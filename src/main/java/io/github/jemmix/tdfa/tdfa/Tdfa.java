@@ -27,64 +27,39 @@ public final class Tdfa {
     public final int groupCount;
     public final int registerCount;
     public final int startState;
-    public final BitSet acceptStates;
-    /** Per-state sorted ranges: [lo, hi, targetState, opsRef] flat. -1 target = dead. */
-    public final int[][] rangeBounds;       // [state] -> sorted {lo1, lo2, ...} for binary search
-    public final int[][] rangeTargets;      // [state] -> {target1, target2, ...} aligned with bounds
-    public final int[][][] rangeOps;        // [state] -> {ops1, ops2, ...} aligned with bounds
-    public final int[][] finalOps;          // per accepting state
+    public final int stateCount;
 
-    private Tdfa(int tagCount, int groupCount, int registerCount, int startState,
-                 BitSet acceptStates, int[][] rangeBounds, int[][] rangeTargets,
-                 int[][][] rangeOps, int[][] finalOps) {
-        this.tagCount = tagCount; this.groupCount = groupCount;
-        this.registerCount = registerCount;
-        this.startState = startState;
-        this.acceptStates = acceptStates;
-        this.rangeBounds = rangeBounds;
-        this.rangeTargets = rangeTargets;
-        this.rangeOps = rangeOps;
-        this.finalOps = finalOps;
-    }
+    // === Flat packed arrays (5 total including per-match register file) ===
+    /** [state] -> (rangeBase << 8) | rangeCount, where rangeBase is the start index (in `ranges`, divided by 4). */
+    public final int[] stateRangeInfo;
+    /** [state] -> (finalOpsOff << 1) | acceptBit, where finalOpsOff is the start index in `ops`. -1 sentinel encoded as 0. */
+    public final int[] stateFinalInfo;
+    /** Flat ranges: [lo0, hi0, target0, opsOff0, lo1, hi1, target1, opsOff1, ...]. */
+    public final int[] ranges;
+    /** Flat ops: [op, dst, src, ...] blocks terminated by OP_END=0. Transition ops + final ops share this array. */
+    public final int[] ops;
 
     public static final int OP_SET_POS = 1;
     public static final int OP_SET_NIL = 2;
     public static final int OP_COPY    = 3;
+    public static final int OP_END     = 0;  // terminator for op blocks
+
+    private Tdfa(int tagCount, int groupCount, int registerCount, int startState, int stateCount,
+                 int[] stateRangeInfo, int[] stateFinalInfo, int[] ranges, int[] ops) {
+        this.tagCount = tagCount; this.groupCount = groupCount;
+        this.registerCount = registerCount;
+        this.startState = startState;
+        this.stateCount = stateCount;
+        this.stateRangeInfo = stateRangeInfo;
+        this.stateFinalInfo = stateFinalInfo;
+        this.ranges = ranges;
+        this.ops = ops;
+    }
+
+    public boolean isAccept(int state) { return (stateFinalInfo[state] & 1) != 0; }
+    public int finalOpsOffset(int state) { return stateFinalInfo[state] >>> 1; }
 
     public static Tdfa compile(Tnfa nfa) { return new Compiler(nfa).compile(); }
-
-    /** Look up transition target for (state, c). Returns -1 if no transition. */
-    public int target(int state, char c) {
-        int[] bounds = rangeBounds[state];
-        int lo = 0, hi = bounds.length - 1;
-        while (lo <= hi) {
-            int mid = (lo + hi) >>> 1;
-            if (c < bounds[mid]) {
-                hi = mid - 1;
-            } else if (mid + 1 < bounds.length && c >= bounds[mid + 1]) {
-                lo = mid + 1;
-            } else {
-                return rangeTargets[state][mid];
-            }
-        }
-        return -1;
-    }
-
-    public int[] ops(int state, char c) {
-        int[] bounds = rangeBounds[state];
-        int lo = 0, hi = bounds.length - 1;
-        while (lo <= hi) {
-            int mid = (lo + hi) >>> 1;
-            if (c < bounds[mid]) {
-                hi = mid - 1;
-            } else if (mid + 1 < bounds.length && c >= bounds[mid + 1]) {
-                lo = mid + 1;
-            } else {
-                return rangeOps[state][mid];
-            }
-        }
-        return null;
-    }
 
     private static final class Compiler {
         final Tnfa nfa;
@@ -198,47 +173,83 @@ public final class Tdfa {
             if (debug) System.err.println("[tdfa] total states=" + states.size() + " accept=" + accept.cardinality());
 
             int n = states.size();
-            int[][] rangeBounds = new int[n][];
-            int[][] rangeTargets = new int[n][];
-            int[][][] rangeOps = new int[n][][];
-            int[][] fops = new int[n][];
-            // Register count: max of (nextReg, all referenced regs in any op or config).
-            int globalMaxReg = nextReg;
+            // First pass: coalesce + fillGaps on every state's ranges, compute totals.
+            int totalRanges = 0;
+            int totalOpsSlots = 1;  // reserve ops[0] = OP_END for the "no ops" case (opsOff=0 means empty)
             for (int s = 0; s < n; s++) {
                 DfaStateBuilder sb = builders.get(s);
                 sb.coalesce();
                 sb.fillGaps();
-                int k = sb.ranges.size();
-                int[] bounds = new int[k];
-                int[] targets = new int[k];
-                int[][] opsArr = new int[k][];
-                for (int i = 0; i < k; i++) {
-                    Range r = sb.ranges.get(i);
-                    bounds[i] = r.lo;
-                    targets[i] = r.target;
-                    opsArr[i] = r.ops;
-                    if (r.ops != null) {
-                        for (int j = 0; j < r.ops.length; j += 3) {
-                            globalMaxReg = Math.max(globalMaxReg, r.ops[j + 1] + 1);
-                            if (r.ops[j] == OP_COPY) globalMaxReg = Math.max(globalMaxReg, r.ops[j + 2] + 1);
-                        }
-                    }
+                totalRanges += sb.ranges.size();
+                for (Range r : sb.ranges) {
+                    if (r.ops != null && r.ops.length > 0) totalOpsSlots += r.ops.length + 1;  // +1 for OP_END
                 }
-                rangeBounds[s] = bounds;
-                rangeTargets[s] = targets;
-                rangeOps[s] = opsArr;
                 if (accept.get(s)) {
-                    fops[s] = finalRegops(states.get(s));
-                    if (fops[s] != null) {
-                        for (int j = 0; j < fops[s].length; j += 3) {
-                            globalMaxReg = Math.max(globalMaxReg, fops[s][j + 1] + 1);
-                            if (fops[s][j] == OP_COPY) globalMaxReg = Math.max(globalMaxReg, fops[s][j + 2] + 1);
-                        }
-                    }
+                    int[] f = finalRegops(states.get(s));
+                    sb.finalOpsArr = f;
+                    if (f != null && f.length > 0) totalOpsSlots += f.length + 1;
                 }
             }
-            return new Tdfa(tags, nfa.groupCount, globalMaxReg, 0, accept,
-                    rangeBounds, rangeTargets, rangeOps, fops);
+
+            // Second pass: allocate flat arrays and populate.
+            int[] stateRangeInfo = new int[n];
+            int[] stateFinalInfo = new int[n];
+            int[] flatRanges = new int[totalRanges * 4];
+            int[] flatOps = new int[totalOpsSlots];
+            flatOps[0] = OP_END;  // opsOff=0 means "empty block"
+            int opsHead = 1;       // next free slot in flatOps (slot 0 reserved)
+            int rangesHead = 0;    // next free slot in flatRanges (in units of 4 ints)
+            int globalMaxReg = 2 * tags;  // at least r0 + R_f
+            for (int s = 0; s < n; s++) {
+                DfaStateBuilder sb = builders.get(s);
+                int k = sb.ranges.size();
+                int rangeBase = rangesHead;
+                for (int i = 0; i < k; i++) {
+                    Range r = sb.ranges.get(i);
+                    int o = rangesHead * 4;
+                    flatRanges[o]     = r.lo;
+                    flatRanges[o + 1] = r.hi;
+                    flatRanges[o + 2] = r.target;
+                    int opsOff;
+                    if (r.ops == null || r.ops.length == 0) {
+                        opsOff = 0;  // shared "empty" sentinel at ops[0]
+                    } else {
+                        opsOff = opsHead;
+                        for (int j = 0; j < r.ops.length; j += 3) {
+                            flatOps[opsHead]     = r.ops[j];
+                            flatOps[opsHead + 1] = r.ops[j + 1];
+                            flatOps[opsHead + 2] = r.ops[j + 2];
+                            globalMaxReg = Math.max(globalMaxReg, r.ops[j + 1] + 1);
+                            if (r.ops[j] == OP_COPY) globalMaxReg = Math.max(globalMaxReg, r.ops[j + 2] + 1);
+                            opsHead += 3;
+                        }
+                        flatOps[opsHead++] = OP_END;
+                    }
+                    flatRanges[o + 3] = opsOff;
+                    rangesHead++;
+                }
+                int finalInfo;
+                if (sb.finalOpsArr != null && sb.finalOpsArr.length > 0) {
+                    int opsOff = opsHead;
+                    int[] f = sb.finalOpsArr;
+                    for (int j = 0; j < f.length; j += 3) {
+                        flatOps[opsHead]     = f[j];
+                        flatOps[opsHead + 1] = f[j + 1];
+                        flatOps[opsHead + 2] = f[j + 2];
+                        globalMaxReg = Math.max(globalMaxReg, f[j + 1] + 1);
+                        if (f[j] == OP_COPY) globalMaxReg = Math.max(globalMaxReg, f[j + 2] + 1);
+                        opsHead += 3;
+                    }
+                    flatOps[opsHead++] = OP_END;
+                    finalInfo = (opsOff << 1) | (accept.get(s) ? 1 : 0);
+                } else {
+                    finalInfo = accept.get(s) ? 1 : 0;  // opsOff=0 (empty)
+                }
+                stateRangeInfo[s] = (rangeBase << 8) | (k & 0xFF);
+                stateFinalInfo[s] = finalInfo;
+            }
+            return new Tdfa(tags, nfa.groupCount, globalMaxReg, 0, n,
+                    stateRangeInfo, stateFinalInfo, flatRanges, flatOps);
         }
 
         static final boolean debug = Boolean.getBoolean("tdfa.debug");
@@ -551,6 +562,7 @@ public final class Tdfa {
     static final class DfaStateBuilder {
         final int id;
         final List<Range> ranges = new ArrayList<>();
+        int[] finalOpsArr;  // populated during materialization
         DfaStateBuilder(int id) { this.id = id; }
         void addRange(int lo, int hi, int target, int[] ops) { ranges.add(new Range(lo, hi, target, ops)); }
         void coalesce() {

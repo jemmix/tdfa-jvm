@@ -7,12 +7,19 @@ import io.github.jemmix.tdfa.vm.MatchResult;
 import java.util.Arrays;
 
 /**
- * Executes a compiled {@link Tdfa} against an input char sequence.
- * Runtime register file sized to {@link Tdfa#registerCount}.
+ * Executes a compiled {@link Tdfa} against an input char sequence using the flat packed
+ * arrays (stateRangeInfo, stateFinalInfo, ranges, ops).
  *
- * Semantics: anchored full-string match (use {@code matches}) or unanchored search
- * ({@code find}). Greedy longest-match: keeps stepping while transitions exist, falls back
- * to the last accepting state on dead-end.
+ * Tier A optimizations applied:
+ *   - A1: merged target+ops lookup (single linear scan; no separate binary searches)
+ *   - A2: lazy accept snapshot (no regs.clone() per accept-state visit; clone only on
+ *         dead-end or end-of-input when we actually need the snapshot)
+ *   - A3: String specialization (fast path for input instanceof String)
+ *   - A4: flat packed arrays (no per-state inner-array dereferences)
+ *
+ * Semantics: anchored full-string match (use matches) or unanchored search (find).
+ * Greedy longest-match: keeps stepping while transitions exist, falls back to the last
+ * accepting state on dead-end.
  */
 public final class TdfaRunner implements Regex.Engine {
     private final Tdfa tdfa;
@@ -33,60 +40,161 @@ public final class TdfaRunner implements Regex.Engine {
         return h == null ? null : new MatchResult(h.regs, tdfa.tagCount, tdfa.groupCount, h.matchStart, h.matchEnd);
     }
 
-    public static final class MatchHolder { public final int matchStart, matchEnd; public final int[] regs; public MatchHolder(int s, int e, int[] r) { matchStart=s; matchEnd=e; regs=r; } }
+    public static final class MatchHolder {
+        public final int matchStart, matchEnd;
+        public final int[] regs;
+        public MatchHolder(int s, int e, int[] r) { matchStart = s; matchEnd = e; regs = r; }
+    }
 
+    /** A3: String fast path. */
     private MatchHolder runHolder(CharSequence input, int from, int to, boolean anchored) {
-        final int regSize = tdfa.registerCount;
-        final int[] baseRegs = new int[regSize];
-        Arrays.fill(baseRegs, -1);
-        if (Boolean.getBoolean("tdfa.debug.runner")) {
-            System.err.println("[tdfa/run] start anchored=" + anchored + " to=" + to + " regSize=" + regSize + " startState=" + tdfa.startState + " acceptStates=" + tdfa.acceptStates);
-        }
+        if (input instanceof String) return runString((String) input, from, to, anchored);
+        return runGeneric(input, from, to, anchored);
+    }
+
+    private MatchHolder runString(String input, int from, int to, boolean anchored) {
+        final Tdfa t = this.tdfa;
+        final int[] stateRangeInfo = t.stateRangeInfo;
+        final int[] stateFinalInfo = t.stateFinalInfo;
+        final int[] ranges = t.ranges;
+        final int[] ops = t.ops;
+        final int regSize = t.registerCount;
 
         int startSearch = from;
         while (true) {
-            int[] regs = baseRegs.clone();
-            int state = tdfa.startState;
-            int[] lastAcceptRegs = null;
-            int lastAcceptPos = -1;
-            int lastAcceptState = -1;
+            int[] regs = new int[regSize];
+            Arrays.fill(regs, -1);
+            int state = t.startState;
+            int lastAcceptPos = -1, lastAcceptState = -1;
+            boolean haveAccept = false;
             int matchStart = startSearch;
-
             int pos = startSearch;
-            boolean deadEnd = false;
-            for (; pos <= to; pos++) {
-                if (tdfa.acceptStates.get(state)) {
-                    lastAcceptRegs = regs.clone();
+
+            loop:
+            for (; ; ) {
+                if ((stateFinalInfo[state] & 1) != 0) {  // A2: cheap accept record, no clone
                     lastAcceptPos = pos;
                     lastAcceptState = state;
+                    haveAccept = true;
                 }
-                if (pos == to) break;
+                if (pos >= to) break;
                 char c = input.charAt(pos);
-                int next = tdfa.target(state, c);
-                if (next < 0) { deadEnd = true; break; }
-                int[] ops = tdfa.ops(state, c);
-                if (ops != null && ops.length > 0) applyOps(ops, regs, pos);
-                state = next;
-            }
-            // If we naturally reached end-of-input in an accept state, record it.
-            // (Don't update on deadEnd — the accept check at the top of the loop already captured
-            // the last accepting position before the dead transition.)
-            if (!deadEnd && pos > to && tdfa.acceptStates.get(state)) {
-                lastAcceptRegs = regs;
-                lastAcceptPos = pos;
-                lastAcceptState = state;
-            }
-            if (lastAcceptRegs != null) {
-                if (anchored && lastAcceptPos != to) {
-                    if (Boolean.getBoolean("tdfa.debug.runner")) {
-                        System.err.println("[tdfa/run] anchored reject: lastAcceptPos=" + lastAcceptPos + " to=" + to);
+                int meta = stateRangeInfo[state];
+                int base = meta >>> 8;
+                int count = meta & 0xFF;
+                for (int i = 0; i < count; i++) {
+                    int o = (base + i) << 2;
+                    if (c >= ranges[o] && c <= ranges[o + 1]) {
+                        int target = ranges[o + 2];
+                        if (target < 0) break loop;  // dead
+                        int opsOff = ranges[o + 3];
+                        if (opsOff != 0) {
+                            for (int j = opsOff; ops[j] != Tdfa.OP_END; j += 3) {
+                                int op = ops[j];
+                                int dst = ops[j + 1];
+                                if (op == Tdfa.OP_SET_POS) regs[dst] = pos;
+                                else if (op == Tdfa.OP_COPY) regs[dst] = regs[ops[j + 2]];
+                                else regs[dst] = -1;
+                            }
+                        }
+                        state = target;
+                        pos++;
+                        continue loop;
                     }
-                    // Anchored full-match requires consuming all input.
-                    return null;
                 }
-                int[] fops = (lastAcceptState >= 0) ? tdfa.finalOps[lastAcceptState] : null;
-                if (fops != null) applyOps(fops, lastAcceptRegs, lastAcceptPos);
-                return new MatchHolder(matchStart, lastAcceptPos, lastAcceptRegs);
+                break;  // no range matched
+            }
+
+            if (haveAccept) {
+                if (anchored && lastAcceptPos != to) return null;
+                // A2: materialize snapshot now by cloning regs
+                int[] r = regs.clone();
+                int opsOff = stateFinalInfo[lastAcceptState] >>> 1;
+                if (opsOff != 0) {
+                    for (int j = opsOff; ops[j] != Tdfa.OP_END; j += 3) {
+                        int op = ops[j];
+                        int dst = ops[j + 1];
+                        if (op == Tdfa.OP_SET_POS) r[dst] = lastAcceptPos;
+                        else if (op == Tdfa.OP_COPY) r[dst] = r[ops[j + 2]];
+                        else r[dst] = -1;
+                    }
+                }
+                return new MatchHolder(matchStart, lastAcceptPos, r);
+            }
+            if (anchored) return null;
+            startSearch++;
+            if (startSearch > to) return null;
+        }
+    }
+
+    /** Same as runString but for arbitrary CharSequence. */
+    private MatchHolder runGeneric(CharSequence input, int from, int to, boolean anchored) {
+        final Tdfa t = this.tdfa;
+        final int[] stateRangeInfo = t.stateRangeInfo;
+        final int[] stateFinalInfo = t.stateFinalInfo;
+        final int[] ranges = t.ranges;
+        final int[] ops = t.ops;
+        final int regSize = t.registerCount;
+
+        int startSearch = from;
+        while (true) {
+            int[] regs = new int[regSize];
+            Arrays.fill(regs, -1);
+            int state = t.startState;
+            int lastAcceptPos = -1, lastAcceptState = -1;
+            boolean haveAccept = false;
+            int matchStart = startSearch;
+            int pos = startSearch;
+
+            loop:
+            for (; ; ) {
+                if ((stateFinalInfo[state] & 1) != 0) {
+                    lastAcceptPos = pos;
+                    lastAcceptState = state;
+                    haveAccept = true;
+                }
+                if (pos >= to) break;
+                char c = input.charAt(pos);
+                int meta = stateRangeInfo[state];
+                int base = meta >>> 8;
+                int count = meta & 0xFF;
+                for (int i = 0; i < count; i++) {
+                    int o = (base + i) << 2;
+                    if (c >= ranges[o] && c <= ranges[o + 1]) {
+                        int target = ranges[o + 2];
+                        if (target < 0) break loop;
+                        int opsOff = ranges[o + 3];
+                        if (opsOff != 0) {
+                            for (int j = opsOff; ops[j] != Tdfa.OP_END; j += 3) {
+                                int op = ops[j];
+                                int dst = ops[j + 1];
+                                if (op == Tdfa.OP_SET_POS) regs[dst] = pos;
+                                else if (op == Tdfa.OP_COPY) regs[dst] = regs[ops[j + 2]];
+                                else regs[dst] = -1;
+                            }
+                        }
+                        state = target;
+                        pos++;
+                        continue loop;
+                    }
+                }
+                break;
+            }
+
+            if (haveAccept) {
+                if (anchored && lastAcceptPos != to) return null;
+                int[] r = regs.clone();
+                int opsOff = stateFinalInfo[lastAcceptState] >>> 1;
+                if (opsOff != 0) {
+                    for (int j = opsOff; ops[j] != Tdfa.OP_END; j += 3) {
+                        int op = ops[j];
+                        int dst = ops[j + 1];
+                        if (op == Tdfa.OP_SET_POS) r[dst] = lastAcceptPos;
+                        else if (op == Tdfa.OP_COPY) r[dst] = r[ops[j + 2]];
+                        else r[dst] = -1;
+                    }
+                }
+                return new MatchHolder(matchStart, lastAcceptPos, r);
             }
             if (anchored) return null;
             startSearch++;
@@ -96,20 +204,6 @@ public final class TdfaRunner implements Regex.Engine {
 
     private int[] run(CharSequence input, int from, int to, boolean anchored) {
         MatchHolder h = runHolder(input, from, to, anchored);
-        return h == null ? null : new int[]{1}; // non-null sentinel
-    }
-
-    private static void applyOps(int[] ops, int[] regs, int currentPos) {
-        for (int i = 0; i < ops.length; i += 3) {
-            int op = ops[i];
-            int dst = ops[i + 1];
-            int src = ops[i + 2];
-            switch (op) {
-                case Tdfa.OP_SET_POS: regs[dst] = currentPos; break;
-                case Tdfa.OP_SET_NIL: regs[dst] = -1; break;
-                case Tdfa.OP_COPY:    regs[dst] = regs[src]; break;
-                default: throw new IllegalStateException("op " + op);
-            }
-        }
+        return h == null ? null : new int[]{1};
     }
 }

@@ -81,6 +81,32 @@ public class CaptureBench {
     @Benchmark public boolean re2jIpMatch() { return RE2J_IP.matcher(IN_IP).matches(); }
     @Benchmark public boolean reggieIpMatch() { return REGGIE_IP.matches(IN_IP); }
 
+    // ============ long-input scaling (per-char cost dominates) ============
+    // Input is all letters (no digit), pattern requires a digit in the middle.
+    // Each restart scans ~10 chars before failing; total work scales with input length.
+    static final String IN_LONG;
+    static final Regex TDFA_LONG;
+    static final Regex ASMC_LONG;
+    static final Pattern JUR_LONG;
+    static final com.datadoghq.reggie.runtime.ReggieMatcher REGGIE_LONG;
+    static {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 100; i++) sb.append("abcdefghij");  // 1000 chars
+        IN_LONG = sb.toString();
+        String longPat = "(\\w+)(\\d+)(\\w+)";  // requires \d+ in middle; never matches all-letter input
+        TDFA_LONG = Regex.compileVm(longPat);
+        ASMC_LONG = Regex.compileAsm(longPat);
+        JUR_LONG = Pattern.compile(longPat);
+        REGGIE_LONG = com.datadoghq.reggie.Reggie.compile(longPat);
+    }
+
+    /** find() on a 1000-char all-letter input where the pattern requires a digit. Both engines
+     *  must scan every start position to give up. Per-char cost dominates. */
+    @Benchmark public boolean tdfaLongFind() { return TDFA_LONG.find(IN_LONG); }
+    @Benchmark public boolean asmcLongFind() { return ASMC_LONG.find(IN_LONG); }
+    @Benchmark public boolean jurLongFind() { return JUR_LONG.matcher(IN_LONG).find(); }
+    @Benchmark public boolean reggieLongFind() { return REGGIE_LONG.find(IN_LONG); }
+
     // ============ with group extraction ============
     @Benchmark
     public void tdfaAltStarGroups(Blackhole bh) {
