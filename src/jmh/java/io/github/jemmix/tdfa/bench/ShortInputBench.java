@@ -82,4 +82,12 @@ public class ShortInputBench {
     @Benchmark public void jurIp(Blackhole bh) { for (int i = 0; i < ITERS; i++) bh.consume(JUR_IP.matcher(IN_IP).matches()); }
     @Benchmark public void re2jIp(Blackhole bh) { for (int i = 0; i < ITERS; i++) bh.consume(RE2J_IP.matcher(IN_IP).matches()); }
     @Benchmark public void regIp(Blackhole bh) { for (int i = 0; i < ITERS; i++) bh.consume(REG_IP.matches(IN_IP)); }
+
+    // ============ control: JMH harness overhead floor ============
+    @Benchmark public void controlNoop(Blackhole bh) { for (int i = 0; i < ITERS; i++) bh.consume(true); }
+    @Benchmark public int controlReturnCount() {
+        int sum = 0;
+        for (int i = 0; i < ITERS; i++) sum += 1;
+        return sum;
+    }
 }

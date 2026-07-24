@@ -29,11 +29,14 @@ public final class Tdfa {
     public final int startState;
     public final int stateCount;
 
-    // === Flat packed arrays (5 total including per-match register file) ===
-    /** [state] -> (rangeBase << 8) | rangeCount, where rangeBase is the start index (in `ranges`, divided by 4). */
-    public final int[] stateRangeInfo;
-    /** [state] -> (finalOpsOff << 1) | acceptBit, where finalOpsOff is the start index in `ops`. -1 sentinel encoded as 0. */
-    public final int[] stateFinalInfo;
+    // === Flat packed arrays (4 arrays total; per-match regs adds a 5th at runtime) ===
+    /**
+     * [state] -> packed (rangeBase << 9) | (rangeCount << 1) | acceptBit.
+     * One load per char gives accept + rangeBase + rangeCount.
+     */
+    public final int[] stateMeta;
+    /** [state] -> finalOpsOff (offset into `ops`), 0 if none. Read only once per match. */
+    public final int[] stateFinalOpsOff;
     /** Flat ranges: [lo0, hi0, target0, opsOff0, lo1, hi1, target1, opsOff1, ...]. */
     public final int[] ranges;
     /** Flat ops: [op, dst, src, ...] blocks terminated by OP_END=0. Transition ops + final ops share this array. */
@@ -45,19 +48,25 @@ public final class Tdfa {
     public static final int OP_END     = 0;  // terminator for op blocks
 
     private Tdfa(int tagCount, int groupCount, int registerCount, int startState, int stateCount,
-                 int[] stateRangeInfo, int[] stateFinalInfo, int[] ranges, int[] ops) {
+                 int[] stateMeta, int[] stateFinalOpsOff, int[] ranges, int[] ops) {
         this.tagCount = tagCount; this.groupCount = groupCount;
         this.registerCount = registerCount;
         this.startState = startState;
         this.stateCount = stateCount;
-        this.stateRangeInfo = stateRangeInfo;
-        this.stateFinalInfo = stateFinalInfo;
+        this.stateMeta = stateMeta;
+        this.stateFinalOpsOff = stateFinalOpsOff;
         this.ranges = ranges;
         this.ops = ops;
     }
 
-    public boolean isAccept(int state) { return (stateFinalInfo[state] & 1) != 0; }
-    public int finalOpsOffset(int state) { return stateFinalInfo[state] >>> 1; }
+    public boolean isAccept(int state) { return (stateMeta[state] & 1) != 0; }
+    public int finalOpsOffset(int state) { return stateFinalOpsOff[state]; }
+    /** Unpack range base from packed stateMeta. */
+    public static int rangeBase(int meta) { return meta >>> 9; }
+    /** Unpack range count from packed stateMeta. */
+    public static int rangeCount(int meta) { return (meta >>> 1) & 0xFF; }
+    /** Accept bit. */
+    public static boolean accept(int meta) { return (meta & 1) != 0; }
 
     public static Tdfa compile(Tnfa nfa) { return new Compiler(nfa).compile(); }
 
@@ -192,8 +201,8 @@ public final class Tdfa {
             }
 
             // Second pass: allocate flat arrays and populate.
-            int[] stateRangeInfo = new int[n];
-            int[] stateFinalInfo = new int[n];
+            int[] stateMeta = new int[n];
+            int[] stateFinalOpsOff = new int[n];
             int[] flatRanges = new int[totalRanges * 4];
             int[] flatOps = new int[totalOpsSlots];
             flatOps[0] = OP_END;  // opsOff=0 means "empty block"
@@ -228,9 +237,9 @@ public final class Tdfa {
                     flatRanges[o + 3] = opsOff;
                     rangesHead++;
                 }
-                int finalInfo;
+                int finalOpsOff = 0;
                 if (sb.finalOpsArr != null && sb.finalOpsArr.length > 0) {
-                    int opsOff = opsHead;
+                    finalOpsOff = opsHead;
                     int[] f = sb.finalOpsArr;
                     for (int j = 0; j < f.length; j += 3) {
                         flatOps[opsHead]     = f[j];
@@ -241,15 +250,14 @@ public final class Tdfa {
                         opsHead += 3;
                     }
                     flatOps[opsHead++] = OP_END;
-                    finalInfo = (opsOff << 1) | (accept.get(s) ? 1 : 0);
-                } else {
-                    finalInfo = accept.get(s) ? 1 : 0;  // opsOff=0 (empty)
                 }
-                stateRangeInfo[s] = (rangeBase << 8) | (k & 0xFF);
-                stateFinalInfo[s] = finalInfo;
+                boolean isAccept = accept.get(s);
+                // Pack: (rangeBase << 9) | (rangeCount << 1) | acceptBit
+                stateMeta[s] = (rangeBase << 9) | ((k & 0xFF) << 1) | (isAccept ? 1 : 0);
+                stateFinalOpsOff[s] = finalOpsOff;
             }
             return new Tdfa(tags, nfa.groupCount, globalMaxReg, 0, n,
-                    stateRangeInfo, stateFinalInfo, flatRanges, flatOps);
+                    stateMeta, stateFinalOpsOff, flatRanges, flatOps);
         }
 
         static final boolean debug = Boolean.getBoolean("tdfa.debug");

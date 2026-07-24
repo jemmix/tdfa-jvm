@@ -84,27 +84,28 @@ public final class TdfaAsmBackend {
         sb.append("      switch (state) {\n");
 
         int nStates = tdfa.stateCount;
-        int[] stateRangeInfo = tdfa.stateRangeInfo;
-        int[] flatRanges = tdfa.ranges;
-        int[] flatOps = tdfa.ops;
+        int[] stateMeta = tdfa.stateMeta;
+        int[] stateFinalOpsOff = tdfa.stateFinalOpsOff;
+        int[] ranges = tdfa.ranges;
+        int[] ops = tdfa.ops;
         for (int s = 0; s < nStates; s++) {
             sb.append("        case ").append(s).append(": {\n");
-            int meta = stateRangeInfo[s];
-            int base = meta >>> 8;
-            int count = meta & 0xFF;
+            int meta = stateMeta[s];
+            int base = meta >>> 9;
+            int count = (meta >>> 1) & 0xFF;
             for (int i = 0; i < count; i++) {
                 int o = (base + i) << 2;
-                int lo = flatRanges[o];
-                int hi = flatRanges[o + 1];
-                int target = flatRanges[o + 2];
-                int opsOff = flatRanges[o + 3];
+                int lo = ranges[o];
+                int hi = ranges[o + 1];
+                int target = ranges[o + 2];
+                int opsOff = ranges[o + 3];
                 if (target < 0) continue;
                 sb.append("          if (c >= ").append(lo).append(" && c <= ").append(hi).append(") {\n");
-                // emit ops inline from flatOps[opsOff..] until OP_END
+                // emit ops inline from ops[opsOff..] until OP_END
                 if (opsOff != 0) {
                     int j = opsOff;
-                    while (flatOps[j] != Tdfa.OP_END) {
-                        int op = flatOps[j], dst = flatOps[j + 1], src = flatOps[j + 2];
+                    while (ops[j] != Tdfa.OP_END) {
+                        int op = ops[j], dst = ops[j + 1], src = ops[j + 2];
                         sb.append("            ");
                         switch (op) {
                             case Tdfa.OP_SET_POS: sb.append("regs[").append(dst).append("] = pos;\n"); break;
@@ -130,15 +131,14 @@ public final class TdfaAsmBackend {
         sb.append("      int[] r = regs.clone();\n");
         // emit per-accept-state finalRegops dispatch
         sb.append("      switch (lastAcceptState) {\n");
-        int[] stateFinalInfo = tdfa.stateFinalInfo;
         for (int s = 0; s < nStates; s++) {
-            int fi = stateFinalInfo[s];
-            int opsOff = fi >>> 1;
-            if ((fi & 1) == 0 || opsOff == 0) continue;  // not accept, or empty final ops
+            int opsOff = stateFinalOpsOff[s];
+            boolean isAccept = (stateMeta[s] & 1) != 0;
+            if (!isAccept || opsOff == 0) continue;
             sb.append("        case ").append(s).append(": {\n");
             int j = opsOff;
-            while (flatOps[j] != Tdfa.OP_END) {
-                int op = flatOps[j], dst = flatOps[j + 1], src = flatOps[j + 2];
+            while (ops[j] != Tdfa.OP_END) {
+                int op = ops[j], dst = ops[j + 1], src = ops[j + 2];
                 sb.append("          ");
                 switch (op) {
                     case Tdfa.OP_SET_POS: sb.append("r[").append(dst).append("] = lastAcceptPos;\n"); break;
@@ -159,7 +159,7 @@ public final class TdfaAsmBackend {
         sb.append("  private static boolean isAccept(int state) {\n");
         sb.append("    switch (state) {\n");
         for (int s = 0; s < nStates; s++) {
-            if ((stateFinalInfo[s] & 1) != 0) sb.append("      case ").append(s).append(":\n");
+            if ((stateMeta[s] & 1) != 0) sb.append("      case ").append(s).append(":\n");
         }
         sb.append("        return true;\n");
         sb.append("      default: return false;\n");
