@@ -1,0 +1,62 @@
+plugins {
+    id 'java'
+    id 'me.champeau.jmh' version '0.7.3'
+}
+
+group = 'io.github.jemmix'
+version = '0.1.0-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://jitpack.io' }
+}
+
+dependencies {
+    testImplementation platform('org.junit:junit-bom:5.10.2'),
+            'org.junit.jupiter:junit-jupiter',
+            'org.junit.platform:junit-platform-launcher',
+            'org.assertj:assertj-core:3.25.3'
+
+    jmh 'com.google.re2j:re2j:1.8'
+    jmh 'com.github.DataDog:java-reggie:main-SNAPSHOT'
+    jmh 'org.ow2.asm:asm:9.9.1'
+    jmh 'org.ow2.asm:asm-commons:9.9.1'
+    jmh 'org.ow2.asm:asm-tree:9.9.1'
+    jmh 'org.ow2.asm:asm-util:9.9.1'
+    jmh 'org.ow2.asm:asm-analysis:9.9.1'
+
+    // For the ASM bytecode backend (M4)
+    implementation 'org.ow2.asm:asm:9.9.1'
+}
+
+test {
+    useJUnitPlatform()
+    jvmArgs '-Xmx128m', '-XX:+HeapDumpOnOutOfMemoryError'
+    testLogging {
+        events 'failed', 'standardOut', 'standardError'
+        exceptionFormat 'full'
+    }
+}
+
+jmh {
+    jmhVersion = '1.37'
+    fork = 1
+    warmupIterations = 3
+    warmup = '1s'
+    iterations = 3
+    timeOnIteration = '1s'
+    failOnError = true
+    resultFormat = 'JSON'
+    resultsFile = file("$buildDir/reports/jmh/results.json")
+    humanOutputFile = file("$buildDir/reports/jmh/human.txt")
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.debug = true
+}

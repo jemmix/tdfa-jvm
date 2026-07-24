@@ -1,0 +1,24 @@
+# Gradle
+build/
+.gradle/
+.gradletasknamecache/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Profiling artifacts
+*.hprof
+hs_err_pid*
+replay_pid*
+
+# Logs
+*.log
