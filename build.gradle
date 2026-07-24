@@ -32,6 +32,8 @@ dependencies {
 
     // For the ASM bytecode backend (M4)
     implementation 'org.ow2.asm:asm:9.9.1'
+
+    jmhAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
 }
 
 test {
