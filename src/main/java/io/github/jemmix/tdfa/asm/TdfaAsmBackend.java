@@ -66,10 +66,22 @@ public final class TdfaAsmBackend {
         sb.append("  public boolean matches(CharSequence i) { return run(i,0,i.length(),true)!=null; }\n");
         sb.append("  public boolean find(CharSequence i) {\n");
         sb.append("    int len = i.length();\n");
-        sb.append("    for (int from = 0; from <= len; from++) {\n");
-        sb.append("      if (run(i, from, len, false) != null) return true;\n");
-        sb.append("    }\n");
-        sb.append("    return false;\n");
+        if (tdfa.hasStartAnchor) {
+            sb.append("    TdfaRunner.MatchHolder h = run(i, 0, len, false);\n");
+            sb.append("    return h != null");
+            if (tdfa.hasEndAnchor) sb.append(" && h.matchEnd == len");
+            sb.append(";\n");
+        } else {
+            sb.append("    for (int from = 0; from <= len; from++) {\n");
+            sb.append("      TdfaRunner.MatchHolder h = run(i, from, len, false);\n");
+            if (tdfa.hasEndAnchor) {
+                sb.append("      if (h != null && h.matchEnd == len) return true;\n");
+            } else {
+                sb.append("      if (h != null) return true;\n");
+            }
+            sb.append("    }\n");
+            sb.append("    return false;\n");
+        }
         sb.append("  }\n");
         sb.append("  public MatchResult match(CharSequence i, int from) {\n");
         sb.append("    int len = i.length();\n");

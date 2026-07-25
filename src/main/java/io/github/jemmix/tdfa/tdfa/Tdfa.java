@@ -28,6 +28,10 @@ public final class Tdfa {
     public final int registerCount;
     public final int startState;
     public final int stateCount;
+    /** True if pattern contains ^ (start anchor). find() should only try position 0. */
+    public final boolean hasStartAnchor;
+    /** True if pattern contains $ (end anchor). Only accept matches ending at input.length(). */
+    public final boolean hasEndAnchor;
 
     // === Flat packed arrays (4 arrays total; per-match regs adds a 5th at runtime) ===
     /**
@@ -48,7 +52,8 @@ public final class Tdfa {
     public static final int OP_END     = 0;  // terminator for op blocks
 
     private Tdfa(int tagCount, int groupCount, int registerCount, int startState, int stateCount,
-                 int[] stateMeta, int[] stateFinalOpsOff, int[] ranges, int[] ops) {
+                 int[] stateMeta, int[] stateFinalOpsOff, int[] ranges, int[] ops,
+                 boolean hasStartAnchor, boolean hasEndAnchor) {
         this.tagCount = tagCount; this.groupCount = groupCount;
         this.registerCount = registerCount;
         this.startState = startState;
@@ -57,6 +62,8 @@ public final class Tdfa {
         this.stateFinalOpsOff = stateFinalOpsOff;
         this.ranges = ranges;
         this.ops = ops;
+        this.hasStartAnchor = hasStartAnchor;
+        this.hasEndAnchor = hasEndAnchor;
     }
 
     public boolean isAccept(int state) { return (stateMeta[state] & 1) != 0; }
@@ -257,7 +264,8 @@ public final class Tdfa {
                 stateFinalOpsOff[s] = finalOpsOff;
             }
             return new Tdfa(tags, nfa.groupCount, globalMaxReg, 0, n,
-                    stateMeta, stateFinalOpsOff, flatRanges, flatOps);
+                    stateMeta, stateFinalOpsOff, flatRanges, flatOps,
+                    nfa.hasStartAnchor, nfa.hasEndAnchor);
         }
 
         static final boolean debug = Boolean.getBoolean("tdfa.debug");

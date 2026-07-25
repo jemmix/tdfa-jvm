@@ -25,25 +25,29 @@ import java.util.List;
 public final class Tnfa {
     public static final int NO_TAG = 0;
 
-    /** All epsilon/symbol transitions. Parallel arrays for cache density. */
     public final int stateCount;
-    public final int[] epsFrom, epsTo, epsPri, epsTag;     // epsTag = 0/+t/-t; tag = NO_TAG for plain
-    public final int[] symFrom, symTo;                      // symbol transitions
-    public final CharClass[] symClass;                      // predicates (one per sym transition)
+    public final int[] epsFrom, epsTo, epsPri, epsTag;
+    public final int[] symFrom, symTo;
+    public final CharClass[] symClass;
     public final int start, accept;
-    public final int tagCount;                              // 1..tagCount
+    public final int tagCount;
     public final int groupCount;
+    public final boolean hasStartAnchor;
+    public final boolean hasEndAnchor;
 
     public Tnfa(int stateCount,
                 int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag,
                 int[] symFrom, int[] symTo, CharClass[] symClass,
-                int start, int accept, int tagCount, int groupCount) {
+                int start, int accept, int tagCount, int groupCount,
+                boolean hasStartAnchor, boolean hasEndAnchor) {
         this.stateCount = stateCount;
         this.epsFrom = epsFrom; this.epsTo = epsTo; this.epsPri = epsPri; this.epsTag = epsTag;
         this.symFrom = symFrom; this.symTo = symTo; this.symClass = symClass;
         this.start = start; this.accept = accept;
         this.tagCount = tagCount;
         this.groupCount = groupCount;
+        this.hasStartAnchor = hasStartAnchor;
+        this.hasEndAnchor = hasEndAnchor;
     }
 
     // ====== Builder / construction ======
@@ -54,7 +58,26 @@ public final class Tnfa {
         Builder b = new Builder();
         int accept = b.fresh();
         int start = b.build(ast, accept);
-        return b.build(start, accept, parser.tagCount(), parser.groupCount());
+        boolean[] anchors = detectAnchors(ast);
+        return b.build(start, accept, parser.tagCount(), parser.groupCount(), anchors[0], anchors[1]);
+    }
+
+    private static boolean[] detectAnchors(Ast ast) {
+        boolean[] result = new boolean[2]; // [hasStart, hasEnd]
+        detectAnchors(ast, result);
+        return result;
+    }
+
+    private static void detectAnchors(Ast ast, boolean[] result) {
+        if (ast instanceof Ast.StartAnchor) result[0] = true;
+        else if (ast instanceof Ast.EndAnchor) result[1] = true;
+        else if (ast instanceof Ast.Concat) {
+            for (Ast c : ((Ast.Concat) ast).children) detectAnchors(c, result);
+        } else if (ast instanceof Ast.Alt) {
+            for (Ast c : ((Ast.Alt) ast).children) detectAnchors(c, result);
+        } else if (ast instanceof Ast.Repeat) {
+            detectAnchors(((Ast.Repeat) ast).body, result);
+        }
     }
 
     private static final class Builder {
@@ -181,7 +204,8 @@ public final class Tnfa {
             return build(result, entryTo);
         }
 
-        Tnfa build(int start, int accept, int tagCount, int groupCount) {
+        Tnfa build(int start, int accept, int tagCount, int groupCount,
+                   boolean hasStartAnchor, boolean hasEndAnchor) {
             // Merge eps + anchors into a single eps array (anchors carry tag values 100/200/.../special)
             int n = eps.size() + anchors.size();
             int[] eFrom = new int[n], eTo = new int[n], ePri = new int[n], eTag = new int[n];
@@ -198,7 +222,8 @@ public final class Tnfa {
             int[] sFrom = syms.stream().mapToInt(a -> a[0]).toArray();
             int[] sTo = syms.stream().mapToInt(a -> a[1]).toArray();
             CharClass[] sClass = symClasses.toArray(new CharClass[0]);
-            return new Tnfa(counter, eFrom, eTo, ePri, eTag, sFrom, sTo, sClass, start, accept, tagCount, groupCount);
+            return new Tnfa(counter, eFrom, eTo, ePri, eTag, sFrom, sTo, sClass, start, accept, tagCount, groupCount,
+                    hasStartAnchor, hasEndAnchor);
         }
     }
 

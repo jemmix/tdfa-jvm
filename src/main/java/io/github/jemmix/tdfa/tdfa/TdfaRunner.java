@@ -23,6 +23,8 @@ public final class TdfaRunner implements Regex.Engine {
     private final int[] ops;
     private final int regSize;
     private final int startState;
+    private final boolean hasStartAnchor;
+    private final boolean hasEndAnchor;
 
     public TdfaRunner(Tnfa nfa) {
         this.tdfa = Tdfa.compile(nfa);
@@ -32,6 +34,8 @@ public final class TdfaRunner implements Regex.Engine {
         this.ops = tdfa.ops;
         this.regSize = tdfa.registerCount;
         this.startState = tdfa.startState;
+        this.hasStartAnchor = tdfa.hasStartAnchor;
+        this.hasEndAnchor = tdfa.hasEndAnchor;
     }
 
     public Tdfa tdfa() { return tdfa; }
@@ -43,11 +47,12 @@ public final class TdfaRunner implements Regex.Engine {
 
     @Override public boolean find(CharSequence input) {
         if (input instanceof String) {
-            int startSearch = 0;
-            int to = input.length();
-            while (startSearch <= to) {
-                if (runStringMatchFrom((String) input, startSearch, to) >= 0) return true;
-                startSearch++;
+            String s = (String) input;
+            int len = s.length();
+            int maxStart = hasStartAnchor ? 0 : len;  // ^: only try position 0
+            for (int from = 0; from <= maxStart; from++) {
+                int res = runStringMatchFrom(s, from, len);
+                if (res >= 0 && (!hasEndAnchor || res == len)) return true;
             }
             return false;
         }
@@ -62,6 +67,55 @@ public final class TdfaRunner implements Regex.Engine {
             h = runGeneric(input, from, input.length(), false);
         }
         return h == null ? null : new MatchResult(h.regs, tdfa.tagCount, tdfa.groupCount, h.matchStart, h.matchEnd);
+    }
+
+    /** String find with anchor enforcement and register extraction. */
+    private MatchHolder runStringExtract(String input, int from, int to) {
+        final int[] sm = this.stateMeta;
+        final int[] rg = this.ranges;
+        final int[] op = this.ops;
+        final int[] sfo = this.stateFinalOpsOff;
+        int maxStart = hasStartAnchor ? 0 : to;
+        for (int startSearch = from; startSearch <= maxStart; startSearch++) {
+            final int[] regs = regSize == 0 ? null : new int[regSize];
+            if (regs != null) Arrays.fill(regs, -1);
+            int state = startState;
+            int lastAcceptPos = -1, lastAcceptState = -1;
+            boolean haveAccept = false;
+            int pos = startSearch;
+
+            loop:
+            for (; ; pos++) {
+                int meta = sm[state];
+                if ((meta & 1) != 0) { lastAcceptPos = pos; lastAcceptState = state; haveAccept = true; }
+                if (pos >= to) break;
+                char c = input.charAt(pos);
+                int base = meta >>> 9;
+                int count = (meta >>> 1) & 0xFF;
+                for (int i = 0; i < count; i++) {
+                    int o = (base + i) << 2;
+                    if (c >= rg[o] && c <= rg[o + 1]) {
+                        int target = rg[o + 2];
+                        if (target < 0) break loop;
+                        if (regs != null) {
+                            int opsOff = rg[o + 3];
+                            if (opsOff != 0) applyOps(op, opsOff, regs, pos);
+                        }
+                        state = target;
+                        continue loop;
+                    }
+                }
+                break;
+            }
+            if (haveAccept) {
+                if (hasEndAnchor && lastAcceptPos != to) continue;  // $ not satisfied
+                int[] r = regs == null ? new int[0] : regs.clone();
+                int foff = sfo[lastAcceptState];
+                if (foff != 0 && regs != null) applyOps(op, foff, r, lastAcceptPos);
+                return new MatchHolder(startSearch, lastAcceptPos, r);
+            }
+        }
+        return null;
     }
 
     public static final class MatchHolder {
@@ -142,55 +196,6 @@ public final class TdfaRunner implements Regex.Engine {
         return haveAccept ? lastAcceptPos : -1;
     }
 
-    /** String match with register extraction (find + match path). */
-    private MatchHolder runStringExtract(String input, int from, int to) {
-        final int[] sm = this.stateMeta;
-        final int[] rg = this.ranges;
-        final int[] op = this.ops;
-        final int[] sfo = this.stateFinalOpsOff;
-        int startSearch = from;
-        while (true) {
-            final int[] regs = regSize == 0 ? null : new int[regSize];
-            if (regs != null) Arrays.fill(regs, -1);
-            int state = startState;
-            int lastAcceptPos = -1, lastAcceptState = -1;
-            boolean haveAccept = false;
-            int pos = startSearch;
-
-            loop:
-            for (; ; pos++) {
-                int meta = sm[state];
-                if ((meta & 1) != 0) { lastAcceptPos = pos; lastAcceptState = state; haveAccept = true; }
-                if (pos >= to) break;
-                char c = input.charAt(pos);
-                int base = meta >>> 9;
-                int count = (meta >>> 1) & 0xFF;
-                for (int i = 0; i < count; i++) {
-                    int o = (base + i) << 2;
-                    if (c >= rg[o] && c <= rg[o + 1]) {
-                        int target = rg[o + 2];
-                        if (target < 0) break loop;
-                        if (regs != null) {
-                            int opsOff = rg[o + 3];
-                            if (opsOff != 0) applyOps(op, opsOff, regs, pos);
-                        }
-                        state = target;
-                        continue loop;
-                    }
-                }
-                break;  // dead
-            }
-            if (haveAccept) {
-                int[] r = regs == null ? new int[0] : regs.clone();
-                int foff = sfo[lastAcceptState];
-                if (foff != 0 && regs != null) applyOps(op, foff, r, lastAcceptPos);
-                return new MatchHolder(startSearch, lastAcceptPos, r);
-            }
-            startSearch++;
-            if (startSearch > to) return null;
-        }
-    }
-
     private MatchHolder runGeneric(CharSequence input, int from, int to, boolean anchored) {
         int startSearch = from;
         while (true) {
@@ -226,12 +231,20 @@ public final class TdfaRunner implements Regex.Engine {
             }
             if (haveAccept) {
                 if (anchored && lastAcceptPos != to) return null;
+                if (hasEndAnchor && lastAcceptPos != to) {
+                    if (anchored) return null;
+                    if (hasStartAnchor) return null;  // ^ prevents trying other positions
+                    startSearch++;
+                    if (startSearch > to) return null;
+                    continue;
+                }
                 int[] r = regs == null ? new int[0] : regs.clone();
                 int foff = stateFinalOpsOff[lastAcceptState];
                 if (foff != 0 && regs != null) applyOps(ops, foff, r, lastAcceptPos);
                 return new MatchHolder(startSearch, lastAcceptPos, r);
             }
             if (anchored) return null;
+            if (hasStartAnchor) return null;  // ^ prevents trying other positions
             startSearch++;
             if (startSearch > to) return null;
         }
