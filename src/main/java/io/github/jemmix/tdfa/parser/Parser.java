@@ -125,6 +125,16 @@ public final class Parser {
         if (peek() == '^') { pos++; negated = true; }
         List<Integer> ranges = new ArrayList<>();
         while (pos < src.length() && peek() != ']') {
+            // Check for shorthand escapes (\s \S \d \D \w \W)
+            if (peek() == '\\' && pos + 1 < src.length()) {
+                char next = src.charAt(pos + 1);
+                int[] sr = shorthandClassRanges(next);
+                if (sr != null) {
+                    pos += 2;
+                    for (int v : sr) ranges.add(v);
+                    continue;
+                }
+            }
             char lo = parseClassChar();
             char hi = lo;
             if (peek() == '-' && pos + 1 < src.length() && src.charAt(pos + 1) != ']') {
@@ -138,6 +148,19 @@ public final class Parser {
         return new CharClass(arr, negated);
     }
 
+    /** Returns ranges for shorthand escapes inside char classes, or null if not a shorthand. */
+    private static int[] shorthandClassRanges(char c) {
+        return switch (c) {
+            case 'd' -> R_DIGIT;
+            case 'D' -> R_NOT_DIGIT;
+            case 'w' -> R_WORD;
+            case 'W' -> R_NOT_WORD;
+            case 's' -> R_SPACE;
+            case 'S' -> R_NOT_SPACE;
+            default -> null;
+        };
+    }
+
     private char parseClassChar() {
         char c = cur();
         if (c == '\\') {
@@ -149,11 +172,10 @@ public final class Parser {
                 case 'r' -> '\r';
                 case 'f' -> '\f';
                 case '0' -> '\0';
+                case 'a' -> (char) 7;
+                case 'v' -> (char) 11;
                 case '\\' -> '\\';
-                case ']' -> ']';
-                case '[' -> '[';
-                case '-' -> '-';
-                default -> throw fail(this, "unsupported escape \\" + e + " in class");
+                default -> e;  // any other escaped char is literal
             };
         }
         pos++;
@@ -219,8 +241,11 @@ public final class Parser {
 
     // ---- predefined classes ----
     private static final int[] R_DIGIT = {'0', '9'};
+    private static final int[] R_NOT_DIGIT = {0, '/', ':', 0xFFFF};
     private static final int[] R_WORD = {'a','z','A','Z','0','9','_','_'};
-    private static final int[] R_SPACE = {' ', ' ', '\t','\t','\n','\n','\r','\r','\f','\f', 0x0B, 0x0B};
+    private static final int[] R_NOT_WORD = {0, '/', ':', '@', '[', '^', '`', '`', '{', 0xFFFF};
+    private static final int[] R_SPACE = {'\t', '\r', ' ', ' '};
+    private static final int[] R_NOT_SPACE = {0, '\t'-1, '\r'+1, ' '-1, ' '+1, 0xFFFF};
 
     static final CharClass DOT = new CharClass(new int[]{0, '\n' - 1, '\n' + 1, 0xFFFF}, false);
     static final CharClass DIGIT = new CharClass(R_DIGIT, false);
