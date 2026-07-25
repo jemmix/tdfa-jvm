@@ -64,11 +64,21 @@ public final class TdfaAsmBackend {
         sb.append("public final class Gen_").append(Math.abs(System.identityHashCode(tdfa)))
           .append(" implements Regex.Engine {\n");
         sb.append("  public boolean matches(CharSequence i) { return run(i,0,i.length(),true)!=null; }\n");
-        sb.append("  public boolean find(CharSequence i) { return run(i,0,i.length(),false)!=null; }\n");
+        sb.append("  public boolean find(CharSequence i) {\n");
+        sb.append("    int len = i.length();\n");
+        sb.append("    for (int from = 0; from <= len; from++) {\n");
+        sb.append("      if (run(i, from, len, false) != null) return true;\n");
+        sb.append("    }\n");
+        sb.append("    return false;\n");
+        sb.append("  }\n");
         sb.append("  public MatchResult match(CharSequence i, int from) {\n");
-        sb.append("    TdfaRunner.MatchHolder h = run(i, from, i.length(), false);\n");
-        sb.append("    return h==null ? null : new MatchResult(h.regs, ").append(tdfa.tagCount)
+        sb.append("    int len = i.length();\n");
+        sb.append("    for (int f = from; f <= len; f++) {\n");
+        sb.append("      TdfaRunner.MatchHolder h = run(i, f, len, false);\n");
+        sb.append("      if (h != null) return new MatchResult(h.regs, ").append(tdfa.tagCount)
           .append(", ").append(tdfa.groupCount).append(", h.matchStart, h.matchEnd);\n");
+        sb.append("    }\n");
+        sb.append("    return null;\n");
         sb.append("  }\n");
         sb.append("  private TdfaRunner.MatchHolder run(CharSequence input, int from, int to, boolean anchored) {\n");
         sb.append("    int[] regs = new int[").append(tdfa.registerCount).append("];\n");
