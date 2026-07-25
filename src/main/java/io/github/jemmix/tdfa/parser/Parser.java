@@ -24,8 +24,10 @@ import java.util.List;
 public final class Parser {
     private final String src;
     private int pos = 0;
-    private int nextTag = 1;       // group open tags are odd: 1=open-g1, 2=close-g1, 3=open-g2,...
+    private int nextTag = 1;
     private int groupCount = 0;
+    boolean caseInsensitive = false;
+    boolean dotall = false;
 
     private Parser(String src) { this.src = src; }
 
@@ -91,28 +93,56 @@ public final class Parser {
         char c = cur();
         if (c == '(') return parseGroup();
         if (c == '[') { pos++; return parseClass(); }
-        if (c == '.') { pos++; return DOT; }
+        if (c == '.') { pos++; return dotall ? DOTALL : DOT; }
         if (c == '^') { pos++; return new Ast.StartAnchor(); }
         if (c == '$') { pos++; return new Ast.EndAnchor(); }
         if (c == '\\') { pos++; return parseEscape(); }
         if (c == ')' || c == '|') throw fail(this, "unexpected '" + c + "'");
         pos++;
+        if (caseInsensitive) {
+            char lo = Character.toLowerCase(c);
+            char hi = Character.toUpperCase(c);
+            if (lo != hi) return new CharClass(new int[]{lo, lo, hi, hi}, false);
+        }
         return new Ast.Symbol(c);
     }
 
-    /** group := '(' ('?:')? alt ')' */
+    /** group := '(' ('?:')? alt ')' | '(' '?flags' ')' | '(' '?flags:' alt ')' */
     private Ast parseGroup() {
         expect('(');
         boolean capturing = true;
         if (pos + 1 < src.length() && src.charAt(pos) == '?' && src.charAt(pos + 1) == ':') {
             pos += 2; capturing = false;
         } else if (pos < src.length() && peek() == '?') {
-            throw new UnsupportedOperationException("group flag '" + peekAhead() + "' not supported");
+            pos++; // consume '?'
+            // Parse inline flags: (?i) (?s) (?m) (?-s) (?i:...) (?is:...)
+            boolean ci = false, ds = false;
+            boolean neg = false;
+            while (pos < src.length() && peek() != ':' && peek() != ')') {
+                char f = peek();
+                if (f == '-') { neg = true; pos++; continue; }
+                switch (f) {
+                    case 'i': ci = !neg; break;
+                    case 's': ds = !neg; break;
+                }
+                neg = false;
+                pos++;
+            }
+            if (peek() == ':') {
+                pos++; // consume ':'
+                capturing = false;
+                this.caseInsensitive |= ci;
+                this.dotall |= ds;
+            } else {
+                expect(')');
+                this.caseInsensitive |= ci;
+                this.dotall |= ds;
+                return new Ast.Empty(); // flag-only group, continue
+            }
         }
         Ast body = parseAlt();
         expect(')');
         if (!capturing) return body;
-        // Wrap body in tags: tagOpen body tagClose
         int open = nextTag++;
         int close = nextTag++;
         groupCount++;
@@ -145,6 +175,20 @@ public final class Parser {
         }
         expect(']');
         int[] arr = ranges.stream().mapToInt(Integer::intValue).toArray();
+        if (caseInsensitive) {
+            List<Integer> exp = new ArrayList<>();
+            for (int i = 0; i < arr.length; i += 2) {
+                int lo = arr[i], hi = arr[i + 1];
+                exp.add(lo); exp.add(hi);
+                int clo = Character.toLowerCase((char) lo);
+                int chi = Character.toLowerCase((char) hi);
+                int ulo = Character.toUpperCase((char) lo);
+                int uhi = Character.toUpperCase((char) hi);
+                if (clo != lo || chi != hi) { exp.add(clo); exp.add(chi); }
+                if (ulo != lo || uhi != hi) { exp.add(ulo); exp.add(uhi); }
+            }
+            arr = exp.stream().mapToInt(Integer::intValue).toArray();
+        }
         return new CharClass(arr, negated);
     }
 
@@ -248,6 +292,7 @@ public final class Parser {
     private static final int[] R_NOT_SPACE = {0, '\t'-1, '\r'+1, ' '-1, ' '+1, 0xFFFF};
 
     static final CharClass DOT = new CharClass(new int[]{0, '\n' - 1, '\n' + 1, 0xFFFF}, false);
+    static final CharClass DOTALL = new CharClass(new int[]{0, 0xFFFF}, false);
     static final CharClass DIGIT = new CharClass(R_DIGIT, false);
     static final CharClass NOT_DIGIT = new CharClass(R_DIGIT, true);
     static final CharClass WORD = new CharClass(R_WORD, false);
