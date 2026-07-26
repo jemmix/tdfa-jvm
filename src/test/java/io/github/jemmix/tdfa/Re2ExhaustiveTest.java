@@ -516,4 +516,94 @@ class Re2ExhaustiveTest {
                 "  FAIL.other           uncategorized — investigate"
         );
     }
+
+    /**
+     * Differential test: compile every pattern with both VM and ASM, run on the same inputs,
+     * and assert they agree. ASM compilation is expensive so we cap the number of distinct
+     * patterns (the time-wise bottleneck is class-generation, not matching).
+     */
+    @Test
+    void runRe2ExhaustiveAsmVmDifferential() throws IOException {
+        InputStream raw = Re2ExhaustiveTest.class.getResourceAsStream("/re2-exhaustive.txt.gz");
+        assertThat(raw).as("re2-exhaustive.txt.gz on test classpath").isNotNull();
+        BufferedReader r = new BufferedReader(new InputStreamReader(new GZIPInputStream(raw), StandardCharsets.UTF_8));
+
+        // First pass: collect distinct (pattern, sample-input) pairs.
+        Map<String, String> samples = new LinkedHashMap<>();
+        List<String> strings = new ArrayList<>();
+        boolean inStrings = false;
+        String currentPattern = null;
+        String stanza = "";
+        boolean stanzaIsByteUtf8 = false;
+        final int TARGET = 500;
+        String line;
+        while ((line = r.readLine()) != null && samples.size() < TARGET) {
+            if (line.isEmpty()) continue;
+            char first = line.charAt(0);
+            if (first == '#') continue;
+            if (first >= 'A' && first <= 'Z' && !line.startsWith("strings") && !line.startsWith("regexps")) {
+                stanza = line;
+                stanzaIsByteUtf8 = stanza.startsWith("InterestingUTF8");
+                continue;
+            }
+            if (line.equals("strings")) { strings.clear(); inStrings = true; continue; }
+            if (line.equals("regexps")) { inStrings = false; continue; }
+            if (first == '"') {
+                String q = goUnquote(line);
+                if (inStrings) { strings.add(q); continue; }
+                if (stanzaIsByteUtf8 || q.contains("\\C")) continue;
+                currentPattern = q;
+                if (!samples.containsKey(currentPattern) && !strings.isEmpty()) {
+                    samples.put(currentPattern, strings.get(strings.size() / 2));
+                }
+                continue;
+            }
+        }
+        r.close();
+
+        // Second pass: compile each pattern both ways and compare.
+        int agree = 0, disagree = 0, asmCompileFail = 0;
+        List<String> diffs = new ArrayList<>();
+        for (Map.Entry<String, String> e : samples.entrySet()) {
+            String pat = e.getKey();
+            String input = e.getValue();
+            Regex vm, asm;
+            try {
+                vm = Regex.compile(pat, false, io.github.jemmix.tdfa.tdfa.Disambiguation.PERL);
+            } catch (Throwable ex) { continue; }
+            try {
+                asm = Regex.compile(pat, true, io.github.jemmix.tdfa.tdfa.Disambiguation.PERL);
+            } catch (Throwable ex) {
+                asmCompileFail++;
+                continue;
+            }
+            MatchResult mv = vm.find(input, 0);
+            MatchResult ma = asm.find(input, 0);
+            boolean sameSpan = (mv == null) == (ma == null);
+            if (sameSpan && mv != null) {
+                sameSpan = mv.start(0) == ma.start(0) && mv.end(0) == ma.end(0);
+            }
+            if (sameSpan) agree++;
+            else {
+                disagree++;
+                if (diffs.size() < 10) {
+                    String vs = mv == null ? "null" : "[" + mv.start(0) + "," + mv.end(0) + ")";
+                    String as = ma == null ? "null" : "[" + ma.start(0) + "," + ma.end(0) + ")";
+                    diffs.add("  /" + pat + "/ on \"" + esc(input) + "\"  vm=" + vs + " asm=" + as);
+                }
+            }
+        }
+        System.err.printf("%n================ ASM/VM DIFFERENTIAL ================%n");
+        System.err.printf("Patterns tested:    %d%n", samples.size());
+        System.err.printf("  agree:            %d%n", agree);
+        System.err.printf("  disagree:         %d%n", disagree);
+        System.err.printf("  ASM compile fails:%d%n", asmCompileFail);
+        if (!diffs.isEmpty()) {
+            System.err.println("Sample disagreements:");
+            diffs.forEach(System.err::println);
+        }
+        assertThat(disagree)
+                .as("ASM/VM disagreements (sample of %d patterns)", samples.size())
+                .isZero();
+    }
 }

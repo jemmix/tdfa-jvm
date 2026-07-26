@@ -237,7 +237,6 @@ class ComprehensiveTest {
     @ParameterizedTest(name = "{4}")
     @MethodSource("cases")
     void testAsm(Case c) {
-        if (c.pattern().contains("[^")) { assumeTrue(false, "negated classes deferred"); return; }
         Regex r = Regex.compileAsm(c.pattern());
         boolean result = c.useFind() ? r.find(c.input()) : r.matches(c.input());
         assertThat(result)
