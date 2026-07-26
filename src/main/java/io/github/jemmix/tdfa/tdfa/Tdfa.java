@@ -278,26 +278,37 @@ public final class Tdfa {
 
         // ---------------- Algorithm 3 building blocks ----------------
 
+        /**
+         * ε-closure via DFS with priority-ordered exploration (paper Algorithm 3).
+         * Uses a stack (LIFO): children pushed in REVERSE priority order so the
+         * highest-priority child is on top and popped first. This ensures the
+         * leftmost-greedy preferred path is explored all the way down before
+         * lower-priority alternatives.
+         *
+         * When the accept state is reached, remaining configs on the stack are
+         * suppressed (they're all lower-priority — DFS has already explored
+         * higher-priority paths). This prevents the DFA from having transitions
+         * that follow lower-priority alternatives past an accept.
+         */
         List<Config> epsilonClosure(List<Config> seed) {
             List<Config> out = new ArrayList<>();
             BitSet visited = new BitSet(nfa.stateCount);
-            PriorityQueue<Config> pq = new PriorityQueue<>(Comparator.comparingInt(c -> c.order));
-            int order = 0;
+            ArrayDeque<Config> stack = new ArrayDeque<>();
+            // Push seed configs in reverse so the first seed config is on top (popped first)
             for (int i = seed.size() - 1; i >= 0; i--) {
-                Config c = seed.get(i);
-                c.order = order++;
-                pq.add(c);
+                stack.push(seed.get(i));
             }
-            while (!pq.isEmpty()) {
-                Config c = pq.poll();
+            while (!stack.isEmpty()) {
+                Config c = stack.pop();
                 if (visited.get(c.state)) continue;
                 visited.set(c.state);
                 out.add(c);
-                if (out.size() > 10000 && !closureWarned) {
-                    closureWarned = true;
-                    System.err.println("[tdfa] closure grew to " + out.size());
-                }
-                for (int idx : epsOut[c.state]) {
+                // Push children in REVERSE priority order.
+                // epsOut[state] is sorted ascending by priority (lowest number = highest priority).
+                // We iterate in reverse so the highest-priority child is pushed LAST → on top → popped first.
+                int[] eps = epsOut[c.state];
+                for (int i = eps.length - 1; i >= 0; i--) {
+                    int idx = eps[i];
                     int to = nfa.epsTo[idx];
                     if (visited.get(to)) continue;
                     int tag = nfa.epsTag[idx];
@@ -307,16 +318,14 @@ public final class Tdfa {
                     } else {
                         newL = appendTag(c.l, tag);
                     }
-                    Config n = new Config(to, c.regs, c.h, newL);
-                    n.order = order++;
-                    pq.add(n);
+                    stack.push(new Config(to, c.regs, c.h, newL));
                 }
             }
-            // Keep all configs (no filter). The paper's add_state operates on the full closure C.
-            // Filtering loses register-tracking information needed by map's bijection.
-            List<Config> all = out;
-            all.sort(Comparator.comparingInt(c -> c.state));
-            return all;
+            // DO NOT sort — preserve DFS order (which IS priority order for leftmost-greedy).
+            // Sorting by state ID would break the seed order for step_on_symbol, causing
+            // the accept state (low ID) to be processed before higher-priority alternatives.
+            // DfaStateKey handles canonicalization internally for comparison.
+            return out;
         }
 
         List<Config> stepOnSymbol(List<Config> configs, char a) {
@@ -529,7 +538,6 @@ public final class Tdfa {
         static final int[] EMPTY = new int[0];
         static final int TAG_POS = 1;
         static final int TAG_NIL = -1;
-        boolean closureWarned = false;
     }
 
     static final class Config {
@@ -537,7 +545,6 @@ public final class Tdfa {
         final int[] regs;
         final int[] h;
         final int[] l;
-        int order;
         Config(int state, int[] regs, int[] h, int[] l) {
             this.state = state; this.regs = regs; this.h = h; this.l = l;
         }
@@ -549,11 +556,14 @@ public final class Tdfa {
         final int[] sig;
         final int hash;
         DfaStateKey(List<Config> configs) {
+            // Sort by state for canonical comparison (configs may be in DFS order)
+            List<Config> sorted = new ArrayList<>(configs);
+            sorted.sort(Comparator.comparingInt(c -> c.state));
             int total = 0;
-            for (Config c : configs) total += 2 + c.l.length;
+            for (Config c : sorted) total += 2 + c.l.length;
             int[] arr = new int[total];
             int i = 0;
-            for (Config c : configs) {
+            for (Config c : sorted) {
                 arr[i++] = c.state;
                 arr[i++] = c.l.length;
                 for (int v : c.l) arr[i++] = v;
