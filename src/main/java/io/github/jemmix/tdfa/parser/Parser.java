@@ -154,6 +154,13 @@ public final class Parser {
         boolean negated = false;
         if (peek() == '^') { pos++; negated = true; }
         List<Integer> ranges = new ArrayList<>();
+        // POSIX/RE2: a `]` as the FIRST char in the class (after an optional `^`)
+        // is a literal class member, not the terminator. So `[]]` matches a single `]`,
+        // `[]a]` matches `]` or `a`, etc.
+        if (peek() == ']') {
+            ranges.add((int) ']'); ranges.add((int) ']');
+            pos++;
+        }
         while (pos < src.length() && peek() != ']') {
             // Check for shorthand escapes (\s \S \d \D \w \W)
             if (peek() == '\\' && pos + 1 < src.length()) {
