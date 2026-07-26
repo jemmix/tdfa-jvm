@@ -55,4 +55,15 @@ public abstract class Ast {
     public static final class EndAnchor extends Ast {
         @Override public String toString() { return "$"; }
     }
+
+    /** Word boundary assertion `\b`. Zero-width: true at any position where
+     *  {@code isWord(prev) != isWord(curr)}. */
+    public static final class WordBoundary extends Ast {
+        @Override public String toString() { return "\\b"; }
+    }
+
+    /** Non-word-boundary assertion `\B`. Zero-width: complement of {@link WordBoundary}. */
+    public static final class NoWordBoundary extends Ast {
+        @Override public String toString() { return "\\B"; }
+    }
 }

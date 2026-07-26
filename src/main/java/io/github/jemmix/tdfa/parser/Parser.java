@@ -241,6 +241,15 @@ public final class Parser {
             case 'W' -> NOT_WORD;
             case 's' -> WHITESPACE;
             case 'S' -> NOT_WHITESPACE;
+            // RE2 (and re2j) reject \C as "any byte" — see re2j Parser.java:913.
+            // We don't support it either; reject at parse time so silent misparse
+            // (treating \C as literal C) doesn't yield wrong matches.
+            case 'C' -> throw new IllegalArgumentException("invalid escape sequence: \\C");
+            // Zero-width assertions — RE2/re2j implement these fully.
+            case 'A' -> new Ast.StartAnchor();          // \A = start of text (== ^ in default mode)
+            case 'z' -> new Ast.EndAnchor();            // \z = end of text (no before-\n special case)
+            case 'b' -> new Ast.WordBoundary();         // \b = word boundary
+            case 'B' -> new Ast.NoWordBoundary();       // \B = not a word boundary
             default -> new Ast.Symbol(c);
         };
     }
