@@ -92,6 +92,7 @@ class Re2ExhaustiveTest {
         int inputIdx = 0;
         String stanza = "(header)";
         boolean stanzaIsUtf8 = false;  // these stanzas use UTF-8 byte indices we can't compare against UTF-16
+        boolean stanzaIsByteUtf8 = false;  // InterestingUTF8.* — byte-oriented semantics, skip entirely
         int totalCases = 0;
         int skippedUtf8 = 0;
         int skippedCompileError = 0;  // result rows for patterns that didn't compile
@@ -110,7 +111,12 @@ class Re2ExhaustiveTest {
             if (first >= 'A' && first <= 'Z' && !line.startsWith("strings") && !line.startsWith("regexps")) {
                 // Stanza name like "Repetition.Simple"
                 stanza = line;
+                // "InterestingUTF8.*" stanzas operate on raw bytes (each Latin-1 char is a byte);
+                // their semantics are byte-oriented and can't be mapped to our char engine via
+                // index translation. "EgrepLiterals.UTF8" operates on real Unicode strings —
+                // we handle that one via char→byte translation.
                 stanzaIsUtf8 = stanza.contains("UTF8") || stanza.contains("Utf8");
+                stanzaIsByteUtf8 = stanza.startsWith("InterestingUTF8");
                 continue;
             }
             if (line.equals("strings")) {
@@ -162,7 +168,16 @@ class Re2ExhaustiveTest {
                 }
                 if (inputIdx >= strings.size()) continue;
                 String text = strings.get(inputIdx++);
-                if (stanzaIsUtf8 || (hasMultibyte(text) && (currentPattern.contains("\\B") || currentPattern.contains("\\C")))) {
+                // InterestingUTF8.* — byte-oriented, no clean translation to char engine.
+                if (stanzaIsByteUtf8) {
+                    skippedUtf8++;
+                    continue;
+                }
+                // \C means "any byte" in re2; our engine is char-based. \B in re2 is byte-based.
+                // For patterns containing these escapes on multibyte inputs, semantics differ
+                // by indexing model — still skip those. Pure UTF-8 stanzas (EgrepLiterals.UTF8)
+                // are now handled by translating our char indices to UTF-8 byte indices.
+                if (hasMultibyte(text) && (currentPattern.contains("\\B") || currentPattern.contains("\\C"))) {
                     skippedUtf8++;
                     continue;
                 }
@@ -177,6 +192,11 @@ class Re2ExhaustiveTest {
                     MatchResult m = currentRegex.find(text, 0);
                     if (m != null) {
                         got = new int[]{m.start(0), m.end(0)};
+                        // UTF-8 stanzas report BYTE indices; translate our char indices.
+                        if (stanzaIsUtf8) {
+                            int[] byteOff = utf8ByteOffsets(text);
+                            got = new int[]{byteOff[m.start(0)], byteOff[m.end(0)]};
+                        }
                     }
                 } catch (Throwable e) {
                     triage.add("RUNTIME_EXCEPTION",
@@ -377,6 +397,23 @@ class Re2ExhaustiveTest {
     private static boolean hasMultibyte(String s) {
         for (int i = 0; i < s.length(); i++) if (s.charAt(i) >= 0x80) return true;
         return false;
+    }
+
+    /** UTF-8 byte offset for each char index 0..len. off[i] = byte offset of char i in UTF-8. */
+    private static int[] utf8ByteOffsets(String s) {
+        int n = s.length();
+        int[] off = new int[n + 1];
+        int b = 0;
+        for (int i = 0; i < n; i++) {
+            off[i] = b;
+            char c = s.charAt(i);
+            if (c < 0x80) b += 1;
+            else if (c < 0x800) b += 2;
+            else if (Character.isSurrogate(c)) b += 4;  // approximate surrogate pair as 4-byte UTF-8 (rare in tests)
+            else b += 3;
+        }
+        off[n] = b;
+        return off;
     }
 
     private static String safeMsg(Throwable e) {
