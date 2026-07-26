@@ -83,6 +83,7 @@ class Re2ExhaustiveTest {
         boolean stanzaIsUtf8 = false;  // these stanzas use UTF-8 byte indices we can't compare against UTF-16
         int totalCases = 0;
         int skippedUtf8 = 0;
+        int skippedCompileError = 0;  // result rows for patterns that didn't compile
         int spanPass = 0;
         int spanPassPosixOnly = 0;
 
@@ -140,6 +141,7 @@ class Re2ExhaustiveTest {
                 totalCases++;
                 if (currentCompileError != null || currentRegex == null) {
                     // compile-error already counted; skip result
+                    skippedCompileError++;
                     continue;
                 }
                 if (inputIdx >= strings.size()) continue;
@@ -211,6 +213,7 @@ class Re2ExhaustiveTest {
 
         long elapsed = System.currentTimeMillis() - start;
         int spanFail = triage.total() - spanPassPosixOnly;
+        int runnable = totalCases - skippedUtf8 - skippedCompileError;
         // Note: triage.total() includes submatch-wrong, runtime, alt-ambiguity, plus all match-failure buckets.
 
         // Build report
@@ -219,20 +222,21 @@ class Re2ExhaustiveTest {
         out.append(String.format("Elapsed:            %,d ms%n", elapsed));
         out.append(String.format("Total result rows:  %,d%n", totalCases));
         out.append(String.format("Skipped UTF-8 idx:  %,d  (UTF-8 byte-index stanzas; not comparable to UTF-16 engine)%n", skippedUtf8));
+        out.append(String.format("Skipped compile-err:%,d  (patterns we reject; not yet implemented)%n", skippedCompileError));
         out.append(String.format("Unique patterns:    %,d (compiled ok: %,d, compile-err: %,d)%n",
                 compiledCache.size() + compileErrorCache.size(), compiledCache.size(), compileErrorCache.size()));
-        out.append(String.format("SPAN pass (col1):   %,d  (%.1f%% of comparable)%n",
-                spanPass, 100.0 * spanPass / Math.max(1, totalCases - skippedUtf8)));
+        out.append(String.format("Runnable cases:     %,d%n", runnable));
+        out.append(String.format("SPAN pass (col1):   %,d  (%.1f%% of runnable)%n",
+                spanPass, 100.0 * spanPass / Math.max(1, runnable)));
         out.append(String.format("SPAN posix-only:    %,d  (%.1f%%)  [match col3 but not col1]%n",
-                spanPassPosixOnly, 100.0 * spanPassPosixOnly / Math.max(1, totalCases - skippedUtf8)));
-        out.append(String.format("Total fail rows:    %,d  (%.1f%%)%n",
-                spanFail, 100.0 * spanFail / Math.max(1, totalCases - skippedUtf8)));
+                spanPassPosixOnly, 100.0 * spanPassPosixOnly / Math.max(1, runnable)));
+        out.append(String.format("Total fail rows:    %,d  (%.1f%% of runnable)%n",
+                spanFail, 100.0 * spanFail / Math.max(1, runnable)));
         out.append("\n--- Triage buckets (descending) ---\n");
-        final int totalCasesFinal = totalCases;
         triage.counts.entrySet().stream()
                 .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
-                .forEach(e -> out.append(String.format("  %-28s %,8d  (%.2f%%)%n",
-                        e.getKey(), e.getValue(), 100.0 * e.getValue() / Math.max(1, totalCasesFinal))));
+                .forEach(e -> out.append(String.format("  %-28s %,8d  (%.2f%% of runnable)%n",
+                        e.getKey(), e.getValue(), 100.0 * e.getValue() / Math.max(1, runnable))));
         out.append("\n--- Sample failures per bucket ---\n");
         triage.counts.keySet().forEach(cat -> {
             out.append("[").append(cat).append("]\n");
