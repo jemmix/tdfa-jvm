@@ -77,12 +77,13 @@ echo "==> Wrote src/test/resources/re2j-commit.txt"
 # --- 2. Refresh testdata ---------------------------------------------------
 mkdir -p "$ROOT/src/test/resources"
 cp testdata/re2-exhaustive.txt.gz "$ROOT/src/test/resources/"
+cp testdata/re2-search.txt      "$ROOT/src/test/resources/"
 for dat in basic.dat nullsubexpr.dat repetition.dat; do
     if [ -f "testdata/$dat" ]; then
         cp "testdata/$dat" "$ROOT/src/test/resources/"
     fi
 done
-echo "==> Copied testdata (re2-exhaustive.txt.gz + Fowler .dat files)"
+echo "==> Copied testdata (re2-exhaustive.txt.gz + re2-search.txt + Fowler .dat files)"
 
 # --- 3. Copy + sed Java test sources --------------------------------------
 SRC_DIR="javatests/com/google/re2j"

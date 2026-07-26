@@ -35,7 +35,7 @@ public final class TdfaRunner implements Regex.Engine {
     private final int startState;
     private final int startStateEntryMask;
     private final boolean perlMode;
-    private final boolean[] stopOnAccept;
+    private final int[] stopOnAcceptMask;
 
     public TdfaRunner(Tnfa nfa) {
         this(Tdfa.compile(nfa));
@@ -53,7 +53,7 @@ public final class TdfaRunner implements Regex.Engine {
         this.startState = tdfa.startState;
         this.startStateEntryMask = tdfa.startStateEntryMask;
         this.perlMode = tdfa.perlMode;
-        this.stopOnAccept = tdfa.stopOnAccept;
+        this.stopOnAcceptMask = tdfa.stopOnAcceptMask;
     }
 
     public Tdfa tdfa() { return tdfa; }
@@ -116,9 +116,11 @@ public final class TdfaRunner implements Regex.Engine {
                 int meta = sm[state];
                 if ((meta & 1) != 0) {
                     // Accept state — check acceptMask at this position.
-                    if ((positionFlags(input, pos, to) & sam[state]) == sam[state]) {
+                    int posFlags = positionFlags(input, pos, to);
+                    if ((posFlags & sam[state]) == sam[state]) {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                        if (perlMode && stopOnAccept[state]) break loop;
+                        int stopMask = stopOnAcceptMask[state];
+                        if (perlMode && stopOnAccept(stopMask, posFlags)) break loop;
                     }
                 }
                 if (pos >= to) break;
@@ -234,9 +236,11 @@ public final class TdfaRunner implements Regex.Engine {
         for (; ; pos++) {
             int meta = sm[state];
             if ((meta & 1) != 0) {
-                if ((positionFlags(input, pos, to) & sam[state]) == sam[state]) {
+                int posFlags = positionFlags(input, pos, to);
+                if ((posFlags & sam[state]) == sam[state]) {
                     haveAccept = true; lastAcceptPos = pos;
-                    if (perlMode && stopOnAccept[state]) break;
+                    int stopMask = stopOnAcceptMask[state];
+                    if (perlMode && stopOnAccept(stopMask, posFlags)) break;
                 }
             }
             if (pos >= to) break;
@@ -287,9 +291,11 @@ public final class TdfaRunner implements Regex.Engine {
             for (; ; pos++) {
                 int meta = stateMeta[state];
                 if ((meta & 1) != 0) {
-                    if ((positionFlagsCS(input, pos, to) & stateAcceptMask[state]) == stateAcceptMask[state]) {
+                    int posFlags = positionFlagsCS(input, pos, to);
+                    if ((posFlags & stateAcceptMask[state]) == stateAcceptMask[state]) {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                        if (perlMode && stopOnAccept[state]) break loop;
+                        int stopMask = stopOnAcceptMask[state];
+                        if (perlMode && stopOnAccept(stopMask, posFlags)) break loop;
                     }
                 }
                 if (pos >= to) break;
@@ -343,6 +349,20 @@ public final class TdfaRunner implements Regex.Engine {
     }
 
     // ===== Zero-width assertion position-flag computation =====
+
+    /**
+     * Determine whether to break the match loop on accept, based on the per-state
+     * stopOnAcceptMask:
+     * - {@link Tdfa#NEVER_STOP}: don't stop (Perl mode disabled for this state).
+     * - 0: always stop (an always-live accept path is higher priority than any extension).
+     * - positive value: stop iff any of the underlying per-accept masks holds, i.e.,
+     *   iff at least one bit in the mask is set in posFlags.
+     */
+    private static boolean stopOnAccept(int stopMask, int posFlags) {
+        if (stopMask == Tdfa.NEVER_STOP) return false;
+        if (stopMask == 0) return true;
+        return (posFlags & stopMask) != 0;
+    }
 
     /** Compute the position-flags for `pos` in a String. Inline-friendly. */
     private static int positionFlags(String s, int pos, int len) {

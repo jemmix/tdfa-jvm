@@ -50,13 +50,19 @@ public final class Tdfa {
      */
     public final boolean perlMode;
     /**
-     * Per-state flag (Perl mode only): when true, the runner should stop extending
-     * the moment this state's accept is declared. Set iff no config EARLIER in the
-     * closure's priority-DFS order has any outgoing symbol transitions — meaning
-     * the accept corresponds to the highest-priority reachable path, so no
-     * higher-priority continuation is possible. Indexed by state id.
+     * Per-state mask (Perl mode only): when an accept fires, the runner stops
+     * extending iff the current position's flag bits satisfy this mask. Used to
+     * encode "the highest-priority accept path requires these assertions to
+     * hold"; e.g. for {@code (^|.)*} the first-accept path is via {@code ^} so
+     * the mask is BEGIN_TEXT and we only stop at beginning-of-input — at
+     * non-BOL positions we fall through to the lower-priority {@code .}-branch
+     * and extend. Mask 0 means "always stop on accept"; the sentinel
+     * {@link #NEVER_STOP} means "don't stop" (used when stopOnAccept doesn't
+     * apply, e.g. POSIX mode or when a higher-priority config can still extend).
      */
-    public final boolean[] stopOnAccept;
+    public final int[] stopOnAcceptMask;
+    /** Sentinel for "don't stop on accept" — bits never simultaneously set in any position. */
+    public static final int NEVER_STOP = 0x10;  // bit above all real assertion bits (1|2|4|8)
 
     // === Flat packed arrays (4 arrays total; per-match regs adds a 5th at runtime) ===
     /**
@@ -83,7 +89,7 @@ public final class Tdfa {
 
     private Tdfa(int tagCount, int groupCount, int registerCount, int startState, int stateCount,
                  int[] stateMeta, int[] stateFinalOpsOff, int[] ranges, int[] ops,
-                 int[] stateEntryMask, int[] stateAcceptMask, boolean perlMode, boolean[] stopOnAccept) {
+                 int[] stateEntryMask, int[] stateAcceptMask, boolean perlMode, int[] stopOnAcceptMask) {
         this.tagCount = tagCount; this.groupCount = groupCount;
         this.registerCount = registerCount;
         this.startState = startState;
@@ -96,7 +102,7 @@ public final class Tdfa {
         this.stateAcceptMask = stateAcceptMask;
         this.startStateEntryMask = stateEntryMask[startState];
         this.perlMode = perlMode;
-        this.stopOnAccept = stopOnAccept;
+        this.stopOnAcceptMask = stopOnAcceptMask;
     }
 
     public boolean isAccept(int state) { return (stateMeta[state] & 1) != 0; }
@@ -131,6 +137,8 @@ public final class Tdfa {
 
         final Map<DfaStateKey, Integer> stateIndex = new HashMap<>();
         final List<List<Config>> states = new ArrayList<>();
+        /** Seed configs (pre-closure) for each DFA state, used to compute per-state DFS order. */
+        final List<List<Config>> stateSeeds = new ArrayList<>();
         final BitSet accept = new BitSet();
         final BitSet processed = new BitSet();
         final List<DfaStateBuilder> builders = new ArrayList<>();
@@ -200,9 +208,10 @@ public final class Tdfa {
         Tdfa compile() {
             nextReg = 2 * tags;
             if (debug) System.err.println("[tdfa] tags=" + tags + " breakpoints=" + breakpoints.length);
-            List<Config> initClosure = epsilonClosure(List.of(
-                    new Config(nfa.start, initialRegisters, EMPTY, EMPTY, 0)));
-            int startId = addState(initClosure, null).targetId;
+            List<Config> initSeed = List.of(
+                    new Config(nfa.start, initialRegisters, EMPTY, EMPTY, 0));
+            List<Config> initClosure = epsilonClosure(initSeed);
+            int startId = addState(initClosure, null, initSeed).targetId;
             work.push(startId);
 
             int[] requiredMaskOut = new int[1];
@@ -227,7 +236,7 @@ public final class Tdfa {
                     List<Config> closed = epsilonClosure(stepped);
                     if (debug && closed.size() > 100) System.err.println("[tdfa] state " + sid + " range " + rangeLo + ".." + rangeHi + " closure=" + closed.size());
                     int[] ops = transitionRegops(closed, sid);
-                    AddResult ar = addState(closed, ops);
+                    AddResult ar = addState(closed, ops, stepped);
                     if (debug) System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> " + ar.targetId + " ops.len=" + ar.ops.length + " mask=" + requiredMask);
                     builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, requiredMask);
                     if (!processed.get(ar.targetId)) work.push(ar.targetId);
@@ -239,7 +248,8 @@ public final class Tdfa {
             // Compute per-state entry/accept masks.
             int[] stateEntryMask = new int[n];
             int[] stateAcceptMask = new int[n];
-            boolean[] stateStopOnAccept = new boolean[n];
+            int[] stateStopOnAcceptMask = new int[n];
+            java.util.Arrays.fill(stateStopOnAcceptMask, NEVER_STOP);
             int ALL_BITS = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY;
             for (int s = 0; s < n; s++) {
                 List<Config> cfgs = states.get(s);
@@ -259,18 +269,83 @@ public final class Tdfa {
                 }
                 stateAcceptMask[s] = anyAccept ? acceptIntersect : 0;
                 // Perl leftmost-first: mark this state as "stop on accept" iff the accept
-                // corresponds to the highest-priority path. That holds when no config
-                // BEFORE the first accept in priority-DFS order has any outgoing symbol
-                // transitions — meaning no higher-priority path can still extend past
-                // the accept. If a higher-priority config has syms (e.g. `(ab|a)` at the
-                // state after `a`: alt 1's mid-state B1 has `b`), the runner must keep
-                // stepping to give that path a chance.
+                // corresponds to the highest-priority path. We use per-state DFS arrival
+                // order (matching re2j's densePcs semantics) to determine priority —
+                // configs whose NFA state arrived BEFORE the accept's NFA state are
+                // "higher priority" and might still extend. If any of them has outgoing
+                // symbol transitions, the runner must keep stepping to give that path a
+                // chance. Otherwise, accept is the highest-priority outcome; stop when
+                // the first-accept path's assertions hold.
+                //
+                // Why per-state (not per-(state,mask)) order: in patterns like ((^|.)*)
+                // the alt (^|.) is re-visited with mask=BEGIN_TEXT via the loop-back,
+                // which causes dotState to appear before accept in (state,mask) arrival
+                // order even though re2j (which dedupes per-state) places it after.
+                //
+                // Why first-accept's mask (not AND of all accepts): re2j processes
+                // threads in densePcs order; the FIRST thread to reach MATCH wins and
+                // lower-priority threads are freed. The first-accept's path determines
+                // when this happens. For (^|.)* that's BEGIN_TEXT (so we stop only at
+                // BOL); for ($|.)* that's END_TEXT (so we stop only at EOF, and at
+                // non-EOF positions we extend via .-branch as re2j does).
                 if (perl && anyAccept) {
-                    boolean stop = true;
-                    for (int i = 0; i < firstAcceptIdx; i++) {
-                        if (symOut[cfgs.get(i).state].length > 0) { stop = false; break; }
+                    int[] perStateOrder = computePerStateOrder(stateSeeds.get(s));
+                    int acceptOrder = perStateOrder[nfa.accept];
+                    // Find the first sym-bearing config in (state,mask) DFS arrival order.
+                    // This is the earliest point at which a transition could extend the match.
+                    int firstSymIdx = -1;
+                    for (int i = 0; i < cfgs.size(); i++) {
+                        if (symOut[cfgs.get(i).state].length > 0) {
+                            firstSymIdx = i;
+                            break;
+                        }
                     }
-                    stateStopOnAccept[s] = stop;
+                    // stop = "no sym-bearing config has per-state priority higher than accept"
+                    // — meaning the accept is the highest-priority outcome.
+                    boolean stop = true;
+                    for (int i = 0; i < cfgs.size(); i++) {
+                        Config c = cfgs.get(i);
+                        if (c.state == nfa.accept) continue;
+                        if (perStateOrder[c.state] < acceptOrder
+                                && symOut[c.state].length > 0) {
+                            stop = false;
+                            break;
+                        }
+                    }
+                    if (stop) {
+                        // Compute stopOnAcceptMask:
+                        // - If any mask=0 (always-live) accept config is BEFORE the first
+                        //   sym-bearing config in (state,mask) DFS order: this means re2j's
+                        //   densePcs would have MATCH before RUNE, freeing RUNE before it
+                        //   can extend. Always stop.
+                        // - Else: stopOnAcceptMask = OR of all accept masks. Stop when any
+                        //   of the underlying per-accept masks holds (so e.g. (^|$|a) stops
+                        //   at BOL via ^ AND at EOF via $). Mask 0 would always hold, but
+                        //   we've excluded that case above; if no non-zero accept masks
+                        //   exist we fall back to NEVER_STOP (the per-state DFS check above
+                        //   guarantees dotState is after accept, but if there's no live
+                        //   accept path the runner should keep extending via dotState).
+                        boolean alwaysStop = false;
+                        if (firstSymIdx >= 0) {
+                            for (int i = 0; i < firstSymIdx; i++) {
+                                Config c = cfgs.get(i);
+                                if (c.state == nfa.accept && c.emptyMask == 0) {
+                                    alwaysStop = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (alwaysStop) {
+                            stateStopOnAcceptMask[s] = 0;
+                        } else {
+                            int orMask = 0;
+                            for (int i = 0; i < cfgs.size(); i++) {
+                                Config c = cfgs.get(i);
+                                if (c.state == nfa.accept) orMask |= c.emptyMask;
+                            }
+                            stateStopOnAcceptMask[s] = (orMask == 0) ? NEVER_STOP : orMask;
+                        }
+                    }
                 }
             }
             // First pass: coalesce + fillGaps on every state's ranges, compute totals.
@@ -350,7 +425,7 @@ public final class Tdfa {
             }
             return new Tdfa(tags, nfa.groupCount, globalMaxReg, 0, n,
                     stateMeta, stateFinalOpsOff, flatRanges, flatOps,
-                    stateEntryMask, stateAcceptMask, perl, stateStopOnAccept);
+                    stateEntryMask, stateAcceptMask, perl, stateStopOnAcceptMask);
         }
 
         static final boolean debug = Boolean.getBoolean("tdfa.debug");
@@ -377,7 +452,6 @@ public final class Tdfa {
          */
         List<Config> epsilonClosure(List<Config> seed) {
             List<Config> out = new ArrayList<>();
-            BitSet visited = new BitSet(nfa.stateCount);
             // For deterministic exploration we visit (state, mask) pairs — same NFA state
             // can appear with different assertion masks (e.g. loop entered 0 vs 1 times).
             // The visited set keyed only on state would wrongly suppress the second path.
@@ -414,6 +488,46 @@ public final class Tdfa {
                 }
             }
             return out;
+        }
+
+        /**
+         * Compute per-state DFS arrival order (re2j's densePcs semantics) for the
+         * closure rooted at {@code seed}. Unlike {@link #epsilonClosure} which
+         * tracks (state, mask) pairs to preserve assertion-mask info, this does
+         * strict per-state dedup: each NFA state is visited at most once, the
+         * first time any of its masks would be popped.
+         *
+         * The resulting order matches re2j's recursive DFS — a state's entire
+         * subtree is fully explored before any of its lower-priority siblings.
+         * Without this, patterns like ((^|.)*) get the wrong priority: alt (^|.)
+         * is re-visited with mask=BEGIN_TEXT via the loop-back, and dotState
+         * ends up "before" accept in (state,mask) arrival order even though
+         * re2j (which visits alt once) places it after.
+         *
+         * Returns int[] indexed by NFA state; value = arrival index (0-based),
+         * or -1 for unreachable states.
+         */
+        int[] computePerStateOrder(List<Config> seed) {
+            int[] order = new int[nfa.stateCount];
+            java.util.Arrays.fill(order, -1);
+            boolean[] visited = new boolean[nfa.stateCount];
+            ArrayDeque<Integer> stack = new ArrayDeque<>();
+            for (int i = seed.size() - 1; i >= 0; i--) {
+                stack.push(seed.get(i).state);
+            }
+            int counter = 0;
+            while (!stack.isEmpty()) {
+                int s = stack.pop();
+                if (visited[s]) continue;
+                visited[s] = true;
+                order[s] = counter++;
+                int[] eps = epsOut[s];
+                for (int i = eps.length - 1; i >= 0; i--) {
+                    int to = nfa.epsTo[eps[i]];
+                    if (!visited[to]) stack.push(to);
+                }
+            }
+            return order;
         }
 
         /**
@@ -549,7 +663,7 @@ public final class Tdfa {
 
         static final class AddResult { final int targetId; final int[] ops; AddResult(int t, int[] o) { targetId=t; ops=o; } }
 
-        AddResult addState(List<Config> configs, int[] ops) {
+        AddResult addState(List<Config> configs, int[] ops, List<Config> seed) {
             DfaStateKey key = new DfaStateKey(configs, perl);
             Integer existing = stateIndex.get(key);
             if (existing != null) {
@@ -569,6 +683,7 @@ public final class Tdfa {
             }
             int id = states.size();
             states.add(configs);
+            stateSeeds.add(seed);
             stateIndex.put(key, id);
             builders.add(new DfaStateBuilder(id));
             for (Config c : configs) {
