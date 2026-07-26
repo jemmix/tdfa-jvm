@@ -94,7 +94,11 @@ public final class Tdfa {
     /** True if start state's entry mask requires {@link Tnfa#BEGIN_TEXT} (limits find() to pos 0). */
     public boolean startRequiresBeginText() { return (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0; }
 
-    public static Tdfa compile(Tnfa nfa) { return new Compiler(nfa).compile(); }
+    public static Tdfa compile(Tnfa nfa) { return compile(nfa, Disambiguation.POSIX); }
+
+    public static Tdfa compile(Tnfa nfa, Disambiguation disamb) {
+        return new Compiler(nfa, disamb).compile();
+    }
 
     private static final class Compiler {
         final Tnfa nfa;
@@ -105,6 +109,8 @@ public final class Tdfa {
         final int[] finalRegisters;
         /** Equivalence-class breakpoints across the BMP. */
         final int[] breakpoints;
+        /** If true, suppress lower-priority paths past an accept (Perl leftmost-first). */
+        final boolean perl;
 
         final Map<DfaStateKey, Integer> stateIndex = new HashMap<>();
         final List<List<Config>> states = new ArrayList<>();
@@ -115,7 +121,9 @@ public final class Tdfa {
         /** Global register allocator counter; bumped monotonically across all states. */
         int nextReg;
 
-        Compiler(Tnfa nfa) {
+        Compiler(Tnfa nfa) { this(nfa, Disambiguation.POSIX); }
+
+        Compiler(Tnfa nfa, Disambiguation disamb) {
             this.nfa = nfa;
             this.tags = nfa.tagCount;
             this.epsOut = sortedOutgoing(nfa.epsFrom, nfa.epsPri);
@@ -125,6 +133,7 @@ public final class Tdfa {
             for (int t = 0; t < tags; t++) initialRegisters[t] = t;
             for (int t = 0; t < tags; t++) finalRegisters[t] = tags + t;
             this.breakpoints = computeBreakpoints();
+            this.perl = (disamb == Disambiguation.PERL);
         }
 
         int[][] sortedOutgoing(int[] fromArr, int[] pri) {
@@ -363,7 +372,10 @@ public final class Tdfa {
                     } else {
                         newL = appendTag(c.l, tag);
                     }
-                    stack.push(new Config(to, c.regs, c.h, newL, newMask));
+                    // In Perl mode, propagate the worst-edge-priority to the child.
+                    // In POSIX mode, leave pri at 0 (unused).
+                    int childPri = perl ? Math.max(c.pri, nfa.epsPri[idx]) : 0;
+                    stack.push(new Config(to, c.regs, c.h, newL, newMask, childPri));
                 }
             }
             return out;
@@ -375,15 +387,54 @@ public final class Tdfa {
          * contributing source config masks into {@code requiredMaskOut[0]}.
          */
         List<Config> stepOnSymbol(List<Config> configs, char a, int[] requiredMaskOut) {
+            // Perl leftmost-first: the closure's configs are in priority-ordered DFS arrival order.
+            // If any config has reached the accept state, find the FIRST (best-priority) such config
+            // and consider suppressing transitions from configs added AFTER it.
+            //
+            // Suppression is safe only if every post-accept config's emptyMask is a SUPERSET of the
+            // accept config's emptyMask — meaning those lower-priority paths are gated by (at least)
+            // the same assertions as the accept. Then wherever the accept fires (assertions hold),
+            // the lower-priority transitions could also fire (so we MUST suppress to keep Perl
+            // first-match); and wherever the accept doesn't fire (assertions don't hold), neither
+            // can the lower-priority transitions (so suppression costs us nothing). When the rule
+            // doesn't hold (e.g. accept requires `$` but a lower-priority alternative is ungated),
+            // we must keep the lower-priority paths as fallback.
+            int firstAcceptIdx = -1;
+            int acceptEmptyMask = 0;
+            boolean suppress = false;
+            if (perl) {
+                for (int i = 0; i < configs.size(); i++) {
+                    Config c = configs.get(i);
+                    if (c.state == nfa.accept) {
+                        firstAcceptIdx = i;
+                        acceptEmptyMask = c.emptyMask;
+                        break;
+                    }
+                }
+                if (firstAcceptIdx >= 0) {
+                    suppress = true;
+                    for (int i = firstAcceptIdx + 1; i < configs.size(); i++) {
+                        Config c = configs.get(i);
+                        if ((c.emptyMask & acceptEmptyMask) != acceptEmptyMask) {
+                            suppress = false;
+                            break;
+                        }
+                    }
+                }
+            }
             List<Config> out = new ArrayList<>();
             int intersection = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY;
             boolean any = false;
-            for (Config c : configs) {
+            for (int ci = 0; ci < configs.size(); ci++) {
+                if (suppress && ci > firstAcceptIdx) {
+                    break;  // suppress lower-priority paths past the first accept (Perl mode)
+                }
+                Config c = configs.get(ci);
                 for (int idx : symOut[c.state]) {
                     CharClass cc = nfa.symClass[idx];
                     if (cc != null && cc.matches(a)) {
                         // emptyMask resets on step — assertions are position-bound, gated via requiredMask.
-                        out.add(new Config(nfa.symTo[idx], c.regs, c.l, EMPTY, 0));
+                        out.add(new Config(nfa.symTo[idx], c.regs, c.l, EMPTY, 0, c.pri));
                         intersection &= c.emptyMask;
                         any = true;
                     }
@@ -425,7 +476,7 @@ public final class Tdfa {
                     }
                     newRegs[t - 1] = reg;
                 }
-                configs.set(ci, new Config(c.state, newRegs, c.h, c.l, c.emptyMask));
+                configs.set(ci, new Config(c.state, newRegs, c.h, c.l, c.emptyMask, c.pri));
             }
             return flatten(opList);
         }
@@ -464,7 +515,7 @@ public final class Tdfa {
         static final class AddResult { final int targetId; final int[] ops; AddResult(int t, int[] o) { targetId=t; ops=o; } }
 
         AddResult addState(List<Config> configs, int[] ops) {
-            DfaStateKey key = new DfaStateKey(configs);
+            DfaStateKey key = new DfaStateKey(configs, perl);
             Integer existing = stateIndex.get(key);
             if (existing != null) {
                 // Identity on (states, lookahead). Registers may differ — translate via tryMap.
@@ -542,7 +593,7 @@ public final class Tdfa {
         }
 
         boolean sameKey(List<Config> a, List<Config> b) {
-            return new DfaStateKey(a).equals(new DfaStateKey(b));
+            return new DfaStateKey(a, perl).equals(new DfaStateKey(b, perl));
         }
 
         /** Stabilize copy chains so reads happen before writes clobber their source. */
@@ -600,22 +651,33 @@ public final class Tdfa {
         /** Zero-width assertion mask accumulated during the ε-closure that produced this config.
          *  Reset to 0 by {@link Compiler#stepOnSymbol}. */
         int emptyMask;
+        /** Worst (highest) priority ε-edge taken to reach this config in the closure.
+         *  Seed configs carry pri=0 (no edges taken). Always 0 in POSIX mode (unused).
+         *  In Perl mode, used to suppress lower-priority paths past an accepting config. */
+        final int pri;
         Config(int state, int[] regs, int[] h, int[] l, int emptyMask) {
+            this(state, regs, h, l, emptyMask, 0);
+        }
+        Config(int state, int[] regs, int[] h, int[] l, int emptyMask, int pri) {
             this.state = state; this.regs = regs; this.h = h; this.l = l; this.emptyMask = emptyMask;
+            this.pri = pri;
         }
     }
 
-    /** Canonical DFA state key: state ids + per-config (lookahead tags, emptyMask).
-     *  Two states with same key are candidates for {@code map} (register bijection). */
+    /** Canonical DFA state key: state ids + per-config (lookahead tags, emptyMask, pri).
+     *  Two states with same key are candidates for {@code map} (register bijection).
+     *  In Perl mode {@code includePri} adds per-config pri to the signature so that closures
+     *  whose suppression behaviour would differ are not merged. */
     static final class DfaStateKey {
         final int[] sig;
         final int hash;
-        DfaStateKey(List<Config> configs) {
+        DfaStateKey(List<Config> configs) { this(configs, false); }
+        DfaStateKey(List<Config> configs, boolean includePri) {
             // Sort by state for canonical comparison (configs may be in DFS order)
             List<Config> sorted = new ArrayList<>(configs);
             sorted.sort(Comparator.comparingInt(c -> c.state));
             int total = 0;
-            for (Config c : sorted) total += 3 + c.l.length;
+            for (Config c : sorted) total += 3 + c.l.length + (includePri ? 1 : 0);
             int[] arr = new int[total];
             int i = 0;
             for (Config c : sorted) {
@@ -623,6 +685,7 @@ public final class Tdfa {
                 arr[i++] = c.l.length;
                 for (int v : c.l) arr[i++] = v;
                 arr[i++] = c.emptyMask;
+                if (includePri) arr[i++] = c.pri;
             }
             this.sig = arr;
             this.hash = Arrays.hashCode(arr);

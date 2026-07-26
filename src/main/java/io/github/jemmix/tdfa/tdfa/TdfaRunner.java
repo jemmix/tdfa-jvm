@@ -36,7 +36,11 @@ public final class TdfaRunner implements Regex.Engine {
     private final int startStateEntryMask;
 
     public TdfaRunner(Tnfa nfa) {
-        this.tdfa = Tdfa.compile(nfa);
+        this(Tdfa.compile(nfa));
+    }
+
+    public TdfaRunner(Tdfa tdfa) {
+        this.tdfa = tdfa;
         this.stateMeta = tdfa.stateMeta;
         this.stateFinalOpsOff = tdfa.stateFinalOpsOff;
         this.stateEntryMask = tdfa.stateEntryMask;

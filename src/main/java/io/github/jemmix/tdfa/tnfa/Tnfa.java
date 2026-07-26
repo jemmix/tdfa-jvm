@@ -152,12 +152,17 @@ public final class Tnfa {
         private int buildRepeat(Ast.Repeat r, int entryTo) {
             int min = r.min, max = r.max;
             Ast body = r.body;
+            boolean lazy = !r.greedy;
+            // Greedy: prefer BODY/REPEAT (pri 1) over SKIP/EXIT (pri 2).
+            // Lazy:   prefer SKIP/EXIT   (pri 1) over BODY/REPEAT (pri 2).
+            int bodyPri = lazy ? 2 : 1;
+            int skipPri = lazy ? 1 : 2;
             if (min == 0 && max == 1) {
-                // e? : newStart -(pri1)-> body -> entryTo ; newStart -(pri2)-> entryTo
+                // e? : newStart -(pri bodyPri)-> body -> entryTo ; newStart -(pri skipPri)-> entryTo
                 int s = fresh();
                 int bodyStart = build(body, entryTo);
-                eps(s, bodyStart, 1);
-                eps(s, entryTo, 2);
+                eps(s, bodyStart, bodyPri);
+                eps(s, entryTo, skipPri);
                 return s;
             }
             if (min == 0 && max == Integer.MAX_VALUE) {
@@ -165,18 +170,18 @@ public final class Tnfa {
                 int s = fresh();
                 int loopBack = fresh();
                 int bodyStart = build(body, loopBack);
-                eps(s, bodyStart, 1);                  // prefer to enter body
-                eps(s, entryTo, 2);                    // or skip
-                eps(loopBack, bodyStart, 1);           // loop back: prefer to repeat
-                eps(loopBack, entryTo, 2);             // or exit
+                eps(s, bodyStart, bodyPri);                  // prefer to enter body (greedy) / skip (lazy)
+                eps(s, entryTo, skipPri);
+                eps(loopBack, bodyStart, bodyPri);           // loop back
+                eps(loopBack, entryTo, skipPri);             // or exit
                 return s;
             }
             if (min == 1 && max == Integer.MAX_VALUE) {
-                // e+ : body followed by e*
+                // e+ : body followed by e* (the e* uses the lazy/greedy preference)
                 int loopBack = fresh();
                 int bodyStart = build(body, loopBack);
-                eps(loopBack, bodyStart, 1);
-                eps(loopBack, entryTo, 2);
+                eps(loopBack, bodyStart, bodyPri);
+                eps(loopBack, entryTo, skipPri);
                 return bodyStart;
             }
             // Bounded repetitions {n}, {n,}, {n,m} — desugar via concatenation + optional tail.
@@ -188,12 +193,12 @@ public final class Tnfa {
                     (mandatory.size() == 1 ? mandatory.get(0) : new Ast.Concat(mandatory));
             Ast result = mandatoryAst;
             if (max == Integer.MAX_VALUE) {
-                // {n,} = mandatory followed by body*
-                result = new Ast.Concat(List.of(mandatoryAst, new Ast.Repeat(body, 0, Integer.MAX_VALUE, true)));
+                // {n,} = mandatory followed by body*  (preserve lazy/greedy)
+                result = new Ast.Concat(List.of(mandatoryAst, new Ast.Repeat(body, 0, Integer.MAX_VALUE, r.greedy)));
             } else if (max > min) {
-                // {n,m} = mandatory followed by m-n optional copies
+                // {n,m} = mandatory followed by m-n optional copies  (preserve lazy/greedy)
                 List<Ast> tail = new ArrayList<>();
-                for (int i = min; i < max; i++) tail.add(new Ast.Repeat(body, 0, 1, true));
+                for (int i = min; i < max; i++) tail.add(new Ast.Repeat(body, 0, 1, r.greedy));
                 result = new Ast.Concat(List.of(mandatoryAst, new Ast.Concat(tail)));
             }
             // re-enter the builder with the desugared form, but DO NOT re-process via parser;

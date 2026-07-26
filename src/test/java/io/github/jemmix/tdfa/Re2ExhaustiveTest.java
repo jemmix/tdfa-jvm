@@ -65,6 +65,17 @@ class Re2ExhaustiveTest {
 
     @Test
     void runRe2ExhaustiveVm() throws IOException {
+        runHarness(io.github.jemmix.tdfa.tdfa.Disambiguation.POSIX, "");
+    }
+
+    @Test
+    void runRe2ExhaustivePerlVm() throws IOException {
+        runHarness(io.github.jemmix.tdfa.tdfa.Disambiguation.PERL, "-perl");
+    }
+
+    private void runHarness(io.github.jemmix.tdfa.tdfa.Disambiguation mode, String reportSuffix) throws IOException {
+        boolean perl = (mode == io.github.jemmix.tdfa.tdfa.Disambiguation.PERL);
+        String modeLabel = perl ? "PERL" : "POSIX";
         InputStream raw = Re2ExhaustiveTest.class.getResourceAsStream("/re2-exhaustive.txt.gz");
         assertThat(raw).as("re2-exhaustive.txt.gz on test classpath").isNotNull();
         BufferedReader r = new BufferedReader(new InputStreamReader(new GZIPInputStream(raw), StandardCharsets.UTF_8));
@@ -123,7 +134,7 @@ class Re2ExhaustiveTest {
                     currentCompileError = null;
                 } else {
                     try {
-                        currentRegex = Regex.compileVm(currentPattern);
+                        currentRegex = Regex.compile(currentPattern, false, mode);
                         compiledCache.put(currentPattern, currentRegex);
                         currentCompileError = null;
                     } catch (Throwable e) {
@@ -223,7 +234,7 @@ class Re2ExhaustiveTest {
 
         // Build report
         StringBuilder out = new StringBuilder();
-        out.append("\n================ RE2 EXHAUSTIVE — VM TRIAGE ================\n");
+        out.append("\n================ RE2 EXHAUSTIVE — VM TRIAGE [" + modeLabel + "] ================\n");
         out.append(String.format("Elapsed:            %,d ms%n", elapsed));
         out.append(String.format("Total result rows:  %,d%n", totalCases));
         out.append(String.format("Skipped UTF-8 idx:  %,d  (UTF-8 byte-index stanzas; not comparable to UTF-16 engine)%n", skippedUtf8));
@@ -265,7 +276,7 @@ class Re2ExhaustiveTest {
 
         String report = out.toString();
         System.err.println(report);
-        Path reportFile = Paths.get("build/reports/re2-exhaustive-vm.txt");
+        Path reportFile = Paths.get("build/reports/re2-exhaustive-vm" + reportSuffix + ".txt");
         Files.createDirectories(reportFile.getParent());
         Files.writeString(reportFile, report);
 
