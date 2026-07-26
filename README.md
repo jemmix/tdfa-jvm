@@ -11,13 +11,17 @@ A working silver-bullet proof of concept:
 
 - **Parser** for a PCRE-ish subset: literals, char classes (`[abc]`, `[a-z]`, `\d \w \s` and
   negations), `.`, quantifiers (`* + ? {n} {n,m}`, greedy), alternation, capturing &
-  non-capturing groups, anchors `^ $` (parsed; not yet enforced at match time).
+  non-capturing groups, anchors `^ $` and `\A \z`, word boundaries `\b \B`. Rejects `\C` (RE2
+  semantics).
 - **TNFA construction** — paper Algorithm 2 (Thompson-style with tagged ε-transitions,
   priorities for leftmost-greedy).
 - **TDFA(1) determinization** — paper Algorithm 3 end-to-end: lookahead tags, register
   allocation via `transition_regops`, state deduplication via `map` + topological sort,
   final-register ops. Single-valued tags (sufficient for j.u.r-style captures). Equivalence-class
-  partitioned alphabet (RE2-style byte-class partitioning).
+  partitioned alphabet (RE2-style byte-class partitioning). **Zero-width assertions**
+  (`^ $ \A \z \b \B`) are encoded as a per-state entry/accept mask plus a per-transition
+  required-mask — position-bound, not pattern-level. Verified against 5.7M cases from RE2's
+  exhaustive suite (97.1% pass on runnable cases).
 - **Two backends**, both consuming the same `Tdfa` IR:
   - **VM**: table-walking interpreter (`TdfaRunner`). Correct, slower.
   - **ASM (source emission)**: lowers the TDFA to a specialized Java class via
@@ -46,7 +50,7 @@ coalescing, minimization — see [`TODO.md`](TODO.md)).
 ## Build & test
 
 ```bash
-./gradlew test    # 19/19 correctness tests + 4 skipped (anchors + negated classes — TODO)
+./gradlew test    # 25 correctness tests + 1 skipped (negated classes — TODO)
 ./gradlew jmh     # full benchmark sweep, ~3-5 min
 ```
 

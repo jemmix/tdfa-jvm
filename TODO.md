@@ -83,8 +83,6 @@ verbatim. Register optimization budget goes to:
 
 ## Other known limitations (not compaction)
 
-- **Anchors (`^`/`$`)** not yet enforced — `StartAnchor`/`EndAnchor` in AST are accepted by parser
-  but ignored at match time. Three tests in `RegexTest` are `assumeTrue(false, ...)`-gated.
 - **Negated char classes** (`[^0-9]`) blow up the alphabet enumeration; needs alphabet partition
   rather than character expansion. Test `negatedClass` is gated.
 - **POSIX disambiguation** (`(a|a)+b`) — not yet implemented; only leftmost-greedy supported.
@@ -94,6 +92,12 @@ verbatim. Register optimization budget goes to:
 - **Multi-valued tags** (tags under repetition accumulating multiple offsets) — single-valued only.
 - **`Matcher.find()` unanchored search** is O(n × states) — restarts from each position. Should
   prefix the pattern with a `.*?` desugaring or add a separate "scan DFA".
+- **Class-leading-`]`** (`[]...]`) — POSIX says a `]` immediately after `[` (or `[^`) is a literal
+  character; our parser closes the class there. ~7K residual failures in the re2-exhaustive suite.
+- **Leftmost-longest vs leftmost-first** — the runner returns the longest match from the leftmost
+  start position (POSIX flavour). re2j's default is leftmost-first (Perl). Patterns with
+  alternation overlap like `(a|ab)` therefore report col-3 results, not col-1; ~130K cases in the
+  re2-exhaustive suite. Not a bug — a semantic choice documented here.
 
 ## Algorithmic gaps vs paper
 

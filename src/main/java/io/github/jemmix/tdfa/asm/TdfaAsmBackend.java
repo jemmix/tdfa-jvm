@@ -3,6 +3,7 @@ package io.github.jemmix.tdfa.asm;
 import io.github.jemmix.tdfa.Regex;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.tnfa.Tnfa;
 import io.github.jemmix.tdfa.vm.MatchResult;
 
 import javax.tools.JavaFileObject;
@@ -59,6 +60,7 @@ public final class TdfaAsmBackend {
         sb.append("package gen;\n");
         sb.append("import io.github.jemmix.tdfa.Regex;\n");
         sb.append("import io.github.jemmix.tdfa.tdfa.TdfaRunner;\n");
+        sb.append("import io.github.jemmix.tdfa.tnfa.Tnfa;\n");
         sb.append("import io.github.jemmix.tdfa.vm.MatchResult;\n");
         sb.append("import java.util.Arrays;\n\n");
         sb.append("public final class Gen_").append(Math.abs(System.identityHashCode(tdfa)))
@@ -66,26 +68,22 @@ public final class TdfaAsmBackend {
         sb.append("  public boolean matches(CharSequence i) { return run(i,0,i.length(),true)!=null; }\n");
         sb.append("  public boolean find(CharSequence i) {\n");
         sb.append("    int len = i.length();\n");
-        if (tdfa.hasStartAnchor) {
+        // Start-state entry mask dictates whether find() can begin at positions > 0.
+        if (tdfa.startRequiresBeginText()) {
             sb.append("    TdfaRunner.MatchHolder h = run(i, 0, len, false);\n");
-            sb.append("    return h != null");
-            if (tdfa.hasEndAnchor) sb.append(" && h.matchEnd == len");
-            sb.append(";\n");
+            sb.append("    return h != null;\n");
         } else {
             sb.append("    for (int from = 0; from <= len; from++) {\n");
             sb.append("      TdfaRunner.MatchHolder h = run(i, from, len, false);\n");
-            if (tdfa.hasEndAnchor) {
-                sb.append("      if (h != null && h.matchEnd == len) return true;\n");
-            } else {
-                sb.append("      if (h != null) return true;\n");
-            }
+            sb.append("      if (h != null) return true;\n");
             sb.append("    }\n");
             sb.append("    return false;\n");
         }
         sb.append("  }\n");
         sb.append("  public MatchResult match(CharSequence i, int from) {\n");
         sb.append("    int len = i.length();\n");
-        sb.append("    for (int f = from; f <= len; f++) {\n");
+        sb.append("    int maxStart = ").append(tdfa.startRequiresBeginText() ? "0" : "len").append(";\n");
+        sb.append("    for (int f = from; f <= maxStart; f++) {\n");
         sb.append("      TdfaRunner.MatchHolder h = run(i, f, len, false);\n");
         sb.append("      if (h != null) return new MatchResult(h.regs, ").append(tdfa.tagCount)
           .append(", ").append(tdfa.groupCount).append(", h.matchStart, h.matchEnd);\n");
@@ -98,11 +96,13 @@ public final class TdfaAsmBackend {
         sb.append("    int state = 0, pos = from;\n");
         sb.append("    int lastAcceptPos = -1, lastAcceptState = -1, matchStart = from;\n");
         sb.append("    boolean haveAccept = false, dead = false;\n");
+        sb.append("    if (!entryOk(state, pos, to, input)) return null;\n");
         sb.append("    while (pos <= to) {\n");
         // accept check — A2 lazy snapshot: just record state+pos, no clone yet
-        sb.append("      if (isAccept(state)) { lastAcceptPos = pos; lastAcceptState = state; haveAccept = true; }\n");
+        sb.append("      if (isAccept(state) && acceptOk(state, pos, to, input)) { lastAcceptPos = pos; lastAcceptState = state; haveAccept = true; }\n");
         sb.append("      if (pos == to) { break; }\n");
         sb.append("      char c = input.charAt(pos);\n");
+        sb.append("      int posFlags = positionFlags(pos, to, input);\n");
         sb.append("      switch (state) {\n");
 
         int nStates = tdfa.stateCount;
@@ -116,13 +116,16 @@ public final class TdfaAsmBackend {
             int base = meta >>> 9;
             int count = (meta >>> 1) & 0xFF;
             for (int i = 0; i < count; i++) {
-                int o = (base + i) << 2;
+                int o = (base + i) * 5;
                 int lo = ranges[o];
                 int hi = ranges[o + 1];
                 int target = ranges[o + 2];
                 int opsOff = ranges[o + 3];
+                int requiredMask = ranges[o + 4];
                 if (target < 0) continue;
-                sb.append("          if (c >= ").append(lo).append(" && c <= ").append(hi).append(") {\n");
+                sb.append("          if (c >= ").append(lo).append(" && c <= ").append(hi);
+                if (requiredMask != 0) sb.append(" && (posFlags & ").append(requiredMask).append(") == ").append(requiredMask);
+                sb.append(") {\n");
                 // emit ops inline from ops[opsOff..] until OP_END
                 if (opsOff != 0) {
                     int j = opsOff;
@@ -137,7 +140,9 @@ public final class TdfaAsmBackend {
                         j += 3;
                     }
                 }
-                sb.append("            state = ").append(target).append("; pos++; continue;\n");
+                sb.append("            state = ").append(target).append(";\n");
+                sb.append("            if (!entryOk(state, pos + 1, to, input)) { dead = true; break; }\n");
+                sb.append("            pos++; continue;\n");
                 sb.append("          }\n");
             }
             sb.append("          dead = true; break;\n");
@@ -187,8 +192,45 @@ public final class TdfaAsmBackend {
         sb.append("      default: return false;\n");
         sb.append("    }\n");
         sb.append("  }\n");
+        // Per-state mask tables — class-level constants shared by entryOk/acceptOk.
+        emitMaskTable(sb, "ENTRY_MASK", tdfa.stateEntryMask);
+        emitMaskTable(sb, "ACCEPT_MASK", tdfa.stateAcceptMask);
+        // Helpers reference ENTRY_MASK[state] / ACCEPT_MASK[state] above.
+        // Mask helpers — compiled-in tables
+        sb.append("  private static boolean entryOk(int state, int pos, int to, CharSequence input) {\n");
+        sb.append("    int required = ENTRY_MASK[state];\n");
+        sb.append("    if (required == 0) return true;\n");
+        sb.append("    return (positionFlags(pos, to, input) & required) == required;\n");
+        sb.append("  }\n");
+        sb.append("  private static boolean acceptOk(int state, int pos, int to, CharSequence input) {\n");
+        sb.append("    int required = ACCEPT_MASK[state];\n");
+        sb.append("    if (required == 0) return true;\n");
+        sb.append("    return (positionFlags(pos, to, input) & required) == required;\n");
+        sb.append("  }\n");
+        sb.append("  private static int positionFlags(int pos, int to, CharSequence input) {\n");
+        sb.append("    int flags = 0;\n");
+        sb.append("    if (pos == 0) flags |= ").append(Tnfa.BEGIN_TEXT).append(";\n");
+        sb.append("    if (pos == to) flags |= ").append(Tnfa.END_TEXT).append(";\n");
+        sb.append("    boolean prev = pos > 0 && isWord(input.charAt(pos - 1));\n");
+        sb.append("    boolean curr = pos < to && isWord(input.charAt(pos));\n");
+        sb.append("    if (prev != curr) flags |= ").append(Tnfa.WORD_BOUNDARY).append(";\n");
+        sb.append("    else flags |= ").append(Tnfa.NO_WORD_BOUNDARY).append(";\n");
+        sb.append("    return flags;\n");
+        sb.append("  }\n");
+        sb.append("  private static boolean isWord(char c) {\n");
+        sb.append("    return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');\n");
+        sb.append("  }\n");
         sb.append("}\n");
         return sb.toString();
+    }
+
+    private static void emitMaskTable(StringBuilder sb, String name, int[] masks) {
+        sb.append("  private static final int[] ").append(name).append(" = new int[]{");
+        for (int i = 0; i < masks.length; i++) {
+            if (i > 0) sb.append(',');
+            sb.append(masks[i]);
+        }
+        sb.append("};\n");
     }
 
     private static void emitOpsSource(StringBuilder sb, int[] ops, String arr, String posVar) {

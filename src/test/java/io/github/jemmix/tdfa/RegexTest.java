@@ -183,24 +183,44 @@ class RegexTest {
     // ----------------- anchors -----------------
 
     @Test void startAnchor() {
-        assumeTrue(false, "anchors not yet implemented (deferred)");
         Regex r = Regex.compile("^abc");
         assertThat(r.find("abc def")).isTrue();
         assertThat(r.find("def abc")).isFalse();
     }
 
     @Test void endAnchor() {
-        assumeTrue(false, "anchors not yet implemented (deferred)");
         Regex r = Regex.compile("abc$");
         assertThat(r.find("def abc")).isTrue();
         assertThat(r.find("abc def")).isFalse();
     }
 
     @Test void bothAnchors() {
-        assumeTrue(false, "anchors not yet implemented (deferred)");
         Regex r = Regex.compile("^abc$");
         assertThat(r.matches("abc")).isTrue();
         assertThat(r.matches("abcd")).isFalse();
         assertThat(r.find(" abc ")).isFalse();
+    }
+
+    @Test void backslashAnchors() {
+        // \A = start of text, \z = end of text (RE2 semantics; matches our ^ $ in default mode).
+        Regex r = Regex.compile("\\Aabc\\z");
+        assertThat(r.matches("abc")).isTrue();
+        assertThat(r.matches("abcd")).isFalse();
+        assertThat(r.find("x abc")).isFalse();
+    }
+
+    @Test void wordBoundary() {
+        // \b matches at any position where one side is a word char and the other isn't.
+        Regex r = Regex.compile("\\bword\\b");
+        assertThat(r.find("a word here")).isTrue();
+        assertThat(r.find("awordhere")).isFalse();
+        assertThat(r.find("the word.")).isTrue();
+    }
+
+    @Test void noWordBoundary() {
+        // \B is the complement of \b.
+        Regex r = Regex.compile("\\Bword");
+        assertThat(r.find("password")).isTrue();   // 'word' mid-word, \B holds before 'w'
+        assertThat(r.find("a word")).isFalse();     // 'word' preceded by space, \b holds (not \B)
     }
 }

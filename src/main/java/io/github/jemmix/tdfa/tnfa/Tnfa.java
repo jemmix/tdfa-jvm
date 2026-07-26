@@ -12,12 +12,17 @@ import java.util.List;
  *
  * Transitions come in two flavors:
  *  - symbol transitions: (from, to, CharClass)
- *  - epsilon transitions: (from, to, priority, tag) where tag = 0 (none), +t (set tag t to current pos), -t (clear tag t)
+ *  - epsilon transitions: (from, to, priority, tag, emptyMask) where:
+ *      tag = 0 (none), +t (set tag t to current pos), -t (clear tag t)
+ *      emptyMask = bit mask of zero-width assertions that gate this ε-edge
  *
  * Lower priority = preferred (leftmost-greedy ordering).
  *
- * Anchors (^ $) become epsilon transitions gated by a predicate on input position.
- * For simplicity, predicates are stored alongside epsilon transitions as a kind enum.
+ * Assertion bits in emptyMask:
+ *   BEGIN_TEXT        = 1   ( ^  or  \A )
+ *   END_TEXT          = 2   ( $  or  \z )
+ *   WORD_BOUNDARY     = 4   ( \b )
+ *   NO_WORD_BOUNDARY  = 8   ( \B )
  *
  * Based on paper Algorithm 2 (TNFA construction), simplified: ntags on alternation
  * paths is included; repetition is handled by structural recursion.
@@ -26,28 +31,30 @@ public final class Tnfa {
     public static final int NO_TAG = 0;
 
     public final int stateCount;
-    public final int[] epsFrom, epsTo, epsPri, epsTag;
+    public final int[] epsFrom, epsTo, epsPri, epsTag, epsEmptyMask;
     public final int[] symFrom, symTo;
     public final CharClass[] symClass;
     public final int start, accept;
     public final int tagCount;
     public final int groupCount;
-    public final boolean hasStartAnchor;
-    public final boolean hasEndAnchor;
+
+    // Zero-width assertion bits.
+    public static final int BEGIN_TEXT        = 1;
+    public static final int END_TEXT          = 2;
+    public static final int WORD_BOUNDARY     = 4;
+    public static final int NO_WORD_BOUNDARY  = 8;
 
     public Tnfa(int stateCount,
-                int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag,
+                int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
                 int[] symFrom, int[] symTo, CharClass[] symClass,
-                int start, int accept, int tagCount, int groupCount,
-                boolean hasStartAnchor, boolean hasEndAnchor) {
+                int start, int accept, int tagCount, int groupCount) {
         this.stateCount = stateCount;
         this.epsFrom = epsFrom; this.epsTo = epsTo; this.epsPri = epsPri; this.epsTag = epsTag;
+        this.epsEmptyMask = epsEmptyMask;
         this.symFrom = symFrom; this.symTo = symTo; this.symClass = symClass;
         this.start = start; this.accept = accept;
         this.tagCount = tagCount;
         this.groupCount = groupCount;
-        this.hasStartAnchor = hasStartAnchor;
-        this.hasEndAnchor = hasEndAnchor;
     }
 
     // ====== Builder / construction ======
@@ -58,40 +65,20 @@ public final class Tnfa {
         Builder b = new Builder();
         int accept = b.fresh();
         int start = b.build(ast, accept);
-        boolean[] anchors = detectAnchors(ast);
-        return b.build(start, accept, parser.tagCount(), parser.groupCount(), anchors[0], anchors[1]);
-    }
-
-    private static boolean[] detectAnchors(Ast ast) {
-        boolean[] result = new boolean[2]; // [hasStart, hasEnd]
-        detectAnchors(ast, result);
-        return result;
-    }
-
-    private static void detectAnchors(Ast ast, boolean[] result) {
-        if (ast instanceof Ast.StartAnchor) result[0] = true;
-        else if (ast instanceof Ast.EndAnchor) result[1] = true;
-        else if (ast instanceof Ast.Concat) {
-            for (Ast c : ((Ast.Concat) ast).children) detectAnchors(c, result);
-        } else if (ast instanceof Ast.Alt) {
-            for (Ast c : ((Ast.Alt) ast).children) detectAnchors(c, result);
-        } else if (ast instanceof Ast.Repeat) {
-            detectAnchors(((Ast.Repeat) ast).body, result);
-        }
+        return b.build(start, accept, parser.tagCount(), parser.groupCount());
     }
 
     private static final class Builder {
-        final List<int[]> eps = new ArrayList<>();        // [from, to, pri, tag]
+        final List<int[]> eps = new ArrayList<>();        // [from, to, pri, tag, emptyMask]
         final List<int[]> syms = new ArrayList<>();       // [from, to]
         final List<CharClass> symClasses = new ArrayList<>();
-        final List<int[]> anchors = new ArrayList<>();    // [from, to, pri, kind]  kind: 1=^ 2=$
         int counter = 0;
 
         int fresh() { return counter++; }
 
-        void eps(int from, int to, int pri) { eps.add(new int[]{from, to, pri, NO_TAG}); }
-        void taggedEps(int from, int to, int pri, int tag) { eps.add(new int[]{from, to, pri, tag}); }
-        void anchor(int from, int to, int pri, int kind) { anchors.add(new int[]{from, to, pri, kind}); }
+        void eps(int from, int to, int pri) { eps.add(new int[]{from, to, pri, NO_TAG, 0}); }
+        void taggedEps(int from, int to, int pri, int tag) { eps.add(new int[]{from, to, pri, tag, 0}); }
+        void anchorEps(int from, int to, int pri, int emptyMask) { eps.add(new int[]{from, to, pri, NO_TAG, emptyMask}); }
         void sym(int from, int to, CharClass cc) {
             syms.add(new int[]{from, to});
             symClasses.add(cc);
@@ -119,14 +106,24 @@ public final class Tnfa {
                 taggedEps(s, entryTo, 1, ((Ast.Tag) e).tag);
                 return s;
             }
-            if (e instanceof Ast.StartAnchor) {
+            if (e instanceof Ast.StartAnchor) {      // ^ or \A
                 int s = fresh();
-                anchor(s, entryTo, 1, 1);
+                anchorEps(s, entryTo, 1, BEGIN_TEXT);
                 return s;
             }
-            if (e instanceof Ast.EndAnchor) {
+            if (e instanceof Ast.EndAnchor) {        // $ or \z
                 int s = fresh();
-                anchor(s, entryTo, 1, 2);
+                anchorEps(s, entryTo, 1, END_TEXT);
+                return s;
+            }
+            if (e instanceof Ast.WordBoundary) {     // \b
+                int s = fresh();
+                anchorEps(s, entryTo, 1, WORD_BOUNDARY);
+                return s;
+            }
+            if (e instanceof Ast.NoWordBoundary) {   // \B
+                int s = fresh();
+                anchorEps(s, entryTo, 1, NO_WORD_BOUNDARY);
                 return s;
             }
             if (e instanceof Ast.Concat) {
@@ -204,29 +201,17 @@ public final class Tnfa {
             return build(result, entryTo);
         }
 
-        Tnfa build(int start, int accept, int tagCount, int groupCount,
-                   boolean hasStartAnchor, boolean hasEndAnchor) {
-            // Merge eps + anchors into a single eps array (anchors carry tag values 100/200/.../special)
-            int n = eps.size() + anchors.size();
-            int[] eFrom = new int[n], eTo = new int[n], ePri = new int[n], eTag = new int[n];
-            int i = 0;
-            for (int[] e : eps) { eFrom[i] = e[0]; eTo[i] = e[1]; ePri[i] = e[2]; eTag[i] = e[3]; i++; }
-            // Anchors share the eps arrays but their tag values are sentinel-encoded.
-            // Anchor kinds 1=^ 2=$ are stored as tag = 100 (start) or 200 (end). Real tags are
-            // strictly positive integers < 100 by parser construction.
-            for (int[] a : anchors) {
-                eFrom[i] = a[0]; eTo[i] = a[1]; ePri[i] = a[2];
-                eTag[i] = a[3] == 1 ? ANCHOR_START : ANCHOR_END;
-                i++;
+        Tnfa build(int start, int accept, int tagCount, int groupCount) {
+            int n = eps.size();
+            int[] eFrom = new int[n], eTo = new int[n], ePri = new int[n], eTag = new int[n], eEmpty = new int[n];
+            for (int i = 0; i < n; i++) {
+                int[] e = eps.get(i);
+                eFrom[i] = e[0]; eTo[i] = e[1]; ePri[i] = e[2]; eTag[i] = e[3]; eEmpty[i] = e[4];
             }
             int[] sFrom = syms.stream().mapToInt(a -> a[0]).toArray();
             int[] sTo = syms.stream().mapToInt(a -> a[1]).toArray();
             CharClass[] sClass = symClasses.toArray(new CharClass[0]);
-            return new Tnfa(counter, eFrom, eTo, ePri, eTag, sFrom, sTo, sClass, start, accept, tagCount, groupCount,
-                    hasStartAnchor, hasEndAnchor);
+            return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, sFrom, sTo, sClass, start, accept, tagCount, groupCount);
         }
     }
-
-    public static final int ANCHOR_START = -1000;
-    public static final int ANCHOR_END = -1001;
 }

@@ -28,10 +28,20 @@ public final class Tdfa {
     public final int registerCount;
     public final int startState;
     public final int stateCount;
-    /** True if pattern contains ^ (start anchor). find() should only try position 0. */
-    public final boolean hasStartAnchor;
-    /** True if pattern contains $ (end anchor). Only accept matches ending at input.length(). */
-    public final boolean hasEndAnchor;
+    /**
+     * Bit mask of zero-width assertions required to ENTER this state. Checked at the
+     * position where the state is entered. Replaces the old pattern-level
+     * {@code hasStartAnchor} flag — now per-state and precise.
+     *   bit 1 = BEGIN_TEXT, bit 2 = END_TEXT, bit 4 = WORD_BOUNDARY, bit 8 = NO_WORD_BOUNDARY
+     */
+    public final int[] stateEntryMask;
+    /**
+     * Bit mask required to declare a match in this (accepting) state. Subset of
+     * {@link #stateEntryMask}. Replaces the old pattern-level {@code hasEndAnchor} flag.
+     */
+    public final int[] stateAcceptMask;
+    /** Mask required to take the start state at all — used to limit find() start positions. */
+    public final int startStateEntryMask;
 
     // === Flat packed arrays (4 arrays total; per-match regs adds a 5th at runtime) ===
     /**
@@ -41,7 +51,12 @@ public final class Tdfa {
     public final int[] stateMeta;
     /** [state] -> finalOpsOff (offset into `ops`), 0 if none. Read only once per match. */
     public final int[] stateFinalOpsOff;
-    /** Flat ranges: [lo0, hi0, target0, opsOff0, lo1, hi1, target1, opsOff1, ...]. */
+    /**
+     * Flat ranges: [lo0, hi0, target0, opsOff0, requiredMask0,
+     *               lo1, hi1, target1, opsOff1, requiredMask1, ...].
+     * {@code requiredMask} is the assertion mask that must hold at the source position
+     * for this transition to be live (intersection of source configs' masks).
+     */
     public final int[] ranges;
     /** Flat ops: [op, dst, src, ...] blocks terminated by OP_END=0. Transition ops + final ops share this array. */
     public final int[] ops;
@@ -53,7 +68,7 @@ public final class Tdfa {
 
     private Tdfa(int tagCount, int groupCount, int registerCount, int startState, int stateCount,
                  int[] stateMeta, int[] stateFinalOpsOff, int[] ranges, int[] ops,
-                 boolean hasStartAnchor, boolean hasEndAnchor) {
+                 int[] stateEntryMask, int[] stateAcceptMask) {
         this.tagCount = tagCount; this.groupCount = groupCount;
         this.registerCount = registerCount;
         this.startState = startState;
@@ -62,8 +77,9 @@ public final class Tdfa {
         this.stateFinalOpsOff = stateFinalOpsOff;
         this.ranges = ranges;
         this.ops = ops;
-        this.hasStartAnchor = hasStartAnchor;
-        this.hasEndAnchor = hasEndAnchor;
+        this.stateEntryMask = stateEntryMask;
+        this.stateAcceptMask = stateAcceptMask;
+        this.startStateEntryMask = stateEntryMask[startState];
     }
 
     public boolean isAccept(int state) { return (stateMeta[state] & 1) != 0; }
@@ -74,6 +90,9 @@ public final class Tdfa {
     public static int rangeCount(int meta) { return (meta >>> 1) & 0xFF; }
     /** Accept bit. */
     public static boolean accept(int meta) { return (meta & 1) != 0; }
+
+    /** True if start state's entry mask requires {@link Tnfa#BEGIN_TEXT} (limits find() to pos 0). */
+    public boolean startRequiresBeginText() { return (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0; }
 
     public static Tdfa compile(Tnfa nfa) { return new Compiler(nfa).compile(); }
 
@@ -156,10 +175,11 @@ public final class Tdfa {
             nextReg = 2 * tags;
             if (debug) System.err.println("[tdfa] tags=" + tags + " breakpoints=" + breakpoints.length);
             List<Config> initClosure = epsilonClosure(List.of(
-                    new Config(nfa.start, initialRegisters, EMPTY, EMPTY)));
+                    new Config(nfa.start, initialRegisters, EMPTY, EMPTY, 0)));
             int startId = addState(initClosure, null).targetId;
             work.push(startId);
 
+            int[] requiredMaskOut = new int[1];
             while (!work.isEmpty()) {
                 int sid = work.pop();
                 if (processed.get(sid)) continue;
@@ -167,7 +187,7 @@ public final class Tdfa {
                 List<Config> cur = states.get(sid);
                 if (debug) {
                     System.err.println("[tdfa] processing state " + sid + " configs:");
-                    for (Config c : cur) System.err.println("    state=" + c.state + " l=" + Arrays.toString(c.l) + " regs=" + Arrays.toString(c.regs));
+                    for (Config c : cur) System.err.println("    state=" + c.state + " l=" + Arrays.toString(c.l) + " regs=" + Arrays.toString(c.regs) + " mask=" + c.emptyMask);
                 }
                 // For each equivalence range, compute one transition (representative char = range.lo)
                 for (int bi = 0; bi < breakpoints.length - 1; bi++) {
@@ -175,20 +195,40 @@ public final class Tdfa {
                     if (rangeLo >= 0x10000) break;
                     int rangeHi = breakpoints[bi + 1] - 1;
                     char repr = (char) rangeLo;
-                    List<Config> stepped = stepOnSymbol(cur, repr);
+                    List<Config> stepped = stepOnSymbol(cur, repr, requiredMaskOut);
                     if (stepped.isEmpty()) continue;
+                    int requiredMask = requiredMaskOut[0];
                     List<Config> closed = epsilonClosure(stepped);
                     if (debug && closed.size() > 100) System.err.println("[tdfa] state " + sid + " range " + rangeLo + ".." + rangeHi + " closure=" + closed.size());
                     int[] ops = transitionRegops(closed, sid);
                     AddResult ar = addState(closed, ops);
-                    if (debug) System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> " + ar.targetId + " ops.len=" + ar.ops.length);
-                    builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops);
+                    if (debug) System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> " + ar.targetId + " ops.len=" + ar.ops.length + " mask=" + requiredMask);
+                    builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, requiredMask);
                     if (!processed.get(ar.targetId)) work.push(ar.targetId);
                 }
             }
             if (debug) System.err.println("[tdfa] total states=" + states.size() + " accept=" + accept.cardinality());
 
             int n = states.size();
+            // Compute per-state entry/accept masks.
+            int[] stateEntryMask = new int[n];
+            int[] stateAcceptMask = new int[n];
+            int ALL_BITS = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY;
+            for (int s = 0; s < n; s++) {
+                List<Config> cfgs = states.get(s);
+                int entryIntersect = ALL_BITS;
+                for (Config c : cfgs) entryIntersect &= c.emptyMask;
+                stateEntryMask[s] = entryIntersect;
+                int acceptIntersect = ALL_BITS;
+                boolean anyAccept = false;
+                for (Config c : cfgs) {
+                    if (c.state == nfa.accept) {
+                        acceptIntersect &= c.emptyMask;
+                        anyAccept = true;
+                    }
+                }
+                stateAcceptMask[s] = anyAccept ? acceptIntersect : 0;
+            }
             // First pass: coalesce + fillGaps on every state's ranges, compute totals.
             int totalRanges = 0;
             int totalOpsSlots = 1;  // reserve ops[0] = OP_END for the "no ops" case (opsOff=0 means empty)
@@ -210,11 +250,11 @@ public final class Tdfa {
             // Second pass: allocate flat arrays and populate.
             int[] stateMeta = new int[n];
             int[] stateFinalOpsOff = new int[n];
-            int[] flatRanges = new int[totalRanges * 4];
+            int[] flatRanges = new int[totalRanges * 5];
             int[] flatOps = new int[totalOpsSlots];
             flatOps[0] = OP_END;  // opsOff=0 means "empty block"
             int opsHead = 1;       // next free slot in flatOps (slot 0 reserved)
-            int rangesHead = 0;    // next free slot in flatRanges (in units of 4 ints)
+            int rangesHead = 0;    // next free slot in flatRanges (in units of 5 ints)
             int globalMaxReg = 2 * tags;  // at least r0 + R_f
             for (int s = 0; s < n; s++) {
                 DfaStateBuilder sb = builders.get(s);
@@ -222,7 +262,7 @@ public final class Tdfa {
                 int rangeBase = rangesHead;
                 for (int i = 0; i < k; i++) {
                     Range r = sb.ranges.get(i);
-                    int o = rangesHead * 4;
+                    int o = rangesHead * 5;
                     flatRanges[o]     = r.lo;
                     flatRanges[o + 1] = r.hi;
                     flatRanges[o + 2] = r.target;
@@ -242,6 +282,7 @@ public final class Tdfa {
                         flatOps[opsHead++] = OP_END;
                     }
                     flatRanges[o + 3] = opsOff;
+                    flatRanges[o + 4] = r.requiredMask;
                     rangesHead++;
                 }
                 int finalOpsOff = 0;
@@ -265,7 +306,7 @@ public final class Tdfa {
             }
             return new Tdfa(tags, nfa.groupCount, globalMaxReg, 0, n,
                     stateMeta, stateFinalOpsOff, flatRanges, flatOps,
-                    nfa.hasStartAnchor, nfa.hasEndAnchor);
+                    stateEntryMask, stateAcceptMask);
         }
 
         static final boolean debug = Boolean.getBoolean("tdfa.debug");
@@ -293,6 +334,11 @@ public final class Tdfa {
         List<Config> epsilonClosure(List<Config> seed) {
             List<Config> out = new ArrayList<>();
             BitSet visited = new BitSet(nfa.stateCount);
+            // For deterministic exploration we visit (state, mask) pairs — same NFA state
+            // can appear with different assertion masks (e.g. loop entered 0 vs 1 times).
+            // The visited set keyed only on state would wrongly suppress the second path.
+            // Use a LongSet of (state << 32) | mask to dedupe within a closure.
+            java.util.HashSet<Long> visitedSM = new java.util.HashSet<>();
             ArrayDeque<Config> stack = new ArrayDeque<>();
             // Push seed configs in reverse so the first seed config is on top (popped first)
             for (int i = seed.size() - 1; i >= 0; i--) {
@@ -300,44 +346,50 @@ public final class Tdfa {
             }
             while (!stack.isEmpty()) {
                 Config c = stack.pop();
-                if (visited.get(c.state)) continue;
-                visited.set(c.state);
+                long key = (((long) c.state) << 32) | (c.emptyMask & 0xFFFFFFFFL);
+                if (!visitedSM.add(key)) continue;
                 out.add(c);
                 // Push children in REVERSE priority order.
-                // epsOut[state] is sorted ascending by priority (lowest number = highest priority).
-                // We iterate in reverse so the highest-priority child is pushed LAST → on top → popped first.
                 int[] eps = epsOut[c.state];
                 for (int i = eps.length - 1; i >= 0; i--) {
                     int idx = eps[i];
                     int to = nfa.epsTo[idx];
-                    if (visited.get(to)) continue;
                     int tag = nfa.epsTag[idx];
+                    int edgeEmpty = nfa.epsEmptyMask[idx];
+                    int newMask = c.emptyMask | edgeEmpty;
                     int[] newL;
-                    if (tag == Tnfa.NO_TAG || tag == Tnfa.ANCHOR_START || tag == Tnfa.ANCHOR_END) {
+                    if (tag == Tnfa.NO_TAG) {
                         newL = c.l;
                     } else {
                         newL = appendTag(c.l, tag);
                     }
-                    stack.push(new Config(to, c.regs, c.h, newL));
+                    stack.push(new Config(to, c.regs, c.h, newL, newMask));
                 }
             }
-            // DO NOT sort — preserve DFS order (which IS priority order for leftmost-greedy).
-            // Sorting by state ID would break the seed order for step_on_symbol, causing
-            // the accept state (low ID) to be processed before higher-priority alternatives.
-            // DfaStateKey handles canonicalization internally for comparison.
             return out;
         }
 
-        List<Config> stepOnSymbol(List<Config> configs, char a) {
+        /**
+         * Step every config in {@code configs} that has an outgoing symbol transition matching {@code a}.
+         * Returns the stepped configs (with emptyMask reset to 0) and stores the intersection of
+         * contributing source config masks into {@code requiredMaskOut[0]}.
+         */
+        List<Config> stepOnSymbol(List<Config> configs, char a, int[] requiredMaskOut) {
             List<Config> out = new ArrayList<>();
+            int intersection = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY;
+            boolean any = false;
             for (Config c : configs) {
                 for (int idx : symOut[c.state]) {
                     CharClass cc = nfa.symClass[idx];
                     if (cc != null && cc.matches(a)) {
-                        out.add(new Config(nfa.symTo[idx], c.regs, c.l, EMPTY));
+                        // emptyMask resets on step — assertions are position-bound, gated via requiredMask.
+                        out.add(new Config(nfa.symTo[idx], c.regs, c.l, EMPTY, 0));
+                        intersection &= c.emptyMask;
+                        any = true;
                     }
                 }
             }
+            requiredMaskOut[0] = any ? intersection : 0;
             return out;
         }
 
@@ -373,7 +425,7 @@ public final class Tdfa {
                     }
                     newRegs[t - 1] = reg;
                 }
-                configs.set(ci, new Config(c.state, newRegs, c.h, c.l));
+                configs.set(ci, new Config(c.state, newRegs, c.h, c.l, c.emptyMask));
             }
             return flatten(opList);
         }
@@ -545,12 +597,15 @@ public final class Tdfa {
         final int[] regs;
         final int[] h;
         final int[] l;
-        Config(int state, int[] regs, int[] h, int[] l) {
-            this.state = state; this.regs = regs; this.h = h; this.l = l;
+        /** Zero-width assertion mask accumulated during the ε-closure that produced this config.
+         *  Reset to 0 by {@link Compiler#stepOnSymbol}. */
+        int emptyMask;
+        Config(int state, int[] regs, int[] h, int[] l, int emptyMask) {
+            this.state = state; this.regs = regs; this.h = h; this.l = l; this.emptyMask = emptyMask;
         }
     }
 
-    /** Canonical DFA state key: state ids + per-config lookahead tags (NOT registers).
+    /** Canonical DFA state key: state ids + per-config (lookahead tags, emptyMask).
      *  Two states with same key are candidates for {@code map} (register bijection). */
     static final class DfaStateKey {
         final int[] sig;
@@ -560,13 +615,14 @@ public final class Tdfa {
             List<Config> sorted = new ArrayList<>(configs);
             sorted.sort(Comparator.comparingInt(c -> c.state));
             int total = 0;
-            for (Config c : sorted) total += 2 + c.l.length;
+            for (Config c : sorted) total += 3 + c.l.length;
             int[] arr = new int[total];
             int i = 0;
             for (Config c : sorted) {
                 arr[i++] = c.state;
                 arr[i++] = c.l.length;
                 for (int v : c.l) arr[i++] = v;
+                arr[i++] = c.emptyMask;
             }
             this.sig = arr;
             this.hash = Arrays.hashCode(arr);
@@ -580,8 +636,9 @@ public final class Tdfa {
     static final class Range {
         final int lo, hi, target;
         final int[] ops;
-        Range(int lo, int hi, int target, int[] ops) {
-            this.lo = lo; this.hi = hi; this.target = target; this.ops = ops;
+        final int requiredMask;
+        Range(int lo, int hi, int target, int[] ops, int requiredMask) {
+            this.lo = lo; this.hi = hi; this.target = target; this.ops = ops; this.requiredMask = requiredMask;
         }
     }
 
@@ -590,7 +647,9 @@ public final class Tdfa {
         final List<Range> ranges = new ArrayList<>();
         int[] finalOpsArr;  // populated during materialization
         DfaStateBuilder(int id) { this.id = id; }
-        void addRange(int lo, int hi, int target, int[] ops) { ranges.add(new Range(lo, hi, target, ops)); }
+        void addRange(int lo, int hi, int target, int[] ops, int requiredMask) {
+            ranges.add(new Range(lo, hi, target, ops, requiredMask));
+        }
         void coalesce() {
             ranges.sort(Comparator.comparingInt(r -> r.lo));
             if (ranges.size() <= 1) return;
@@ -598,8 +657,10 @@ public final class Tdfa {
             Range cur = ranges.get(0);
             for (int i = 1; i < ranges.size(); i++) {
                 Range next = ranges.get(i);
-                if (next.lo == cur.hi + 1 && next.target == cur.target && Arrays.equals(next.ops, cur.ops)) {
-                    cur = new Range(cur.lo, next.hi, cur.target, cur.ops);
+                if (next.lo == cur.hi + 1 && next.target == cur.target
+                        && Arrays.equals(next.ops, cur.ops)
+                        && next.requiredMask == cur.requiredMask) {
+                    cur = new Range(cur.lo, next.hi, cur.target, cur.ops, cur.requiredMask);
                 } else {
                     out.add(cur); cur = next;
                 }
@@ -615,13 +676,13 @@ public final class Tdfa {
             int expected = 0;
             for (Range r : ranges) {
                 if (r.lo > expected) {
-                    out.add(new Range(expected, r.lo - 1, -1, null));
+                    out.add(new Range(expected, r.lo - 1, -1, null, 0));
                 }
                 out.add(r);
                 expected = r.hi + 1;
             }
             if (expected <= 0xFFFF) {
-                out.add(new Range(expected, 0xFFFF, -1, null));
+                out.add(new Range(expected, 0xFFFF, -1, null, 0));
             }
             ranges.clear();
             ranges.addAll(out);
