@@ -36,8 +36,6 @@ class RegexTest {
     }
 
     @Test void negatedClass() {
-        // Disabled: negated classes blow up the per-state alphabet (TODO: partition)
-        assumeTrue(false, "negated classes need alphabet partitioning (deferred)");
         Regex r = Regex.compile("[^0-9]+");
         assertThat(r.matches("abc")).isTrue();
         assertThat(r.matches("abc1")).isFalse();
