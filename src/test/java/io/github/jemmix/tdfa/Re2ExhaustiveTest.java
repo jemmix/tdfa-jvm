@@ -84,6 +84,7 @@ class Re2ExhaustiveTest {
         int totalCases = 0;
         int skippedUtf8 = 0;
         int skippedCompileError = 0;  // result rows for patterns that didn't compile
+        int compileErrAgree = 0;      // we reject & re2j rejects (e.g. \C) — counts as pass
         int spanPass = 0;
         int spanPassPosixOnly = 0;
 
@@ -131,7 +132,7 @@ class Re2ExhaustiveTest {
                         currentRegex = null;
                     }
                 }
-                if (currentCompileError != null) {
+                if (currentCompileError != null && !currentCompileError.contains("\\C")) {
                     triage.add(categoryForCompileError(currentPattern, currentCompileError),
                             "[" + stanza + "] /" + currentPattern + "/ -> " + currentCompileError);
                 }
@@ -140,8 +141,12 @@ class Re2ExhaustiveTest {
                 // Result line: full-nonlongest;partial-nonlongest;full-longest;partial-longest
                 totalCases++;
                 if (currentCompileError != null || currentRegex == null) {
-                    // compile-error already counted; skip result
-                    skippedCompileError++;
+                    // Compile-error. If re2j also rejects (e.g. \C), count as a pass.
+                    if (currentCompileError != null && currentCompileError.contains("\\C")) {
+                        compileErrAgree++;
+                    } else {
+                        skippedCompileError++;
+                    }
                     continue;
                 }
                 if (inputIdx >= strings.size()) continue;
@@ -213,7 +218,7 @@ class Re2ExhaustiveTest {
 
         long elapsed = System.currentTimeMillis() - start;
         int spanFail = triage.total() - spanPassPosixOnly;
-        int runnable = totalCases - skippedUtf8 - skippedCompileError;
+        int runnable = totalCases - skippedUtf8 - skippedCompileError - compileErrAgree;
         // Note: triage.total() includes submatch-wrong, runtime, alt-ambiguity, plus all match-failure buckets.
 
         // Build report
@@ -222,7 +227,8 @@ class Re2ExhaustiveTest {
         out.append(String.format("Elapsed:            %,d ms%n", elapsed));
         out.append(String.format("Total result rows:  %,d%n", totalCases));
         out.append(String.format("Skipped UTF-8 idx:  %,d  (UTF-8 byte-index stanzas; not comparable to UTF-16 engine)%n", skippedUtf8));
-        out.append(String.format("Skipped compile-err:%,d  (patterns we reject; not yet implemented)%n", skippedCompileError));
+        out.append(String.format("Skipped compile-err:%,d  (patterns we reject that re2j accepts — bugs to fix)%n", skippedCompileError));
+        out.append(String.format("Compile-err agree:  %,d  (we reject & re2j rejects, e.g. \\C — parity)%n", compileErrAgree));
         out.append(String.format("Unique patterns:    %,d (compiled ok: %,d, compile-err: %,d)%n",
                 compiledCache.size() + compileErrorCache.size(), compiledCache.size(), compileErrorCache.size()));
         out.append(String.format("Runnable cases:     %,d%n", runnable));
