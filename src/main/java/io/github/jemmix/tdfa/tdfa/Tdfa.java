@@ -43,6 +43,21 @@ public final class Tdfa {
     /** Mask required to take the start state at all — used to limit find() start positions. */
     public final int startStateEntryMask;
 
+    /**
+     * True iff this TDFA was compiled for Perl (leftmost-first) disambiguation.
+     * In Perl mode the runner stops at the first accept (highest-priority path);
+     * in POSIX mode it continues stepping to find the longest match.
+     */
+    public final boolean perlMode;
+    /**
+     * Per-state flag (Perl mode only): when true, the runner should stop extending
+     * the moment this state's accept is declared. Set iff no config EARLIER in the
+     * closure's priority-DFS order has any outgoing symbol transitions — meaning
+     * the accept corresponds to the highest-priority reachable path, so no
+     * higher-priority continuation is possible. Indexed by state id.
+     */
+    public final boolean[] stopOnAccept;
+
     // === Flat packed arrays (4 arrays total; per-match regs adds a 5th at runtime) ===
     /**
      * [state] -> packed (rangeBase << 9) | (rangeCount << 1) | acceptBit.
@@ -68,7 +83,7 @@ public final class Tdfa {
 
     private Tdfa(int tagCount, int groupCount, int registerCount, int startState, int stateCount,
                  int[] stateMeta, int[] stateFinalOpsOff, int[] ranges, int[] ops,
-                 int[] stateEntryMask, int[] stateAcceptMask) {
+                 int[] stateEntryMask, int[] stateAcceptMask, boolean perlMode, boolean[] stopOnAccept) {
         this.tagCount = tagCount; this.groupCount = groupCount;
         this.registerCount = registerCount;
         this.startState = startState;
@@ -80,6 +95,8 @@ public final class Tdfa {
         this.stateEntryMask = stateEntryMask;
         this.stateAcceptMask = stateAcceptMask;
         this.startStateEntryMask = stateEntryMask[startState];
+        this.perlMode = perlMode;
+        this.stopOnAccept = stopOnAccept;
     }
 
     public boolean isAccept(int state) { return (stateMeta[state] & 1) != 0; }
@@ -222,6 +239,7 @@ public final class Tdfa {
             // Compute per-state entry/accept masks.
             int[] stateEntryMask = new int[n];
             int[] stateAcceptMask = new int[n];
+            boolean[] stateStopOnAccept = new boolean[n];
             int ALL_BITS = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY;
             for (int s = 0; s < n; s++) {
                 List<Config> cfgs = states.get(s);
@@ -230,13 +248,30 @@ public final class Tdfa {
                 stateEntryMask[s] = entryIntersect;
                 int acceptIntersect = ALL_BITS;
                 boolean anyAccept = false;
-                for (Config c : cfgs) {
+                int firstAcceptIdx = -1;
+                for (int i = 0; i < cfgs.size(); i++) {
+                    Config c = cfgs.get(i);
                     if (c.state == nfa.accept) {
+                        if (firstAcceptIdx < 0) firstAcceptIdx = i;
                         acceptIntersect &= c.emptyMask;
                         anyAccept = true;
                     }
                 }
                 stateAcceptMask[s] = anyAccept ? acceptIntersect : 0;
+                // Perl leftmost-first: mark this state as "stop on accept" iff the accept
+                // corresponds to the highest-priority path. That holds when no config
+                // BEFORE the first accept in priority-DFS order has any outgoing symbol
+                // transitions — meaning no higher-priority path can still extend past
+                // the accept. If a higher-priority config has syms (e.g. `(ab|a)` at the
+                // state after `a`: alt 1's mid-state B1 has `b`), the runner must keep
+                // stepping to give that path a chance.
+                if (perl && anyAccept) {
+                    boolean stop = true;
+                    for (int i = 0; i < firstAcceptIdx; i++) {
+                        if (symOut[cfgs.get(i).state].length > 0) { stop = false; break; }
+                    }
+                    stateStopOnAccept[s] = stop;
+                }
             }
             // First pass: coalesce + fillGaps on every state's ranges, compute totals.
             int totalRanges = 0;
@@ -315,7 +350,7 @@ public final class Tdfa {
             }
             return new Tdfa(tags, nfa.groupCount, globalMaxReg, 0, n,
                     stateMeta, stateFinalOpsOff, flatRanges, flatOps,
-                    stateEntryMask, stateAcceptMask);
+                    stateEntryMask, stateAcceptMask, perl, stateStopOnAccept);
         }
 
         static final boolean debug = Boolean.getBoolean("tdfa.debug");

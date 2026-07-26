@@ -20,7 +20,10 @@ dependencies {
     testImplementation platform('org.junit:junit-bom:5.10.2'),
             'org.junit.jupiter:junit-jupiter',
             'org.junit.platform:junit-platform-launcher',
-            'org.assertj:assertj-core:3.25.3'
+            'org.junit.vintage:junit-vintage-engine',
+            'junit:junit:4.13.2',
+            'org.assertj:assertj-core:3.25.3',
+            'com.google.guava:guava:33.0.0-jre'
 
     jmh 'com.google.re2j:re2j:1.8'
     jmh 'com.github.DataDog:java-reggie:main-SNAPSHOT'

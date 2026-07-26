@@ -34,6 +34,8 @@ public final class TdfaRunner implements Regex.Engine {
     private final int regSize;
     private final int startState;
     private final int startStateEntryMask;
+    private final boolean perlMode;
+    private final boolean[] stopOnAccept;
 
     public TdfaRunner(Tnfa nfa) {
         this(Tdfa.compile(nfa));
@@ -50,6 +52,8 @@ public final class TdfaRunner implements Regex.Engine {
         this.regSize = tdfa.registerCount;
         this.startState = tdfa.startState;
         this.startStateEntryMask = tdfa.startStateEntryMask;
+        this.perlMode = tdfa.perlMode;
+        this.stopOnAccept = tdfa.stopOnAccept;
     }
 
     public Tdfa tdfa() { return tdfa; }
@@ -114,6 +118,7 @@ public final class TdfaRunner implements Regex.Engine {
                     // Accept state — check acceptMask at this position.
                     if ((positionFlags(input, pos, to) & sam[state]) == sam[state]) {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
+                        if (perlMode && stopOnAccept[state]) break loop;
                     }
                 }
                 if (pos >= to) break;
@@ -231,6 +236,7 @@ public final class TdfaRunner implements Regex.Engine {
             if ((meta & 1) != 0) {
                 if ((positionFlags(input, pos, to) & sam[state]) == sam[state]) {
                     haveAccept = true; lastAcceptPos = pos;
+                    if (perlMode && stopOnAccept[state]) break;
                 }
             }
             if (pos >= to) break;
@@ -283,6 +289,7 @@ public final class TdfaRunner implements Regex.Engine {
                 if ((meta & 1) != 0) {
                     if ((positionFlagsCS(input, pos, to) & stateAcceptMask[state]) == stateAcceptMask[state]) {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
+                        if (perlMode && stopOnAccept[state]) break loop;
                     }
                 }
                 if (pos >= to) break;
