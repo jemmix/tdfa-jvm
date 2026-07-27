@@ -119,7 +119,7 @@ public final class TdfaRunner implements Regex.Engine {
                     int posFlags = positionFlags(input, pos, to);
                     if ((posFlags & sam[state]) == sam[state]) {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                        int stopMask = stopOnAcceptMask[state];
+                        int stopMask = stopOnAcceptMask[state * 16 + posFlags];
                         if (perlMode && stopOnAccept(stopMask, posFlags)) break loop;
                     }
                 }
@@ -239,7 +239,7 @@ public final class TdfaRunner implements Regex.Engine {
                 int posFlags = positionFlags(input, pos, to);
                 if ((posFlags & sam[state]) == sam[state]) {
                     haveAccept = true; lastAcceptPos = pos;
-                    int stopMask = stopOnAcceptMask[state];
+                    int stopMask = stopOnAcceptMask[state * 16 + posFlags];
                     if (perlMode && stopOnAccept(stopMask, posFlags)) break;
                 }
             }
@@ -294,7 +294,7 @@ public final class TdfaRunner implements Regex.Engine {
                     int posFlags = positionFlagsCS(input, pos, to);
                     if ((posFlags & stateAcceptMask[state]) == stateAcceptMask[state]) {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                        int stopMask = stopOnAcceptMask[state];
+                        int stopMask = stopOnAcceptMask[state * 16 + posFlags];
                         if (perlMode && stopOnAccept(stopMask, posFlags)) break loop;
                     }
                 }
@@ -351,17 +351,16 @@ public final class TdfaRunner implements Regex.Engine {
     // ===== Zero-width assertion position-flag computation =====
 
     /**
-     * Determine whether to break the match loop on accept, based on the per-state
-     * stopOnAcceptMask:
-     * - {@link Tdfa#NEVER_STOP}: don't stop (Perl mode disabled for this state).
-     * - 0: always stop (an always-live accept path is higher priority than any extension).
-     * - positive value: stop iff any of the underlying per-accept masks holds, i.e.,
-     *   iff at least one bit in the mask is set in posFlags.
+     * Determine whether to break the match loop on accept, based on the
+     * position-aware per-(state, posFlags) cell of {@link Tdfa#stopOnAcceptMask}:
+     * - {@link Tdfa#NEVER_STOP}: don't stop (sym-bearing config outranks accept
+     *   under this posFlags, or accept unreachable).
+     * - 0: stop (accept is the highest-priority live outcome under this posFlags).
+     * The {@code posFlags} argument is unused beyond the array index computed
+     * by the caller; kept for signature parity.
      */
     private static boolean stopOnAccept(int stopMask, int posFlags) {
-        if (stopMask == Tdfa.NEVER_STOP) return false;
-        if (stopMask == 0) return true;
-        return (posFlags & stopMask) != 0;
+        return stopMask != Tdfa.NEVER_STOP;
     }
 
     /** Compute the position-flags for `pos` in a String. Inline-friendly. */

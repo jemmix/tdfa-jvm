@@ -50,18 +50,25 @@ public final class Tdfa {
      */
     public final boolean perlMode;
     /**
-     * Per-state mask (Perl mode only): when an accept fires, the runner stops
-     * extending iff the current position's flag bits satisfy this mask. Used to
-     * encode "the highest-priority accept path requires these assertions to
-     * hold"; e.g. for {@code (^|.)*} the first-accept path is via {@code ^} so
-     * the mask is BEGIN_TEXT and we only stop at beginning-of-input — at
-     * non-BOL positions we fall through to the lower-priority {@code .}-branch
-     * and extend. Mask 0 means "always stop on accept"; the sentinel
-     * {@link #NEVER_STOP} means "don't stop" (used when stopOnAccept doesn't
-     * apply, e.g. POSIX mode or when a higher-priority config can still extend).
+     * Position-aware Perl-mode stop-on-accept decision table.
+     * Indexed as {@code stopOnAcceptMask[state * 16 + posFlags]} where {@code posFlags}
+     * is the runtime position-flags bitmask ({@code BEGIN_TEXT|END_TEXT|WORD_BOUNDARY|NO_WORD_BOUNDARY},
+     * 4 bits, 16 possible values). Each cell encodes:
+     * <ul>
+     *   <li>{@code 0} — stop the match loop on accept (accept is the highest-priority
+     *       live outcome under this posFlags);</li>
+     *   <li>{@link #NEVER_STOP} — don't stop (a sym-bearing config outranks accept
+     *       under this posFlags, or accept is unreachable).</li>
+     * </ul>
+     * Position-awareness is required because re2j's densePcs priority depends on
+     * which assertion edges are live at the current cursor — e.g. for
+     * {@code ^((?:$)|.)*} at pos 0 of "a", {@code $} fails so the {@code .}-branch
+     * outranks the skip-exit MATCH (extend); at pos 1 (EOF), {@code $} holds and
+     * the {@code $}-loop-back MATCH outranks {@code .} (stop).
+     * Unused in POSIX mode (all cells stay {@link #NEVER_STOP}).
      */
     public final int[] stopOnAcceptMask;
-    /** Sentinel for "don't stop on accept" — bits never simultaneously set in any position. */
+    /** Sentinel for "don't stop on accept" — distinct from 0 (= stop). */
     public static final int NEVER_STOP = 0x10;  // bit above all real assertion bits (1|2|4|8)
 
     // === Flat packed arrays (4 arrays total; per-match regs adds a 5th at runtime) ===
@@ -248,7 +255,11 @@ public final class Tdfa {
             // Compute per-state entry/accept masks.
             int[] stateEntryMask = new int[n];
             int[] stateAcceptMask = new int[n];
-            int[] stateStopOnAcceptMask = new int[n];
+            // Position-aware stopOnAcceptMask: int[state * 16 + posFlags] encodes
+            // 0 (stop) or NEVER_STOP (don't stop). Position-aware because re2j's
+            // densePcs priority depends on which assertion edges are live at the
+            // current cursor position — see computePerStateOrder(seed, posMask).
+            int[] stateStopOnAcceptMask = new int[n * 16];
             java.util.Arrays.fill(stateStopOnAcceptMask, NEVER_STOP);
             int ALL_BITS = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY;
             for (int s = 0; s < n; s++) {
@@ -258,93 +269,53 @@ public final class Tdfa {
                 stateEntryMask[s] = entryIntersect;
                 int acceptIntersect = ALL_BITS;
                 boolean anyAccept = false;
-                int firstAcceptIdx = -1;
                 for (int i = 0; i < cfgs.size(); i++) {
                     Config c = cfgs.get(i);
                     if (c.state == nfa.accept) {
-                        if (firstAcceptIdx < 0) firstAcceptIdx = i;
                         acceptIntersect &= c.emptyMask;
                         anyAccept = true;
                     }
                 }
                 stateAcceptMask[s] = anyAccept ? acceptIntersect : 0;
-                // Perl leftmost-first: mark this state as "stop on accept" iff the accept
-                // corresponds to the highest-priority path. We use per-state DFS arrival
-                // order (matching re2j's densePcs semantics) to determine priority —
-                // configs whose NFA state arrived BEFORE the accept's NFA state are
-                // "higher priority" and might still extend. If any of them has outgoing
-                // symbol transitions, the runner must keep stepping to give that path a
-                // chance. Otherwise, accept is the highest-priority outcome; stop when
-                // the first-accept path's assertions hold.
+                // Perl leftmost-first: for each (state, posFlags) pair, decide
+                // whether the runner should break the match loop on accept. The
+                // decision is position-aware because re2j's runtime closure
+                // evaluates each assertion against the current cursor's cond and
+                // kills failing threads before they can claim a densePcs slot —
+                // so the same DFA state can have different "highest-priority
+                // outcome" at different positions. Example: for ^((?:$)|.)* at
+                // pos 0 of "a", $ fails, so the .-branch outranks the skip-exit
+                // MATCH and we extend; at pos 1 (EOF), $ holds, the $-loop-back
+                // MATCH outranks . and we stop.
                 //
-                // Why per-state (not per-(state,mask)) order: in patterns like ((^|.)*)
-                // the alt (^|.) is re-visited with mask=BEGIN_TEXT via the loop-back,
-                // which causes dotState to appear before accept in (state,mask) arrival
-                // order even though re2j (which dedupes per-state) places it after.
-                //
-                // Why first-accept's mask (not AND of all accepts): re2j processes
-                // threads in densePcs order; the FIRST thread to reach MATCH wins and
-                // lower-priority threads are freed. The first-accept's path determines
-                // when this happens. For (^|.)* that's BEGIN_TEXT (so we stop only at
-                // BOL); for ($|.)* that's END_TEXT (so we stop only at EOF, and at
-                // non-EOF positions we extend via .-branch as re2j does).
+                // For each of the 16 possible posFlags values M, compute the
+                // perStateOrder DFS skipping assertion edges whose requirements
+                // aren't subset of M, then check whether any sym-bearing config
+                // outranks accept in that order. If yes, NEVER_STOP (extend);
+                // else 0 (stop). Accept-unreachable-under-M also gets NEVER_STOP
+                // (no accept to stop on; runner's sam check filters anyway).
                 if (perl && anyAccept) {
-                    int[] perStateOrder = computePerStateOrder(stateSeeds.get(s));
-                    int acceptOrder = perStateOrder[nfa.accept];
-                    // Find the first sym-bearing config in (state,mask) DFS arrival order.
-                    // This is the earliest point at which a transition could extend the match.
-                    int firstSymIdx = -1;
-                    for (int i = 0; i < cfgs.size(); i++) {
-                        if (symOut[cfgs.get(i).state].length > 0) {
-                            firstSymIdx = i;
-                            break;
+                    List<Config> seed = stateSeeds.get(s);
+                    for (int M = 0; M < 16; M++) {
+                        int[] perStateOrder = computePerStateOrder(seed, M);
+                        int acceptOrder = perStateOrder[nfa.accept];
+                        if (acceptOrder == -1) {
+                            // Accept unreachable under M; sam check will fail too.
+                            stateStopOnAcceptMask[s * 16 + M] = NEVER_STOP;
+                            continue;
                         }
-                    }
-                    // stop = "no sym-bearing config has per-state priority higher than accept"
-                    // — meaning the accept is the highest-priority outcome.
-                    boolean stop = true;
-                    for (int i = 0; i < cfgs.size(); i++) {
-                        Config c = cfgs.get(i);
-                        if (c.state == nfa.accept) continue;
-                        if (perStateOrder[c.state] < acceptOrder
-                                && symOut[c.state].length > 0) {
-                            stop = false;
-                            break;
-                        }
-                    }
-                    if (stop) {
-                        // Compute stopOnAcceptMask:
-                        // - If any mask=0 (always-live) accept config is BEFORE the first
-                        //   sym-bearing config in (state,mask) DFS order: this means re2j's
-                        //   densePcs would have MATCH before RUNE, freeing RUNE before it
-                        //   can extend. Always stop.
-                        // - Else: stopOnAcceptMask = OR of all accept masks. Stop when any
-                        //   of the underlying per-accept masks holds (so e.g. (^|$|a) stops
-                        //   at BOL via ^ AND at EOF via $). Mask 0 would always hold, but
-                        //   we've excluded that case above; if no non-zero accept masks
-                        //   exist we fall back to NEVER_STOP (the per-state DFS check above
-                        //   guarantees dotState is after accept, but if there's no live
-                        //   accept path the runner should keep extending via dotState).
-                        boolean alwaysStop = false;
-                        if (firstSymIdx >= 0) {
-                            for (int i = 0; i < firstSymIdx; i++) {
-                                Config c = cfgs.get(i);
-                                if (c.state == nfa.accept && c.emptyMask == 0) {
-                                    alwaysStop = true;
-                                    break;
-                                }
+                        boolean higherPriSym = false;
+                        for (int i = 0; i < cfgs.size(); i++) {
+                            Config c = cfgs.get(i);
+                            if (c.state == nfa.accept) continue;
+                            if (symOut[c.state].length == 0) continue;
+                            int o = perStateOrder[c.state];
+                            if (o != -1 && o < acceptOrder) {
+                                higherPriSym = true;
+                                break;
                             }
                         }
-                        if (alwaysStop) {
-                            stateStopOnAcceptMask[s] = 0;
-                        } else {
-                            int orMask = 0;
-                            for (int i = 0; i < cfgs.size(); i++) {
-                                Config c = cfgs.get(i);
-                                if (c.state == nfa.accept) orMask |= c.emptyMask;
-                            }
-                            stateStopOnAcceptMask[s] = (orMask == 0) ? NEVER_STOP : orMask;
-                        }
+                        stateStopOnAcceptMask[s * 16 + M] = higherPriSym ? NEVER_STOP : 0;
                     }
                 }
             }
@@ -492,22 +463,33 @@ public final class Tdfa {
 
         /**
          * Compute per-state DFS arrival order (re2j's densePcs semantics) for the
-         * closure rooted at {@code seed}. Unlike {@link #epsilonClosure} which
-         * tracks (state, mask) pairs to preserve assertion-mask info, this does
-         * strict per-state dedup: each NFA state is visited at most once, the
-         * first time any of its masks would be popped.
+         * closure rooted at {@code seed}, assuming the cursor's position-flags
+         * are exactly {@code posMask}. Assertion ε-edges whose required bits
+         * aren't subset of {@code posMask} are skipped — mirroring re2j's
+         * runtime closure, which kills threads failing EMPTY_WIDTH before they
+         * can claim a densePcs slot.
          *
-         * The resulting order matches re2j's recursive DFS — a state's entire
+         * <p>Unlike {@link #epsilonClosure} which tracks (state, mask) pairs to
+         * preserve assertion-mask info, this does strict per-state dedup: each
+         * NFA state is visited at most once, the first time any of its masks
+         * would be popped.
+         *
+         * <p>The resulting order matches re2j's recursive DFS — a state's entire
          * subtree is fully explored before any of its lower-priority siblings.
-         * Without this, patterns like ((^|.)*) get the wrong priority: alt (^|.)
+         * Without this, patterns like ((^|.)* ) get the wrong priority: alt (^|.)
          * is re-visited with mask=BEGIN_TEXT via the loop-back, and dotState
          * ends up "before" accept in (state,mask) arrival order even though
          * re2j (which visits alt once) places it after.
          *
-         * Returns int[] indexed by NFA state; value = arrival index (0-based),
-         * or -1 for unreachable states.
+         * @param posMask runtime position-flags (subset of
+         *        {@code BEGIN_TEXT|END_TEXT|WORD_BOUNDARY|NO_WORD_BOUNDARY});
+         *        0xF ("all assertions hold") recovers the pre-position-aware
+         *        behavior.
+         * @return int[] indexed by NFA state; value = arrival index (0-based),
+         *         or -1 for unreachable states (incl. states only reachable via
+         *         assertion edges whose requirements aren't in posMask).
          */
-        int[] computePerStateOrder(List<Config> seed) {
+        int[] computePerStateOrder(List<Config> seed, int posMask) {
             int[] order = new int[nfa.stateCount];
             java.util.Arrays.fill(order, -1);
             boolean[] visited = new boolean[nfa.stateCount];
@@ -523,7 +505,10 @@ public final class Tdfa {
                 order[s] = counter++;
                 int[] eps = epsOut[s];
                 for (int i = eps.length - 1; i >= 0; i--) {
-                    int to = nfa.epsTo[eps[i]];
+                    int idx = eps[i];
+                    int required = nfa.epsEmptyMask[idx];
+                    if ((required & ~posMask) != 0) continue;  // assertion fails at this position
+                    int to = nfa.epsTo[idx];
                     if (!visited[to]) stack.push(to);
                 }
             }
