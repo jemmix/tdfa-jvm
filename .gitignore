@@ -27,3 +27,4 @@ replay_pid*
 # Run the script locally to verify re2j test-suite parity.
 src/test/java/io/github/jemmix/tdfa/re2j/
 src/test/resources/re2j-commit.txt
+src/test/resources/re2-search.txt
