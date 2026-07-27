@@ -162,6 +162,12 @@ public final class Parser {
             pos++;
         }
         while (pos < src.length() && peek() != ']') {
+            // Check for POSIX class [:name:]
+            if (peek() == '[' && peekAhead() == ':') {
+                int[] posix = parsePosixClass();
+                for (int v : posix) ranges.add(v);
+                continue;
+            }
             // Check for shorthand escapes (\s \S \d \D \w \W)
             if (peek() == '\\' && pos + 1 < src.length()) {
                 char next = src.charAt(pos + 1);
@@ -212,6 +218,49 @@ public final class Parser {
         };
     }
 
+    /**
+     * Parses a POSIX character class {@code [:name:]} (called only when {@code peek()=='['}
+     * and {@code peekAhead()==':'). Returns the corresponding ASCII range table matching
+     * re2j's POSIX semantics, or throws on malformed syntax or unknown names.
+     */
+    private int[] parsePosixClass() {
+        // Caller guarantees [: — consume both.
+        pos += 2;
+        int start = pos;
+        while (pos < src.length() && src.charAt(pos) != ':' && src.charAt(pos) != ']') pos++;
+        if (pos >= src.length() || src.charAt(pos) != ':') {
+            throw fail(this, "invalid POSIX class: missing ':]'");
+        }
+        String name = src.substring(start, pos);
+        pos++;  // consume ':'
+        if (pos >= src.length() || src.charAt(pos) != ']') {
+            throw fail(this, "invalid POSIX class: missing closing ']'");
+        }
+        pos++;  // consume ']'
+        int[] r = posixClassRanges(name);
+        if (r == null) throw fail(this, "unknown POSIX class: [:" + name + ":]");
+        return r;
+    }
+
+    /** ASCII-only POSIX class ranges, matching re2j's CharClass tables. */
+    private static int[] posixClassRanges(String name) {
+        return switch (name) {
+            case "alnum"  -> R_POSIX_ALNUM;
+            case "alpha"  -> R_POSIX_ALPHA;
+            case "blank"  -> R_POSIX_BLANK;
+            case "cntrl"  -> R_POSIX_CNTRL;
+            case "digit"  -> R_POSIX_DIGIT;
+            case "graph"  -> R_POSIX_GRAPH;
+            case "lower"  -> R_POSIX_LOWER;
+            case "print"  -> R_POSIX_PRINT;
+            case "punct"  -> R_POSIX_PUNCT;
+            case "space"  -> R_POSIX_SPACE;  // POSIX [:space:] INCLUDES \v (unlike Perl \s)
+            case "upper"  -> R_POSIX_UPPER;
+            case "xdigit" -> R_POSIX_XDIGIT;
+            default -> null;
+        };
+    }
+
     private char parseClassChar() {
         char c = cur();
         if (c == '\\') {
@@ -241,6 +290,8 @@ public final class Parser {
             case 'r' -> new Ast.Symbol('\r');
             case 'f' -> new Ast.Symbol('\f');
             case '0' -> new Ast.Symbol('\0');
+            case 'a' -> new Ast.Symbol((char) 7);   // alarm/bell, like re2j
+            case 'v' -> new Ast.Symbol((char) 11);  // vertical tab, like re2j
             case '\\' -> new Ast.Symbol('\\');
             case 'd' -> DIGIT;
             case 'D' -> NOT_DIGIT;
@@ -304,8 +355,24 @@ public final class Parser {
     private static final int[] R_NOT_DIGIT = {0, '/', ':', 0xFFFF};
     private static final int[] R_WORD = {'a','z','A','Z','0','9','_','_'};
     private static final int[] R_NOT_WORD = {0, '/', ':', '@', '[', '^', '`', '`', '{', 0xFFFF};
-    private static final int[] R_SPACE = {'\t', '\r', ' ', ' '};
-    private static final int[] R_NOT_SPACE = {0, '\t'-1, '\r'+1, ' '-1, ' '+1, 0xFFFF};
+    // re2j's \s = [\t\n\f\r ] — note: no \v (U+000B), unlike POSIX [:space:].
+    private static final int[] R_SPACE = {'\t', '\n', '\f', '\r', ' ', ' '};
+    private static final int[] R_NOT_SPACE = {0, '\t' - 1, 0x0B, 0x0B, '\r' + 1, ' ' - 1, ' ' + 1, 0xFFFF};
+
+    // POSIX character classes — ASCII-only, matching re2j's CharClass tables.
+    // Note: [:space:] INCLUDES \v (U+000B) per POSIX, unlike Perl's \s.
+    private static final int[] R_POSIX_ALNUM  = {'0', '9', 'A', 'Z', 'a', 'z'};
+    private static final int[] R_POSIX_ALPHA  = {'A', 'Z', 'a', 'z'};
+    private static final int[] R_POSIX_BLANK  = {'\t', '\t', ' ', ' '};
+    private static final int[] R_POSIX_CNTRL  = {0, 0x1F, 0x7F, 0x7F};
+    private static final int[] R_POSIX_DIGIT  = {'0', '9'};
+    private static final int[] R_POSIX_GRAPH  = {0x21, 0x7E};
+    private static final int[] R_POSIX_LOWER  = {'a', 'z'};
+    private static final int[] R_POSIX_PRINT  = {' ', 0x7E};
+    private static final int[] R_POSIX_PUNCT  = {0x21, '/', ':', '@', '[', '`', '{', '~'};
+    private static final int[] R_POSIX_SPACE  = {'\t', '\r', ' ', ' '};  // \t\n\v\f\r and space
+    private static final int[] R_POSIX_UPPER  = {'A', 'Z'};
+    private static final int[] R_POSIX_XDIGIT = {'0', '9', 'A', 'F', 'a', 'f'};
 
     static final CharClass DOT = new CharClass(new int[]{0, '\n' - 1, '\n' + 1, 0xFFFF}, false);
     static final CharClass DOTALL = new CharClass(new int[]{0, 0xFFFF}, false);
