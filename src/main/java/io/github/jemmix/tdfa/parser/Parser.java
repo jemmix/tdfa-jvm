@@ -140,12 +140,20 @@ public final class Parser {
                 return new Ast.Empty(); // flag-only group, continue
             }
         }
+        // Allocate tag pair BEFORE recursing into the body so group numbers
+        // follow open-paren position (standard regex convention): outer groups
+        // get LOWER numbers than their inner groups. Allocating after the
+        // recursive parseAlt would assign numbers in close-paren order, which
+        // is inside-out.
+        int open = -1, close = -1;
+        if (capturing) {
+            open = nextTag++;
+            close = nextTag++;
+            groupCount++;
+        }
         Ast body = parseAlt();
         expect(')');
         if (!capturing) return body;
-        int open = nextTag++;
-        int close = nextTag++;
-        groupCount++;
         return new Ast.Concat(List.of(new Ast.Tag(open), body, new Ast.Tag(close)));
     }
 
