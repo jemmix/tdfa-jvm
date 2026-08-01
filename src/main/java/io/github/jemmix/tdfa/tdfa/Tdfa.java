@@ -241,38 +241,49 @@ public final class Tdfa {
                     System.err.println("[tdfa] processing state " + sid + " configs:");
                     for (Config c : cur) System.err.println("    state=" + c.state + " l=" + Arrays.toString(c.l) + " regs=" + Arrays.toString(c.regs) + " mask=" + c.emptyMask);
                 }
-                // For each equivalence range, compute one transition (representative char = range.lo)
+                // Group configs by emptyMask so that transitions from configs with different
+                // assertion masks don't get their masks intersected (which would silently drop
+                // assertion requirements). Each group produces separate transitions with the
+                // correct requiredMask. E.g. for a*(^a): a* loop (mask=0) and ^a path
+                // (mask=BEGIN_TEXT) step on 'a' — without grouping, intersection 0&1=0 loses ^.
+                Map<Integer, List<Config>> maskGroups = new LinkedHashMap<>();
+                for (Config c : cur) {
+                    maskGroups.computeIfAbsent(c.emptyMask, k -> new ArrayList<>()).add(c);
+                }
+                // For each equivalence range, compute one transition per mask group
                 for (int bi = 0; bi < breakpoints.length - 1; bi++) {
                     int rangeLo = breakpoints[bi];
                     if (rangeLo >= 0x10000) break;
                     int rangeHi = breakpoints[bi + 1] - 1;
                     char repr = (char) rangeLo;
-                    List<Config> stepped = stepOnSymbol(cur, repr, requiredMaskOut);
-                    if (stepped.isEmpty()) continue;
-                    int requiredMask = requiredMaskOut[0];
-                    List<Config> closed;
-                    int[] newPrectable;
-                    if (perl) {
-                        closed = epsilonClosure(stepped);
-                        newPrectable = null;
-                    } else {
-                        int[] parentPrectable = statePrectables.get(sid);
-                        closed = closurePosix(stepped, parentPrectable, cur.size());
-                        newPrectable = computePrectable(closed, parentPrectable, cur.size());
-                    }
-                    if (debug && closed.size() > 100) System.err.println("[tdfa] state " + sid + " range " + rangeLo + ".." + rangeHi + " closure=" + closed.size());
-                    int[] ops = transitionRegops(closed, sid);
-                    AddResult ar = addState(closed, ops, stepped);
-                    if (!perl) {
-                        // Ensure prectable slot exists for the target state.
-                        while (statePrectables.size() <= ar.targetId) statePrectables.add(null);
-                        if (statePrectables.get(ar.targetId) == null) {
-                            statePrectables.set(ar.targetId, newPrectable);
+                    for (List<Config> groupConfigs : maskGroups.values()) {
+                        List<Config> stepped = stepOnSymbol(groupConfigs, repr, requiredMaskOut);
+                        if (stepped.isEmpty()) continue;
+                        int requiredMask = requiredMaskOut[0];
+                        List<Config> closed;
+                        int[] newPrectable;
+                        if (perl) {
+                            closed = epsilonClosure(stepped);
+                            newPrectable = null;
+                        } else {
+                            int[] parentPrectable = statePrectables.get(sid);
+                            closed = closurePosix(stepped, parentPrectable, cur.size());
+                            newPrectable = computePrectable(closed, parentPrectable, cur.size());
                         }
+                        if (debug && closed.size() > 100) System.err.println("[tdfa] state " + sid + " range " + rangeLo + ".." + rangeHi + " closure=" + closed.size());
+                        int[] ops = transitionRegops(closed, sid);
+                        AddResult ar = addState(closed, ops, stepped);
+                        if (!perl) {
+                            // Ensure prectable slot exists for the target state.
+                            while (statePrectables.size() <= ar.targetId) statePrectables.add(null);
+                            if (statePrectables.get(ar.targetId) == null) {
+                                statePrectables.set(ar.targetId, newPrectable);
+                            }
+                        }
+                        if (debug) System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> " + ar.targetId + " ops.len=" + ar.ops.length + " mask=" + requiredMask);
+                        builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, requiredMask);
+                        if (!processed.get(ar.targetId)) work.push(ar.targetId);
                     }
-                    if (debug) System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> " + ar.targetId + " ops.len=" + ar.ops.length + " mask=" + requiredMask);
-                    builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, requiredMask);
-                    if (!processed.get(ar.targetId)) work.push(ar.targetId);
                 }
             }
             if (debug) System.err.println("[tdfa] total states=" + states.size() + " accept=" + accept.cardinality());
@@ -351,6 +362,7 @@ public final class Tdfa {
             for (int s = 0; s < n; s++) {
                 DfaStateBuilder sb = builders.get(s);
                 sb.coalesce();
+                sb.sortByMaskSpecificity();
                 sb.fillGaps();
                 totalRanges += sb.ranges.size();
                 for (Range r : sb.ranges) {
@@ -980,6 +992,19 @@ public final class Tdfa {
             out.add(cur);
             ranges.clear();
             ranges.addAll(out);
+        }
+        /**
+         * Sort ranges so that for the same lo, ranges with more assertion bits in requiredMask
+         * come first. This ensures the runner tries assertion-gated transitions before ungated
+         * ones — e.g. for a*(^a) at pos 0, the BEGIN_TEXT-gated transition (leading to accept)
+         * must be tried before the mask=0 loop transition (which would skip past the accept).
+         */
+        void sortByMaskSpecificity() {
+            ranges.sort((a, b) -> {
+                int cmp = Integer.compare(a.lo, b.lo);
+                if (cmp != 0) return cmp;
+                return Integer.compare(Integer.bitCount(b.requiredMask), Integer.bitCount(a.requiredMask));
+            });
         }
         /** Insert target=-1 ranges in any gap so the ranges tile [0, 0xFFFF] contiguously. */
         void fillGaps() {
