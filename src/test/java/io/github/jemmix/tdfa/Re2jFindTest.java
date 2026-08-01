@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   - POSIX_CLASS: need [:space:] [:digit:]
  *   - UNICODE: need surrogate pair handling
  *   - SPECIAL_ESCAPE: need \a \f \v \`
- *   - TAG_TIMING: known TDFA(1) lookahead bug on nested groups
+ *   - NESTED_CAPTURE: nested capture groups (was TAG_TIMING, fixed in #15)
  *   - PARSER_GAP: other missing parser feature
  */
 class Re2jFindTest {
@@ -91,12 +91,12 @@ class Re2jFindTest {
         cases.add(new Re2Case("(?-s)(?:(?:^).)", "\n", -1, -1, null, "FLAGS"));
         cases.add(new Re2Case("(?i)\\W", "x", -1, -1, null, "FLAGS"));
 
-        // === Complex nested captures (may hit tag timing bug) ===
-        cases.add(new Re2Case("(([^xyz]*)(d))", "abcd", 0, 4, new int[]{0,4, 0,3, 3,4}, "TAG_TIMING"));
-        cases.add(new Re2Case("((a|b|c)*(d))", "abcd", 0, 4, new int[]{0,4, 2,3, 3,4}, "TAG_TIMING"));
-        cases.add(new Re2Case("(((a|b|c)*)(d))", "abcd", 0, 4, new int[]{0,4, 0,3, 2,3, 3,4}, "TAG_TIMING"));
-        cases.add(new Re2Case("a*(|(b))c*", "aacc", 0, 4, new int[]{2,2, -1,-1}, "TAG_TIMING"));
-        cases.add(new Re2Case("(aa)*$", "a", 1, 1, new int[]{-1,-1}, "TAG_TIMING")); // needs $ too
+        // === Nested captures (was TAG_TIMING, fixed in #15 — was a group-numbering bug, not TDFA tag-timing) ===
+        cases.add(new Re2Case("(([^xyz]*)(d))", "abcd", 0, 4, new int[]{0,4, 0,3, 3,4}, "NESTED_CAPTURE"));
+        cases.add(new Re2Case("((a|b|c)*(d))", "abcd", 0, 4, new int[]{0,4, 2,3, 3,4}, "NESTED_CAPTURE"));
+        cases.add(new Re2Case("(((a|b|c)*)(d))", "abcd", 0, 4, new int[]{0,4, 0,3, 2,3, 3,4}, "NESTED_CAPTURE"));
+        cases.add(new Re2Case("a*(|(b))c*", "aacc", 0, 4, new int[]{2,2, -1,-1}, "NESTED_CAPTURE"));
+        cases.add(new Re2Case("(aa)*$", "a", 1, 1, new int[]{-1,-1}, "NESTED_CAPTURE"));
 
         // === POSIX classes ===
         cases.add(new Re2Case("[^\\S\\s]", "abcd", -1, -1, null, "POSIX_CLASS"));
