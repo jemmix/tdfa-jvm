@@ -3,302 +3,941 @@ package io.github.jemmix.tdfa.asm;
 import io.github.jemmix.tdfa.Regex;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import io.github.jemmix.tdfa.tnfa.Tnfa;
 import io.github.jemmix.tdfa.vm.MatchResult;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 
-import javax.tools.JavaFileObject;
-import javax.tools.SimpleJavaFileObject;
-import javax.tools.ToolProvider;
-import java.io.ByteArrayOutputStream;
-import java.io.OutputStream;
-import java.lang.reflect.Method;
-import java.net.URI;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Lowers a compiled {@link Tdfa} to a specialized Java class via in-memory source-code emission
- * + {@code javax.tools.JavaCompiler}. Loaded via a private ClassLoader.
+ * Lowers a compiled {@link Tdfa} to JVM bytecode via the ASM library.
  *
- * Why source-code emission instead of ASM bytecode? {@code COMPUTE_FRAMES} chokes on our
- * cascading-IF state dispatch; writing StackMapTable frames by hand is error-prone and the JIT
- * output from a HotSpot compile of generated source is identical to hand-emitted bytecode for
- * our shapes (per-state switch, cascading range checks). Compile cost is ~50-150 ms per regex,
- * amortized over many matches.
+ * <p>Each compiled regex gets its own {@link ClassLoader} so that when the
+ * {@link Regex.Engine} instance becomes unreachable, the generated class
+ * and its classloader are garbage-collected — no Metaspace leak.
  *
- * Generated source shape (one method per regex):
- * <pre>
- * public final class Gen_N implements Regex.Engine {
- *   public boolean matches(CharSequence i) { return run(i,0,i.length(),true)!=null; }
- *   public boolean find(CharSequence i)    { return run(i,0,i.length(),false)!=null; }
- *   public MatchResult match(CharSequence i, int from) { ... }
- *   private TdfaRunner.MatchHolder run(CharSequence input, int from, int to, boolean anchored) {
- *     int[] regs = new int[N]; Arrays.fill(regs, -1);
- *     int state = 0, pos = from, ...;
- *     while (pos <= to) {
- *       switch (state) { case 0: ...; default: return_or_break; }
- *       ...
- *     }
- *     ...
- *   }
- * }
- * </pre>
+ * <p>The generated class implements {@link Regex.Engine} directly. DFA
+ * transitions are baked into a {@code TABLESWITCH} on state, with per-range
+ * {@code IF} cascades and inline register ops ({@code IASTORE}).
  */
 public final class TdfaAsmBackend {
 
+    private static final AtomicLong COUNTER = new AtomicLong();
+
+    private static final String ENGINE_INT    = "io/github/jemmix/tdfa/Regex$Engine";
+    private static final String MATCH_HOLDER  = "io/github/jemmix/tdfa/tdfa/TdfaRunner$MatchHolder";
+    private static final String MATCH_RESULT  = "io/github/jemmix/tdfa/vm/MatchResult";
+    private static final String CHAR_SEQ      = "java/lang/CharSequence";
+    private static final String ARRAYS        = "java/util/Arrays";
+    private static final String CS_DESC       = "Ljava/lang/CharSequence;";
+    private static final String RUN_DESC      = "(" + CS_DESC + "IIZ)L" + MATCH_HOLDER + ";";
+
     public static Regex.Engine compile(Tdfa tdfa) {
-        String src = generateSource(tdfa);
-        try {
-            Class<?> cls = compileAndLoad(src, tdfa);
-            return (Regex.Engine) cls.getDeclaredConstructor().newInstance();
-        } catch (Exception e) {
-            throw new IllegalStateException("source backend failed: " + e, e);
-        }
-    }
+        long id = COUNTER.incrementAndGet();
+        String className  = "io.github.jemmix.tdfa.gen.Gen" + id;
+        String internal   = className.replace('.', '/');
+        byte[] bytecode   = generateBytecode(tdfa, internal);
 
-    private static String generateSource(Tdfa tdfa) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("package gen;\n");
-        sb.append("import io.github.jemmix.tdfa.Regex;\n");
-        sb.append("import io.github.jemmix.tdfa.tdfa.TdfaRunner;\n");
-        sb.append("import io.github.jemmix.tdfa.tnfa.Tnfa;\n");
-        sb.append("import io.github.jemmix.tdfa.vm.MatchResult;\n");
-        sb.append("import java.util.Arrays;\n\n");
-        sb.append("public final class Gen_").append(Math.abs(System.identityHashCode(tdfa)))
-          .append(" implements Regex.Engine {\n");
-        sb.append("  public boolean matches(CharSequence i) { return run(i,0,i.length(),true)!=null; }\n");
-        sb.append("  public boolean find(CharSequence i) {\n");
-        sb.append("    int len = i.length();\n");
-        // Start-state entry mask dictates whether find() can begin at positions > 0.
-        if (tdfa.startRequiresBeginText()) {
-            sb.append("    TdfaRunner.MatchHolder h = run(i, 0, len, false);\n");
-            sb.append("    return h != null;\n");
-        } else {
-            sb.append("    for (int from = 0; from <= len; from++) {\n");
-            sb.append("      TdfaRunner.MatchHolder h = run(i, from, len, false);\n");
-            sb.append("      if (h != null) return true;\n");
-            sb.append("    }\n");
-            sb.append("    return false;\n");
-        }
-        sb.append("  }\n");
-        sb.append("  public MatchResult match(CharSequence i, int from) {\n");
-        sb.append("    int len = i.length();\n");
-        sb.append("    int maxStart = ").append(tdfa.startRequiresBeginText() ? "0" : "len").append(";\n");
-        sb.append("    for (int f = from; f <= maxStart; f++) {\n");
-        sb.append("      TdfaRunner.MatchHolder h = run(i, f, len, false);\n");
-        sb.append("      if (h != null) return new MatchResult(h.regs, ").append(tdfa.tagCount)
-          .append(", ").append(tdfa.groupCount).append(", h.matchStart, h.matchEnd);\n");
-        sb.append("    }\n");
-        sb.append("    return null;\n");
-        sb.append("  }\n");
-        sb.append("  private TdfaRunner.MatchHolder run(CharSequence input, int from, int to, boolean anchored) {\n");
-        sb.append("    int[] regs = new int[").append(tdfa.registerCount).append("];\n");
-        sb.append("    Arrays.fill(regs, -1);\n");
-        sb.append("    int state = 0, pos = from;\n");
-        sb.append("    int lastAcceptPos = -1, lastAcceptState = -1, matchStart = from;\n");
-        sb.append("    boolean haveAccept = false, dead = false;\n");
-        sb.append("    if (!entryOk(state, pos, to, input)) return null;\n");
-        sb.append("    while (pos <= to) {\n");
-        // accept check — A2 lazy snapshot: just record state+pos, no clone yet
-        sb.append("      if (isAccept(state) && acceptOk(state, pos, to, input)) { lastAcceptPos = pos; lastAcceptState = state; haveAccept = true; }\n");
-        sb.append("      if (pos == to) { break; }\n");
-        sb.append("      char c = input.charAt(pos);\n");
-        sb.append("      int posFlags = positionFlags(pos, to, input);\n");
-        sb.append("      switch (state) {\n");
-
-        int nStates = tdfa.stateCount;
-        int[] stateMeta = tdfa.stateMeta;
-        int[] stateFinalOpsOff = tdfa.stateFinalOpsOff;
-        int[] ranges = tdfa.ranges;
-        int[] ops = tdfa.ops;
-        for (int s = 0; s < nStates; s++) {
-            sb.append("        case ").append(s).append(": {\n");
-            int meta = stateMeta[s];
-            int base = meta >>> 9;
-            int count = (meta >>> 1) & 0xFF;
-            for (int i = 0; i < count; i++) {
-                int o = (base + i) * 5;
-                int lo = ranges[o];
-                int hi = ranges[o + 1];
-                int target = ranges[o + 2];
-                int opsOff = ranges[o + 3];
-                int requiredMask = ranges[o + 4];
-                if (target < 0) continue;
-                sb.append("          if (c >= ").append(lo).append(" && c <= ").append(hi);
-                if (requiredMask != 0) sb.append(" && (posFlags & ").append(requiredMask).append(") == ").append(requiredMask);
-                sb.append(") {\n");
-                // emit ops inline from ops[opsOff..] until OP_END
-                if (opsOff != 0) {
-                    int j = opsOff;
-                    while (ops[j] != Tdfa.OP_END) {
-                        int op = ops[j], dst = ops[j + 1], src = ops[j + 2];
-                        sb.append("            ");
-                        switch (op) {
-                            case Tdfa.OP_SET_POS: sb.append("regs[").append(dst).append("] = pos;\n"); break;
-                            case Tdfa.OP_SET_NIL: sb.append("regs[").append(dst).append("] = -1;\n"); break;
-                            case Tdfa.OP_COPY:    sb.append("regs[").append(dst).append("] = regs[").append(src).append("];\n"); break;
-                        }
-                        j += 3;
-                    }
+        String cn = className;
+        byte[] bc = bytecode;
+        ClassLoader loader = new ClassLoader(TdfaAsmBackend.class.getClassLoader()) {
+            @Override
+            protected Class<?> findClass(String name) throws ClassNotFoundException {
+                if (name.equals(cn)) {
+                    return defineClass(cn, bc, 0, bc.length);
                 }
-                sb.append("            state = ").append(target).append(";\n");
-                sb.append("            pos += pairAdvance(c, pos, to, input);\n");
-                sb.append("            if (!entryOk(state, pos + 1, to, input)) { dead = true; break; }\n");
-                sb.append("            pos++; continue;\n");
-                sb.append("          }\n");
-            }
-            sb.append("          dead = true; break;\n");
-            sb.append("        }\n");
-        }
-        sb.append("        default: dead = true; break;\n");
-        sb.append("      }\n");
-        sb.append("      if (dead) break;\n");
-        sb.append("    }\n");
-        // post-loop — A2: clone regs only once we know we need them
-        sb.append("    if (haveAccept) {\n");
-        sb.append("      if (anchored && lastAcceptPos != to) return null;\n");
-        sb.append("      int[] r = regs.clone();\n");
-        // emit per-accept-state finalRegops dispatch
-        sb.append("      switch (lastAcceptState) {\n");
-        for (int s = 0; s < nStates; s++) {
-            int opsOff = stateFinalOpsOff[s];
-            boolean isAccept = (stateMeta[s] & 1) != 0;
-            if (!isAccept || opsOff == 0) continue;
-            sb.append("        case ").append(s).append(": {\n");
-            int j = opsOff;
-            while (ops[j] != Tdfa.OP_END) {
-                int op = ops[j], dst = ops[j + 1], src = ops[j + 2];
-                sb.append("          ");
-                switch (op) {
-                    case Tdfa.OP_SET_POS: sb.append("r[").append(dst).append("] = lastAcceptPos;\n"); break;
-                    case Tdfa.OP_SET_NIL: sb.append("r[").append(dst).append("] = -1;\n"); break;
-                    case Tdfa.OP_COPY:    sb.append("r[").append(dst).append("] = r[").append(src).append("];\n"); break;
-                }
-                j += 3;
-            }
-            sb.append("          break;\n");
-            sb.append("        }\n");
-        }
-        sb.append("      }\n");
-        sb.append("      return new TdfaRunner.MatchHolder(matchStart, lastAcceptPos, r);\n");
-        sb.append("    }\n");
-        sb.append("    return null;\n");
-        sb.append("  }\n");
-        // isAccept(state) — emit early-return when no state accepts (empty language)
-        boolean anyAccept = false;
-        for (int s = 0; s < nStates; s++) {
-            if ((stateMeta[s] & 1) != 0) { anyAccept = true; break; }
-        }
-        sb.append("  private static boolean isAccept(int state) {\n");
-        if (!anyAccept) {
-            sb.append("    return false;\n");
-        } else {
-            sb.append("    switch (state) {\n");
-            for (int s = 0; s < nStates; s++) {
-                if ((stateMeta[s] & 1) != 0) sb.append("      case ").append(s).append(":\n");
-            }
-            sb.append("        return true;\n");
-            sb.append("      default: return false;\n");
-            sb.append("    }\n");
-        }
-        sb.append("  }\n");
-        // Per-state mask tables — class-level constants shared by entryOk/acceptOk.
-        emitMaskTable(sb, "ENTRY_MASK", tdfa.stateEntryMask);
-        emitMaskTable(sb, "ACCEPT_MASK", tdfa.stateAcceptMask);
-        // Helpers reference ENTRY_MASK[state] / ACCEPT_MASK[state] above.
-        // Mask helpers — compiled-in tables
-        sb.append("  private static boolean entryOk(int state, int pos, int to, CharSequence input) {\n");
-        sb.append("    int required = ENTRY_MASK[state];\n");
-        sb.append("    if (required == 0) return true;\n");
-        sb.append("    return (positionFlags(pos, to, input) & required) == required;\n");
-        sb.append("  }\n");
-        sb.append("  private static boolean acceptOk(int state, int pos, int to, CharSequence input) {\n");
-        sb.append("    int required = ACCEPT_MASK[state];\n");
-        sb.append("    if (required == 0) return true;\n");
-        sb.append("    return (positionFlags(pos, to, input) & required) == required;\n");
-        sb.append("  }\n");
-        sb.append("  private static int positionFlags(int pos, int to, CharSequence input) {\n");
-        sb.append("    int flags = 0;\n");
-        sb.append("    if (pos == 0) flags |= ").append(Tnfa.BEGIN_TEXT).append(";\n");
-        sb.append("    if (pos == to) flags |= ").append(Tnfa.END_TEXT).append(";\n");
-        sb.append("    boolean prev = pos > 0 && isWord(input.charAt(pos - 1));\n");
-        sb.append("    boolean curr = pos < to && isWord(input.charAt(pos));\n");
-        sb.append("    if (prev != curr) flags |= ").append(Tnfa.WORD_BOUNDARY).append(";\n");
-        sb.append("    else flags |= ").append(Tnfa.NO_WORD_BOUNDARY).append(";\n");
-        sb.append("    return flags;\n");
-        sb.append("  }\n");
-        sb.append("  private static boolean isWord(char c) {\n");
-        sb.append("    return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');\n");
-        sb.append("  }\n");
-        sb.append("  private static int pairAdvance(char c, int pos, int to, CharSequence input) {\n");
-        sb.append("    if (c < 0xD800 || c > 0xDBFF || pos + 1 >= to) return 0;\n");
-        sb.append("    char c2 = input.charAt(pos + 1);\n");
-        sb.append("    return (c2 >= 0xDC00 && c2 <= 0xDFFF) ? 1 : 0;\n");
-        sb.append("  }\n");
-        sb.append("}\n");
-        return sb.toString();
-    }
-
-    private static void emitMaskTable(StringBuilder sb, String name, int[] masks) {
-        sb.append("  private static final int[] ").append(name).append(" = new int[]{");
-        for (int i = 0; i < masks.length; i++) {
-            if (i > 0) sb.append(',');
-            sb.append(masks[i]);
-        }
-        sb.append("};\n");
-    }
-
-    private static void emitOpsSource(StringBuilder sb, int[] ops, String arr, String posVar) {
-        for (int i = 0; i < ops.length; i += 3) {
-            int op = ops[i], dst = ops[i + 1], src = ops[i + 2];
-            sb.append("            ");
-            switch (op) {
-                case Tdfa.OP_SET_POS: sb.append(arr).append("[").append(dst).append("] = ").append(posVar).append(";\n"); break;
-                case Tdfa.OP_SET_NIL: sb.append(arr).append("[").append(dst).append("] = -1;\n"); break;
-                case Tdfa.OP_COPY:    sb.append(arr).append("[").append(dst).append("] = ").append(arr).append("[").append(src).append("];\n"); break;
-            }
-        }
-    }
-
-    private static Class<?> compileAndLoad(String src, Tdfa tdfa) throws Exception {
-        String className = "Gen_" + Math.abs(System.identityHashCode(tdfa));
-        var compiler = ToolProvider.getSystemJavaCompiler();
-        varFileManager fm = new varFileManager(compiler);
-        var cu = List.<SimpleJavaFileObject>of(new SimpleJavaFileObject(
-                URI.create("string:///gen/" + className + ".java"), JavaFileObject.Kind.SOURCE) {
-            @Override public CharSequence getCharContent(boolean ignoreEncodingErrors) { return src; }
-        });
-        ByteArrayOutputStream err = new ByteArrayOutputStream();
-        javax.tools.DiagnosticCollector<javax.tools.JavaFileObject> diagnostics = new javax.tools.DiagnosticCollector<>();
-        boolean ok = compiler.getTask(new java.io.PrintWriter(err), fm, diagnostics,
-                List.of("--release", "17"), null, cu).call();
-        if (!ok) throw new IllegalStateException("compile failed:\n" + src + "\n---\n" + err + "\n" + diagnostics.getDiagnostics());
-        Class<?> cls = Class.forName("gen." + className, true, fm.cl);
-        // Sanity: stash source for debugging via System.setProperty if needed.
-        return cls;
-    }
-
-    /** In-memory file manager that captures emitted .class bytes and exposes a loader. */
-    private static final class varFileManager extends javax.tools.ForwardingJavaFileManager<javax.tools.JavaFileManager> {
-        final Map<String, byte[]> classes = new HashMap<>();
-        final ClassLoader cl = new ClassLoader(TdfaAsmBackend.class.getClassLoader()) {
-            @Override protected Class<?> findClass(String name) throws ClassNotFoundException {
-                byte[] b = classes.get(name);
-                if (b != null) { classes.put(name, null); return defineClass(name, b, 0, b.length); }
                 return super.findClass(name);
             }
         };
-        varFileManager(javax.tools.JavaCompiler compiler) {
-            super(compiler.getStandardFileManager(null, null, null));
+
+        try {
+            Class<?> cls = Class.forName(className, true, loader);
+            return (Regex.Engine) cls.getDeclaredConstructor().newInstance();
+        } catch (Exception e) {
+            throw new IllegalStateException("ASM bytecode backend failed", e);
         }
-        @Override public javax.tools.JavaFileObject getJavaFileForOutput(Location location,
-                String className, javax.tools.JavaFileObject.Kind kind, javax.tools.FileObject sibling) {
-            return new SimpleJavaFileObject(URI.create("mem:///" + className + ".class"), javax.tools.JavaFileObject.Kind.CLASS) {
-                @Override public OutputStream openOutputStream() {
-                    return new ByteArrayOutputStream() {
-                        @Override public void close() { classes.put(className, toByteArray()); }
-                    };
+    }
+
+    // ======================================================================
+
+    private static byte[] generateBytecode(Tdfa tdfa, String internal) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL,
+                internal, null, "java/lang/Object", new String[]{ENGINE_INT});
+
+        generateClinit(cw, tdfa, internal);
+        generateConstructor(cw);
+        generateMatches(cw, tdfa, internal);
+        generateFind(cw, tdfa, internal);
+        generateMatch(cw, tdfa, internal);
+        generateRun(cw, tdfa, internal);
+        generateIsAccept(cw, tdfa, internal);
+        generateEntryOk(cw, internal);
+        generateAcceptOk(cw, internal);
+        generatePositionFlags(cw, internal);
+        generateIsWord(cw);
+        generatePairAdvance(cw);
+
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    // ===== <clinit> =======================================================
+
+    private static void generateClinit(ClassWriter cw, Tdfa tdfa, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
+        mv.visitCode();
+
+        int n = tdfa.stateCount;
+
+        // ENTRY_MASK
+        emitNewIntArray(mv, n);
+        for (int s = 0; s < n; s++) {
+            if (tdfa.stateEntryMask[s] != 0) {
+                mv.visitInsn(Opcodes.DUP);
+                iconst(mv, s);
+                iconst(mv, tdfa.stateEntryMask[s]);
+                mv.visitInsn(Opcodes.IASTORE);
+            }
+        }
+        mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "ENTRY_MASK", "[I");
+
+        // ACCEPT_MASK
+        emitNewIntArray(mv, n);
+        for (int s = 0; s < n; s++) {
+            if (tdfa.stateAcceptMask[s] != 0) {
+                mv.visitInsn(Opcodes.DUP);
+                iconst(mv, s);
+                iconst(mv, tdfa.stateAcceptMask[s]);
+                mv.visitInsn(Opcodes.IASTORE);
+            }
+        }
+        mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "ACCEPT_MASK", "[I");
+
+        // STOP_MASK = new int[n*16]; Arrays.fill(STOP_MASK, NEVER_STOP); set exceptions
+        int stopLen = n * 16;
+        emitNewIntArray(mv, stopLen);
+        mv.visitInsn(Opcodes.DUP);
+        iconst(mv, Tdfa.NEVER_STOP);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, ARRAYS, "fill", "([II)V", false);
+        int[] som = tdfa.stopOnAcceptMask;
+        for (int i = 0; i < som.length; i++) {
+            if (som[i] != Tdfa.NEVER_STOP) {
+                mv.visitInsn(Opcodes.DUP);
+                iconst(mv, i);
+                iconst(mv, som[i]);
+                mv.visitInsn(Opcodes.IASTORE);
+            }
+        }
+        mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "STOP_MASK", "[I");
+
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+
+        // declare the static fields
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL,
+                "ENTRY_MASK", "[I", null, null).visitEnd();
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL,
+                "ACCEPT_MASK", "[I", null, null).visitEnd();
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL,
+                "STOP_MASK", "[I", null, null).visitEnd();
+    }
+
+    // ===== <init> =========================================================
+
+    private static void generateConstructor(ClassWriter cw) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // ===== matches(CharSequence) ==========================================
+
+    private static void generateMatches(ClassWriter cw, Tdfa tdfa, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matches",
+                "(" + CS_DESC + ")Z", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, CHAR_SEQ, "length", "()I", true);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, owner, "run", RUN_DESC, false);
+        Label ok = new Label();
+        mv.visitJumpInsn(Opcodes.IFNONNULL, ok);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitLabel(ok);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // ===== find(CharSequence) =============================================
+
+    private static void generateFind(ClassWriter cw, Tdfa tdfa, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "find",
+                "(" + CS_DESC + ")Z", null, null);
+        mv.visitCode();
+
+        // int len = i.length();
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, CHAR_SEQ, "length", "()I", true);
+        mv.visitVarInsn(Opcodes.ISTORE, 2);
+
+        if (tdfa.startRequiresBeginText()) {
+            emitRunCall(mv, owner, 0, 1, 0, 2, 0);
+            Label ok = new Label();
+            mv.visitJumpInsn(Opcodes.IFNONNULL, ok);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitInsn(Opcodes.IRETURN);
+            mv.visitLabel(ok);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitInsn(Opcodes.IRETURN);
+        } else {
+            // for (int from = 0; from <= len; from++)
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitVarInsn(Opcodes.ISTORE, 3);
+            Label loop = new Label(), end = new Label();
+            mv.visitLabel(loop);
+            mv.visitVarInsn(Opcodes.ILOAD, 3);
+            mv.visitVarInsn(Opcodes.ILOAD, 2);
+            mv.visitJumpInsn(Opcodes.IF_ICMPGT, end);
+            emitRunCall(mv, owner, 0, 1, 3, 2, 0);
+            Label found = new Label();
+            mv.visitJumpInsn(Opcodes.IFNONNULL, found);
+            mv.visitIincInsn(3, 1);
+            mv.visitJumpInsn(Opcodes.GOTO, loop);
+            mv.visitLabel(found);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitInsn(Opcodes.IRETURN);
+            mv.visitLabel(end);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitInsn(Opcodes.IRETURN);
+        }
+
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // ===== match(CharSequence, int) =======================================
+
+    private static void generateMatch(ClassWriter cw, Tdfa tdfa, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match",
+                "(" + CS_DESC + "I)L" + MATCH_RESULT + ";", null, null);
+        mv.visitCode();
+
+        // int len = i.length();
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, CHAR_SEQ, "length", "()I", true);
+        int LV_LEN = 3, LV_MAX = 4, LV_F = 5, LV_H = 6;
+        mv.visitVarInsn(Opcodes.ISTORE, LV_LEN);
+
+        // int maxStart = startReqBT ? 0 : len;
+        if (tdfa.startRequiresBeginText()) mv.visitInsn(Opcodes.ICONST_0);
+        else mv.visitVarInsn(Opcodes.ILOAD, LV_LEN);
+        mv.visitVarInsn(Opcodes.ISTORE, LV_MAX);
+
+        // for (int f = from; f <= maxStart; f++)
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitVarInsn(Opcodes.ISTORE, LV_F);
+
+        Label loop = new Label(), end = new Label();
+        mv.visitLabel(loop);
+        mv.visitVarInsn(Opcodes.ILOAD, LV_F);
+        mv.visitVarInsn(Opcodes.ILOAD, LV_MAX);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGT, end);
+
+        emitRunCall(mv, owner, 0, 1, LV_F, LV_LEN, 0);
+        mv.visitVarInsn(Opcodes.ASTORE, LV_H);
+
+        mv.visitVarInsn(Opcodes.ALOAD, LV_H);
+        Label next = new Label();
+        mv.visitJumpInsn(Opcodes.IFNULL, next);
+
+        // return new MatchResult(h.regs, tagCount, groupCount, h.matchStart, h.matchEnd);
+        mv.visitTypeInsn(Opcodes.NEW, MATCH_RESULT);
+        mv.visitInsn(Opcodes.DUP);
+        mv.visitVarInsn(Opcodes.ALOAD, LV_H);
+        mv.visitFieldInsn(Opcodes.GETFIELD, MATCH_HOLDER, "regs", "[I");
+        iconst(mv, tdfa.tagCount);
+        iconst(mv, tdfa.groupCount);
+        mv.visitVarInsn(Opcodes.ALOAD, LV_H);
+        mv.visitFieldInsn(Opcodes.GETFIELD, MATCH_HOLDER, "matchStart", "I");
+        mv.visitVarInsn(Opcodes.ALOAD, LV_H);
+        mv.visitFieldInsn(Opcodes.GETFIELD, MATCH_HOLDER, "matchEnd", "I");
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, MATCH_RESULT, "<init>", "([IIIII)V", false);
+        mv.visitInsn(Opcodes.ARETURN);
+
+        mv.visitLabel(next);
+        mv.visitIincInsn(LV_F, 1);
+        mv.visitJumpInsn(Opcodes.GOTO, loop);
+        mv.visitLabel(end);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ARETURN);
+
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // ===== run — core DFA walk ============================================
+
+    private static void generateRun(ClassWriter cw, Tdfa tdfa, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE, "run", RUN_DESC, null, null);
+        mv.visitCode();
+
+        final int nStates = tdfa.stateCount;
+        final int[] sm = tdfa.stateMeta;
+        final int[] sfo = tdfa.stateFinalOpsOff;
+        final int[] rg = tdfa.ranges;
+        final int[] op = tdfa.ops;
+        final boolean perl = tdfa.perlMode;
+
+        final int I = 1, FROM = 2, TO = 3, ANC = 4;
+        final int REGS = 5, ST = 6, POS = 7, LAP = 8, LAS = 9, MS = 10;
+        final int HA = 11, DEAD = 12, C = 13, PF = 14, R = 15;
+
+        // int[] regs = new int[registerCount]; Arrays.fill(regs, -1);
+        iconst(mv, tdfa.registerCount);
+        mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
+        mv.visitVarInsn(Opcodes.ASTORE, REGS);
+        mv.visitVarInsn(Opcodes.ALOAD, REGS);
+        mv.visitInsn(Opcodes.ICONST_M1);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, ARRAYS, "fill", "([II)V", false);
+
+        iconst(mv, tdfa.startState); mv.visitVarInsn(Opcodes.ISTORE, ST);
+        mv.visitVarInsn(Opcodes.ILOAD, FROM);    mv.visitVarInsn(Opcodes.ISTORE, POS);
+        mv.visitInsn(Opcodes.ICONST_M1);         mv.visitVarInsn(Opcodes.ISTORE, LAP);
+        mv.visitInsn(Opcodes.ICONST_M1);         mv.visitVarInsn(Opcodes.ISTORE, LAS);
+        mv.visitVarInsn(Opcodes.ILOAD, FROM);    mv.visitVarInsn(Opcodes.ISTORE, MS);
+        mv.visitInsn(Opcodes.ICONST_0);          mv.visitVarInsn(Opcodes.ISTORE, HA);
+        mv.visitInsn(Opcodes.ICONST_0);          mv.visitVarInsn(Opcodes.ISTORE, DEAD);
+
+        // if (!entryOk(state, pos, to, input)) return null;
+        emitEntryOk(mv, owner, ST, POS, TO, I);
+        Label initOk = new Label();
+        mv.visitJumpInsn(Opcodes.IFNE, initOk);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitLabel(initOk);
+
+        Label loopStart = new Label();
+        Label loopEnd   = new Label();
+        Label afterSw   = new Label();
+
+        // ---- LOOP ----
+        mv.visitLabel(loopStart);
+
+        // Accept check
+        mv.visitVarInsn(Opcodes.ILOAD, ST);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isAccept", "(I)Z", false);
+        Label skipAcc = new Label();
+        mv.visitJumpInsn(Opcodes.IFEQ, skipAcc);
+
+        emitAcceptOk(mv, owner, ST, POS, TO, I);
+        mv.visitJumpInsn(Opcodes.IFEQ, skipAcc);
+
+        mv.visitVarInsn(Opcodes.ILOAD, POS);  mv.visitVarInsn(Opcodes.ISTORE, LAP);
+        mv.visitVarInsn(Opcodes.ILOAD, ST);   mv.visitVarInsn(Opcodes.ISTORE, LAS);
+        mv.visitInsn(Opcodes.ICONST_1);       mv.visitVarInsn(Opcodes.ISTORE, HA);
+
+        if (perl) {
+            // pf = positionFlags(pos, to, input)
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitVarInsn(Opcodes.ILOAD, TO);
+            mv.visitVarInsn(Opcodes.ALOAD, I);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "positionFlags",
+                    "(II" + CS_DESC + ")I", false);
+            mv.visitVarInsn(Opcodes.ISTORE, PF);
+            // int stopMask = STOP_MASK[state * 16 + pf]
+            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "STOP_MASK", "[I");
+            mv.visitVarInsn(Opcodes.ILOAD, ST);
+            mv.visitIntInsn(Opcodes.BIPUSH, 16);
+            mv.visitInsn(Opcodes.IMUL);
+            mv.visitVarInsn(Opcodes.ILOAD, PF);
+            mv.visitInsn(Opcodes.IADD);
+            mv.visitInsn(Opcodes.IALOAD);
+            iconst(mv, Tdfa.NEVER_STOP);
+            Label noStop = new Label();
+            mv.visitJumpInsn(Opcodes.IF_ICMPEQ, noStop);
+            mv.visitJumpInsn(Opcodes.GOTO, loopEnd);
+            mv.visitLabel(noStop);
+        }
+        mv.visitLabel(skipAcc);
+
+        // if (pos == to) break;
+        mv.visitVarInsn(Opcodes.ILOAD, POS);
+        mv.visitVarInsn(Opcodes.ILOAD, TO);
+        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, loopEnd);
+
+        // c = input.charAt(pos)
+        mv.visitVarInsn(Opcodes.ALOAD, I);
+        mv.visitVarInsn(Opcodes.ILOAD, POS);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, CHAR_SEQ, "charAt", "(I)C", true);
+        mv.visitVarInsn(Opcodes.ISTORE, C);
+
+        // posFlags = positionFlags(pos, to, input)
+        mv.visitVarInsn(Opcodes.ILOAD, POS);
+        mv.visitVarInsn(Opcodes.ILOAD, TO);
+        mv.visitVarInsn(Opcodes.ALOAD, I);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "positionFlags",
+                "(II" + CS_DESC + ")I", false);
+        mv.visitVarInsn(Opcodes.ISTORE, PF);
+
+        // switch (state)
+        Label[] sl = new Label[nStates];
+        Label defL = new Label();
+        for (int s = 0; s < nStates; s++) sl[s] = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, ST);
+        mv.visitTableSwitchInsn(0, nStates - 1, defL, sl);
+
+        for (int s = 0; s < nStates; s++) {
+            mv.visitLabel(sl[s]);
+            int meta = sm[s];
+            int base = meta >>> 9;
+            int cnt  = (meta >>> 1) & 0xFF;
+
+            // Collect live (non-dead) ranges
+            List<int[]> live = new ArrayList<>();
+            for (int i = 0; i < cnt; i++) {
+                int o = (base + i) * 5;
+                if (rg[o + 2] >= 0) {
+                    live.add(new int[]{rg[o], rg[o + 1], rg[o + 2], rg[o + 3], rg[o + 4]});
                 }
-            };
+            }
+
+            Label stateDead = new Label();
+            int nLive = live.size();
+
+            for (int ri = 0; ri < nLive; ri++) {
+                int[] range = live.get(ri);
+                int lo = range[0], hi = range[1], target = range[2];
+                int opsOff = range[3], reqMask = range[4];
+                boolean isLast = (ri == nLive - 1);
+                Label nextRange = isLast ? stateDead : new Label();
+
+                // if (c >= lo && c <= hi)
+                mv.visitVarInsn(Opcodes.ILOAD, C);
+                iconst(mv, lo);
+                mv.visitJumpInsn(Opcodes.IF_ICMPLT, nextRange);
+                mv.visitVarInsn(Opcodes.ILOAD, C);
+                iconst(mv, hi);
+                mv.visitJumpInsn(Opcodes.IF_ICMPGT, nextRange);
+
+                if (reqMask != 0) {
+                    mv.visitVarInsn(Opcodes.ILOAD, PF);
+                    iconst(mv, reqMask);
+                    mv.visitInsn(Opcodes.IAND);
+                    iconst(mv, reqMask);
+                    mv.visitJumpInsn(Opcodes.IF_ICMPNE, nextRange);
+                }
+
+                // inline register ops
+                if (opsOff != 0) {
+                    emitOpsInline(mv, op, opsOff, REGS, POS, false, -1);
+                }
+
+                // state = target
+                iconst(mv, target);
+                mv.visitVarInsn(Opcodes.ISTORE, ST);
+
+                // pos += pairAdvance(c, pos, to, input)
+                mv.visitVarInsn(Opcodes.ILOAD, C);
+                mv.visitVarInsn(Opcodes.ILOAD, POS);
+                mv.visitVarInsn(Opcodes.ILOAD, TO);
+                mv.visitVarInsn(Opcodes.ALOAD, I);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "pairAdvance",
+                        "(CII" + CS_DESC + ")I", false);
+                mv.visitVarInsn(Opcodes.ILOAD, POS);
+                mv.visitInsn(Opcodes.IADD);
+                mv.visitVarInsn(Opcodes.ISTORE, POS);
+
+                // entryOk(state, pos+1, to, input)
+                mv.visitVarInsn(Opcodes.ILOAD, ST);
+                mv.visitVarInsn(Opcodes.ILOAD, POS);
+                mv.visitInsn(Opcodes.ICONST_1);
+                mv.visitInsn(Opcodes.IADD);
+                mv.visitVarInsn(Opcodes.ILOAD, TO);
+                mv.visitVarInsn(Opcodes.ALOAD, I);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "entryOk",
+                        "(III" + CS_DESC + ")Z", false);
+                Label entryOk = new Label();
+                mv.visitJumpInsn(Opcodes.IFNE, entryOk);
+                mv.visitInsn(Opcodes.ICONST_1);
+                mv.visitVarInsn(Opcodes.ISTORE, DEAD);
+                mv.visitJumpInsn(Opcodes.GOTO, afterSw);
+                mv.visitLabel(entryOk);
+
+                mv.visitIincInsn(POS, 1);
+                mv.visitJumpInsn(Opcodes.GOTO, loopStart);
+
+                if (!isLast) mv.visitLabel(nextRange);
+            }
+
+            mv.visitLabel(stateDead);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitVarInsn(Opcodes.ISTORE, DEAD);
+            mv.visitJumpInsn(Opcodes.GOTO, afterSw);
+        }
+
+        mv.visitLabel(defL);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitVarInsn(Opcodes.ISTORE, DEAD);
+
+        mv.visitLabel(afterSw);
+        mv.visitVarInsn(Opcodes.ILOAD, DEAD);
+        mv.visitJumpInsn(Opcodes.IFEQ, loopStart);
+
+        // ---- POST-LOOP ----
+        mv.visitLabel(loopEnd);
+
+        Label retNull = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, HA);
+        mv.visitJumpInsn(Opcodes.IFEQ, retNull);
+
+        // if (anchored && lastAcceptPos != to) return null
+        mv.visitVarInsn(Opcodes.ILOAD, ANC);
+        Label doClone = new Label();
+        mv.visitJumpInsn(Opcodes.IFEQ, doClone);
+        mv.visitVarInsn(Opcodes.ILOAD, LAP);
+        mv.visitVarInsn(Opcodes.ILOAD, TO);
+        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, doClone);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitLabel(doClone);
+
+        // r = regs.clone()
+        mv.visitVarInsn(Opcodes.ALOAD, REGS);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "[I", "clone", "()Ljava/lang/Object;", false);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, "[I");
+        mv.visitVarInsn(Opcodes.ASTORE, R);
+
+        // switch(lastAcceptState) { apply final ops to r }
+        List<int[]> finals = new ArrayList<>();
+        for (int s = 0; s < nStates; s++) {
+            if ((sm[s] & 1) != 0 && sfo[s] != 0) finals.add(new int[]{s, sfo[s]});
+        }
+        if (!finals.isEmpty()) {
+            int nf = finals.size();
+            int[] keys = new int[nf];
+            Label[] fl = new Label[nf];
+            Label fDef = new Label(), fAfter = new Label();
+            for (int k = 0; k < nf; k++) { keys[k] = finals.get(k)[0]; fl[k] = new Label(); }
+
+            mv.visitVarInsn(Opcodes.ILOAD, LAS);
+            mv.visitLookupSwitchInsn(fDef, keys, fl);
+
+            for (int k = 0; k < nf; k++) {
+                mv.visitLabel(fl[k]);
+                emitOpsInline(mv, op, finals.get(k)[1], R, LAP, true, -1);
+                mv.visitJumpInsn(Opcodes.GOTO, fAfter);
+            }
+            mv.visitLabel(fDef);
+            mv.visitLabel(fAfter);
+        }
+
+        // return new MatchHolder(matchStart, lastAcceptPos, r)
+        mv.visitTypeInsn(Opcodes.NEW, MATCH_HOLDER);
+        mv.visitInsn(Opcodes.DUP);
+        mv.visitVarInsn(Opcodes.ILOAD, MS);
+        mv.visitVarInsn(Opcodes.ILOAD, LAP);
+        mv.visitVarInsn(Opcodes.ALOAD, R);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, MATCH_HOLDER, "<init>", "(II[I)V", false);
+        mv.visitInsn(Opcodes.ARETURN);
+
+        mv.visitLabel(retNull);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ARETURN);
+
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // ===== isAccept(int) ==================================================
+
+    private static void generateIsAccept(ClassWriter cw, Tdfa tdfa, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "isAccept", "(I)Z", null, null);
+        mv.visitCode();
+
+        int n = tdfa.stateCount;
+        int[] sm = tdfa.stateMeta;
+        Label[] labels = new Label[n];
+        Label falseL = new Label();
+        for (int s = 0; s < n; s++) labels[s] = new Label();
+
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitTableSwitchInsn(0, n - 1, falseL, labels);
+
+        for (int s = 0; s < n; s++) {
+            mv.visitLabel(labels[s]);
+            if ((sm[s] & 1) != 0) {
+                mv.visitInsn(Opcodes.ICONST_1);
+                mv.visitInsn(Opcodes.IRETURN);
+            } else {
+                mv.visitJumpInsn(Opcodes.GOTO, falseL);
+            }
+        }
+        mv.visitLabel(falseL);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitInsn(Opcodes.IRETURN);
+
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // ===== entryOk(int, int, int, CharSequence) ===========================
+
+    private static void generateEntryOk(ClassWriter cw, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "entryOk", "(III" + CS_DESC + ")Z", null, null);
+        mv.visitCode();
+        // locals: 0=state, 1=pos, 2=to, 3=input, 4=required
+        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ENTRY_MASK", "[I");
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitInsn(Opcodes.IALOAD);
+        mv.visitVarInsn(Opcodes.ISTORE, 4);
+
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        Label cont = new Label();
+        mv.visitJumpInsn(Opcodes.IFNE, cont);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitLabel(cont);
+
+        // (positionFlags(pos, to, input) & required) == required
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "positionFlags",
+                "(II" + CS_DESC + ")I", false);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitInsn(Opcodes.IAND);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        Label yes = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, yes);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitLabel(yes);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // ===== acceptOk(int, int, int, CharSequence) ==========================
+
+    private static void generateAcceptOk(ClassWriter cw, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "acceptOk", "(III" + CS_DESC + ")Z", null, null);
+        mv.visitCode();
+        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ACCEPT_MASK", "[I");
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitInsn(Opcodes.IALOAD);
+        mv.visitVarInsn(Opcodes.ISTORE, 4);
+
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        Label cont = new Label();
+        mv.visitJumpInsn(Opcodes.IFNE, cont);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitLabel(cont);
+
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "positionFlags",
+                "(II" + CS_DESC + ")I", false);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitInsn(Opcodes.IAND);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        Label yes = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, yes);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitLabel(yes);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // ===== positionFlags(int, int, CharSequence) ==========================
+
+    private static void generatePositionFlags(ClassWriter cw, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "positionFlags", "(II" + CS_DESC + ")I", null, null);
+        mv.visitCode();
+        // locals: 0=pos, 1=to, 2=input, 3=flags, 4=prevWord, 5=currWord
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitVarInsn(Opcodes.ISTORE, 3);
+
+        // if (pos == 0) flags |= BEGIN_TEXT
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        Label l1 = new Label();
+        mv.visitJumpInsn(Opcodes.IFNE, l1);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.IOR);
+        mv.visitVarInsn(Opcodes.ISTORE, 3);
+        mv.visitLabel(l1);
+
+        // if (pos == to) flags |= END_TEXT
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        Label l2 = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPNE, l2);
+        mv.visitInsn(Opcodes.ICONST_2);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.IOR);
+        mv.visitVarInsn(Opcodes.ISTORE, 3);
+        mv.visitLabel(l2);
+
+        // boolean prevWord = pos > 0 && isWord(input.charAt(pos-1))
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        Label pf = new Label(), pd = new Label();
+        mv.visitJumpInsn(Opcodes.IFLE, pf);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.ISUB);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, CHAR_SEQ, "charAt", "(I)C", true);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWord", "(C)Z", false);
+        mv.visitJumpInsn(Opcodes.GOTO, pd);
+        mv.visitLabel(pf);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitLabel(pd);
+        mv.visitVarInsn(Opcodes.ISTORE, 4);
+
+        // boolean currWord = pos < to && isWord(input.charAt(pos))
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        Label cf = new Label(), cd = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, cf);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitJumpInsn(Opcodes.GOTO, cd);
+        mv.visitLabel(cf);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, CHAR_SEQ, "charAt", "(I)C", true);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWord", "(C)Z", false);
+        mv.visitLabel(cd);
+        mv.visitVarInsn(Opcodes.ISTORE, 5);
+
+        // if (prevWord != currWord) flags |= WORD_BOUNDARY; else flags |= NO_WORD_BOUNDARY
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
+        Label nb = new Label(), done = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, nb);
+        mv.visitInsn(Opcodes.ICONST_4);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.IOR);
+        mv.visitVarInsn(Opcodes.ISTORE, 3);
+        mv.visitJumpInsn(Opcodes.GOTO, done);
+        mv.visitLabel(nb);
+        mv.visitIntInsn(Opcodes.BIPUSH, 8);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.IOR);
+        mv.visitVarInsn(Opcodes.ISTORE, 3);
+        mv.visitLabel(done);
+
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // ===== isWord(char) ===================================================
+
+    private static void generateIsWord(ClassWriter cw) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "isWord", "(C)Z", null, null);
+        mv.visitCode();
+
+        Label t = new Label(), f = new Label();
+
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitLdcInsn((int) '_');
+        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, t);
+
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitIntInsn(Opcodes.BIPUSH, '0');
+        Label cl = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, cl);
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitIntInsn(Opcodes.BIPUSH, '9');
+        mv.visitJumpInsn(Opcodes.IF_ICMPLE, t);
+        mv.visitLabel(cl);
+
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitIntInsn(Opcodes.BIPUSH, 'a');
+        Label cu = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, cu);
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitIntInsn(Opcodes.BIPUSH, 'z');
+        mv.visitJumpInsn(Opcodes.IF_ICMPLE, t);
+        mv.visitLabel(cu);
+
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitIntInsn(Opcodes.BIPUSH, 'A');
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, f);
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitIntInsn(Opcodes.BIPUSH, 'Z');
+        mv.visitJumpInsn(Opcodes.IF_ICMPGT, f);
+
+        mv.visitLabel(t);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IRETURN);
+
+        mv.visitLabel(f);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitInsn(Opcodes.IRETURN);
+
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // ===== pairAdvance(char, int, int, CharSequence) ======================
+
+    private static void generatePairAdvance(ClassWriter cw) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "pairAdvance", "(CII" + CS_DESC + ")I", null, null);
+        mv.visitCode();
+
+        Label zero = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitLdcInsn(0xD800);
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, zero);
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitLdcInsn(0xDBFF);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGT, zero);
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGE, zero);
+
+        // c2 = input.charAt(pos+1) → store in local 4
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, CHAR_SEQ, "charAt", "(I)C", true);
+        mv.visitVarInsn(Opcodes.ISTORE, 4);
+
+        // return (c2 >= 0xDC00 && c2 <= 0xDFFF) ? 1 : 0
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitLdcInsn(0xDC00);
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, zero);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitLdcInsn(0xDFFF);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGT, zero);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IRETURN);
+
+        mv.visitLabel(zero);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitInsn(Opcodes.IRETURN);
+
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // ===== Shared emit helpers ============================================
+
+    /**
+     * Emits inline register ops from the flat ops array.
+     * @param regsLv  local var index of the regs array
+     * @param posLv   local var index of pos (for SET_POS); -1 to use posVal instead
+     * @param isFinal true if these are final ops (value is posLv; SET_POS uses it directly)
+     * @param posVal  literal pos value when posLv == -1
+     */
+    private static void emitOpsInline(MethodVisitor mv, int[] op, int opsOff,
+                                      int regsLv, int posLv, boolean isFinal, int posVal) {
+        int j = opsOff;
+        while (op[j] != Tdfa.OP_END) {
+            int opc = op[j], dst = op[j + 1], src = op[j + 2];
+            if (opc == Tdfa.OP_SET_POS) {
+                mv.visitVarInsn(Opcodes.ALOAD, regsLv);
+                iconst(mv, dst);
+                if (posLv >= 0) mv.visitVarInsn(Opcodes.ILOAD, posLv);
+                else            iconst(mv, posVal);
+                mv.visitInsn(Opcodes.IASTORE);
+            } else if (opc == Tdfa.OP_SET_NIL) {
+                mv.visitVarInsn(Opcodes.ALOAD, regsLv);
+                iconst(mv, dst);
+                mv.visitInsn(Opcodes.ICONST_M1);
+                mv.visitInsn(Opcodes.IASTORE);
+            } else if (opc == Tdfa.OP_COPY) {
+                mv.visitVarInsn(Opcodes.ALOAD, regsLv);
+                iconst(mv, dst);
+                mv.visitVarInsn(Opcodes.ALOAD, regsLv);
+                iconst(mv, src);
+                mv.visitInsn(Opcodes.IALOAD);
+                mv.visitInsn(Opcodes.IASTORE);
+            }
+            j += 3;
+        }
+    }
+
+    /** Emits a run(input, from, to, anchored) call. */
+    private static void emitRunCall(MethodVisitor mv, String owner,
+                                    int lvThis, int lvInput, int lvFrom, int lvTo, int anchored) {
+        mv.visitVarInsn(Opcodes.ALOAD, lvThis);
+        mv.visitVarInsn(Opcodes.ALOAD, lvInput);
+        mv.visitVarInsn(Opcodes.ILOAD, lvFrom);
+        mv.visitVarInsn(Opcodes.ILOAD, lvTo);
+        iconst(mv, anchored);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, owner, "run", RUN_DESC, false);
+    }
+
+    /** Emits entryOk(state, pos, to, input) as INVOKESTATIC. */
+    private static void emitEntryOk(MethodVisitor mv, String owner,
+                                    int lvState, int lvPos, int lvTo, int lvInput) {
+        mv.visitVarInsn(Opcodes.ILOAD, lvState);
+        mv.visitVarInsn(Opcodes.ILOAD, lvPos);
+        mv.visitVarInsn(Opcodes.ILOAD, lvTo);
+        mv.visitVarInsn(Opcodes.ALOAD, lvInput);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "entryOk",
+                "(III" + CS_DESC + ")Z", false);
+    }
+
+    /** Emits acceptOk(state, pos, to, input) as INVOKESTATIC. */
+    private static void emitAcceptOk(MethodVisitor mv, String owner,
+                                     int lvState, int lvPos, int lvTo, int lvInput) {
+        mv.visitVarInsn(Opcodes.ILOAD, lvState);
+        mv.visitVarInsn(Opcodes.ILOAD, lvPos);
+        mv.visitVarInsn(Opcodes.ILOAD, lvTo);
+        mv.visitVarInsn(Opcodes.ALOAD, lvInput);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "acceptOk",
+                "(III" + CS_DESC + ")Z", false);
+    }
+
+    private static void emitNewIntArray(MethodVisitor mv, int size) {
+        iconst(mv, size);
+        mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
+    }
+
+    private static void iconst(MethodVisitor mv, int val) {
+        if (val >= -1 && val <= 5) {
+            mv.visitInsn(Opcodes.ICONST_0 + val);
+        } else if (val >= Byte.MIN_VALUE && val <= Byte.MAX_VALUE) {
+            mv.visitIntInsn(Opcodes.BIPUSH, val);
+        } else if (val >= Short.MIN_VALUE && val <= Short.MAX_VALUE) {
+            mv.visitIntInsn(Opcodes.SIPUSH, val);
+        } else {
+            mv.visitLdcInsn(val);
         }
     }
 }
