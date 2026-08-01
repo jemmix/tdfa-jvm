@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.parser;
 
 import io.github.jemmix.tdfa.ast.Ast;
 import io.github.jemmix.tdfa.ast.CharClass;
+import io.github.jemmix.tdfa.unicode.UnicodeProviders;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -183,6 +184,12 @@ public final class Parser {
                 if (sr != null) {
                     pos += 2;
                     for (int v : sr) ranges.add(v);
+                    continue;
+                }
+                // Unicode property classes \p{X} \pX \P{X} \PX \p{^X}
+                if (next == 'p' || next == 'P') {
+                    pos += 2;  // consume '\' and 'p'/'P'
+                    appendUnicodeToRanges(ranges, next == 'p', false);
                     continue;
                 }
             }
@@ -380,8 +387,128 @@ public final class Parser {
             case 'z' -> new Ast.EndAnchor();            // \z = end of text (no before-\n special case)
             case 'b' -> new Ast.WordBoundary();         // \b = word boundary
             case 'B' -> new Ast.NoWordBoundary();       // \B = not a word boundary
+            // Unicode property classes \p{X} \pX \P{X} \PX \p{^X}.
+            // Outside a char class, build a CharClass directly (the table's
+            // own negation flag carries the \P sign; no complement materialisation).
+            case 'p' -> parseUnicodeEscape(true);
+            case 'P' -> parseUnicodeEscape(false);
             default -> new Ast.Symbol(c);
         };
+    }
+
+    /**
+     * Parse a Unicode property escape after the {@code \p} / {@code \P} prefix
+     * (caller has consumed both characters). Supports all four re2j syntaxes:
+     * {@code \p{X}}, {@code \pX}, {@code \P{X}}, {@code \PX}, plus internal
+     * negation {@code \p{^X}} (equivalent to {@code \P{X}}).
+     *
+     * @param positive {@code true} for {@code \p}, {@code false} for {@code \P}
+     */
+    private Ast parseUnicodeEscape(boolean positive) {
+        String name = parseUnicodeName();
+        boolean innerNeg = false;
+        if (name.startsWith("^")) { innerNeg = true; name = name.substring(1); }
+        // Truth table:
+        //   \p{X}  → (T, F) → negated=F
+        //   \p{^X} → (T, T) → negated=T
+        //   \P{X}  → (F, F) → negated=T
+        //   \P{^X} → (F, T) → negated=F
+        boolean negated = (positive == innerNeg);
+
+        int[] t = UnicodeProviders.get().tableFor(name);
+        if (t == null) throw fail(this, "unknown character class name: " + name);
+        int[] fold = caseInsensitive ? UnicodeProviders.get().foldTableFor(name) : null;
+        if (fold != null && fold.length > 0) t = mergeRanges(t, fold);
+        t = clampToBmp(t);
+        return new CharClass(t, negated);
+    }
+
+    /** Append Unicode property ranges into a class's accumulator. The caller
+     *  has already consumed {@code \p} / {@code \P}; we read the name and
+     *  materialise the ranges (with complement if {@code \P}) into {@code out}.
+     *  The class's own {@code [^...]} negation is applied at the end via the
+     *  existing CharClass path; here we only handle the escape's own sign. */
+    private void appendUnicodeToRanges(List<Integer> out, boolean positive, boolean unused) {
+        String name = parseUnicodeName();
+        boolean innerNeg = false;
+        if (name.startsWith("^")) { innerNeg = true; name = name.substring(1); }
+        boolean negate = (positive == innerNeg);  // see parseUnicodeEscape truth table
+        int[] t = UnicodeProviders.get().tableFor(name);
+        if (t == null) throw fail(this, "unknown character class name: " + name);
+        int[] fold = caseInsensitive ? UnicodeProviders.get().foldTableFor(name) : null;
+        if (fold != null && fold.length > 0) t = mergeRanges(t, fold);
+        t = clampToBmp(t);
+        if (negate) t = complementRanges(t);
+        for (int v : t) out.add(v);
+    }
+
+    /** Read a Unicode property name after {@code \p}/{@code \P}: either
+     *  braced {@code {name}} or a single letter {@code L}, {@code N}, etc. */
+    private String parseUnicodeName() {
+        if (pos < src.length() && src.charAt(pos) == '{') {
+            pos++;
+            int start = pos;
+            while (pos < src.length() && src.charAt(pos) != '}') pos++;
+            if (pos >= src.length()) throw fail(this, "unclosed '\\p{' in pattern");
+            String name = src.substring(start, pos);
+            pos++;  // consume '}'
+            if (name.isEmpty()) throw fail(this, "empty property name in '\\p{}'");
+            return name;
+        }
+        if (pos >= src.length()) throw fail(this, "incomplete '\\p' escape");
+        String name = String.valueOf(src.charAt(pos));
+        pos++;
+        return name;
+    }
+
+    /** Compute the complement of {@code ranges} within [0, 0xFFFF]. */
+    private static int[] complementRanges(int[] ranges) {
+        List<Integer> out = new ArrayList<>();
+        int prev = 0;
+        for (int i = 0; i < ranges.length; i += 2) {
+            int lo = ranges[i], hi = ranges[i + 1];
+            if (lo > prev) { out.add(prev); out.add(lo - 1); }
+            prev = Math.max(prev, hi + 1);
+            if (prev > 0xFFFF) break;
+        }
+        if (prev <= 0xFFFF) { out.add(prev); out.add(0xFFFF); }
+        return out.stream().mapToInt(Integer::intValue).toArray();
+    }
+
+    /** Merge two sorted range arrays into a sorted, merged result. */
+    private static int[] mergeRanges(int[] a, int[] b) {
+        List<int[]> all = new ArrayList<>();
+        for (int i = 0; i < a.length; i += 2) all.add(new int[]{a[i], a[i + 1]});
+        for (int i = 0; i < b.length; i += 2) all.add(new int[]{b[i], b[i + 1]});
+        all.sort((x, y) -> Integer.compare(x[0], y[0]));
+        List<int[]> merged = new ArrayList<>();
+        for (int[] r : all) {
+            if (!merged.isEmpty() && r[0] <= merged.get(merged.size() - 1)[1] + 1) {
+                merged.get(merged.size() - 1)[1] = Math.max(merged.get(merged.size() - 1)[1], r[1]);
+            } else {
+                merged.add(new int[]{r[0], r[1]});
+            }
+        }
+        int[] out = new int[merged.size() * 2];
+        for (int i = 0; i < merged.size(); i++) {
+            out[2 * i]     = merged.get(i)[0];
+            out[2 * i + 1] = merged.get(i)[1];
+        }
+        return out;
+    }
+
+    /** Truncate ranges to the BMP (0..0xFFFF); ranges entirely above 0xFFFF
+     *  are dropped, ranges spanning the boundary are clamped. Necessary
+     *  because CharClass is currently {@code char}-based. */
+    private static int[] clampToBmp(int[] ranges) {
+        List<Integer> out = new ArrayList<>();
+        for (int i = 0; i < ranges.length; i += 2) {
+            int lo = ranges[i], hi = ranges[i + 1];
+            if (lo > 0xFFFF) continue;
+            out.add(lo);
+            out.add(Math.min(hi, 0xFFFF));
+        }
+        return out.stream().mapToInt(Integer::intValue).toArray();
     }
 
     /**
