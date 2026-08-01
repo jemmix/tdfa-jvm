@@ -141,6 +141,7 @@ public final class TdfaAsmBackend {
                     }
                 }
                 sb.append("            state = ").append(target).append(";\n");
+                sb.append("            pos += pairAdvance(c, pos, to, input);\n");
                 sb.append("            if (!entryOk(state, pos + 1, to, input)) { dead = true; break; }\n");
                 sb.append("            pos++; continue;\n");
                 sb.append("          }\n");
@@ -219,6 +220,11 @@ public final class TdfaAsmBackend {
         sb.append("  }\n");
         sb.append("  private static boolean isWord(char c) {\n");
         sb.append("    return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');\n");
+        sb.append("  }\n");
+        sb.append("  private static int pairAdvance(char c, int pos, int to, CharSequence input) {\n");
+        sb.append("    if (c < 0xD800 || c > 0xDBFF || pos + 1 >= to) return 0;\n");
+        sb.append("    char c2 = input.charAt(pos + 1);\n");
+        sb.append("    return (c2 >= 0xDC00 && c2 <= 0xDFFF) ? 1 : 0;\n");
         sb.append("  }\n");
         sb.append("}\n");
         return sb.toString();

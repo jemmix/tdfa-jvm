@@ -140,6 +140,14 @@ public final class TdfaRunner implements Regex.Engine {
                             if (opsOff != 0) applyOps(op, opsOff, regs, pos);
                         }
                         state = target;
+                        // Codepoint-aware consumption: if we just matched a high surrogate
+                        // that's followed by a low surrogate, advance once more so the
+                        // entire supplementary codepoint is consumed as one transition
+                        // (mirrors re2j's rune-based input).
+                        if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
+                                && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
+                            pos++;
+                        }
                         // Destination entryMask will be checked at the top of the next iteration.
                         if (!entryMaskOk(sem, state, input, pos + 1, to)) {
                             // Destination cannot be entered — treat as dead.
@@ -207,6 +215,11 @@ public final class TdfaRunner implements Regex.Engine {
                         if (opsOff != 0) applyOps(op, opsOff, regs, pos);
                     }
                     state = target;
+                    // Codepoint-aware consumption: see runStringExtract for rationale.
+                    if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
+                            && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
+                        pos++;
+                    }
                     if (!entryMaskOk(sem, state, input, pos + 1, to)) {
                         // destination dead — stop.
                         return lastAcceptPos == to ? lastAcceptPos : -1;
@@ -257,6 +270,11 @@ public final class TdfaRunner implements Regex.Engine {
                     int requiredMask = rg[o + 4];
                     if ((posFlags & requiredMask) != requiredMask) continue;
                     state = target;
+                    // Codepoint-aware consumption: see runStringExtract for rationale.
+                    if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
+                            && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
+                        pos++;
+                    }
                     if (!entryMaskOk(sem, state, input, pos + 1, to)) {
                         return haveAccept ? lastAcceptPos : -1;
                     }
@@ -315,6 +333,11 @@ public final class TdfaRunner implements Regex.Engine {
                             if (opsOff != 0) applyOps(ops, opsOff, regs, pos);
                         }
                         state = target;
+                        // Codepoint-aware consumption: see runStringExtract for rationale.
+                        if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
+                                && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
+                            pos++;
+                        }
                         if (!entryMaskOkCharSeq(stateEntryMask, state, input, pos + 1, to)) {
                             break loop;
                         }
