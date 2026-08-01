@@ -447,7 +447,12 @@ public final class Tdfa {
                     int edgeEmpty = nfa.epsEmptyMask[idx];
                     int newMask = c.emptyMask | edgeEmpty;
                     int[] newL;
-                    if (tag == Tnfa.NO_TAG) {
+                    if (tag == Tnfa.NO_TAG || tag < 0) {
+                        // No tag, or negative tag (BT19 ntag — nil/no-match marker).
+                        // The existing TDFA(1) machinery doesn't model ntags correctly
+                        // (would treat them as "clear register" ops and override earlier
+                        // positive values on join paths). Skip ntags here; they're only
+                        // meaningful for the POSIX NFA simulator (PosixNfaSimulator).
                         newL = c.l;
                     } else {
                         newL = appendTag(c.l, tag);

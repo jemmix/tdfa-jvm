@@ -135,10 +135,32 @@ public final class Tnfa {
             }
             if (e instanceof Ast.Alt) {
                 // Build all alternatives flowing into entryTo with descending priority.
+                // For POSIX (BT19 §7.3): prepend ntag (negative-tag) sub-automata to each
+                // branch for groups that exist in OTHER branches but not this one. This
+                // guarantees the U-tree prefix property and encodes "no match" structurally
+                // so POSIX comparison can pick the correct alternative.
                 int newStart = fresh();
                 List<Ast> ch = ((Ast.Alt) e).children;
+                // Compute groups per branch and union.
+                List<java.util.BitSet> branchGroups = new ArrayList<>();
+                java.util.BitSet union = new java.util.BitSet();
+                for (Ast child : ch) {
+                    java.util.BitSet g = new java.util.BitSet();
+                    collectGroups(child, g);
+                    branchGroups.add(g);
+                    union.or(g);
+                }
                 for (int i = 0; i < ch.size(); i++) {
                     int altStart = build(ch.get(i), entryTo);
+                    // Prepend ntags for missing groups (in union but not in this branch).
+                    java.util.BitSet missing = (java.util.BitSet) union.clone();
+                    missing.andNot(branchGroups.get(i));
+                    for (int g = missing.length(); (g = missing.previousSetBit(g - 1)) >= 0; ) {
+                        int ntagState = fresh();
+                        int closeTag = 2 * g;  // close tag of group g (positive number)
+                        taggedEps(ntagState, altStart, 1, -closeTag);  // negative = nil
+                        altStart = ntagState;
+                    }
                     eps(newStart, altStart, i + 1);
                 }
                 return newStart;
@@ -147,6 +169,21 @@ public final class Tnfa {
                 return buildRepeat((Ast.Repeat) e, entryTo);
             }
             throw new IllegalStateException("unknown ast: " + e);
+        }
+
+        /** Collect group numbers (1-based) used anywhere in the AST subtree. */
+        private static void collectGroups(Ast e, java.util.BitSet out) {
+            if (e instanceof Ast.Tag) {
+                Ast.Tag t = (Ast.Tag) e;
+                int g = (t.tag + 1) / 2;
+                out.set(g);
+            } else if (e instanceof Ast.Concat) {
+                for (Ast c : ((Ast.Concat) e).children) collectGroups(c, out);
+            } else if (e instanceof Ast.Alt) {
+                for (Ast c : ((Ast.Alt) e).children) collectGroups(c, out);
+            } else if (e instanceof Ast.Repeat) {
+                collectGroups(((Ast.Repeat) e).body, out);
+            }
         }
 
         private int buildRepeat(Ast.Repeat r, int entryTo) {
@@ -158,22 +195,44 @@ public final class Tnfa {
             int bodyPri = lazy ? 2 : 1;
             int skipPri = lazy ? 1 : 2;
             if (min == 0 && max == 1) {
-                // e? : newStart -(pri bodyPri)-> body -> entryTo ; newStart -(pri skipPri)-> entryTo
+                // e? : newStart -(pri bodyPri)-> body -> entryTo ; newStart -(pri skipPri)-> [ntags] -> entryTo
                 int s = fresh();
                 int bodyStart = build(body, entryTo);
                 eps(s, bodyStart, bodyPri);
-                eps(s, entryTo, skipPri);
+                int skipTarget = entryTo;
+                // Prepend ntags for groups in body (they didn't match on skip path).
+                java.util.BitSet bodyGroups = new java.util.BitSet();
+                collectGroups(body, bodyGroups);
+                for (int g = bodyGroups.length(); (g = bodyGroups.previousSetBit(g - 1)) >= 0; ) {
+                    int ntagState = fresh();
+                    taggedEps(ntagState, skipTarget, 1, -(2 * g));
+                    skipTarget = ntagState;
+                }
+                eps(s, skipTarget, skipPri);
                 return s;
             }
             if (min == 0 && max == Integer.MAX_VALUE) {
-                // e* : loop
+                // e* : loop. ntags only on the INITIAL skip (0 iterations); subsequent
+                // exits from loopBack do NOT re-emit ntags because the group already
+                // matched in a prior iteration (BT19 §7.3 — ntag represents no-match).
                 int s = fresh();
                 int loopBack = fresh();
                 int bodyStart = build(body, loopBack);
-                eps(s, bodyStart, bodyPri);                  // prefer to enter body (greedy) / skip (lazy)
-                eps(s, entryTo, skipPri);
-                eps(loopBack, bodyStart, bodyPri);           // loop back
-                eps(loopBack, entryTo, skipPri);             // or exit
+                eps(s, bodyStart, bodyPri);                       // prefer to enter body (greedy) / skip (lazy)
+                // Initial skip path: prepend ntags for body groups (0 iterations ⇒ no match).
+                int skipFromStart = entryTo;
+                {
+                    java.util.BitSet bodyGroups = new java.util.BitSet();
+                    collectGroups(body, bodyGroups);
+                    for (int g = bodyGroups.length(); (g = bodyGroups.previousSetBit(g - 1)) >= 0; ) {
+                        int ntagState = fresh();
+                        taggedEps(ntagState, skipFromStart, 1, -(2 * g));
+                        skipFromStart = ntagState;
+                    }
+                }
+                eps(s, skipFromStart, skipPri);
+                eps(loopBack, bodyStart, bodyPri);                // loop back (no ntag; group already matched)
+                eps(loopBack, entryTo, skipPri);                 // or exit (no ntag)
                 return s;
             }
             if (min == 1 && max == Integer.MAX_VALUE) {
