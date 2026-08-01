@@ -19,9 +19,7 @@ import java.util.List;
  *
  * Migrating from re2j: change {@code import com.google.re2j.RE2;} to
  * {@code import io.github.jemmix.tdfa.re2j.RE2;}. Same call sites for the
- * methods implemented here. Methods not yet implemented (findAll,
- * findAllSubmatch, quoteMeta, compileImpl) throw
- * {@link UnsupportedOperationException} if called.
+ * methods implemented here.
  */
 public final class RE2 {
 
@@ -88,7 +86,7 @@ public final class RE2 {
      * which we rewrap as PatternSyntaxException(description="invalid escape sequence",
      * input="\\C") to produce the matching message.
      */
-    private static PatternSyntaxException translate(RuntimeException e, String pattern) {
+    static PatternSyntaxException translate(RuntimeException e, String pattern) {
         String msg = e.getMessage();
         if (msg != null) {
             // Special-case: \C escape. Match re2j's exact format.

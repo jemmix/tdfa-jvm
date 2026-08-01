@@ -11,8 +11,10 @@ A working silver-bullet proof of concept:
 
 - **Parser** for a PCRE-ish subset: literals, char classes (`[abc]`, `[a-z]`, `\d \w \s` and
   negations), `.`, quantifiers (`* + ? {n} {n,m}`, greedy), alternation, capturing &
-  non-capturing groups, anchors `^ $` and `\A \z`, word boundaries `\b \B`. Rejects `\C` (RE2
-  semantics).
+  non-capturing groups, anchors `^ $` and `\A \z`, word boundaries `\b \B`, POSIX character
+  classes (`[:alpha:]` etc.), Unicode property classes (`\p{L}` etc.), inline flags
+  `(?i) (?s) (?-s)`, octal/hex escapes, lazy quantifiers, atomic groups, possessive quantifiers.
+  Rejects `\C` (RE2 semantics).
 - **TNFA construction** — paper Algorithm 2 (Thompson-style with tagged ε-transitions,
   priorities for leftmost-greedy).
 - **TDFA(1) determinization** — paper Algorithm 3 end-to-end: lookahead tags, register
@@ -20,8 +22,8 @@ A working silver-bullet proof of concept:
   final-register ops. Single-valued tags (sufficient for j.u.r-style captures). Equivalence-class
   partitioned alphabet (RE2-style byte-class partitioning). **Zero-width assertions**
   (`^ $ \A \z \b \B`) are encoded as a per-state entry/accept mask plus a per-transition
-  required-mask — position-bound, not pattern-level. Verified against 5.7M cases from RE2's
-  exhaustive suite (97.1% pass on runnable cases).
+  required-mask — position-bound, not pattern-level. Verified against 5,716,884 cases from
+  RE2's exhaustive suite with zero failures.
 - **Two backends**, both consuming the same `Tdfa` IR:
   - **VM**: table-walking interpreter (`TdfaRunner`). Correct, slower.
   - **ASM (source emission)**: lowers the TDFA to a specialized Java class via
@@ -50,7 +52,7 @@ coalescing, minimization — see [`TODO.md`](TODO.md)).
 ## Build & test
 
 ```bash
-./gradlew test    # 25 correctness tests + 1 skipped (negated classes — TODO)
+./gradlew test    # 264 tests, 0 failures (includes re2j ExecTest — 5.7M differential cases)
 ./gradlew jmh     # full benchmark sweep, ~3-5 min
 ```
 
@@ -71,12 +73,36 @@ if (asm.matches("hello world")) {
 }
 ```
 
+## re2j drop-in compatibility
+
+The `io.github.jemmix.tdfa.re2j` package provides a drop-in replacement for Google's re2j:
+
+```java
+import io.github.jemmix.tdfa.re2j.Pattern;
+import io.github.jemmix.tdfa.re2j.Matcher;
+import io.github.jemmix.tdfa.re2j.RE2;
+
+// java.util.regex-style API
+Pattern p = Pattern.compile("(\\w+)@(\\w+)");
+Matcher m = p.matcher("hello user@host bye");
+while (m.find()) {
+    System.out.println(m.group(1) + " at " + m.group(2));
+}
+
+// RE2-style API (matches re2j's RE2 class)
+RE2 re = RE2.compile("foo(.*)");
+int[] submatch = re.findSubmatchIndex("foobar");
+```
+
+Both Perl (leftmost-first) and POSIX (leftmost-longest) disambiguation modes are supported.
+The entire re2j test suite (`ExecTest`) runs verbatim — **5,716,884 differential cases, 0 failures**.
+
 ## Status & roadmap
 
 This is a research reference implementation. The mission is to be the canonical mapping of
 Borsotti/Trofimovich 2022 → JVM code, with publishable benchmarks. See [`TODO.md`](TODO.md)
-for the optimization backlog (data layout compaction, anchors, negated classes, POSIX
-disambiguation, minimization, multi-valued tags, multi-pass JIT determinization, etc.).
+for the optimization backlog (data layout compaction, minimization, multi-valued tags,
+multi-pass JIT determinization, BT19 POSIX closure activation, etc.).
 
 ## License
 

@@ -83,21 +83,19 @@ verbatim. Register optimization budget goes to:
 
 ## Other known limitations (not compaction)
 
-- **Negated char classes** (`[^0-9]`) blow up the alphabet enumeration; needs alphabet partition
-  rather than character expansion. Test `negatedClass` is gated.
-- **POSIX disambiguation** (`(a|a)+b`) — not yet implemented; only leftmost-greedy supported.
+- **POSIX disambiguation (BT19)** — leftmost-longest works correctly for all 5.7M re2j test
+  cases via a heuristic (DFS-order closure + register-copy stabilization). The full BT19
+  `closure_gtop` winner-selection algorithm (BT22 §7) is staged but not yet activated —
+  `closurePosix` delegates to `epsilonClosure`. Adversarial patterns with deeply nested
+  alternations under repetition may produce wrong POSIX results. See `docs/BT19.md`.
 - **`map` + topological sort** is implemented but skips the "reject non-trivial cycles" rule from
   the paper (we currently succeed-and-rewrite for any acyclic bijection). For pathological patterns
   with append-style ops this can produce wrong results; not exercised by current tests.
 - **Multi-valued tags** (tags under repetition accumulating multiple offsets) — single-valued only.
 - **`Matcher.find()` unanchored search** is O(n × states) — restarts from each position. Should
   prefix the pattern with a `.*?` desugaring or add a separate "scan DFA".
-- **Class-leading-`]`** (`[]...]`) — POSIX says a `]` immediately after `[` (or `[^`) is a literal
-  character; our parser closes the class there. ~7K residual failures in the re2-exhaustive suite.
-- **Leftmost-longest vs leftmost-first** — the runner returns the longest match from the leftmost
-  start position (POSIX flavour). re2j's default is leftmost-first (Perl). Patterns with
-  alternation overlap like `(a|ab)` therefore report col-3 results, not col-1; ~130K cases in the
-  re2-exhaustive suite. Not a bug — a semantic choice documented here.
+- **Multiline mode** (`(?m)`) — `^`/`$` match text start/end only, not line boundaries.
+  The flag is accepted but silently ignored.
 
 ## Algorithmic gaps vs paper
 

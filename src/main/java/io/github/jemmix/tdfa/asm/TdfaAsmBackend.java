@@ -183,15 +183,23 @@ public final class TdfaAsmBackend {
         sb.append("    }\n");
         sb.append("    return null;\n");
         sb.append("  }\n");
-        // isAccept(state)
-        sb.append("  private static boolean isAccept(int state) {\n");
-        sb.append("    switch (state) {\n");
+        // isAccept(state) — emit early-return when no state accepts (empty language)
+        boolean anyAccept = false;
         for (int s = 0; s < nStates; s++) {
-            if ((stateMeta[s] & 1) != 0) sb.append("      case ").append(s).append(":\n");
+            if ((stateMeta[s] & 1) != 0) { anyAccept = true; break; }
         }
-        sb.append("        return true;\n");
-        sb.append("      default: return false;\n");
-        sb.append("    }\n");
+        sb.append("  private static boolean isAccept(int state) {\n");
+        if (!anyAccept) {
+            sb.append("    return false;\n");
+        } else {
+            sb.append("    switch (state) {\n");
+            for (int s = 0; s < nStates; s++) {
+                if ((stateMeta[s] & 1) != 0) sb.append("      case ").append(s).append(":\n");
+            }
+            sb.append("        return true;\n");
+            sb.append("      default: return false;\n");
+            sb.append("    }\n");
+        }
         sb.append("  }\n");
         // Per-state mask tables — class-level constants shared by entryOk/acceptOk.
         emitMaskTable(sb, "ENTRY_MASK", tdfa.stateEntryMask);
