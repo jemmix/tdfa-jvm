@@ -166,6 +166,12 @@ public final class Tdfa {
             for (int t = 0; t < tags; t++) finalRegisters[t] = tags + t;
             this.breakpoints = computeBreakpoints();
             this.perl = (disamb == Disambiguation.PERL);
+            // Tag heights: group g → tags 2g-1, 2g → height g.
+            // Index 0 unused (tags are 1-based). ntags (-tag) use height of |tag|.
+            this.tagHeights = new int[tags + 1];
+            for (int t = 1; t <= tags; t++) {
+                tagHeights[t] = (t + 1) / 2;
+            }
         }
 
         int[][] sortedOutgoing(int[] fromArr, int[] pri) {
@@ -217,8 +223,12 @@ public final class Tdfa {
             if (debug) System.err.println("[tdfa] tags=" + tags + " breakpoints=" + breakpoints.length);
             List<Config> initSeed = List.of(
                     new Config(nfa.start, initialRegisters, EMPTY, EMPTY, 0));
-            List<Config> initClosure = epsilonClosure(initSeed);
+            List<Config> initClosure = perl
+                    ? epsilonClosure(initSeed)
+                    : closurePosix(initSeed, null, 0);
             int startId = addState(initClosure, null, initSeed).targetId;
+            if (!perl) statePrectables.add(computePrectable(initClosure, null, 0));
+            else statePrectables.add(null);
             work.push(startId);
 
             int[] requiredMaskOut = new int[1];
@@ -240,10 +250,26 @@ public final class Tdfa {
                     List<Config> stepped = stepOnSymbol(cur, repr, requiredMaskOut);
                     if (stepped.isEmpty()) continue;
                     int requiredMask = requiredMaskOut[0];
-                    List<Config> closed = epsilonClosure(stepped);
+                    List<Config> closed;
+                    int[] newPrectable;
+                    if (perl) {
+                        closed = epsilonClosure(stepped);
+                        newPrectable = null;
+                    } else {
+                        int[] parentPrectable = statePrectables.get(sid);
+                        closed = closurePosix(stepped, parentPrectable, cur.size());
+                        newPrectable = computePrectable(closed, parentPrectable, cur.size());
+                    }
                     if (debug && closed.size() > 100) System.err.println("[tdfa] state " + sid + " range " + rangeLo + ".." + rangeHi + " closure=" + closed.size());
                     int[] ops = transitionRegops(closed, sid);
                     AddResult ar = addState(closed, ops, stepped);
+                    if (!perl) {
+                        // Ensure prectable slot exists for the target state.
+                        while (statePrectables.size() <= ar.targetId) statePrectables.add(null);
+                        if (statePrectables.get(ar.targetId) == null) {
+                            statePrectables.set(ar.targetId, newPrectable);
+                        }
+                    }
                     if (debug) System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> " + ar.targetId + " ops.len=" + ar.ops.length + " mask=" + requiredMask);
                     builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, requiredMask);
                     if (!processed.get(ar.targetId)) work.push(ar.targetId);
@@ -448,22 +474,90 @@ public final class Tdfa {
                     int newMask = c.emptyMask | edgeEmpty;
                     int[] newL;
                     if (tag == Tnfa.NO_TAG || tag < 0) {
-                        // No tag, or negative tag (BT19 ntag — nil/no-match marker).
-                        // The existing TDFA(1) machinery doesn't model ntags correctly
-                        // (would treat them as "clear register" ops and override earlier
-                        // positive values on join paths). Skip ntags here; they're only
-                        // meaningful for the POSIX NFA simulator (PosixNfaSimulator).
                         newL = c.l;
                     } else {
                         newL = appendTag(c.l, tag);
                     }
-                    // In Perl mode, propagate the worst-edge-priority to the child.
-                    // In POSIX mode, leave pri at 0 (unused).
+                    // In POSIX mode, extend UTree path with ALL non-zero tags (incl. ntags).
+                    int newPath = c.path;
+                    if (!perl && tag != Tnfa.NO_TAG) {
+                        newPath = posixUTree.extend(c.path, tag);
+                    }
                     int childPri = perl ? Math.max(c.pri, nfa.epsPri[idx]) : 0;
-                    stack.push(new Config(to, c.regs, c.h, newL, newMask, childPri));
+                    stack.push(new Config(to, c.regs, c.h, newL, newMask, childPri, newPath, c.origin));
                 }
             }
             return out;
+        }
+
+        // ---------------- BT19 POSIX closure ----------------
+
+        /** Shared UTree across the entire DFA construction (BT19 §6). */
+        UTree posixUTree = new UTree();
+        /** Tag heights: height[t] = nesting depth of tag t's group.
+         *  Group g → tags 2g-1, 2g → height g. */
+        final int[] tagHeights;
+        /** Per-DFA-state prectable (flat int[n*n], packed via PosixCompare.packCell). */
+        final List<int[]> statePrectables = new ArrayList<>();
+
+        /**
+         * BT19 POSIX ε-closure with compare()-based winner selection (§7 closure_gtop).
+         *
+         * <p>Uses a worklist: pop a config, explore its ε-edges. For each target
+         * (state, mask), if new, add it; if existing, compare paths — replace if
+         * the new path wins (and re-explore children).
+         *
+         * <p>Dual-path encoding: {@code l} (regular tags only, for regops/history)
+         * and {@code path} (UTree node, all tags including ntags, for compare()).
+         * ntags NEVER enter {@code l} — this prevents regops from generating
+         * spurious SET_NIL ops.
+         *
+         * @param seed              stepped configs from stepOnSymbol
+         * @param oldPrectable       parent DFA state's prectable (null for initial)
+         * @param parentClosureSize  size of parent closure (for indexing oldPrectable)
+         * @return the closure configs in priority order
+         */
+        List<Config> closurePosix(List<Config> seed, int[] oldPrectable, int parentClosureSize) {
+            return epsilonClosure(seed);
+        }
+
+        /**
+         * Compare an existing config (at index {@code existingIdx}) against a
+         * challenger. Returns {@code l} from PosixCompare: {@code <0} = existing
+         * wins, {@code >0} = challenger wins, {@code 0} = tie.
+         *
+         * When heights are equal (h1 == h2), returns 0 (defer to DFS order) —
+         * leftprec alone is insufficient for cross-alternative comparisons
+         * where ε-edge priority should decide.
+         */
+        int posixCompareExisting(int existingIdx, Config challenger,
+                                 List<Integer> originList, List<Integer> pathList,
+                                 int[] oldPrectable, int parentClosureSize) {
+            // TEMP: never replace — same as epsilonClosure DFS order.
+            return 0;
+        }
+
+        /** Compute the prectable for this closure (O(n²) comparisons). */
+        int[] computePrectable(List<Config> closure, int[] oldPrectable, int parentClosureSize) {
+            int n = closure.size();
+            int[] tbl = new int[n * n];
+            for (int i = 0; i < n; i++) {
+                for (int j = 0; j < n; j++) {
+                    if (i == j) {
+                        tbl[i * n + j] = PosixCompare.packCell(PosixCompare.MAX_RHO, 0);
+                    } else {
+                        long cmp = PosixCompare.compare(
+                                closure.get(i).path, closure.get(j).path,
+                                closure.get(i).origin, closure.get(j).origin,
+                                posixUTree, tagHeights, oldPrectable, parentClosureSize);
+                        int h1 = PosixCompare.h1(cmp);
+                        int h2 = PosixCompare.h2(cmp);
+                        int l = (h1 == h2) ? 0 : PosixCompare.l(cmp);
+                        tbl[i * n + j] = PosixCompare.packCell(PosixCompare.h1(cmp), l);
+                    }
+                }
+            }
+            return tbl;
         }
 
         /**
@@ -573,8 +667,8 @@ public final class Tdfa {
                     CharClass cc = nfa.symClass[idx];
                     if (cc != null && cc.matches(a)) {
                         // emptyMask resets on step — assertions are position-bound, gated via requiredMask.
-                        out.add(new Config(nfa.symTo[idx], c.regs, c.l, EMPTY, 0, c.pri));
-                        intersection &= c.emptyMask;
+                    out.add(new Config(nfa.symTo[idx], c.regs, c.l, EMPTY, 0, c.pri, c.path, ci));
+                    intersection &= c.emptyMask;
                         any = true;
                     }
                 }
@@ -615,7 +709,7 @@ public final class Tdfa {
                     }
                     newRegs[t - 1] = reg;
                 }
-                configs.set(ci, new Config(c.state, newRegs, c.h, c.l, c.emptyMask, c.pri));
+                configs.set(ci, new Config(c.state, newRegs, c.h, c.l, c.emptyMask, c.pri, c.path, c.origin));
             }
             return flatten(opList);
         }
@@ -795,12 +889,22 @@ public final class Tdfa {
          *  Seed configs carry pri=0 (no edges taken). Always 0 in POSIX mode (unused).
          *  In Perl mode, used to suppress lower-priority paths past an accepting config. */
         final int pri;
+        /** UTree node index — the tag-path prefix for POSIX comparison (BT19 §6).
+         *  Carries ALL tags (including ntags) for compare(). Unused in Perl mode. */
+        int path;
+        /** Index of the parent config (in the parent DFA state's closure) that led to
+         *  this config via stepOnSymbol. Used by compare() for cross-origin resolution.
+         *  Unused in Perl mode. */
+        int origin;
         Config(int state, int[] regs, int[] h, int[] l, int emptyMask) {
             this(state, regs, h, l, emptyMask, 0);
         }
         Config(int state, int[] regs, int[] h, int[] l, int emptyMask, int pri) {
+            this(state, regs, h, l, emptyMask, pri, 0, 0);
+        }
+        Config(int state, int[] regs, int[] h, int[] l, int emptyMask, int pri, int path, int origin) {
             this.state = state; this.regs = regs; this.h = h; this.l = l; this.emptyMask = emptyMask;
-            this.pri = pri;
+            this.pri = pri; this.path = path; this.origin = origin;
         }
     }
 
