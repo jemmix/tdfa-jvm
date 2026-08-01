@@ -830,7 +830,9 @@ public final class Tdfa {
             return new DfaStateKey(a, perl).equals(new DfaStateKey(b, perl));
         }
 
-        /** Stabilize copy chains so reads happen before writes clobber their source. */
+        /** Stabilize copy chains so reads happen before writes clobber their source.
+         *  COPYs that read from a register must execute before any op (COPY or POS/NIL)
+         *  that writes to that register. */
         void topologicalSort(List<int[]> ops) {
             boolean changed = true;
             int guard = 0;
@@ -840,11 +842,14 @@ public final class Tdfa {
                     int[] op = ops.get(i);
                     if (op[0] != OP_COPY) continue;
                     int src = op[2];
-                    for (int j = i + 1; j < ops.size(); j++) {
-                        int[] later = ops.get(j);
-                        if (later[1] == src) {
-                            for (int k = j; k > i; k--) ops.set(k, ops.get(k - 1));
-                            ops.set(i, later);
+                    // Check if any EARLIER op writes to src — if so, the COPY must
+                    // move before it (to read the OLD value before it's clobbered).
+                    for (int j = 0; j < i; j++) {
+                        int[] earlier = ops.get(j);
+                        if (earlier[1] == src) {
+                            // Move COPY to position j, shift everything else right.
+                            for (int k = i; k > j; k--) ops.set(k, ops.get(k - 1));
+                            ops.set(j, op);
                             changed = true;
                             break;
                         }
