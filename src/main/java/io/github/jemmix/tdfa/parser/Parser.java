@@ -197,16 +197,25 @@ public final class Parser {
         expect(']');
         int[] arr = ranges.stream().mapToInt(Integer::intValue).toArray();
         if (caseInsensitive) {
+            // For each user range [lo,hi], add the case-folded counterparts of
+            // any ASCII letter sub-range. The previous implementation computed
+            // toLowerCase(hi)/toUpperCase(hi) on the ENDPOINTS, which produced
+            // nonsense spans like [@-a] for [@-A] (covering all of [\]^_` in
+            // between). The correct semantics: for any sub-range overlapping
+            // A-Z, add the lowercase equivalent; for any overlapping a-z, add
+            // the uppercase equivalent. Non-letter chars (including _ @ ` etc.)
+            // have no case fold and contribute nothing.
+            //
+            // Limited to ASCII for now; full Unicode case folding (Greek, etc.)
+            // would require per-codepoint expansion or UnicodeCaseFold tables.
             List<Integer> exp = new ArrayList<>();
             for (int i = 0; i < arr.length; i += 2) {
                 int lo = arr[i], hi = arr[i + 1];
                 exp.add(lo); exp.add(hi);
-                int clo = Character.toLowerCase((char) lo);
-                int chi = Character.toLowerCase((char) hi);
-                int ulo = Character.toUpperCase((char) lo);
-                int uhi = Character.toUpperCase((char) hi);
-                if (clo != lo || chi != hi) { exp.add(clo); exp.add(chi); }
-                if (ulo != lo || uhi != hi) { exp.add(ulo); exp.add(uhi); }
+                int aStart = Math.max(lo, 'A'), aEnd = Math.min(hi, 'Z');
+                if (aStart <= aEnd) { exp.add(aStart + 32); exp.add(aEnd + 32); }  // A-Z → a-z
+                int laStart = Math.max(lo, 'a'), laEnd = Math.min(hi, 'z');
+                if (laStart <= laEnd) { exp.add(laStart - 32); exp.add(laEnd - 32); }  // a-z → A-Z
             }
             arr = exp.stream().mapToInt(Integer::intValue).toArray();
         }
@@ -274,15 +283,28 @@ public final class Parser {
         if (c == '\\') {
             pos++;
             char e = cur(); pos++;
+            // Octal escape \NNN (1-3 octal digits, value capped at 0xFF).
+            if (e >= '0' && e <= '7') {
+                int val = e - '0';
+                if (pos < src.length() && src.charAt(pos) >= '0' && src.charAt(pos) <= '7') {
+                    val = val * 8 + (src.charAt(pos) - '0');
+                    pos++;
+                    if (val < 32 && pos < src.length() && src.charAt(pos) >= '0' && src.charAt(pos) <= '7') {
+                        val = val * 8 + (src.charAt(pos) - '0');
+                        pos++;
+                    }
+                }
+                return (char) val;
+            }
             return switch (e) {
                 case 'n' -> '\n';
                 case 't' -> '\t';
                 case 'r' -> '\r';
                 case 'f' -> '\f';
-                case '0' -> '\0';
                 case 'a' -> (char) 7;
                 case 'v' -> (char) 11;
                 case '\\' -> '\\';
+                case 'x' -> parseHexChar();
                 default -> e;  // any other escaped char is literal
             };
         }
@@ -290,17 +312,59 @@ public final class Parser {
         return c;
     }
 
+    /** Like {@link #parseHexEscape()} but returns a {@code char} for class membership. */
+    private char parseHexChar() {
+        int val;
+        if (pos < src.length() && src.charAt(pos) == '{') {
+            pos++;
+            int start = pos;
+            while (pos < src.length() && isHex(src.charAt(pos))) pos++;
+            if (pos >= src.length() || src.charAt(pos) != '}') {
+                throw fail(this, "invalid hex escape: expected '}'");
+            }
+            String hex = src.substring(start, pos);
+            pos++; // consume '}'
+            if (hex.isEmpty()) throw fail(this, "invalid hex escape: empty \\x{}");
+            val = Integer.parseInt(hex, 16);
+            if (val > 0xFFFF) {
+                throw fail(this, "non-BMP hex escape \\x{" + hex + "} not yet supported");
+            }
+        } else {
+            if (pos + 1 >= src.length() || !isHex(src.charAt(pos)) || !isHex(src.charAt(pos + 1))) {
+                throw fail(this, "invalid hex escape: expected exactly 2 hex digits after \\x");
+            }
+            val = (hexVal(src.charAt(pos)) << 4) | hexVal(src.charAt(pos + 1));
+            pos += 2;
+        }
+        return (char) val;
+    }
+
     private Ast parseEscape() {
         char c = cur(); pos++;
+        // Octal escape \NNN (1-3 octal digits, value capped at 0xFF = 0377).
+        // re2j semantics: greedily read up to 3 octal digits, but stop if the
+        // running value would exceed 0xFF. \0 is the 1-digit octal null case.
+        if (c >= '0' && c <= '7') {
+            int val = c - '0';
+            if (pos < src.length() && src.charAt(pos) >= '0' && src.charAt(pos) <= '7') {
+                val = val * 8 + (src.charAt(pos) - '0');
+                pos++;
+                if (val < 32 && pos < src.length() && src.charAt(pos) >= '0' && src.charAt(pos) <= '7') {
+                    val = val * 8 + (src.charAt(pos) - '0');
+                    pos++;
+                }
+            }
+            return new Ast.Symbol((char) val);
+        }
         return switch (c) {
             case 'n' -> new Ast.Symbol('\n');
             case 't' -> new Ast.Symbol('\t');
             case 'r' -> new Ast.Symbol('\r');
             case 'f' -> new Ast.Symbol('\f');
-            case '0' -> new Ast.Symbol('\0');
             case 'a' -> new Ast.Symbol((char) 7);   // alarm/bell, like re2j
             case 'v' -> new Ast.Symbol((char) 11);  // vertical tab, like re2j
             case '\\' -> new Ast.Symbol('\\');
+            case 'x' -> parseHexEscape();
             case 'd' -> DIGIT;
             case 'D' -> NOT_DIGIT;
             case 'w' -> WORD;
@@ -318,6 +382,52 @@ public final class Parser {
             case 'B' -> new Ast.NoWordBoundary();       // \B = not a word boundary
             default -> new Ast.Symbol(c);
         };
+    }
+
+    /**
+     * Parse a hex escape after the leading {@code \x} (caller has consumed both).
+     * Supports both forms (re2j-compatible):
+     * <ul>
+     *   <li>{@code \xNN} — exactly 2 hex digits, value 0x00-0xFF.</li>
+     *   <li>{@code \x{N+}} — 1+ hex digits enclosed in braces, value 0-0xFFFF.
+     *       Values above 0xFFFF (non-BMP codepoints) are rejected until full
+     *       codepoint-aware CharClass support lands.</li>
+     * </ul>
+     */
+    private Ast parseHexEscape() {
+        int val;
+        if (pos < src.length() && src.charAt(pos) == '{') {
+            pos++;
+            int start = pos;
+            while (pos < src.length() && isHex(src.charAt(pos))) pos++;
+            if (pos >= src.length() || src.charAt(pos) != '}') {
+                throw fail(this, "invalid hex escape: expected '}'");
+            }
+            String hex = src.substring(start, pos);
+            pos++; // consume '}'
+            if (hex.isEmpty()) throw fail(this, "invalid hex escape: empty \\x{}");
+            val = Integer.parseInt(hex, 16);
+            if (val > 0xFFFF) {
+                throw fail(this, "non-BMP hex escape \\x{" + hex + "} not yet supported");
+            }
+        } else {
+            if (pos + 1 >= src.length() || !isHex(src.charAt(pos)) || !isHex(src.charAt(pos + 1))) {
+                throw fail(this, "invalid hex escape: expected exactly 2 hex digits after \\x");
+            }
+            val = (hexVal(src.charAt(pos)) << 4) | hexVal(src.charAt(pos + 1));
+            pos += 2;
+        }
+        return new Ast.Symbol((char) val);
+    }
+
+    private static boolean isHex(char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    }
+
+    private static int hexVal(char c) {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        return c - 'A' + 10;
     }
 
     private int[] parseBraces() {
