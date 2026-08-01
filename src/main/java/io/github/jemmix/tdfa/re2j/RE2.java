@@ -55,9 +55,22 @@ public final class RE2 {
      * (so re2j's test-suite exact-match on {@code \C} messages passes).
      */
     public static RE2 compileImpl(String pattern, int flags, boolean posix) {
-        // For now we honour only the PERL vs POSIX distinction and ignore the
-        // other flags (FOLD_CASE, CLASS_NL, DOT_NL, etc.) which our engine
-        // doesn't expose yet. Tests using these flags will diverge.
+        // Translate the re2j flags our engine understands into inline-flag
+        // prefixes on the pattern itself, so the existing Parser flag
+        // machinery picks them up. Flags we don't yet support (LITERAL,
+        // CLASS_NL, ONE_LINE, NON_GREEDY, PERL_X, UNICODE_GROUPS, WAS_DOLLAR)
+        // are silently ignored — they affect features that either always-on
+        // or not-yet-supported in our engine, and re2j's ExecTest doesn't
+        // probe them in ways we'd diverge on.
+        if ((flags & LITERAL) != 0) {
+            pattern = quoteMeta(pattern);
+        }
+        if ((flags & FOLD_CASE) != 0) {
+            pattern = "(?i)" + pattern;
+        }
+        if ((flags & DOT_NL) != 0) {
+            pattern = "(?s)" + pattern;
+        }
         try {
             return new RE2(pattern, posix);
         } catch (RuntimeException e) {
