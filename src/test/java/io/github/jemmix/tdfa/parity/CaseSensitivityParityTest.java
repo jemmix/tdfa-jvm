@@ -24,9 +24,7 @@ class CaseSensitivityParityTest {
     @Test void foldLiteralInConcat() { assertSameFind("(?i)hello", "HeLLo"); }
 
     @Test void foldUnicodePropertyLl() { assertSameFind("(?i)\\p{Ll}", "A"); }
-    @Test
-    @Disabled("TDFA_MISSING: Unicode case folding for \\p{X} under (?i) — JdkUnicodeDataProvider returns no fold table")
-    void foldUnicodePropertyLu() { assertSameFind("(?i)\\p{Lu}", "a"); }
+    @Test void foldUnicodePropertyLu() { assertSameFind("(?i)\\p{Lu}", "a"); }
     @Test void foldUnicodeScriptGreek() { assertSameFind("(?i)\\p{Greek}", "\u0391"); }
 
     @Test void caseInsensitiveFlag() {

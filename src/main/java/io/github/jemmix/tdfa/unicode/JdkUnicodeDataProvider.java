@@ -25,14 +25,13 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
 
     private volatile Map<String, int[]> scripts;
     private volatile Map<String, int[]> categories;
+    private volatile Map<String, int[]> foldTables;
 
     private JdkUnicodeDataProvider() {}
 
     @Override
     public int[] tableFor(String name) {
         if ("Any".equals(name)) return ANY_TABLE;
-        // Try scripts first to match re2j lookup order? Actually re2j tries
-        // CATEGORIES first then SCRIPTS. We follow the same order.
         Map<String, int[]> cats = categories();
         int[] t = cats.get(name);
         if (t != null) return t;
@@ -42,14 +41,66 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
 
     @Override
     public int[] foldTableFor(String name) {
-        // Fold tables would require scanning 0..0x10FFFF with
-        // Character.toLowerCase(int)/toUpperCase(int) and partitioning by the
-        // fold target's category/script. Expensive and rarely used in real
-        // patterns; return null (no extra codepoints from folding) for now.
-        // Case-insensitive \p{X} therefore matches the same set as \p{X};
-        // this is a known divergence from re2j but acceptable until the
-        // re2j-compat tables jar is plugged in.
-        return null;
+        int[] table = tableFor(name);
+        if (table == null) return null;
+        Map<String, int[]> ft = foldTables;
+        if (ft == null) {
+            synchronized (this) {
+                ft = foldTables;
+                if (ft == null) {
+                    ft = new HashMap<>();
+                    foldTables = ft;
+                }
+            }
+        }
+        synchronized (ft) {
+            int[] cached = ft.get(name);
+            if (cached != null) return cached.length == 0 ? null : cached;
+            int[] result = buildFoldTable(table);
+            ft.put(name, result == null ? new int[0] : result);
+            return result;
+        }
+    }
+
+    /**
+     * Build fold counterpart ranges for the given property table: codepoints
+     * NOT in the table whose {@code toUpperCase} IS in the table. This mirrors
+     * re2j's simple case-folding direction (uppercase → lowercase): only
+     * uppercase class members contribute new codepoints (their lowercase
+     * folds). Lowercase members' {@code toLowerCase} is themselves, so they
+     * contribute nothing.
+     */
+    private static int[] buildFoldTable(int[] table) {
+        ArrayList<int[]> ranges = new ArrayList<>();
+        int rangeStart = -1;
+        for (int cp = 0; cp <= 0xFFFF; cp++) {
+            if (!inRange(table, cp)) {
+                int upper = Character.toUpperCase(cp);
+                if (upper != cp && inRange(table, upper)) {
+                    if (rangeStart < 0) rangeStart = cp;
+                    continue;
+                }
+            }
+            if (rangeStart >= 0) {
+                ranges.add(new int[]{rangeStart, cp - 1});
+                rangeStart = -1;
+            }
+        }
+        if (rangeStart >= 0) ranges.add(new int[]{rangeStart, 0xFFFF});
+        if (ranges.isEmpty()) return null;
+        return flatten(ranges);
+    }
+
+    private static boolean inRange(int[] table, int cp) {
+        if (cp > 0xFFFF) return false;
+        int lo = 0, hi = table.length / 2 - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            if (cp < table[2 * mid]) hi = mid - 1;
+            else if (cp > table[2 * mid + 1]) lo = mid + 1;
+            else return true;
+        }
+        return false;
     }
 
     private static final int[] ANY_TABLE = new int[]{0, Character.MAX_CODE_POINT};
