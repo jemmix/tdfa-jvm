@@ -25,19 +25,26 @@ public final class TdfaAsmBackend {
     private static final String ARRAYS = "java/util/Arrays";
 
     public static Regex.Engine compile(Tdfa tdfa) {
-        long id = COUNTER.incrementAndGet();
-        String cn = "io.github.jemmix.tdfa.gen.Gen" + id;
-        String owner = cn.replace('.', '/');
-        byte[] bc = generate(tdfa, owner);
-        ClassLoader cl = new ClassLoader(TdfaAsmBackend.class.getClassLoader()) {
-            @Override protected Class<?> findClass(String n) throws ClassNotFoundException {
-                if (n.equals(cn)) return defineClass(cn, bc, 0, bc.length);
-                return super.findClass(n);
-            }
-        };
+        byte[] bc;
         try {
+            long id = COUNTER.incrementAndGet();
+            String cn = "io.github.jemmix.tdfa.gen.Gen" + id;
+            String owner = cn.replace('.', '/');
+            bc = generate(tdfa, owner);
+            final byte[] bytes = bc;
+            final String className = cn;
+            ClassLoader cl = new ClassLoader(TdfaAsmBackend.class.getClassLoader()) {
+                @Override protected Class<?> findClass(String n) throws ClassNotFoundException {
+                    if (n.equals(className)) return defineClass(className, bytes, 0, bytes.length);
+                    return super.findClass(n);
+                }
+            };
             return (Regex.Engine) Class.forName(cn, true, cl).getDeclaredConstructor().newInstance();
-        } catch (Exception e) { throw new IllegalStateException("ASM backend failed", e); }
+        } catch (org.objectweb.asm.MethodTooLargeException e) {
+            return new io.github.jemmix.tdfa.tdfa.TdfaRunner(tdfa);
+        } catch (Exception e) {
+            throw new IllegalStateException("ASM backend failed", e);
+        }
     }
 
     private static byte[] generate(Tdfa tdfa, String owner) {

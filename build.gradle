@@ -42,6 +42,7 @@ dependencies {
 test {
     useJUnitPlatform()
     jvmArgs '-Xmx128m', '-XX:+HeapDumpOnOutOfMemoryError'
+    systemProperty 'tdfa.asm', System.getProperty('tdfa.asm') ?: ''
     testLogging {
         events 'failed', 'standardOut', 'standardError'
         exceptionFormat 'full'

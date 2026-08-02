@@ -123,8 +123,9 @@ public final class RE2 {
 
     private RE2(String pattern, boolean posix) {
         this.pattern = pattern;
-        this.perlEngine = Regex.compile(pattern, false, Disambiguation.PERL);
-        this.posixEngine = Regex.compile(pattern, false, Disambiguation.POSIX);
+        boolean asm = Boolean.getBoolean("tdfa.asm");
+        this.perlEngine = Regex.compile(pattern, asm, Disambiguation.PERL);
+        this.posixEngine = Regex.compile(pattern, asm, Disambiguation.POSIX);
         this.longest = posix;
     }
 
