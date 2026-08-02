@@ -75,33 +75,13 @@ class GroupSyntaxParityTest {
     @Disabled("TDFA_MISSING: named groups (?<name>...) not supported")
     void namedGroupAngleStyle() { assertSameFind("(?<word>\\w+)", "hello"); }
 
-    // ---- Lookarounds (neither re2j nor TDFA support) ----
+    // ---- DFA-incompatible group syntax (both re2j and TDFA reject) ----
 
-    @Test
-    @Disabled("RE2J_MISSING: lookahead (?=...) not supported by re2j")
-    void lookahead() { assertSameFind("(?=abc)abc", "abc"); }
-
-    @Test
-    @Disabled("RE2J_MISSING: negative lookahead (?!...) not supported by re2j")
-    void negativeLookahead() { assertSameFind("a(?!b)c", "ac"); }
-
-    @Test
-    @Disabled("RE2J_MISSING: lookbehind (?<=...) not supported by re2j")
-    void lookbehind() { assertSameFind("(?<=a)b", "ab"); }
-
-    // ---- Atomic groups / possessive (neither supports) ----
-
-    @Test
-    @Disabled("RE2J_MISSING: atomic groups (?>...) not supported by re2j")
-    void atomicGroup() { assertSameFind("(?>a+)", "aaa"); }
-
-    @Test
-    @Disabled("RE2J_MISSING: possessive quantifiers not supported by re2j")
-    void possessiveStar() { assertSameCompileSuccess("a*+"); }
-
-    // ---- Backreferences (neither supports — RE2 is regular-only) ----
-
-    @Test
-    @Disabled("RE2J_MISSING: backreferences not supported by re2j")
-    void backreference() { assertSameFind("(a)\\1", "aa"); }
+    @Test void lookaheadRejects() { assertSameCompileReject("(?=abc)abc"); }
+    @Test void negativeLookaheadRejects() { assertSameCompileReject("a(?!b)c"); }
+    @Test void lookbehindRejects() { assertSameCompileReject("(?<=a)b"); }
+    @Test void negativeLookbehindRejects() { assertSameCompileReject("(?<!a)b"); }
+    @Test void atomicGroupRejects() { assertSameCompileReject("(?>a+)"); }
+    @Test void possessiveStarRejects() { assertSameCompileReject("a*+"); }
+    @Test void backreferenceRejects() { assertSameCompileReject("(a)\\1"); }
 }

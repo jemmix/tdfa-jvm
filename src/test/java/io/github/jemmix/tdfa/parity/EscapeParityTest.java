@@ -54,6 +54,5 @@ class EscapeParityTest {
     void quoteLiteralWithSpecial() { assertSameFind("\\Q[()]\\E", "[()]"); }
 
     @Test
-    @Disabled("TDFA_MISSING: \\1 accepted by us (octal), rejected by re2j (invalid escape — reserved for backref)")
-    void octalOneDigit() { assertSameFind("\\1", "\u0001"); }
+    void octalOneDigit() { assertSameCompileReject("\\1"); }
 }

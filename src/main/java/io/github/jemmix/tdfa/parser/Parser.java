@@ -122,6 +122,15 @@ public final class Parser {
             pos += 2; capturing = false;
         } else if (pos < src.length() && peek() == '?') {
             pos++; // consume '?'
+            // Reject DFA-incompatible group syntax
+            char afterQ = peek();
+            if (afterQ == '=' || afterQ == '!') throw fail(this, "lookahead not supported");
+            if (afterQ == '>') throw fail(this, "atomic groups not supported");
+            if (afterQ == '<') {
+                char next = pos + 1 < src.length() ? src.charAt(pos + 1) : '\0';
+                if (next == '=' || next == '!') throw fail(this, "lookbehind not supported");
+                throw fail(this, "named groups not supported");
+            }
             // Parse inline flags: (?i) (?s) (?m) (?-s) (?i:...) (?is:...)
             boolean ci = false, ds = false;
             boolean neg = false;
@@ -297,6 +306,7 @@ public final class Parser {
             pos++;
             char e = cur(); pos++;
             // Octal escape \NNN (1-3 octal digits, value capped at 0xFF).
+            // \1-\9 single-digit rejected (reserved for backreference syntax).
             if (e >= '0' && e <= '7') {
                 int val = e - '0';
                 if (pos < src.length() && src.charAt(pos) >= '0' && src.charAt(pos) <= '7') {
@@ -306,6 +316,8 @@ public final class Parser {
                         val = val * 8 + (src.charAt(pos) - '0');
                         pos++;
                     }
+                } else if (e != '0') {
+                    throw fail(this, "invalid escape sequence: \\" + e);
                 }
                 return (char) val;
             }
@@ -355,8 +367,9 @@ public final class Parser {
     private Ast parseEscape() {
         char c = cur(); pos++;
         // Octal escape \NNN (1-3 octal digits, value capped at 0xFF = 0377).
-        // re2j semantics: greedily read up to 3 octal digits, but stop if the
-        // running value would exceed 0xFF. \0 is the 1-digit octal null case.
+        // \0 is the null character; \1-\9 single-digit is rejected (reserved
+        // for backreference syntax, which is DFA-incompatible). Multi-digit
+        // octal like \12, \101 is accepted.
         if (c >= '0' && c <= '7') {
             int val = c - '0';
             if (pos < src.length() && src.charAt(pos) >= '0' && src.charAt(pos) <= '7') {
@@ -366,6 +379,8 @@ public final class Parser {
                     val = val * 8 + (src.charAt(pos) - '0');
                     pos++;
                 }
+            } else if (c != '0') {
+                throw fail(this, "invalid escape sequence: \\" + c);
             }
             return new Ast.Symbol((char) val);
         }
