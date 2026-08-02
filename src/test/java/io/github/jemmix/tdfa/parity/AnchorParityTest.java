@@ -1,7 +1,6 @@
 package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Disabled;
 
 import static io.github.jemmix.tdfa.parity.Re2jOracle.*;
 
@@ -31,24 +30,8 @@ class AnchorParityTest {
 
     @Test void findAllAnchored() { assertSameAllMatches("^a", "aaa"); }
 
-    @Test
-    @Disabled("TDFA_MISSING: (?m) multiline mode not implemented — ^/$ match text start/end only")
-    void multilineStartAnchor() {
-        assertSameFind("(?m)^abc", "def\nabc");
-    }
-    @Test
-    @Disabled("TDFA_MISSING: (?m) multiline mode not implemented")
-    void multilineEndAnchor() {
-        assertSameFind("(?m)abc$", "abc\ndef");
-    }
-    @Test
-    @Disabled("TDFA_MISSING: (?m) multiline mode not implemented")
-    void multilineMultipleLines() {
-        assertSameAllMatches("(?m)^.", "ab\ncd\nef");
-    }
-    @Test
-    @Disabled("TDFA_MISSING: (?m) multiline mode not implemented")
-    void multilineEndAnchorNewline() {
-        assertSameFind("(?m)abc$", "abc\ndef");
-    }
+    @Test void multilineStartAnchor() { assertSameFind("(?m)^abc", "def\nabc"); }
+    @Test void multilineEndAnchor() { assertSameFind("(?m)abc$", "abc\ndef"); }
+    @Test void multilineMultipleLines() { assertSameAllMatches("(?m)^.", "ab\ncd\nef"); }
+    @Test void multilineEndAnchorNewline() { assertSameFind("(?m)abc$", "abc\ndef"); }
 }

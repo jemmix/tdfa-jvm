@@ -35,6 +35,7 @@ public final class TdfaRunner implements Regex.Engine {
     private final int startState;
     private final int startStateEntryMask;
     private final boolean perlMode;
+    private final boolean multiline;
     private final int[] stopOnAcceptMask;
     private final boolean rangesDisjoint;
     private final int[][] asciiRangeIdx;
@@ -57,6 +58,7 @@ public final class TdfaRunner implements Regex.Engine {
         this.rangesDisjoint = checkRangesDisjoint(tdfa);
         this.asciiRangeIdx = rangesDisjoint ? buildAsciiRangeIdx(tdfa) : null;
         this.perlMode = tdfa.perlMode;
+        this.multiline = tdfa.multiline;
         this.stopOnAcceptMask = tdfa.stopOnAcceptMask;
     }
 
@@ -72,7 +74,7 @@ public final class TdfaRunner implements Regex.Engine {
             String s = (String) input;
             int len = s.length();
             // If the start state requires BEGIN_TEXT, only position 0 can match.
-            int maxStart = ((startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) ? 0 : len;
+            int maxStart = (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) ? 0 : len;
             for (int from = 0; from <= maxStart; from++) {
                 int res = runStringMatchFrom(s, from, len);
                 if (res >= 0) return true;
@@ -100,7 +102,7 @@ public final class TdfaRunner implements Regex.Engine {
         final int[] sfo = this.stateFinalOpsOff;
         final int[] sem = this.stateEntryMask;
         final int[] sam = this.stateAcceptMask;
-        int maxStart = ((startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) ? 0 : to;
+        int maxStart = (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) ? 0 : to;
         for (int startSearch = from; startSearch <= maxStart; startSearch++) {
             final int[] regs = regSize == 0 ? null : new int[regSize];
             if (regs != null) Arrays.fill(regs, -1);
@@ -432,7 +434,7 @@ public final class TdfaRunner implements Regex.Engine {
                 int entryReq = stateEntryMask[state];
                 if (entryReq != 0 && (positionFlagsCS(input, pos, to) & entryReq) != entryReq) {
                     if (anchored) return null;
-                    if ((startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) return null;
+                    if (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) return null;
                     startSearch++;
                     if (startSearch > to) return null;
                     continue;
@@ -502,7 +504,7 @@ public final class TdfaRunner implements Regex.Engine {
                 return new MatchHolder(startSearch, lastAcceptPos, r);
             }
             if (anchored) return null;
-            if ((startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) return null;
+            if (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) return null;
             startSearch++;
             if (startSearch > to) return null;
         }
@@ -534,11 +536,11 @@ public final class TdfaRunner implements Regex.Engine {
         return stopMask != Tdfa.NEVER_STOP;
     }
 
-    /** Compute the position-flags for `pos` in a String. Inline-friendly. */
-    private static int positionFlags(String s, int pos, int len) {
+    /** Compute the position-flags for `pos` in a String. */
+    private int positionFlags(String s, int pos, int len) {
         int flags = 0;
-        if (pos == 0) flags |= Tnfa.BEGIN_TEXT;
-        if (pos == len) flags |= Tnfa.END_TEXT;
+        if (pos == 0 || (multiline && pos > 0 && s.charAt(pos - 1) == '\n')) flags |= Tnfa.BEGIN_TEXT;
+        if (pos == len || (multiline && pos < len && s.charAt(pos) == '\n')) flags |= Tnfa.END_TEXT;
         boolean prevWord = pos > 0 && isWordChar(s.charAt(pos - 1));
         boolean currWord = pos < len && isWordChar(s.charAt(pos));
         if (prevWord != currWord) flags |= Tnfa.WORD_BOUNDARY;
@@ -547,10 +549,10 @@ public final class TdfaRunner implements Regex.Engine {
     }
 
     /** Same for a generic CharSequence. */
-    private static int positionFlagsCS(CharSequence s, int pos, int len) {
+    private int positionFlagsCS(CharSequence s, int pos, int len) {
         int flags = 0;
-        if (pos == 0) flags |= Tnfa.BEGIN_TEXT;
-        if (pos == len) flags |= Tnfa.END_TEXT;
+        if (pos == 0 || (multiline && pos > 0 && s.charAt(pos - 1) == '\n')) flags |= Tnfa.BEGIN_TEXT;
+        if (pos == len || (multiline && pos < len && s.charAt(pos) == '\n')) flags |= Tnfa.END_TEXT;
         boolean prevWord = pos > 0 && isWordChar(s.charAt(pos - 1));
         boolean currWord = pos < len && isWordChar(s.charAt(pos));
         if (prevWord != currWord) flags |= Tnfa.WORD_BOUNDARY;
@@ -559,13 +561,13 @@ public final class TdfaRunner implements Regex.Engine {
     }
 
     /** True iff stateEntryMask[state] is satisfied at `pos` in `input[0..len)`. */
-    private static boolean entryMaskOk(int[] sem, int state, String input, int pos, int len) {
+    private boolean entryMaskOk(int[] sem, int state, String input, int pos, int len) {
         int required = sem[state];
         if (required == 0) return true;
         return (positionFlags(input, pos, len) & required) == required;
     }
 
-    private static boolean entryMaskOkCharSeq(int[] sem, int state, CharSequence input, int pos, int len) {
+    private boolean entryMaskOkCharSeq(int[] sem, int state, CharSequence input, int pos, int len) {
         int required = sem[state];
         if (required == 0) return true;
         return (positionFlagsCS(input, pos, len) & required) == required;

@@ -61,7 +61,7 @@ public final class TdfaAsmBackend {
         genRunBoolean(cw, tdfa, owner);
         genRunExtract(cw, tdfa, owner);
         genEntryOkC(cw, owner);
-        genPositionFlagsC(cw, owner);
+        genPositionFlagsC(cw, owner, tdfa.multiline);
         cw.visitEnd();
         return cw.toByteArray();
     }
@@ -271,7 +271,7 @@ public final class TdfaAsmBackend {
 
     // ===== positionFlagsC — position flags for char[] input (helper) =====
 
-    private static void genPositionFlagsC(ClassWriter cw, String owner) {
+    private static void genPositionFlagsC(ClassWriter cw, String owner, boolean multiline) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
                 "positionFlagsC", "(II[C)I", null, null);
         mv.visitCode();
@@ -279,6 +279,7 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitVarInsn(Opcodes.ISTORE, 3);
 
+        // BEGIN_TEXT: pos == 0
         mv.visitVarInsn(Opcodes.ILOAD, 0);
         Label l1 = new Label();
         mv.visitJumpInsn(Opcodes.IFNE, l1);
@@ -288,6 +289,28 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ISTORE, 3);
         mv.visitLabel(l1);
 
+        if (multiline) {
+            // || (pos > 0 && input[pos-1] == '\n')
+            mv.visitVarInsn(Opcodes.ILOAD, 0);
+            Label l1b = new Label();
+            mv.visitJumpInsn(Opcodes.IFLE, l1b);
+            mv.visitVarInsn(Opcodes.ALOAD, 2);
+            mv.visitVarInsn(Opcodes.ILOAD, 0);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitInsn(Opcodes.ISUB);
+            mv.visitInsn(Opcodes.CALOAD);
+            mv.visitIntInsn(Opcodes.BIPUSH, '\n');
+            Label l1c = new Label();
+            mv.visitJumpInsn(Opcodes.IF_ICMPNE, l1c);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitVarInsn(Opcodes.ILOAD, 3);
+            mv.visitInsn(Opcodes.IOR);
+            mv.visitVarInsn(Opcodes.ISTORE, 3);
+            mv.visitLabel(l1c);
+            mv.visitLabel(l1b);
+        }
+
+        // END_TEXT: pos == len
         mv.visitVarInsn(Opcodes.ILOAD, 0);
         mv.visitVarInsn(Opcodes.ILOAD, 1);
         Label l2 = new Label();
@@ -297,6 +320,26 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.IOR);
         mv.visitVarInsn(Opcodes.ISTORE, 3);
         mv.visitLabel(l2);
+
+        if (multiline) {
+            // || (pos < len && input[pos] == '\n')
+            mv.visitVarInsn(Opcodes.ILOAD, 0);
+            mv.visitVarInsn(Opcodes.ILOAD, 1);
+            Label l2b = new Label();
+            mv.visitJumpInsn(Opcodes.IF_ICMPGE, l2b);
+            mv.visitVarInsn(Opcodes.ALOAD, 2);
+            mv.visitVarInsn(Opcodes.ILOAD, 0);
+            mv.visitInsn(Opcodes.CALOAD);
+            mv.visitIntInsn(Opcodes.BIPUSH, '\n');
+            Label l2c = new Label();
+            mv.visitJumpInsn(Opcodes.IF_ICMPNE, l2c);
+            mv.visitInsn(Opcodes.ICONST_2);
+            mv.visitVarInsn(Opcodes.ILOAD, 3);
+            mv.visitInsn(Opcodes.IOR);
+            mv.visitVarInsn(Opcodes.ISTORE, 3);
+            mv.visitLabel(l2c);
+            mv.visitLabel(l2b);
+        }
 
         // prevWord
         Label pf = new Label(), pd = new Label();
@@ -357,7 +400,7 @@ public final class TdfaAsmBackend {
 
     private static void emitRunCore(MethodVisitor mv, Tdfa tdfa, String owner, boolean extract) {
         final boolean perl = tdfa.perlMode;
-        final boolean startReqBT = tdfa.startRequiresBeginText();
+        final boolean startReqBT = !tdfa.multiline && tdfa.startRequiresBeginText();
         final int nStates = tdfa.stateCount;
         final int[] sm = tdfa.stateMeta, rg = tdfa.ranges, op = tdfa.ops, sfo = tdfa.stateFinalOpsOff;
 
@@ -456,7 +499,7 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ILOAD, T1);
             Label initEntryOk = new Label();
             mv.visitJumpInsn(Opcodes.IFEQ, initEntryOk);
-            emitPFInline(mv, owner, IN, ST, LEN, PF2, T2, T3, T4);
+            emitPFInline(mv, owner, IN, ST, LEN, PF2, T2, T3, T4, tdfa.multiline);
             mv.visitVarInsn(Opcodes.ILOAD, PF2);
             mv.visitVarInsn(Opcodes.ILOAD, T1);
             mv.visitInsn(Opcodes.IAND);
@@ -477,7 +520,7 @@ public final class TdfaAsmBackend {
 
         // pf = positionFlags(pos, len, input) — skip when never needed
         if (pfNeeded)
-            emitPFInline(mv, owner, IN, POS, LEN, PF, T1, T2, T3);
+            emitPFInline(mv, owner, IN, POS, LEN, PF, T1, T2, T3, tdfa.multiline);
         else {
             mv.visitInsn(Opcodes.ICONST_0);
             mv.visitVarInsn(Opcodes.ISTORE, PF);
@@ -734,7 +777,8 @@ public final class TdfaAsmBackend {
     // ===== position flags (inline) =====
 
     private static void emitPFInline(MethodVisitor mv, String owner,
-                                     int IN, int POS, int LEN, int RESULT, int T1, int T2, int T3) {
+                                     int IN, int POS, int LEN, int RESULT, int T1, int T2, int T3,
+                                     boolean multiline) {
         // pf = 0
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitVarInsn(Opcodes.ISTORE, RESULT);
@@ -749,6 +793,27 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ISTORE, RESULT);
         mv.visitLabel(l1);
 
+        if (multiline) {
+            // || (pos > 0 && input[pos-1] == '\n')
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            Label l1b = new Label();
+            mv.visitJumpInsn(Opcodes.IFLE, l1b);
+            mv.visitVarInsn(Opcodes.ALOAD, IN);
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitInsn(Opcodes.ISUB);
+            mv.visitInsn(Opcodes.CALOAD);
+            mv.visitIntInsn(Opcodes.BIPUSH, '\n');
+            Label l1c = new Label();
+            mv.visitJumpInsn(Opcodes.IF_ICMPNE, l1c);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitVarInsn(Opcodes.ILOAD, RESULT);
+            mv.visitInsn(Opcodes.IOR);
+            mv.visitVarInsn(Opcodes.ISTORE, RESULT);
+            mv.visitLabel(l1c);
+            mv.visitLabel(l1b);
+        }
+
         // if (pos == len) pf |= 2
         mv.visitVarInsn(Opcodes.ILOAD, POS);
         mv.visitVarInsn(Opcodes.ILOAD, LEN);
@@ -759,6 +824,26 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.IOR);
         mv.visitVarInsn(Opcodes.ISTORE, RESULT);
         mv.visitLabel(l2);
+
+        if (multiline) {
+            // || (pos < len && input[pos] == '\n')
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitVarInsn(Opcodes.ILOAD, LEN);
+            Label l2b = new Label();
+            mv.visitJumpInsn(Opcodes.IF_ICMPGE, l2b);
+            mv.visitVarInsn(Opcodes.ALOAD, IN);
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitInsn(Opcodes.CALOAD);
+            mv.visitIntInsn(Opcodes.BIPUSH, '\n');
+            Label l2c = new Label();
+            mv.visitJumpInsn(Opcodes.IF_ICMPNE, l2c);
+            mv.visitInsn(Opcodes.ICONST_2);
+            mv.visitVarInsn(Opcodes.ILOAD, RESULT);
+            mv.visitInsn(Opcodes.IOR);
+            mv.visitVarInsn(Opcodes.ISTORE, RESULT);
+            mv.visitLabel(l2c);
+            mv.visitLabel(l2b);
+        }
 
         // prevWord = pos > 0 && isWord(input[pos-1])
         Label prevFalse = new Label(), prevDone = new Label();

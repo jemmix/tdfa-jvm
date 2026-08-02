@@ -49,6 +49,7 @@ public final class Tdfa {
      * in POSIX mode it continues stepping to find the longest match.
      */
     public final boolean perlMode;
+    public final boolean multiline;
     /**
      * Position-aware Perl-mode stop-on-accept decision table.
      * Indexed as {@code stopOnAcceptMask[state * 16 + posFlags]} where {@code posFlags}
@@ -96,7 +97,7 @@ public final class Tdfa {
 
     private Tdfa(int tagCount, int groupCount, int registerCount, int startState, int stateCount,
                  int[] stateMeta, int[] stateFinalOpsOff, int[] ranges, int[] ops,
-                 int[] stateEntryMask, int[] stateAcceptMask, boolean perlMode, int[] stopOnAcceptMask) {
+                 int[] stateEntryMask, int[] stateAcceptMask, boolean perlMode, int[] stopOnAcceptMask, boolean multiline) {
         this.tagCount = tagCount; this.groupCount = groupCount;
         this.registerCount = registerCount;
         this.startState = startState;
@@ -110,6 +111,7 @@ public final class Tdfa {
         this.startStateEntryMask = stateEntryMask[startState];
         this.perlMode = perlMode;
         this.stopOnAcceptMask = stopOnAcceptMask;
+        this.multiline = multiline;
     }
 
     public boolean isAccept(int state) { return (stateMeta[state] & 1) != 0; }
@@ -434,7 +436,7 @@ public final class Tdfa {
             }
             return new Tdfa(tags, nfa.groupCount, globalMaxReg, 0, n,
                     stateMeta, stateFinalOpsOff, flatRanges, flatOps,
-                    stateEntryMask, stateAcceptMask, perl, stateStopOnAcceptMask);
+                    stateEntryMask, stateAcceptMask, perl, stateStopOnAcceptMask, nfa.multiline);
         }
 
         static final boolean debug = Boolean.getBoolean("tdfa.debug");

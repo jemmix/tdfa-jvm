@@ -35,6 +35,7 @@ public final class Parser {
     private int groupCount = 0;
     boolean caseInsensitive = false;
     boolean dotall = false;
+    boolean multiline = false;
 
     private Parser(String src) { this.src = src; }
 
@@ -119,7 +120,7 @@ public final class Parser {
         expect('(');
         boolean capturing = true;
         boolean restoreFlags = false;
-        boolean savedCi = false, savedDs = false;
+        boolean savedCi = false, savedDs = false, savedMl = false;
         if (pos + 1 < src.length() && src.charAt(pos) == '?' && src.charAt(pos + 1) == ':') {
             pos += 2; capturing = false;
         } else if (pos < src.length() && peek() == '?') {
@@ -133,9 +134,9 @@ public final class Parser {
                 if (next == '=' || next == '!') throw fail(this, "lookbehind not supported");
                 throw fail(this, "named groups not supported");
             }
-            // Parse inline flags: (?i) (?s) (?m) (?-s) (?i:...) (?is:...)
-            boolean ci = false, ds = false;
-            boolean ciSet = false, dsSet = false;
+            // Parse inline flags: (?i) (?s) (?m) (?-s) (?i:...) (?ism:...)
+            boolean ci = false, ds = false, ml = false;
+            boolean ciSet = false, dsSet = false, mlSet = false;
             boolean neg = false;
             while (pos < src.length() && peek() != ':' && peek() != ')') {
                 char f = peek();
@@ -143,6 +144,7 @@ public final class Parser {
                 switch (f) {
                     case 'i': ci = !neg; ciSet = true; break;
                     case 's': ds = !neg; dsSet = true; break;
+                    case 'm': ml = !neg; mlSet = true; break;
                 }
                 neg = false;
                 pos++;
@@ -153,12 +155,15 @@ public final class Parser {
                 restoreFlags = true;
                 savedCi = this.caseInsensitive;
                 savedDs = this.dotall;
+                savedMl = this.multiline;
                 if (ciSet) this.caseInsensitive = ci;
                 if (dsSet) this.dotall = ds;
+                if (mlSet) this.multiline = ml;
             } else {
                 expect(')');
                 if (ciSet) this.caseInsensitive = ci;
                 if (dsSet) this.dotall = ds;
+                if (mlSet) this.multiline = ml;
                 return new Ast.Empty(); // flag-only group, continue
             }
         }
@@ -178,6 +183,7 @@ public final class Parser {
         if (restoreFlags) {
             this.caseInsensitive = savedCi;
             this.dotall = savedDs;
+            this.multiline = savedMl;
         }
         if (!capturing) return body;
         return new Ast.Concat(List.of(new Ast.Tag(open), body, new Ast.Tag(close)));
@@ -667,6 +673,7 @@ public final class Parser {
 
     public int groupCount() { return groupCount; }
     public int tagCount() { return nextTag - 1; }
+    public boolean multiline() { return multiline; }
 
     private static IllegalArgumentException fail(Parser p, String msg) {
         return new IllegalArgumentException("Parse error at index " + p.pos + ": " + msg + " (in \"" + p.src + "\")");
