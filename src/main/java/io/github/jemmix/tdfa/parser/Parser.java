@@ -9,18 +9,24 @@ import java.util.List;
 
 /**
  * Hand-rolled recursive-descent parser for a PCRE-ish subset:
- * - literals, escape sequences (\n \t \r \\ \d \D \w \W \s \S)
- * - char classes [abc], [a-z], [^...]
+ * - literals, escape sequences (\n \t \r \f \a \v \d \D \w \W \s \S)
+ * - hex escapes (\xNN, \x{N+}), octal escapes (\NNN, 1–3 digits capped at 0xFF)
+ * - char classes [abc], [a-z], [^...], with POSIX classes [:alpha:] etc.
+ * - Unicode property classes \p{X} \P{X} (BMP only)
  * - quantifiers: * + ? {n} {n,} {n,m} (greedy and lazy)
  * - alternation |
  * - capturing groups (...), non-capturing (?:...)
- * - anchors ^ $
- * - dot .
+ * - inline flags (?i) (?s) (?-i) (?-s) (?i:...) (?is:...)
+ * - anchors ^ $ \A \z \b \B
+ * - dot . (excludes \n unless (?s))
  *
- * Capturing groups become pairs of tags (1..n, 1..n) — see Compile.visitGroup.
- *
- * NOT supported (rejected): backreferences, lookarounds, backslash-octal/hex codepoints,
- * POSIX classes, Unicode properties, inline flags, atomic groups, possessive.
+ * NOT supported (rejected at parse time):
+ * - backreferences (\1), lookarounds (?=...), atomic groups (?>...)
+ * - possessive quantifiers (*+ ++ ?+)
+ * - \C (any byte), \Q...\E (literal quoting)
+ * - (?m) multiline mode (accepted but no-op)
+ * - named groups (?P<name>...) (?<name>...)
+ * - non-BMP codepoints in \x{...} and \p{...}
  */
 public final class Parser {
     private final String src;
