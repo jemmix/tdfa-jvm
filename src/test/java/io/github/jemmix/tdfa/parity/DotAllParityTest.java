@@ -25,9 +25,7 @@ class DotAllParityTest {
     }
     @Test void dotAllScoped() { assertSameFind("a(?s:.)c", "a\nc"); }
     @Test void dotAllNoLeak() { assertSameFind("(?s)a.c|def", "a\nc"); }
-    @Test
-    @Disabled("TDFA_MISSING: (?-s) flag negation not working — flags accumulate with |= but never reset")
-    void toggleDotAllOff() { assertSameFind("(?s)a(?-s).c", "a\nc"); }
+    @Test void toggleDotAllOff() { assertSameFind("(?s)a(?-s).c", "a\nc"); }
 
     @Test void findAllDotAll() { assertSameAllMatches("(?s).", "ab\ncd"); }
 }

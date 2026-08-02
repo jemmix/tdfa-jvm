@@ -41,9 +41,9 @@ class CaseSensitivityParityTest {
     }
 
     @Test void toggleCaseInsensitiveOff() { assertSameFind("(?i)ab(?-i)c", "ABc"); }
-    @Test
-    @Disabled("TDFA_MISSING: (?-i) flag negation not properly implemented — flags accumulate with |= but never reset")
-    void toggleCaseInsensitiveOff2() { assertSameFind("(?i)ab(?-i)c", "ABC"); }
+    @Test void toggleCaseInsensitiveOff2() { assertSameFind("(?i)ab(?-i)c", "ABC"); }
     @Test void scopedCaseInsensitive() { assertSameFind("a(?i:bc)d", "aBCd"); }
     @Test void scopedCaseInsensitiveNoLeak() { assertSameFind("a(?i:bc)d", "abcd"); }
+    @Test void scopedCaseInsensitiveLeakPrevention() { assertSameFind("(?i:a)b", "Ab"); }
+    @Test void scopedNegationLeakPrevention() { assertSameFind("(?i)a(?-i:b)c", "AbC"); }
 }

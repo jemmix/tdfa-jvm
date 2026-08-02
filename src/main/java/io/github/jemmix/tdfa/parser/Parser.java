@@ -118,6 +118,8 @@ public final class Parser {
     private Ast parseGroup() {
         expect('(');
         boolean capturing = true;
+        boolean restoreFlags = false;
+        boolean savedCi = false, savedDs = false;
         if (pos + 1 < src.length() && src.charAt(pos) == '?' && src.charAt(pos + 1) == ':') {
             pos += 2; capturing = false;
         } else if (pos < src.length() && peek() == '?') {
@@ -133,13 +135,14 @@ public final class Parser {
             }
             // Parse inline flags: (?i) (?s) (?m) (?-s) (?i:...) (?is:...)
             boolean ci = false, ds = false;
+            boolean ciSet = false, dsSet = false;
             boolean neg = false;
             while (pos < src.length() && peek() != ':' && peek() != ')') {
                 char f = peek();
                 if (f == '-') { neg = true; pos++; continue; }
                 switch (f) {
-                    case 'i': ci = !neg; break;
-                    case 's': ds = !neg; break;
+                    case 'i': ci = !neg; ciSet = true; break;
+                    case 's': ds = !neg; dsSet = true; break;
                 }
                 neg = false;
                 pos++;
@@ -147,12 +150,15 @@ public final class Parser {
             if (peek() == ':') {
                 pos++; // consume ':'
                 capturing = false;
-                this.caseInsensitive |= ci;
-                this.dotall |= ds;
+                restoreFlags = true;
+                savedCi = this.caseInsensitive;
+                savedDs = this.dotall;
+                if (ciSet) this.caseInsensitive = ci;
+                if (dsSet) this.dotall = ds;
             } else {
                 expect(')');
-                this.caseInsensitive |= ci;
-                this.dotall |= ds;
+                if (ciSet) this.caseInsensitive = ci;
+                if (dsSet) this.dotall = ds;
                 return new Ast.Empty(); // flag-only group, continue
             }
         }
@@ -169,6 +175,10 @@ public final class Parser {
         }
         Ast body = parseAlt();
         expect(')');
+        if (restoreFlags) {
+            this.caseInsensitive = savedCi;
+            this.dotall = savedDs;
+        }
         if (!capturing) return body;
         return new Ast.Concat(List.of(new Ast.Tag(open), body, new Ast.Tag(close)));
     }
