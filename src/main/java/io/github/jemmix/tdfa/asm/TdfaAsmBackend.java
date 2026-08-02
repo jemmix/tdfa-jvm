@@ -40,8 +40,6 @@ public final class TdfaAsmBackend {
                 }
             };
             return (Regex.Engine) Class.forName(cn, true, cl).getDeclaredConstructor().newInstance();
-        } catch (org.objectweb.asm.MethodTooLargeException e) {
-            return new io.github.jemmix.tdfa.tdfa.TdfaRunner(tdfa);
         } catch (Exception e) {
             throw new IllegalStateException("ASM backend failed", e);
         }
