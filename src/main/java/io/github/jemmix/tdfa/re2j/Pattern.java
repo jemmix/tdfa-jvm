@@ -15,9 +15,7 @@ import java.util.Map;
  * <p>Compile with {@link #compile(String)} or {@link #compile(String, int)}.
  * Obtain a {@link Matcher} via {@link #matcher(CharSequence)}.
  *
- * <p>Supported flags: {@link #CASE_INSENSITIVE}, {@link #DOTALL}, {@link #LONGEST_MATCH}.
- * {@link #MULTILINE} is accepted but currently a no-op (anchors always match
- * text start/end, not line boundaries).
+ * <p>Supported flags: {@link #CASE_INSENSITIVE}, {@link #DOTALL}, {@link #MULTILINE}, {@link #LONGEST_MATCH}.
  */
 public final class Pattern {
 
@@ -27,7 +25,7 @@ public final class Pattern {
     /** Flag: dot ({@code .}) matches all characters, including newline. */
     public static final int DOTALL = 2;
 
-    /** Flag: multiline matching ({@code ^}/{@code $} at line boundaries). Accepted but not yet implemented. */
+    /** Flag: multiline matching ({@code ^}/{@code $} at line boundaries). */
     public static final int MULTILINE = 4;
 
     /** Flag: matches longest possible string (POSIX leftmost-longest). */
