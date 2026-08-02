@@ -37,6 +37,7 @@ public final class TdfaRunner implements Regex.Engine {
     private final boolean perlMode;
     private final int[] stopOnAcceptMask;
     private final boolean rangesDisjoint;
+    private final int[][] asciiRangeIdx;
 
     public TdfaRunner(Tnfa nfa) {
         this(Tdfa.compile(nfa));
@@ -54,6 +55,7 @@ public final class TdfaRunner implements Regex.Engine {
         this.startState = tdfa.startState;
         this.startStateEntryMask = tdfa.startStateEntryMask;
         this.rangesDisjoint = checkRangesDisjoint(tdfa);
+        this.asciiRangeIdx = rangesDisjoint ? buildAsciiRangeIdx(tdfa) : null;
         this.perlMode = tdfa.perlMode;
         this.stopOnAcceptMask = tdfa.stopOnAcceptMask;
     }
@@ -219,33 +221,63 @@ public final class TdfaRunner implements Regex.Engine {
             int count = (meta >>> 1) & 0xFF;
             boolean matched = false;
             if (rangesDisjoint) {
-                // Binary search for the range containing c
-                int rlo = 0, rhi = count - 1;
-                while (rlo <= rhi) {
-                    int mid = (rlo + rhi) >>> 1;
-                    int mo = (base + mid) * 5;
-                    if (c < rg[mo]) { rhi = mid - 1; continue; }
-                    if (c > rg[mo + 1]) { rlo = mid + 1; continue; }
+                // ASCII fast path: direct table lookup
+                int ri = c < 128 ? asciiRangeIdx[state][c] : -2;
+                if (ri >= 0) {
+                    int mo = (base + ri) * 5;
                     int target = rg[mo + 2];
-                    if (target < 0) break;
-                    int requiredMask = rg[mo + 4];
-                    if (requiredMask != 0) {
-                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                        if ((posFlags & requiredMask) != requiredMask) break;
-                    }
-                    state = target;
-                    if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
-                            && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
-                        pos++;
-                    }
-                    int entryReq = sem[state];
-                    if (entryReq != 0) {
-                        if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
-                            return lastAcceptPos == to ? lastAcceptPos : -1;
+                    if (target >= 0) {
+                        int requiredMask = rg[mo + 4];
+                        boolean maskOk = true;
+                        if (requiredMask != 0) {
+                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                            maskOk = (posFlags & requiredMask) == requiredMask;
+                        }
+                        if (maskOk) {
+                            state = target;
+                            if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
+                                    && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
+                                pos++;
+                            }
+                            int entryReq = sem[state];
+                            if (entryReq == 0 || (positionFlags(input, pos + 1, to) & entryReq) == entryReq) {
+                                matched = true;
+                            } else {
+                                return lastAcceptPos == to ? lastAcceptPos : -1;
+                            }
                         }
                     }
-                    matched = true;
-                    break;
+                } else if (ri == -1) {
+                    break; // dead ASCII char
+                } else {
+                    // Non-ASCII: binary search
+                    int rlo = 0, rhi = count - 1;
+                    while (rlo <= rhi) {
+                        int mid = (rlo + rhi) >>> 1;
+                        int mo = (base + mid) * 5;
+                        if (c < rg[mo]) { rhi = mid - 1; continue; }
+                        if (c > rg[mo + 1]) { rlo = mid + 1; continue; }
+                        int target = rg[mo + 2];
+                        if (target < 0) break;
+                        int requiredMask = rg[mo + 4];
+                        if (requiredMask != 0) {
+                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                            if ((posFlags & requiredMask) != requiredMask) break;
+                        }
+                        state = target;
+                        if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
+                                && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
+                            pos++;
+                        }
+                        int entryReq = sem[state];
+                        if (entryReq != 0) {
+                            if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
+                                return lastAcceptPos == to ? lastAcceptPos : -1;
+                            }
+                        }
+                        matched = true;
+                        break;
+                    }
                 }
             } else {
             for (int i = 0; i < count; i++) {
@@ -556,6 +588,26 @@ public final class TdfaRunner implements Regex.Engine {
             }
         }
         return true;
+    }
+
+    /** Build per-state ASCII range-index lookup tables (128 entries per state). */
+    private static int[][] buildAsciiRangeIdx(Tdfa tdfa) {
+        int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
+        int[][] result = new int[tdfa.stateCount][];
+        for (int s = 0; s < tdfa.stateCount; s++) {
+            int meta = sm[s];
+            int base = meta >>> 9, cnt = (meta >>> 1) & 0xFF;
+            int[] table = new int[128];
+            java.util.Arrays.fill(table, -1);
+            for (int i = 0; i < cnt; i++) {
+                int o = (base + i) * 5;
+                int lo = Math.max(rg[o], 0);
+                int hi = Math.min(rg[o + 1], 127);
+                for (int c = lo; c <= hi; c++) table[c] = i;
+            }
+            result[s] = table;
+        }
+        return result;
     }
 
     /** RE2's isWordRune: ASCII word chars [_0-9A-Za-z]. */
