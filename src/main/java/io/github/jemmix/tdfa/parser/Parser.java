@@ -5,7 +5,9 @@ import io.github.jemmix.tdfa.ast.CharClass;
 import io.github.jemmix.tdfa.unicode.UnicodeProviders;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Hand-rolled recursive-descent parser for a PCRE-ish subset:
@@ -33,6 +35,7 @@ public final class Parser {
     private int pos = 0;
     private int nextTag = 1;
     private int groupCount = 0;
+    private final Map<String, Integer> groupNames = new LinkedHashMap<>();
     boolean caseInsensitive = false;
     boolean dotall = false;
     boolean multiline = false;
@@ -115,12 +118,13 @@ public final class Parser {
         return new Ast.Symbol(c);
     }
 
-    /** group := '(' ('?:')? alt ')' | '(' '?flags' ')' | '(' '?flags:' alt ')' */
+    /** group := '(' ('?:')? alt ')' | '(' '?flags' ')' | '(' '?flags:' alt ')' | '(' '?<' name '>' alt ')' | '(' '?P<' name '>' alt ')' */
     private Ast parseGroup() {
         expect('(');
         boolean capturing = true;
         boolean restoreFlags = false;
         boolean savedCi = false, savedDs = false, savedMl = false;
+        String groupName = null;
         if (pos + 1 < src.length() && src.charAt(pos) == '?' && src.charAt(pos + 1) == ':') {
             pos += 2; capturing = false;
         } else if (pos < src.length() && peek() == '?') {
@@ -132,39 +136,46 @@ public final class Parser {
             if (afterQ == '<') {
                 char next = pos + 1 < src.length() ? src.charAt(pos + 1) : '\0';
                 if (next == '=' || next == '!') throw fail(this, "lookbehind not supported");
-                throw fail(this, "named groups not supported");
-            }
-            // Parse inline flags: (?i) (?s) (?m) (?-s) (?i:...) (?ism:...)
-            boolean ci = false, ds = false, ml = false;
-            boolean ciSet = false, dsSet = false, mlSet = false;
-            boolean neg = false;
-            while (pos < src.length() && peek() != ':' && peek() != ')') {
-                char f = peek();
-                if (f == '-') { neg = true; pos++; continue; }
-                switch (f) {
-                    case 'i': ci = !neg; ciSet = true; break;
-                    case 's': ds = !neg; dsSet = true; break;
-                    case 'm': ml = !neg; mlSet = true; break;
-                }
-                neg = false;
-                pos++;
-            }
-            if (peek() == ':') {
-                pos++; // consume ':'
-                capturing = false;
-                restoreFlags = true;
-                savedCi = this.caseInsensitive;
-                savedDs = this.dotall;
-                savedMl = this.multiline;
-                if (ciSet) this.caseInsensitive = ci;
-                if (dsSet) this.dotall = ds;
-                if (mlSet) this.multiline = ml;
+                // Named group (?<name>...)
+                pos++; // consume '<'
+                groupName = readGroupName();
+            } else if (afterQ == 'P' && pos + 1 < src.length() && src.charAt(pos + 1) == '<') {
+                // Named group (?P<name>...)
+                pos += 2; // consume 'P<'
+                groupName = readGroupName();
             } else {
-                expect(')');
-                if (ciSet) this.caseInsensitive = ci;
-                if (dsSet) this.dotall = ds;
-                if (mlSet) this.multiline = ml;
-                return new Ast.Empty(); // flag-only group, continue
+                // Parse inline flags: (?i) (?s) (?m) (?-s) (?i:...) (?ism:...)
+                boolean ci = false, ds = false, ml = false;
+                boolean ciSet = false, dsSet = false, mlSet = false;
+                boolean neg = false;
+                while (pos < src.length() && peek() != ':' && peek() != ')') {
+                    char f = peek();
+                    if (f == '-') { neg = true; pos++; continue; }
+                    switch (f) {
+                        case 'i': ci = !neg; ciSet = true; break;
+                        case 's': ds = !neg; dsSet = true; break;
+                        case 'm': ml = !neg; mlSet = true; break;
+                    }
+                    neg = false;
+                    pos++;
+                }
+                if (peek() == ':') {
+                    pos++; // consume ':'
+                    capturing = false;
+                    restoreFlags = true;
+                    savedCi = this.caseInsensitive;
+                    savedDs = this.dotall;
+                    savedMl = this.multiline;
+                    if (ciSet) this.caseInsensitive = ci;
+                    if (dsSet) this.dotall = ds;
+                    if (mlSet) this.multiline = ml;
+                } else {
+                    expect(')');
+                    if (ciSet) this.caseInsensitive = ci;
+                    if (dsSet) this.dotall = ds;
+                    if (mlSet) this.multiline = ml;
+                    return new Ast.Empty(); // flag-only group, continue
+                }
             }
         }
         // Allocate tag pair BEFORE recursing into the body so group numbers
@@ -177,6 +188,11 @@ public final class Parser {
             open = nextTag++;
             close = nextTag++;
             groupCount++;
+            if (groupName != null) {
+                if (groupNames.containsKey(groupName))
+                    throw fail(this, "duplicate capture group name: `" + groupName + "`");
+                groupNames.put(groupName, groupCount);
+            }
         }
         Ast body = parseAlt();
         expect(')');
@@ -674,6 +690,18 @@ public final class Parser {
     public int groupCount() { return groupCount; }
     public int tagCount() { return nextTag - 1; }
     public boolean multiline() { return multiline; }
+    public Map<String, Integer> namedGroups() { return groupNames; }
+
+    /** Read a group name between '<' and '>' (caller has consumed '<'). */
+    private String readGroupName() {
+        int start = pos;
+        while (pos < src.length() && peek() != '>') pos++;
+        if (pos >= src.length()) throw fail(this, "unclosed group name");
+        String name = src.substring(start, pos);
+        pos++; // consume '>'
+        if (name.isEmpty()) throw fail(this, "empty group name");
+        return name;
+    }
 
     private static IllegalArgumentException fail(Parser p, String msg) {
         return new IllegalArgumentException("Parse error at index " + p.pos + ": " + msg + " (in \"" + p.src + "\")");

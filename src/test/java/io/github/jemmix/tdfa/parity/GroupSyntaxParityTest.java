@@ -1,7 +1,6 @@
 package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Disabled;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static io.github.jemmix.tdfa.parity.Re2jOracle.*;
@@ -65,15 +64,16 @@ class GroupSyntaxParityTest {
         assertThat(t).isEqualTo(r);
     }
 
-    // ---- Named groups (re2j supports, we don't) ----
+    // ---- Named groups ----
 
-    @Test
-    @Disabled("TDFA_MISSING: named groups (?P<name>...) not supported")
-    void namedGroupPStyle() { assertSameFind("(?P<word>\\w+)", "hello"); }
-
-    @Test
-    @Disabled("TDFA_MISSING: named groups (?<name>...) not supported")
-    void namedGroupAngleStyle() { assertSameFind("(?<word>\\w+)", "hello"); }
+    @Test void namedGroupPStyle() { assertSameFind("(?P<word>\\w+)", "hello"); }
+    @Test void namedGroupAngleStyle() { assertSameFind("(?<word>\\w+)", "hello"); }
+    @Test void namedGroupWithOtherGroups() {
+        int[] r = re2jFind("(a)(?P<x>b)(c)", "abc");
+        int[] t = tdfaFind("(a)(?P<x>b)(c)", "abc");
+        assertThat(t).isEqualTo(r);
+    }
+    @Test void namedGroupDuplicateRejects() { assertSameCompileReject("(?P<x>a)(?P<x>b)"); }
 
     // ---- DFA-incompatible group syntax (both re2j and TDFA reject) ----
 

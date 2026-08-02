@@ -5,6 +5,8 @@ import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
 import io.github.jemmix.tdfa.vm.MatchResult;
 
+import java.util.Map;
+
 /**
  * Public entry point. Compile once, match many.
  *
@@ -21,6 +23,7 @@ import io.github.jemmix.tdfa.vm.MatchResult;
 public final class Regex {
     private final Engine engine;
     private final int groupCount;
+    private final Map<String, Integer> namedGroups;
 
     public interface Engine {
         boolean matches(CharSequence input);
@@ -47,7 +50,7 @@ public final class Regex {
         Engine engine = bytecode
                 ? io.github.jemmix.tdfa.asm.TdfaAsmBackend.compile(tdfa)
                 : new io.github.jemmix.tdfa.tdfa.TdfaRunner(tdfa);
-        return new Regex(engine, nfa.groupCount);
+        return new Regex(engine, nfa.groupCount, nfa.namedGroups);
     }
 
     /** Engine backed by the interpreted VM (slower, no ASM dependency). */
@@ -62,8 +65,9 @@ public final class Regex {
     /** POSIX leftmost-longest semantics (default). Engine backed by the interpreted VM. */
     public static Regex compilePosixVm(String pattern) { return compile(pattern, false, Disambiguation.POSIX); }
 
-    private Regex(Engine engine, int groupCount) {
+    private Regex(Engine engine, int groupCount, Map<String, Integer> namedGroups) {
         this.engine = engine; this.groupCount = groupCount;
+        this.namedGroups = namedGroups != null ? namedGroups : Map.of();
     }
 
     public boolean matches(CharSequence input) { return engine.matches(input); }
@@ -71,4 +75,5 @@ public final class Regex {
     public MatchResult find(CharSequence input, int from) { return engine.match(input, from); }
 
     public int groupCount() { return groupCount; }
+    public Map<String, Integer> namedGroups() { return namedGroups; }
 }

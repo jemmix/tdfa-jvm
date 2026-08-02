@@ -4,7 +4,9 @@ import io.github.jemmix.tdfa.Regex;
 import io.github.jemmix.tdfa.tdfa.Disambiguation;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Drop-in replacement for {@code com.google.re2j.Pattern}, mimicking the
@@ -134,6 +136,9 @@ public final class Pattern {
 
     /** Number of capturing groups (excluding group 0). */
     public int groupCount() { return engine.groupCount(); }
+
+    /** Unmodifiable name→index map for named capturing groups. */
+    public Map<String, Integer> namedGroups() { return Collections.unmodifiableMap(engine.namedGroups()); }
 
     @Override public String toString() { return pattern; }
 

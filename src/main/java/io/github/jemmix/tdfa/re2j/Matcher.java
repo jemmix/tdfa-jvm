@@ -147,6 +147,21 @@ public final class Matcher {
         return input.subSequence(s, e).toString();
     }
 
+    /** Substring of the named group, or {@code null} if the group didn't participate. */
+    public String group(String name) {
+        return group(groupIndex(name));
+    }
+
+    /** Start of the named group. */
+    public int start(String name) {
+        return start(groupIndex(name));
+    }
+
+    /** End of the named group. */
+    public int end(String name) {
+        return end(groupIndex(name));
+    }
+
     /** Number of capturing groups (excluding group 0). */
     public int groupCount() {
         return pattern.groupCount();
@@ -212,6 +227,12 @@ public final class Matcher {
 
     private void ensureMatch() {
         if (!hasMatch) throw new IllegalStateException("perhaps no match attempted");
+    }
+
+    private int groupIndex(String name) {
+        Integer idx = pattern.namedGroups().get(name);
+        if (idx == null) throw new IllegalArgumentException("group '" + name + "' not found");
+        return idx;
     }
 
     private void appendReplacementInternal(StringBuilder sb, String replacement) {

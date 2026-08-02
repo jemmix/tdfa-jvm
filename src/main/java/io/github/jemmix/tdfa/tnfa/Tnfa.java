@@ -6,6 +6,7 @@ import io.github.jemmix.tdfa.parser.Parser;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Thompson-style NFA with tagged epsilon transitions.
@@ -38,6 +39,7 @@ public final class Tnfa {
     public final int tagCount;
     public final int groupCount;
     public final boolean multiline;
+    public final Map<String, Integer> namedGroups;
 
     // Zero-width assertion bits.
     public static final int BEGIN_TEXT        = 1;
@@ -48,7 +50,8 @@ public final class Tnfa {
     public Tnfa(int stateCount,
                 int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
                 int[] symFrom, int[] symTo, CharClass[] symClass,
-                int start, int accept, int tagCount, int groupCount, boolean multiline) {
+                int start, int accept, int tagCount, int groupCount, boolean multiline,
+                Map<String, Integer> namedGroups) {
         this.stateCount = stateCount;
         this.epsFrom = epsFrom; this.epsTo = epsTo; this.epsPri = epsPri; this.epsTag = epsTag;
         this.epsEmptyMask = epsEmptyMask;
@@ -57,6 +60,7 @@ public final class Tnfa {
         this.tagCount = tagCount;
         this.groupCount = groupCount;
         this.multiline = multiline;
+        this.namedGroups = namedGroups;
     }
 
     // ====== Builder / construction ======
@@ -67,7 +71,7 @@ public final class Tnfa {
         Builder b = new Builder();
         int accept = b.fresh();
         int start = b.build(ast, accept);
-        return b.build(start, accept, parser.tagCount(), parser.groupCount(), parser.multiline());
+        return b.build(start, accept, parser.tagCount(), parser.groupCount(), parser.multiline(), parser.namedGroups());
     }
 
     private static final class Builder {
@@ -267,7 +271,7 @@ public final class Tnfa {
             return build(result, entryTo);
         }
 
-        Tnfa build(int start, int accept, int tagCount, int groupCount, boolean multiline) {
+        Tnfa build(int start, int accept, int tagCount, int groupCount, boolean multiline, Map<String, Integer> namedGroups) {
             int n = eps.size();
             int[] eFrom = new int[n], eTo = new int[n], ePri = new int[n], eTag = new int[n], eEmpty = new int[n];
             for (int i = 0; i < n; i++) {
@@ -277,7 +281,7 @@ public final class Tnfa {
             int[] sFrom = syms.stream().mapToInt(a -> a[0]).toArray();
             int[] sTo = syms.stream().mapToInt(a -> a[1]).toArray();
             CharClass[] sClass = symClasses.toArray(new CharClass[0]);
-            return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, sFrom, sTo, sClass, start, accept, tagCount, groupCount, multiline);
+            return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, sFrom, sTo, sClass, start, accept, tagCount, groupCount, multiline, namedGroups);
         }
     }
 }
