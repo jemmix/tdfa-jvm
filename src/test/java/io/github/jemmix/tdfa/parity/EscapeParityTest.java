@@ -40,18 +40,10 @@ class EscapeParityTest {
         assertSameCompileReject("\\C");
     }
 
-    @Test
-    @Disabled("TDFA_MISSING: \\Q...\\E literal quoting not supported")
-    void quoteLiteral() { assertSameFind("\\Qa.b*c\\E", "a.b*c"); }
-    @Test
-    @Disabled("TDFA_MISSING: \\Q...\\E literal quoting not supported")
-    void quoteLiteralNoClose() { assertSameFind("\\Qabc", "abc"); }
-    @Test
-    @Disabled("TDFA_MISSING: \\Q...\\E literal quoting not supported")
-    void quoteLiteralPartial() { assertSameFind("x\\Qa.b\\Ey", "xa.by"); }
-    @Test
-    @Disabled("TDFA_MISSING: \\Q...\\E literal quoting not supported")
-    void quoteLiteralWithSpecial() { assertSameFind("\\Q[()]\\E", "[()]"); }
+    @Test void quoteLiteral() { assertSameFind("\\Qa.b*c\\E", "a.b*c"); }
+    @Test void quoteLiteralNoClose() { assertSameFind("\\Qabc", "abc"); }
+    @Test void quoteLiteralPartial() { assertSameFind("x\\Qa.b\\Ey", "xa.by"); }
+    @Test void quoteLiteralWithSpecial() { assertSameFind("\\Q[()]\\E", "[()]"); }
 
     @Test
     void octalOneDigit() { assertSameCompileReject("\\1"); }

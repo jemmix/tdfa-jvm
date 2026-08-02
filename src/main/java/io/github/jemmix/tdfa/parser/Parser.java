@@ -423,8 +423,54 @@ public final class Parser {
             // own negation flag carries the \P sign; no complement materialisation).
             case 'p' -> parseUnicodeEscape(true);
             case 'P' -> parseUnicodeEscape(false);
+            case 'Q' -> parseQuotedLiteral();
+            case 'E' -> new Ast.Symbol('E');  // bare \E outside \Q is literal E
             default -> new Ast.Symbol(c);
         };
+    }
+
+    /**
+     * Parse a {@code \Q...\E} literal quoting section (caller has consumed
+     * {@code \Q}). Everything up to {@code \E} (or end of pattern) is treated
+     * as literal characters. If no {@code \E} is found, the rest of the
+     * pattern is literal (matching re2j/PCRE behavior).
+     */
+    private Ast parseQuotedLiteral() {
+        int start = pos;
+        boolean foundE = false;
+        while (pos < src.length()) {
+            if (pos + 1 < src.length() && src.charAt(pos) == '\\' && src.charAt(pos + 1) == 'E') {
+                foundE = true;
+                break;
+            }
+            pos++;
+        }
+        String literal = src.substring(start, pos);
+        if (foundE) pos += 2;  // consume \E
+
+        if (literal.isEmpty()) return new Ast.Empty();
+        if (literal.length() == 1) {
+            char ch = literal.charAt(0);
+            if (caseInsensitive) {
+                char lo = Character.toLowerCase(ch);
+                char hi = Character.toUpperCase(ch);
+                if (lo != hi) return new CharClass(new int[]{lo, lo, hi, hi}, false);
+            }
+            return new Ast.Symbol(ch);
+        }
+        List<Ast> parts = new ArrayList<>();
+        for (int i = 0; i < literal.length(); i++) {
+            char ch = literal.charAt(i);
+            if (caseInsensitive) {
+                char lo = Character.toLowerCase(ch);
+                char hi = Character.toUpperCase(ch);
+                if (lo != hi) parts.add(new CharClass(new int[]{lo, lo, hi, hi}, false));
+                else parts.add(new Ast.Symbol(ch));
+            } else {
+                parts.add(new Ast.Symbol(ch));
+            }
+        }
+        return new Ast.Concat(parts);
     }
 
     /**
