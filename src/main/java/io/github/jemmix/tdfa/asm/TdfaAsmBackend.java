@@ -58,6 +58,8 @@ public final class TdfaAsmBackend {
         genToCharArray(cw);
         genRunBoolean(cw, tdfa, owner);
         genRunExtract(cw, tdfa, owner);
+        genEntryOkC(cw, owner);
+        genPositionFlagsC(cw, owner);
         cw.visitEnd();
         return cw.toByteArray();
     }
@@ -227,6 +229,124 @@ public final class TdfaAsmBackend {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "runExtract", "([CII)L" + HOLDER + ";", null, null);
         mv.visitCode();
         emitRunCore(mv, tdfa, owner, true);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // ===== entryOkC — entry mask check using char[] input (helper for DFA dispatch) =====
+
+    private static void genEntryOkC(ClassWriter cw, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "entryOkC", "(III[C)Z", null, null);
+        mv.visitCode();
+        // locals: 0=state, 1=pos, 2=len, 3=input, 4=required
+        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ENTRY_MASK", "[I");
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitInsn(Opcodes.IALOAD);
+        mv.visitVarInsn(Opcodes.ISTORE, 4);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        Label ok = new Label();
+        mv.visitJumpInsn(Opcodes.IFEQ, ok);
+        // (positionFlagsC(pos, len, input) & required) == required
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "positionFlagsC", "(II[C)I", false);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitInsn(Opcodes.IAND);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        Label yes = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, yes);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitLabel(ok);
+        mv.visitLabel(yes);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // ===== positionFlagsC — position flags for char[] input (helper) =====
+
+    private static void genPositionFlagsC(ClassWriter cw, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "positionFlagsC", "(II[C)I", null, null);
+        mv.visitCode();
+        // locals: 0=pos, 1=len, 2=input, 3=flags, 4=t1, 5=t2
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitVarInsn(Opcodes.ISTORE, 3);
+
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        Label l1 = new Label();
+        mv.visitJumpInsn(Opcodes.IFNE, l1);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.IOR);
+        mv.visitVarInsn(Opcodes.ISTORE, 3);
+        mv.visitLabel(l1);
+
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        Label l2 = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPNE, l2);
+        mv.visitInsn(Opcodes.ICONST_2);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.IOR);
+        mv.visitVarInsn(Opcodes.ISTORE, 3);
+        mv.visitLabel(l2);
+
+        // prevWord
+        Label pf = new Label(), pd = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitJumpInsn(Opcodes.IFLE, pf);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.ISUB);
+        mv.visitInsn(Opcodes.CALOAD);
+        mv.visitVarInsn(Opcodes.ISTORE, 4);
+        emitIsWordBranch(mv, 4, pf);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitJumpInsn(Opcodes.GOTO, pd);
+        mv.visitLabel(pf);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitLabel(pd);
+        mv.visitVarInsn(Opcodes.ISTORE, 4);
+
+        // currWord
+        Label cf = new Label(), cd = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGE, cf);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitInsn(Opcodes.CALOAD);
+        mv.visitVarInsn(Opcodes.ISTORE, 5);
+        emitIsWordBranch(mv, 5, cf);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitJumpInsn(Opcodes.GOTO, cd);
+        mv.visitLabel(cf);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitLabel(cd);
+
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        Label nb = new Label(), done = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, nb);
+        mv.visitInsn(Opcodes.ICONST_4);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.IOR);
+        mv.visitVarInsn(Opcodes.ISTORE, 3);
+        mv.visitJumpInsn(Opcodes.GOTO, done);
+        mv.visitLabel(nb);
+        mv.visitIntInsn(Opcodes.BIPUSH, 8);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.IOR);
+        mv.visitVarInsn(Opcodes.ISTORE, 3);
+        mv.visitLabel(done);
+
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.IRETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
@@ -527,28 +647,22 @@ public final class TdfaAsmBackend {
                 ic(mv, target);
                 mv.visitVarInsn(Opcodes.ISTORE, STATE);
 
-                // surrogate pair advance: if c in [0xD800,0xDBFF] && pos+1<len && input[pos+1] in [0xDC00,0xDFFF] → pos++
-                emitSurrogateAdvance(mv, IN, C_LV, POS, LEN, T1);
+                // surrogate pair advance — only if range overlaps [0xD800, 0xDBFF]
+                if (lo <= 0xDBFF && hi >= 0xD800)
+                    emitSurrogateAdvance(mv, IN, C_LV, POS, LEN, T1);
 
-                // entry check for target at pos+1
-                mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ENTRY_MASK", "[I");
+                // entry check for target at pos+1 — call helper (not inline PF)
                 mv.visitVarInsn(Opcodes.ILOAD, STATE);
-                mv.visitInsn(Opcodes.IALOAD);
-                mv.visitVarInsn(Opcodes.ISTORE, T1);
-                mv.visitVarInsn(Opcodes.ILOAD, T1);
-                Label entryOk = new Label();
-                mv.visitJumpInsn(Opcodes.IFEQ, entryOk);
-                // compute PF at pos+1
                 mv.visitVarInsn(Opcodes.ILOAD, POS);
                 mv.visitInsn(Opcodes.ICONST_1);
                 mv.visitInsn(Opcodes.IADD);
-                mv.visitVarInsn(Opcodes.ISTORE, T2);
-                emitPFInline(mv, owner, IN, T2, LEN, PF2, T3, T4, T1);
-                mv.visitVarInsn(Opcodes.ILOAD, PF2);
-                mv.visitVarInsn(Opcodes.ILOAD, T1);
-                mv.visitInsn(Opcodes.IAND);
-                mv.visitVarInsn(Opcodes.ILOAD, T1);
-                mv.visitJumpInsn(Opcodes.IF_ICMPNE, dfaEnd);
+                mv.visitVarInsn(Opcodes.ILOAD, LEN);
+                mv.visitVarInsn(Opcodes.ALOAD, IN);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "entryOkC",
+                        "(III[C)Z", false);
+                Label entryOk = new Label();
+                mv.visitJumpInsn(Opcodes.IFNE, entryOk);
+                mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
                 mv.visitLabel(entryOk);
 
                 // pos++
