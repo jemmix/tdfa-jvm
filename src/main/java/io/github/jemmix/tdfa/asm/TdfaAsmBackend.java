@@ -31,6 +31,10 @@ public final class TdfaAsmBackend {
             String cn = "io.github.jemmix.tdfa.gen.Gen" + id;
             String owner = cn.replace('.', '/');
             bc = generate(tdfa, owner);
+            if (Boolean.getBoolean("tdfa.asm.dump")) {
+                String dp = "/tmp/" + owner.replace('/', '.') + ".class";
+                try { java.nio.file.Files.write(java.nio.file.Paths.get(dp), bc); } catch (Exception ignored) {}
+            }
             final byte[] bytes = bc;
             final String className = cn;
             ClassLoader cl = new ClassLoader(TdfaAsmBackend.class.getClassLoader()) {
@@ -357,6 +361,22 @@ public final class TdfaAsmBackend {
         final int nStates = tdfa.stateCount;
         final int[] sm = tdfa.stateMeta, rg = tdfa.ranges, op = tdfa.ops, sfo = tdfa.stateFinalOpsOff;
 
+        // Compile-time check: is positionFlags ever needed?
+        // PF is needed if any accepting state has ACCEPT_MASK != 0,
+        // or any live transition range has reqMask != 0,
+        // or PERL mode has accepting states (STOP_MASK indexed by PF).
+        boolean pfNeeded = false;
+        for (int s = 0; s < nStates && !pfNeeded; s++) {
+            if ((sm[s] & 1) != 0) {
+                if (perl || tdfa.stateAcceptMask[s] != 0) pfNeeded = true;
+            }
+        }
+        if (!pfNeeded) {
+            for (int i = 0; i < rg.length; i += 5) {
+                if (rg[i + 2] >= 0 && rg[i + 4] != 0) { pfNeeded = true; break; }
+            }
+        }
+
         // Locals (extract adds: regs, lastAcceptState, r)
         // 0=input, 1=from, 2=len, 3=anchored(runBoolean only)
         final int IN=0, FROM=1, LEN=2, ANC=3;
@@ -427,21 +447,23 @@ public final class TdfaAsmBackend {
             }
         }
 
-        // Entry check for start state at ST
-        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ENTRY_MASK", "[I");
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitInsn(Opcodes.IALOAD);
-        mv.visitVarInsn(Opcodes.ISTORE, T1);
-        mv.visitVarInsn(Opcodes.ILOAD, T1);
-        Label initEntryOk = new Label();
-        mv.visitJumpInsn(Opcodes.IFEQ, initEntryOk);
-        emitPFInline(mv, owner, IN, ST, LEN, PF2, T2, T3, T4);
-        mv.visitVarInsn(Opcodes.ILOAD, PF2);
-        mv.visitVarInsn(Opcodes.ILOAD, T1);
-        mv.visitInsn(Opcodes.IAND);
-        mv.visitVarInsn(Opcodes.ILOAD, T1);
-        mv.visitJumpInsn(Opcodes.IF_ICMPNE, searchNext);
-        mv.visitLabel(initEntryOk);
+        // Entry check for start state at ST — skip if ENTRY_MASK[0] == 0
+        if (tdfa.stateEntryMask[0] != 0) {
+            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ENTRY_MASK", "[I");
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitInsn(Opcodes.IALOAD);
+            mv.visitVarInsn(Opcodes.ISTORE, T1);
+            mv.visitVarInsn(Opcodes.ILOAD, T1);
+            Label initEntryOk = new Label();
+            mv.visitJumpInsn(Opcodes.IFEQ, initEntryOk);
+            emitPFInline(mv, owner, IN, ST, LEN, PF2, T2, T3, T4);
+            mv.visitVarInsn(Opcodes.ILOAD, PF2);
+            mv.visitVarInsn(Opcodes.ILOAD, T1);
+            mv.visitInsn(Opcodes.IAND);
+            mv.visitVarInsn(Opcodes.ILOAD, T1);
+            mv.visitJumpInsn(Opcodes.IF_ICMPNE, searchNext);
+            mv.visitLabel(initEntryOk);
+        }
 
         // state=0, pos=start, haveAccept=false, lastAcceptPos=-1
         mv.visitInsn(Opcodes.ICONST_0); mv.visitVarInsn(Opcodes.ISTORE, STATE);
@@ -453,8 +475,13 @@ public final class TdfaAsmBackend {
         Label dfaLoop = new Label(), dfaEnd = new Label();
         mv.visitLabel(dfaLoop);
 
-        // pf = positionFlags(pos, len, input)
-        emitPFInline(mv, owner, IN, POS, LEN, PF, T1, T2, T3);
+        // pf = positionFlags(pos, len, input) — skip when never needed
+        if (pfNeeded)
+            emitPFInline(mv, owner, IN, POS, LEN, PF, T1, T2, T3);
+        else {
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitVarInsn(Opcodes.ISTORE, PF);
+        }
 
         // Accept check (inline)
         Label skipAccept = new Label();
@@ -649,19 +676,21 @@ public final class TdfaAsmBackend {
                 if (lo <= 0xDBFF && hi >= 0xD800)
                     emitSurrogateAdvance(mv, IN, C_LV, POS, LEN, T1);
 
-                // entry check for target at pos+1 — call helper (not inline PF)
-                mv.visitVarInsn(Opcodes.ILOAD, STATE);
-                mv.visitVarInsn(Opcodes.ILOAD, POS);
-                mv.visitInsn(Opcodes.ICONST_1);
-                mv.visitInsn(Opcodes.IADD);
-                mv.visitVarInsn(Opcodes.ILOAD, LEN);
-                mv.visitVarInsn(Opcodes.ALOAD, IN);
-                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "entryOkC",
-                        "(III[C)Z", false);
-                Label entryOk = new Label();
-                mv.visitJumpInsn(Opcodes.IFNE, entryOk);
-                mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
-                mv.visitLabel(entryOk);
+                // entry check for target at pos+1 — skip call if ENTRY_MASK[target] == 0
+                if (tdfa.stateEntryMask[target] != 0) {
+                    mv.visitVarInsn(Opcodes.ILOAD, STATE);
+                    mv.visitVarInsn(Opcodes.ILOAD, POS);
+                    mv.visitInsn(Opcodes.ICONST_1);
+                    mv.visitInsn(Opcodes.IADD);
+                    mv.visitVarInsn(Opcodes.ILOAD, LEN);
+                    mv.visitVarInsn(Opcodes.ALOAD, IN);
+                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "entryOkC",
+                            "(III[C)Z", false);
+                    Label entryOk = new Label();
+                    mv.visitJumpInsn(Opcodes.IFNE, entryOk);
+                    mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
+                    mv.visitLabel(entryOk);
+                }
 
                 // pos++
                 mv.visitIincInsn(POS, 1);
