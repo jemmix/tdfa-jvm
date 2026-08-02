@@ -36,6 +36,7 @@ public final class TdfaRunner implements Regex.Engine {
     private final int startStateEntryMask;
     private final boolean perlMode;
     private final int[] stopOnAcceptMask;
+    private final boolean rangesDisjoint;
 
     public TdfaRunner(Tnfa nfa) {
         this(Tdfa.compile(nfa));
@@ -52,6 +53,7 @@ public final class TdfaRunner implements Regex.Engine {
         this.regSize = tdfa.registerCount;
         this.startState = tdfa.startState;
         this.startStateEntryMask = tdfa.startStateEntryMask;
+        this.rangesDisjoint = checkRangesDisjoint(tdfa);
         this.perlMode = tdfa.perlMode;
         this.stopOnAcceptMask = tdfa.stopOnAcceptMask;
     }
@@ -105,54 +107,62 @@ public final class TdfaRunner implements Regex.Engine {
             boolean haveAccept = false;
             int pos = startSearch;
 
-            // Check start state's entryMask before declaring any match at this position.
-            if (!entryMaskOk(sem, state, input, pos, to)) {
-                // start state itself can't be entered; no transitions, no accept.
-                continue;
+            // Entry check for start state — inline
+            {
+                int entryReq = sem[state];
+                if (entryReq != 0 && (positionFlags(input, pos, to) & entryReq) != entryReq) continue;
             }
 
+            int posFlags = -1;
             loop:
             for (; ; pos++) {
                 int meta = sm[state];
                 if ((meta & 1) != 0) {
-                    // Accept state — check acceptMask at this position.
-                    int posFlags = positionFlags(input, pos, to);
-                    if ((posFlags & sam[state]) == sam[state]) {
+                    int acceptMask = sam[state];
+                    if (acceptMask == 0) {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                        int stopMask = stopOnAcceptMask[state * 16 + posFlags];
-                        if (perlMode && stopOnAccept(stopMask, posFlags)) break loop;
+                        if (perlMode) {
+                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                            int stopMask = stopOnAcceptMask[state * 16 + posFlags];
+                            if (stopOnAccept(stopMask, posFlags)) break loop;
+                        }
+                    } else {
+                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                        if ((posFlags & acceptMask) == acceptMask) {
+                            lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
+                            int stopMask = stopOnAcceptMask[state * 16 + posFlags];
+                            if (perlMode && stopOnAccept(stopMask, posFlags)) break loop;
+                        }
                     }
                 }
                 if (pos >= to) break;
                 char c = input.charAt(pos);
                 int base = meta >>> 9;
                 int count = (meta >>> 1) & 0xFF;
-                int posFlags = positionFlags(input, pos, to);
                 for (int i = 0; i < count; i++) {
                     int o = (base + i) * 5;
                     if (c >= rg[o] && c <= rg[o + 1]) {
                         int target = rg[o + 2];
                         if (target < 0) break loop;
                         int requiredMask = rg[o + 4];
-                        if ((posFlags & requiredMask) != requiredMask) continue;  // assertion fails, try next range
+                        if (requiredMask != 0) {
+                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                            if ((posFlags & requiredMask) != requiredMask) continue;
+                        }
                         if (regs != null) {
                             int opsOff = rg[o + 3];
                             if (opsOff != 0) applyOps(op, opsOff, regs, pos);
                         }
                         state = target;
-                        // Codepoint-aware consumption: if we just matched a high surrogate
-                        // that's followed by a low surrogate, advance once more so the
-                        // entire supplementary codepoint is consumed as one transition
-                        // (mirrors re2j's rune-based input).
                         if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
                                 && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
                             pos++;
                         }
-                        // Destination entryMask will be checked at the top of the next iteration.
-                        if (!entryMaskOk(sem, state, input, pos + 1, to)) {
-                            // Destination cannot be entered — treat as dead.
-                            break loop;
+                        int entryReq = sem[state];
+                        if (entryReq != 0) {
+                            if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) break loop;
                         }
+                        posFlags = -1;
                         continue loop;
                     }
                 }
@@ -178,57 +188,95 @@ public final class TdfaRunner implements Regex.Engine {
     private int runStringAnchored(String input) {
         final int[] sm = this.stateMeta;
         final int[] rg = this.ranges;
-        final int[] op = this.ops;
         final int[] sem = this.stateEntryMask;
         final int[] sam = this.stateAcceptMask;
         final int to = input.length();
-        final int[] regs = regSize == 0 ? null : new int[regSize];
-        if (regs != null) Arrays.fill(regs, -1);
 
         int state = startState;
         int lastAcceptPos = -1;
 
-        if (!entryMaskOk(sem, state, input, 0, to)) return -1;
+        // Entry check for start state — inline
+        {
+            int entryReq = sem[state];
+            if (entryReq != 0 && (positionFlags(input, 0, to) & entryReq) != entryReq) return -1;
+        }
 
+        int posFlags = -1; // lazy: -1 means not yet computed for current pos
         for (int pos = 0; pos <= to; pos++) {
             int meta = sm[state];
             if ((meta & 1) != 0) {
-                if ((positionFlags(input, pos, to) & sam[state]) == sam[state]) {
+                int acceptMask = sam[state];
+                if (acceptMask == 0) {
                     lastAcceptPos = pos;
+                } else {
+                    if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                    if ((posFlags & acceptMask) == acceptMask) lastAcceptPos = pos;
                 }
             }
             if (pos == to) break;
             char c = input.charAt(pos);
             int base = meta >>> 9;
             int count = (meta >>> 1) & 0xFF;
-            int posFlags = positionFlags(input, pos, to);
             boolean matched = false;
+            if (rangesDisjoint) {
+                // Binary search for the range containing c
+                int rlo = 0, rhi = count - 1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    int mo = (base + mid) * 5;
+                    if (c < rg[mo]) { rhi = mid - 1; continue; }
+                    if (c > rg[mo + 1]) { rlo = mid + 1; continue; }
+                    int target = rg[mo + 2];
+                    if (target < 0) break;
+                    int requiredMask = rg[mo + 4];
+                    if (requiredMask != 0) {
+                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                        if ((posFlags & requiredMask) != requiredMask) break;
+                    }
+                    state = target;
+                    if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
+                            && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
+                        pos++;
+                    }
+                    int entryReq = sem[state];
+                    if (entryReq != 0) {
+                        if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
+                            return lastAcceptPos == to ? lastAcceptPos : -1;
+                        }
+                    }
+                    matched = true;
+                    break;
+                }
+            } else {
             for (int i = 0; i < count; i++) {
                 int o = (base + i) * 5;
                 if (c >= rg[o] && c <= rg[o + 1]) {
                     int target = rg[o + 2];
                     if (target < 0) break;  // dead
                     int requiredMask = rg[o + 4];
-                    if ((posFlags & requiredMask) != requiredMask) continue;
-                    if (regs != null) {
-                        int opsOff = rg[o + 3];
-                        if (opsOff != 0) applyOps(op, opsOff, regs, pos);
+                    if (requiredMask != 0) {
+                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                        if ((posFlags & requiredMask) != requiredMask) continue;
                     }
                     state = target;
-                    // Codepoint-aware consumption: see runStringExtract for rationale.
                     if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
                             && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
                         pos++;
                     }
-                    if (!entryMaskOk(sem, state, input, pos + 1, to)) {
-                        // destination dead — stop.
-                        return lastAcceptPos == to ? lastAcceptPos : -1;
+                    // Entry check for target at pos+1 — inline
+                    int entryReq = sem[state];
+                    if (entryReq != 0) {
+                        if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
+                            return lastAcceptPos == to ? lastAcceptPos : -1;
+                        }
                     }
                     matched = true;
                     break;
                 }
             }
+            }
             if (!matched) break;
+            posFlags = -1;
         }
         return lastAcceptPos == to ? lastAcceptPos : -1;
     }
@@ -244,45 +292,95 @@ public final class TdfaRunner implements Regex.Engine {
         boolean haveAccept = false;
         int pos = from;
 
-        if (!entryMaskOk(sem, state, input, pos, to)) return -1;
+        // Entry check for start state — inline
+        {
+            int entryReq = sem[state];
+            if (entryReq != 0 && (positionFlags(input, pos, to) & entryReq) != entryReq) return -1;
+        }
 
+        int posFlags = -1;
         for (; ; pos++) {
             int meta = sm[state];
             if ((meta & 1) != 0) {
-                int posFlags = positionFlags(input, pos, to);
-                if ((posFlags & sam[state]) == sam[state]) {
+                int acceptMask = sam[state];
+                if (acceptMask == 0) {
                     haveAccept = true; lastAcceptPos = pos;
-                    int stopMask = stopOnAcceptMask[state * 16 + posFlags];
-                    if (perlMode && stopOnAccept(stopMask, posFlags)) break;
+                    if (perlMode) {
+                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                        int stopMask = stopOnAcceptMask[state * 16 + posFlags];
+                        if (stopOnAccept(stopMask, posFlags)) break;
+                    }
+                } else {
+                    if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                    if ((posFlags & acceptMask) == acceptMask) {
+                        haveAccept = true; lastAcceptPos = pos;
+                        int stopMask = stopOnAcceptMask[state * 16 + posFlags];
+                        if (perlMode && stopOnAccept(stopMask, posFlags)) break;
+                    }
                 }
             }
             if (pos >= to) break;
             char c = input.charAt(pos);
             int base = meta >>> 9;
             int count = (meta >>> 1) & 0xFF;
-            int posFlags = positionFlags(input, pos, to);
             boolean matched = false;
+            if (rangesDisjoint) {
+                int rlo = 0, rhi = count - 1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    int mo = (base + mid) * 5;
+                    if (c < rg[mo]) { rhi = mid - 1; continue; }
+                    if (c > rg[mo + 1]) { rlo = mid + 1; continue; }
+                    int target = rg[mo + 2];
+                    if (target < 0) return haveAccept ? lastAcceptPos : -1;
+                    int requiredMask = rg[mo + 4];
+                    if (requiredMask != 0) {
+                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                        if ((posFlags & requiredMask) != requiredMask) return haveAccept ? lastAcceptPos : -1;
+                    }
+                    state = target;
+                    if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
+                            && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
+                        pos++;
+                    }
+                    int entryReq = sem[state];
+                    if (entryReq != 0) {
+                        if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
+                            return haveAccept ? lastAcceptPos : -1;
+                        }
+                    }
+                    matched = true;
+                    break;
+                }
+            } else {
             for (int i = 0; i < count; i++) {
                 int o = (base + i) * 5;
                 if (c >= rg[o] && c <= rg[o + 1]) {
                     int target = rg[o + 2];
                     if (target < 0) return haveAccept ? lastAcceptPos : -1;
                     int requiredMask = rg[o + 4];
-                    if ((posFlags & requiredMask) != requiredMask) continue;
+                    if (requiredMask != 0) {
+                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                        if ((posFlags & requiredMask) != requiredMask) continue;
+                    }
                     state = target;
-                    // Codepoint-aware consumption: see runStringExtract for rationale.
                     if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
                             && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
                         pos++;
                     }
-                    if (!entryMaskOk(sem, state, input, pos + 1, to)) {
-                        return haveAccept ? lastAcceptPos : -1;
+                    int entryReq = sem[state];
+                    if (entryReq != 0) {
+                        if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
+                            return haveAccept ? lastAcceptPos : -1;
+                        }
                     }
                     matched = true;
                     break;
                 }
             }
+            }
             if (!matched) break;
+            posFlags = -1;
         }
         return haveAccept ? lastAcceptPos : -1;
     }
@@ -297,50 +395,68 @@ public final class TdfaRunner implements Regex.Engine {
             boolean haveAccept = false;
             int pos = startSearch;
 
-            if (!entryMaskOkCharSeq(stateEntryMask, state, input, pos, to)) {
-                if (anchored) return null;
-                if ((startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) return null;
-                startSearch++;
-                if (startSearch > to) return null;
-                continue;
+            // Entry check for start state — inline
+            {
+                int entryReq = stateEntryMask[state];
+                if (entryReq != 0 && (positionFlagsCS(input, pos, to) & entryReq) != entryReq) {
+                    if (anchored) return null;
+                    if ((startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) return null;
+                    startSearch++;
+                    if (startSearch > to) return null;
+                    continue;
+                }
             }
 
+            int posFlags = -1;
             loop:
             for (; ; pos++) {
                 int meta = stateMeta[state];
                 if ((meta & 1) != 0) {
-                    int posFlags = positionFlagsCS(input, pos, to);
-                    if ((posFlags & stateAcceptMask[state]) == stateAcceptMask[state]) {
+                    int acceptMask = stateAcceptMask[state];
+                    if (acceptMask == 0) {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                        int stopMask = stopOnAcceptMask[state * 16 + posFlags];
-                        if (perlMode && stopOnAccept(stopMask, posFlags)) break loop;
+                        if (perlMode) {
+                            if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
+                            int stopMask = stopOnAcceptMask[state * 16 + posFlags];
+                            if (stopOnAccept(stopMask, posFlags)) break loop;
+                        }
+                    } else {
+                        if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
+                        if ((posFlags & acceptMask) == acceptMask) {
+                            lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
+                            int stopMask = stopOnAcceptMask[state * 16 + posFlags];
+                            if (perlMode && stopOnAccept(stopMask, posFlags)) break loop;
+                        }
                     }
                 }
                 if (pos >= to) break;
                 char c = input.charAt(pos);
                 int base = meta >>> 9;
                 int count = (meta >>> 1) & 0xFF;
-                int posFlags = positionFlagsCS(input, pos, to);
                 for (int i = 0; i < count; i++) {
                     int o = (base + i) * 5;
                     if (c >= ranges[o] && c <= ranges[o + 1]) {
                         int target = ranges[o + 2];
                         if (target < 0) break loop;
                         int requiredMask = ranges[o + 4];
-                        if ((posFlags & requiredMask) != requiredMask) continue;
+                        if (requiredMask != 0) {
+                            if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
+                            if ((posFlags & requiredMask) != requiredMask) continue;
+                        }
                         if (regs != null) {
                             int opsOff = ranges[o + 3];
                             if (opsOff != 0) applyOps(ops, opsOff, regs, pos);
                         }
                         state = target;
-                        // Codepoint-aware consumption: see runStringExtract for rationale.
                         if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
                                 && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
                             pos++;
                         }
-                        if (!entryMaskOkCharSeq(stateEntryMask, state, input, pos + 1, to)) {
-                            break loop;
+                        int entryReq = stateEntryMask[state];
+                        if (entryReq != 0) {
+                            if ((positionFlagsCS(input, pos + 1, to) & entryReq) != entryReq) break loop;
                         }
+                        posFlags = -1;
                         continue loop;
                     }
                 }
@@ -421,6 +537,25 @@ public final class TdfaRunner implements Regex.Engine {
         int required = sem[state];
         if (required == 0) return true;
         return (positionFlagsCS(input, pos, len) & required) == required;
+    }
+
+    /** Check if all states have pairwise-disjoint ranges (no overlapping ranges). */
+    private static boolean checkRangesDisjoint(Tdfa tdfa) {
+        int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
+        for (int s = 0; s < tdfa.stateCount; s++) {
+            int meta = sm[s];
+            int base = meta >>> 9, cnt = (meta >>> 1) & 0xFF;
+            for (int i = 0; i < cnt; i++) {
+                int o1 = (base + i) * 5;
+                int lo1 = rg[o1], hi1 = rg[o1 + 1];
+                for (int j = i + 1; j < cnt; j++) {
+                    int o2 = (base + j) * 5;
+                    int lo2 = rg[o2], hi2 = rg[o2 + 1];
+                    if (lo1 <= hi2 && lo2 <= hi1) return false;
+                }
+            }
+        }
+        return true;
     }
 
     /** RE2's isWordRune: ASCII word chars [_0-9A-Za-z]. */
