@@ -17,9 +17,9 @@ import java.util.regex.Pattern;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 @State(Scope.Benchmark)
-@Warmup(iterations = 5, time = 1000, timeUnit = TimeUnit.MILLISECONDS)
-@Measurement(iterations = 10, time = 1000, timeUnit = TimeUnit.MILLISECONDS)
-@Fork(10)
+@Warmup(iterations = 5, time = 500, timeUnit = TimeUnit.MILLISECONDS)
+@Measurement(iterations = 10, time = 500, timeUnit = TimeUnit.MILLISECONDS)
+@Fork(2)
 @OperationsPerInvocation(ParameterizedShortInputBench.ITERS)
 public class ParameterizedShortInputBench {
 

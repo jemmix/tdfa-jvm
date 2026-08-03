@@ -50,11 +50,12 @@ public final class TdfaAsmBackend {
     }
 
     private static byte[] generate(Tdfa tdfa, String owner) {
+        boolean fastPath = computeFastPath(tdfa);
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, owner, null, "java/lang/Object", new String[]{ENGINE});
-        genClinit(cw, tdfa, owner);
+        genClinit(cw, tdfa, owner, fastPath);
         genInit(cw);
-        genMatches(cw, owner);
+        genMatches(cw, owner, fastPath);
         genFind(cw, owner);
         genMatch(cw, tdfa, owner);
         genToCharArray(cw);
@@ -68,9 +69,11 @@ public final class TdfaAsmBackend {
 
     // ===== <clinit> =====
 
-    private static void genClinit(ClassWriter cw, Tdfa tdfa, String owner) {
+    private static void genClinit(ClassWriter cw, Tdfa tdfa, String owner, boolean fastPath) {
         for (String f : new String[]{"ENTRY_MASK", "ACCEPT_MASK", "STOP_MASK", "IS_ACCEPT"})
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, f, "[I", null, null).visitEnd();
+        if (fastPath)
+            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "ASCII_TARGET", "[I", null, null).visitEnd();
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
         mv.visitCode();
         int n = tdfa.stateCount;
@@ -93,6 +96,33 @@ public final class TdfaAsmBackend {
         for (int i = 0; i < tdfa.stopOnAcceptMask.length; i++) if (tdfa.stopOnAcceptMask[i] != Tdfa.NEVER_STOP) { mv.visitInsn(Opcodes.DUP); ic(mv, i); ic(mv, tdfa.stopOnAcceptMask[i]); mv.visitInsn(Opcodes.IASTORE); }
         mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "STOP_MASK", "[I");
 
+        if (fastPath) {
+            int tableSize = tdfa.stateCount * 128;
+            ic(mv, tableSize);
+            mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
+            mv.visitInsn(Opcodes.DUP);
+            mv.visitInsn(Opcodes.ICONST_M1);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, ARRAYS, "fill", "([II)V", false);
+            int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
+            for (int s = 0; s < tdfa.stateCount; s++) {
+                int meta = sm[s];
+                int base = meta >>> 17, cnt = (meta >>> 1) & 0xFFFF;
+                for (int i = 0; i < cnt; i++) {
+                    int o = (base + i) * 5;
+                    int lo = Math.max(rg[o], 0), hi = Math.min(rg[o + 1], 127);
+                    int target = rg[o + 2];
+                    if (target < 0) continue;
+                    for (int c = lo; c <= hi; c++) {
+                        mv.visitInsn(Opcodes.DUP);
+                        ic(mv, s * 128 + c);
+                        ic(mv, target);
+                        mv.visitInsn(Opcodes.IASTORE);
+                    }
+                }
+            }
+            mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "ASCII_TARGET", "[I");
+        }
+
         mv.visitInsn(Opcodes.RETURN);
         mv.visitMaxs(0, 0); mv.visitEnd();
     }
@@ -110,9 +140,67 @@ public final class TdfaAsmBackend {
 
     // ===== interface methods =====
 
-    private static void genMatches(ClassWriter cw, String owner) {
+    private static void genMatches(ClassWriter cw, String owner, boolean fastPath) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matches", "(" + CS_D + ")Z", null, null);
         mv.visitCode();
+
+        if (fastPath) {
+            // locals: 0=this, 1=input, 2=s(String), 3=len, 4=state, 5=pos
+            Label slowPath = new Label();
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitTypeInsn(Opcodes.INSTANCEOF, STR);
+            mv.visitJumpInsn(Opcodes.IFEQ, slowPath);
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitTypeInsn(Opcodes.CHECKCAST, STR);
+            mv.visitVarInsn(Opcodes.ASTORE, 2);
+            mv.visitVarInsn(Opcodes.ALOAD, 2);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "length", "()I", false);
+            mv.visitVarInsn(Opcodes.ISTORE, 3);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitVarInsn(Opcodes.ISTORE, 4); // state = 0 (startState)
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitVarInsn(Opcodes.ISTORE, 5); // pos = 0
+
+            Label loop = new Label(), done = new Label(), deadFail = new Label();
+            mv.visitLabel(loop);
+            mv.visitVarInsn(Opcodes.ILOAD, 5);
+            mv.visitVarInsn(Opcodes.ILOAD, 3);
+            mv.visitJumpInsn(Opcodes.IF_ICMPGE, done);
+            mv.visitVarInsn(Opcodes.ALOAD, 2);
+            mv.visitVarInsn(Opcodes.ILOAD, 5);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
+            mv.visitVarInsn(Opcodes.ISTORE, 6); // c (use local 6 temporarily, no conflict)
+            mv.visitVarInsn(Opcodes.ILOAD, 6);
+            mv.visitIntInsn(Opcodes.SIPUSH, 128);
+            mv.visitJumpInsn(Opcodes.IF_ICMPGE, slowPath); // non-ASCII → fallback
+            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ASCII_TARGET", "[I");
+            mv.visitVarInsn(Opcodes.ILOAD, 4);
+            ic(mv, 128);
+            mv.visitInsn(Opcodes.IMUL);
+            mv.visitVarInsn(Opcodes.ILOAD, 6);
+            mv.visitInsn(Opcodes.IADD);
+            mv.visitInsn(Opcodes.IALOAD);
+            mv.visitVarInsn(Opcodes.ISTORE, 4); // state = ASCII_TARGET[state * 128 + c]
+            mv.visitVarInsn(Opcodes.ILOAD, 4);
+            mv.visitJumpInsn(Opcodes.IFLT, deadFail);
+            mv.visitIincInsn(5, 1);
+            mv.visitJumpInsn(Opcodes.GOTO, loop);
+
+            mv.visitLabel(deadFail);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitInsn(Opcodes.IRETURN);
+
+            mv.visitLabel(done);
+            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "IS_ACCEPT", "[I");
+            mv.visitVarInsn(Opcodes.ILOAD, 4);
+            mv.visitInsn(Opcodes.IALOAD);
+            mv.visitInsn(Opcodes.IRETURN);
+
+            mv.visitLabel(slowPath);
+            // Fall through to generic path
+        }
+
+        // Generic path: toCharArray + runBoolean
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "toCharArray", "(" + CS_D + ")[C", false);
         mv.visitVarInsn(Opcodes.ASTORE, 2);
@@ -1030,5 +1118,33 @@ public final class TdfaAsmBackend {
         else if (v >= Byte.MIN_VALUE && v <= Byte.MAX_VALUE) mv.visitIntInsn(Opcodes.BIPUSH, v);
         else if (v >= Short.MIN_VALUE && v <= Short.MAX_VALUE) mv.visitIntInsn(Opcodes.SIPUSH, v);
         else mv.visitLdcInsn(v);
+    }
+
+    // ===== fast-path eligibility =====
+
+    private static boolean computeFastPath(Tdfa tdfa) {
+        if (tdfa.multiline) return false;
+        if (!checkRangesDisjoint(tdfa)) return false;
+        for (int mask : tdfa.stateEntryMask) if (mask != 0) return false;
+        for (int mask : tdfa.stateAcceptMask) if (mask != 0) return false;
+        for (int i = 4; i < tdfa.ranges.length; i += 5) if (tdfa.ranges[i] != 0) return false;
+        return true;
+    }
+
+    private static boolean checkRangesDisjoint(Tdfa tdfa) {
+        int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
+        for (int s = 0; s < tdfa.stateCount; s++) {
+            int meta = sm[s];
+            int base = meta >>> 17, cnt = (meta >>> 1) & 0xFFFF;
+            for (int i = 0; i < cnt; i++) {
+                int o1 = (base + i) * 5;
+                int lo1 = rg[o1], hi1 = rg[o1 + 1];
+                for (int j = i + 1; j < cnt; j++) {
+                    int o2 = (base + j) * 5;
+                    if (lo1 <= rg[o2 + 1] && rg[o2] <= hi1) return false;
+                }
+            }
+        }
+        return true;
     }
 }
