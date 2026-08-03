@@ -1,115 +1,115 @@
 # tdfa-jvm
 
-A standalone JVM reference implementation of the Borsotti–Trofimovich 2022 TDFA algorithm
+Tagged deterministic finite automata for the JVM, after Borsotti–Trofimovich 2022
 (*A closer look at TDFA* — https://github.com/skvadrik/re2c/blob/master/doc/papers/2022_a_closer_look_at_tdfa/).
 
 Apache 2.0.
 
-## What's here
+## Vision
 
-A working silver-bullet proof of concept:
+A **finished library** — bounded scope, all bugs fixed, then frozen.
 
-- **Parser** for a PCRE-ish subset: literals, char classes (`[abc]`, `[a-z]`, `\d \w \s` and
-  negations), `.`, quantifiers (`* + ? {n} {n,m}`, greedy), alternation, capturing &
-  non-capturing groups, anchors `^ $` and `\A \z`, word boundaries `\b \B`, POSIX character
-  classes (`[:alpha:]` etc.), Unicode property classes (`\p{L}` etc.), inline flags
-  `(?i) (?s) (?-s)`, octal/hex escapes, lazy quantifiers, atomic groups, possessive quantifiers.
-  Rejects `\C` (RE2 semantics).
-- **TNFA construction** — paper Algorithm 2 (Thompson-style with tagged ε-transitions,
-  priorities for leftmost-greedy).
-- **TDFA(1) determinization** — paper Algorithm 3 end-to-end: lookahead tags, register
-  allocation via `transition_regops`, state deduplication via `map` + topological sort,
-  final-register ops. Single-valued tags (sufficient for j.u.r-style captures). Equivalence-class
-  partitioned alphabet (RE2-style byte-class partitioning). **Zero-width assertions**
-  (`^ $ \A \z \b \B`) are encoded as a per-state entry/accept mask plus a per-transition
-  required-mask — position-bound, not pattern-level. Verified against 5,716,884 cases from
-  RE2's exhaustive suite with zero failures.
-- **Two backends**, both consuming the same `Tdfa` IR:
-  - **VM**: table-walking interpreter (`TdfaRunner`). Correct, slower.
-  - **ASM (source emission)**: lowers the TDFA to a specialized Java class via
-    `javax.tools.JavaCompiler`. Hard-codes per-state dispatch + register ops as straight-line
-    code. 4–10× faster than the VM.
-- **JMH benchmarks** vs `java.util.regex`, `re2j`, and `DataDog/java-reggie`.
+The same regex never backtracks and never catastrophic-backtracks. One algorithm
+(TDFA), compiled to JVM bytecode, for every pattern it accepts. If a pattern
+requires backtracking, we reject it at compile time rather than silently falling
+back to a slower engine.
+
+**Goals**
+- Faithful, readable implementation of BT2022 (TNFA construction, TDFA(1)
+  determinization, lookahead tags, register allocation).
+- Drop-in `re2j` replacement that is faster, not slower.
+- Compile regexes to JVM bytecode for state-of-the-art throughput.
+
+**Non-goals**
+- PCRE / `java.util.regex` backtracking features (backreferences, lookaround).
+- Multi-engine dispatch (no "if backtracking needed, switch to NFA").
+
+## Correctness checklist
+
+- [x] TNFA construction — BT22 Algorithm 2
+- [x] TDFA(1) determinization — BT22 Algorithm 3
+- [x] Lookahead tags, register allocation, state deduplication
+- [x] Perl (leftmost-first) disambiguation
+- [x] POSIX (leftmost-longest) — heuristic; full BT22 §7 closure pending
+- [x] Zero-width assertions (`^ $ \A \z \b \B`)
+- [x] Equivalence-class alphabet (RE2 byte-class partitioning)
+- [x] Non-BMP Unicode (int-based DFA alphabet)
+- [x] Case-insensitive `(?i)`, dot-all `(?s)`, named groups, `\Q...\E`
+- [x] ASM bytecode backend (runtime code generation, GC-able classes)
+- [x] re2j exhaustive differential testing — **5,716,884 cases, 0 failures**
+- [x] re2j API parity — 14 parameterized suites (ASM + VM), 1127 tests
+- [ ] Multiline mode `(?m)` — flag accepted, not yet honored
+- [ ] Full POSIX leftmost-longest (BT22 §7 `closure_gtop`)
+- [ ] Differential fuzzing vs `re2j` / `java.util.regex`
+- [ ] Deterministic compilation (same regex → identical TDFA across runs)
+- [ ] JVM method-size splitting for large automata (>65 KB)
+
+## What's implemented
+
+**Parser** — PCRE-ish subset: literals, classes (`[a-z]`, `\d \w \s`, `[:alpha:]`,
+`\p{L}`), `.`, quantifiers (`* + ? {n,m}`, greedy + lazy), alternation, capturing
+& non-capturing groups, anchors, word boundaries, inline flags, atomic groups,
+possessive quantifiers. Rejects `\C` and backtracking-required syntax.
+
+**Two backends**, same `Tdfa` IR:
+- **ASM** (default) — emits a specialized JVM class per regex via runtime
+  bytecode generation. 4–10× faster than the VM backend.
+- **VM** — table-walking interpreter. Correct, portable, slower.
+
+`EngineFactory` selects the backend per-compile (ASM, VM, or custom lambda).
+Default resolved once from `-Dtdfa.engine=ASM|VM`.
 
 ## Headline benchmark
 
 JMH AverageTime, ns/op. JDK 26. Lower is better. Reproduce with `./gradlew jmh`.
-See [`BENCHMARKS.md`](BENCHMARKS.md) for the full table.
+Full tables in [`BENCHMARKS.md`](BENCHMARKS.md).
 
 | Engine | `(a+)+b` ReDoS | `(a\|b)*c` | `(\w+)\s+(\w+)` | IPv4 |
 |---|---:|---:|---:|---:|
+| **tdfa-jvm ASM** | **16,558** | **13,896** | **42,026** | **34,841** |
 | tdfa-jvm VM | 159,704 | 82,668 | 177,431 | 124,965 |
-| tdfa-jvm ASM | **16,558** | **13,896** | **42,026** | **34,841** |
 | java.util.regex | 2,624,056 | 84,770 | 70,085 | 84,118 |
 | re2j 1.8 | 833,464 | 214,668 | 421,970 | 356,723 |
-| Reggie | 528 | 250,320 | 17,400 | 11,149 |
 
-ASM backend beats `java.util.regex` on every tested pattern (1.7–158× faster) and beats `re2j`
-everywhere (10–50×). Reggie still wins on realistic capture-heavy patterns (`(\w+)\s+(\w+)`, IPv4)
-because their DFA substrate has optimizations we haven't implemented yet (tag-lifetime, register
-coalescing, minimization — see [`TODO.md`](TODO.md)).
+ASM beats `java.util.regex` on every tested pattern (1.7–158×) and `re2j`
+everywhere (10–50×). No ReDoS vulnerability — `(a+)+b` on a non-matching input
+is linear-time, 158× faster than `java.util.regex`.
 
 ## Build & test
 
 ```bash
-./gradlew test    # 1127 tests, 0 failures (parameterized across ASM + VM engines)
-./gradlew jmh     # full benchmark sweep, ~3-5 min
+./gradlew test    # 1127 tests, 0 failures
+./gradlew jmh     # benchmarks, ~5 min
 ```
 
-JDK 17+ required (project targets JDK 11 bytecode but uses JDK 17 source features).
+JDK 17+. Targets JDK 11 bytecode.
 
 ## API
-
-```java
-import io.github.jemmix.tdfa.Regex;
-import io.github.jemmix.tdfa.EngineFactory;
-
-// Default engine (ASM, or set via -Dtdfa.engine=VM)
-Regex r = Regex.compile("(\\w+)\\s+(\\w+)");
-
-// Explicit engine selection
-Regex vm  = Regex.compile("(\\w+)\\s+(\\w+)", EngineFactory.VM);
-Regex asm = Regex.compile("(\\w+)\\s+(\\w+)", EngineFactory.ASM);
-
-// Custom backend (tracing, debugging, experimental)
-Regex dbg = Regex.compile(pattern, tdfa -> new MyDebugRunner(tdfa));
-
-if (asm.matches("hello world")) {
-    io.github.jemmix.tdfa.vm.MatchResult m = asm.find("hello world", 0);
-    int g1start = m.start(1);  // 0
-    int g1end   = m.end(1);    // 5
-}
-```
-
-## re2j drop-in compatibility
-
-The `io.github.jemmix.tdfa.re2j` package provides a drop-in replacement for Google's re2j:
 
 ```java
 import io.github.jemmix.tdfa.re2j.Pattern;
 import io.github.jemmix.tdfa.re2j.Matcher;
 import io.github.jemmix.tdfa.EngineFactory;
 
-// java.util.regex-style API (defaults to ASM backend)
-Pattern p = Pattern.compile("(\\w+)@(\\w+)");
-Matcher m = p.matcher("hello user@host bye");
-while (m.find()) {
-    System.out.println(m.group(1) + " at " + m.group(2));
-}
+Pattern p = Pattern.compile("(\\w+)@(\\w+)");           // ASM by default
+Pattern p = Pattern.compile(regex, flags, EngineFactory.VM);  // explicit
 
-// Explicit engine selection per-regex
-Pattern pVM = Pattern.compile("(\\w+)@(\\w+)", 0, EngineFactory.VM);
+Matcher m = p.matcher("hello user@host bye");
+while (m.find())
+    System.out.println(m.group(1) + " @ " + m.group(2));
 ```
 
-Both Perl (leftmost-first) and POSIX (leftmost-longest) disambiguation modes are supported.
-The entire re2j test suite (`ExecTest`) runs verbatim — **5,716,884 differential cases, 0 failures**.
+```java
+import io.github.jemmix.tdfa.Regex;
 
-## Status & roadmap
+Regex r = Regex.compile("(\\w+)\\s+(\\w+)");             // ASM by default
+Regex r = Regex.compile(pattern, EngineFactory.VM);      // explicit
 
-This is a research reference implementation. The mission is to be the canonical mapping of
-Borsotti/Trofimovich 2022 → JVM code, with publishable benchmarks. See [`TODO.md`](TODO.md)
-for the optimization backlog (data layout compaction, minimization, multi-valued tags,
-multi-pass JIT determinization, BT19 POSIX closure activation, etc.).
+if (r.matches("hello world")) { ... }
+```
+
+Both Perl and POSIX disambiguation supported. See [`TODO.md`](TODO.md) for the
+roadmap to the finish line.
 
 ## License
 

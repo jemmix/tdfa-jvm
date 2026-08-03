@@ -1,107 +1,64 @@
-# tdfa-jvm — TODO
+# tdfa-jvm — Roadmap
 
-## Compaction / cache-friendly data layout (Tier A — IN PROGRESS)
+Everything between here and "done." When this list is empty, the library is
+finished. See the [vision](README.md#vision).
 
-Current `Tdfa` pokes all over the heap: per-state `int[][] rangeBounds`, `int[][] rangeTargets`,
-`int[][][] rangeOps`, plus `BitSet acceptStates` and `int[][] finalOps`. Every transition lookup
-in `TdfaRunner` is a pointer-chase:
+## Feature parity
 
-```
-rangeBounds[state]            // deref 1
-  -> binary search on int[]   // boatload of cache lines if range count grows
-rangeTargets[state][mid]      // deref 2
-rangeOps[state][mid]          // deref 3
-```
+- [ ] Clear all 41 pending parity tests (POSIX classes, escape rejection, absolute anchors, split, `matches()` byte overloads, Unicode version)
+- [ ] Multiline mode `(?m)` — `^`/`$` at line boundaries
+- [ ] Full POSIX leftmost-longest — activate BT22 §7 `closure_gtop` winner selection
+- [ ] Unicode case folding completeness (currently partial)
+- [ ] `\b` / `\B` Unicode word boundary semantics (currently ASCII)
 
-### Target layout (5 int arrays total — fits L1 trivially)
+## Correctness
 
-```
-int[] stateRangeInfo  // [state] packed: (rangeBase << 8) | rangeCount
-int[] stateFinalInfo  // [state] packed: (finalOpsOff << 1) | acceptBit
-int[] ranges          // flat: [lo0, hi0, target0, opsOff0, lo1, hi1, target1, opsOff1, ...]
-int[] ops             // flat: [op, dst, src, op, dst, src, ...] blocks terminated by OP_END=0
-int[] regs (runtime)  // per-match register file, see register-alloc notes below
-```
+- [ ] Differential fuzzing vs `re2j` and `java.util.regex` (Jazzer or custom harness)
+- [ ] Deterministic compilation — same regex → identical TDFA across runs
+- [ ] `map` + topological sort: reject non-trivial cycles (BT22 §3.3)
+- [ ] Fallback / backup operations (BT22 §3.2) — restore clobberable registers on dead-end
+- [ ] Verify TDFA(1) strict conformance vs paper wording (lookahead delay semantics)
+- [ ] Multi-valued tags (tags under repetition accumulating multiple offsets)
+- [ ] Property-based testing (random regex generation + differential oracle)
 
-For a 20-state / 60-range / 30-ops regex: ~1 KB total across 4 contiguous slabs. Hot state's
-range block fits in one 64-byte cache line.
+## Performance
 
-### Runner hot path after refactor
+- [ ] DFA minimization (Moore-style, register-aware)
+- [ ] ASM register coalescing / scalar replacement (registers → JVM locals)
+- [ ] Cache-friendly flat-array data layout for VM backend
+- [ ] Unanchored `find()` — scan DFA or `.*?` desugaring instead of O(n × states) restart
+- [ ] ASM method-size splitting for large automata (>65 KB bytecode limit)
+- [ ] Lazy accept-snapshot (avoid `regs.clone()` on every accept-state visit)
+- [ ] ASCII fast-path specialization (128-entry byte table per state)
 
-```java
-int meta = stateRangeInfo[state];
-int base = meta >>> 8, count = meta & 0xFF;
-for (int i = 0; i < count; i++) {
-    int o = (base + i) << 2;
-    if (c >= ranges[o] && c <= ranges[o + 1]) {
-        int opsOff = ranges[o + 3];
-        for (int j = opsOff; ops[j] != OP_END; j += 3) {
-            int op = ops[j];
-            if (op == OP_SET_POS) regs[ops[j+1]] = pos;
-            else if (op == OP_COPY) regs[ops[j+1]] = regs[ops[j+2]];
-            else regs[ops[j+1]] = -1;
-        }
-        state = ranges[o + 2];
-        pos++;
-        continue outer;
-    }
-}
-// dead
-```
+## Benchmark coverage
 
-**Per-char cost:** 2 sequential cache-line reads (state range block + ops block). For typical
-states (≤4 ranges, ≤6 ops) both blocks fit in a single 64-byte cache line.
+- [ ] [rebar](https://github.com/BurntSushi/rebar) scenarios (Rust regex benchmark harness)
+- [ ] Hyperscan corpus / Snort rule set
+- [ ] Long-input scan across diverse patterns (not just `\w+\d+\w+`)
+- [ ] CI performance regression tracking (JMH + comparison thresholds)
 
-### Optional further wins (Tier B+)
+## Engineering — "SQLite levels"
 
-- **Specialize for ASCII.** If every range's `lo/hi < 128`, lower to a `byte[128]` per state
-  (one byte = class id) and a `byte[] targetByClassAndState`. Drops the dispatch to a single
-  indexed byte load.
-- **Specialize for "one range" states** (vast majority). Skip the loop, single `if` check.
-- **Bytes rather than ints for state ids** once state count < 256 — cuts the layout by 4×.
-- **Minimization** (Moore-style with register awareness): not implemented. State counts for
-  non-trivial patterns (e.g. `(a|b)*c(a|b)*d`) are 2-3× larger than necessary.
-- **`invokedynamic` + condy** to lazily specialize a per-regex `TdfaRunner` subclass at first match — but that's what the ASM backend (Tier B) already does explicitly.
+- [ ] SpotBugs / Error Prone / PMD — zero warnings
+- [ ] Checkstyle / Spotless — enforced code style
+- [ ] JaCoCo coverage targets (line + branch)
+- [ ] JavaDoc for all public API surface
+- [ ] API stability guarantees (signatures locked at 1.0)
+- [ ] Multi-JDK CI matrix (11, 17, 21, 25)
+- [ ] GraalVM native-image compatibility
+- [ ] Android API-level compatibility check
+- [ ] JPMS module info (`module-info.java`)
+- [ ] Reproducible builds (deterministic jar output)
+- [ ] Thread safety audit (`Matcher` reuse, `Pattern` sharing)
+- [ ] Memory leak testing (generated class GC under load)
+- [ ] Security review (untrusted regex DoS: compile-time blowup, state explosion)
 
-## Register file (rejected: pooling)
+## Wishlist (maybe, someday, if motivated)
 
-Per-match `new int[registerCount]` + `Arrays.fill(-1)` is ~10 ns, < 0.01 % of VM per-match
-latency. **Register pooling / generation-marked thread-local caches / off-heap schemes rejected
-after Amdahl analysis**: maximum theoretical gain ≈ 0.02 %, against hundreds of lines of reset /
-thread-affinity / lifecycle machinery. HotSpot's TLAB allocation is already near-free for arrays
-of this size (≤ 96 bytes).
-
-Revisit only if a benchmark at >10M matches/sec shows GC pressure as a top profiler hit.
-Currently no such evidence.
-
-**Action:** keep `final int[] baseRegs = new int[tdfa.registerCount]; Arrays.fill(baseRegs, -1);`
-verbatim. Register optimization budget goes to:
-- **A2 / R1** — lazy snapshot: don't `regs.clone()` on every accept-state visit. Track
-  `(lastAcceptPos, lastAcceptState)` cheaply; materialize the snapshot lazily on dead-end.
-- **R4 (Tier B)** — ASM scalar replacement: lower registers to JVM locals when registerCount ≤ 16,
-  let HotSpot put them in CPU registers. Eliminates the array entirely on the fast path.
-
-## Other known limitations (not compaction)
-
-- **POSIX disambiguation (BT19)** — leftmost-longest works correctly for all 5.7M re2j test
-  cases via a heuristic (DFS-order closure + register-copy stabilization). The full BT19
-  `closure_gtop` winner-selection algorithm (BT22 §7) is staged but not yet activated —
-  `closurePosix` delegates to `epsilonClosure`. Adversarial patterns with deeply nested
-  alternations under repetition may produce wrong POSIX results. See `docs/BT19.md`.
-- **`map` + topological sort** is implemented but skips the "reject non-trivial cycles" rule from
-  the paper (we currently succeed-and-rewrite for any acyclic bijection). For pathological patterns
-  with append-style ops this can produce wrong results; not exercised by current tests.
-- **Multi-valued tags** (tags under repetition accumulating multiple offsets) — single-valued only.
-- **`Matcher.find()` unanchored search** is O(n × states) — restarts from each position. Should
-  prefix the pattern with a `.*?` desugaring or add a separate "scan DFA".
-- **Multiline mode** (`(?m)`) — `^`/`$` match text start/end only, not line boundaries.
-  The flag is accepted but silently ignored.
-
-## Algorithmic gaps vs paper
-
-- **Lookahead-TDFA(1) vs TDFA(0):** our implementation is closer to TDFA(0) with lookahead-style
-  delay. Strict paper conformance would also defer ε-closure tag recording into the next state's
-  `h` and apply on the OUTGOING transition — verify against paper §3 wording.
-- **Fallback / backup operations** (paper §3.2): not implemented. `Matcher.find` longest-match is
-  handled by re-running from each start; for true fallback we should backup clobberable registers
-  on transition out of accepting states and restore on dead-end.
+- [ ] `condy` / `invokedynamic` for lazy per-regex specialization
+- [ ] Tiered compilation hints (`@Contended`, `@Stable`)
+- [ ] SIMD-accelerated `find()` for fixed-string prefixes (`String.indexOf` vectorization)
+- [ ] Ahead-of-time class persistence (compile regex to `.class` on disk, load at startup)
+- [ ] POSIX longest-leftmost capture groups (not just match boundaries)
+- [ ] Streaming input (match against `InputStream` / `ByteBuffer` without materializing)
