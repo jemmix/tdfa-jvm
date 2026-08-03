@@ -55,4 +55,14 @@ class ShorthandParityTest {
     @Test void wordNonAsciiDigit() { assertSameFind("\\w", "\u0660"); }      // Arabic-Indic zero
     @Test void digitNonAscii() { assertSameFind("\\d", "\u0660"); }
     @Test void notWordNonAscii() { assertSameFind("\\W", "\u00E9"); }
+
+    // ---- Unicode whitespace divergence check ----
+    // re2j \s is ASCII-only: [\t\n\f\r ] — Unicode whitespace like
+    // U+00A0, U+2028 etc. should NOT match \s in either engine.
+
+    @Test void spaceNbsp() { assertSameFind("\\s", "\u00A0"); }
+    @Test void spaceLineSep() { assertSameFind("\\s", "\u2028"); }
+    @Test void spaceParaSep() { assertSameFind("\\s", "\u2029"); }
+    @Test void spaceNextLine() { assertSameFind("\\s", "\u0085"); }
+    @Test void spaceBom() { assertSameFind("\\s", "\uFEFF"); }
 }

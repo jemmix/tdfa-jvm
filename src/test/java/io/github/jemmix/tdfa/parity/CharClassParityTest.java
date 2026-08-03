@@ -129,6 +129,46 @@ class CharClassParityTest {
     @Test void nestedPosixInClass() { assertSameFind("[a-z[:digit:]]", "5"); }
     @Test void supplementaryPlaneInput() {
         String s = new String(Character.toChars(0x1F600));
-        assertSameFind("\\p{S}", s);
+        assertSameFind("\\p{So}", s);
+    }
+
+    // ---- Additional Unicode sub-categories ----
+
+    @Test void unicodeLo() { assertSameFind("\\p{Lo}", "\u4E00"); }       // CJK ideograph
+    @Test void unicodeLm() { assertSameFind("\\p{Lm}", "\u02B0"); }       // modifier letter
+    @Test void unicodeLt() { assertSameFind("\\p{Lt}", "\u01C5"); }       // titlecase letter (DZ)
+    @Test void unicodePs() { assertSameFind("\\p{Ps}", "("); }            // open punctuation
+    @Test void unicodePe() { assertSameFind("\\p{Pe}", ")"); }            // close punctuation
+    @Test void unicodePi() { assertSameFind("\\p{Pi}", "\u201C"); }      // initial quote "
+    @Test void unicodePf() { assertSameFind("\\p{Pf}", "\u201D"); }      // final quote "
+    @Test void unicodePo() { assertSameFind("\\p{Po}", "."); }            // other punctuation
+    @Test void unicodeMc() { assertSameFind("\\p{Mc}", "\u0903"); }      // spacing combining mark
+    @Test void unicodeMe() { assertSameFind("\\p{Me}", "\u0488"); }      // enclosing mark
+    @Test void unicodeSo() { assertSameFind("\\p{So}", "\u263A"); }      // other symbol ☺
+    @Test void unicodeZl() { assertSameFind("\\p{Zl}", "\u2028"); }      // line separator
+    @Test void unicodeZp() { assertSameFind("\\p{Zp}", "\u2029"); }      // paragraph separator
+    @Test void unicodeCo() { assertSameFind("\\p{Co}", "\uE000"); }      // private use
+
+    // ---- [\b] rejection (re2j rejects too) ----
+
+    @Test void backspaceInClassRejects() { assertSameCompileReject("[\\b]"); }
+
+    // ---- \N{...} rejection (re2j rejects) ----
+
+    @Test void namedEscapeRejects() { assertSameCompileReject("\\N{LATIN SMALL LETTER A}"); }
+
+    // ---- \777 overflow: re2j accepts (wraps to 0xFF) ----
+
+    @Test void octalOverflow() { assertSameFind("\\777", "\u00FF"); }
+
+    // ---- \x{D800} lone surrogate: re2j accepts ----
+
+    @Test void hexSurrogate() { assertSameCompileSuccess("\\x{D800}"); }
+
+    // ---- Long input ----
+
+    @Test void longInputFind() {
+        String in = "a".repeat(10000) + "b";
+        assertSameFind("a+b", in);
     }
 }

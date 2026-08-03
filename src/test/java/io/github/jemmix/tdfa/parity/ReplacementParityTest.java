@@ -154,4 +154,9 @@ class ReplacementParityTest {
         assertThat(tdfaReplaceAll("xyz", "abc", "Y"))
                 .isEqualTo(re2jReplaceAll("xyz", "abc", "Y"));
     }
+
+    @Test void replaceAllDollarNonDigit() {
+        String p = "a", in = "banana", repl = "x$y";
+        assertThat(tdfaReplaceAll(p, in, repl)).isEqualTo(re2jReplaceAll(p, in, repl));
+    }
 }

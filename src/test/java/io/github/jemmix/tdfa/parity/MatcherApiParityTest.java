@@ -254,4 +254,68 @@ class MatcherApiParityTest {
         assertThat(t.find()).isEqualTo(r.find());
         assertThat(t.start()).isEqualTo(r.start());
     }
+
+    // ---- find() boundary ----
+
+    @Test void findAtInputLength() {
+        var r = re2jM("a", "xyz");
+        var t = tdfaM("a", "xyz");
+        assertThat(t.find(3)).isEqualTo(r.find(3));
+    }
+
+    @Test void findPastInputLength() {
+        assertThatThrownBy(() -> tdfaM("a", "xyz").find(4))
+                .isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> re2jM("a", "xyz").find(4))
+                .isInstanceOf(IndexOutOfBoundsException.class);
+    }
+
+    @Test void instanceMatchesFalse() {
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("abc").matches("abcd"))
+                .isEqualTo(com.google.re2j.Pattern.compile("abc").matches("abcd"));
+    }
+
+    @Test void matchesThenGroup() {
+        var r = re2jM("(a)(b)(c)", "abc");
+        var t = tdfaM("(a)(b)(c)", "abc");
+        r.matches(); t.matches();
+        assertThat(t.group(0)).isEqualTo(r.group(0));
+        assertThat(t.group(1)).isEqualTo(r.group(1));
+        assertThat(t.group(3)).isEqualTo(r.group(3));
+    }
+
+    @Test void appendReplFailedFindTail() {
+        var rSb = new StringBuilder();
+        var rM = re2jM("xyz", "abc");
+        rM.find();
+        rM.appendTail(rSb);
+
+        var tSb = new StringBuilder();
+        var tM = tdfaM("xyz", "abc");
+        tM.find();
+        tM.appendTail(tSb);
+
+        assertThat(tSb.toString()).isEqualTo(rSb.toString());
+    }
+
+    @Test void emptyInputMatches() {
+        assertThat(tdfaM("a*", "").matches())
+                .isEqualTo(re2jM("a*", "").matches());
+    }
+
+    @Test void emptyInputLookingAt() {
+        assertThat(tdfaM("a*", "").lookingAt())
+                .isEqualTo(re2jM("a*", "").lookingAt());
+    }
+
+    @Test void deeplyNestedGroups() {
+        StringBuilder pat = new StringBuilder("a");
+        for (int i = 0; i < 50; i++) pat.insert(0, "(").append(")");
+        String p = pat.toString();
+        var r = re2jM(p, "a");
+        var t = tdfaM(p, "a");
+        r.find(); t.find();
+        assertThat(t.group(0)).isEqualTo(r.group(0));
+        assertThat(t.groupCount()).isEqualTo(r.groupCount());
+    }
 }
