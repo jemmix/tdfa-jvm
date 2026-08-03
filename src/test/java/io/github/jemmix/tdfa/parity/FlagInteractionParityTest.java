@@ -1,7 +1,7 @@
 package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -62,7 +62,7 @@ class FlagInteractionParityTest {
                 io.github.jemmix.tdfa.re2j.Pattern.DISABLE_UNICODE_GROUPS);
     }
 
-    @Disabled("PENDING: DISABLE_UNICODE_GROUPS should reject \\p{X} like re2j")
+    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: DISABLE_UNICODE_GROUPS should reject \\p{X} like re2j")
     @Test void disableUnicodeGroupsRejectsProperty() {
         assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}",
                 io.github.jemmix.tdfa.re2j.Pattern.DISABLE_UNICODE_GROUPS))

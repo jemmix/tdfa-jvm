@@ -1,7 +1,7 @@
 package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -322,7 +322,7 @@ class MatcherApiParityTest {
 
     // ---- matches() with alternation correctness ----
 
-    @Disabled("PENDING: matches() anchored-both extract returns wrong groups")
+    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: matches() anchored-both extract returns wrong groups")
     @Test void matchesWithAlternationGroups() {
         var r = re2jM("(a|ab)", "ab");
         var t = tdfaM("(a|ab)", "ab");

@@ -9,9 +9,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Oracle helpers: compile each pattern in both com.google.re2j (upstream) and
  * io.github.jemmix.tdfa.re2j (our shim), then compare results.
  *
- * Disabled-test convention:
- *   @Disabled("TDFA_MISSING: ...")  — re2j supports it, we don't (parity gap)
- *   @Disabled("RE2J_MISSING: ...")  — neither re2j nor we support it (not a gap)
+ * Pending-test convention:
+ *   @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")
+ *   // PENDING: <description of what needs to be implemented>
+ *   Run with -Dtdfa.pending=true to include pending tests.
  */
 public final class Re2jOracle {
 
