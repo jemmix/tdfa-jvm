@@ -16,19 +16,33 @@ Apache 2.0.
 JMH AverageTime, ns/op. JDK 26. Lower is better. Reproduce with `./gradlew jmh`.
 Full tables in [`BENCHMARKS.md`](BENCHMARKS.md).
 
-| Engine | `(a+)+b` ReDoS | `(a\|b)*c` | `(\w+)\s+(\w+)` | IPv4 |
+Boolean match, short inputs:
+
+| Engine | `(a+)+b` ReDoS¹ | `(a\|b)*c` | `(\w+)\s+(\w+)` | IPv4 |
 |---|---:|---:|---:|---:|
-| **tdfa-jvm ASM** | **16,558** | **13,896** | 42,026 | 34,841 |
-| tdfa-jvm VM | 159,704 | 82,668 | 177,431 | 124,965 |
-| java.util.regex | 2,624,056 | 84,770 | 70,085 | 84,118 |
-| re2j 1.8 | 833,464 | 214,668 | 421,970 | 356,723 |
-| reggie | 528 | 250,320 | 17,400 | 11,149 |
+| **tdfa-jvm ASM** | **17,352** | **15,793** | 36,388 | 36,310 |
+| tdfa-jvm VM | 57,538 | 20,084 | 64,092 | 61,855 |
+| java.util.regex | 1,837,680 | 147,171 | 48,369 | 64,717 |
+| re2j 1.8 | 945,049 | 232,059 | 545,922 | 434,960 |
+| reggie | <1² | 344,005 | **20,805** | **12,340** |
 
-On a 1000-character scan, ASM is **4.3× faster than `java.util.regex`** and
-scales linearly where `reggie` goes super-linear (150× gap at 1000 chars).
+¹ Input: 20 × `a` + `c` — `java.util.regex` goes exponential (106× slower than us).
+² JIT constant-folded in this microbenchmark; not representative of real throughput.
 
-See [`TODO.md`](TODO.md) for the optimizations still needed to close the gap
-with `reggie` on short capture-heavy patterns.
+Long-input scan (1000 chars, pattern never matches — per-char cost dominates):
+
+| Engine | ns/char | vs ASM |
+|---|---:|---|
+| **tdfa-jvm ASM** | **793** | — |
+| tdfa-jvm VM | 3,216 | 4.1× slower |
+| java.util.regex | 5,417 | 6.8× slower |
+| reggie | 206,776 | 261× slower |
+
+vs `java.util.regex`: **1.3–9× faster** on realistic patterns, **106× faster** on ReDoS.
+vs `re2j`: **10–30× faster** everywhere.
+vs `reggie`: they win on short capture-heavy patterns (1.7–3×); we win massively on long inputs (261×).
+
+See [`TODO.md`](TODO.md) for the optimizations needed to close the gap with `reggie`.
 
 ## Vision
 
