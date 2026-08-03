@@ -30,7 +30,7 @@ public class ParameterizedShortInputBench {
         @Param({"tdfa", "asmc", "jur", "re2j", "reggie"})
         public String engine;
 
-        @Param({"alt", "two", "ip", "lit"})
+        @Param({"alt", "two", "ip", "lit", "redos"})
         public String regexSlug;
 
         public String in;
@@ -43,6 +43,7 @@ public class ParameterizedShortInputBench {
                 case "two" -> "(\\w+)\\s+(\\w+)";
                 case "ip" -> "(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)";
                 case "lit" -> "abc";
+                case "redos" -> "(a+)+b";
                 default -> throw new UnsupportedOperationException("unknown regexSlug: " + regexSlug);
             };
 
@@ -51,6 +52,7 @@ public class ParameterizedShortInputBench {
                 case "two" -> "hello world";
                 case "ip" -> "192.168.1.1";
                 case "lit" -> "abc";
+                case "redos" -> "aaaaaaaaaaaaaaaaaaaac";
                 default -> throw new UnsupportedOperationException("unknown regexSlug: " + regexSlug);
             };
 
