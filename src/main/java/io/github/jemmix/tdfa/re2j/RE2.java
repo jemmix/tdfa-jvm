@@ -20,29 +20,29 @@ import java.util.List;
  * {@code import io.github.jemmix.tdfa.re2j.RE2;}. Same call sites for the
  * methods implemented here.
  */
-public final class RE2 {
+final class RE2 {
 
     // ---- Parser/re2j flag constants (mirrors re2j's RE2 class) -----------
-    public static final int FOLD_CASE       = 0x01;
-    public static final int LITERAL         = 0x02;
-    public static final int CLASS_NL        = 0x04;
-    public static final int DOT_NL          = 0x08;
-    public static final int ONE_LINE        = 0x10;
-    public static final int NON_GREEDY      = 0x20;
-    public static final int PERL_X          = 0x40;
-    public static final int UNICODE_GROUPS  = 0x80;
-    public static final int WAS_DOLLAR      = 0x100;
-    public static final int MATCH_NL        = CLASS_NL | DOT_NL;
-    public static final int PERL            = CLASS_NL | ONE_LINE | PERL_X | UNICODE_GROUPS;
-    public static final int POSIX           = 0;
+    static final int FOLD_CASE       = 0x01;
+    static final int LITERAL         = 0x02;
+    static final int CLASS_NL        = 0x04;
+    static final int DOT_NL          = 0x08;
+    static final int ONE_LINE        = 0x10;
+    static final int NON_GREEDY      = 0x20;
+    static final int PERL_X          = 0x40;
+    static final int UNICODE_GROUPS  = 0x80;
+    static final int WAS_DOLLAR      = 0x100;
+    static final int MATCH_NL        = CLASS_NL | DOT_NL;
+    static final int PERL            = CLASS_NL | ONE_LINE | PERL_X | UNICODE_GROUPS;
+    static final int POSIX           = 0;
 
     /** Compile a pattern using Perl (leftmost-first) disambiguation, matching re2j's default. */
-    public static RE2 compile(String pattern) {
+    static RE2 compile(String pattern) {
         return compileImpl(pattern, PERL, false);
     }
 
     /** Compile using POSIX (leftmost-longest) disambiguation, matching re2j's RE2.compilePOSIX. */
-    public static RE2 compilePOSIX(String pattern) {
+    static RE2 compilePOSIX(String pattern) {
         return compileImpl(pattern, POSIX, true);
     }
 
@@ -51,7 +51,7 @@ public final class RE2 {
      * {@link PatternSyntaxException} with the message format re2j uses
      * (so re2j's test-suite exact-match on {@code \C} messages passes).
      */
-    public static RE2 compileImpl(String pattern, int flags, boolean posix) {
+    static RE2 compileImpl(String pattern, int flags, boolean posix) {
         // Translate the re2j flags our engine understands into inline-flag
         // prefixes on the pattern itself, so the existing Parser flag
         // machinery picks them up. Flags pending parity implementation
@@ -96,7 +96,7 @@ public final class RE2 {
     }
 
     /** Quote regexp metacharacters in {@code pattern}; matches re2j's RE2.quoteMeta. */
-    public static String quoteMeta(String pattern) {
+    static String quoteMeta(String pattern) {
         if (pattern.isEmpty()) return "";
         StringBuilder out = new StringBuilder(pattern.length() << 1);
         for (int i = 0; i < pattern.length(); ) {
@@ -117,7 +117,7 @@ public final class RE2 {
      * {@link #findSubmatchIndex(String)} / {@link #match(String)} calls.
      * Mirrors re2j's {@code regexp.longest = ...} mutation API.
      */
-    public boolean longest = false;
+    boolean longest = false;
 
     private RE2(String pattern, boolean posix) {
         this.pattern = pattern;
@@ -134,7 +134,7 @@ public final class RE2 {
      * or {@code null} if no match. Unmatched groups report {@code -1, -1}.
      * Mirrors re2j's {@code RE2.findSubmatchIndex(String)}.
      */
-    public int[] findSubmatchIndex(String text) {
+    int[] findSubmatchIndex(String text) {
         MatchResult m = engine().find(text, 0);
         if (m == null) return null;
         Regex engine = engine();
@@ -150,7 +150,7 @@ public final class RE2 {
     }
 
     /** Equivalent to {@code findSubmatchIndex(text) != null}. */
-    public boolean match(String text) {
+    boolean match(String text) {
         return engine().find(text, 0) != null;
     }
 
@@ -158,7 +158,7 @@ public final class RE2 {
      * Find all (possibly-overlapping-up-to-cap) matches in {@code text}.
      * Each match is returned as its matched substring.
      */
-    public List<String> findAll(String text, int cap) {
+    List<String> findAll(String text, int cap) {
         List<String> out = new ArrayList<>();
         int from = 0;
         while (from <= text.length()) {
@@ -175,7 +175,7 @@ public final class RE2 {
     /**
      * Find all matches; each match returns its full match + submatch substrings.
      */
-    public List<String[]> findAllSubmatch(String text, int cap) {
+    List<String[]> findAllSubmatch(String text, int cap) {
         List<String[]> out = new ArrayList<>();
         int gc = engine().groupCount();
         int from = 0;
