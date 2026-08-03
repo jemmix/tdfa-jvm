@@ -42,4 +42,17 @@ class ShorthandParityTest {
 
     @Test void complexPattern() { assertSameFind("(\\w+)@(\\w+)\\.(\\w+)", "user@host.com"); }
     @Test void ipPattern() { assertSameFind("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "192.168.1.1"); }
+
+    // ---- Full whitespace coverage ----
+
+    @Test void spaceCarriageReturn() { assertSameFind("\\s", "\r"); }
+    @Test void spaceFormFeed() { assertSameFind("\\s", "\f"); }
+    @Test void spaceVerticalTab() { assertSameFind("\\s", "\u000B"); }
+
+    // ---- Non-ASCII divergence checks (re2j \w \d are ASCII-only) ----
+
+    @Test void wordNonAsciiLetter() { assertSameFind("\\w", "\u00E9"); }     // é
+    @Test void wordNonAsciiDigit() { assertSameFind("\\w", "\u0660"); }      // Arabic-Indic zero
+    @Test void digitNonAscii() { assertSameFind("\\d", "\u0660"); }
+    @Test void notWordNonAscii() { assertSameFind("\\W", "\u00E9"); }
 }

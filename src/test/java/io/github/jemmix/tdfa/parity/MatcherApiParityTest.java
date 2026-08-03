@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
 
+import static org.assertj.core.api.Assertions.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -123,5 +124,134 @@ class MatcherApiParityTest {
         var t = tdfaM("a(b)?c", "abc");
         r.find(); t.find();
         assertThat(t.group(1)).isEqualTo(r.group(1));
+    }
+
+    // ---- static / instance convenience ----
+
+    @Test void staticMatchesTrue() {
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.matches("abc", "abc"))
+                .isEqualTo(com.google.re2j.Pattern.matches("abc", "abc"));
+    }
+
+    @Test void staticMatchesFalse() {
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.matches("abc", "abcd"))
+                .isEqualTo(com.google.re2j.Pattern.matches("abc", "abcd"));
+    }
+
+    @Test void instanceMatchesTrue() {
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("abc").matches("abc"))
+                .isEqualTo(com.google.re2j.Pattern.compile("abc").matches("abc"));
+    }
+
+    @Test void patternAccessor() {
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("a(b)c").pattern())
+                .isEqualTo(com.google.re2j.Pattern.compile("a(b)c").pattern());
+    }
+
+    // ---- runtime exceptions ----
+
+    @Test void findNegativeStart() {
+        assertThatThrownBy(() -> tdfaM("a", "abc").find(-1))
+                .isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> re2jM("a", "abc").find(-1))
+                .isInstanceOf(IndexOutOfBoundsException.class);
+    }
+
+    @Test void findTooLargeStart() {
+        assertThatThrownBy(() -> tdfaM("a", "abc").find(10))
+                .isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> re2jM("a", "abc").find(10))
+                .isInstanceOf(IndexOutOfBoundsException.class);
+    }
+
+    @Test void startBeforeMatch() {
+        assertThatThrownBy(() -> tdfaM("a", "abc").start())
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> re2jM("a", "abc").start())
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test void groupBeforeMatch() {
+        assertThatThrownBy(() -> tdfaM("a", "abc").group())
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> re2jM("a", "abc").group())
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test void groupIndexTooHigh() {
+        assertThatThrownBy(() -> { var m = tdfaM("(a)", "a"); m.find(); m.group(99); })
+                .isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> { var m = re2jM("(a)", "a"); m.find(); m.group(99); })
+                .isInstanceOf(IndexOutOfBoundsException.class);
+    }
+
+    @Test void groupUnknownName() {
+        assertThatThrownBy(() -> { var m = tdfaM("(?<x>a)", "a"); m.find(); m.group("y"); })
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> { var m = re2jM("(?<x>a)", "a"); m.find(); m.group("y"); })
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // ---- stateful interactions ----
+
+    @Test void lookingAtThenFind() {
+        var r = re2jM("\\w+", "hello world");
+        var t = tdfaM("\\w+", "hello world");
+        r.lookingAt(); t.lookingAt();
+        assertThat(t.group()).isEqualTo(r.group());
+        r.find(); t.find();
+        assertThat(t.group()).isEqualTo(r.group());
+    }
+
+    @Test void matchFailThenFind() {
+        var r = re2jM("^xyz$", "abc xyz");
+        var t = tdfaM("^xyz$", "abc xyz");
+        assertThat(t.matches()).isEqualTo(r.matches());
+        assertThat(t.find()).isEqualTo(r.find());
+        if (r.find() || t.find()) {
+            assertThat(t.group()).isEqualTo(r.group());
+        }
+    }
+
+    @Test void findFromThenFind() {
+        var r = re2jM("\\w", "abcd");
+        var t = tdfaM("\\w", "abcd");
+        r.find(2); t.find(2);
+        assertThat(t.group()).isEqualTo(r.group());
+        r.find(); t.find();
+        assertThat(t.group()).isEqualTo(r.group());
+    }
+
+    // ---- edge cases ----
+
+    @Test void tenGroups() {
+        String pat = "(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)";
+        var r = re2jM(pat, "abcdefghij");
+        var t = tdfaM(pat, "abcdefghij");
+        r.find(); t.find();
+        for (int i = 0; i <= 10; i++)
+            assertThat(t.group(i)).as("group " + i).isEqualTo(r.group(i));
+    }
+
+    @Test void emptyInputFind() {
+        Re2jOracle.assertSameFind("a*", "");
+    }
+
+    @Test void emptyPattern() {
+        Re2jOracle.assertSameFind("", "abc");
+    }
+
+    @Test void nullByteInInput() {
+        Re2jOracle.assertSameFind("a.b", "a\u0000b");
+    }
+
+    @Test void resetTwice() {
+        var t = tdfaM("\\d", "a1b2");
+        t.find();
+        t.reset();
+        t.reset();
+        var r = re2jM("\\d", "a1b2");
+        assertThat(t.find()).isEqualTo(r.find());
+        assertThat(t.start()).isEqualTo(r.start());
     }
 }

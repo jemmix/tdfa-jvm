@@ -28,4 +28,10 @@ class DotAllParityTest {
     @Test void toggleDotAllOff() { assertSameFind("(?s)a(?-s).c", "a\nc"); }
 
     @Test void findAllDotAll() { assertSameAllMatches("(?s).", "ab\ncd"); }
+
+    // ---- Edge cases ----
+
+    @Test void dotAllWithCarriageReturn() { assertSameFind("(?s)a.c", "a\rc"); }
+    @Test void dotAllMultiline() { assertSameFind("(?ms)^.$", "a\nb"); }
+    @Test void dotAllScopedMultiline() { assertSameFind("(?m)^(?s:.)$", "a\nb"); }
 }

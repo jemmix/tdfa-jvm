@@ -34,4 +34,14 @@ class AnchorParityTest {
     @Test void multilineEndAnchor() { assertSameFind("(?m)abc$", "abc\ndef"); }
     @Test void multilineMultipleLines() { assertSameAllMatches("(?m)^.", "ab\ncd\nef"); }
     @Test void multilineEndAnchorNewline() { assertSameFind("(?m)abc$", "abc\ndef"); }
+
+    // ---- Edge cases ----
+
+    @Test void dollarBeforeTrailingNewline() { assertSameFind("abc$", "abc\n"); }
+    @Test void dollarBeforeTrailingNewlineNone() { assertSameFind("abc$", "abc"); }
+    @Test void multilineCRLF() { assertSameFind("(?m)^abc", "def\r\nabc"); }
+    @Test void multilineCRLFEnd() { assertSameFind("(?m)abc$", "abc\r\ndef"); }
+    @Test void anchoredAUnaffectedByMultiline() { assertSameFind("(?m)\\Aabc", "def\nabc"); }
+    @Test void anchoredZUnaffectedByMultiline() { assertSameFind("(?m)abc\\z", "abc\ndef"); }
+    @Test void findAllMultilineLines() { assertSameAllMatches("(?m)^\\w+", "ab\ncd\nef"); }
 }

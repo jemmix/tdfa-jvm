@@ -37,4 +37,11 @@ class SplitParityTest {
     @Test void splitLimit0() { assertSplit(",", "a,b,c,", 0); }
     @Test void splitLimitLarge() { assertSplit(",", "a,b,c", 10); }
     @Test void splitLimitNegative() { assertSplit(",", "a,b,c,,,", -1); }
+
+    // ---- Edge cases ----
+
+    @Test void splitZeroWidthPattern() { assertSplit("a*", "aaabbb"); }
+    @Test void splitEveryChar() { assertSplit(".", "abc"); }
+    @Test void splitEmptyPattern() { assertSplit("", "abc"); }
+    @Test void splitOnNullByte() { assertSplit("\\x00", "a\u0000b"); }
 }

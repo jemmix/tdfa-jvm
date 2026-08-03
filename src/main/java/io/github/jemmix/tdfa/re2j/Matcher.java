@@ -48,6 +48,11 @@ public final class Matcher {
         return reset();
     }
 
+    /** Pending parity — byte[] input not yet implemented. */
+    public Matcher reset(byte[] bytes) {
+        throw new UnsupportedOperationException("byte[] input pending parity implementation");
+    }
+
     // ---- match operations ----
 
     /** Match the entire input (anchored both ends). */
@@ -167,6 +172,11 @@ public final class Matcher {
         return pattern.groupCount();
     }
 
+    /** Pending parity — DFA complexity metric not yet exposed. */
+    public int programSize() {
+        throw new UnsupportedOperationException("programSize() pending parity implementation");
+    }
+
     // ---- replacement ----
 
     /** Replace all matches with {@code replacement} (supports {@code $N} backreferences). */
@@ -205,8 +215,27 @@ public final class Matcher {
         return this;
     }
 
+    /** {@link StringBuffer} overload — delegates to {@link StringBuilder} variant. */
+    public Matcher appendReplacement(StringBuffer sb, String replacement) {
+        ensureMatch();
+        if (appendPos < lastMatchStart) {
+            sb.append(input, appendPos, lastMatchStart);
+        }
+        appendPos = lastMatchEnd;
+        StringBuilder tmp = new StringBuilder();
+        appendReplacementInternal(tmp, replacement);
+        sb.append(tmp);
+        return this;
+    }
+
     /** Append the remaining unmatched tail. */
     public StringBuilder appendTail(StringBuilder sb) {
+        sb.append(input, appendPos, inputLength);
+        return sb;
+    }
+
+    /** {@link StringBuffer} overload. */
+    public StringBuffer appendTail(StringBuffer sb) {
         sb.append(input, appendPos, inputLength);
         return sb;
     }
@@ -264,6 +293,19 @@ public final class Matcher {
                     if (g != null) sb.append(g);
                     last = i;
                     i--;
+                    continue;
+                } else if (c2 == '{') {
+                    if (last < i) sb.append(replacement, last, i);
+                    i += 2;
+                    int j = i;
+                    while (j < m && replacement.charAt(j) != '}' && replacement.charAt(j) != ' ') j++;
+                    if (j >= m || replacement.charAt(j) != '}')
+                        throw new IllegalArgumentException("named capture group is missing trailing '}'");
+                    String gName = replacement.substring(i, j);
+                    String gVal = group(gName);
+                    if (gVal != null) sb.append(gVal);
+                    last = j + 1;
+                    i = j;
                     continue;
                 }
             }

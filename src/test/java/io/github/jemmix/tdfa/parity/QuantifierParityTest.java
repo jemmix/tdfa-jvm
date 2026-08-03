@@ -50,4 +50,16 @@ class QuantifierParityTest {
 
     @Test void repeatWithAnchor() { assertSameFind("^a*", "aaa"); }
     @Test void complexBacktrack() { assertSameFind("(a+)+b", "aaab"); }
+
+    // ---- Pending parity / edge cases ----
+
+    @Test void commaShorthandBounded() { assertSameFind("a{,3}", "aaaa"); }
+    @Test void zeroZeroQuantifier() { assertSameFind("a{0,0}", "aaa"); }
+    @Test void largeCount() { assertSameFind("a{5}", "aaaaa"); }
+
+    @Test void possessivePlusRejects() { assertSameCompileReject("a++"); }
+    @Test void possessiveQuestionRejects() { assertSameCompileReject("a?+"); }
+    @Test void possessiveBoundedRejects() { assertSameCompileReject("a{2,3}+"); }
+
+    @Test void invertedRangeRejects() { assertSameCompileReject("a{3,2}"); }
 }

@@ -52,6 +52,10 @@ public final class Pattern {
 
     /** Compile {@code regex} with the given {@code flags} (bitwise OR of the flag constants). */
     public static Pattern compile(String regex, int flags) {
+        if ((flags & ~(CASE_INSENSITIVE | DOTALL | MULTILINE | DISABLE_UNICODE_GROUPS | LONGEST_MATCH)) != 0) {
+            throw new IllegalArgumentException(
+                    "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS, LONGEST_MATCH");
+        }
         String flregex = regex;
         if ((flags & CASE_INSENSITIVE) != 0) flregex = "(?i)" + flregex;
         if ((flags & DOTALL) != 0)          flregex = "(?s)" + flregex;
@@ -71,14 +75,29 @@ public final class Pattern {
         return compile(regex).matcher(input).matches();
     }
 
+    /** Pending parity — byte[] input not yet implemented. */
+    public static boolean matches(String regex, byte[] input) {
+        throw new UnsupportedOperationException("byte[] input pending parity implementation");
+    }
+
     /** Match the entire input against this pattern. */
     public boolean matches(String input) {
         return matcher(input).matches();
     }
 
+    /** Pending parity — byte[] input not yet implemented. */
+    public boolean matches(byte[] input) {
+        throw new UnsupportedOperationException("byte[] input pending parity implementation");
+    }
+
     /** Create a {@link Matcher} for this pattern against {@code input}. */
     public Matcher matcher(CharSequence input) {
         return new Matcher(this, input);
+    }
+
+    /** Pending parity — byte[] input not yet implemented. */
+    public Matcher matcher(byte[] input) {
+        throw new UnsupportedOperationException("byte[] input pending parity implementation");
     }
 
     /** Split {@code input} around matches of this pattern. Trailing empty strings are omitted. */
@@ -125,6 +144,14 @@ public final class Pattern {
     /** Quote regexp metacharacters in {@code s}. */
     public static String quote(String s) {
         return RE2.quoteMeta(s);
+    }
+
+    /** Releases internal caches (no-op for this engine). */
+    public void reset() { }
+
+    /** Pending parity — DFA complexity metric not yet exposed. */
+    public int programSize() {
+        throw new UnsupportedOperationException("programSize() pending parity implementation");
     }
 
     /** Returns the pattern string. */

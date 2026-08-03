@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
 
+import static org.assertj.core.api.Assertions.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -99,5 +100,58 @@ class ReplacementParityTest {
     @Test void replaceAllEscapedBackslash() {
         String p = "a", in = "aaa", repl = "\\\\";
         assertThat(tdfaReplaceAll(p, in, repl)).isEqualTo(re2jReplaceAll(p, in, repl));
+    }
+
+    @Test void replaceAllNamedGroupRef() {
+        String p = "(?<word>\\w+)", in = "hello world", repl = "[${word}]";
+        assertThat(tdfaReplaceAll(p, in, repl)).isEqualTo(re2jReplaceAll(p, in, repl));
+    }
+
+    @Test void replaceAllMultiDigitGroupRef() {
+        String p = "(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)";
+        String in = "abcdefghij", repl = "$10";
+        assertThat(tdfaReplaceAll(p, in, repl)).isEqualTo(re2jReplaceAll(p, in, repl));
+    }
+
+    @Test void replaceAllDollarAtEnd() {
+        String p = "a", in = "banana", repl = "x$";
+        assertThat(tdfaReplaceAll(p, in, repl)).isEqualTo(re2jReplaceAll(p, in, repl));
+    }
+
+    @Test void replaceAllNonParticipatingGroup() {
+        String p = "(a)|(b)", in = "b", repl = "$1-$2";
+        assertThat(tdfaReplaceAll(p, in, repl)).isEqualTo(re2jReplaceAll(p, in, repl));
+    }
+
+    @Test void replaceAllGroupRefOutOfRange() {
+        assertThatThrownBy(() -> tdfaReplaceAll("(a)", "a", "$2"))
+                .isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> re2jReplaceAll("(a)", "a", "$2"))
+                .isInstanceOf(IndexOutOfBoundsException.class);
+    }
+
+    @Test void stringBufferAppendReplacement() {
+        String p = "(\\w+)", in = "hello world", repl = "[$1]";
+        var rSb = new StringBuffer();
+        var rM = com.google.re2j.Pattern.compile(p).matcher(in);
+        while (rM.find()) rM.appendReplacement(rSb, repl);
+        rM.appendTail(rSb);
+
+        var tSb = new StringBuffer();
+        var tM = io.github.jemmix.tdfa.re2j.Pattern.compile(p).matcher(in);
+        while (tM.find()) tM.appendReplacement(tSb, repl);
+        tM.appendTail(tSb);
+
+        assertThat(tSb.toString()).isEqualTo(rSb.toString());
+    }
+
+    @Test void replaceAllEmptyInput() {
+        assertThat(tdfaReplaceAll("a", "", "X"))
+                .isEqualTo(re2jReplaceAll("a", "", "X"));
+    }
+
+    @Test void replaceAllNoMatchKeepsInput() {
+        assertThat(tdfaReplaceAll("xyz", "abc", "Y"))
+                .isEqualTo(re2jReplaceAll("xyz", "abc", "Y"));
     }
 }

@@ -47,4 +47,14 @@ class EscapeParityTest {
 
     @Test
     void octalOneDigit() { assertSameCompileReject("\\1"); }
+
+    // ---- Edge cases ----
+
+    @Test void octalNull() { assertSameFind("\\0", "\u0000"); }
+    @Test void octalLeadingZero() { assertSameFind("\\012", "\n"); }
+    @Test void hexEmpty() { assertSameCompileReject("\\x{}"); }
+    @Test void hexNoDigits() { assertSameCompileReject("\\x"); }
+    @Test void hexOverflow() { assertSameCompileReject("\\x{FFFFFFFF}"); }
+    @Test void quoteEmpty() { assertSameFind("\\Q\\E", ""); }
+    @Test void quoteFollowedByQuote() { assertSameFind("\\Qa\\E\\Qb\\E", "ab"); }
 }

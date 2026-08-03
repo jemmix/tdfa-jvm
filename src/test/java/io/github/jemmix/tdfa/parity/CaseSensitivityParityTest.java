@@ -44,4 +44,15 @@ class CaseSensitivityParityTest {
     @Test void scopedCaseInsensitiveNoLeak() { assertSameFind("a(?i:bc)d", "abcd"); }
     @Test void scopedCaseInsensitiveLeakPrevention() { assertSameFind("(?i:a)b", "Ab"); }
     @Test void scopedNegationLeakPrevention() { assertSameFind("(?i)a(?-i:b)c", "AbC"); }
+
+    // ---- Combined flags ----
+
+    @Test void combinedIandS() { assertSameFind("(?is).+", "AB\ncd"); }
+    @Test void combinedIandM() { assertSameAllMatches("(?im)^\\w", "Ab\nCd"); }
+    @Test void negatedClassUnderCaseInsensitive() { assertSameFind("(?i)[^a-z]", "A"); }
+    @Test void negatedClassUnderCaseInsensitive2() { assertSameFind("(?i)[^a-z]", "5"); }
+
+    // ---- Empty input ----
+
+    @Test void caseInsensitiveEmptyInput() { assertSameFind("(?i)a*", ""); }
 }

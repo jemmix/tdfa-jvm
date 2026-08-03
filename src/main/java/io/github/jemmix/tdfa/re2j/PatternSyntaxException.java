@@ -20,6 +20,12 @@ public class PatternSyntaxException extends RuntimeException {
         this.pattern = pattern;
     }
 
+    public PatternSyntaxException(String description) {
+        super("error parsing regexp: " + description);
+        this.description = description;
+        this.pattern = "";
+    }
+
     public String getDescription() { return description; }
     public String getPattern() { return pattern; }
     public int getIndex() { return -1; }
