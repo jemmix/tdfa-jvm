@@ -58,7 +58,7 @@ public final class Pattern {
         Disambiguation disamb = (flags & LONGEST_MATCH) != 0
                 ? Disambiguation.POSIX : Disambiguation.PERL;
         try {
-            Regex engine = Regex.compile(flregex, false, disamb);
+            Regex engine = Regex.compile(flregex, Boolean.getBoolean("tdfa.asm"), disamb);
             return new Pattern(regex, flags, engine);
         } catch (RuntimeException e) {
             throw RE2.translate(e, regex);

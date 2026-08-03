@@ -51,7 +51,7 @@ public final class TdfaAsmBackend {
 
     private static byte[] generate(Tdfa tdfa, String owner) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
-        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, owner, null, "java/lang/Object", new String[]{ENGINE});
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, owner, null, "java/lang/Object", new String[]{ENGINE});
         genClinit(cw, tdfa, owner);
         genInit(cw);
         genMatches(cw, owner);
@@ -569,11 +569,12 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, LEN);
         mv.visitJumpInsn(Opcodes.IF_ICMPGE, dfaEnd);
 
-        // c = input[pos] (CALOAD)
+        // c = input[pos] (CALOAD), then decode codepoint from surrogate pair
         mv.visitVarInsn(Opcodes.ALOAD, IN);
         mv.visitVarInsn(Opcodes.ILOAD, POS);
         mv.visitInsn(Opcodes.CALOAD);
         mv.visitVarInsn(Opcodes.ISTORE, C_LV);
+        emitCodePointDecode(mv, IN, C_LV, POS, LEN, T1);
 
         // ===== DFA DISPATCH (TABLESWITCH) =====
         emitDfaDispatch(mv, tdfa, owner, extract,
@@ -675,7 +676,7 @@ public final class TdfaAsmBackend {
         for (int s = 0; s < nStates; s++) {
             mv.visitLabel(sl[s]);
             int meta = sm[s];
-            int base = meta >>> 9, cnt = (meta >>> 1) & 0xFF;
+            int base = meta >>> 17, cnt = (meta >>> 1) & 0xFFFF;
 
             List<int[]> live = new ArrayList<>();
             for (int i = 0; i < cnt; i++) {
@@ -715,9 +716,15 @@ public final class TdfaAsmBackend {
                 ic(mv, target);
                 mv.visitVarInsn(Opcodes.ISTORE, STATE);
 
-                // surrogate pair advance — only if range overlaps [0xD800, 0xDBFF]
-                if (lo <= 0xDBFF && hi >= 0xD800)
-                    emitSurrogateAdvance(mv, IN, C_LV, POS, LEN, T1);
+                // codepoint pair advance — if decoded a non-BMP codepoint
+                if (hi > 0xFFFF || (lo <= 0xDBFF && hi >= 0xD800)) {
+                    Label noAdv = new Label();
+                    mv.visitVarInsn(Opcodes.ILOAD, C_LV);
+                    mv.visitLdcInsn(0x10000);
+                    mv.visitJumpInsn(Opcodes.IF_ICMPLT, noAdv);
+                    mv.visitIincInsn(POS, 1);
+                    mv.visitLabel(noAdv);
+                }
 
                 // entry check for target at pos+1 — skip call if ENTRY_MASK[target] == 0
                 if (tdfa.stateEntryMask[target] != 0) {
@@ -930,21 +937,21 @@ public final class TdfaAsmBackend {
         // fall through = is word
     }
 
-    // ===== surrogate pair advance (inline) =====
+    // ===== codepoint decode from surrogate pair (inline) =====
 
-    private static void emitSurrogateAdvance(MethodVisitor mv, int IN, int C_LV, int POS, int LEN, int T1) {
-        Label noSur = new Label();
+    private static void emitCodePointDecode(MethodVisitor mv, int IN, int C_LV, int POS, int LEN, int T1) {
+        Label notSur = new Label();
         mv.visitVarInsn(Opcodes.ILOAD, C_LV);
         mv.visitLdcInsn(0xD800);
-        mv.visitJumpInsn(Opcodes.IF_ICMPLT, noSur);
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, notSur);
         mv.visitVarInsn(Opcodes.ILOAD, C_LV);
         mv.visitLdcInsn(0xDBFF);
-        mv.visitJumpInsn(Opcodes.IF_ICMPGT, noSur);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGT, notSur);
         mv.visitVarInsn(Opcodes.ILOAD, POS);
         mv.visitInsn(Opcodes.ICONST_1);
         mv.visitInsn(Opcodes.IADD);
         mv.visitVarInsn(Opcodes.ILOAD, LEN);
-        mv.visitJumpInsn(Opcodes.IF_ICMPGE, noSur);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGE, notSur);
         mv.visitVarInsn(Opcodes.ALOAD, IN);
         mv.visitVarInsn(Opcodes.ILOAD, POS);
         mv.visitInsn(Opcodes.ICONST_1);
@@ -953,12 +960,23 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ISTORE, T1);
         mv.visitVarInsn(Opcodes.ILOAD, T1);
         mv.visitLdcInsn(0xDC00);
-        mv.visitJumpInsn(Opcodes.IF_ICMPLT, noSur);
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, notSur);
         mv.visitVarInsn(Opcodes.ILOAD, T1);
         mv.visitLdcInsn(0xDFFF);
-        mv.visitJumpInsn(Opcodes.IF_ICMPGT, noSur);
-        mv.visitIincInsn(POS, 1);
-        mv.visitLabel(noSur);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGT, notSur);
+        mv.visitVarInsn(Opcodes.ILOAD, C_LV);
+        mv.visitLdcInsn(0xD800);
+        mv.visitInsn(Opcodes.ISUB);
+        mv.visitIntInsn(Opcodes.BIPUSH, 10);
+        mv.visitInsn(Opcodes.ISHL);
+        mv.visitVarInsn(Opcodes.ILOAD, T1);
+        mv.visitLdcInsn(0xDC00);
+        mv.visitInsn(Opcodes.ISUB);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitLdcInsn(0x10000);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitVarInsn(Opcodes.ISTORE, C_LV);
+        mv.visitLabel(notSur);
     }
 
     // ===== register ops (inline, transition) =====

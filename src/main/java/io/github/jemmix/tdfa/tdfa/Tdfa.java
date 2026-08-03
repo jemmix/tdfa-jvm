@@ -74,7 +74,7 @@ public final class Tdfa {
 
     // === Flat packed arrays (4 arrays total; per-match regs adds a 5th at runtime) ===
     /**
-     * [state] -> packed (rangeBase << 9) | (rangeCount << 1) | acceptBit.
+     * [state] -> packed (rangeBase << 17) | (rangeCount << 1) | acceptBit.
      * One load per char gives accept + rangeBase + rangeCount.
      */
     public final int[] stateMeta;
@@ -117,9 +117,9 @@ public final class Tdfa {
     public boolean isAccept(int state) { return (stateMeta[state] & 1) != 0; }
     public int finalOpsOffset(int state) { return stateFinalOpsOff[state]; }
     /** Unpack range base from packed stateMeta. */
-    public static int rangeBase(int meta) { return meta >>> 9; }
+    public static int rangeBase(int meta) { return meta >>> 17; }
     /** Unpack range count from packed stateMeta. */
-    public static int rangeCount(int meta) { return (meta >>> 1) & 0xFF; }
+    public static int rangeCount(int meta) { return (meta >>> 1) & 0xFFFF; }
     /** Accept bit. */
     public static boolean accept(int meta) { return (meta & 1) != 0; }
 
@@ -199,19 +199,18 @@ public final class Tdfa {
             return out;
         }
 
-        /** Compute breakpoints: every char where some NFA CharClass boundary occurs. */
+        /** Compute breakpoints: every codepoint where some NFA CharClass boundary occurs. */
         int[] computeBreakpoints() {
             TreeSet<Integer> bps = new TreeSet<>();
             bps.add(0);
-            bps.add(0x10000); // sentinel upper bound (exclusive)
+            bps.add(0x110000); // sentinel upper bound (exclusive)
             for (CharClass cc : nfa.symClass) {
                 if (cc == null) continue;
                 for (int r = 0; r < cc.ranges.length; r += 2) {
                     int lo = cc.ranges[r], hi = cc.ranges[r + 1];
-                    if (lo > 0xFFFF) continue;
                     bps.add(lo);
-                    int after = Math.min(hi, 0xFFFF) + 1;
-                    if (after <= 0xFFFF) bps.add(after);
+                    int after = hi + 1;
+                    if (after <= 0x10FFFF) bps.add(after);
                 }
             }
             int[] arr = new int[bps.size()];
@@ -255,9 +254,8 @@ public final class Tdfa {
                 // For each equivalence range, compute one transition per mask group
                 for (int bi = 0; bi < breakpoints.length - 1; bi++) {
                     int rangeLo = breakpoints[bi];
-                    if (rangeLo >= 0x10000) break;
                     int rangeHi = breakpoints[bi + 1] - 1;
-                    char repr = (char) rangeLo;
+                    int repr = rangeLo;
                     for (List<Config> groupConfigs : maskGroups.values()) {
                         List<Config> stepped = stepOnSymbol(groupConfigs, repr, requiredMaskOut);
                         if (stepped.isEmpty()) continue;
@@ -431,7 +429,7 @@ public final class Tdfa {
                 }
                 boolean isAccept = accept.get(s);
                 // Pack: (rangeBase << 9) | (rangeCount << 1) | acceptBit
-                stateMeta[s] = (rangeBase << 9) | ((k & 0xFF) << 1) | (isAccept ? 1 : 0);
+                stateMeta[s] = (rangeBase << 17) | ((k & 0xFFFF) << 1) | (isAccept ? 1 : 0);
                 stateFinalOpsOff[s] = finalOpsOff;
             }
             return new Tdfa(tags, nfa.groupCount, globalMaxReg, 0, n,
@@ -633,7 +631,7 @@ public final class Tdfa {
          * Returns the stepped configs (with emptyMask reset to 0) and stores the intersection of
          * contributing source config masks into {@code requiredMaskOut[0]}.
          */
-        List<Config> stepOnSymbol(List<Config> configs, char a, int[] requiredMaskOut) {
+        List<Config> stepOnSymbol(List<Config> configs, int a, int[] requiredMaskOut) {
             // Perl leftmost-first: the closure's configs are in priority-ordered DFS arrival order.
             // If any config has reached the accept state, find the FIRST (best-priority) such config
             // and consider suppressing transitions from configs added AFTER it.
@@ -1008,7 +1006,7 @@ public final class Tdfa {
                 return Integer.compare(Integer.bitCount(b.requiredMask), Integer.bitCount(a.requiredMask));
             });
         }
-        /** Insert target=-1 ranges in any gap so the ranges tile [0, 0xFFFF] contiguously. */
+        /** Insert target=-1 ranges in any gap so the ranges tile [0, 0x10FFFF] contiguously. */
         void fillGaps() {
             ranges.sort(Comparator.comparingInt(r -> r.lo));
             List<Range> out = new ArrayList<>();
@@ -1020,8 +1018,8 @@ public final class Tdfa {
                 out.add(r);
                 expected = r.hi + 1;
             }
-            if (expected <= 0xFFFF) {
-                out.add(new Range(expected, 0xFFFF, -1, null, 0));
+            if (expected <= 0x10FFFF) {
+                out.add(new Range(expected, 0x10FFFF, -1, null, 0));
             }
             ranges.clear();
             ranges.addAll(out);

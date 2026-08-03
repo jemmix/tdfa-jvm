@@ -1,7 +1,6 @@
 package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Disabled;
 
 import static io.github.jemmix.tdfa.parity.Re2jOracle.*;
 
@@ -59,9 +58,7 @@ class CharClassParityTest {
     @Test void findAllWithClass() { assertSameAllMatches("[aeiou]", "hello world"); }
     @Test void findAllNegated() { assertSameAllMatches("[^aeiou ]", "hello world"); }
 
-    @Test
-    @Disabled("TDFA_MISSING: non-BMP codepoint \\x{10000} rejected — CharClass is char-based")
-    void unicodeNonBmpCodepoint() {
+    @Test void unicodeNonBmpCodepoint() {
         assertSameFind("\\x{10000}", new String(Character.toChars(0x10000)));
     }
 }

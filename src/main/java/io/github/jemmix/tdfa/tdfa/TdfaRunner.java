@@ -140,9 +140,12 @@ public final class TdfaRunner implements Regex.Engine {
                     }
                 }
                 if (pos >= to) break;
-                char c = input.charAt(pos);
-                int base = meta >>> 9;
-                int count = (meta >>> 1) & 0xFF;
+                char c0 = input.charAt(pos); int c = c0;
+                if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to
+                        && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF)
+                    c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
+                int base = meta >>> 17;
+                int count = (meta >>> 1) & 0xFFFF;
                 for (int i = 0; i < count; i++) {
                     int o = (base + i) * 5;
                     if (c >= rg[o] && c <= rg[o + 1]) {
@@ -158,10 +161,7 @@ public final class TdfaRunner implements Regex.Engine {
                             if (opsOff != 0) applyOps(op, opsOff, regs, pos);
                         }
                         state = target;
-                        if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
-                                && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
-                            pos++;
-                        }
+                        if (c > 0xFFFF) pos++;
                         int entryReq = sem[state];
                         if (entryReq != 0) {
                             if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) break loop;
@@ -218,9 +218,12 @@ public final class TdfaRunner implements Regex.Engine {
                 }
             }
             if (pos == to) break;
-            char c = input.charAt(pos);
-            int base = meta >>> 9;
-            int count = (meta >>> 1) & 0xFF;
+            char c0 = input.charAt(pos); int c = c0;
+            if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to
+                    && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF)
+                c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
+            int base = meta >>> 17;
+            int count = (meta >>> 1) & 0xFFFF;
             boolean matched = false;
             if (rangesDisjoint) {
                 // ASCII fast path: direct table lookup
@@ -237,10 +240,7 @@ public final class TdfaRunner implements Regex.Engine {
                         }
                         if (maskOk) {
                             state = target;
-                            if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
-                                    && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
-                                pos++;
-                            }
+                            if (c > 0xFFFF) pos++;
                             int entryReq = sem[state];
                             if (entryReq == 0 || (positionFlags(input, pos + 1, to) & entryReq) == entryReq) {
                                 matched = true;
@@ -267,10 +267,7 @@ public final class TdfaRunner implements Regex.Engine {
                             if ((posFlags & requiredMask) != requiredMask) break;
                         }
                         state = target;
-                        if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
-                                && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
-                            pos++;
-                        }
+                        if (c > 0xFFFF) pos++;
                         int entryReq = sem[state];
                         if (entryReq != 0) {
                             if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
@@ -293,10 +290,7 @@ public final class TdfaRunner implements Regex.Engine {
                         if ((posFlags & requiredMask) != requiredMask) continue;
                     }
                     state = target;
-                    if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
-                            && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
-                        pos++;
-                    }
+                    if (c > 0xFFFF) pos++;
                     // Entry check for target at pos+1 — inline
                     int entryReq = sem[state];
                     if (entryReq != 0) {
@@ -354,9 +348,12 @@ public final class TdfaRunner implements Regex.Engine {
                 }
             }
             if (pos >= to) break;
-            char c = input.charAt(pos);
-            int base = meta >>> 9;
-            int count = (meta >>> 1) & 0xFF;
+            char c0 = input.charAt(pos); int c = c0;
+            if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to
+                    && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF)
+                c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
+            int base = meta >>> 17;
+            int count = (meta >>> 1) & 0xFFFF;
             boolean matched = false;
             if (rangesDisjoint) {
                 int rlo = 0, rhi = count - 1;
@@ -373,10 +370,7 @@ public final class TdfaRunner implements Regex.Engine {
                         if ((posFlags & requiredMask) != requiredMask) return haveAccept ? lastAcceptPos : -1;
                     }
                     state = target;
-                    if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
-                            && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
-                        pos++;
-                    }
+                    if (c > 0xFFFF) pos++;
                     int entryReq = sem[state];
                     if (entryReq != 0) {
                         if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
@@ -398,10 +392,7 @@ public final class TdfaRunner implements Regex.Engine {
                         if ((posFlags & requiredMask) != requiredMask) continue;
                     }
                     state = target;
-                    if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
-                            && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
-                        pos++;
-                    }
+                    if (c > 0xFFFF) pos++;
                     int entryReq = sem[state];
                     if (entryReq != 0) {
                         if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
@@ -464,9 +455,12 @@ public final class TdfaRunner implements Regex.Engine {
                     }
                 }
                 if (pos >= to) break;
-                char c = input.charAt(pos);
-                int base = meta >>> 9;
-                int count = (meta >>> 1) & 0xFF;
+                char c0 = input.charAt(pos); int c = c0;
+                if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to
+                        && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF)
+                    c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
+                int base = meta >>> 17;
+                int count = (meta >>> 1) & 0xFFFF;
                 for (int i = 0; i < count; i++) {
                     int o = (base + i) * 5;
                     if (c >= ranges[o] && c <= ranges[o + 1]) {
@@ -482,10 +476,7 @@ public final class TdfaRunner implements Regex.Engine {
                             if (opsOff != 0) applyOps(ops, opsOff, regs, pos);
                         }
                         state = target;
-                        if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < to
-                                && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF) {
-                            pos++;
-                        }
+                        if (c > 0xFFFF) pos++;
                         int entryReq = stateEntryMask[state];
                         if (entryReq != 0) {
                             if ((positionFlagsCS(input, pos + 1, to) & entryReq) != entryReq) break loop;
@@ -578,7 +569,7 @@ public final class TdfaRunner implements Regex.Engine {
         int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
         for (int s = 0; s < tdfa.stateCount; s++) {
             int meta = sm[s];
-            int base = meta >>> 9, cnt = (meta >>> 1) & 0xFF;
+            int base = meta >>> 17, cnt = (meta >>> 1) & 0xFFFF;
             for (int i = 0; i < cnt; i++) {
                 int o1 = (base + i) * 5;
                 int lo1 = rg[o1], hi1 = rg[o1 + 1];
@@ -598,7 +589,7 @@ public final class TdfaRunner implements Regex.Engine {
         int[][] result = new int[tdfa.stateCount][];
         for (int s = 0; s < tdfa.stateCount; s++) {
             int meta = sm[s];
-            int base = meta >>> 9, cnt = (meta >>> 1) & 0xFF;
+            int base = meta >>> 17, cnt = (meta >>> 1) & 0xFFFF;
             int[] table = new int[128];
             java.util.Arrays.fill(table, -1);
             for (int i = 0; i < cnt; i++) {

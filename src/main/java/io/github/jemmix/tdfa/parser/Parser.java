@@ -240,8 +240,8 @@ public final class Parser {
                     continue;
                 }
             }
-            char lo = parseClassChar();
-            char hi = lo;
+            int lo = parseClassChar();
+            int hi = lo;
             if (peek() == '-' && pos + 1 < src.length() && src.charAt(pos + 1) != ']') {
                 pos++; hi = parseClassChar();
                 if (hi < lo) throw fail(this, "inverted range in class");
@@ -332,7 +332,7 @@ public final class Parser {
         };
     }
 
-    private char parseClassChar() {
+    private int parseClassChar() {
         char c = cur();
         if (c == '\\') {
             pos++;
@@ -369,8 +369,8 @@ public final class Parser {
         return c;
     }
 
-    /** Like {@link #parseHexEscape()} but returns a {@code char} for class membership. */
-    private char parseHexChar() {
+    /** Like {@link #parseHexEscape()} but returns an int codepoint for class membership. */
+    private int parseHexChar() {
         int val;
         if (pos < src.length() && src.charAt(pos) == '{') {
             pos++;
@@ -383,9 +383,7 @@ public final class Parser {
             pos++; // consume '}'
             if (hex.isEmpty()) throw fail(this, "invalid hex escape: empty \\x{}");
             val = Integer.parseInt(hex, 16);
-            if (val > 0xFFFF) {
-                throw fail(this, "non-BMP hex escape \\x{" + hex + "} not yet supported");
-            }
+            if (val > 0x10FFFF) throw fail(this, "codepoint too large: \\x{" + hex + "}");
         } else {
             if (pos + 1 >= src.length() || !isHex(src.charAt(pos)) || !isHex(src.charAt(pos + 1))) {
                 throw fail(this, "invalid hex escape: expected exactly 2 hex digits after \\x");
@@ -393,7 +391,7 @@ public final class Parser {
             val = (hexVal(src.charAt(pos)) << 4) | hexVal(src.charAt(pos + 1));
             pos += 2;
         }
-        return (char) val;
+        return val;
     }
 
     private Ast parseEscape() {
@@ -518,7 +516,6 @@ public final class Parser {
         if (t == null) throw fail(this, "unknown character class name: " + name);
         int[] fold = caseInsensitive ? UnicodeProviders.get().foldTableFor(name) : null;
         if (fold != null && fold.length > 0) t = mergeRanges(t, fold);
-        t = clampToBmp(t);
         return new CharClass(t, negated);
     }
 
@@ -536,7 +533,6 @@ public final class Parser {
         if (t == null) throw fail(this, "unknown character class name: " + name);
         int[] fold = caseInsensitive ? UnicodeProviders.get().foldTableFor(name) : null;
         if (fold != null && fold.length > 0) t = mergeRanges(t, fold);
-        t = clampToBmp(t);
         if (negate) t = complementRanges(t);
         for (int v : t) out.add(v);
     }
@@ -560,7 +556,7 @@ public final class Parser {
         return name;
     }
 
-    /** Compute the complement of {@code ranges} within [0, 0xFFFF]. */
+    /** Compute the complement of {@code ranges} within [0, 0x10FFFF]. */
     private static int[] complementRanges(int[] ranges) {
         List<Integer> out = new ArrayList<>();
         int prev = 0;
@@ -568,9 +564,9 @@ public final class Parser {
             int lo = ranges[i], hi = ranges[i + 1];
             if (lo > prev) { out.add(prev); out.add(lo - 1); }
             prev = Math.max(prev, hi + 1);
-            if (prev > 0xFFFF) break;
+            if (prev > 0x10FFFF) break;
         }
-        if (prev <= 0xFFFF) { out.add(prev); out.add(0xFFFF); }
+        if (prev <= 0x10FFFF) { out.add(prev); out.add(0x10FFFF); }
         return out.stream().mapToInt(Integer::intValue).toArray();
     }
 
@@ -633,9 +629,8 @@ public final class Parser {
             pos++; // consume '}'
             if (hex.isEmpty()) throw fail(this, "invalid hex escape: empty \\x{}");
             val = Integer.parseInt(hex, 16);
-            if (val > 0xFFFF) {
-                throw fail(this, "non-BMP hex escape \\x{" + hex + "} not yet supported");
-            }
+            if (val > 0x10FFFF) throw fail(this, "codepoint too large: \\x{" + hex + "}");
+            if (val > 0xFFFF) return new CharClass(new int[]{val, val}, false);
         } else {
             if (pos + 1 >= src.length() || !isHex(src.charAt(pos)) || !isHex(src.charAt(pos + 1))) {
                 throw fail(this, "invalid hex escape: expected exactly 2 hex digits after \\x");
@@ -709,12 +704,12 @@ public final class Parser {
 
     // ---- predefined classes ----
     private static final int[] R_DIGIT = {'0', '9'};
-    private static final int[] R_NOT_DIGIT = {0, '/', ':', 0xFFFF};
+    private static final int[] R_NOT_DIGIT = {0, '/', ':', 0x10FFFF};
     private static final int[] R_WORD = {'a','z','A','Z','0','9','_','_'};
-    private static final int[] R_NOT_WORD = {0, '/', ':', '@', '[', '^', '`', '`', '{', 0xFFFF};
+    private static final int[] R_NOT_WORD = {0, '/', ':', '@', '[', '^', '`', '`', '{', 0x10FFFF};
     // re2j's \s = [\t\n\f\r ] — note: no \v (U+000B), unlike POSIX [:space:].
     private static final int[] R_SPACE = {'\t', '\n', '\f', '\r', ' ', ' '};
-    private static final int[] R_NOT_SPACE = {0, '\t' - 1, 0x0B, 0x0B, '\r' + 1, ' ' - 1, ' ' + 1, 0xFFFF};
+    private static final int[] R_NOT_SPACE = {0, '\t' - 1, 0x0B, 0x0B, '\r' + 1, ' ' - 1, ' ' + 1, 0x10FFFF};
 
     // POSIX character classes — ASCII-only, matching re2j's CharClass tables.
     // Note: [:space:] INCLUDES \v (U+000B) per POSIX, unlike Perl's \s.
@@ -731,8 +726,8 @@ public final class Parser {
     private static final int[] R_POSIX_UPPER  = {'A', 'Z'};
     private static final int[] R_POSIX_XDIGIT = {'0', '9', 'A', 'F', 'a', 'f'};
 
-    static final CharClass DOT = new CharClass(new int[]{0, '\n' - 1, '\n' + 1, 0xFFFF}, false);
-    static final CharClass DOTALL = new CharClass(new int[]{0, 0xFFFF}, false);
+    static final CharClass DOT = new CharClass(new int[]{0, '\n' - 1, '\n' + 1, 0x10FFFF}, false);
+    static final CharClass DOTALL = new CharClass(new int[]{0, 0x10FFFF}, false);
     static final CharClass DIGIT = new CharClass(R_DIGIT, false);
     static final CharClass NOT_DIGIT = new CharClass(R_DIGIT, true);
     static final CharClass WORD = new CharClass(R_WORD, false);

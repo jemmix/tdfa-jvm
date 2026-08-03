@@ -12,7 +12,7 @@ public final class CharClass extends Ast {
         this.ranges = ranges; this.negated = negated;
     }
 
-    public boolean matches(char c) {
+    public boolean matches(int c) {
         for (int i = 0; i < ranges.length; i += 2) {
             if (c >= ranges[i] && c <= ranges[i + 1]) return !negated;
         }
