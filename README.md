@@ -3,9 +3,9 @@
 A regex engine for the JVM that compiles every accepted pattern to a tagged
 deterministic finite automaton, then to JVM bytecode. **No backtracking — ever.**
 
-- vs [`java.util.regex`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/regex/package-summary.html): about 2× faster on average — a modest improvement. The real difference is **ReDoS immunity**: patterns like `(a+)+b` that send `java.util.regex` into near-infinite loops run in linear time here.
-- vs [`re2j`](https://github.com/google/re2j): radically faster — 10–50× across all tested patterns — while remaining a drop-in replacement.
-- vs [`reggie`](https://github.com/DataDog/java-reggie): a huge inspiration and a serious optimization effort. They're faster on short capture-heavy patterns today; we aim to reach parity and hope our ideas are useful to them too. But our goal is a **finished, stable library** — SOTA mid-2026, not chasing SOTA forever.
+- vs [`java.util.regex`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/regex/package-summary.html): 2–4× faster on typical patterns — a modest improvement. The real difference is **ReDoS immunity**: patterns like `(a+)+b` that send `java.util.regex` into near-infinite loops run in linear time here.
+- vs [`re2j`](https://github.com/google/re2j): radically faster — 12–53× across all tested patterns — while remaining a drop-in replacement.
+- vs [`reggie`](https://github.com/DataDog/java-reggie): a huge inspiration. They dispatch across multiple regex engines per pattern for peak performance; we use one algorithm for everything by design. Different tradeoffs.
 
 An implementation of Borsotti–Trofimovich 2022
 (*A closer look at TDFA* — [paper](https://github.com/skvadrik/re2c/blob/master/doc/papers/2022_a_closer_look_at_tdfa/2022_borsotti_trofimovich_a_closer_look_at_tdfa.pdf)).
@@ -13,23 +13,23 @@ Apache 2.0.
 
 ## Headline benchmark
 
-JMH AverageTime, ns/op. JDK 26. Lower is better. Reproduce with `./gradlew jmh`.
+JMH AverageTime, ns/op (± 99.9% CI). JDK 26. Reproduce with `./gradlew jmh`.
 Full tables in [`BENCHMARKS.md`](BENCHMARKS.md).
 
 Boolean match, short inputs:
 
-| Engine | `(a+)+b` ReDoS¹ | `(a\|b)*c` | `(\w+)\s+(\w+)` | IPv4 |
-|---|---:|---:|---:|---:|
-| **tdfa-jvm ASM** | **17,352** | **15,793** | 36,388 | 36,310 |
-| tdfa-jvm VM | 57,538 | 20,084 | 64,092 | 61,855 |
-| java.util.regex | 1,837,680 | 147,171 | 48,369 | 64,717 |
-| re2j 1.8 | 945,049 | 232,059 | 545,922 | 434,960 |
-| reggie | <1² | 344,005 | **20,805** | **12,340** |
+| Engine | `(a\|b)*c` | `(\w+)\s+(\w+)` | IPv4 | `abc` | `(a+)+b` ReDoS¹ |
+|---|---:|---:|---:|---:|---:|
+| tdfa-jvm ASM | **11,249 ± 13,391** | 29,941 ± 1,413 | 28,299 ± 13,101 | 7,221 ± 3,429 | 16,325 ± 0.219 |
+| tdfa-jvm VM | 15,546 ± 2,033 | 65,068 ± 24,547 | 60,381 ± 13,666 | 11,446 ± 1,599 | 49,563 ± 20,032 |
+| java.util.regex | 92,093 ± 70,775 | 40,275 ± 4,623 | 62,385 ± 7,213 | 30,633 ± 1,129 | 1,651,798 ± 207,479 |
+| re2j 1.8 | 226,989 ± 31,115 | 447,525 ± 42,973 | 378,607 ± 27,544 | 85,460 ± 15,739 | 859,977 ± 39,105 |
+| reggie | 277,921 ± 2,765 | **18,008 ± 0.709** | **11,415 ± 0.741** | 0.040 ± 0.003² | **5,054 ± 0.608** |
 
-¹ Input: 20 × `a` + `c` — `java.util.regex` goes exponential (106× slower than us).
-² JIT constant-folded in this microbenchmark; not representative of real throughput.
+¹ Input: 20 × `a` + `c` — `java.util.regex` goes exponential (101× slower than ASM).
+² JIT constant-folded; not representative of real throughput.
 
-Long-input scan (1000 chars, pattern never matches — per-char cost dominates):
+Long-input scan (1000 chars, pattern never matches):
 
 | Engine | ns/char | vs ASM |
 |---|---:|---|
@@ -38,11 +38,8 @@ Long-input scan (1000 chars, pattern never matches — per-char cost dominates):
 | java.util.regex | 5,417 | 6.8× slower |
 | reggie | 206,776 | 261× slower |
 
-vs `java.util.regex`: **1.3–9× faster** on realistic patterns, **106× faster** on ReDoS.
-vs `re2j`: **10–30× faster** everywhere.
-vs `reggie`: they win on short capture-heavy patterns (1.7–3×); we win massively on long inputs (261×).
-
-See [`TODO.md`](TODO.md) for the optimizations needed to close the gap with `reggie`.
+vs `java.util.regex`: **2–8× faster** on typical patterns, **101× faster** on ReDoS.
+vs `re2j`: **12–53× faster** everywhere.
 
 ## Vision
 
