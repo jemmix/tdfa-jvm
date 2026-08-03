@@ -112,8 +112,7 @@ class GroupSyntaxParityTest {
     }
 
     @Test void namedGroupNonParticipating() {
-        var r = com.google.re2j.Pattern.compile("(?<x>a)|(?<x>b)").matcher("b");
-        assertThatThrownBy(() -> r.group("x")).isInstanceOf(IllegalArgumentException.class);
+        assertSameCompileReject("(?<x>a)|(?<x>b)");
     }
 
     // ---- DFA-incompatible group syntax (both re2j and TDFA reject) ----
