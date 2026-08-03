@@ -17,10 +17,10 @@ import java.util.regex.Pattern;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 @State(Scope.Benchmark)
-@Warmup(iterations = 1, time = 2)
-@Measurement(iterations = 2, time = 2)
-@Fork(2)
-@OperationsPerInvocation(10_000)
+@Warmup(iterations = 5, time = 1000, timeUnit = TimeUnit.MILLISECONDS)
+@Measurement(iterations = 10, time = 1000, timeUnit = TimeUnit.MILLISECONDS)
+@Fork(10)
+@OperationsPerInvocation(ParameterizedShortInputBench.ITERS)
 public class ParameterizedShortInputBench {
 
     static final int ITERS = 10_000;

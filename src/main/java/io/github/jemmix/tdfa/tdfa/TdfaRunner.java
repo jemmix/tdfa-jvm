@@ -38,7 +38,9 @@ public final class TdfaRunner implements Regex.Engine {
     private final boolean multiline;
     private final int[] stopOnAcceptMask;
     private final boolean rangesDisjoint;
-    private final int[][] asciiRangeIdx;
+    private final int[] asciiTarget;    // flat: [state * 128 + c] → target state (-1 = dead)
+    private final int[] asciiRangeFlat; // flat: [state * 128 + c] → range index (-1 = dead)
+    private final boolean fastPath;     // true = no masks + disjoint + not multiline
 
     public TdfaRunner(Tnfa nfa) {
         this(Tdfa.compile(nfa));
@@ -56,7 +58,14 @@ public final class TdfaRunner implements Regex.Engine {
         this.startState = tdfa.startState;
         this.startStateEntryMask = tdfa.startStateEntryMask;
         this.rangesDisjoint = checkRangesDisjoint(tdfa);
-        this.asciiRangeIdx = rangesDisjoint ? buildAsciiRangeIdx(tdfa) : null;
+        if (rangesDisjoint) {
+            this.asciiRangeFlat = buildAsciiRangeFlat(tdfa);
+            this.asciiTarget = buildAsciiTarget(tdfa);
+        } else {
+            this.asciiRangeFlat = null;
+            this.asciiTarget = null;
+        }
+        this.fastPath = computeFastPath(tdfa);
         this.perlMode = tdfa.perlMode;
         this.multiline = tdfa.multiline;
         this.stopOnAcceptMask = tdfa.stopOnAcceptMask;
@@ -65,7 +74,11 @@ public final class TdfaRunner implements Regex.Engine {
     public Tdfa tdfa() { return tdfa; }
 
     @Override public boolean matches(CharSequence input) {
-        if (input instanceof String) return runStringAnchored((String) input) >= 0;
+        if (input instanceof String) {
+            String s = (String) input;
+            if (fastPath) return runStringAnchoredFast(s);
+            return runStringAnchored(s) >= 0;
+        }
         return runGeneric(input, 0, input.length(), true) != null;
     }
 
@@ -73,7 +86,7 @@ public final class TdfaRunner implements Regex.Engine {
         if (input instanceof String) {
             String s = (String) input;
             int len = s.length();
-            // If the start state requires BEGIN_TEXT, only position 0 can match.
+            if (fastPath) return runStringFindFast(s, len);
             int maxStart = (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) ? 0 : len;
             for (int from = 0; from <= maxStart; from++) {
                 int res = runStringMatchFrom(s, from, len);
@@ -87,7 +100,8 @@ public final class TdfaRunner implements Regex.Engine {
     @Override public MatchResult match(CharSequence input, int from) {
         MatchHolder h;
         if (input instanceof String) {
-            h = runStringExtract((String) input, from, input.length());
+            String s = (String) input;
+            h = fastPath ? runStringExtractFast(s, from, s.length()) : runStringExtract(s, from, s.length());
         } else {
             h = runGeneric(input, from, input.length(), false);
         }
@@ -188,6 +202,94 @@ public final class TdfaRunner implements Regex.Engine {
         public MatchHolder(int s, int e, int[] r) { matchStart = s; matchEnd = e; regs = r; }
     }
 
+    // ===== Fast paths: no masks, disjoint ranges, ASCII-only =====
+
+    /**
+     * Ultra-tight anchored match for DFAs with no masks and disjoint ranges.
+     * Uses a flat precomputed target table: one array load per char.
+     * Falls back to {@link #runStringAnchored} on non-ASCII input.
+     */
+    private boolean runStringAnchoredFast(String input) {
+        final int to = input.length();
+        final int[] sm = this.stateMeta;
+        final int[] at = this.asciiTarget;
+        int state = startState;
+        for (int pos = 0; pos < to; pos++) {
+            char c = input.charAt(pos);
+            if (c >= 128) return runStringAnchored(input) >= 0;
+            state = at[state * 128 + c];
+            if (state < 0) return false;
+        }
+        return (sm[state] & 1) != 0;
+    }
+
+    /** Fast unanchored boolean search. */
+    private boolean runStringFindFast(String input, int to) {
+        final int[] sm = this.stateMeta;
+        final int[] at = this.asciiTarget;
+        for (int from = 0; from <= to; from++) {
+            int state = startState;
+            for (int pos = from; pos <= to; pos++) {
+                if ((sm[state] & 1) != 0) return true;
+                if (pos == to) break;
+                char c = input.charAt(pos);
+                if (c >= 128) {
+                    int maxStart = to;
+                    for (int f = from; f <= maxStart; f++) {
+                        if (runStringMatchFrom(input, f, to) >= 0) return true;
+                    }
+                    return false;
+                }
+                int target = at[state * 128 + c];
+                if (target < 0) break;
+                state = target;
+            }
+        }
+        return false;
+    }
+
+    /** Fast extract with register updates. */
+    private MatchHolder runStringExtractFast(String input, int from, int to) {
+        final int[] sm = this.stateMeta;
+        final int[] arf = this.asciiRangeFlat;
+        final int[] rg = this.ranges;
+        final int[] op = this.ops;
+        final int[] sfo = this.stateFinalOpsOff;
+        for (int startSearch = from; startSearch <= to; startSearch++) {
+            final int[] regs = regSize == 0 ? null : new int[regSize];
+            if (regs != null) Arrays.fill(regs, -1);
+            int state = startState;
+            int lastAcceptPos = -1, lastAcceptState = -1;
+            boolean haveAccept = false;
+            for (int pos = startSearch; pos <= to; pos++) {
+                int meta = sm[state];
+                if ((meta & 1) != 0) {
+                    haveAccept = true; lastAcceptPos = pos; lastAcceptState = state;
+                }
+                if (pos == to) break;
+                char c = input.charAt(pos);
+                if (c >= 128) return runStringExtract(input, from, to);
+                int ri = arf[state * 128 + c];
+                if (ri < 0) break;
+                int mo = ((meta >>> 17) + ri) * 5;
+                int target = rg[mo + 2];
+                if (target < 0) break;
+                if (regs != null) {
+                    int opsOff = rg[mo + 3];
+                    if (opsOff != 0) applyOps(op, opsOff, regs, pos);
+                }
+                state = target;
+            }
+            if (haveAccept) {
+                int[] r = regs == null ? new int[0] : regs.clone();
+                int foff = sfo[lastAcceptState];
+                if (foff != 0 && regs != null) applyOps(op, foff, r, lastAcceptPos);
+                return new MatchHolder(startSearch, lastAcceptPos, r);
+            }
+        }
+        return null;
+    }
+
     /** Anchored String match. Returns lastAcceptPos (>=0) on match, -1 on no match. No allocation. */
     private int runStringAnchored(String input) {
         final int[] sm = this.stateMeta;
@@ -227,7 +329,7 @@ public final class TdfaRunner implements Regex.Engine {
             boolean matched = false;
             if (rangesDisjoint) {
                 // ASCII fast path: direct table lookup
-                int ri = c < 128 ? asciiRangeIdx[state][c] : -2;
+                int ri = c < 128 ? asciiRangeFlat[state * 128 + c] : -2;
                 if (ri >= 0) {
                     int mo = (base + ri) * 5;
                     int target = rg[mo + 2];
@@ -583,24 +685,50 @@ public final class TdfaRunner implements Regex.Engine {
         return true;
     }
 
-    /** Build per-state ASCII range-index lookup tables (128 entries per state). */
-    private static int[][] buildAsciiRangeIdx(Tdfa tdfa) {
+    /** Build flat per-state ASCII target lookup: [state * 128 + c] → target state (-1 = dead). */
+    private static int[] buildAsciiTarget(Tdfa tdfa) {
         int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
-        int[][] result = new int[tdfa.stateCount][];
+        int[] flat = new int[tdfa.stateCount * 128];
+        java.util.Arrays.fill(flat, -1);
         for (int s = 0; s < tdfa.stateCount; s++) {
             int meta = sm[s];
             int base = meta >>> 17, cnt = (meta >>> 1) & 0xFFFF;
-            int[] table = new int[128];
-            java.util.Arrays.fill(table, -1);
             for (int i = 0; i < cnt; i++) {
                 int o = (base + i) * 5;
                 int lo = Math.max(rg[o], 0);
                 int hi = Math.min(rg[o + 1], 127);
-                for (int c = lo; c <= hi; c++) table[c] = i;
+                int target = rg[o + 2];
+                for (int c = lo; c <= hi; c++) flat[s * 128 + c] = target;
             }
-            result[s] = table;
         }
-        return result;
+        return flat;
+    }
+
+    /** Build flat per-state ASCII range-index lookup: [state * 128 + c] → range index (-1 = dead). */
+    private static int[] buildAsciiRangeFlat(Tdfa tdfa) {
+        int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
+        int[] flat = new int[tdfa.stateCount * 128];
+        java.util.Arrays.fill(flat, -1);
+        for (int s = 0; s < tdfa.stateCount; s++) {
+            int meta = sm[s];
+            int base = meta >>> 17, cnt = (meta >>> 1) & 0xFFFF;
+            for (int i = 0; i < cnt; i++) {
+                int o = (base + i) * 5;
+                int lo = Math.max(rg[o], 0);
+                int hi = Math.min(rg[o + 1], 127);
+                for (int c = lo; c <= hi; c++) flat[s * 128 + c] = i;
+            }
+        }
+        return flat;
+    }
+
+    /** True if the DFA qualifies for the no-masks fast path. */
+    private boolean computeFastPath(Tdfa tdfa) {
+        if (!rangesDisjoint || multiline) return false;
+        for (int mask : tdfa.stateEntryMask) if (mask != 0) return false;
+        for (int mask : tdfa.stateAcceptMask) if (mask != 0) return false;
+        for (int i = 4; i < tdfa.ranges.length; i += 5) if (tdfa.ranges[i] != 0) return false;
+        return true;
     }
 
     /** RE2's isWordRune: ASCII word chars [_0-9A-Za-z]. */
