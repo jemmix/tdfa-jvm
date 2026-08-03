@@ -3,8 +3,9 @@
 A regex engine for the JVM that compiles every accepted pattern to a tagged
 deterministic finite automaton, then to JVM bytecode. **No backtracking — ever.**
 
-Unlike `java.util.regex`, it cannot catastrophic-backtrack. Unlike `re2j`, it is
-10–50× faster. Unlike `reggie`, it does not degrade catastrophically on long inputs.
+- vs [`java.util.regex`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/regex/package-summary.html): about 2× faster on average — a modest improvement. The real difference is **ReDoS immunity**: patterns like `(a+)+b` that send `java.util.regex` into near-infinite loops run in linear time here.
+- vs [`re2j`](https://github.com/google/re2j): radically faster — 10–50× across all tested patterns — while remaining a drop-in replacement.
+- vs [`reggie`](https://github.com/DataDog/java-reggie): a huge inspiration and a serious optimization effort. They're faster on short capture-heavy patterns today; we aim to reach parity and hope our ideas are useful to them too. But our goal is a **finished, stable library** — SOTA mid-2026, not chasing SOTA forever.
 
 An implementation of Borsotti–Trofimovich 2022
 (*A closer look at TDFA* — [paper](https://github.com/skvadrik/re2c/blob/master/doc/papers/2022_a_closer_look_at_tdfa/2022_borsotti_trofimovich_a_closer_look_at_tdfa.pdf)).
@@ -23,13 +24,11 @@ Full tables in [`BENCHMARKS.md`](BENCHMARKS.md).
 | re2j 1.8 | 833,464 | 214,668 | 421,970 | 356,723 |
 | reggie | 528 | 250,320 | 17,400 | 11,149 |
 
-On a 1000-character scan (the real test), ASM is **4.3× faster than
-`java.util.regex`** and **150× faster than `reggie`** (which goes super-linear).
+On a 1000-character scan, ASM is **4.3× faster than `java.util.regex`** and
+scales linearly where `reggie` goes super-linear (150× gap at 1000 chars).
 
-ASM beats `java.util.regex` on every tested pattern (1.7–158×) and `re2j`
-everywhere (10–50×). Reggie still wins on short capture-heavy patterns —
-we haven't implemented tag-lifetime / register coalescing / minimization yet
-(see [`TODO.md`](TODO.md)).
+See [`TODO.md`](TODO.md) for the optimizations still needed to close the gap
+with `reggie` on short capture-heavy patterns.
 
 ## Vision
 
