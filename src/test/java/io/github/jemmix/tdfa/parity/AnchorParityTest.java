@@ -44,4 +44,18 @@ class AnchorParityTest {
     @Test void anchoredAUnaffectedByMultiline() { assertSameFind("(?m)\\Aabc", "def\nabc"); }
     @Test void anchoredZUnaffectedByMultiline() { assertSameFind("(?m)abc\\z", "abc\ndef"); }
     @Test void findAllMultilineLines() { assertSameAllMatches("(?m)^\\w+", "ab\ncd\nef"); }
+
+    // ---- \A/\z positive matches under (?m) ----
+
+    @Test void multilineAnchoredAMatches() { assertSameFind("(?m)\\Aabc", "abc"); }
+    @Test void multilineAnchoredZMatches() { assertSameFind("(?m)abc\\z", "abc"); }
+    @Test void multilineAnchoredASingleLine() { assertSameFind("(?m)\\Aabc", "abc\ndef"); }
+    @Test void multilineAnchoredZSingleLine() { assertSameFind("(?m)abc\\z", "def\nabc"); }
+
+    // ---- Anchor-only patterns ----
+
+    @Test void emptyStringMatch() { assertSameFind("^$", ""); }
+    @Test void absoluteAnchorsEmpty() { assertSameFind("\\A\\z", ""); }
+    @Test void absoluteAnchorsNonEmpty() { assertSameFind("\\A\\z", "a"); }
+    @Test void startEndAnchorOnNewline() { assertSameFind("^$", "\n"); }
 }

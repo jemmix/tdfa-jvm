@@ -159,4 +159,9 @@ class ReplacementParityTest {
         String p = "a", in = "banana", repl = "x$y";
         assertThat(tdfaReplaceAll(p, in, repl)).isEqualTo(re2jReplaceAll(p, in, repl));
     }
+
+    @Test void replaceAllBackslashZero() {
+        String p = "a", in = "banana", repl = "\\0";
+        assertThat(tdfaReplaceAll(p, in, repl)).isEqualTo(re2jReplaceAll(p, in, repl));
+    }
 }

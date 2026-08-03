@@ -1,8 +1,9 @@
 package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Disabled;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.*;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static io.github.jemmix.tdfa.parity.Re2jOracle.*;
 
@@ -59,6 +60,13 @@ class FlagInteractionParityTest {
         // Our shim currently accepts (pending parity enforcement).
         io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}",
                 io.github.jemmix.tdfa.re2j.Pattern.DISABLE_UNICODE_GROUPS);
+    }
+
+    @Disabled("PENDING: DISABLE_UNICODE_GROUPS should reject \\p{X} like re2j")
+    @Test void disableUnicodeGroupsRejectsProperty() {
+        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}",
+                io.github.jemmix.tdfa.re2j.Pattern.DISABLE_UNICODE_GROUPS))
+                .isInstanceOf(io.github.jemmix.tdfa.re2j.PatternSyntaxException.class);
     }
 
     @Test void flagRoundTrip() {

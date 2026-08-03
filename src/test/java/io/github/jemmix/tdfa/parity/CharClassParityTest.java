@@ -83,6 +83,10 @@ class CharClassParityTest {
     @Test void posixNegatedGraph() { assertSameFind("[[:^graph:]]", " "); }
     @Test void posixNegatedPrint() { assertSameFind("[[:^print:]]", "\u0001"); }
     @Test void posixNegatedAlnum() { assertSameFind("[[:^alnum:]]", "!"); }
+    @Test void posixNegatedAscii() { assertSameFind("[[:^ascii:]]", "\u00E9"); }
+    @Test void posixNegatedAsciiMatch() { assertSameFind("[[:^ascii:]]", "A"); }
+    @Test void posixNegatedWord() { assertSameFind("[[:^word:]]", "!"); }
+    @Test void posixNegatedWordMatch() { assertSameFind("[[:^word:]]", "_"); }
 
     // ---- Unicode general categories ----
 

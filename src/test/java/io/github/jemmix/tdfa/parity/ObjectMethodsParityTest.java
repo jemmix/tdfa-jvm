@@ -1,8 +1,9 @@
 package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Disabled;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.*;
 
 /**
  * Object method parity: toString(), equals(), hashCode(), pattern(),
@@ -78,5 +79,69 @@ class ObjectMethodsParityTest {
     @Test void patternResetNoOp() {
         var p = io.github.jemmix.tdfa.re2j.Pattern.compile("abc");
         p.reset(); // should not throw
+    }
+
+    // ---- quote with non-ASCII ----
+
+    @Test void quoteNonAscii() {
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.quote("caf\u00E9."))
+                .isEqualTo(com.google.re2j.Pattern.quote("caf\u00E9."));
+    }
+
+    @Test void quoteSurrogate() {
+        String s = new String(Character.toChars(0x10000)) + ".";
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.quote(s))
+                .isEqualTo(com.google.re2j.Pattern.quote(s));
+    }
+
+    // ---- null pattern ----
+
+    @Test void compileNullRejects() {
+        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile(null))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> com.google.re2j.Pattern.compile(null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    // ---- programSize UOE ----
+
+    @Test void patternProgramSizeThrowsUOE() {
+        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("abc").programSize())
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test void matcherProgramSizeThrowsUOE() {
+        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("abc").matcher("abc").programSize())
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    // ---- byte[] UOE ----
+
+    @Test void staticMatchesByteArrayThrowsUOE() {
+        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.matches("a", new byte[]{65}))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test void instanceMatchesByteArrayThrowsUOE() {
+        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("a").matches(new byte[]{65}))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test void matcherByteArrayThrowsUOE() {
+        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("a").matcher(new byte[]{65}))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test void resetByteArrayThrowsUOE() {
+        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("a").matcher("a").reset(new byte[]{65}))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    // ---- @Ignore: pending features ----
+
+    @Disabled("PENDING: Pattern implements Serializable")
+    @Test void patternSerializable() {
+        var p = io.github.jemmix.tdfa.re2j.Pattern.compile("abc");
+        assertThat(p).isInstanceOf(java.io.Serializable.class);
     }
 }

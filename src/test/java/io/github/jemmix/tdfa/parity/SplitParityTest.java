@@ -44,4 +44,5 @@ class SplitParityTest {
     @Test void splitEveryChar() { assertSplit(".", "abc"); }
     @Test void splitEmptyPattern() { assertSplit("", "abc"); }
     @Test void splitOnNullByte() { assertSplit("\\x00", "a\u0000b"); }
+    @Test void splitZeroWidthWithLimit() { assertSplit("a*", "aaabbb", 3); }
 }

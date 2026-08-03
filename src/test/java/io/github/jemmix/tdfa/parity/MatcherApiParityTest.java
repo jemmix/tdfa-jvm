@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Disabled;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -317,5 +318,42 @@ class MatcherApiParityTest {
         r.find(); t.find();
         assertThat(t.group(0)).isEqualTo(r.group(0));
         assertThat(t.groupCount()).isEqualTo(r.groupCount());
+    }
+
+    // ---- matches() with alternation correctness ----
+
+    @Disabled("PENDING: matches() anchored-both extract returns wrong groups")
+    @Test void matchesWithAlternationGroups() {
+        var r = re2jM("(a|ab)", "ab");
+        var t = tdfaM("(a|ab)", "ab");
+        assertThat(t.matches()).isEqualTo(r.matches());
+        assertThat(t.group(0)).isEqualTo(r.group(0));
+        assertThat(t.group(1)).isEqualTo(r.group(1));
+    }
+
+    @Test void matchesThenFind() {
+        var r = re2jM("\\w+", "ab");
+        var t = tdfaM("\\w+", "ab");
+        assertThat(t.matches()).isEqualTo(r.matches());
+        assertThat(t.group()).isEqualTo(r.group());
+        assertThat(t.group()).isEqualTo("ab");
+        r.reset(); t.reset();
+        assertThat(t.find()).isEqualTo(r.find());
+        assertThat(t.group()).isEqualTo(r.group());
+    }
+
+    @Test void lookingAtWithAlternation() {
+        var r = re2jM("(a|ab)", "ab");
+        var t = tdfaM("(a|ab)", "ab");
+        r.lookingAt(); t.lookingAt();
+        assertThat(t.group(0)).isEqualTo(r.group(0));
+        assertThat(t.group(1)).isEqualTo(r.group(1));
+    }
+
+    @Test void groupNegativeIndex() {
+        assertThatThrownBy(() -> { var m = tdfaM("(a)", "a"); m.find(); m.group(-1); })
+                .isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> { var m = re2jM("(a)", "a"); m.find(); m.group(-1); })
+                .isInstanceOf(IndexOutOfBoundsException.class);
     }
 }

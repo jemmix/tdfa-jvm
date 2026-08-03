@@ -47,11 +47,13 @@ public final class Pattern {
 
     /** Compile {@code regex} with default flags (Perl leftmost-first semantics). */
     public static Pattern compile(String regex) {
+        if (regex == null) throw new NullPointerException("pattern is null");
         return compile(regex, 0);
     }
 
     /** Compile {@code regex} with the given {@code flags} (bitwise OR of the flag constants). */
     public static Pattern compile(String regex, int flags) {
+        if (regex == null) throw new NullPointerException("pattern is null");
         if ((flags & ~(CASE_INSENSITIVE | DOTALL | MULTILINE | DISABLE_UNICODE_GROUPS | LONGEST_MATCH)) != 0) {
             throw new IllegalArgumentException(
                     "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS, LONGEST_MATCH");

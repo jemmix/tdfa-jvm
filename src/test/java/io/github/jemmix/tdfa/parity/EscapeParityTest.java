@@ -57,4 +57,11 @@ class EscapeParityTest {
     @Test void hexOverflow() { assertSameCompileReject("\\x{FFFFFFFF}"); }
     @Test void quoteEmpty() { assertSameFind("\\Q\\E", ""); }
     @Test void quoteFollowedByQuote() { assertSameFind("\\Qa\\E\\Qb\\E", "ab"); }
+
+    // ---- Unknown alphanumeric escape rejection (re2j rejects) ----
+
+    @Test void standaloneERejects() { assertSameCompileReject("\\E"); }
+    @Test void escapeKRejects() { assertSameCompileReject("\\K"); }
+    @Test void escapeRRejects() { assertSameCompileReject("\\R"); }
+    @Test void escapeERejects() { assertSameCompileReject("\\e"); }
 }
