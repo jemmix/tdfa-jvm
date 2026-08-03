@@ -1,6 +1,9 @@
 package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import io.github.jemmix.tdfa.EngineFactory;
 
 import static io.github.jemmix.tdfa.parity.Re2jOracle.*;
 
@@ -9,57 +12,137 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.*;
  */
 class QuantifierParityTest {
 
-    @Test void starGreedy() { assertSameFind("a*", "aaa"); }
-    @Test void starGreedyNone() { assertSameFind("a*", "bbb"); }
-    @Test void plusGreedy() { assertSameFind("a+", "aaa"); }
-    @Test void plusGreedyNone() { assertSameFind("a+", "bbb"); }
-    @Test void question() { assertSameFind("ab?", "ab"); }
-    @Test void questionNoMatch() { assertSameFind("ab?", "ac"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void starGreedy(EngineFactory factory) { assertSameFind("a*", "aaa", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void starGreedyNone(EngineFactory factory) { assertSameFind("a*", "bbb", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void plusGreedy(EngineFactory factory) { assertSameFind("a+", "aaa", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void plusGreedyNone(EngineFactory factory) { assertSameFind("a+", "bbb", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void question(EngineFactory factory) { assertSameFind("ab?", "ab", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void questionNoMatch(EngineFactory factory) { assertSameFind("ab?", "ac", factory); }
 
-    @Test void starLazy() { assertSameFind("a*?", "aaa"); }
-    @Test void plusLazy() { assertSameFind("a+?", "aaa"); }
-    @Test void questionLazy() { assertSameFind("ab??", "ab"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void starLazy(EngineFactory factory) { assertSameFind("a*?", "aaa", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void plusLazy(EngineFactory factory) { assertSameFind("a+?", "aaa", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void questionLazy(EngineFactory factory) { assertSameFind("ab??", "ab", factory); }
 
-    @Test void boundedExact() { assertSameFind("a{3}", "aaaa"); }
-    @Test void boundedExactFail() { assertSameFind("a{3}", "aa"); }
-    @Test void boundedMin() { assertSameFind("a{2,}", "aaaaa"); }
-    @Test void boundedRange() { assertSameFind("a{2,4}", "aaaaaa"); }
-    @Test void boundedRangeGreedy() { assertSameFind("a{2,4}a", "aaaaaa"); }
-    @Test void boundedRangeLazy() { assertSameFind("a{2,4}?a", "aaaaaa"); }
-    @Test void zeroQuantifier() { assertSameFind("a{0}", "aaa"); }
-    @Test void boundedOnGroup() { assertSameFind("(ab){2}", "abab"); }
-    @Test void boundedOnGroupPartial() { assertSameFind("(ab){2}", "aba"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void boundedExact(EngineFactory factory) { assertSameFind("a{3}", "aaaa", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void boundedExactFail(EngineFactory factory) { assertSameFind("a{3}", "aa", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void boundedMin(EngineFactory factory) { assertSameFind("a{2,}", "aaaaa", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void boundedRange(EngineFactory factory) { assertSameFind("a{2,4}", "aaaaaa", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void boundedRangeGreedy(EngineFactory factory) { assertSameFind("a{2,4}a", "aaaaaa", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void boundedRangeLazy(EngineFactory factory) { assertSameFind("a{2,4}?a", "aaaaaa", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void zeroQuantifier(EngineFactory factory) { assertSameFind("a{0}", "aaa", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void boundedOnGroup(EngineFactory factory) { assertSameFind("(ab){2}", "abab", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void boundedOnGroupPartial(EngineFactory factory) { assertSameFind("(ab){2}", "aba", factory); }
 
-    @Test void greedyVsLazyWithSuffix() { assertSameFind("a.*b", "aXbYb"); }
-    @Test void greedyVsLazyWithSuffix2() { assertSameFind("a.*?b", "aXbYb"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void greedyVsLazyWithSuffix(EngineFactory factory) { assertSameFind("a.*b", "aXbYb", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void greedyVsLazyWithSuffix2(EngineFactory factory) { assertSameFind("a.*?b", "aXbYb", factory); }
 
-    @Test void alternationGreedy() { assertSameFind("(a|ab)", "ab"); }
-    @Test void alternationGreedy2() { assertSameFind("(ab|a)", "ab"); }
-    @Test void alternationPosix() { assertSameFindPosix("(a|ab)", "ab"); }
-    @Test void alternationPosixLongest() { assertSameFindPosix("(ab|a)", "ab"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void alternationGreedy(EngineFactory factory) { assertSameFind("(a|ab)", "ab", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void alternationGreedy2(EngineFactory factory) { assertSameFind("(ab|a)", "ab", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void alternationPosix(EngineFactory factory) { assertSameFindPosix("(a|ab)", "ab", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void alternationPosixLongest(EngineFactory factory) { assertSameFindPosix("(ab|a)", "ab", factory); }
 
-    @Test void nestedStarPlus() { assertSameFind("(a*)+", "aaa"); }
-    @Test void quantifiedAlternation() { assertSameFind("(cat|dog)+", "catdogcat"); }
-    @Test void starOnClass() { assertSameFind("[0-9]+", "abc123def"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void nestedStarPlus(EngineFactory factory) { assertSameFind("(a*)+", "aaa", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void quantifiedAlternation(EngineFactory factory) { assertSameFind("(cat|dog)+", "catdogcat", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void starOnClass(EngineFactory factory) { assertSameFind("[0-9]+", "abc123def", factory); }
 
-    @Test void lazyStarFindAll() { assertSameAllMatches("a+?", "aaa"); }
-    @Test void greedyStarFindAll() { assertSameAllMatches("a+", "aaa"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void lazyStarFindAll(EngineFactory factory) { assertSameAllMatches("a+?", "aaa", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void greedyStarFindAll(EngineFactory factory) { assertSameAllMatches("a+", "aaa", factory); }
 
-    @Test void alternationEmptyFirst() { assertSameFind("(|a)", "a"); }
-    @Test void alternationEmptySecond() { assertSameFind("(a|)", "a"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void alternationEmptyFirst(EngineFactory factory) { assertSameFind("(|a)", "a", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void alternationEmptySecond(EngineFactory factory) { assertSameFind("(a|)", "a", factory); }
 
-    @Test void repeatWithAnchor() { assertSameFind("^a*", "aaa"); }
-    @Test void complexBacktrack() { assertSameFind("(a+)+b", "aaab"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void repeatWithAnchor(EngineFactory factory) { assertSameFind("^a*", "aaa", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void complexBacktrack(EngineFactory factory) { assertSameFind("(a+)+b", "aaab", factory); }
 
     // ---- Pending parity / edge cases ----
 
-    @Test void commaShorthandBounded() { assertSameFind("a{,3}", "aaaa"); }
-    @Test void zeroZeroQuantifier() { assertSameFind("a{0,0}", "aaa"); }
-    @Test void largeCount() { assertSameFind("a{5}", "aaaaa"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void commaShorthandBounded(EngineFactory factory) { assertSameFind("a{,3}", "aaaa", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void zeroZeroQuantifier(EngineFactory factory) { assertSameFind("a{0,0}", "aaa", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void largeCount(EngineFactory factory) { assertSameFind("a{5}", "aaaaa", factory); }
 
-    @Test void possessivePlusRejects() { assertSameCompileReject("a++"); }
-    @Test void possessiveQuestionRejects() { assertSameCompileReject("a?+"); }
-    @Test void possessiveBoundedRejects() { assertSameCompileReject("a{2,3}+"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void possessivePlusRejects(EngineFactory factory) { assertSameCompileReject("a++", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void possessiveQuestionRejects(EngineFactory factory) { assertSameCompileReject("a?+", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void possessiveBoundedRejects(EngineFactory factory) { assertSameCompileReject("a{2,3}+", factory); }
 
-    @Test void invertedRangeRejects() { assertSameCompileReject("a{3,2}"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void invertedRangeRejects(EngineFactory factory) { assertSameCompileReject("a{3,2}", factory); }
 }

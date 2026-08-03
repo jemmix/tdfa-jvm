@@ -119,7 +119,7 @@ class Re2jFindTest {
 
         for (Re2Case c : re2jCases()) {
             try {
-                Regex r = Regex.compileVm(c.pat());
+                Regex r = Regex.compile(c.pat(), EngineFactory.VM);
                 MatchResult m = r.find(c.input(), 0);
 
                 if (c.matchStart() < 0) {
@@ -188,7 +188,7 @@ class Re2jFindTest {
 
         for (Re2Case c : re2jCases()) {
             try {
-                Regex r = Regex.compileAsm(c.pat());
+                Regex r = Regex.compile(c.pat(), EngineFactory.ASM);
                 MatchResult m = r.find(c.input(), 0);
 
                 if (c.matchStart() < 0) {

@@ -1,6 +1,9 @@
 package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import io.github.jemmix.tdfa.EngineFactory;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import static org.assertj.core.api.Assertions.*;
@@ -13,39 +16,55 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.*;
  */
 class FlagInteractionParityTest {
 
-    @Test void caseInsensitiveAndDotAll() {
-        assertSameFind("(?is)A.", "a\n");
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void caseInsensitiveAndDotAll(EngineFactory factory) {
+        assertSameFind("(?is)A.", "a\n", factory);
     }
 
-    @Test void caseInsensitiveAndMultiline() {
-        assertSameAllMatches("(?im)^a", "Ab\ncD\nae");
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void caseInsensitiveAndMultiline(EngineFactory factory) {
+        assertSameAllMatches("(?im)^a", "Ab\ncD\nae", factory);
     }
 
-    @Test void dotAllAndMultiline() {
-        assertSameAllMatches("(?sm)^.$", "a\nb");
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void dotAllAndMultiline(EngineFactory factory) {
+        assertSameAllMatches("(?sm)^.$", "a\nb", factory);
     }
 
-    @Test void allThreeFlagsCombined() {
-        assertSameFind("(?ims)A.", "a\n");
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void allThreeFlagsCombined(EngineFactory factory) {
+        assertSameFind("(?ims)A.", "a\n", factory);
     }
 
-    @Test void longestMatchCombinedWithCaseInsensitive() {
-        assertSameFindPosix("(?i)(a|ab)", "AB");
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void longestMatchCombinedWithCaseInsensitive(EngineFactory factory) {
+        assertSameFindPosix("(?i)(a|ab)", "AB", factory);
     }
 
-    @Test void unknownFlagRejects() {
-        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("abc", 0x100))
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void unknownFlagRejects(EngineFactory factory) {
+        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("abc", 0x100, factory))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> com.google.re2j.Pattern.compile("abc", 0x100))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
-    @Test void disableUnicodeGroupsAccepted() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void disableUnicodeGroupsAccepted(EngineFactory factory) {
         io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}",
-                io.github.jemmix.tdfa.re2j.Pattern.DISABLE_UNICODE_GROUPS);
+                io.github.jemmix.tdfa.re2j.Pattern.DISABLE_UNICODE_GROUPS, factory);
     }
 
-    @Test void disableUnicodeGroupsBehavior() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void disableUnicodeGroupsBehavior(EngineFactory factory) {
         // Pending parity: re2j rejects \p{L} when DISABLE_UNICODE_GROUPS is set;
         // our shim accepts it. Verify the divergence is known.
         boolean re2jRejects;
@@ -59,21 +78,25 @@ class FlagInteractionParityTest {
         assertThat(re2jRejects).isTrue();
         // Our shim currently accepts (pending parity enforcement).
         io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}",
-                io.github.jemmix.tdfa.re2j.Pattern.DISABLE_UNICODE_GROUPS);
+                io.github.jemmix.tdfa.re2j.Pattern.DISABLE_UNICODE_GROUPS, factory);
     }
 
     @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: DISABLE_UNICODE_GROUPS should reject \\p{X} like re2j")
-    @Test void disableUnicodeGroupsRejectsProperty() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void disableUnicodeGroupsRejectsProperty(EngineFactory factory) {
         assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}",
-                io.github.jemmix.tdfa.re2j.Pattern.DISABLE_UNICODE_GROUPS))
+                io.github.jemmix.tdfa.re2j.Pattern.DISABLE_UNICODE_GROUPS, factory))
                 .isInstanceOf(io.github.jemmix.tdfa.re2j.PatternSyntaxException.class);
     }
 
-    @Test void flagRoundTrip() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void flagRoundTrip(EngineFactory factory) {
         int flags = io.github.jemmix.tdfa.re2j.Pattern.CASE_INSENSITIVE
                 | io.github.jemmix.tdfa.re2j.Pattern.MULTILINE
                 | io.github.jemmix.tdfa.re2j.Pattern.DOTALL;
-        var p = io.github.jemmix.tdfa.re2j.Pattern.compile("abc", flags);
+        var p = io.github.jemmix.tdfa.re2j.Pattern.compile("abc", flags, factory);
         assertThat(p.flags()).isEqualTo(flags);
     }
 }

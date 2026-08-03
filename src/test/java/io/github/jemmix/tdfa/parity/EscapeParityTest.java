@@ -1,6 +1,9 @@
 package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import io.github.jemmix.tdfa.EngineFactory;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.Disabled;
 
@@ -11,62 +14,139 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.*;
  */
 class EscapeParityTest {
 
-    @Test void newline() { assertSameFind("\\n", "\n"); }
-    @Test void tab() { assertSameFind("\\t", "\t"); }
-    @Test void carriageReturn() { assertSameFind("\\r", "\r"); }
-    @Test void formFeed() { assertSameFind("\\f", "\f"); }
-    @Test void alarm() { assertSameFind("\\a", "\u0007"); }
-    @Test void verticalTab() { assertSameFind("\\v", "\u000B"); }
-    @Test void backslash() { assertSameFind("\\\\", "\\"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void newline(EngineFactory factory) { assertSameFind("\\n", "\n", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void tab(EngineFactory factory) { assertSameFind("\\t", "\t", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void carriageReturn(EngineFactory factory) { assertSameFind("\\r", "\r", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void formFeed(EngineFactory factory) { assertSameFind("\\f", "\f", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void alarm(EngineFactory factory) { assertSameFind("\\a", "\u0007", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void verticalTab(EngineFactory factory) { assertSameFind("\\v", "\u000B", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void backslash(EngineFactory factory) { assertSameFind("\\\\", "\\", factory); }
 
-    @Test void hexEscape() { assertSameFind("\\x41", "A"); }
-    @Test void hexBraced() { assertSameFind("\\x{41}", "A"); }
-    @Test void hexBracedUnicode() { assertSameFind("\\x{3B1}", "\u03B1"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void hexEscape(EngineFactory factory) { assertSameFind("\\x41", "A", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void hexBraced(EngineFactory factory) { assertSameFind("\\x{41}", "A", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void hexBracedUnicode(EngineFactory factory) { assertSameFind("\\x{3B1}", "\u03B1", factory); }
 
-    @Test void octalTwoDigit() { assertSameFind("\\12", "\n"); }
-    @Test void octalThreeDigit() { assertSameFind("\\101", "A"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void octalTwoDigit(EngineFactory factory) { assertSameFind("\\12", "\n", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void octalThreeDigit(EngineFactory factory) { assertSameFind("\\101", "A", factory); }
 
-    @Test void escapeDot() { assertSameFind("\\.", "."); }
-    @Test void escapeStar() { assertSameFind("\\*", "*"); }
-    @Test void escapePlus() { assertSameFind("\\+", "+"); }
-    @Test void escapeQuestion() { assertSameFind("\\?", "?"); }
-    @Test void escapeParen() { assertSameFind("\\(\\)", "()"); }
-    @Test void escapeBracket() { assertSameFind("\\[", "["); }
-    @Test void escapeBrace() { assertSameFind("\\{", "{"); }
-    @Test void escapePipe() { assertSameFind("\\|", "|"); }
-    @Test void escapeDollar() { assertSameFind("\\$", "$"); }
-    @Test void escapeCaret() { assertSameFind("\\^", "^"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void escapeDot(EngineFactory factory) { assertSameFind("\\.", ".", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void escapeStar(EngineFactory factory) { assertSameFind("\\*", "*", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void escapePlus(EngineFactory factory) { assertSameFind("\\+", "+", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void escapeQuestion(EngineFactory factory) { assertSameFind("\\?", "?", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void escapeParen(EngineFactory factory) { assertSameFind("\\(\\)", "()", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void escapeBracket(EngineFactory factory) { assertSameFind("\\[", "[", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void escapeBrace(EngineFactory factory) { assertSameFind("\\{", "{", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void escapePipe(EngineFactory factory) { assertSameFind("\\|", "|", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void escapeDollar(EngineFactory factory) { assertSameFind("\\$", "$", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void escapeCaret(EngineFactory factory) { assertSameFind("\\^", "^", factory); }
 
-    @Test void cEscape() {
-        assertSameCompileReject("\\C");
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void cEscape(EngineFactory factory) {
+        assertSameCompileReject("\\C", factory);
     }
 
-    @Test void quoteLiteral() { assertSameFind("\\Qa.b*c\\E", "a.b*c"); }
-    @Test void quoteLiteralNoClose() { assertSameFind("\\Qabc", "abc"); }
-    @Test void quoteLiteralPartial() { assertSameFind("x\\Qa.b\\Ey", "xa.by"); }
-    @Test void quoteLiteralWithSpecial() { assertSameFind("\\Q[()]\\E", "[()]"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void quoteLiteral(EngineFactory factory) { assertSameFind("\\Qa.b*c\\E", "a.b*c", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void quoteLiteralNoClose(EngineFactory factory) { assertSameFind("\\Qabc", "abc", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void quoteLiteralPartial(EngineFactory factory) { assertSameFind("x\\Qa.b\\Ey", "xa.by", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void quoteLiteralWithSpecial(EngineFactory factory) { assertSameFind("\\Q[()]\\E", "[()]", factory); }
 
-    @Test
-    void octalOneDigit() { assertSameCompileReject("\\1"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void octalOneDigit(EngineFactory factory) { assertSameCompileReject("\\1", factory); }
 
     // ---- Edge cases ----
 
-    @Test void octalNull() { assertSameFind("\\0", "\u0000"); }
-    @Test void octalLeadingZero() { assertSameFind("\\012", "\n"); }
-    @Test void hexEmpty() { assertSameCompileReject("\\x{}"); }
-    @Test void hexNoDigits() { assertSameCompileReject("\\x"); }
-    @Test void hexOverflow() { assertSameCompileReject("\\x{FFFFFFFF}"); }
-    @Test void quoteEmpty() { assertSameFind("\\Q\\E", ""); }
-    @Test void quoteFollowedByQuote() { assertSameFind("\\Qa\\E\\Qb\\E", "ab"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void octalNull(EngineFactory factory) { assertSameFind("\\0", "\u0000", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void octalLeadingZero(EngineFactory factory) { assertSameFind("\\012", "\n", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void hexEmpty(EngineFactory factory) { assertSameCompileReject("\\x{}", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void hexNoDigits(EngineFactory factory) { assertSameCompileReject("\\x", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void hexOverflow(EngineFactory factory) { assertSameCompileReject("\\x{FFFFFFFF}", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void quoteEmpty(EngineFactory factory) { assertSameFind("\\Q\\E", "", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void quoteFollowedByQuote(EngineFactory factory) { assertSameFind("\\Qa\\E\\Qb\\E", "ab", factory); }
 
     // ---- Unknown alphanumeric escape rejection (re2j rejects) ----
 
     @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: unknown alphanumeric escapes should be rejected
-    @Test void standaloneERejects() { assertSameCompileReject("\\E"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void standaloneERejects(EngineFactory factory) { assertSameCompileReject("\\E", factory); }
     @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: unknown alphanumeric escapes should be rejected
-    @Test void escapeKRejects() { assertSameCompileReject("\\K"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void escapeKRejects(EngineFactory factory) { assertSameCompileReject("\\K", factory); }
     @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: unknown alphanumeric escapes should be rejected
-    @Test void escapeRRejects() { assertSameCompileReject("\\R"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void escapeRRejects(EngineFactory factory) { assertSameCompileReject("\\R", factory); }
     @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: unknown alphanumeric escapes should be rejected
-    @Test void escapeERejects() { assertSameCompileReject("\\e"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void escapeERejects(EngineFactory factory) { assertSameCompileReject("\\e", factory); }
 }

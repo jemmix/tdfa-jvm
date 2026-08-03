@@ -212,7 +212,7 @@ class ComprehensiveTest {
     @ParameterizedTest(name = "{4}")
     @MethodSource("cases")
     void testVm(Case c) {
-        Regex r = Regex.compileVm(c.pattern());
+        Regex r = Regex.compile(c.pattern(), EngineFactory.VM);
         boolean result = c.useFind() ? r.find(c.input()) : r.matches(c.input());
         assertThat(result)
                 .as("VM: %s (pattern=%s, input=%s)", c.label(), c.pattern(), c.input())
@@ -236,7 +236,7 @@ class ComprehensiveTest {
     @ParameterizedTest(name = "{4}")
     @MethodSource("cases")
     void testAsm(Case c) {
-        Regex r = Regex.compileAsm(c.pattern());
+        Regex r = Regex.compile(c.pattern(), EngineFactory.ASM);
         boolean result = c.useFind() ? r.find(c.input()) : r.matches(c.input());
         assertThat(result)
                 .as("ASM: %s (pattern=%s, input=%s)", c.label(), c.pattern(), c.input())

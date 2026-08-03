@@ -1,7 +1,9 @@
 package io.github.jemmix.tdfa.parity;
 
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import io.github.jemmix.tdfa.EngineFactory;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -10,41 +12,79 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class SplitParityTest {
 
-    private static void assertSplit(String pattern, String input) {
+    private static void assertSplit(String pattern, String input, EngineFactory factory) {
         String[] re2j = com.google.re2j.Pattern.compile(pattern).split(input);
-        String[] tdfa = io.github.jemmix.tdfa.re2j.Pattern.compile(pattern).split(input);
+        String[] tdfa = io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, factory).split(input);
         assertThat(tdfa).as("split \"%s\" on \"%s\"", pattern, input).isEqualTo(re2j);
     }
 
-    private static void assertSplit(String pattern, String input, int limit) {
+    private static void assertSplit(String pattern, String input, int limit, EngineFactory factory) {
         String[] re2j = com.google.re2j.Pattern.compile(pattern).split(input, limit);
-        String[] tdfa = io.github.jemmix.tdfa.re2j.Pattern.compile(pattern).split(input, limit);
+        String[] tdfa = io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, factory).split(input, limit);
         assertThat(tdfa).as("split \"%s\" on \"%s\" limit=%d", pattern, input, limit)
                 .isEqualTo(re2j);
     }
 
-    @Test void splitBasic() { assertSplit(",", "a,b,c"); }
-    @Test void splitSingleChar() { assertSplit("\\s+", "a b c"); }
-    @Test void splitNoMatch() { assertSplit("x", "abc"); }
-    @Test void splitEmptyInput() { assertSplit(",", ""); }
-    @Test void splitTrailingEmpty() { assertSplit(",", "a,b,"); }
-    @Test void splitMultipleTrailingEmpty() { assertSplit(",", "a,b,,,"); }
-    @Test void splitLeadingEmpty() { assertSplit(",", ",a"); }
-    @Test void splitOnlyDelimiter() { assertSplit(",", ",,"); }
-    @Test void splitWordPattern() { assertSplit("\\W+", "hello, world! foo"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitBasic(EngineFactory factory) { assertSplit(",", "a,b,c", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitSingleChar(EngineFactory factory) { assertSplit("\\s+", "a b c", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitNoMatch(EngineFactory factory) { assertSplit("x", "abc", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitEmptyInput(EngineFactory factory) { assertSplit(",", "", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitTrailingEmpty(EngineFactory factory) { assertSplit(",", "a,b,", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitMultipleTrailingEmpty(EngineFactory factory) { assertSplit(",", "a,b,,,", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitLeadingEmpty(EngineFactory factory) { assertSplit(",", ",a", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitOnlyDelimiter(EngineFactory factory) { assertSplit(",", ",,", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitWordPattern(EngineFactory factory) { assertSplit("\\W+", "hello, world! foo", factory); }
 
-    @Test void splitLimit2() { assertSplit(",", "a,b,c", 2); }
-    @Test void splitLimit1() { assertSplit(",", "a,b,c", 1); }
-    @Test void splitLimit0() { assertSplit(",", "a,b,c,", 0); }
-    @Test void splitLimitLarge() { assertSplit(",", "a,b,c", 10); }
-    @Test void splitLimitNegative() { assertSplit(",", "a,b,c,,,", -1); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitLimit2(EngineFactory factory) { assertSplit(",", "a,b,c", 2, factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitLimit1(EngineFactory factory) { assertSplit(",", "a,b,c", 1, factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitLimit0(EngineFactory factory) { assertSplit(",", "a,b,c,", 0, factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitLimitLarge(EngineFactory factory) { assertSplit(",", "a,b,c", 10, factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitLimitNegative(EngineFactory factory) { assertSplit(",", "a,b,c,,,", -1, factory); }
 
     // ---- Edge cases ----
 
     @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: split zero-width pattern emptiesSkipped counter
-    @Test void splitZeroWidthPattern() { assertSplit("a*", "aaabbb"); }
-    @Test void splitEveryChar() { assertSplit(".", "abc"); }
-    @Test void splitEmptyPattern() { assertSplit("", "abc"); }
-    @Test void splitOnNullByte() { assertSplit("\\x00", "a\u0000b"); }
-    @Test void splitZeroWidthWithLimit() { assertSplit("a*", "aaabbb", 3); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitZeroWidthPattern(EngineFactory factory) { assertSplit("a*", "aaabbb", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitEveryChar(EngineFactory factory) { assertSplit(".", "abc", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitEmptyPattern(EngineFactory factory) { assertSplit("", "abc", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitOnNullByte(EngineFactory factory) { assertSplit("\\x00", "a\u0000b", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitZeroWidthWithLimit(EngineFactory factory) { assertSplit("a*", "aaabbb", 3, factory); }
 }

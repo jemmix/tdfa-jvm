@@ -140,7 +140,7 @@ class Re2ExhaustiveTest {
                     currentCompileError = null;
                 } else {
                     try {
-                        currentRegex = Regex.compile(currentPattern, false, mode);
+                        currentRegex = Regex.compile(currentPattern, EngineFactory.VM, mode);
                         compiledCache.put(currentPattern, currentRegex);
                         currentCompileError = null;
                     } catch (Throwable e) {
@@ -569,10 +569,10 @@ class Re2ExhaustiveTest {
             String input = e.getValue();
             Regex vm, asm;
             try {
-                vm = Regex.compile(pat, false, io.github.jemmix.tdfa.tdfa.Disambiguation.PERL);
+                vm = Regex.compile(pat, EngineFactory.VM, io.github.jemmix.tdfa.tdfa.Disambiguation.PERL);
             } catch (Throwable ex) { continue; }
             try {
-                asm = Regex.compile(pat, true, io.github.jemmix.tdfa.tdfa.Disambiguation.PERL);
+                asm = Regex.compile(pat, EngineFactory.ASM, io.github.jemmix.tdfa.tdfa.Disambiguation.PERL);
             } catch (Throwable ex) {
                 asmCompileFail++;
                 continue;

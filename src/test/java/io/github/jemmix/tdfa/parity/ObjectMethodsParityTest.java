@@ -1,6 +1,9 @@
 package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import io.github.jemmix.tdfa.EngineFactory;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import static org.assertj.core.api.Assertions.*;
@@ -11,47 +14,63 @@ import static org.assertj.core.api.Assertions.*;
  */
 class ObjectMethodsParityTest {
 
-    @Test void toStringMatches() {
-        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("abc").toString())
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void toStringMatches(EngineFactory factory) {
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("abc", 0, factory).toString())
                 .isEqualTo(com.google.re2j.Pattern.compile("abc").toString());
     }
 
-    @Test void equalsSamePattern() {
-        var t1 = io.github.jemmix.tdfa.re2j.Pattern.compile("abc");
-        var t2 = io.github.jemmix.tdfa.re2j.Pattern.compile("abc");
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void equalsSamePattern(EngineFactory factory) {
+        var t1 = io.github.jemmix.tdfa.re2j.Pattern.compile("abc", 0, factory);
+        var t2 = io.github.jemmix.tdfa.re2j.Pattern.compile("abc", 0, factory);
         assertThat(t1.equals(t2)).isTrue();
     }
 
-    @Test void equalsDifferentPattern() {
-        var t1 = io.github.jemmix.tdfa.re2j.Pattern.compile("abc");
-        var t2 = io.github.jemmix.tdfa.re2j.Pattern.compile("def");
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void equalsDifferentPattern(EngineFactory factory) {
+        var t1 = io.github.jemmix.tdfa.re2j.Pattern.compile("abc", 0, factory);
+        var t2 = io.github.jemmix.tdfa.re2j.Pattern.compile("def", 0, factory);
         assertThat(t1.equals(t2)).isFalse();
     }
 
-    @Test void equalsDifferentFlags() {
-        var t1 = io.github.jemmix.tdfa.re2j.Pattern.compile("abc", io.github.jemmix.tdfa.re2j.Pattern.CASE_INSENSITIVE);
-        var t2 = io.github.jemmix.tdfa.re2j.Pattern.compile("abc", 0);
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void equalsDifferentFlags(EngineFactory factory) {
+        var t1 = io.github.jemmix.tdfa.re2j.Pattern.compile("abc", io.github.jemmix.tdfa.re2j.Pattern.CASE_INSENSITIVE, factory);
+        var t2 = io.github.jemmix.tdfa.re2j.Pattern.compile("abc", 0, factory);
         assertThat(t1.equals(t2)).isFalse();
     }
 
-    @Test void equalsNull() {
-        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("abc").equals(null)).isFalse();
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void equalsNull(EngineFactory factory) {
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("abc", 0, factory).equals(null)).isFalse();
     }
 
-    @Test void hashCodeConsistent() {
-        var t1 = io.github.jemmix.tdfa.re2j.Pattern.compile("abc");
-        var t2 = io.github.jemmix.tdfa.re2j.Pattern.compile("abc");
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void hashCodeConsistent(EngineFactory factory) {
+        var t1 = io.github.jemmix.tdfa.re2j.Pattern.compile("abc", 0, factory);
+        var t2 = io.github.jemmix.tdfa.re2j.Pattern.compile("abc", 0, factory);
         assertThat(t1.hashCode()).isEqualTo(t2.hashCode());
     }
 
-    @Test void patternAccessor() {
-        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("a(b)c").pattern())
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void patternAccessor(EngineFactory factory) {
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("a(b)c", 0, factory).pattern())
                 .isEqualTo("a(b)c");
     }
 
-    @Test void flagsAccessor() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void flagsAccessor(EngineFactory factory) {
         assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("abc",
-                io.github.jemmix.tdfa.re2j.Pattern.CASE_INSENSITIVE | io.github.jemmix.tdfa.re2j.Pattern.DOTALL).flags())
+                io.github.jemmix.tdfa.re2j.Pattern.CASE_INSENSITIVE | io.github.jemmix.tdfa.re2j.Pattern.DOTALL, factory).flags())
                 .isEqualTo(io.github.jemmix.tdfa.re2j.Pattern.CASE_INSENSITIVE | io.github.jemmix.tdfa.re2j.Pattern.DOTALL);
     }
 
@@ -76,8 +95,10 @@ class ObjectMethodsParityTest {
                 .isEqualTo(com.google.re2j.Pattern.quote(meta));
     }
 
-    @Test void patternResetNoOp() {
-        var p = io.github.jemmix.tdfa.re2j.Pattern.compile("abc");
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void patternResetNoOp(EngineFactory factory) {
+        var p = io.github.jemmix.tdfa.re2j.Pattern.compile("abc", 0, factory);
         p.reset(); // should not throw
     }
 
@@ -105,36 +126,50 @@ class ObjectMethodsParityTest {
 
     // ---- programSize UOE ----
 
-    @Test void patternProgramSizeThrowsUOE() {
-        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("abc").programSize())
-                .isInstanceOf(UnsupportedOperationException.class);
+    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: programSize() implementation
+    @Test void patternProgramSize() {
+        int re2jSize = com.google.re2j.Pattern.compile("abc").programSize();
+        int tdfaSize = io.github.jemmix.tdfa.re2j.Pattern.compile("abc").programSize();
+        assertThat(tdfaSize).isEqualTo(re2jSize);
     }
 
-    @Test void matcherProgramSizeThrowsUOE() {
-        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("abc").matcher("abc").programSize())
-                .isInstanceOf(UnsupportedOperationException.class);
+    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: Matcher.programSize() implementation
+    @Test void matcherProgramSize() {
+        int re2jSize = com.google.re2j.Pattern.compile("abc").matcher("abc").programSize();
+        int tdfaSize = io.github.jemmix.tdfa.re2j.Pattern.compile("abc").matcher("abc").programSize();
+        assertThat(tdfaSize).isEqualTo(re2jSize);
     }
 
     // ---- byte[] UOE ----
 
-    @Test void staticMatchesByteArrayThrowsUOE() {
-        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.matches("a", new byte[]{65}))
-                .isInstanceOf(UnsupportedOperationException.class);
+    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: Pattern.matches(byte[]) implementation
+    @Test void staticMatchesByteArray() {
+        boolean re2jResult = com.google.re2j.Pattern.matches("a", new byte[]{65});
+        boolean tdfaResult = io.github.jemmix.tdfa.re2j.Pattern.matches("a", new byte[]{65});
+        assertThat(tdfaResult).isEqualTo(re2jResult);
     }
 
-    @Test void instanceMatchesByteArrayThrowsUOE() {
-        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("a").matches(new byte[]{65}))
-                .isInstanceOf(UnsupportedOperationException.class);
+    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: Pattern.matches(byte[]) implementation
+    @Test void instanceMatchesByteArray() {
+        boolean re2jResult = com.google.re2j.Pattern.compile("a").matches(new byte[]{65});
+        boolean tdfaResult = io.github.jemmix.tdfa.re2j.Pattern.compile("a").matches(new byte[]{65});
+        assertThat(tdfaResult).isEqualTo(re2jResult);
     }
 
-    @Test void matcherByteArrayThrowsUOE() {
-        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("a").matcher(new byte[]{65}))
-                .isInstanceOf(UnsupportedOperationException.class);
+    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: Pattern.matcher(byte[]) implementation
+    @Test void matcherByteArray() {
+        boolean re2jResult = com.google.re2j.Pattern.compile("a").matcher(new byte[]{65}).matches();
+        boolean tdfaResult = io.github.jemmix.tdfa.re2j.Pattern.compile("a").matcher(new byte[]{65}).matches();
+        assertThat(tdfaResult).isEqualTo(re2jResult);
     }
 
-    @Test void resetByteArrayThrowsUOE() {
-        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("a").matcher("a").reset(new byte[]{65}))
-                .isInstanceOf(UnsupportedOperationException.class);
+    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: Matcher.reset(byte[]) implementation
+    @Test void resetByteArray() {
+        var re2jMatcher = com.google.re2j.Pattern.compile("a").matcher("a");
+        re2jMatcher.reset(new byte[]{65});
+        var tdfaMatcher = io.github.jemmix.tdfa.re2j.Pattern.compile("a").matcher("a");
+        tdfaMatcher.reset(new byte[]{65});
+        assertThat(tdfaMatcher.matches()).isEqualTo(re2jMatcher.matches());
     }
 
     // ---- @Ignore: pending features ----

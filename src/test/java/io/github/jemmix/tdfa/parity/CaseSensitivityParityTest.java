@@ -1,7 +1,9 @@
 package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import io.github.jemmix.tdfa.EngineFactory;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static io.github.jemmix.tdfa.parity.Re2jOracle.*;
@@ -12,47 +14,95 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.*;
  */
 class CaseSensitivityParityTest {
 
-    @Test void inlineCaseInsensitive() { assertSameFind("(?i)abc", "ABC"); }
-    @Test void inlineCaseInsensitive2() { assertSameFind("(?i)abc", "abc"); }
-    @Test void inlineCaseInsensitive3() { assertSameFind("(?i)abc", "AbC"); }
-    @Test void caseInsensitiveNoMatch() { assertSameFind("(?i)abc", "abd"); }
-    @Test void caseSensitiveDefault() { assertSameFind("abc", "ABC"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void inlineCaseInsensitive(EngineFactory factory) { assertSameFind("(?i)abc", "ABC", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void inlineCaseInsensitive2(EngineFactory factory) { assertSameFind("(?i)abc", "abc", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void inlineCaseInsensitive3(EngineFactory factory) { assertSameFind("(?i)abc", "AbC", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void caseInsensitiveNoMatch(EngineFactory factory) { assertSameFind("(?i)abc", "abd", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void caseSensitiveDefault(EngineFactory factory) { assertSameFind("abc", "ABC", factory); }
 
-    @Test void foldClassRange() { assertSameFind("(?i)[A-Z]", "g"); }
-    @Test void foldClassRangeUpper() { assertSameFind("(?i)[a-z]", "G"); }
-    @Test void foldClassSingleChar() { assertSameFind("(?i)a", "A"); }
-    @Test void foldLiteralInConcat() { assertSameFind("(?i)hello", "HeLLo"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void foldClassRange(EngineFactory factory) { assertSameFind("(?i)[A-Z]", "g", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void foldClassRangeUpper(EngineFactory factory) { assertSameFind("(?i)[a-z]", "G", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void foldClassSingleChar(EngineFactory factory) { assertSameFind("(?i)a", "A", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void foldLiteralInConcat(EngineFactory factory) { assertSameFind("(?i)hello", "HeLLo", factory); }
 
-    @Test void foldUnicodePropertyLl() { assertSameFind("(?i)\\p{Ll}", "A"); }
-    @Test void foldUnicodePropertyLu() { assertSameFind("(?i)\\p{Lu}", "a"); }
-    @Test void foldUnicodeScriptGreek() { assertSameFind("(?i)\\p{Greek}", "\u0391"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void foldUnicodePropertyLl(EngineFactory factory) { assertSameFind("(?i)\\p{Ll}", "A", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void foldUnicodePropertyLu(EngineFactory factory) { assertSameFind("(?i)\\p{Lu}", "a", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void foldUnicodeScriptGreek(EngineFactory factory) { assertSameFind("(?i)\\p{Greek}", "\u0391", factory); }
 
-    @Test void caseInsensitiveFlag() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void caseInsensitiveFlag(EngineFactory factory) {
         int[] expected = com.google.re2j.Pattern.compile("abc",
                 com.google.re2j.Pattern.CASE_INSENSITIVE)
                 .matcher("ABC").matches()
                 ? new int[]{0, 3} : null;
         boolean actual = io.github.jemmix.tdfa.re2j.Pattern.compile("abc",
-                io.github.jemmix.tdfa.re2j.Pattern.CASE_INSENSITIVE)
+                io.github.jemmix.tdfa.re2j.Pattern.CASE_INSENSITIVE, factory)
                 .matcher("ABC").matches();
         assertThat(actual).isEqualTo(expected != null);
     }
 
-    @Test void toggleCaseInsensitiveOff() { assertSameFind("(?i)ab(?-i)c", "ABc"); }
-    @Test void toggleCaseInsensitiveOff2() { assertSameFind("(?i)ab(?-i)c", "ABC"); }
-    @Test void scopedCaseInsensitive() { assertSameFind("a(?i:bc)d", "aBCd"); }
-    @Test void scopedCaseInsensitiveNoLeak() { assertSameFind("a(?i:bc)d", "abcd"); }
-    @Test void scopedCaseInsensitiveLeakPrevention() { assertSameFind("(?i:a)b", "Ab"); }
-    @Test void scopedNegationLeakPrevention() { assertSameFind("(?i)a(?-i:b)c", "AbC"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void toggleCaseInsensitiveOff(EngineFactory factory) { assertSameFind("(?i)ab(?-i)c", "ABc", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void toggleCaseInsensitiveOff2(EngineFactory factory) { assertSameFind("(?i)ab(?-i)c", "ABC", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void scopedCaseInsensitive(EngineFactory factory) { assertSameFind("a(?i:bc)d", "aBCd", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void scopedCaseInsensitiveNoLeak(EngineFactory factory) { assertSameFind("a(?i:bc)d", "abcd", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void scopedCaseInsensitiveLeakPrevention(EngineFactory factory) { assertSameFind("(?i:a)b", "Ab", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void scopedNegationLeakPrevention(EngineFactory factory) { assertSameFind("(?i)a(?-i:b)c", "AbC", factory); }
 
     // ---- Combined flags ----
 
-    @Test void combinedIandS() { assertSameFind("(?is).+", "AB\ncd"); }
-    @Test void combinedIandM() { assertSameAllMatches("(?im)^\\w", "Ab\nCd"); }
-    @Test void negatedClassUnderCaseInsensitive() { assertSameFind("(?i)[^a-z]", "A"); }
-    @Test void negatedClassUnderCaseInsensitive2() { assertSameFind("(?i)[^a-z]", "5"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void combinedIandS(EngineFactory factory) { assertSameFind("(?is).+", "AB\ncd", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void combinedIandM(EngineFactory factory) { assertSameAllMatches("(?im)^\\w", "Ab\nCd", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void negatedClassUnderCaseInsensitive(EngineFactory factory) { assertSameFind("(?i)[^a-z]", "A", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void negatedClassUnderCaseInsensitive2(EngineFactory factory) { assertSameFind("(?i)[^a-z]", "5", factory); }
 
     // ---- Empty input ----
 
-    @Test void caseInsensitiveEmptyInput() { assertSameFind("(?i)a*", ""); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void caseInsensitiveEmptyInput(EngineFactory factory) { assertSameFind("(?i)a*", "", factory); }
 }

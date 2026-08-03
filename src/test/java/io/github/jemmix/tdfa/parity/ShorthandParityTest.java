@@ -1,6 +1,9 @@
 package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import io.github.jemmix.tdfa.EngineFactory;
 
 import static io.github.jemmix.tdfa.parity.Re2jOracle.*;
 
@@ -10,59 +13,133 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.*;
  */
 class ShorthandParityTest {
 
-    @Test void digitAtom() { assertSameFind("\\d", "5"); }
-    @Test void digitNoMatch() { assertSameFind("\\d", "x"); }
-    @Test void notDigitAtom() { assertSameFind("\\D", "x"); }
-    @Test void notDigitNoMatch() { assertSameFind("\\D", "5"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void digitAtom(EngineFactory factory) { assertSameFind("\\d", "5", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void digitNoMatch(EngineFactory factory) { assertSameFind("\\d", "x", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void notDigitAtom(EngineFactory factory) { assertSameFind("\\D", "x", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void notDigitNoMatch(EngineFactory factory) { assertSameFind("\\D", "5", factory); }
 
-    @Test void wordAtom() { assertSameFind("\\w", "a"); }
-    @Test void wordUnderscore() { assertSameFind("\\w", "_"); }
-    @Test void wordNoMatch() { assertSameFind("\\w", "!"); }
-    @Test void notWordAtom() { assertSameFind("\\W", "!"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void wordAtom(EngineFactory factory) { assertSameFind("\\w", "a", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void wordUnderscore(EngineFactory factory) { assertSameFind("\\w", "_", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void wordNoMatch(EngineFactory factory) { assertSameFind("\\w", "!", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void notWordAtom(EngineFactory factory) { assertSameFind("\\W", "!", factory); }
 
-    @Test void spaceAtom() { assertSameFind("\\s", " "); }
-    @Test void spaceTab() { assertSameFind("\\s", "\t"); }
-    @Test void spaceNewline() { assertSameFind("\\s", "\n"); }
-    @Test void notSpaceAtom() { assertSameFind("\\S", "x"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void spaceAtom(EngineFactory factory) { assertSameFind("\\s", " ", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void spaceTab(EngineFactory factory) { assertSameFind("\\s", "\t", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void spaceNewline(EngineFactory factory) { assertSameFind("\\s", "\n", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void notSpaceAtom(EngineFactory factory) { assertSameFind("\\S", "x", factory); }
 
-    @Test void digitInClass() { assertSameFind("[\\d]", "7"); }
-    @Test void wordInClass() { assertSameFind("[\\w]", "z"); }
-    @Test void spaceInClass() { assertSameFind("[\\s]", "\t"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void digitInClass(EngineFactory factory) { assertSameFind("[\\d]", "7", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void wordInClass(EngineFactory factory) { assertSameFind("[\\w]", "z", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void spaceInClass(EngineFactory factory) { assertSameFind("[\\s]", "\t", factory); }
 
-    @Test void mixedClassWithShorthand() { assertSameFind("[\\w\\s]", " "); }
-    @Test void mixedClassDigitWord() { assertSameFind("[\\d\\w]", "a"); }
-    @Test void negatedClassWithShorthand() { assertSameFind("[^\\d]", "a"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void mixedClassWithShorthand(EngineFactory factory) { assertSameFind("[\\w\\s]", " ", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void mixedClassDigitWord(EngineFactory factory) { assertSameFind("[\\d\\w]", "a", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void negatedClassWithShorthand(EngineFactory factory) { assertSameFind("[^\\d]", "a", factory); }
 
-    @Test void digitPlus() { assertSameFind("\\d+", "12345"); }
-    @Test void wordStar() { assertSameFind("\\w*", "hello_world"); }
-    @Test void spacePlus() { assertSameFind("\\s+", "   "); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void digitPlus(EngineFactory factory) { assertSameFind("\\d+", "12345", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void wordStar(EngineFactory factory) { assertSameFind("\\w*", "hello_world", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void spacePlus(EngineFactory factory) { assertSameFind("\\s+", "   ", factory); }
 
-    @Test void findAllDigits() { assertSameAllMatches("\\d", "a1b2c3"); }
-    @Test void findAllWords() { assertSameAllMatches("\\w+", "hello world foo"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void findAllDigits(EngineFactory factory) { assertSameAllMatches("\\d", "a1b2c3", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void findAllWords(EngineFactory factory) { assertSameAllMatches("\\w+", "hello world foo", factory); }
 
-    @Test void complexPattern() { assertSameFind("(\\w+)@(\\w+)\\.(\\w+)", "user@host.com"); }
-    @Test void ipPattern() { assertSameFind("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "192.168.1.1"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void complexPattern(EngineFactory factory) { assertSameFind("(\\w+)@(\\w+)\\.(\\w+)", "user@host.com", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void ipPattern(EngineFactory factory) { assertSameFind("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "192.168.1.1", factory); }
 
     // ---- Full whitespace coverage ----
 
-    @Test void spaceCarriageReturn() { assertSameFind("\\s", "\r"); }
-    @Test void spaceFormFeed() { assertSameFind("\\s", "\f"); }
-    @Test void spaceVerticalTab() { assertSameFind("\\s", "\u000B"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void spaceCarriageReturn(EngineFactory factory) { assertSameFind("\\s", "\r", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void spaceFormFeed(EngineFactory factory) { assertSameFind("\\s", "\f", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void spaceVerticalTab(EngineFactory factory) { assertSameFind("\\s", "\u000B", factory); }
 
     // ---- Non-ASCII divergence checks (re2j \w \d are ASCII-only) ----
 
-    @Test void wordNonAsciiLetter() { assertSameFind("\\w", "\u00E9"); }     // é
-    @Test void wordNonAsciiDigit() { assertSameFind("\\w", "\u0660"); }      // Arabic-Indic zero
-    @Test void digitNonAscii() { assertSameFind("\\d", "\u0660"); }
-    @Test void notWordNonAscii() { assertSameFind("\\W", "\u00E9"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void wordNonAsciiLetter(EngineFactory factory) { assertSameFind("\\w", "\u00E9", factory); }     // é
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void wordNonAsciiDigit(EngineFactory factory) { assertSameFind("\\w", "\u0660", factory); }      // Arabic-Indic zero
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void digitNonAscii(EngineFactory factory) { assertSameFind("\\d", "\u0660", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void notWordNonAscii(EngineFactory factory) { assertSameFind("\\W", "\u00E9", factory); }
 
     // ---- Unicode whitespace divergence check ----
     // re2j \s is ASCII-only: [\t\n\f\r ] — Unicode whitespace like
     // U+00A0, U+2028 etc. should NOT match \s in either engine.
 
-    @Test void spaceNbsp() { assertSameFind("\\s", "\u00A0"); }
-    @Test void spaceLineSep() { assertSameFind("\\s", "\u2028"); }
-    @Test void spaceParaSep() { assertSameFind("\\s", "\u2029"); }
-    @Test void spaceNextLine() { assertSameFind("\\s", "\u0085"); }
-    @Test void spaceBom() { assertSameFind("\\s", "\uFEFF"); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void spaceNbsp(EngineFactory factory) { assertSameFind("\\s", "\u00A0", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void spaceLineSep(EngineFactory factory) { assertSameFind("\\s", "\u2028", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void spaceParaSep(EngineFactory factory) { assertSameFind("\\s", "\u2029", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void spaceNextLine(EngineFactory factory) { assertSameFind("\\s", "\u0085", factory); }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void spaceBom(EngineFactory factory) { assertSameFind("\\s", "\uFEFF", factory); }
 }

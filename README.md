@@ -52,7 +52,7 @@ coalescing, minimization — see [`TODO.md`](TODO.md)).
 ## Build & test
 
 ```bash
-./gradlew test    # 264 tests, 0 failures (includes re2j ExecTest — 5.7M differential cases)
+./gradlew test    # 1127 tests, 0 failures (parameterized across ASM + VM engines)
 ./gradlew jmh     # full benchmark sweep, ~3-5 min
 ```
 
@@ -62,9 +62,17 @@ JDK 17+ required (project targets JDK 11 bytecode but uses JDK 17 source feature
 
 ```java
 import io.github.jemmix.tdfa.Regex;
+import io.github.jemmix.tdfa.EngineFactory;
 
-Regex vm  = Regex.compileVm("(\\w+)\\s+(\\w+)");     // interpreted
-Regex asm = Regex.compileAsm("(\\w+)\\s+(\\w+)");    // source-emitted, faster
+// Default engine (ASM, or set via -Dtdfa.engine=VM)
+Regex r = Regex.compile("(\\w+)\\s+(\\w+)");
+
+// Explicit engine selection
+Regex vm  = Regex.compile("(\\w+)\\s+(\\w+)", EngineFactory.VM);
+Regex asm = Regex.compile("(\\w+)\\s+(\\w+)", EngineFactory.ASM);
+
+// Custom backend (tracing, debugging, experimental)
+Regex dbg = Regex.compile(pattern, tdfa -> new MyDebugRunner(tdfa));
 
 if (asm.matches("hello world")) {
     io.github.jemmix.tdfa.vm.MatchResult m = asm.find("hello world", 0);
@@ -80,18 +88,17 @@ The `io.github.jemmix.tdfa.re2j` package provides a drop-in replacement for Goog
 ```java
 import io.github.jemmix.tdfa.re2j.Pattern;
 import io.github.jemmix.tdfa.re2j.Matcher;
-import io.github.jemmix.tdfa.re2j.RE2;
+import io.github.jemmix.tdfa.EngineFactory;
 
-// java.util.regex-style API
+// java.util.regex-style API (defaults to ASM backend)
 Pattern p = Pattern.compile("(\\w+)@(\\w+)");
 Matcher m = p.matcher("hello user@host bye");
 while (m.find()) {
     System.out.println(m.group(1) + " at " + m.group(2));
 }
 
-// RE2-style API (matches re2j's RE2 class)
-RE2 re = RE2.compile("foo(.*)");
-int[] submatch = re.findSubmatchIndex("foobar");
+// Explicit engine selection per-regex
+Pattern pVM = Pattern.compile("(\\w+)@(\\w+)", 0, EngineFactory.VM);
 ```
 
 Both Perl (leftmost-first) and POSIX (leftmost-longest) disambiguation modes are supported.

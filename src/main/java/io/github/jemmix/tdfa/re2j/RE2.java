@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa.re2j;
 
+import io.github.jemmix.tdfa.EngineFactory;
 import io.github.jemmix.tdfa.Regex;
 import io.github.jemmix.tdfa.tdfa.Disambiguation;
 import io.github.jemmix.tdfa.vm.MatchResult;
@@ -121,9 +122,8 @@ final class RE2 {
 
     private RE2(String pattern, boolean posix) {
         this.pattern = pattern;
-        boolean asm = Boolean.getBoolean("tdfa.asm");
-        this.perlEngine = Regex.compile(pattern, asm, Disambiguation.PERL);
-        this.posixEngine = Regex.compile(pattern, asm, Disambiguation.POSIX);
+        this.perlEngine = Regex.compile(pattern, EngineFactory.DEFAULT, Disambiguation.PERL);
+        this.posixEngine = Regex.compile(pattern, EngineFactory.DEFAULT, Disambiguation.POSIX);
         this.longest = posix;
     }
 

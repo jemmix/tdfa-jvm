@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa.bench;
 
+import io.github.jemmix.tdfa.EngineFactory;
 import io.github.jemmix.tdfa.Regex;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
@@ -54,8 +55,8 @@ public class ParameterizedShortInputBench {
             };
 
             switch (engine) {
-                case "tdfa" -> matches = Regex.compileVm(regex)::matches;
-                case "asmc" -> matches = Regex.compileAsm(regex)::matches;
+                case "tdfa" -> matches = Regex.compile(regex, EngineFactory.VM)::matches;
+                case "asmc" -> matches = Regex.compile(regex, EngineFactory.ASM)::matches;
                 case "jur" -> {
                     var pattern = Pattern.compile(regex);
                     matches = s -> pattern.matcher(s).matches();

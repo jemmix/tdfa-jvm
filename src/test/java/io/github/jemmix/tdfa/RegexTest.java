@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa;
 
+import io.github.jemmix.tdfa.tdfa.Disambiguation;
 import io.github.jemmix.tdfa.vm.MatchResult;
 import org.junit.jupiter.api.Test;
 
@@ -225,7 +226,7 @@ class RegexTest {
     @Test void perlLeftmostFirst() {
         // re2j/Perl: try alternatives left-to-right, first one that match wins.
         // (a|ab) on "ab": alt 1 matches [0,1) — Perl returns [0,1); POSIX returns [0,2).
-        Regex perl = Regex.compilePerlVm("(a|ab)");
+        Regex perl = Regex.compile("(a|ab)", EngineFactory.VM, Disambiguation.PERL);
         MatchResult m1 = perl.find("ab", 0);
         assertThat(m1).as("Perl (a|ab) on 'ab' should be [0,1)").isNotNull();
         assertThat(m1.start(0)).isEqualTo(0);
@@ -233,14 +234,14 @@ class RegexTest {
 
         // (ab|a) on "ab": alt 1 matches [0,2) — Perl returns [0,2); POSIX also [0,2).
         MatchResult m2 = perl.find("ab", 0);
-        Regex perl2 = Regex.compilePerlVm("(ab|a)");
+        Regex perl2 = Regex.compile("(ab|a)", EngineFactory.VM, Disambiguation.PERL);
         MatchResult m3 = perl2.find("ab", 0);
         assertThat(m3).as("Perl (ab|a) on 'ab' should be [0,2)").isNotNull();
         assertThat(m3.start(0)).isEqualTo(0);
         assertThat(m3.end(0)).isEqualTo(2);
 
         // (a|aa) on "aaa": Perl alt 1 matches [0,1).
-        Regex perl3 = Regex.compilePerlVm("(a|aa)");
+        Regex perl3 = Regex.compile("(a|aa)", EngineFactory.VM, Disambiguation.PERL);
         MatchResult m4 = perl3.find("aaa", 0);
         assertThat(m4).as("Perl (a|aa) on 'aaa' should be [0,1)").isNotNull();
         assertThat(m4.end(0)).isEqualTo(1);
@@ -248,7 +249,7 @@ class RegexTest {
 
     @Test void posixLeftmostLongest() {
         // Sanity: POSIX default should still give leftmost-longest.
-        Regex posix = Regex.compilePosixVm("(a|ab)");
+        Regex posix = Regex.compile("(a|ab)", EngineFactory.VM, Disambiguation.POSIX);
         MatchResult m = posix.find("ab", 0);
         assertThat(m).as("POSIX (a|ab) on 'ab' should be [0,2)").isNotNull();
         assertThat(m.start(0)).isEqualTo(0);

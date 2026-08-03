@@ -2,6 +2,9 @@ package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import io.github.jemmix.tdfa.EngineFactory;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -16,43 +19,57 @@ class MatcherApiParityTest {
         return com.google.re2j.Pattern.compile(p).matcher(in);
     }
 
-    private static io.github.jemmix.tdfa.re2j.Matcher tdfaM(String p, String in) {
-        return io.github.jemmix.tdfa.re2j.Pattern.compile(p).matcher(in);
+    private static io.github.jemmix.tdfa.re2j.Matcher tdfaM(String p, String in, EngineFactory factory) {
+        return io.github.jemmix.tdfa.re2j.Pattern.compile(p, 0, factory).matcher(in);
     }
 
-    @Test void matchesTrue() {
-        assertThat(tdfaM("abc", "abc").matches()).isEqualTo(re2jM("abc", "abc").matches());
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void matchesTrue(EngineFactory factory) {
+        assertThat(tdfaM("abc", "abc", factory).matches()).isEqualTo(re2jM("abc", "abc").matches());
     }
 
-    @Test void matchesFalse() {
-        assertThat(tdfaM("abc", "abcd").matches()).isEqualTo(re2jM("abc", "abcd").matches());
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void matchesFalse(EngineFactory factory) {
+        assertThat(tdfaM("abc", "abcd", factory).matches()).isEqualTo(re2jM("abc", "abcd").matches());
     }
 
-    @Test void matchesPartial() {
-        assertThat(tdfaM("abc", "xabc").matches()).isEqualTo(re2jM("abc", "xabc").matches());
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void matchesPartial(EngineFactory factory) {
+        assertThat(tdfaM("abc", "xabc", factory).matches()).isEqualTo(re2jM("abc", "xabc").matches());
     }
 
-    @Test void lookingAtTrue() {
-        assertThat(tdfaM("abc", "abcdef").lookingAt())
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void lookingAtTrue(EngineFactory factory) {
+        assertThat(tdfaM("abc", "abcdef", factory).lookingAt())
                 .isEqualTo(re2jM("abc", "abcdef").lookingAt());
     }
 
-    @Test void lookingAtFalse() {
-        assertThat(tdfaM("abc", "xabc").lookingAt())
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void lookingAtFalse(EngineFactory factory) {
+        assertThat(tdfaM("abc", "xabc", factory).lookingAt())
                 .isEqualTo(re2jM("abc", "xabc").lookingAt());
     }
 
-    @Test void findFirst() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void findFirst(EngineFactory factory) {
         var r = re2jM("\\d+", "abc123def456");
-        var t = tdfaM("\\d+", "abc123def456");
+        var t = tdfaM("\\d+", "abc123def456", factory);
         assertThat(t.find()).isEqualTo(r.find());
         assertThat(t.start()).isEqualTo(r.start());
         assertThat(t.end()).isEqualTo(r.end());
     }
 
-    @Test void findIterate() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void findIterate(EngineFactory factory) {
         var r = re2jM("\\d+", "a1b2c3");
-        var t = tdfaM("\\d+", "a1b2c3");
+        var t = tdfaM("\\d+", "a1b2c3", factory);
         while (r.find() && t.find()) {
             assertThat(t.group()).as("group").isEqualTo(r.group());
             assertThat(t.start()).as("start").isEqualTo(r.start());
@@ -60,29 +77,37 @@ class MatcherApiParityTest {
         assertThat(r.find()).isEqualTo(t.find());
     }
 
-    @Test void findFromPosition() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void findFromPosition(EngineFactory factory) {
         var r = re2jM("\\d+", "12ab34");
-        var t = tdfaM("\\d+", "12ab34");
+        var t = tdfaM("\\d+", "12ab34", factory);
         r.find(4);
         t.find(4);
         assertThat(t.group()).isEqualTo(r.group());
     }
 
-    @Test void groupExtraction() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void groupExtraction(EngineFactory factory) {
         var r = re2jM("(\\w+)@(\\w+)", "user@host");
-        var t = tdfaM("(\\w+)@(\\w+)", "user@host");
+        var t = tdfaM("(\\w+)@(\\w+)", "user@host", factory);
         r.find(); t.find();
         assertThat(t.group(1)).isEqualTo(r.group(1));
         assertThat(t.group(2)).isEqualTo(r.group(2));
     }
 
-    @Test void groupCount() {
-        assertThat(tdfaM("(a)(b)(c)", "abc").groupCount())
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void groupCount(EngineFactory factory) {
+        assertThat(tdfaM("(a)(b)(c)", "abc", factory).groupCount())
                 .isEqualTo(re2jM("(a)(b)(c)", "abc").groupCount());
     }
 
-    @Test void resetClearsState() {
-        var t = tdfaM("\\d", "a1b2");
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void resetClearsState(EngineFactory factory) {
+        var t = tdfaM("\\d", "a1b2", factory);
         t.find();
         t.reset();
         var r = re2jM("\\d", "a1b2");
@@ -90,8 +115,10 @@ class MatcherApiParityTest {
         assertThat(t.start()).isEqualTo(r.start());
     }
 
-    @Test void resetWithNewInput() {
-        var t = tdfaM("\\d", "a1b2");
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void resetWithNewInput(EngineFactory factory) {
+        var t = tdfaM("\\d", "a1b2", factory);
         t.find();
         t.reset("x3y4");
         var r = re2jM("\\d", "x3y4");
@@ -99,9 +126,11 @@ class MatcherApiParityTest {
         assertThat(t.group()).isEqualTo(r.group());
     }
 
-    @Test void zeroWidthFindAdvance() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void zeroWidthFindAdvance(EngineFactory factory) {
         var r = re2jM("a*", "aaabbb");
-        var t = tdfaM("a*", "aaabbb");
+        var t = tdfaM("a*", "aaabbb", factory);
         java.util.List<String> rMatches = new java.util.ArrayList<>();
         java.util.List<String> tMatches = new java.util.ArrayList<>();
         while (r.find()) rMatches.add(r.group());
@@ -109,20 +138,26 @@ class MatcherApiParityTest {
         assertThat(tMatches).isEqualTo(rMatches);
     }
 
-    @Test void findNoMatch() {
-        assertThat(tdfaM("xyz", "abc").find()).isEqualTo(re2jM("xyz", "abc").find());
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void findNoMatch(EngineFactory factory) {
+        assertThat(tdfaM("xyz", "abc", factory).find()).isEqualTo(re2jM("xyz", "abc").find());
     }
 
-    @Test void optionalGroupNull() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void optionalGroupNull(EngineFactory factory) {
         var r = re2jM("a(b)?c", "ac");
-        var t = tdfaM("a(b)?c", "ac");
+        var t = tdfaM("a(b)?c", "ac", factory);
         r.find(); t.find();
         assertThat(t.group(1)).isEqualTo(r.group(1));
     }
 
-    @Test void optionalGroupPresent() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void optionalGroupPresent(EngineFactory factory) {
         var r = re2jM("a(b)?c", "abc");
-        var t = tdfaM("a(b)?c", "abc");
+        var t = tdfaM("a(b)?c", "abc", factory);
         r.find(); t.find();
         assertThat(t.group(1)).isEqualTo(r.group(1));
     }
@@ -139,55 +174,71 @@ class MatcherApiParityTest {
                 .isEqualTo(com.google.re2j.Pattern.matches("abc", "abcd"));
     }
 
-    @Test void instanceMatchesTrue() {
-        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("abc").matches("abc"))
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void instanceMatchesTrue(EngineFactory factory) {
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("abc", 0, factory).matches("abc"))
                 .isEqualTo(com.google.re2j.Pattern.compile("abc").matches("abc"));
     }
 
-    @Test void patternAccessor() {
-        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("a(b)c").pattern())
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void patternAccessor(EngineFactory factory) {
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("a(b)c", 0, factory).pattern())
                 .isEqualTo(com.google.re2j.Pattern.compile("a(b)c").pattern());
     }
 
     // ---- runtime exceptions ----
 
-    @Test void findNegativeStart() {
-        assertThatThrownBy(() -> tdfaM("a", "abc").find(-1))
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void findNegativeStart(EngineFactory factory) {
+        assertThatThrownBy(() -> tdfaM("a", "abc", factory).find(-1))
                 .isInstanceOf(IndexOutOfBoundsException.class);
         assertThatThrownBy(() -> re2jM("a", "abc").find(-1))
                 .isInstanceOf(IndexOutOfBoundsException.class);
     }
 
-    @Test void findTooLargeStart() {
-        assertThatThrownBy(() -> tdfaM("a", "abc").find(10))
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void findTooLargeStart(EngineFactory factory) {
+        assertThatThrownBy(() -> tdfaM("a", "abc", factory).find(10))
                 .isInstanceOf(IndexOutOfBoundsException.class);
         assertThatThrownBy(() -> re2jM("a", "abc").find(10))
                 .isInstanceOf(IndexOutOfBoundsException.class);
     }
 
-    @Test void startBeforeMatch() {
-        assertThatThrownBy(() -> tdfaM("a", "abc").start())
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void startBeforeMatch(EngineFactory factory) {
+        assertThatThrownBy(() -> tdfaM("a", "abc", factory).start())
                 .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> re2jM("a", "abc").start())
                 .isInstanceOf(IllegalStateException.class);
     }
 
-    @Test void groupBeforeMatch() {
-        assertThatThrownBy(() -> tdfaM("a", "abc").group())
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void groupBeforeMatch(EngineFactory factory) {
+        assertThatThrownBy(() -> tdfaM("a", "abc", factory).group())
                 .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> re2jM("a", "abc").group())
                 .isInstanceOf(IllegalStateException.class);
     }
 
-    @Test void groupIndexTooHigh() {
-        assertThatThrownBy(() -> { var m = tdfaM("(a)", "a"); m.find(); m.group(99); })
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void groupIndexTooHigh(EngineFactory factory) {
+        assertThatThrownBy(() -> { var m = tdfaM("(a)", "a", factory); m.find(); m.group(99); })
                 .isInstanceOf(IndexOutOfBoundsException.class);
         assertThatThrownBy(() -> { var m = re2jM("(a)", "a"); m.find(); m.group(99); })
                 .isInstanceOf(IndexOutOfBoundsException.class);
     }
 
-    @Test void groupUnknownName() {
-        assertThatThrownBy(() -> { var m = tdfaM("(?<x>a)", "a"); m.find(); m.group("y"); })
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void groupUnknownName(EngineFactory factory) {
+        assertThatThrownBy(() -> { var m = tdfaM("(?<x>a)", "a", factory); m.find(); m.group("y"); })
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> { var m = re2jM("(?<x>a)", "a"); m.find(); m.group("y"); })
                 .isInstanceOf(IllegalArgumentException.class);
@@ -195,18 +246,22 @@ class MatcherApiParityTest {
 
     // ---- stateful interactions ----
 
-    @Test void lookingAtThenFind() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void lookingAtThenFind(EngineFactory factory) {
         var r = re2jM("\\w+", "hello world");
-        var t = tdfaM("\\w+", "hello world");
+        var t = tdfaM("\\w+", "hello world", factory);
         r.lookingAt(); t.lookingAt();
         assertThat(t.group()).isEqualTo(r.group());
         r.find(); t.find();
         assertThat(t.group()).isEqualTo(r.group());
     }
 
-    @Test void matchFailThenFind() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void matchFailThenFind(EngineFactory factory) {
         var r = re2jM("^xyz$", "abc xyz");
-        var t = tdfaM("^xyz$", "abc xyz");
+        var t = tdfaM("^xyz$", "abc xyz", factory);
         assertThat(t.matches()).isEqualTo(r.matches());
         assertThat(t.find()).isEqualTo(r.find());
         if (r.find() || t.find()) {
@@ -214,9 +269,11 @@ class MatcherApiParityTest {
         }
     }
 
-    @Test void findFromThenFind() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void findFromThenFind(EngineFactory factory) {
         var r = re2jM("\\w", "abcd");
-        var t = tdfaM("\\w", "abcd");
+        var t = tdfaM("\\w", "abcd", factory);
         r.find(2); t.find(2);
         assertThat(t.group()).isEqualTo(r.group());
         r.find(); t.find();
@@ -225,29 +282,39 @@ class MatcherApiParityTest {
 
     // ---- edge cases ----
 
-    @Test void tenGroups() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void tenGroups(EngineFactory factory) {
         String pat = "(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)";
         var r = re2jM(pat, "abcdefghij");
-        var t = tdfaM(pat, "abcdefghij");
+        var t = tdfaM(pat, "abcdefghij", factory);
         r.find(); t.find();
         for (int i = 0; i <= 10; i++)
             assertThat(t.group(i)).as("group " + i).isEqualTo(r.group(i));
     }
 
-    @Test void emptyInputFind() {
-        Re2jOracle.assertSameFind("a*", "");
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void emptyInputFind(EngineFactory factory) {
+        Re2jOracle.assertSameFind("a*", "", factory);
     }
 
-    @Test void emptyPattern() {
-        Re2jOracle.assertSameFind("", "abc");
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void emptyPattern(EngineFactory factory) {
+        Re2jOracle.assertSameFind("", "abc", factory);
     }
 
-    @Test void nullByteInInput() {
-        Re2jOracle.assertSameFind("a.b", "a\u0000b");
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void nullByteInInput(EngineFactory factory) {
+        Re2jOracle.assertSameFind("a.b", "a\u0000b", factory);
     }
 
-    @Test void resetTwice() {
-        var t = tdfaM("\\d", "a1b2");
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void resetTwice(EngineFactory factory) {
+        var t = tdfaM("\\d", "a1b2", factory);
         t.find();
         t.reset();
         t.reset();
@@ -258,63 +325,79 @@ class MatcherApiParityTest {
 
     // ---- find() boundary ----
 
-    @Test void findAtInputLength() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void findAtInputLength(EngineFactory factory) {
         var r = re2jM("a", "xyz");
-        var t = tdfaM("a", "xyz");
+        var t = tdfaM("a", "xyz", factory);
         assertThat(t.find(3)).isEqualTo(r.find(3));
     }
 
-    @Test void findPastInputLength() {
-        assertThatThrownBy(() -> tdfaM("a", "xyz").find(4))
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void findPastInputLength(EngineFactory factory) {
+        assertThatThrownBy(() -> tdfaM("a", "xyz", factory).find(4))
                 .isInstanceOf(IndexOutOfBoundsException.class);
         assertThatThrownBy(() -> re2jM("a", "xyz").find(4))
                 .isInstanceOf(IndexOutOfBoundsException.class);
     }
 
-    @Test void instanceMatchesFalse() {
-        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("abc").matches("abcd"))
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void instanceMatchesFalse(EngineFactory factory) {
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("abc", 0, factory).matches("abcd"))
                 .isEqualTo(com.google.re2j.Pattern.compile("abc").matches("abcd"));
     }
 
-    @Test void matchesThenGroup() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void matchesThenGroup(EngineFactory factory) {
         var r = re2jM("(a)(b)(c)", "abc");
-        var t = tdfaM("(a)(b)(c)", "abc");
+        var t = tdfaM("(a)(b)(c)", "abc", factory);
         r.matches(); t.matches();
         assertThat(t.group(0)).isEqualTo(r.group(0));
         assertThat(t.group(1)).isEqualTo(r.group(1));
         assertThat(t.group(3)).isEqualTo(r.group(3));
     }
 
-    @Test void appendReplFailedFindTail() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void appendReplFailedFindTail(EngineFactory factory) {
         var rSb = new StringBuilder();
         var rM = re2jM("xyz", "abc");
         rM.find();
         rM.appendTail(rSb);
 
         var tSb = new StringBuilder();
-        var tM = tdfaM("xyz", "abc");
+        var tM = tdfaM("xyz", "abc", factory);
         tM.find();
         tM.appendTail(tSb);
 
         assertThat(tSb.toString()).isEqualTo(rSb.toString());
     }
 
-    @Test void emptyInputMatches() {
-        assertThat(tdfaM("a*", "").matches())
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void emptyInputMatches(EngineFactory factory) {
+        assertThat(tdfaM("a*", "", factory).matches())
                 .isEqualTo(re2jM("a*", "").matches());
     }
 
-    @Test void emptyInputLookingAt() {
-        assertThat(tdfaM("a*", "").lookingAt())
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void emptyInputLookingAt(EngineFactory factory) {
+        assertThat(tdfaM("a*", "", factory).lookingAt())
                 .isEqualTo(re2jM("a*", "").lookingAt());
     }
 
-    @Test void deeplyNestedGroups() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void deeplyNestedGroups(EngineFactory factory) {
         StringBuilder pat = new StringBuilder("a");
         for (int i = 0; i < 50; i++) pat.insert(0, "(").append(")");
         String p = pat.toString();
         var r = re2jM(p, "a");
-        var t = tdfaM(p, "a");
+        var t = tdfaM(p, "a", factory);
         r.find(); t.find();
         assertThat(t.group(0)).isEqualTo(r.group(0));
         assertThat(t.groupCount()).isEqualTo(r.groupCount());
@@ -323,17 +406,21 @@ class MatcherApiParityTest {
     // ---- matches() with alternation correctness ----
 
     @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: matches() anchored-both extract returns wrong groups")
-    @Test void matchesWithAlternationGroups() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void matchesWithAlternationGroups(EngineFactory factory) {
         var r = re2jM("(a|ab)", "ab");
-        var t = tdfaM("(a|ab)", "ab");
+        var t = tdfaM("(a|ab)", "ab", factory);
         assertThat(t.matches()).isEqualTo(r.matches());
         assertThat(t.group(0)).isEqualTo(r.group(0));
         assertThat(t.group(1)).isEqualTo(r.group(1));
     }
 
-    @Test void matchesThenFind() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void matchesThenFind(EngineFactory factory) {
         var r = re2jM("\\w+", "ab");
-        var t = tdfaM("\\w+", "ab");
+        var t = tdfaM("\\w+", "ab", factory);
         assertThat(t.matches()).isEqualTo(r.matches());
         assertThat(t.group()).isEqualTo(r.group());
         assertThat(t.group()).isEqualTo("ab");
@@ -342,16 +429,20 @@ class MatcherApiParityTest {
         assertThat(t.group()).isEqualTo(r.group());
     }
 
-    @Test void lookingAtWithAlternation() {
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void lookingAtWithAlternation(EngineFactory factory) {
         var r = re2jM("(a|ab)", "ab");
-        var t = tdfaM("(a|ab)", "ab");
+        var t = tdfaM("(a|ab)", "ab", factory);
         r.lookingAt(); t.lookingAt();
         assertThat(t.group(0)).isEqualTo(r.group(0));
         assertThat(t.group(1)).isEqualTo(r.group(1));
     }
 
-    @Test void groupNegativeIndex() {
-        assertThatThrownBy(() -> { var m = tdfaM("(a)", "a"); m.find(); m.group(-1); })
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void groupNegativeIndex(EngineFactory factory) {
+        assertThatThrownBy(() -> { var m = tdfaM("(a)", "a", factory); m.find(); m.group(-1); })
                 .isInstanceOf(IndexOutOfBoundsException.class);
         assertThatThrownBy(() -> { var m = re2jM("(a)", "a"); m.find(); m.group(-1); })
                 .isInstanceOf(IndexOutOfBoundsException.class);
