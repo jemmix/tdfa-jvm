@@ -11,11 +11,10 @@ import java.util.List;
 /**
  * Drop-in replacement for {@code com.google.re2j.RE2}.
  *
- * Mirrors the subset of re2j's {@code RE2} public API needed by its ExecTest
- * suite. Each instance compiles both Perl (leftmost-first) and POSIX
- * (leftmost-longest) variants of the pattern against our TDFA engine; the
- * mutable {@link #longest} flag selects which is used per call, matching
- * re2j's mutation-based API.
+ * Mirrors the re2j {@code RE2} public API. Each instance compiles both Perl
+ * (leftmost-first) and POSIX (leftmost-longest) variants of the pattern against
+ * our TDFA engine; the mutable {@link #longest} flag selects which is used per
+ * call, matching re2j's mutation-based API.
  *
  * Migrating from re2j: change {@code import com.google.re2j.RE2;} to
  * {@code import io.github.jemmix.tdfa.re2j.RE2;}. Same call sites for the
@@ -55,11 +54,10 @@ public final class RE2 {
     public static RE2 compileImpl(String pattern, int flags, boolean posix) {
         // Translate the re2j flags our engine understands into inline-flag
         // prefixes on the pattern itself, so the existing Parser flag
-        // machinery picks them up. Flags we don't yet support (LITERAL,
-        // CLASS_NL, ONE_LINE, NON_GREEDY, PERL_X, UNICODE_GROUPS, WAS_DOLLAR)
-        // are silently ignored — they affect features that either always-on
-        // or not-yet-supported in our engine, and re2j's ExecTest doesn't
-        // probe them in ways we'd diverge on.
+        // machinery picks them up. Flags pending parity implementation
+        // (LITERAL, CLASS_NL, ONE_LINE, NON_GREEDY, PERL_X, UNICODE_GROUPS,
+        // WAS_DOLLAR) are currently no-ops — they affect features that are
+        // either always-on in our engine or not yet wired through.
         if ((flags & LITERAL) != 0) {
             pattern = quoteMeta(pattern);
         }

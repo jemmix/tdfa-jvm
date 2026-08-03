@@ -16,6 +16,7 @@ import java.util.Map;
  * Obtain a {@link Matcher} via {@link #matcher(CharSequence)}.
  *
  * <p>Supported flags: {@link #CASE_INSENSITIVE}, {@link #DOTALL}, {@link #MULTILINE}, {@link #LONGEST_MATCH}.
+ * {@link #DISABLE_UNICODE_GROUPS} is accepted but enforcement is pending.
  */
 public final class Pattern {
 
@@ -31,7 +32,7 @@ public final class Pattern {
     /** Flag: matches longest possible string (POSIX leftmost-longest). */
     public static final int LONGEST_MATCH = 16;
 
-    /** Flag: disable Unicode groups. Accepted; Unicode groups are always enabled in this engine. */
+    /** Flag: disable Unicode groups. Pending parity — flag is accepted but Unicode groups remain enabled. */
     public static final int DISABLE_UNICODE_GROUPS = 8;
 
     private final String pattern;

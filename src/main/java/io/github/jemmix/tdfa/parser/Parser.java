@@ -14,21 +14,25 @@ import java.util.Map;
  * - literals, escape sequences (\n \t \r \f \a \v \d \D \w \W \s \S)
  * - hex escapes (\xNN, \x{N+}), octal escapes (\NNN, 1–3 digits capped at 0xFF)
  * - char classes [abc], [a-z], [^...], with POSIX classes [:alpha:] etc.
- * - Unicode property classes \p{X} \P{X} (BMP only)
+ * - Unicode property classes \p{X} \P{X} (full codepoint range, U+0000–U+10FFFF)
  * - quantifiers: * + ? {n} {n,} {n,m} (greedy and lazy)
  * - alternation |
- * - capturing groups (...), non-capturing (?:...)
- * - inline flags (?i) (?s) (?-i) (?-s) (?i:...) (?is:...)
+ * - capturing groups (...), non-capturing (?:...), named groups (?P<name>...) (?<name>...)
+ * - inline flags (?i) (?s) (?m) (?-i) (?-s) (?i:...) (?is:...)
  * - anchors ^ $ \A \z \b \B
  * - dot . (excludes \n unless (?s))
+ * - literal quoting \Q...\E
+ * - non-BMP codepoints in \x{...} and \p{...} (surrogate-pair aware)
  *
- * NOT supported (rejected at parse time):
- * - backreferences (\1), lookarounds (?=...), atomic groups (?>...)
- * - possessive quantifiers (*+ ++ ?+)
- * - \C (any byte), \Q...\E (literal quoting)
- * - (?m) multiline mode (accepted but no-op)
- * - named groups (?P<name>...) (?<name>...)
- * - non-BMP codepoints in \x{...} and \p{...}
+ * Rejected at parse time (DFA-incompatible, also rejected by re2j):
+ * - backreferences (\1), lookarounds (?=...) (?!...) (?<=...) (?<!...)
+ * - atomic groups (?>...), possessive quantifiers (*+ ++ ?+ {n,m}+)
+ * - \C (any byte)
+ *
+ * Pending re2j parity (see parity test suite):
+ * - [:ascii:] and [:word:] POSIX classes
+ * - [:^name:] negated POSIX classes
+ * - full Unicode case folding for arbitrary class ranges under (?i)
  */
 public final class Parser {
     private final String src;
@@ -260,8 +264,9 @@ public final class Parser {
             // the uppercase equivalent. Non-letter chars (including _ @ ` etc.)
             // have no case fold and contribute nothing.
             //
-            // Limited to ASCII for now; full Unicode case folding (Greek, etc.)
-            // would require per-codepoint expansion or UnicodeCaseFold tables.
+            // Pending full Unicode case folding for arbitrary class ranges;
+            // currently ASCII-only (A-Z/a-z). Unicode property classes like
+            // \p{Greek} under (?i) use foldTableFor() separately.
             List<Integer> exp = new ArrayList<>();
             for (int i = 0; i < arr.length; i += 2) {
                 int lo = arr[i], hi = arr[i + 1];
@@ -592,28 +597,14 @@ public final class Parser {
         return out;
     }
 
-    /** Truncate ranges to the BMP (0..0xFFFF); ranges entirely above 0xFFFF
-     *  are dropped, ranges spanning the boundary are clamped. Necessary
-     *  because CharClass is currently {@code char}-based. */
-    private static int[] clampToBmp(int[] ranges) {
-        List<Integer> out = new ArrayList<>();
-        for (int i = 0; i < ranges.length; i += 2) {
-            int lo = ranges[i], hi = ranges[i + 1];
-            if (lo > 0xFFFF) continue;
-            out.add(lo);
-            out.add(Math.min(hi, 0xFFFF));
-        }
-        return out.stream().mapToInt(Integer::intValue).toArray();
-    }
-
     /**
      * Parse a hex escape after the leading {@code \x} (caller has consumed both).
      * Supports both forms (re2j-compatible):
      * <ul>
      *   <li>{@code \xNN} — exactly 2 hex digits, value 0x00-0xFF.</li>
-     *   <li>{@code \x{N+}} — 1+ hex digits enclosed in braces, value 0-0xFFFF.
-     *       Values above 0xFFFF (non-BMP codepoints) are rejected until full
-     *       codepoint-aware CharClass support lands.</li>
+     *   <li>{@code \x{N+}} — 1+ hex digits enclosed in braces, value 0-U+10FFFF.
+     *       Non-BMP codepoints (above U+FFFF) are returned as a CharClass
+     *       and are surrogate-pair aware at match time.</li>
      * </ul>
      */
     private Ast parseHexEscape() {
