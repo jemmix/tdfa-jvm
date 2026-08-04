@@ -27,7 +27,7 @@ Boolean match, short inputs:
 | reggie | 274 | 17.6 | 11.1 | 0.04² | **4.9** |
 
 ¹ Input: 20 × `a` + `c` — `java.util.regex` goes exponential (125× slower than ASM).
-² JIT constant-folded; not representative of real throughput.
+² Reggie special-cases literal patterns to `String.indexOf`, which the JVM vectorizes (SIMD). Single-algorithm design means we don't do this.
 
 Long-input scan (1000 chars, pattern never matches):
 

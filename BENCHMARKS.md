@@ -15,7 +15,7 @@ Boolean match, short inputs:
 | reggie | 273.811 | 17.555 | 11.084 | 0.038² | **4.911** |
 
 ¹ Input: 20 × `a` + `c` — `java.util.regex` goes exponential (125× slower than ASM).
-² JIT constant-folded; not representative of real throughput.
+² Reggie special-cases literal patterns to `String.indexOf`, which the JVM vectorizes (SIMD). Single-algorithm design means we don't do this.
 
 ## Long-input scan — 1000-char input, pattern `(\w+)(\d+)(\w+)` (never matches)
 
@@ -40,4 +40,4 @@ Forces a scan of all 1000 start positions. Per-char cost dominates.
 - **ASM vs j.u.r**: 4–25× faster on typical patterns, 125× faster on ReDoS. Modest but consistent.
 - **ASM vs re2j**: 35–68× faster everywhere. Radically better.
 - **reggie**: uses multi-engine dispatch (DFA, PikeVM, etc.) — different design point. Faster on short capture-heavy patterns; goes super-linear on long adversarial inputs (261× gap).
-- **reggie `abc` at 0.038 ns** is a JIT artifact — HotSpot constant-folds the match when both pattern and input are compile-time constants in the benchmark harness. Not representative of real-world throughput.
+- **reggie `abc` at 0.038 ns**: Reggie detects literal patterns and dispatches to `String.indexOf`, which HotSpot intrinsifies to SIMD on x86/ARM. Legitimate optimization, not a benchmark artifact. We don't replicate it — one algorithm for all patterns by design.
