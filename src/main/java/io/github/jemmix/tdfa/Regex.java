@@ -44,7 +44,12 @@ public final class Regex {
     }
 
     public static Regex compile(String pattern, EngineFactory factory, Disambiguation disamb, boolean disableUnicodeGroups) {
-        Tnfa nfa = Tnfa.compile(pattern, disableUnicodeGroups);
+        return compile(pattern, factory, disamb, disableUnicodeGroups, false);
+    }
+
+    public static Regex compile(String pattern, EngineFactory factory, Disambiguation disamb,
+                                boolean disableUnicodeGroups, boolean anchorBoth) {
+        Tnfa nfa = Tnfa.compile(pattern, disableUnicodeGroups, anchorBoth);
         io.github.jemmix.tdfa.tdfa.Tdfa tdfa = io.github.jemmix.tdfa.tdfa.Tdfa.compile(nfa, disamb);
         Engine engine = factory.create(tdfa);
         return new Regex(engine, nfa.groupCount, nfa.namedGroups);

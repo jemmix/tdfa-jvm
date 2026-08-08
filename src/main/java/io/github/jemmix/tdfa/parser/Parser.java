@@ -57,10 +57,14 @@ public final class Parser {
     }
 
     public static Ast parse(String src, boolean disableUnicodeGroups) {
+        return parse(src, disableUnicodeGroups, false);
+    }
+
+    public static Ast parse(String src, boolean disableUnicodeGroups, boolean anchorBoth) {
         Parser p = new Parser(src, disableUnicodeGroups);
         Ast e = p.parseAlt();
         if (p.pos != p.src.length()) throw fail(p, "unexpected '" + p.cur() + "'");
-        return e;
+        return anchorBoth ? anchorBoth(e) : e;
     }
 
     /** Side-effect: parses, leaves tag/group counters accessible. */
@@ -70,10 +74,23 @@ public final class Parser {
 
     /** Side-effect: parses, leaves tag/group counters accessible. */
     public static Parser capture(String src, boolean disableUnicodeGroups) {
+        return capture(src, disableUnicodeGroups, false);
+    }
+
+    /** Side-effect: parses, leaves tag/group counters accessible. */
+    public static Parser capture(String src, boolean disableUnicodeGroups, boolean anchorBoth) {
         Parser p = new Parser(src, disableUnicodeGroups);
-        p.lastAst = p.parseAlt();
+        p.lastAst = anchorBoth ? anchorBoth(p.parseAlt()) : p.parseAlt();
         if (p.pos != p.src.length()) throw fail(p, "unexpected '" + p.cur() + "'");
         return p;
+    }
+
+    /** Wrap a parsed body in start/end-text anchors (matches() = anchored both ends).
+     *  Done at AST level so literal-quote ({@code \Q...\E}) in the body isn't disturbed,
+     *  and the trailing anchor supplies context that prevents the Perl leftmost-first
+     *  DFA from pruning a longer alternative's continuation. */
+    private static Ast anchorBoth(Ast e) {
+        return new Ast.Concat(List.of(new Ast.StartAnchor(), e, new Ast.EndAnchor()));
     }
 
     public Ast lastAst() { return lastAst; }

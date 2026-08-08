@@ -57,18 +57,15 @@ public final class Matcher {
 
     /** Match the entire input (anchored both ends). */
     public boolean matches() {
-        Regex engine = pattern.engine();
-        if (engine.matches(input)) {
-            match = engine.find(input, 0);
-            hasMatch = match != null;
-            if (hasMatch) {
-                lastMatchStart = match.start(0);
-                lastMatchEnd = match.end(0);
-            }
-            return hasMatch;
+        Regex whole = pattern.wholeEngine();
+        MatchResult m = whole.find(input, 0);
+        hasMatch = m != null;
+        if (hasMatch) {
+            match = m;
+            lastMatchStart = m.start(0);
+            lastMatchEnd = m.end(0);
         }
-        hasMatch = false;
-        return false;
+        return hasMatch;
     }
 
     /** Match from the beginning of input (anchored start only). */

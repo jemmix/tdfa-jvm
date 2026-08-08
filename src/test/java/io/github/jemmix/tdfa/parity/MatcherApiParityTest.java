@@ -405,7 +405,6 @@ class MatcherApiParityTest {
 
     // ---- matches() with alternation correctness ----
 
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: matches() anchored-both extract returns wrong groups")
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void matchesWithAlternationGroups(EngineFactory factory) {

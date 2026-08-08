@@ -70,7 +70,11 @@ public final class Tnfa {
     }
 
     public static Tnfa compile(String pattern, boolean disableUnicodeGroups) {
-        Parser parser = Parser.capture(pattern, disableUnicodeGroups);
+        return compile(pattern, disableUnicodeGroups, false);
+    }
+
+    public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth) {
+        Parser parser = Parser.capture(pattern, disableUnicodeGroups, anchorBoth);
         Ast ast = parser.lastAst();
         Builder b = new Builder();
         int accept = b.fresh();

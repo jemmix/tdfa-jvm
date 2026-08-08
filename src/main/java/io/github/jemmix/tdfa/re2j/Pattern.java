@@ -40,11 +40,13 @@ public final class Pattern {
     private final String pattern;
     private final int flags;
     private final Regex engine;
+    private final Regex wholeEngine;
 
-    Pattern(String pattern, int flags, Regex engine) {
+    Pattern(String pattern, int flags, Regex engine, Regex wholeEngine) {
         this.pattern = pattern;
         this.flags = flags;
         this.engine = engine;
+        this.wholeEngine = wholeEngine;
     }
 
     /** Compile {@code regex} with default flags and the default engine (Perl leftmost-first semantics). */
@@ -79,7 +81,13 @@ public final class Pattern {
         boolean disableUnicodeGroups = (flags & DISABLE_UNICODE_GROUPS) != 0;
         try {
             Regex engine = Regex.compile(flregex, factory, disamb, disableUnicodeGroups);
-            return new Pattern(regex, flags, engine);
+            // A second engine for matches() (anchored both ends). anchorBoth injects start/end
+            // anchors at the AST level (not text — safe against \Q..\E), and the trailing anchor
+            // supplies context that prevents the Perl leftmost-first DFA from pruning a longer
+            // alternative's continuation once a shorter branch reaches accept
+            // (e.g. (a|ab) against "ab" must retain the `ab` path).
+            Regex wholeEngine = Regex.compile(flregex, factory, disamb, disableUnicodeGroups, true);
+            return new Pattern(regex, flags, engine, wholeEngine);
         } catch (RuntimeException e) {
             throw RE2.translate(e, regex);
         }
@@ -207,6 +215,9 @@ public final class Pattern {
     }
 
     Regex engine() { return engine; }
+
+    /** Engine for {@code matches()}: pattern wrapped in {@code \A(?:...)\z}. */
+    Regex wholeEngine() { return wholeEngine; }
 
     /** Decode UTF-8 bytes to a String for the {@code byte[]} overloads (matches re2j's {@code MatcherInput.utf8}). */
     static String utf8(byte[] bytes) {
