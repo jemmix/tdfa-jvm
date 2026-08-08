@@ -66,7 +66,11 @@ public final class Tnfa {
     // ====== Builder / construction ======
 
     public static Tnfa compile(String pattern) {
-        Parser parser = Parser.capture(pattern);
+        return compile(pattern, false);
+    }
+
+    public static Tnfa compile(String pattern, boolean disableUnicodeGroups) {
+        Parser parser = Parser.capture(pattern, disableUnicodeGroups);
         Ast ast = parser.lastAst();
         Builder b = new Builder();
         int accept = b.fresh();

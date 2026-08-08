@@ -40,7 +40,11 @@ public final class Regex {
     }
 
     public static Regex compile(String pattern, EngineFactory factory, Disambiguation disamb) {
-        Tnfa nfa = Tnfa.compile(pattern);
+        return compile(pattern, factory, disamb, false);
+    }
+
+    public static Regex compile(String pattern, EngineFactory factory, Disambiguation disamb, boolean disableUnicodeGroups) {
+        Tnfa nfa = Tnfa.compile(pattern, disableUnicodeGroups);
         io.github.jemmix.tdfa.tdfa.Tdfa tdfa = io.github.jemmix.tdfa.tdfa.Tdfa.compile(nfa, disamb);
         Engine engine = factory.create(tdfa);
         return new Regex(engine, nfa.groupCount, nfa.namedGroups);

@@ -41,13 +41,23 @@ public final class Parser {
     boolean caseInsensitive = false;
     boolean dotall = false;
     boolean multiline = false;
+    boolean disableUnicodeGroups = false;
 
     private Parser(String src) { this.src = src; }
+
+    private Parser(String src, boolean disableUnicodeGroups) {
+        this.src = src;
+        this.disableUnicodeGroups = disableUnicodeGroups;
+    }
 
     private Ast lastAst;
 
     public static Ast parse(String src) {
-        Parser p = new Parser(src);
+        return parse(src, false);
+    }
+
+    public static Ast parse(String src, boolean disableUnicodeGroups) {
+        Parser p = new Parser(src, disableUnicodeGroups);
         Ast e = p.parseAlt();
         if (p.pos != p.src.length()) throw fail(p, "unexpected '" + p.cur() + "'");
         return e;
@@ -55,7 +65,12 @@ public final class Parser {
 
     /** Side-effect: parses, leaves tag/group counters accessible. */
     public static Parser capture(String src) {
-        Parser p = new Parser(src);
+        return capture(src, false);
+    }
+
+    /** Side-effect: parses, leaves tag/group counters accessible. */
+    public static Parser capture(String src, boolean disableUnicodeGroups) {
+        Parser p = new Parser(src, disableUnicodeGroups);
         p.lastAst = p.parseAlt();
         if (p.pos != p.src.length()) throw fail(p, "unexpected '" + p.cur() + "'");
         return p;
@@ -520,6 +535,8 @@ public final class Parser {
      * @param positive {@code true} for {@code \p}, {@code false} for {@code \P}
      */
     private Ast parseUnicodeEscape(boolean positive) {
+        if (disableUnicodeGroups)
+            throw fail(this, "Unicode groups (\\p/\\P) disabled by DISABLE_UNICODE_GROUPS flag");
         String name = parseUnicodeName();
         boolean innerNeg = false;
         if (name.startsWith("^")) { innerNeg = true; name = name.substring(1); }
@@ -543,6 +560,8 @@ public final class Parser {
      *  The class's own {@code [^...]} negation is applied at the end via the
      *  existing CharClass path; here we only handle the escape's own sign. */
     private void appendUnicodeToRanges(List<Integer> out, boolean positive, boolean unused) {
+        if (disableUnicodeGroups)
+            throw fail(this, "Unicode groups (\\p/\\P) disabled by DISABLE_UNICODE_GROUPS flag");
         String name = parseUnicodeName();
         boolean innerNeg = false;
         if (name.startsWith("^")) { innerNeg = true; name = name.substring(1); }

@@ -57,31 +57,15 @@ class FlagInteractionParityTest {
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void disableUnicodeGroupsAccepted(EngineFactory factory) {
-        io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}",
-                io.github.jemmix.tdfa.re2j.Pattern.DISABLE_UNICODE_GROUPS, factory);
-    }
-
-    @ParameterizedTest
-    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void disableUnicodeGroupsBehavior(EngineFactory factory) {
-        // Pending parity: re2j rejects \p{L} when DISABLE_UNICODE_GROUPS is set;
-        // our shim accepts it. Verify the divergence is known.
-        boolean re2jRejects;
-        try {
-            com.google.re2j.Pattern.compile("\\p{L}", com.google.re2j.Pattern.DISABLE_UNICODE_GROUPS);
-            re2jRejects = false;
-        } catch (Exception e) {
-            re2jRejects = true;
-        }
-        // re2j should reject Unicode groups when flag is set.
-        assertThat(re2jRejects).isTrue();
-        // Our shim currently accepts (pending parity enforcement).
-        io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}",
-                io.github.jemmix.tdfa.re2j.Pattern.DISABLE_UNICODE_GROUPS, factory);
+        // Both re2j and our shim reject \p{L} when DISABLE_UNICODE_GROUPS is set.
+        assertThatThrownBy(() -> com.google.re2j.Pattern.compile("\\p{L}", com.google.re2j.Pattern.DISABLE_UNICODE_GROUPS))
+                .isInstanceOf(Exception.class);
+        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}",
+                io.github.jemmix.tdfa.re2j.Pattern.DISABLE_UNICODE_GROUPS, factory))
+                .isInstanceOf(io.github.jemmix.tdfa.re2j.PatternSyntaxException.class);
     }
 
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: DISABLE_UNICODE_GROUPS should reject \\p{X} like re2j")
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void disableUnicodeGroupsRejectsProperty(EngineFactory factory) {

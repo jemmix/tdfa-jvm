@@ -17,8 +17,8 @@ import java.util.Map;
  * <p>Compile with {@link #compile(String)} or {@link #compile(String, int)}.
  * Obtain a {@link Matcher} via {@link #matcher(CharSequence)}.
  *
- * <p>Supported flags: {@link #CASE_INSENSITIVE}, {@link #DOTALL}, {@link #MULTILINE}, {@link #LONGEST_MATCH}.
- * {@link #DISABLE_UNICODE_GROUPS} is accepted but enforcement is pending.
+ * <p>Supported flags: {@link #CASE_INSENSITIVE}, {@link #DOTALL}, {@link #MULTILINE}, {@link #LONGEST_MATCH},
+ * {@link #DISABLE_UNICODE_GROUPS}.
  */
 public final class Pattern {
 
@@ -34,7 +34,7 @@ public final class Pattern {
     /** Flag: matches longest possible string (POSIX leftmost-longest). */
     public static final int LONGEST_MATCH = 16;
 
-    /** Flag: disable Unicode groups. Pending parity — flag is accepted but Unicode groups remain enabled. */
+    /** Flag: disable Unicode groups ({@code \p{...}} / {@code \P{...}} rejected at compile time, like re2j). */
     public static final int DISABLE_UNICODE_GROUPS = 8;
 
     private final String pattern;
@@ -76,8 +76,9 @@ public final class Pattern {
         if ((flags & MULTILINE) != 0)       flregex = "(?m)" + flregex;
         Disambiguation disamb = (flags & LONGEST_MATCH) != 0
                 ? Disambiguation.POSIX : Disambiguation.PERL;
+        boolean disableUnicodeGroups = (flags & DISABLE_UNICODE_GROUPS) != 0;
         try {
-            Regex engine = Regex.compile(flregex, factory, disamb);
+            Regex engine = Regex.compile(flregex, factory, disamb, disableUnicodeGroups);
             return new Pattern(regex, flags, engine);
         } catch (RuntimeException e) {
             throw RE2.translate(e, regex);
