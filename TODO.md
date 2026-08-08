@@ -6,6 +6,7 @@ finished. See the [vision](README.md#vision).
 ## Feature parity
 
 - [x] Clear all pending parity tests — 0 remaining (was 41; all cleared: POSIX classes, escape rejection, byte[] overloads, split, DISABLE_UNICODE_GROUPS, matches() anchored groups, programSize, Serializable, `\A`/`\z` multiline invariance, re2j-exact Unicode provider). See `docs/PARITY-PLAN.md`.
+- [ ] Add more parity tests — expand coverage to edge cases not yet exercised (backreference semantics, large repetition counts, nested quantifiers, Unicode line boundaries, canonical equivalents, etc.). Gate known-failing or not-yet-implemented cases with `@EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")` and a `// PENDING:` comment; run the full set with `./gradlew test -Dtdfa.pending=true`. Clear the gate as each feature lands.
 - [ ] Multiline mode `(?m)` — `^`/`$` at line boundaries
 - [ ] Full POSIX leftmost-longest — activate BT22 §7 `closure_gtop` winner selection
 - [ ] Unicode case folding completeness (currently partial)

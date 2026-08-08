@@ -44,7 +44,6 @@ test {
     useJUnitPlatform()
     jvmArgs '-Xmx512m', '-XX:+HeapDumpOnOutOfMemoryError'
     systemProperty 'tdfa.engine', System.getProperty('tdfa.engine') ?: ''
-    systemProperty 'tdfa.pending', System.getProperty('tdfa.pending') ?: ''
     testLogging {
         events 'failed', 'standardOut', 'standardError'
         exceptionFormat 'full'

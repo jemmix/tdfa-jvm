@@ -14,11 +14,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * Every tdfa helper accepts an {@link EngineFactory} so tests can run on both
  * ASM and VM backends via {@code @MethodSource("engineFactories")}.
- *
- * Pending-test convention:
- *   @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")
- *   // PENDING: <description of what needs to be implemented>
- *   Run with -Dtdfa.pending=true to include pending tests.
  */
 public final class Re2jOracle {
 
