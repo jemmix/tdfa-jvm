@@ -78,7 +78,12 @@ public final class Tnfa {
     }
 
     public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth) {
-        Parser parser = Parser.capture(pattern, disableUnicodeGroups, anchorBoth);
+        return compile(pattern, disableUnicodeGroups, anchorBoth, io.github.jemmix.tdfa.unicode.UnicodeProviders.get());
+    }
+
+    public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
+                               io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
+        Parser parser = Parser.capture(pattern, disableUnicodeGroups, anchorBoth, provider);
         Ast ast = parser.lastAst();
         Builder b = new Builder();
         int accept = b.fresh();

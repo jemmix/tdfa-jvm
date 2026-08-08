@@ -42,12 +42,14 @@ public final class Parser {
     boolean dotall = false;
     boolean multiline = false;
     boolean disableUnicodeGroups = false;
+    io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider;
 
-    private Parser(String src) { this.src = src; }
+    private Parser(String src) { this.src = src; this.provider = io.github.jemmix.tdfa.unicode.UnicodeProviders.get(); }
 
-    private Parser(String src, boolean disableUnicodeGroups) {
+    private Parser(String src, boolean disableUnicodeGroups, io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
         this.src = src;
         this.disableUnicodeGroups = disableUnicodeGroups;
+        this.provider = provider;
     }
 
     private Ast lastAst;
@@ -61,7 +63,12 @@ public final class Parser {
     }
 
     public static Ast parse(String src, boolean disableUnicodeGroups, boolean anchorBoth) {
-        Parser p = new Parser(src, disableUnicodeGroups);
+        return parse(src, disableUnicodeGroups, anchorBoth, io.github.jemmix.tdfa.unicode.UnicodeProviders.get());
+    }
+
+    public static Ast parse(String src, boolean disableUnicodeGroups, boolean anchorBoth,
+                            io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
+        Parser p = new Parser(src, disableUnicodeGroups, provider);
         Ast e = p.parseAlt();
         if (p.pos != p.src.length()) throw fail(p, "unexpected '" + p.cur() + "'");
         return anchorBoth ? anchorBoth(e) : e;
@@ -79,7 +86,13 @@ public final class Parser {
 
     /** Side-effect: parses, leaves tag/group counters accessible. */
     public static Parser capture(String src, boolean disableUnicodeGroups, boolean anchorBoth) {
-        Parser p = new Parser(src, disableUnicodeGroups);
+        return capture(src, disableUnicodeGroups, anchorBoth, io.github.jemmix.tdfa.unicode.UnicodeProviders.get());
+    }
+
+    /** Side-effect: parses, leaves tag/group counters accessible. */
+    public static Parser capture(String src, boolean disableUnicodeGroups, boolean anchorBoth,
+                                 io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
+        Parser p = new Parser(src, disableUnicodeGroups, provider);
         p.lastAst = anchorBoth ? anchorBoth(p.parseAlt()) : p.parseAlt();
         if (p.pos != p.src.length()) throw fail(p, "unexpected '" + p.cur() + "'");
         return p;
@@ -564,9 +577,9 @@ public final class Parser {
         //   \P{^X} → (F, T) → negated=F
         boolean negated = (positive == innerNeg);
 
-        int[] t = UnicodeProviders.get().tableFor(name);
+        int[] t = provider.tableFor(name);
         if (t == null) throw fail(this, "unknown character class name: " + name);
-        int[] fold = caseInsensitive ? UnicodeProviders.get().foldTableFor(name) : null;
+        int[] fold = caseInsensitive ? provider.foldTableFor(name) : null;
         if (fold != null && fold.length > 0) t = mergeRanges(t, fold);
         return new CharClass(t, negated);
     }
@@ -583,9 +596,9 @@ public final class Parser {
         boolean innerNeg = false;
         if (name.startsWith("^")) { innerNeg = true; name = name.substring(1); }
         boolean negate = (positive == innerNeg);  // see parseUnicodeEscape truth table
-        int[] t = UnicodeProviders.get().tableFor(name);
+        int[] t = provider.tableFor(name);
         if (t == null) throw fail(this, "unknown character class name: " + name);
-        int[] fold = caseInsensitive ? UnicodeProviders.get().foldTableFor(name) : null;
+        int[] fold = caseInsensitive ? provider.foldTableFor(name) : null;
         if (fold != null && fold.length > 0) t = mergeRanges(t, fold);
         if (negate) t = complementRanges(t);
         for (int v : t) out.add(v);

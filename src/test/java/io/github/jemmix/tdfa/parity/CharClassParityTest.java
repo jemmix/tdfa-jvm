@@ -329,7 +329,6 @@ class CharClassParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void nestedPosixInClass(EngineFactory factory) { assertSameFind("[a-z[:digit:]]", "5", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: Unicode table version mismatch (re2j 1.8 vs JDK)
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void supplementaryPlaneInput(EngineFactory factory) {

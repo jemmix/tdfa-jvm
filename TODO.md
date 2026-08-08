@@ -5,7 +5,7 @@ finished. See the [vision](README.md#vision).
 
 ## Feature parity
 
-- [ ] Clear all pending parity tests — 5 remaining (was 41; 36 cleared: POSIX classes, escape rejection, byte[] overloads, split, DISABLE_UNICODE_GROUPS, matches() anchored groups, programSize, Serializable, `\A`/`\z` multiline invariance). See `docs/PARITY-PLAN.md`.
+- [x] Clear all pending parity tests — 0 remaining (was 41; all cleared: POSIX classes, escape rejection, byte[] overloads, split, DISABLE_UNICODE_GROUPS, matches() anchored groups, programSize, Serializable, `\A`/`\z` multiline invariance, re2j-exact Unicode provider). See `docs/PARITY-PLAN.md`.
 - [ ] Multiline mode `(?m)` — `^`/`$` at line boundaries
 - [ ] Full POSIX leftmost-longest — activate BT22 §7 `closure_gtop` winner selection
 - [ ] Unicode case folding completeness (currently partial)

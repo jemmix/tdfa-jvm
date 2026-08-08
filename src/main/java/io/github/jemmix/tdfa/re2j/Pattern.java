@@ -68,8 +68,20 @@ public final class Pattern implements java.io.Serializable {
      * or pass a lambda for a custom backend.
      */
     public static Pattern compile(String regex, int flags, EngineFactory factory) {
+        return compile(regex, flags, factory, io.github.jemmix.tdfa.unicode.UnicodeProviders.get());
+    }
+
+    /**
+     * Compile {@code regex} with the given {@code flags}, {@link EngineFactory}, and an explicit
+     * {@link io.github.jemmix.tdfa.unicode.UnicodeDataProvider UnicodeDataProvider} for resolving
+     * {@code \p{...}} / {@code \P{...}} property classes. Use this to select a Unicode table version
+     * (e.g. a re2j-exact provider) independently of the JVM-default {@link java.lang.Character} tables.
+     */
+    public static Pattern compile(String regex, int flags, EngineFactory factory,
+                                  io.github.jemmix.tdfa.unicode.UnicodeDataProvider unicodeProvider) {
         if (regex == null) throw new NullPointerException("pattern is null");
         if (factory == null) throw new NullPointerException("factory is null");
+        if (unicodeProvider == null) throw new NullPointerException("unicodeProvider is null");
         if ((flags & ~(CASE_INSENSITIVE | DOTALL | MULTILINE | DISABLE_UNICODE_GROUPS | LONGEST_MATCH)) != 0) {
             throw new IllegalArgumentException(
                     "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS, LONGEST_MATCH");
@@ -82,13 +94,13 @@ public final class Pattern implements java.io.Serializable {
                 ? Disambiguation.POSIX : Disambiguation.PERL;
         boolean disableUnicodeGroups = (flags & DISABLE_UNICODE_GROUPS) != 0;
         try {
-            Regex engine = Regex.compile(flregex, factory, disamb, disableUnicodeGroups);
+            Regex engine = Regex.compile(flregex, factory, disamb, disableUnicodeGroups, false, unicodeProvider);
             // A second engine for matches() (anchored both ends). anchorBoth injects start/end
             // anchors at the AST level (not text — safe against \Q..\E), and the trailing anchor
             // supplies context that prevents the Perl leftmost-first DFA from pruning a longer
             // alternative's continuation once a shorter branch reaches accept
             // (e.g. (a|ab) against "ab" must retain the `ab` path).
-            Regex wholeEngine = Regex.compile(flregex, factory, disamb, disableUnicodeGroups, true);
+            Regex wholeEngine = Regex.compile(flregex, factory, disamb, disableUnicodeGroups, true, unicodeProvider);
             return new Pattern(regex, flags, engine, wholeEngine);
         } catch (RuntimeException e) {
             throw RE2.translate(e, regex);
