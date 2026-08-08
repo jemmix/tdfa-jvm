@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import io.github.jemmix.tdfa.EngineFactory;
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -172,9 +171,8 @@ class ObjectMethodsParityTest {
         assertThat(tdfaMatcher.matches()).isEqualTo(re2jMatcher.matches());
     }
 
-    // ---- @Ignore: pending features ----
+    // ---- Serializable ----
 
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: Pattern implements Serializable")
     @Test void patternSerializable() {
         var p = io.github.jemmix.tdfa.re2j.Pattern.compile("abc");
         assertThat(p).isInstanceOf(java.io.Serializable.class);

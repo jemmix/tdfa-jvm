@@ -20,7 +20,7 @@ import java.util.Map;
  * <p>Supported flags: {@link #CASE_INSENSITIVE}, {@link #DOTALL}, {@link #MULTILINE}, {@link #LONGEST_MATCH},
  * {@link #DISABLE_UNICODE_GROUPS}.
  */
-public final class Pattern {
+public final class Pattern implements java.io.Serializable {
 
     /** Flag: case insensitive matching. */
     public static final int CASE_INSENSITIVE = 1;
@@ -37,10 +37,12 @@ public final class Pattern {
     /** Flag: disable Unicode groups ({@code \p{...}} / {@code \P{...}} rejected at compile time, like re2j). */
     public static final int DISABLE_UNICODE_GROUPS = 8;
 
+    private static final long serialVersionUID = 1L;
+
     private final String pattern;
     private final int flags;
-    private final Regex engine;
-    private final Regex wholeEngine;
+    private transient Regex engine;
+    private transient Regex wholeEngine;
 
     Pattern(String pattern, int flags, Regex engine, Regex wholeEngine) {
         this.pattern = pattern;
@@ -184,6 +186,15 @@ public final class Pattern {
 
     /** Releases internal caches (no-op for this engine). */
     public void reset() { }
+
+    /** Recompile the (transient) engines after deserialization, from {@code pattern}+{@code flags}. */
+    private void readObject(java.io.ObjectInputStream in)
+            throws java.io.IOException, ClassNotFoundException {
+        in.defaultReadObject();
+        Pattern tmp = compile(pattern, flags);
+        this.engine = tmp.engine;
+        this.wholeEngine = tmp.wholeEngine;
+    }
 
     /**
      * Cost estimate for the compiled pattern: the number of states in the tagged DFA.
