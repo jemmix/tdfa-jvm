@@ -4,8 +4,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import io.github.jemmix.tdfa.EngineFactory;
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
-import org.junit.jupiter.api.Disabled;
 
 import static io.github.jemmix.tdfa.parity.Re2jOracle.*;
 
@@ -133,19 +131,15 @@ class EscapeParityTest {
 
     // ---- Unknown alphanumeric escape rejection (re2j rejects) ----
 
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: unknown alphanumeric escapes should be rejected
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void standaloneERejects(EngineFactory factory) { assertSameCompileReject("\\E", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: unknown alphanumeric escapes should be rejected
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void escapeKRejects(EngineFactory factory) { assertSameCompileReject("\\K", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: unknown alphanumeric escapes should be rejected
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void escapeRRejects(EngineFactory factory) { assertSameCompileReject("\\R", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: unknown alphanumeric escapes should be rejected
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void escapeERejects(EngineFactory factory) { assertSameCompileReject("\\e", factory); }
