@@ -124,20 +124,24 @@ class ObjectMethodsParityTest {
                 .isInstanceOf(NullPointerException.class);
     }
 
-    // ---- programSize UOE ----
+    // ---- programSize: cost estimate (DFA state count; NOT equal to re2j's NFA-instruction count) ----
 
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: programSize() implementation
     @Test void patternProgramSize() {
-        int re2jSize = com.google.re2j.Pattern.compile("abc").programSize();
+        // A meaningful, positive cost metric; same value on repeat compile (deterministic).
         int tdfaSize = io.github.jemmix.tdfa.re2j.Pattern.compile("abc").programSize();
-        assertThat(tdfaSize).isEqualTo(re2jSize);
+        assertThat(tdfaSize).isPositive();
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("abc").programSize())
+                .isEqualTo(io.github.jemmix.tdfa.re2j.Pattern.compile("abc").programSize());
+        // More complex patterns cost more than simple ones.
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("(a|b)*c(d|e)+f").programSize())
+                .isGreaterThan(tdfaSize);
     }
 
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: Matcher.programSize() implementation
     @Test void matcherProgramSize() {
-        int re2jSize = com.google.re2j.Pattern.compile("abc").matcher("abc").programSize();
-        int tdfaSize = io.github.jemmix.tdfa.re2j.Pattern.compile("abc").matcher("abc").programSize();
-        assertThat(tdfaSize).isEqualTo(re2jSize);
+        // Matcher.programSize() reflects its pattern's program.
+        int p = io.github.jemmix.tdfa.re2j.Pattern.compile("abc").programSize();
+        int m = io.github.jemmix.tdfa.re2j.Pattern.compile("abc").matcher("abc").programSize();
+        assertThat(m).isEqualTo(p);
     }
 
     // ---- byte[] input (UTF-8 decoded) ----

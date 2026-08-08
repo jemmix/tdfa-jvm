@@ -23,6 +23,7 @@ import java.util.Map;
 public final class Regex {
     private final Engine engine;
     private final int groupCount;
+    private final int programSize;
     private final Map<String, Integer> namedGroups;
 
     public interface Engine {
@@ -52,11 +53,11 @@ public final class Regex {
         Tnfa nfa = Tnfa.compile(pattern, disableUnicodeGroups, anchorBoth);
         io.github.jemmix.tdfa.tdfa.Tdfa tdfa = io.github.jemmix.tdfa.tdfa.Tdfa.compile(nfa, disamb);
         Engine engine = factory.create(tdfa);
-        return new Regex(engine, nfa.groupCount, nfa.namedGroups);
+        return new Regex(engine, nfa.groupCount, tdfa.stateCount, nfa.namedGroups);
     }
 
-    private Regex(Engine engine, int groupCount, Map<String, Integer> namedGroups) {
-        this.engine = engine; this.groupCount = groupCount;
+    private Regex(Engine engine, int groupCount, int programSize, Map<String, Integer> namedGroups) {
+        this.engine = engine; this.groupCount = groupCount; this.programSize = programSize;
         this.namedGroups = namedGroups != null ? namedGroups : Map.of();
     }
 
@@ -65,5 +66,7 @@ public final class Regex {
     public MatchResult find(CharSequence input, int from) { return engine.match(input, from); }
 
     public int groupCount() { return groupCount; }
+    /** Cost estimate: the number of states in the compiled DFA. */
+    public int programSize() { return programSize; }
     public Map<String, Integer> namedGroups() { return namedGroups; }
 }

@@ -185,9 +185,14 @@ public final class Pattern {
     /** Releases internal caches (no-op for this engine). */
     public void reset() { }
 
-    /** Pending parity — DFA complexity metric not yet exposed. */
+    /**
+     * Cost estimate for the compiled pattern: the number of states in the tagged DFA.
+     * <p><b>Not comparable to {@code com.google.re2j.Pattern.programSize()}</b> — that returns
+     * an NFA-instruction count (a different compilation model). {@code java.util.regex.Pattern}
+     * has no equivalent method. Larger numbers indicate more expensive patterns.
+     */
     public int programSize() {
-        throw new UnsupportedOperationException("programSize() pending parity implementation");
+        return engine.programSize();
     }
 
     /** Returns the pattern string. */

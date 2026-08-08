@@ -169,9 +169,9 @@ public final class Matcher {
         return pattern.groupCount();
     }
 
-    /** Pending parity — DFA complexity metric not yet exposed. */
+    /** Cost estimate for this matcher's pattern — see {@link Pattern#programSize()}. */
     public int programSize() {
-        throw new UnsupportedOperationException("programSize() pending parity implementation");
+        return pattern.programSize();
     }
 
     // ---- replacement ----
