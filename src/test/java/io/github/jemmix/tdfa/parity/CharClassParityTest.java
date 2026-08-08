@@ -152,94 +152,72 @@ class CharClassParityTest {
         assertSameFind("\\x{10000}", new String(Character.toChars(0x10000)), factory);
     }
 
-    // ---- POSIX classes (pending parity: [:ascii:], [:word:], [:^name:]) ----
+    // ---- POSIX classes: ascii/word + [:^name:] negation ----
 
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:ascii:] and [:word:] POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixAscii(EngineFactory factory) { assertSameFind("[[:ascii:]]", "A", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:ascii:] and [:word:] POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixAsciiNoMatch(EngineFactory factory) { assertSameFind("[[:ascii:]]", "\u00E9", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:ascii:] and [:word:] POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixWord(EngineFactory factory) { assertSameFind("[[:word:]]", "_", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:ascii:] and [:word:] POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixWordNoMatch(EngineFactory factory) { assertSameFind("[[:word:]]", "!", factory); }
 
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedAlpha(EngineFactory factory) { assertSameFind("[[:^alpha:]]", "5", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedAlphaMatch(EngineFactory factory) { assertSameFind("[[:^alpha:]]", "A", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedDigit(EngineFactory factory) { assertSameFind("[[:^digit:]]", "x", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedDigitNoMatch(EngineFactory factory) { assertSameFind("[[:^digit:]]", "5", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedSpace(EngineFactory factory) { assertSameFind("[[:^space:]]", "x", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedUpper(EngineFactory factory) { assertSameFind("[[:^upper:]]", "a", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedLower(EngineFactory factory) { assertSameFind("[[:^lower:]]", "A", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedCntrl(EngineFactory factory) { assertSameFind("[[:^cntrl:]]", "A", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedPunct(EngineFactory factory) { assertSameFind("[[:^punct:]]", "A", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedXdigit(EngineFactory factory) { assertSameFind("[[:^xdigit:]]", "z", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedBlank(EngineFactory factory) { assertSameFind("[[:^blank:]]", "x", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedGraph(EngineFactory factory) { assertSameFind("[[:^graph:]]", " ", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedPrint(EngineFactory factory) { assertSameFind("[[:^print:]]", "\u0001", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedAlnum(EngineFactory factory) { assertSameFind("[[:^alnum:]]", "!", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedAscii(EngineFactory factory) { assertSameFind("[[:^ascii:]]", "\u00E9", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedAsciiMatch(EngineFactory factory) { assertSameFind("[[:^ascii:]]", "A", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedWord(EngineFactory factory) { assertSameFind("[[:^word:]]", "!", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [:^name:] negated POSIX classes not implemented
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void posixNegatedWordMatch(EngineFactory factory) { assertSameFind("[[:^word:]]", "_", factory); }
@@ -406,14 +384,12 @@ class CharClassParityTest {
 
     // ---- [\b] rejection (re2j rejects too) ----
 
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: [b] should be rejected in class context
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void backspaceInClassRejects(EngineFactory factory) { assertSameCompileReject("[\\b]", factory); }
 
     // ---- \N{...} rejection (re2j rejects) ----
 
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: N{...} should be rejected as unknown escape
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void namedEscapeRejects(EngineFactory factory) { assertSameCompileReject("\\N{LATIN SMALL LETTER A}", factory); }

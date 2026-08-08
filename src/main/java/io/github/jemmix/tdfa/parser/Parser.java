@@ -30,8 +30,6 @@ import java.util.Map;
  * - \C (any byte)
  *
  * Pending re2j parity (see parity test suite):
- * - [:ascii:] and [:word:] POSIX classes
- * - [:^name:] negated POSIX classes
  * - full Unicode case folding for arbitrary class ranges under (?i)
  */
 public final class Parser {
@@ -295,9 +293,11 @@ public final class Parser {
     }
 
     /**
-     * Parses a POSIX character class {@code [:name:]} (called only when {@code peek()=='['}
-     * and {@code peekAhead()==':'). Returns the corresponding ASCII range table matching
-     * re2j's POSIX semantics, or throws on malformed syntax or unknown names.
+     * Parses a POSIX character class {@code [:name:]} or {@code [:^name:]} (called only
+     * when {@code peek()=='['} and {@code peekAhead()==':'). Returns the corresponding
+     * ASCII range table matching re2j's POSIX semantics (complemented within
+     * [0, 0x10FFFF] when the leading {@code ^} is present), or throws on malformed
+     * syntax or unknown names.
      */
     private int[] parsePosixClass() {
         // Caller guarantees [: — consume both.
@@ -313,9 +313,11 @@ public final class Parser {
             throw fail(this, "invalid POSIX class: missing closing ']'");
         }
         pos++;  // consume ']'
+        boolean negated = false;
+        if (name.startsWith("^")) { negated = true; name = name.substring(1); }
         int[] r = posixClassRanges(name);
-        if (r == null) throw fail(this, "unknown POSIX class: [:" + name + ":]");
-        return r;
+        if (r == null) throw fail(this, "unknown POSIX class: [:" + (negated ? "^" : "") + name + ":]");
+        return negated ? complementRanges(r) : r;
     }
 
     /** ASCII-only POSIX class ranges, matching re2j's CharClass tables. */
@@ -323,6 +325,7 @@ public final class Parser {
         return switch (name) {
             case "alnum"  -> R_POSIX_ALNUM;
             case "alpha"  -> R_POSIX_ALPHA;
+            case "ascii"  -> R_POSIX_ASCII;
             case "blank"  -> R_POSIX_BLANK;
             case "cntrl"  -> R_POSIX_CNTRL;
             case "digit"  -> R_POSIX_DIGIT;
@@ -332,6 +335,7 @@ public final class Parser {
             case "punct"  -> R_POSIX_PUNCT;
             case "space"  -> R_POSIX_SPACE;  // POSIX [:space:] INCLUDES \v (unlike Perl \s)
             case "upper"  -> R_POSIX_UPPER;
+            case "word"   -> R_POSIX_WORD;
             case "xdigit" -> R_POSIX_XDIGIT;
             default -> null;
         };
@@ -367,7 +371,12 @@ public final class Parser {
                 case 'v' -> (char) 11;
                 case '\\' -> '\\';
                 case 'x' -> parseHexChar();
-                default -> e;  // any other escaped char is literal
+                default -> {
+                    // re2j rejects unknown alphanumeric escapes in class context
+                    // (notably [\b] — backspace is unsupported; see re2j Parser.parseEscape).
+                    if (Character.isLetterOrDigit(e)) throw fail(this, "invalid escape sequence: \\" + e);
+                    yield e;  // any other (non-alphanumeric) escaped char is literal
+                }
             };
         }
         pos++;
@@ -449,8 +458,12 @@ public final class Parser {
             case 'p' -> parseUnicodeEscape(true);
             case 'P' -> parseUnicodeEscape(false);
             case 'Q' -> parseQuotedLiteral();
-            case 'E' -> new Ast.Symbol('E');  // bare \E outside \Q is literal E
-            default -> new Ast.Symbol(c);
+            default -> {
+                // re2j rejects unknown alphanumeric escapes (\E, \K, \R, \e, \N, ...).
+                // Non-alphanumeric escapes (\. \- \_ \: ...) are literals.
+                if (Character.isLetterOrDigit(c)) throw fail(this, "invalid escape sequence: \\" + c);
+                yield new Ast.Symbol(c);
+            }
         };
     }
 
@@ -702,10 +715,11 @@ public final class Parser {
     private static final int[] R_SPACE = {'\t', '\n', '\f', '\r', ' ', ' '};
     private static final int[] R_NOT_SPACE = {0, '\t' - 1, 0x0B, 0x0B, '\r' + 1, ' ' - 1, ' ' + 1, 0x10FFFF};
 
-    // POSIX character classes — ASCII-only, matching re2j's CharClass tables.
+    // POSIX character classes — ASCII-only, matching re2j's CharGroup tables.
     // Note: [:space:] INCLUDES \v (U+000B) per POSIX, unlike Perl's \s.
     private static final int[] R_POSIX_ALNUM  = {'0', '9', 'A', 'Z', 'a', 'z'};
     private static final int[] R_POSIX_ALPHA  = {'A', 'Z', 'a', 'z'};
+    private static final int[] R_POSIX_ASCII  = {0, 0x7F};
     private static final int[] R_POSIX_BLANK  = {'\t', '\t', ' ', ' '};
     private static final int[] R_POSIX_CNTRL  = {0, 0x1F, 0x7F, 0x7F};
     private static final int[] R_POSIX_DIGIT  = {'0', '9'};
@@ -715,6 +729,7 @@ public final class Parser {
     private static final int[] R_POSIX_PUNCT  = {0x21, '/', ':', '@', '[', '`', '{', '~'};
     private static final int[] R_POSIX_SPACE  = {'\t', '\r', ' ', ' '};  // \t\n\v\f\r and space
     private static final int[] R_POSIX_UPPER  = {'A', 'Z'};
+    private static final int[] R_POSIX_WORD   = {'0', '9', 'A', 'Z', '_', '_', 'a', 'z'};
     private static final int[] R_POSIX_XDIGIT = {'0', '9', 'A', 'F', 'a', 'f'};
 
     static final CharClass DOT = new CharClass(new int[]{0, '\n' - 1, '\n' + 1, 0x10FFFF}, false);

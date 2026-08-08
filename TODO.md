@@ -5,7 +5,7 @@ finished. See the [vision](README.md#vision).
 
 ## Feature parity
 
-- [ ] Clear all 41 pending parity tests (POSIX classes, escape rejection, absolute anchors, split, `matches()` byte overloads, Unicode version)
+- [ ] Clear all pending parity tests — 17 remaining (was 41; 24 cleared: POSIX classes, `[\b]`/`\N{}` rejection). See `docs/PARITY-PLAN.md`.
 - [ ] Multiline mode `(?m)` — `^`/`$` at line boundaries
 - [ ] Full POSIX leftmost-longest — activate BT22 §7 `closure_gtop` winner selection
 - [ ] Unicode case folding completeness (currently partial)
