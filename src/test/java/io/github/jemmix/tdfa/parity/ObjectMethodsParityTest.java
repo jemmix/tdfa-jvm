@@ -140,30 +140,26 @@ class ObjectMethodsParityTest {
         assertThat(tdfaSize).isEqualTo(re2jSize);
     }
 
-    // ---- byte[] UOE ----
+    // ---- byte[] input (UTF-8 decoded) ----
 
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: Pattern.matches(byte[]) implementation
     @Test void staticMatchesByteArray() {
         boolean re2jResult = com.google.re2j.Pattern.matches("a", new byte[]{65});
         boolean tdfaResult = io.github.jemmix.tdfa.re2j.Pattern.matches("a", new byte[]{65});
         assertThat(tdfaResult).isEqualTo(re2jResult);
     }
 
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: Pattern.matches(byte[]) implementation
     @Test void instanceMatchesByteArray() {
         boolean re2jResult = com.google.re2j.Pattern.compile("a").matches(new byte[]{65});
         boolean tdfaResult = io.github.jemmix.tdfa.re2j.Pattern.compile("a").matches(new byte[]{65});
         assertThat(tdfaResult).isEqualTo(re2jResult);
     }
 
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: Pattern.matcher(byte[]) implementation
     @Test void matcherByteArray() {
         boolean re2jResult = com.google.re2j.Pattern.compile("a").matcher(new byte[]{65}).matches();
         boolean tdfaResult = io.github.jemmix.tdfa.re2j.Pattern.compile("a").matcher(new byte[]{65}).matches();
         assertThat(tdfaResult).isEqualTo(re2jResult);
     }
 
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: Matcher.reset(byte[]) implementation
     @Test void resetByteArray() {
         var re2jMatcher = com.google.re2j.Pattern.compile("a").matcher("a");
         re2jMatcher.reset(new byte[]{65});

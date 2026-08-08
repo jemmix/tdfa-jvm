@@ -48,9 +48,9 @@ public final class Matcher {
         return reset();
     }
 
-    /** Pending parity — byte[] input not yet implemented. */
+    /** Reset with UTF-8-decoded bytes as the new input (matches re2j's {@code MatcherInput.utf8}). */
     public Matcher reset(byte[] bytes) {
-        throw new UnsupportedOperationException("byte[] input pending parity implementation");
+        return reset(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
     }
 
     // ---- match operations ----

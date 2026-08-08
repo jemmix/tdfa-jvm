@@ -4,6 +4,7 @@ import io.github.jemmix.tdfa.EngineFactory;
 import io.github.jemmix.tdfa.Regex;
 import io.github.jemmix.tdfa.tdfa.Disambiguation;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -88,9 +89,13 @@ public final class Pattern {
         return compile(regex).matcher(input).matches();
     }
 
-    /** Pending parity — byte[] input not yet implemented. */
+    /**
+     * Convenience: compile and match the entire input. The bytes are decoded as UTF-8;
+     * match indices (where applicable) are therefore UTF-16 char offsets of the decoded
+     * text, not raw byte offsets.
+     */
     public static boolean matches(String regex, byte[] input) {
-        throw new UnsupportedOperationException("byte[] input pending parity implementation");
+        return matches(regex, utf8(input));
     }
 
     /** Match the entire input against this pattern. */
@@ -98,9 +103,9 @@ public final class Pattern {
         return matcher(input).matches();
     }
 
-    /** Pending parity — byte[] input not yet implemented. */
+    /** Match the entire input against this pattern (UTF-8 bytes decoded to a String). */
     public boolean matches(byte[] input) {
-        throw new UnsupportedOperationException("byte[] input pending parity implementation");
+        return matches(utf8(input));
     }
 
     /** Create a {@link Matcher} for this pattern against {@code input}. */
@@ -108,9 +113,9 @@ public final class Pattern {
         return new Matcher(this, input);
     }
 
-    /** Pending parity — byte[] input not yet implemented. */
+    /** Create a {@link Matcher} for this pattern against UTF-8-decoded {@code input}. */
     public Matcher matcher(byte[] input) {
-        throw new UnsupportedOperationException("byte[] input pending parity implementation");
+        return new Matcher(this, utf8(input));
     }
 
     /** Split {@code input} around matches of this pattern. Trailing empty strings are omitted. */
@@ -201,4 +206,9 @@ public final class Pattern {
     }
 
     Regex engine() { return engine; }
+
+    /** Decode UTF-8 bytes to a String for the {@code byte[]} overloads (matches re2j's {@code MatcherInput.utf8}). */
+    static String utf8(byte[] bytes) {
+        return new String(bytes, StandardCharsets.UTF_8);
+    }
 }
