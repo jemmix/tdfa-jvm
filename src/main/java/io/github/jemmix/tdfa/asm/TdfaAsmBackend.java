@@ -90,7 +90,7 @@ public final class TdfaAsmBackend {
         for (int s = 0; s < n; s++) if ((tdfa.stateMeta[s] & 1) != 0) { mv.visitInsn(Opcodes.DUP); ic(mv, s); mv.visitInsn(Opcodes.ICONST_1); mv.visitInsn(Opcodes.IASTORE); }
         mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "IS_ACCEPT", "[I");
 
-        newIntArr(mv, n * 16);
+        newIntArr(mv, n * 64);
         mv.visitInsn(Opcodes.DUP); ic(mv, Tdfa.NEVER_STOP);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, ARRAYS, "fill", "([II)V", false);
         for (int i = 0; i < tdfa.stopOnAcceptMask.length; i++) if (tdfa.stopOnAcceptMask[i] != Tdfa.NEVER_STOP) { mv.visitInsn(Opcodes.DUP); ic(mv, i); ic(mv, tdfa.stopOnAcceptMask[i]); mv.visitInsn(Opcodes.IASTORE); }
@@ -429,6 +429,27 @@ public final class TdfaAsmBackend {
             mv.visitLabel(l2b);
         }
 
+        // ABS_BEGIN (\A): pos == 0, always (never affected by (?m))
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        Label lab = new Label();
+        mv.visitJumpInsn(Opcodes.IFNE, lab);
+        mv.visitIntInsn(Opcodes.BIPUSH, 16);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.IOR);
+        mv.visitVarInsn(Opcodes.ISTORE, 3);
+        mv.visitLabel(lab);
+
+        // ABS_END (\z): pos == len, always
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        Label lae = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPNE, lae);
+        mv.visitIntInsn(Opcodes.BIPUSH, 32);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.IOR);
+        mv.visitVarInsn(Opcodes.ISTORE, 3);
+        mv.visitLabel(lae);
+
         // prevWord
         Label pf = new Label(), pd = new Label();
         mv.visitVarInsn(Opcodes.ILOAD, 0);
@@ -639,7 +660,7 @@ public final class TdfaAsmBackend {
         if (perl) {
             mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "STOP_MASK", "[I");
             mv.visitVarInsn(Opcodes.ILOAD, STATE);
-            mv.visitIntInsn(Opcodes.BIPUSH, 16);
+            mv.visitIntInsn(Opcodes.BIPUSH, 64);
             mv.visitInsn(Opcodes.IMUL);
             mv.visitVarInsn(Opcodes.ILOAD, PF);
             mv.visitInsn(Opcodes.IADD);
@@ -939,6 +960,27 @@ public final class TdfaAsmBackend {
             mv.visitLabel(l2c);
             mv.visitLabel(l2b);
         }
+
+        // if (pos == 0) pf |= 16  (ABS_BEGIN, \A — always, not multiline-gated)
+        mv.visitVarInsn(Opcodes.ILOAD, POS);
+        Label lab = new Label();
+        mv.visitJumpInsn(Opcodes.IFNE, lab);
+        mv.visitIntInsn(Opcodes.BIPUSH, 16);
+        mv.visitVarInsn(Opcodes.ILOAD, RESULT);
+        mv.visitInsn(Opcodes.IOR);
+        mv.visitVarInsn(Opcodes.ISTORE, RESULT);
+        mv.visitLabel(lab);
+
+        // if (pos == len) pf |= 32  (ABS_END, \z — always)
+        mv.visitVarInsn(Opcodes.ILOAD, POS);
+        mv.visitVarInsn(Opcodes.ILOAD, LEN);
+        Label lae = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPNE, lae);
+        mv.visitIntInsn(Opcodes.BIPUSH, 32);
+        mv.visitVarInsn(Opcodes.ILOAD, RESULT);
+        mv.visitInsn(Opcodes.IOR);
+        mv.visitVarInsn(Opcodes.ISTORE, RESULT);
+        mv.visitLabel(lae);
 
         // prevWord = pos > 0 && isWord(input[pos-1])
         Label prevFalse = new Label(), prevDone = new Label();

@@ -41,11 +41,15 @@ public final class Tnfa {
     public final boolean multiline;
     public final Map<String, Integer> namedGroups;
 
-    // Zero-width assertion bits.
+    // Zero-width assertion bits. BEGIN_TEXT/END_TEXT (^/$) are multiline-sensitive
+    // (also hold after/before \n under (?m)); ABS_BEGIN/ABS_END (\A/\z) are absolute
+    // (position 0 / end-of-input, never affected by (?m)).
     public static final int BEGIN_TEXT        = 1;
     public static final int END_TEXT          = 2;
     public static final int WORD_BOUNDARY     = 4;
     public static final int NO_WORD_BOUNDARY  = 8;
+    public static final int ABS_BEGIN         = 16;
+    public static final int ABS_END           = 32;
 
     public Tnfa(int stateCount,
                 int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
@@ -120,14 +124,17 @@ public final class Tnfa {
                 taggedEps(s, entryTo, 1, ((Ast.Tag) e).tag);
                 return s;
             }
-            if (e instanceof Ast.StartAnchor) {      // ^ or \A
+            if (e instanceof Ast.StartAnchor a) {      // ^ or \A
                 int s = fresh();
-                anchorEps(s, entryTo, 1, BEGIN_TEXT);
+                // \A requires ABS_BEGIN (pos0-only, immune to (?m)) AND BEGIN_TEXT
+                // (so intersection with ^-paths in merged DFA states keeps BEGIN_TEXT,
+                //  preserving the accept/entry mask semantics).
+                anchorEps(s, entryTo, 1, a.absolute ? (ABS_BEGIN | BEGIN_TEXT) : BEGIN_TEXT);
                 return s;
             }
-            if (e instanceof Ast.EndAnchor) {        // $ or \z
+            if (e instanceof Ast.EndAnchor a) {        // $ or \z
                 int s = fresh();
-                anchorEps(s, entryTo, 1, END_TEXT);
+                anchorEps(s, entryTo, 1, a.absolute ? (ABS_END | END_TEXT) : END_TEXT);
                 return s;
             }
             if (e instanceof Ast.WordBoundary) {     // \b

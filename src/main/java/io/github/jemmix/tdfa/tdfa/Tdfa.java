@@ -32,7 +32,8 @@ public final class Tdfa {
      * Bit mask of zero-width assertions required to ENTER this state. Checked at the
      * position where the state is entered. Replaces the old pattern-level
      * {@code hasStartAnchor} flag — now per-state and precise.
-     *   bit 1 = BEGIN_TEXT, bit 2 = END_TEXT, bit 4 = WORD_BOUNDARY, bit 8 = NO_WORD_BOUNDARY
+     *   bit 1 = BEGIN_TEXT, bit 2 = END_TEXT, bit 4 = WORD_BOUNDARY, bit 8 = NO_WORD_BOUNDARY,
+     *   bit 16 = ABS_BEGIN (\A), bit 32 = ABS_END (\z)
      */
     public final int[] stateEntryMask;
     /**
@@ -52,9 +53,9 @@ public final class Tdfa {
     public final boolean multiline;
     /**
      * Position-aware Perl-mode stop-on-accept decision table.
-     * Indexed as {@code stopOnAcceptMask[state * 16 + posFlags]} where {@code posFlags}
-     * is the runtime position-flags bitmask ({@code BEGIN_TEXT|END_TEXT|WORD_BOUNDARY|NO_WORD_BOUNDARY},
-     * 4 bits, 16 possible values). Each cell encodes:
+     * Indexed as {@code stopOnAcceptMask[state * 64 + posFlags]} where {@code posFlags}
+     * is the runtime position-flags bitmask ({@code BEGIN_TEXT|END_TEXT|WORD_BOUNDARY|NO_WORD_BOUNDARY|ABS_BEGIN|ABS_END},
+     * 6 bits, 64 possible values). Each cell encodes:
      * <ul>
      *   <li>{@code 0} — stop the match loop on accept (accept is the highest-priority
      *       live outcome under this posFlags);</li>
@@ -70,7 +71,7 @@ public final class Tdfa {
      */
     public final int[] stopOnAcceptMask;
     /** Sentinel for "don't stop on accept" — distinct from 0 (= stop). */
-    public static final int NEVER_STOP = 0x10;  // bit above all real assertion bits (1|2|4|8)
+    public static final int NEVER_STOP = 0x40;  // sentinel bit above all real assertion bits (1|2|4|8|16|32)
 
     // === Flat packed arrays (4 arrays total; per-match regs adds a 5th at runtime) ===
     /**
@@ -292,13 +293,15 @@ public final class Tdfa {
             // Compute per-state entry/accept masks.
             int[] stateEntryMask = new int[n];
             int[] stateAcceptMask = new int[n];
-            // Position-aware stopOnAcceptMask: int[state * 16 + posFlags] encodes
+            // Position-aware stopOnAcceptMask: int[state * 64 + posFlags] encodes
             // 0 (stop) or NEVER_STOP (don't stop). Position-aware because re2j's
             // densePcs priority depends on which assertion edges are live at the
             // current cursor position — see computePerStateOrder(seed, posMask).
-            int[] stateStopOnAcceptMask = new int[n * 16];
+            // 64 = 2^6 position-flag bits (BEGIN/END_TEXT, WORD/NO_WORD, ABS_BEGIN/ABS_END).
+            int[] stateStopOnAcceptMask = new int[n * 64];
             java.util.Arrays.fill(stateStopOnAcceptMask, NEVER_STOP);
-            int ALL_BITS = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY;
+            int ALL_BITS = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY
+                    | Tnfa.ABS_BEGIN | Tnfa.ABS_END;
             for (int s = 0; s < n; s++) {
                 List<Config> cfgs = states.get(s);
                 int entryIntersect = ALL_BITS;
@@ -325,7 +328,7 @@ public final class Tdfa {
                 // MATCH and we extend; at pos 1 (EOF), $ holds, the $-loop-back
                 // MATCH outranks . and we stop.
                 //
-                // For each of the 16 possible posFlags values M, compute the
+                // For each of the 64 possible posFlags values M, compute the
                 // perStateOrder DFS skipping assertion edges whose requirements
                 // aren't subset of M, then check whether any sym-bearing config
                 // outranks accept in that order. If yes, NEVER_STOP (extend);
@@ -333,12 +336,12 @@ public final class Tdfa {
                 // (no accept to stop on; runner's sam check filters anyway).
                 if (perl && anyAccept) {
                     List<Config> seed = stateSeeds.get(s);
-                    for (int M = 0; M < 16; M++) {
+                    for (int M = 0; M < 64; M++) {
                         int[] perStateOrder = computePerStateOrder(seed, M);
                         int acceptOrder = perStateOrder[nfa.accept];
                         if (acceptOrder == -1) {
                             // Accept unreachable under M; sam check will fail too.
-                            stateStopOnAcceptMask[s * 16 + M] = NEVER_STOP;
+                            stateStopOnAcceptMask[s * 64 + M] = NEVER_STOP;
                             continue;
                         }
                         boolean higherPriSym = false;
@@ -352,7 +355,7 @@ public final class Tdfa {
                                 break;
                             }
                         }
-                        stateStopOnAcceptMask[s * 16 + M] = higherPriSym ? NEVER_STOP : 0;
+                        stateStopOnAcceptMask[s * 64 + M] = higherPriSym ? NEVER_STOP : 0;
                     }
                 }
             }
@@ -668,7 +671,8 @@ public final class Tdfa {
                 }
             }
             List<Config> out = new ArrayList<>();
-            int intersection = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY;
+            int intersection = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY
+                    | Tnfa.ABS_BEGIN | Tnfa.ABS_END;
             boolean any = false;
             for (int ci = 0; ci < configs.size(); ci++) {
                 if (suppress && ci > firstAcceptIdx) {

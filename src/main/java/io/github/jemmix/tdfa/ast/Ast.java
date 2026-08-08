@@ -48,12 +48,26 @@ public abstract class Ast {
         }
     }
 
+    /**
+     * Start-of-text/line anchor: {@code ^} (line, multiline-sensitive) or {@code \A}
+     * (absolute, always position 0) when {@link #absolute} is set.
+     */
     public static final class StartAnchor extends Ast {
-        @Override public String toString() { return "^"; }
+        public final boolean absolute;
+        public StartAnchor() { this(false); }
+        public StartAnchor(boolean absolute) { this.absolute = absolute; }
+        @Override public String toString() { return absolute ? "\\A" : "^"; }
     }
 
+    /**
+     * End-of-text/line anchor: {@code $} (line, multiline-sensitive) or {@code \z}
+     * (absolute, always end-of-input) when {@link #absolute} is set.
+     */
     public static final class EndAnchor extends Ast {
-        @Override public String toString() { return "$"; }
+        public final boolean absolute;
+        public EndAnchor() { this(false); }
+        public EndAnchor(boolean absolute) { this.absolute = absolute; }
+        @Override public String toString() { return absolute ? "\\z" : "$"; }
     }
 
     /** Word boundary assertion `\b`. Zero-width: true at any position where

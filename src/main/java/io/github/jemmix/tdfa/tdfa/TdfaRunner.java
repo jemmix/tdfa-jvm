@@ -141,14 +141,14 @@ public final class TdfaRunner implements Regex.Engine {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
                         if (perlMode) {
                             if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                            int stopMask = stopOnAcceptMask[state * 16 + posFlags];
+                            int stopMask = stopOnAcceptMask[state * 64 + posFlags];
                             if (stopOnAccept(stopMask, posFlags)) break loop;
                         }
                     } else {
                         if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                         if ((posFlags & acceptMask) == acceptMask) {
                             lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                            int stopMask = stopOnAcceptMask[state * 16 + posFlags];
+                            int stopMask = stopOnAcceptMask[state * 64 + posFlags];
                             if (perlMode && stopOnAccept(stopMask, posFlags)) break loop;
                         }
                     }
@@ -437,14 +437,14 @@ public final class TdfaRunner implements Regex.Engine {
                     haveAccept = true; lastAcceptPos = pos;
                     if (perlMode) {
                         if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                        int stopMask = stopOnAcceptMask[state * 16 + posFlags];
+                        int stopMask = stopOnAcceptMask[state * 64 + posFlags];
                         if (stopOnAccept(stopMask, posFlags)) break;
                     }
                 } else {
                     if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                     if ((posFlags & acceptMask) == acceptMask) {
                         haveAccept = true; lastAcceptPos = pos;
-                        int stopMask = stopOnAcceptMask[state * 16 + posFlags];
+                        int stopMask = stopOnAcceptMask[state * 64 + posFlags];
                         if (perlMode && stopOnAccept(stopMask, posFlags)) break;
                     }
                 }
@@ -544,14 +544,14 @@ public final class TdfaRunner implements Regex.Engine {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
                         if (perlMode) {
                             if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
-                            int stopMask = stopOnAcceptMask[state * 16 + posFlags];
+                            int stopMask = stopOnAcceptMask[state * 64 + posFlags];
                             if (stopOnAccept(stopMask, posFlags)) break loop;
                         }
                     } else {
                         if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
                         if ((posFlags & acceptMask) == acceptMask) {
                             lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                            int stopMask = stopOnAcceptMask[state * 16 + posFlags];
+                            int stopMask = stopOnAcceptMask[state * 64 + posFlags];
                             if (perlMode && stopOnAccept(stopMask, posFlags)) break loop;
                         }
                     }
@@ -634,6 +634,8 @@ public final class TdfaRunner implements Regex.Engine {
         int flags = 0;
         if (pos == 0 || (multiline && pos > 0 && s.charAt(pos - 1) == '\n')) flags |= Tnfa.BEGIN_TEXT;
         if (pos == len || (multiline && pos < len && s.charAt(pos) == '\n')) flags |= Tnfa.END_TEXT;
+        if (pos == 0) flags |= Tnfa.ABS_BEGIN;   // \A: absolute start, never affected by (?m)
+        if (pos == len) flags |= Tnfa.ABS_END;    // \z: absolute end, never affected by (?m)
         boolean prevWord = pos > 0 && isWordChar(s.charAt(pos - 1));
         boolean currWord = pos < len && isWordChar(s.charAt(pos));
         if (prevWord != currWord) flags |= Tnfa.WORD_BOUNDARY;
@@ -646,6 +648,8 @@ public final class TdfaRunner implements Regex.Engine {
         int flags = 0;
         if (pos == 0 || (multiline && pos > 0 && s.charAt(pos - 1) == '\n')) flags |= Tnfa.BEGIN_TEXT;
         if (pos == len || (multiline && pos < len && s.charAt(pos) == '\n')) flags |= Tnfa.END_TEXT;
+        if (pos == 0) flags |= Tnfa.ABS_BEGIN;
+        if (pos == len) flags |= Tnfa.ABS_END;
         boolean prevWord = pos > 0 && isWordChar(s.charAt(pos - 1));
         boolean currWord = pos < len && isWordChar(s.charAt(pos));
         if (prevWord != currWord) flags |= Tnfa.WORD_BOUNDARY;

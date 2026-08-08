@@ -90,7 +90,7 @@ public final class Parser {
      *  and the trailing anchor supplies context that prevents the Perl leftmost-first
      *  DFA from pruning a longer alternative's continuation. */
     private static Ast anchorBoth(Ast e) {
-        return new Ast.Concat(List.of(new Ast.StartAnchor(), e, new Ast.EndAnchor()));
+        return new Ast.Concat(List.of(new Ast.StartAnchor(true), e, new Ast.EndAnchor(true)));
     }
 
     public Ast lastAst() { return lastAst; }
@@ -480,8 +480,8 @@ public final class Parser {
             // (treating \C as literal C) doesn't yield wrong matches.
             case 'C' -> throw new IllegalArgumentException("invalid escape sequence: \\C");
             // Zero-width assertions — RE2/re2j implement these fully.
-            case 'A' -> new Ast.StartAnchor();          // \A = start of text (== ^ in default mode)
-            case 'z' -> new Ast.EndAnchor();            // \z = end of text (no before-\n special case)
+            case 'A' -> new Ast.StartAnchor(true);    // \A = absolute start of text (immune to (?m))
+            case 'z' -> new Ast.EndAnchor(true);      // \z = absolute end of text (immune to (?m))
             case 'b' -> new Ast.WordBoundary();         // \b = word boundary
             case 'B' -> new Ast.NoWordBoundary();       // \B = not a word boundary
             // Unicode property classes \p{X} \pX \P{X} \PX \p{^X}.

@@ -95,11 +95,9 @@ class AnchorParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void multilineCRLFEnd(EngineFactory factory) { assertSameFind("(?m)abc$", "abc\r\ndef", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: A and z must not be affected by (?m)
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void anchoredAUnaffectedByMultiline(EngineFactory factory) { assertSameFind("(?m)\\Aabc", "def\nabc", factory); }
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: A and z must not be affected by (?m)
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void anchoredZUnaffectedByMultiline(EngineFactory factory) { assertSameFind("(?m)abc\\z", "abc\ndef", factory); }
