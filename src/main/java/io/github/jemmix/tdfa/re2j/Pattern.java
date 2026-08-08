@@ -122,30 +122,39 @@ public final class Pattern {
     public String[] split(String input, int limit) {
         Matcher m = matcher(input);
         List<String> result = new ArrayList<>();
+        int emptiesSkipped = 0;
         int last = 0;
-        boolean emptiesSkipped = false;
 
         while (m.find()) {
             if (last == 0 && m.end() == 0) {
+                // Zero-width match at the beginning, skip (JDK8+ behavior).
                 last = m.end();
                 continue;
             }
             if (limit > 0 && result.size() == limit - 1) break;
             if (last == m.start()) {
                 if (limit == 0) {
-                    emptiesSkipped = true;
+                    // Empty match, may or may not be trailing.
+                    emptiesSkipped++;
                     last = m.end();
                     continue;
                 }
-            } else if (emptiesSkipped) {
-                result.add("");
-                emptiesSkipped = false;
+            } else {
+                // If emptiesSkipped > 0 then limit == 0 and we have non-trailing empty
+                // matches to add before this non-empty match.
+                while (emptiesSkipped > 0) {
+                    result.add("");
+                    emptiesSkipped--;
+                }
             }
             result.add(input.substring(last, m.start()));
             last = m.end();
         }
         if (limit == 0 && last != input.length()) {
-            if (emptiesSkipped) result.add("");
+            while (emptiesSkipped > 0) {
+                result.add("");
+                emptiesSkipped--;
+            }
             result.add(input.substring(last));
         }
         if (limit != 0 || result.isEmpty()) {

@@ -2,7 +2,6 @@ package io.github.jemmix.tdfa.parity;
 
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import io.github.jemmix.tdfa.EngineFactory;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -71,7 +70,6 @@ class SplitParityTest {
 
     // ---- Edge cases ----
 
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true") // PENDING: split zero-width pattern emptiesSkipped counter
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void splitZeroWidthPattern(EngineFactory factory) { assertSplit("a*", "aaabbb", factory); }
