@@ -1,0 +1,20 @@
+plugins {
+    id 'java-library'
+}
+
+repositories {
+    mavenCentral()
+}
+
+group = 'io.github.jemmix'
+version = '0.1.0-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+dependencies {
+    // Pure-Java TOML 1.0 parser; used to read rebar's benchmark definition files.
+    api 'org.tomlj:tomlj:1.1.1'
+}

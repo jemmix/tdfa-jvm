@@ -95,12 +95,38 @@ Default resolved once from `-Dtdfa.engine=ASM|VM`.
 
 ## Build & test
 
-```bash
-./gradlew test    # 1127 tests, 0 failures
-./gradlew jmh     # benchmarks, ~5 min
+The repo is a multi-module Gradle build. The evergreen library lives at the
+root (`src/main/java/`); the growing test/benchmark surface is split into
+self-contained subprojects.
+
+```
+tdfa-jvm/                             ← root = the library
+├── src/main/java/...                 ← evergreen core (frozen when finished)
+├── tests/
+│   ├── unit/                         ← own correctness tests
+│   └── parity/
+│       ├── re2j/                     ← own parity tests (re2j engine as live oracle)
+│       ├── re2j-suite/               ← Google's patched ExecTest + corpus (vendored)
+│       └── rebar/                    ← own tests using rebar's scenario corpus
+├── benchmarks/micro/                 ← own JMH micros
+├── testlib/rebar/                    ← shared parser lib for rebar's TOML scenarios
+└── vendor/                           ← pristine third-party archives + patches
 ```
 
-JDK 17+. Targets JDK 11 bytecode.
+```bash
+./gradlew check                       # run everything: all test modules on both backends
+./gradlew :tests:unit:test            # own unit tests only (fast)
+./gradlew :tests:parity:re2j:test     # re2j parity suites only
+./gradlew :tests:parity:re2j-suite:check  # Google's ExecTest against ASM + VM
+./gradlew :tests:parity:rebar:test    # rebar scenario parity (tracer-bullet)
+./gradlew :benchmarks:micro:jmh       # JMH microbenchmarks
+```
+
+JDK 17+. Targets JDK 11 bytecode. Vendored deps (re2j, rebar) are extracted
+automatically by the `:prepareVendor` task before any test that needs them;
+run `./gradlew prepareVendor` once before opening in IntelliJ so generated
+sources appear in the IDE. See [`vendor/README.md`](vendor/README.md) for the
+upgrade workflow.
 
 ## API
 

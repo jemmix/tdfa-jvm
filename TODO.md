@@ -14,6 +14,8 @@ finished. See the [vision](README.md#vision).
 
 ## Correctness
 
+- [ ] VM backend: regex `(?:(?:^)|.)?` matches `[0,1]` instead of `[0,0]` at start of input — caught by Google's ExecTest running against both backends (`:tests:parity:re2j-suite:testOnVm`).
+- [ ] 14 rebar scenario mismatches — see `:tests:parity:rebar:test` report. Includes: catastrophic-backtracking test handling, literal-uppercase-in-pattern detection (`fooYbarZquux`), `[A-Z]awyer|[A-Z]inn` alternation captures.
 - [ ] Differential fuzzing vs `re2j` and `java.util.regex` (Jazzer or custom harness)
 - [ ] Deterministic compilation — same regex → identical TDFA across runs
 - [ ] `map` + topological sort: reject non-trivial cycles (BT22 §3.3)
@@ -34,7 +36,9 @@ finished. See the [vision](README.md#vision).
 
 ## Benchmark coverage
 
-- [ ] [rebar](https://github.com/BurntSushi/rebar) scenarios (Rust regex benchmark harness)
+- [x] Vendor [rebar](https://github.com/BurntSushi/rebar) scenario corpus — `vendor/rebar-<sha>.tar.gz`; parsed by `:testlib:rebar`.
+- [x] Tracer-bullet parity test against rebar scenarios — `:tests:parity:rebar:RebarScenarioParityTest`. 30 scenarios run; 16 pass, 14 surface real bugs (quadratic-backtracking handling, `[A-Z]` literal detection, alternation capture).
+- [ ] Expand rebar parity — bump MAX_RAN cap, fix surfaced bugs, add ASM backend, support more rebar models (`grep`, `count-captures`).
 - [ ] Hyperscan corpus / Snort rule set
 - [ ] Long-input scan across diverse patterns (not just `\w+\d+\w+`)
 - [ ] CI performance regression tracking (JMH + comparison thresholds)

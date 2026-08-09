@@ -1,6 +1,5 @@
 plugins {
     id 'java'
-    id 'me.champeau.jmh' version '0.7.3'
 }
 
 group = 'io.github.jemmix'
@@ -17,50 +16,19 @@ repositories {
 }
 
 dependencies {
-    testImplementation platform('org.junit:junit-bom:5.10.2'),
-            'org.junit.jupiter:junit-jupiter',
-            'org.junit.platform:junit-platform-launcher',
-            'org.junit.vintage:junit-vintage-engine',
-            'junit:junit:4.13.2',
-            'org.assertj:assertj-core:3.25.3',
-            'com.google.guava:guava:33.0.0-jre',
-            'com.google.re2j:re2j:1.8'
-
-    jmh 'com.google.re2j:re2j:1.8'
-    jmh 'com.github.DataDog:java-reggie:main-SNAPSHOT'
-    jmh 'org.ow2.asm:asm:9.9.1'
-    jmh 'org.ow2.asm:asm-commons:9.9.1'
-    jmh 'org.ow2.asm:asm-tree:9.9.1'
-    jmh 'org.ow2.asm:asm-util:9.9.1'
-    jmh 'org.ow2.asm:asm-analysis:9.9.1'
-
-    // For the ASM bytecode backend (M4)
+    // ASM bytecode backend (M4)
     implementation 'org.ow2.asm:asm:9.9.1'
-
-    jmhAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
 }
 
-test {
-    useJUnitPlatform()
-    jvmArgs '-Xmx512m', '-XX:+HeapDumpOnOutOfMemoryError'
-    systemProperty 'tdfa.engine', System.getProperty('tdfa.engine') ?: ''
-    testLogging {
-        events 'failed', 'standardOut', 'standardError'
-        exceptionFormat 'full'
-    }
-}
-
-jmh {
-    jmhVersion = '1.37'
-    fork = 1
-    warmupIterations = 2
-    warmup = '1s'
-    iterations = 2
-    timeOnIteration = '1s'
-    failOnError = true
-    resultFormat = 'JSON'
-    resultsFile = file("$buildDir/reports/jmh/results.json")
-    humanOutputFile = file("$buildDir/reports/jmh/human.txt")
+// Materialize vendored third-party sources/resources into build/generated/.
+// Subprojects with generated sourceSets (e.g. :tests:parity:re2j-suite) depend
+// on this task. Safe to run any time; idempotent.
+tasks.register('prepareVendor', Exec) {
+    description = 'Extract vendor archives into build/generated/ and apply patches.'
+    group = 'build'
+    commandLine './scripts/vendor.sh', 'prepare'
+    inputs.files fileTree('vendor')
+    outputs.dir layout.buildDirectory.dir('generated')
 }
 
 tasks.withType(JavaCompile).configureEach {

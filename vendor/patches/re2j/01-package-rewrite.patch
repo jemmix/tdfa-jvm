@@ -1,0 +1,84 @@
+diff -ruN before/io/github/jemmix/tdfa/re2j/Characters.java after/io/github/jemmix/tdfa/re2j/Characters.java
+--- io/github/jemmix/tdfa/re2j/Characters.java	2026-08-09 15:51:57
++++ io/github/jemmix/tdfa/re2j/Characters.java	2026-08-09 15:51:57
+@@ -4,7 +4,7 @@
+  * Use of this source code is governed by a BSD-style
+  * license that can be found in the LICENSE file.
+  */
+-package com.google.re2j;
++package io.github.jemmix.tdfa.re2j;
+ 
+ /** Wraps Character methods to be overridden for GWT. */
+ final class Characters {
+diff -ruN before/io/github/jemmix/tdfa/re2j/ExecTest.java after/io/github/jemmix/tdfa/re2j/ExecTest.java
+--- io/github/jemmix/tdfa/re2j/ExecTest.java	2026-08-09 15:51:57
++++ io/github/jemmix/tdfa/re2j/ExecTest.java	2026-08-09 15:51:57
+@@ -7,7 +7,7 @@
+ // Original Go source here:
+ // http://code.google.com/p/go/source/browse/src/pkg/regexp/syntax/exec_test.go
+ 
+-package com.google.re2j;
++package io.github.jemmix.tdfa.re2j;
+ 
+ import static org.junit.Assert.assertEquals;
+ import static org.junit.Assert.fail;
+diff -ruN before/io/github/jemmix/tdfa/re2j/Strconv.java after/io/github/jemmix/tdfa/re2j/Strconv.java
+--- io/github/jemmix/tdfa/re2j/Strconv.java	2026-08-09 15:51:57
++++ io/github/jemmix/tdfa/re2j/Strconv.java	2026-08-09 15:51:57
+@@ -10,7 +10,7 @@
+ // While this is a port of production Go source, it is currently
+ // only used by ExecTest, which is why it appears beneath javatests/.
+ 
+-package com.google.re2j;
++package io.github.jemmix.tdfa.re2j;
+ 
+ class Strconv {
+ 
+diff -ruN before/io/github/jemmix/tdfa/re2j/UNIXBufferedReader.java after/io/github/jemmix/tdfa/re2j/UNIXBufferedReader.java
+--- io/github/jemmix/tdfa/re2j/UNIXBufferedReader.java	2026-08-09 15:51:57
++++ io/github/jemmix/tdfa/re2j/UNIXBufferedReader.java	2026-08-09 15:51:57
+@@ -4,7 +4,7 @@
+  * Use of this source code is governed by a BSD-style
+  * license that can be found in the LICENSE file.
+  */
+-package com.google.re2j;
++package io.github.jemmix.tdfa.re2j;
+ 
+ import java.io.IOException;
+ import java.io.Reader;
+diff -ruN before/io/github/jemmix/tdfa/re2j/Unicode.java after/io/github/jemmix/tdfa/re2j/Unicode.java
+--- io/github/jemmix/tdfa/re2j/Unicode.java	2026-08-09 15:51:57
++++ io/github/jemmix/tdfa/re2j/Unicode.java	2026-08-09 15:51:57
+@@ -7,7 +7,7 @@
+ // Many of these were derived from the corresponding Go functions in
+ // http://code.google.com/p/go/source/browse/src/pkg/unicode/letter.go
+ 
+-package com.google.re2j;
++package io.github.jemmix.tdfa.re2j;
+ 
+ /**
+  * Utilities for dealing with Unicode better than Java does.
+diff -ruN before/io/github/jemmix/tdfa/re2j/UnicodeTables.java after/io/github/jemmix/tdfa/re2j/UnicodeTables.java
+--- io/github/jemmix/tdfa/re2j/UnicodeTables.java	2026-08-09 15:51:57
++++ io/github/jemmix/tdfa/re2j/UnicodeTables.java	2026-08-09 15:51:57
+@@ -6,7 +6,7 @@
+  */
+ // Generated at 2020-06-09T16:20:06.352Z by Java 1.8.0_181 using Unicode version 6.0.0.0.
+ // Do not change this file, your edits will be lost. Instead change UnicodeTablesGenerator.java.
+-package com.google.re2j;
++package io.github.jemmix.tdfa.re2j;
+ 
+ import java.util.Collections;
+ import java.util.HashMap;
+diff -ruN before/io/github/jemmix/tdfa/re2j/Utils.java after/io/github/jemmix/tdfa/re2j/Utils.java
+--- io/github/jemmix/tdfa/re2j/Utils.java	2026-08-09 15:51:57
++++ io/github/jemmix/tdfa/re2j/Utils.java	2026-08-09 15:51:57
+@@ -4,7 +4,7 @@
+  * Use of this source code is governed by a BSD-style
+  * license that can be found in the LICENSE file.
+  */
+-package com.google.re2j;
++package io.github.jemmix.tdfa.re2j;
+ 
+ /**
+  * Various constants and helper utilities.

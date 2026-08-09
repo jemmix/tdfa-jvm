@@ -1,0 +1,35 @@
+plugins {
+    id 'java'
+    id 'me.champeau.jmh' version '0.7.3'
+}
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://jitpack.io' }
+}
+
+dependencies {
+    jmh project(':')
+    jmh 'com.google.re2j:re2j:1.8'
+    // Pinned to a specific commit on JitPack (replaces previous main-SNAPSHOT).
+    jmh 'com.github.DataDog:java-reggie:f437ac8d77c0e4e8faf2bc931f24947b8039ffbb'
+    jmh 'org.ow2.asm:asm:9.9.1'
+    jmh 'org.ow2.asm:asm-commons:9.9.1'
+    jmh 'org.ow2.asm:asm-tree:9.9.1'
+    jmh 'org.ow2.asm:asm-util:9.9.1'
+    jmh 'org.ow2.asm:asm-analysis:9.9.1'
+    jmhAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
+}
+
+jmh {
+    jmhVersion = '1.37'
+    fork = 1
+    warmupIterations = 2
+    warmup = '1s'
+    iterations = 2
+    timeOnIteration = '1s'
+    failOnError = true
+    resultFormat = 'JSON'
+    resultsFile = file("$buildDir/reports/jmh/results.json")
+    humanOutputFile = file("$buildDir/reports/jmh/human.txt")
+}

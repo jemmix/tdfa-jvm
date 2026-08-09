@@ -1,0 +1,26 @@
+plugins {
+    id 'java'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation project(':')
+    testImplementation platform('org.junit:junit-bom:5.10.2'),
+            'org.junit.jupiter:junit-jupiter',
+            'org.assertj:assertj-core:3.25.3'
+    // re2j as live oracle for parity comparison
+    testImplementation 'com.google.re2j:re2j:1.8'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+    jvmArgs '-Xmx512m', '-XX:+HeapDumpOnOutOfMemoryError'
+    testLogging {
+        events 'failed', 'standardOut', 'standardError'
+        exceptionFormat 'full'
+    }
+}

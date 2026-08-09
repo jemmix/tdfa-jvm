@@ -4,3 +4,10 @@ pluginManagement {
         mavenCentral()
     }
 }
+
+include ':tests:unit',
+        ':tests:parity:re2j',
+        ':tests:parity:re2j-suite',
+        ':tests:parity:rebar',
+        ':benchmarks:micro',
+        ':testlib:rebar'
