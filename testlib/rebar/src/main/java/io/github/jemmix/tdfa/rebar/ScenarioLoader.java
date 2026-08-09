@@ -177,20 +177,34 @@ public final class ScenarioLoader {
      * the haystack itself). Returns an {@link Scenario.HaystackSpec.Inline} for
      * inline strings, or {@link Scenario.HaystackSpec.FromPath} for path
      * references. Use {@link Scenario#resolveHaystack(Path)} to materialize.
+     *
+     * <p>Supports rebar's full transformation set on both inline and path
+     * variants: {@code trim}, {@code repeat}, {@code prepend}, {@code append},
+     * {@code line-start}, {@code line-end}.
      */
     private Scenario.HaystackSpec resolveHaystackSpec(Object hsValue) {
         if (hsValue == null) {
             return null;
         }
         if (hsValue instanceof String s) {
-            return new Scenario.HaystackSpec.Inline(s);
+            return new Scenario.HaystackSpec.Inline(s, null, null, null);
         }
         if (hsValue instanceof TomlTable t) {
+            Long repeat = t.getLong("repeat");
+            String prepend = t.getString("prepend");
+            String append = t.getString("append");
             if (t.isString("contents")) {
-                return new Scenario.HaystackSpec.Inline(t.getString("contents"));
+                return new Scenario.HaystackSpec.Inline(
+                        t.getString("contents"), repeat, prepend, append);
             }
             if (t.isString("path")) {
-                return new Scenario.HaystackSpec.FromPath(t.getString("path"));
+                boolean trim = boolOr(t.getBoolean("trim"), false);
+                Long ls = t.getLong("line-start");
+                Long le = t.getLong("line-end");
+                return new Scenario.HaystackSpec.FromPath(
+                        t.getString("path"), trim, repeat, prepend, append,
+                        ls != null ? ls.intValue() : null,
+                        le != null ? le.intValue() : null);
             }
         }
         return null;
