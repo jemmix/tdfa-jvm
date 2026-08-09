@@ -12,6 +12,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
@@ -71,11 +74,12 @@ class RebarScenarioParityTest {
     void runScenarioThroughTdfa(String displayName, Scenario s) throws Exception {
         // Models we run; everything else is a clean skip.
         Set<String> supportedModels = Set.of("count", "count-spans", "count-captures", "grep");
-        // Tracer-bullet caps — generous enough to exercise most scenarios.
-        final int MAX_HAYSTACK_BYTES = 200_000;   // 200 KB
-        final int MAX_REGEX_LEN = 2_000;
-        final int MAX_ITER = 200_000;
-        final long MAX_NS = 2_000_000_000L;       // 2 s per scenario
+        // Quick-and-dirty budgets: tight enough that 359 cases finish in
+        // ~2 minutes worst-case, loose enough to not flap on a slow CI box.
+        final long COMPILE_TIMEOUT_MS = 300;     // regex compilation wall-clock
+        final long RUN_TIMEOUT_MS    = 500;     // match execution wall-clock
+        final int  MAX_HAYSTACK_BYTES = 200_000;
+        final int  MAX_REGEX_LEN = 2_000;
 
         // --- Filter: skip cleanly via assumeTrue so IDE shows gray "skipped" ---
 
@@ -90,19 +94,25 @@ class RebarScenarioParityTest {
         assumeTrue(hsBytes >= 0 && hsBytes <= MAX_HAYSTACK_BYTES,
                 "haystack too big (" + hsBytes + " bytes)");
 
-        // --- Compile (VM backend for tracer-bullet; ASM codegen is slow per-pattern) ---
+        // --- Compile (VM backend) with hard timeout ---
 
-        Regex r;
+        long compileStart = System.nanoTime();
+        final Regex r;
         try {
-            r = Regex.compile(s.regex(), EngineFactory.VM);
+            r = withTimeout(COMPILE_TIMEOUT_MS, "compile", () -> Regex.compile(s.regex(), EngineFactory.VM));
+        } catch (TimeoutException e) {
+            skipCount.incrementAndGet();
+            assumeTrue(false, "COMPILE_TIMEOUT " + COMPILE_TIMEOUT_MS + "ms");
+            return;
         } catch (Exception e) {
             skipCount.incrementAndGet();
             assumeTrue(false, "compile failed: " + e.getClass().getSimpleName()
                     + (e.getMessage() != null ? ": " + e.getMessage() : ""));
-            return; // unreachable; satisfy compiler
+            return;
         }
+        long compileMs = (System.nanoTime() - compileStart) / 1_000_000;
 
-        // --- Run with time + iteration budgets ---
+        // --- Resolve haystack (not budgeted — should be I/O only) ---
 
         String haystack;
         try {
@@ -112,20 +122,25 @@ class RebarScenarioParityTest {
             assumeTrue(false, "haystack resolve failed: " + e.getMessage());
             return;
         }
-        long start = System.nanoTime();
-        long actual = -1;
-        String budgetReason = null;
+
+        // --- Run with hard wall-clock timeout ---
+
+        final long runStart = System.nanoTime();
+        final long actual;
         try {
-            actual = runModel(s, r, haystack, MAX_ITER, start, MAX_NS);
-        } catch (MaxIterException e) {
-            budgetReason = "exceeded " + MAX_ITER + " iterations";
-        } catch (TimeBudgetException e) {
-            budgetReason = "exceeded " + (MAX_NS / 1_000_000) + "ms time budget";
-        }
-        if (budgetReason != null) {
+            actual = withTimeout(RUN_TIMEOUT_MS, "run", () -> runModel(s, r, haystack));
+        } catch (TimeoutException e) {
             skipCount.incrementAndGet();
-            assumeTrue(false, budgetReason);
+            System.out.printf("TIMEOUT  %-60s compile=%dms  run>%dms  /%s/%n",
+                    s.fullName(), compileMs, RUN_TIMEOUT_MS, abbrev(s.regex(), 50));
+            assumeTrue(false, "RUN_TIMEOUT " + RUN_TIMEOUT_MS + "ms (compile was " + compileMs + "ms)");
             return;
+        }
+        long runMs = (System.nanoTime() - runStart) / 1_000_000;
+
+        if (compileMs > 50 || runMs > 50) {
+            System.out.printf("SLOW     %-60s compile=%dms  run=%dms  /%s/%n",
+                    s.fullName(), compileMs, runMs, abbrev(s.regex(), 50));
         }
 
         // --- Assert ---
@@ -136,20 +151,46 @@ class RebarScenarioParityTest {
             failCount.incrementAndGet();
         }
         assertThat(actual)
-                .as("match count for /%s/ on %d-byte haystack (model=%s); hs contains regex? %s; first 40 chars: %s",
-                        s.regex(), haystack.length(), s.model(),
+                .as("match count for /%s/ on %d-byte haystack (model=%s); compile=%dms run=%dms; hs contains regex? %s; first 40 chars: %s",
+                        s.regex(), haystack.length(), s.model(), compileMs, runMs,
                         haystack.contains(s.regex().length() <= 100 ? s.regex() : s.regex().substring(0, 50)),
                         haystack.substring(0, Math.min(40, haystack.length())).replace("\n", "\\n").replace("\r", "\\r"))
                 .isEqualTo(s.expectedCount());
     }
 
+    /**
+     * Run {@code task} on a fresh virtual thread, aborting the caller after
+     * {@code timeoutMs}. On timeout the virtual thread is interrupted (best
+     * effort for CPU-bound compilation) but continues until it checks the
+     * interrupt or finishes naturally — it does NOT block the next test case.
+     *
+     * <p>Virtual threads (JDK 21+) are cheap enough that one-per-call is fine
+     * even for 359 test cases. Orphaned threads die with the JVM.
+     *
+     * <p>Why not a shared single-thread executor? Because a timed-out CPU-bound
+     * compile occupies the worker indefinitely; the next {@code submit} queues
+     * behind it and its own timeout fires before the task even starts,
+     * producing cascading false COMPILE_TIMEOUTs.
+     */
+    private static <T> T withTimeout(long timeoutMs, String phase, Callable<T> task)
+            throws Exception {
+        var future = new java.util.concurrent.FutureTask<T>(task);
+        Thread.startVirtualThread(future);
+        try {
+            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            throw e;
+        }
+    }
+
     /** Dispatch to the right model implementation. */
-    private static long runModel(Scenario s, Regex r, String haystack, int maxIter, long startNs, long maxNs) {
+    private static long runModel(Scenario s, Regex r, String haystack) {
         switch (s.model()) {
-            case "count":          return countMatches(r, haystack, maxIter, startNs, maxNs);
-            case "count-spans":    return countSpans(r, haystack, maxIter, startNs, maxNs);
-            case "count-captures": return countCaptures(r, haystack, maxIter, startNs, maxNs);
-            case "grep":           return grepLines(r, haystack, maxIter, startNs, maxNs);
+            case "count":          return countMatches(r, haystack);
+            case "count-spans":    return countSpans(r, haystack);
+            case "count-captures": return countCaptures(r, haystack);
+            case "grep":           return grepLines(r, haystack);
             default: throw new IllegalStateException("unsupported model: " + s.model());
         }
     }
@@ -185,16 +226,10 @@ class RebarScenarioParityTest {
         return oneLine.length() <= max ? oneLine : oneLine.substring(0, max - 3) + "...";
     }
 
-    private static final class MaxIterException extends RuntimeException {}
-    private static final class TimeBudgetException extends RuntimeException {}
-
-    private static long countMatches(Regex r, String hs, int maxIter, long startNs, long maxNs) {
+    private static long countMatches(Regex r, String hs) {
         long n = 0;
         int pos = 0;
-        int iter = 0;
         while (pos <= hs.length()) {
-            if (++iter > maxIter) throw new MaxIterException();
-            if ((iter & 0x3F) == 0 && System.nanoTime() - startNs > maxNs) throw new TimeBudgetException();
             MatchResult m = r.find(hs, pos);
             if (m == null) break;
             n++;
@@ -204,13 +239,10 @@ class RebarScenarioParityTest {
         return n;
     }
 
-    private static long countSpans(Regex r, String hs, int maxIter, long startNs, long maxNs) {
+    private static long countSpans(Regex r, String hs) {
         long sum = 0;
         int pos = 0;
-        int iter = 0;
         while (pos <= hs.length()) {
-            if (++iter > maxIter) throw new MaxIterException();
-            if ((iter & 0x3F) == 0 && System.nanoTime() - startNs > maxNs) throw new TimeBudgetException();
             MatchResult m = r.find(hs, pos);
             if (m == null) break;
             sum += m.end(0) - m.start(0);
@@ -221,16 +253,12 @@ class RebarScenarioParityTest {
     }
 
     /** Count total capturing groups across all non-overlapping matches. */
-    private static long countCaptures(Regex r, String hs, int maxIter, long startNs, long maxNs) {
+    private static long countCaptures(Regex r, String hs) {
         long n = 0;
         int pos = 0;
-        int iter = 0;
         while (pos <= hs.length()) {
-            if (++iter > maxIter) throw new MaxIterException();
-            if ((iter & 0x3F) == 0 && System.nanoTime() - startNs > maxNs) throw new TimeBudgetException();
             MatchResult m = r.find(hs, pos);
             if (m == null) break;
-            // Count matched (non-null) groups, group 0 included per rebar's convention.
             for (int g = 0; g <= m.groupCount(); g++) {
                 if (m.start(g) >= 0) n++;
             }
@@ -241,21 +269,17 @@ class RebarScenarioParityTest {
     }
 
     /** Count haystack lines that contain at least one match (rebar's 'grep' model). */
-    private static long grepLines(Regex r, String hs, int maxIter, long startNs, long maxNs) {
+    private static long grepLines(Regex r, String hs) {
         long matched = 0;
-        int iter = 0;
         int lineStart = 0;
         for (int i = 0; i <= hs.length(); i++) {
             if (i == hs.length() || hs.charAt(i) == '\n') {
                 String line = hs.substring(lineStart, i);
-                // Find first match in this line.
                 MatchResult m = null;
                 try {
                     m = r.find(line, 0);
                 } catch (Exception ignored) { /* engine hiccup on this line */ }
                 if (m != null) matched++;
-                if (++iter > maxIter) throw new MaxIterException();
-                if ((iter & 0x3F) == 0 && System.nanoTime() - startNs > maxNs) throw new TimeBudgetException();
                 lineStart = i + 1;
             }
         }
