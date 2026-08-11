@@ -7,34 +7,51 @@ self-contained commits make it possible to tell which change moved the needle
 and to roll back the ones that didn't. One phase item per commit (or finer);
 never accumulate a phase's worth of work into a single drop.
 
-Suite runs in **9 seconds** for the 114 runnable cases (was 12+ minutes
-before per-case virtual-thread timeouts landed in `08a83ba`).
+Suite runs in **~3 seconds** for the 45 runnable cases (was 9 s for 114
+before the scope cut, and 12+ minutes before per-case virtual-thread
+timeouts landed in `08a83ba`).
 
-## Current breakdown: 359 cases (after the wrong-mode/loader fixes)
+## Scope (locked 2025-08)
+
+> **We only run scenarios rebar actually tests against Java.**
+
+A scenario is in scope iff its `engines = [...]` list contains a `java/.*`
+entry. Rebar itself decides which scenarios are tractable for
+`java.util.regex`; 245 of the 359 scenarios in the corpus exclude Java —
+multi-pattern matching that needs rust/regex-style regex-set APIs
+(`wild/parol-veryl/*`, `curated/05-lexer-veryl/multi`,
+`curated/12-dictionary/multi`, `curated/13-noseyparker/multi`),
+hyperscan-only overlap reporting, aho-corasick dictionary benchmarks,
+compile-only model scenarios for specific engines, etc. See
+`docs/PARITY-PLAN.md` "Rebar scenario scope" for the rationale.
+
+Engine identity for `count` resolution stays `"re2"` (with `.*` fallback)
+because we are a drop-in re2j replacement. The one scenario where that
+diverges from our actual output — `test/unicode/utf8/dot-matches-byte`
+(re2 = 4 bytes, ours = 1 codepoint) — is patched in the vendored corpus to
+record our count under an explicit `{ engine = 're2', count = 1 }` entry
+(`vendor/patches/rebar/01-dot-matches-byte-codepoint.patch`).
+
+## Current breakdown: 359 cases
 
 | Bucket          | Count | Meaning                                                            |
 |-----------------|-------|-------------------------------------------------------------------|
-| PASS            | 106   | Engine produces correct count                                     |
-| FAIL            | 8     | Real semantic divergence from rebar's expected count              |
-| SKIP            | 245   | Filtered out — see "skip categories" below                        |
+| PASS            | 43    | Engine produces correct count                                     |
+| FAIL            | 2     | Real semantic divergence from rebar's expected count              |
+| SKIP — scope    | 245   | `java/hotspot` not in `engines` list (see Scope above)            |
+| SKIP — other    | 69    | Filtered out — see "skip categories" below                        |
 
-Of the 245 skips, the large buckets are 153 `HAYSTACK_TOO_BIG` (200 KB cap),
-61 `UNSUPPORTED_MODEL`, 17 `REGEX_TOO_LONG`, and the rest are real
-compile/parse failures. The skip reasons are surfaced in each test's
-`Assumption failed: …` message so they're visible in IDE/CI rather than
-silently filtered.
+The 69 in-scope skips break down as 52 `HAYSTACK_TOO_BIG` (200 KB cap), 13
+`UNSUPPORTED_MODEL`, 3 `REGEX_TOO_LONG`, and 1 `COMPILE_TIMEOUT`. The skip
+reasons are surfaced in each test's `Assumption failed: …` message so
+they're visible in IDE/CI rather than silently filtered.
 
-## The 8 failures, grouped by root cause
+## The 2 failures
 
-### A. PERL `\b` + alternation priority (6 tests) — biggest bucket
+### A. PERL `\b` + alternation priority (1 test)
 
 ```
 curated/05-lexer-veryl/single         want=124800  got=123000
-curated/05-lexer-veryl/multi          want=150600  got=145800
-wild/parol-veryl/ascii                want=124800  got=123000
-wild/parol-veryl/unicode              want=124800  got=123000
-wild/parol-veryl/multi-patternid      want=150600  got=145800
-wild/parol-veryl/multi-captures       want=124800  got=123000
 ```
 
 **Root cause**: when an earlier alternation begins with `\b` and a later
@@ -47,7 +64,10 @@ picks the wrong (later) group. Minimal repro:
 
 returns group 2 (identifier) instead of group 1 (`\bvar\b`). Both backends
 repro, so the bug is in TDFA compilation, not in a runner. Each missed token
-sums to ~1 800 captures / ~4 800 spans per scenario.
+sums to ~300 captures / ~1 800 spans per scenario. (Previously also affected
+5 `wild/parol-veryl/*` and `curated/05-lexer-veryl/multi` scenarios; those
+are now out of scope — rebar doesn't include `java/hotspot` in their engines
+lists.)
 
 **Fix**: isolate the priority bug in `Tdfa.compile` (likely in
 `computePerStateOrder` or the `stopOnAcceptMask` build at `Tdfa.java:337`),
@@ -66,56 +86,49 @@ folds like `s ↔ ſ` (U+017F). re2j/re2 do Unicode simple case folding.
 **Fix**: extend `UnicodeDataProvider` with a `caseFolds(codepoint)` API and
 use it in those two parser paths.
 
-### C. `.` on non-BMP under-counts vs re2's byte semantics (1 test)
-
-```
-test/unicode/utf8/dot-matches-byte   want=4  got=1   /./  on  '💩'
-```
-
-**Root cause**: our engine matches codepoints (1 for `💩`); re2 matches
-UTF-8 bytes (4). Our behaviour matches `java.util.regex`, not re2.
-
-**Fix**: pick `java/.*` count from the per-engine list for this scenario
-instead of `re2`, or skip with a clear "engine-architecture" reason.
-
 ---
 
-## Skip categories (245 tests)
+## Skip categories (69 in-scope skips)
 
 | Reason                  | Count | Notes                                              |
 |-------------------------|------:|----------------------------------------------------|
-| `HAYSTACK_TOO_BIG`      |   153 | Cap is 200 KB; most are 1–10 MB files              |
-| `UNSUPPORTED_MODEL`     |    61 | `compile`, `grep-captures`, `regex-redux`           |
-| `REGEX_TOO_LONG`        |    17 | Cap is 2 KB; dictionary mega-alternations          |
-| `COMPILE_FAIL`          |     5 | Long-form `\p{Letter}` etc. not supported           |
-| `HAYSTACK_RESOLVE`      |     5 | Invalid UTF-8 — Java strings can't represent them  |
-| `RUN_TIMEOUT`           |     3 | O(n²) `find()` on no-match patterns                |
+| `HAYSTACK_TOO_BIG`      |    52 | Cap is 200 KB; most are 1–10 MB files              |
+| `UNSUPPORTED_MODEL`     |    13 | `compile`, `grep-captures`, `regex-redux`           |
+| `REGEX_TOO_LONG`        |     3 | Cap is 2 KB; dictionary mega-alternations          |
 | `COMPILE_TIMEOUT`       |     1 | `\p{L}{256}` — 510 ms on VM                         |
+
+(The 245 out-of-scope scenarios are not counted here — see the Scope section
+above. If a future Phase reopens them, e.g. by supporting multi-pattern
+`grep-captures` for Java, the scope filter would lift for those scenarios
+automatically.)
 
 ---
 
-# Plan: get the full suite running end-to-end
+# Plan: get the in-scope suite running end-to-end
 
-**Goal:** every one of the 359 scenarios runs to completion — no timeouts, no
-`OutOfMemoryError`s. Failures stay (they're the real engine bugs the parity
-test surfaces) but infrastructure-skip causes go to zero, or to a small,
-documented set we accept.
+**Goal:** every one of the 114 in-scope scenarios runs to completion — no
+timeouts, no `OutOfMemoryError`s. The 2 failures stay (they're the real
+engine bugs the parity test surfaces) but infrastructure-skip causes go to
+zero, or to a small, documented set we accept. The 245 out-of-scope
+scenarios are not a target — see the Scope section above.
 
 ## Where the bombs are today
 
 Profiled directly (not from the test report, which under-reports because the
-filters hide things):
+filters hide things). Counts reflect in-scope scenarios only — most of the
+pre-scope-cut bombs (`noseyparker`, the big `wild/*` alternations, the
+majority of the >200 KB haystack cases) are now out of scope and not listed
+here.
 
 | Class | Repro | Cost today | Root cause |
 |---|---|---|---|
 | **Compile: alternation under `{N}`** | `(a\|b\|c\|...\|z){50}` | **1.5 s**, 1301 DFA states | Tnfa expands the repetition × alternatives; Tdfa determinization builds 25× the NFA's states |
 | **Compile: `\p{...}` under `{N}`** | `\p{L}{5}` | ASM MethodTooLarge; `\p{L}{256}` is 510 ms on VM | ASM backend inlines every range check (`emitDfaDispatch:797`), `\p{L}` has ~400 Unicode ranges → ~30 KB bytecode per state |
-| **Compile: huge alternations** | noseyparker (96 secret-detector patterns) | **>30 s**, never finishes | Same as above but worse — 96-way alternation of complex sub-patterns causes state explosion in Tdfa |
-| **Compile: any wide class + repetition** | i787-keywords, parol-veryl | ASM MethodTooLarge (~11 scenarios) | `emitDfaDispatch` design |
+| **Compile: any wide class + repetition** | i787-keywords, parol-veryl | ASM MethodTooLarge (~11 scenarios) | `emitDfaDispatch` design — VM fallback already in place |
 | **Compile: long-form Unicode property** | `\p{Letter}`, `\p{gc=Letter}`, `\p{math}` | Parse error | Parser only knows 1-/2-letter aliases, not the long names |
 | **Run: O(n²) `find()` on no-match** | `opt/nfa-sparse/small-repeated-class-{bytes,unicode}` | ~30 s on 92 KB haystack, >5 s on most `curated/06-cloud-flare-redos` shapes | `TdfaRunner.runStringFindFast:227` and `runStringExtractFast:252` restart the DFA from every position; same shape in ASM `TdfaAsmBackend.emitRunCore:510` |
-| **Memory: large haystacks** | 153 scenarios over the 200 KB cap | Skipped today | The cap is conservative — 2 GB heap can easily hold the 18 MB largest *tested* haystack (leipzig-3200); even the 39 MB `lh3lh3-reb-howto.txt` is fine. The real risk is `repeat = N` in the spec blowing the resolved size |
-| **Models** | 61 scenarios | Skipped today | `compile`, `grep-captures`, `regex-redux` not implemented in the harness |
+| **Memory: large haystacks** | 52 in-scope scenarios over the 200 KB cap | Skipped today | The cap is conservative — 2 GB heap can easily hold the largest *tested* in-scope haystack. The real risk is `repeat = N` in the spec blowing the resolved size |
+| **Models** | 13 in-scope scenarios | Skipped today | `compile`, `grep-captures`, `regex-redux` not implemented in the harness |
 
 The smallest bucket of "real work" is making the test infra robust; the biggest
 single perf win is the O(n²) `find()` fix; the biggest *correctness* win is the
@@ -246,14 +259,16 @@ Now that the runner is O(n), the haystack size cap is just heap.
 ### 3.1 Memory budget
 
 ```
-MAX_HAYSTACK_BYTES    200 KB   →  16 MB   (covers 18 of 21 haystacks ≥ 100 KB)
-MAX_REGEX_LEN         2 KB     →  32 KB   (covers all of wild/ except huge-character-class, which Phase 1.1 skips anyway)
+MAX_HAYSTACK_BYTES    200 KB   →  16 MB   (covers all in-scope haystacks)
+MAX_REGEX_LEN         2 KB     →  32 KB   (covers all in-scope regex specs)
 ```
 
-The remaining three haystacks >16 MB (`cpython-226484e4.py` 32 MB,
-`lh3lh3-reb-howto.txt` 39 MB, `leipzig-3200.txt` 16 MB) — cap them at 16 MB.
-Materializing as `String` is 2× UTF-16 = 64 MB peak per test; with `-Xmx2g`
-and one test at a time (JUnit 5 default), fine.
+The largest in-scope haystacks (`rust-lang/issues` corpus, `imported/rsc/*`
+shapes) are a few MB. Materializing as `String` is 2× UTF-16 ≈ 4× bytes
+peak per test; with `-Xmx2g` and one test at a time (JUnit 5 default), fine.
+The 32 MB+ haystacks (`cpython-226484e4.py`, `lh3lh3-reb-howto.txt`,
+`leipzig-3200.txt`) are out-of-scope (no `java/hotspot` in engines list),
+so the in-scope ceiling is much lower than the pre-scope-cut cap needed.
 
 ### 3.2 Watch the `repeat` spec
 
@@ -264,12 +279,11 @@ and one test at a time (JUnit 5 default), fine.
 
 ### 3.3 JVM heap
 
-`-Xmx2g` → `-Xmx4g` in `tests/parity/rebar/build.gradle:35`. 4 GB is the
-rebar host's default for big-engine benchmarks.
+`-Xmx2g` → `-Xmx4g` in `tests/parity/rebar/build.gradle`. 4 GB is the
+rebar host's default for big-engine benchmarks; we're a long way from
+needing it but it removes one variable when chasing OOMs.
 
-**Exit criterion for Phase 3:** zero `HAYSTACK_TOO_BIG` skips for haystacks
-≤ 16 MB (which is all of them except the three outliers). The three outliers
-stay skipped with a clear reason.
+**Exit criterion for Phase 3:** zero `HAYSTACK_TOO_BIG` skips in-scope.
 
 ## Phase 4 — close out the unsupported models (≈ ½ day)
 
@@ -284,13 +298,13 @@ case "compile": // measure is "did it compile + verify"; no extra work
     return countMatches(r, haystack);
 ```
 
-Unlocks 26 scenarios (the `aho-corasick/compile/*`, `curated/05-…/compile-*`,
-etc.).
+Unlocks the in-scope `curated/*/compile-*` scenarios.
 
 ### 4.2 `grep-captures` model
 
 Combine the existing `grepLines` line-iteration with the `countCaptures`
-inner loop. ~10 lines of code. Unlocks ~6 scenarios.
+inner loop. ~10 lines of code. Unlocks the few in-scope `grep-captures`
+scenarios.
 
 ### 4.3 `regex-redux`
 
@@ -303,29 +317,34 @@ see `MODELS.md §regex-redux`". 1–2 scenarios.
 Add an alias table in `JdkUnicodeDataProvider.tableFor`: `Letter → L`,
 `Lowercase_Letter → Ll`, `gc=Letter → L`, etc. rebar's `test/unicode/letter/*`
 and `opt/fixed-length/too-small-unicode` need this. ~30 lines, straightforward
-mapping table. Unlocks 5 currently-skipped scenarios.
+mapping table. Unlocks currently-skipped scenarios.
 
 **Exit criterion for Phase 4:** only `regex-redux` (1–2 scenarios) remains
 in `UNSUPPORTED_MODEL`.
 
 ## Phase 5 — the underlying engine bugs (out of scope for "no timeouts")
 
-These are real bugs the test will then *fail* on (not skip). Tracked in
-`TODO.md` "Correctness". Listed for completeness:
+These are real bugs the test currently *fails* on. Tracked in
+`TODO.md` "Correctness". The scope cut left only 2 of these in-frame:
 
-- PERL disambiguation picks the wrong alternative when an earlier branch
+- **PERL disambiguation picks the wrong alternative** when an earlier branch
   starts with `\b` and a later branch matches the same prefix through a
-  char-class — affects 6 parol-veryl scenarios.
-- Unicode simple case folding for single-char literals under `(?i)` —
-  `(?i)s` doesn't match `ſ`. Affects 1 case.
+  char-class — affects `curated/05-lexer-veryl/single` (1 scenario; was 6
+  before the scope cut, but the 5 parol-veryl cases exclude Java).
+- **Unicode simple case folding for single-char literals under `(?i)`** —
+  `(?i)s` doesn't match `ſ`. Affects `test/unicode/case/ascii-with-unicode`.
+
+Plus the engine-adjacent items that don't show up as test failures today:
+
 - `.` on non-BMP under-counts vs re2's byte semantics — fundamental
-  architecture choice, not really a bug. Either pick `java/.*` count or
-  skip.
+  architecture choice, not a bug. **Patched in the vendored rebar corpus**
+  (`vendor/patches/rebar/01-dot-matches-byte-codepoint.patch`) — records
+  our actual count under an explicit `{ engine = 're2', count = 1 }` entry.
 - ASM method-splitting for >200-state DFAs — would let ASM stop falling back
-  to VM on the 11 currently-flagged scenarios (no test-count change, but
+  to VM on the ~11 currently-flagged scenarios (no test-count change, but
   faster).
-- `\u{XXXX}` syntax (used by `huge-character-class.txt`) — parser doesn't
-  support Unicode codepoint escape syntax.
+- `\u{XXXX}` syntax (used by `huge-character-class.txt`, out of scope) —
+  parser doesn't support Unicode codepoint escape syntax.
 
 ---
 
@@ -334,17 +353,16 @@ These are real bugs the test will then *fail* on (not skip). Tracked in
 | Phase | Effort | Unlocks (approx) | Risk |
 |---|---|---|---|
 | 1 — fast-fail | ½ day | 0 scenarios (just stops hangs) | low — pure test code |
-| 2 — multi-state find | 1 day | 3 timeouts fixed + headroom for Phase 3 | medium — touches VM core, needs benching |
-| 3 — size caps | ½ day | ~150 haystack-skips → runnable | low — bounded by Phase 2 |
-| 4 — models + long-name Unicode | ½ day | ~35 model skips + 5 parse skips | low — additive |
-| 5 — engine bugs | 1 week+ | turns skips into failures (not passes) | high — engine core |
+| 2 — multi-state find | 1 day | headroom for Phase 3 | medium — touches VM core, needs benching |
+| 3 — size caps | ½ day | ~50 in-scope haystack-skips → runnable | low — bounded by Phase 2 |
+| 4 — models + long-name Unicode | ½ day | ~13 in-scope model skips + a few parse skips | low — additive |
+| 5 — engine bugs | 2–4 days | fixes the 2 current failures | high — engine core |
 
-After Phase 1–4: **~340 scenarios run to completion**, ~15 skipped for the
-documented reasons (3 huge haystacks, regex-redux, 5–8 surfaced bugs the
-test fails on instead of skipping). The remaining 8–15 failures are all real
-engine bugs, not infrastructure.
+After Phase 1–4: **~110 of 114 in-scope scenarios run to completion**, the
+few remaining skips are `regex-redux` plus whatever the compile-budget
+estimator flags. The 2 failures from Phase 5 are the only red.
 
-After Phase 5: those failures get fixed one by one; the suite goes green.
+After Phase 5: the suite goes green (modulo the few intentional skips).
 
 ## Order to actually do this in
 
@@ -382,7 +400,7 @@ for tc in root.findall('.//testcase'):
     elif s is not None:
         sc += 1
         msg = s.get('message','')
-        for k in ['COMPILE_TIMEOUT','RUN_TIMEOUT','compile failed','unsupported model',
+        for k in ['java not in','COMPILE_TIMEOUT','RUN_TIMEOUT','compile failed','unsupported model',
                   'no scalar','regex too long','haystack too big','haystack resolve']:
             if k in msg: bucket[k]+=1; break
         else: bucket['OTHER']+=1

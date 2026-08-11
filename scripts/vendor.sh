@@ -96,6 +96,20 @@ apply_copy_map() {
     done
 }
 
+# Try to apply $2 (patch file) to $1 (target dir) with -p0. Forwards on
+# success, reports "already applied" on reverse-apply success, returns
+# non-zero otherwise. Idempotent: re-running `prepare` is safe.
+apply_patch() {
+    local target_dir="$1" patch_file="$2"
+    if patch -d "$target_dir" -p0 --dry-run --forward -i "$patch_file" >/dev/null 2>&1; then
+        patch -d "$target_dir" -p0 --forward --reject-file=/dev/null -i "$patch_file" >/dev/null
+    elif patch -d "$target_dir" -p0 --dry-run -R -i "$patch_file" >/dev/null 2>&1; then
+        echo "      (already applied at $target_dir, skipping)"
+    else
+        return 1
+    fi
+}
+
 # Emit the copy map for a dep on stdout (one entry per line, space-separated).
 copy_map_for() {
     case "$1" in
@@ -224,7 +238,11 @@ do_prepare_dep() {
     # apply_copy_map reads from $pristine_dir (which contains $dep/...).
     copy_map_for "$dep" | apply_copy_map "$pristine_dir" "$gen_src_dir" "$gen_res_dir"
 
-    # Apply patches in lexical order.
+    # Apply patches in lexical order. Each patch is tried against
+    # $gen_src_dir first (e.g. re2j's package-rewrite patch targets
+    # generated Java sources), then against $pristine_dir/$dep (e.g. rebar
+    # patches that modify the upstream benchmarks/ corpus in-place — the
+    # parity test reads scenarios from the pristine extract directly).
     local patch_dir="$PATCHES_DIR/$dep"
     if [ -d "$patch_dir" ]; then
         local patches=()
@@ -237,13 +255,13 @@ do_prepare_dep() {
             echo "==> $dep: applying ${#patches[@]} patch(es)"
             for p in "${patches[@]}"; do
                 echo "    $(basename "$p")"
-                # Patches target $gen_src_dir (java/).
-                if patch -d "$gen_src_dir" -p0 --dry-run --forward -i "$p" >/dev/null 2>&1; then
-                    patch -d "$gen_src_dir" -p0 --forward --reject-file=/dev/null -i "$p" >/dev/null
-                elif patch -d "$gen_src_dir" -p0 --dry-run -R -i "$p" >/dev/null 2>&1; then
-                    echo "      (already applied, skipping)"
+                if apply_patch "$gen_src_dir" "$p"; then
+                    :
+                elif apply_patch "$pristine_dir/$dep" "$p"; then
+                    :
                 else
                     echo "error: patch does not apply cleanly: $p" >&2
+                    echo "       tried: $gen_src_dir and $pristine_dir/$dep" >&2
                     echo "       regenerate against current pristine tree and retry" >&2
                     return 1
                 fi

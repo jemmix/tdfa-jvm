@@ -59,6 +59,14 @@ To add a new dep:
    ```
 4. Run `./scripts/vendor.sh prepare` to verify.
 
+Patches target the generated-sources dir by default (re2j's package-rewrite
+patch touches Java sources). For deps that need to patch the upstream tree
+directly — e.g. rebar's benchmark scenario corpus, which the parity test
+reads from `build/vendor/<dep>/pristine/<dep>/benchmarks/` — `prepare` will
+also try each patch against `build/vendor/<dep>/pristine/<dep>/` and apply
+it there if it doesn't apply to the generated-sources dir. Either way the
+patch must use `-p0` paths relative to one of those roots.
+
 ## Prerequisites
 
 - `tar`, `gzip`, `patch`, `git` (all standard on macOS/Linux).
