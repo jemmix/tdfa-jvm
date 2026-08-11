@@ -326,14 +326,14 @@ public final class ScenarioLoader {
         }
         if (countValue instanceof TomlArray arr) {
             // rebar anchors each engine regex with ^...$ and matches in order.
-            // When unicode=true we enable UNICODE_CHARACTER_CLASS, so our
-            // \w/\d/\s/\b behavior matches java.util.regex — resolve as
-            // "java/hotspot" first to pick up Java-specific counts (e.g.
-            // char-based span counting vs re2's byte-based).
-            // When unicode=false we use ASCII classes — resolve as "re2".
-            String[] identities = unicode
-                    ? new String[]{"java/hotspot", "re2", ".*"}
-                    : new String[]{"re2", ".*"};
+            // Our engine is a re2j drop-in replacement but is codepoint-oriented
+            // and (with UNICODE_CHARACTER_CLASS) matches java.util.regex for
+            // \w/\d/\s/\b. We always resolve as "java/hotspot" first: upstream
+            // TOMLs have java/.* entries for most architectural divergences
+            // (codepoint vs byte spans, etc.). A few scenarios where re2j
+            // intentionally diverges from j.u.r (e.g. . matches \r, $ doesn't
+            // match before final line terminator) are patched in vendor/patches.
+            String[] identities = new String[]{"java/hotspot", "re2", ".*"};
             for (String identity : identities) {
                 for (int i = 0; i < arr.size(); i++) {
                     TomlTable t = arr.getTable(i);
