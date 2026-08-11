@@ -28,12 +28,13 @@ tasks.named('compileTestJava') {
 tasks.named('test') {
     useJUnitPlatform()
     systemProperty 'rebar.benchmarks.dir', rebarBenchmarksDir.absolutePath
-    // Use the VM backend for the tracer-bullet — ASM codegen per-regex is
-    // expensive when compiling hundreds of patterns. Swap to ASM once the
-    // baseline pass rate is known.
-    systemProperty 'tdfa.engine', 'VM'
+    // Match the library's actual default backend (ASM). The tracer-bullet
+    // originally pinned VM to sidestep ASM per-regex codegen cost when
+    // compiling hundreds of patterns; that's no longer needed and was masking
+    // ASM-specific bugs (the README positions ASM as the primary engine).
+    // Override on the command line with -Dtdfa.engine=VM if needed.
     jvmArgs '-Xmx2g'
-    // KNOWN: 48 of 359 rebar scenarios currently fail parity (real bugs —
+    // KNOWN: a handful of rebar scenarios currently fail parity (real bugs —
     // see TODO.md "Correctness" section). ignoreFailures keeps the migration
     // green while still surfacing the failures in IDE/CI reports. Drop once
     // the surfaced bugs are addressed.

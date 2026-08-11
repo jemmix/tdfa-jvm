@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.rebar.Scenario;
 import io.github.jemmix.tdfa.rebar.ScenarioLoader;
+import io.github.jemmix.tdfa.tdfa.Disambiguation;
 import io.github.jemmix.tdfa.vm.MatchResult;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -31,18 +32,31 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * rather than silently filtered — that way you can see at a glance which
  * scenarios our engine doesn't yet cover.
  *
+ * <p>Engine identity: rebar's {@code regex = [...]} multi-pattern inputs are
+ * folded into a single Perl-style alternation (preserving each pattern's
+ * capture groups), and the test compiles with {@link Disambiguation#PERL}
+ * (leftmost-first, like re2/re2j) on the default backend ({@link EngineFactory#DEFAULT},
+ * ASM unless {@code -Dtdfa.engine=VM}). Per-engine {@code count} entries are
+ * resolved in the {@code "re2"} identity first, falling back to {@code .*}.
+ * Scenario flag {@code case-insensitive} is applied via the {@code (?i)}
+ * inline flag. ASM-only failures (method-too-large etc.) automatically retry
+ * on the VM backend — logged via {@code ASM-FAIL} on stdout.
+ *
  * <p>Skipped for tracer-bullet reasons:
  * <ul>
- *   <li>model not in {count, count-spans} (others need infrastructure we don't have)</li>
- *   <li>haystack &gt; 2 KB (avoid OOM + ReDoS time bombs)</li>
- *   <li>regex &gt; 200 chars (mega-alternations like dictionary lookups)</li>
- *   <li>expected count has only per-engine overrides, no scalar default</li>
- *   <li>parser rejects the pattern (backreferences, lookaround, unsupported syntax)</li>
- *   <li>per-scenario time budget exceeded (100ms) — flagged for investigation</li>
+ *   <li>model not in {count, count-spans, count-captures, grep}
+ *       (regex-redux, grep-captures, compile need infrastructure we don't have)</li>
+ *   <li>haystack &gt; 200 KB (avoid OOM + ReDoS time bombs)</li>
+ *   <li>regex &gt; 2 000 chars (mega-alternations like dictionary lookups)</li>
+ *   <li>expected count has no entry matching our {@code "re2"} identity</li>
+ *   <li>haystack contains invalid UTF-8 (Java strings can't represent them)</li>
+ *   <li>parser rejects the pattern (Unicode property long-names, backrefs, lookaround)</li>
+ *   <li>per-scenario time budget exceeded (500 ms run / 300 ms compile)</li>
  * </ul>
  *
  * <p>Failures are real divergences between our engine and rebar's reference
  * results — see the {@code want} vs {@code got} counts in the failure message.
+ * See {@code TODO.md} "Correctness" section for the current triage.
  */
 class RebarScenarioParityTest {
 
@@ -94,22 +108,69 @@ class RebarScenarioParityTest {
         assumeTrue(hsBytes >= 0 && hsBytes <= MAX_HAYSTACK_BYTES,
                 "haystack too big (" + hsBytes + " bytes)");
 
-        // --- Compile (VM backend) with hard timeout ---
+        // --- Compile. rebar's "re2" identity is a Perl leftmost-first
+        //     automata engine, so we use PERL disambiguation (the same default
+        //     our public re2j Pattern uses at Pattern.java:93-94). The factory
+        //     is whatever -Dtdfa.engine resolves to (ASM by default — the
+        //     library's primary backend). Case-insensitivity is applied via
+        //     the (?i) inline flag, the same way our re2j Pattern does it
+        //     (Pattern.java:90).
+        //
+        //     ASM fallback: when the pattern produces a DFA big enough to
+        //     blow the JVM 65 KB method-size limit (e.g. the i787 keywords
+        //     alternation, the parol-veryl lexer), ASM throws
+        //     IllegalStateException→MethodTooLargeException. The result is
+        //     identical on the VM backend — only slower — so we retry there
+        //     instead of skipping. The underlying ASM splitting fix is
+        //     tracked in TODO.md ("Performance" section).
 
+        String flPat = s.caseInsensitive() ? "(?i)" + s.regex() : s.regex();
         long compileStart = System.nanoTime();
-        final Regex r;
+        EngineFactory factory = EngineFactory.DEFAULT;
+        Regex compiled = null;
         try {
-            r = withTimeout(COMPILE_TIMEOUT_MS, "compile", () -> Regex.compile(s.regex(), EngineFactory.VM));
+            final EngineFactory f0 = factory;
+            compiled = withTimeout(COMPILE_TIMEOUT_MS, "compile",
+                    () -> Regex.compile(flPat, f0, Disambiguation.PERL));
         } catch (TimeoutException e) {
             skipCount.incrementAndGet();
             assumeTrue(false, "COMPILE_TIMEOUT " + COMPILE_TIMEOUT_MS + "ms");
             return;
         } catch (Exception e) {
+            // ASM failures arrive as ExecutionException(IllegalStateException)
+            // via the FutureTask wrapper; recurse to find the ASM backend
+            // sentinel. We retry on VM below if it looks like an ASM-only
+            // problem (method-too-large etc.); the VM and ASM backends
+            // produce identical match results, only speed differs.
+            if (!looksLikeAsmOnlyFailure(e)) {
+                skipCount.incrementAndGet();
+                assumeTrue(false, "compile failed: " + e.getClass().getSimpleName()
+                        + (e.getMessage() != null ? ": " + e.getMessage() : ""));
+                return;
+            }
+            try {
+                final EngineFactory f1 = EngineFactory.VM;
+                compiled = withTimeout(COMPILE_TIMEOUT_MS, "compile-vm",
+                        () -> Regex.compile(flPat, f1, Disambiguation.PERL));
+                factory = EngineFactory.VM;
+            } catch (TimeoutException te) {
+                skipCount.incrementAndGet();
+                assumeTrue(false, "COMPILE_TIMEOUT on ASM+VM fallback");
+                return;
+            } catch (Exception vmE) {
+                skipCount.incrementAndGet();
+                assumeTrue(false, "compile failed on both ASM and VM: "
+                        + vmE.getClass().getSimpleName()
+                        + (vmE.getMessage() != null ? ": " + vmE.getMessage() : ""));
+                return;
+            }
+        }
+        if (compiled == null) {  // shouldn't happen; defensive
             skipCount.incrementAndGet();
-            assumeTrue(false, "compile failed: " + e.getClass().getSimpleName()
-                    + (e.getMessage() != null ? ": " + e.getMessage() : ""));
+            assumeTrue(false, "compile returned null");
             return;
         }
+        final Regex r = compiled;
         long compileMs = (System.nanoTime() - compileStart) / 1_000_000;
 
         // --- Resolve haystack (not budgeted — should be I/O only) ---
@@ -142,6 +203,10 @@ class RebarScenarioParityTest {
             System.out.printf("SLOW     %-60s compile=%dms  run=%dms  /%s/%n",
                     s.fullName(), compileMs, runMs, abbrev(s.regex(), 50));
         }
+        if (factory == EngineFactory.VM && EngineFactory.DEFAULT == EngineFactory.ASM) {
+            System.out.printf("ASM-FAIL %-60s (fell back to VM)  /%s/%n",
+                    s.fullName(), abbrev(s.regex(), 50));
+        }
 
         // --- Assert ---
 
@@ -156,6 +221,25 @@ class RebarScenarioParityTest {
                         haystack.contains(s.regex().length() <= 100 ? s.regex() : s.regex().substring(0, 50)),
                         haystack.substring(0, Math.min(40, haystack.length())).replace("\n", "\\n").replace("\r", "\\r"))
                 .isEqualTo(s.expectedCount());
+    }
+
+    /**
+     * Does {@code e} look like an ASM-backend-only failure (method-too-large
+     * etc.) that the VM backend can recover from? We unwrap
+     * {@link java.util.concurrent.ExecutionException} from the FutureTask
+     * wrapper, then look for the ASM backend's sentinel message or
+     * {@code org.objectweb.asm.MethodTooLargeException} in the cause chain.
+     */
+    private static boolean looksLikeAsmOnlyFailure(Throwable e) {
+        Throwable c = e;
+        for (int i = 0; i < 6 && c != null; i++) {
+            String name = c.getClass().getName();
+            if (name.equals("org.objectweb.asm.MethodTooLargeException")) return true;
+            String msg = c.getMessage();
+            if (msg != null && msg.contains("ASM backend failed")) return true;
+            c = c.getCause();
+        }
+        return false;
     }
 
     /**
@@ -234,7 +318,12 @@ class RebarScenarioParityTest {
             if (m == null) break;
             n++;
             int end = m.end(0);
-            pos = (end <= pos) ? pos + 1 : end;
+            // Empty-match safe advance: if the match consumed no chars (e.g.
+            // `$`, `(?=)`, `a*` on a non-matching position), step past it
+            // so we don't loop forever — and so a leftmost match reported
+            // ahead of `pos` isn't counted twice (once for the start search
+            // that finds it, once for the next find at the same end pos).
+            pos = (end <= m.start(0)) ? end + 1 : end;
         }
         return n;
     }
@@ -247,7 +336,7 @@ class RebarScenarioParityTest {
             if (m == null) break;
             sum += m.end(0) - m.start(0);
             int end = m.end(0);
-            pos = (end <= pos) ? pos + 1 : end;
+            pos = (end <= m.start(0)) ? end + 1 : end;
         }
         return sum;
     }
@@ -263,18 +352,29 @@ class RebarScenarioParityTest {
                 if (m.start(g) >= 0) n++;
             }
             int end = m.end(0);
-            pos = (end <= pos) ? pos + 1 : end;
+            pos = (end <= m.start(0)) ? end + 1 : end;
         }
         return n;
     }
 
-    /** Count haystack lines that contain at least one match (rebar's 'grep' model). */
+    /**
+     * Count haystack lines that contain at least one match (rebar's 'grep'
+     * model). Matches MODELS.md §grep pseudo-code: iterate on {@code \n}, strip
+     * a trailing {@code \r} from CRLF-terminated lines, then ask the engine
+     * for any match within the line (line terminator excluded).
+     */
     private static long grepLines(Regex r, String hs) {
         long matched = 0;
         int lineStart = 0;
         for (int i = 0; i <= hs.length(); i++) {
             if (i == hs.length() || hs.charAt(i) == '\n') {
-                String line = hs.substring(lineStart, i);
+                int lineEnd = i;
+                // Strip a trailing \r so CRLF-terminated lines match the same
+                // way LF-terminated lines do.
+                if (lineEnd > lineStart && hs.charAt(lineEnd - 1) == '\r') {
+                    lineEnd--;
+                }
+                String line = hs.substring(lineStart, lineEnd);
                 MatchResult m = null;
                 try {
                     m = r.find(line, 0);
