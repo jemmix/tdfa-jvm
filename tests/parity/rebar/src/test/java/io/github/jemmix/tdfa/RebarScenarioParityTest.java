@@ -4,6 +4,7 @@ import io.github.jemmix.tdfa.re2j.Matcher;
 import io.github.jemmix.tdfa.re2j.Pattern;
 import io.github.jemmix.tdfa.rebar.Scenario;
 import io.github.jemmix.tdfa.rebar.ScenarioLoader;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -11,6 +12,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -88,6 +91,22 @@ class RebarScenarioParityTest {
     static final AtomicInteger failCount = new AtomicInteger();
     static final AtomicInteger skipCount = new AtomicInteger();
 
+    /** Per-test timing record for the end-of-suite summary. */
+    record Timing(String name, long compileMs, long runMs, String outcome) {
+        long totalMs() { return compileMs + runMs; }
+    }
+
+    /** All timings; synchronized because parameterized tests can run in parallel. */
+    static final List<Timing> timings = java.util.Collections.synchronizedList(new ArrayList<>());
+
+    /** Skip-reason counters for the summary. */
+    static final java.util.concurrent.ConcurrentHashMap<String, AtomicInteger> skipBuckets =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    static void countSkip(String reason) {
+        skipBuckets.computeIfAbsent(reason.intern(), k -> new AtomicInteger()).incrementAndGet();
+    }
+
     static {
         String dir = System.getProperty("rebar.benchmarks.dir");
         benchmarksDir = Paths.get(dir);
@@ -112,13 +131,16 @@ class RebarScenarioParityTest {
         // (bespoke embedded-regex harness, ~1–2 scenarios — see PARITY-PLAN §4.3).
         Set<String> supportedModels = Set.of("count", "count-spans", "count-captures",
                 "grep", "compile", "grep-captures");
-        // Budgets: per PARITY-PLAN Phase 2.3/3.1. The caps cover every in-scope
-        // haystack (largest is a few MB); the 10 s run timeout matches rebar's
-        // own ceiling. One test runs at a time (JUnit 5 default) under -Xmx4g.
-        final long COMPILE_TIMEOUT_MS = 5_000;      // regex compilation wall-clock
-        final long RUN_TIMEOUT_MS    = 10_000;      // match execution wall-clock
-        final int  MAX_HAYSTACK_BYTES = 16_000_000; // covers all in-scope haystacks
-        final int  MAX_REGEX_LEN = 32_000;
+        // Budgets: radically relaxed (24×/60× the prior 5 s/10 s ceilings) so the
+        // suite surfaces real bugs instead of timing out on legitimate-but-slow
+        // compiles/runs. The 80 MB haystack cap covers every in-scope haystack
+        // (largest is 39 MB); the 2 MB regex cap covers the longest in-scope
+        // dictionary alternation (~57 KB). The end-of-suite summary prints the
+        // slowest tests so we can see what actually needed the headroom.
+        final long COMPILE_TIMEOUT_MS = 120_000;      // regex compilation wall-clock (2 min)
+        final long RUN_TIMEOUT_MS    = 600_000;       // match execution wall-clock (10 min)
+        final int  MAX_HAYSTACK_BYTES = 80_000_000;   // covers all in-scope haystacks (largest 39 MB)
+        final int  MAX_REGEX_LEN = 2_000_000;         // covers all in-scope regex specs (largest ~57 KB)
 
         // --- Filter: skip cleanly via assumeTrue so IDE shows gray "skipped" ---
 
@@ -127,19 +149,45 @@ class RebarScenarioParityTest {
         // tractable for a Java regex library" — see the class javadoc and
         // docs/PARITY-PLAN.md. Skips ~245 multi-pattern / rust-only /
         // hyperscan-only / aho-corasick / dictionary scenarios.
-        assumeTrue(enginesIncludeJava(s),
-                "java not in rebar engines list (out of scope for a Java regex lib)");
+        if (!enginesIncludeJava(s)) {
+            countSkip("scope:java-not-in-engines");
+            skipCount.incrementAndGet();
+            timings.add(new Timing(s.fullName(), 0, 0, "SKIP:scope"));
+            assumeTrue(false, "java not in rebar engines list (out of scope for a Java regex lib)");
+            return;
+        }
 
-        assumeTrue(supportedModels.contains(s.model()),
-                "unsupported model: " + s.model());
-        assumeTrue(s.expectedCount() != Long.MIN_VALUE,
-                "no scalar expected count (per-engine overrides only)");
-        assumeTrue(s.regex() != null && s.regex().length() <= MAX_REGEX_LEN,
-                "regex too long (" + (s.regex() == null ? 0 : s.regex().length()) + " chars)");
+        if (!supportedModels.contains(s.model())) {
+            countSkip("unsupported-model:" + s.model());
+            skipCount.incrementAndGet();
+            timings.add(new Timing(s.fullName(), 0, 0, "SKIP:model:" + s.model()));
+            assumeTrue(false, "unsupported model: " + s.model());
+            return;
+        }
+        if (s.expectedCount() == Long.MIN_VALUE) {
+            countSkip("no-scalar-count");
+            skipCount.incrementAndGet();
+            timings.add(new Timing(s.fullName(), 0, 0, "SKIP:no-scalar-count"));
+            assumeTrue(false, "no scalar expected count (per-engine overrides only)");
+            return;
+        }
+        if (s.regex() == null || s.regex().length() > MAX_REGEX_LEN) {
+            countSkip("regex-too-long");
+            skipCount.incrementAndGet();
+            timings.add(new Timing(s.fullName(), 0, 0, "SKIP:regex-too-long"));
+            assumeTrue(false, "regex too long ("
+                    + (s.regex() == null ? 0 : s.regex().length()) + " chars)");
+            return;
+        }
 
         long hsBytes = haystackByteSize(s);
-        assumeTrue(hsBytes >= 0 && hsBytes <= MAX_HAYSTACK_BYTES,
-                "haystack too big (" + hsBytes + " bytes)");
+        if (hsBytes < 0 || hsBytes > MAX_HAYSTACK_BYTES) {
+            countSkip("haystack-too-big");
+            skipCount.incrementAndGet();
+            timings.add(new Timing(s.fullName(), 0, 0, "SKIP:haystack-too-big:" + hsBytes));
+            assumeTrue(false, "haystack too big (" + hsBytes + " bytes)");
+            return;
+        }
 
         // --- Compile via the re2j-compat API (Pattern/Matcher). Flags are
         //     translated to inline prefixes by Pattern.compile — (?i) for
@@ -164,12 +212,21 @@ class RebarScenarioParityTest {
             compiled = withTimeout(COMPILE_TIMEOUT_MS, "compile",
                     () -> Pattern.compile(s.regex(), fl, f0));
         } catch (TimeoutException e) {
+            countSkip("COMPILE_TIMEOUT");
             skipCount.incrementAndGet();
+            timings.add(new Timing(s.fullName(),
+                    (System.nanoTime() - compileStart) / 1_000_000, 0, "SKIP:COMPILE_TIMEOUT"));
+            System.out.printf("TIMEOUT  %-60s compile>%dms  /%s/%n",
+                    s.fullName(), COMPILE_TIMEOUT_MS, abbrev(s.regex(), 50));
             assumeTrue(false, "COMPILE_TIMEOUT " + COMPILE_TIMEOUT_MS + "ms");
             return;
         } catch (Exception e) {
             if (!looksLikeAsmOnlyFailure(e)) {
+                countSkip("compile-failed:" + e.getClass().getSimpleName());
                 skipCount.incrementAndGet();
+                timings.add(new Timing(s.fullName(),
+                        (System.nanoTime() - compileStart) / 1_000_000, 0,
+                        "SKIP:compile-failed:" + e.getClass().getSimpleName()));
                 assumeTrue(false, "compile failed: " + e.getClass().getSimpleName()
                         + (e.getMessage() != null ? ": " + e.getMessage() : ""));
                 return;
@@ -181,11 +238,18 @@ class RebarScenarioParityTest {
                         () -> Pattern.compile(s.regex(), fl, f1));
                 factory = EngineFactory.VM;
             } catch (TimeoutException te) {
+                countSkip("COMPILE_TIMEOUT(ASM+VM)");
                 skipCount.incrementAndGet();
+                timings.add(new Timing(s.fullName(),
+                        (System.nanoTime() - compileStart) / 1_000_000, 0, "SKIP:COMPILE_TIMEOUT(VM)"));
                 assumeTrue(false, "COMPILE_TIMEOUT on ASM+VM fallback");
                 return;
             } catch (Exception vmE) {
+                countSkip("compile-failed-both:" + vmE.getClass().getSimpleName());
                 skipCount.incrementAndGet();
+                timings.add(new Timing(s.fullName(),
+                        (System.nanoTime() - compileStart) / 1_000_000, 0,
+                        "SKIP:compile-failed-both:" + vmE.getClass().getSimpleName()));
                 assumeTrue(false, "compile failed on both ASM and VM: "
                         + vmE.getClass().getSimpleName()
                         + (vmE.getMessage() != null ? ": " + vmE.getMessage() : ""));
@@ -193,7 +257,10 @@ class RebarScenarioParityTest {
             }
         }
         if (compiled == null) {  // shouldn't happen; defensive
+            countSkip("compile-null");
             skipCount.incrementAndGet();
+            timings.add(new Timing(s.fullName(),
+                    (System.nanoTime() - compileStart) / 1_000_000, 0, "SKIP:compile-null"));
             assumeTrue(false, "compile returned null");
             return;
         }
@@ -206,7 +273,9 @@ class RebarScenarioParityTest {
         try {
             haystack = s.resolveHaystack(benchmarksDir);
         } catch (Exception e) {
+            countSkip("haystack-resolve-failed");
             skipCount.incrementAndGet();
+            timings.add(new Timing(s.fullName(), compileMs, 0, "SKIP:haystack-resolve"));
             assumeTrue(false, "haystack resolve failed: " + e.getMessage());
             return;
         }
@@ -218,7 +287,10 @@ class RebarScenarioParityTest {
         try {
             actual = withTimeout(RUN_TIMEOUT_MS, "run", () -> runModel(s, p, haystack));
         } catch (TimeoutException e) {
+            countSkip("RUN_TIMEOUT");
             skipCount.incrementAndGet();
+            long runMs = (System.nanoTime() - runStart) / 1_000_000;
+            timings.add(new Timing(s.fullName(), compileMs, runMs, "SKIP:RUN_TIMEOUT"));
             System.out.printf("TIMEOUT  %-60s compile=%dms  run>%dms  /%s/%n",
                     s.fullName(), compileMs, RUN_TIMEOUT_MS, abbrev(s.regex(), 50));
             assumeTrue(false, "RUN_TIMEOUT " + RUN_TIMEOUT_MS + "ms (compile was " + compileMs + "ms)");
@@ -237,17 +309,80 @@ class RebarScenarioParityTest {
 
         // --- Assert ---
 
-        if (actual == s.expectedCount()) {
+        boolean passed = actual == s.expectedCount();
+        if (passed) {
             passCount.incrementAndGet();
         } else {
             failCount.incrementAndGet();
         }
+        timings.add(new Timing(s.fullName(), compileMs, runMs,
+                passed ? "PASS" : "FAIL:want=" + s.expectedCount() + ",got=" + actual));
         assertThat(actual)
                 .as("match count for /%s/ on %d-byte haystack (model=%s); compile=%dms run=%dms; hs contains regex? %s; first 40 chars: %s",
                         s.regex(), haystack.length(), s.model(), compileMs, runMs,
                         haystack.contains(s.regex().length() <= 100 ? s.regex() : s.regex().substring(0, 50)),
                         haystack.substring(0, Math.min(40, haystack.length())).replace("\n", "\\n").replace("\r", "\\r"))
                 .isEqualTo(s.expectedCount());
+    }
+
+    /**
+     * End-of-suite summary printed once all parameterized invocations finish.
+     * Surfaces the slowest tests and the skip-reason histogram so the triage
+     * in {@code docs/REBAR-PARITY-PLAN.md} can be kept in sync with reality.
+     */
+    @AfterAll
+    static void printSummary() {
+        System.out.println();
+        System.out.println("╔══════════════════════════════════════════════════════════════════════╗");
+        System.out.printf("║ rebar parity: pass=%-4d  fail=%-4d  skip=%-4d   total=%-4d%n",
+                passCount.get(), failCount.get(), skipCount.get(),
+                passCount.get() + failCount.get() + skipCount.get());
+        System.out.println("╚══════════════════════════════════════════════════════════════════════╝");
+
+        // Skip-reason histogram
+        if (!skipBuckets.isEmpty()) {
+            System.out.println();
+            System.out.println("── Skip reasons ──────────────────────────────────────────────");
+            skipBuckets.entrySet().stream()
+                    .sorted(java.util.Map.Entry.<String, AtomicInteger>comparingByValue(
+                            java.util.Comparator.comparingInt(AtomicInteger::get)).reversed())
+                    .forEach(e -> System.out.printf("  %5d  %s%n", e.getValue().get(), e.getKey()));
+        }
+
+        // Top-20 slowest tests by compile+run
+        List<Timing> sorted = new ArrayList<>(timings);
+        sorted.sort(Comparator.comparingLong(Timing::totalMs).reversed());
+        System.out.println();
+        System.out.println("── Top 20 slowest (compile + run, ms) ─────────────────────────");
+        for (int i = 0; i < Math.min(20, sorted.size()); i++) {
+            Timing t = sorted.get(i);
+            System.out.printf("  %4dms  c=%-5d r=%-6d  %-50s  [%s]%n",
+                    t.totalMs(), t.compileMs(), t.runMs(),
+                    abbrev(t.name(), 50), t.outcome());
+        }
+
+        // Histogram of total time (compile + run)
+        System.out.println();
+        System.out.println("── Timing histogram (compile + run, by outcome) ──────────────");
+        String[] buckets = {"<1ms", "1-10ms", "10-100ms", "100ms-1s", "1-10s", "10-60s", ">60s"};
+        int[][] counts = new int[buckets.length][2]; // [bucket][pass/rest]
+        for (Timing t : sorted) {
+            long ms = t.totalMs();
+            int b = ms < 1 ? 0 : ms < 10 ? 1 : ms < 100 ? 2 : ms < 1000 ? 3
+                    : ms < 10_000 ? 4 : ms < 60_000 ? 5 : 6;
+            counts[b]["PASS".equals(t.outcome()) ? 0 : 1]++;
+        }
+        System.out.printf("  %-12s  %6s  %6s%n", "bucket", "PASS", "other");
+        for (int i = 0; i < buckets.length; i++) {
+            if (counts[i][0] + counts[i][1] > 0) {
+                System.out.printf("  %-12s  %6d  %6d%n", buckets[i], counts[i][0], counts[i][1]);
+            }
+        }
+        long totalMs = sorted.stream().mapToLong(Timing::totalMs).sum();
+        long compileMs = sorted.stream().mapToLong(Timing::compileMs).sum();
+        long runMs = sorted.stream().mapToLong(Timing::runMs).sum();
+        System.out.printf("  total: compile=%dms (%.1fs), run=%dms (%.1fs), wall=%dms (%.1fs)%n",
+                compileMs, compileMs / 1000.0, runMs, runMs / 1000.0, totalMs, totalMs / 1000.0);
     }
 
     /**

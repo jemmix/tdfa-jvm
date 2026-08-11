@@ -294,10 +294,11 @@ public final class ScenarioLoader {
             }
             if (t.isString("path")) {
                 boolean trim = boolOr(t.getBoolean("trim"), false);
+                boolean utf8Lossy = boolOr(t.getBoolean("utf8-lossy"), false);
                 Long ls = t.getLong("line-start");
                 Long le = t.getLong("line-end");
                 return new Scenario.HaystackSpec.FromPath(
-                        t.getString("path"), trim, repeat, prepend, append,
+                        t.getString("path"), trim, utf8Lossy, repeat, prepend, append,
                         ls != null ? ls.intValue() : null,
                         le != null ? le.intValue() : null);
             }

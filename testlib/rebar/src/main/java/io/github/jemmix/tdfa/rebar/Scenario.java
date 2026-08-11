@@ -41,7 +41,7 @@ public record Scenario(
                 if (contents == null) throw new NullPointerException("contents");
             }
         }
-        record FromPath(String path, boolean trim, Long repeat,
+        record FromPath(String path, boolean trim, boolean utf8Lossy, Long repeat,
                         String prepend, String append,
                         Integer lineStart, Integer lineEnd) implements HaystackSpec {
             public FromPath {
@@ -54,17 +54,45 @@ public record Scenario(
      * Materialize the haystack content, resolving path references against the dir.
      * Applies {@code trim}, {@code repeat}, {@code prepend}, {@code append},
      * {@code line-start}, {@code line-end} transformations per rebar's FORMAT.md.
+     *
+     * <p>When {@code utf8-lossy = true} was set on a path-reference haystack,
+     * the file is decoded with U+FFFD replacement for invalid UTF-8 byte
+     * sequences (matching rebar's {@code bstr::decode_bytes_lossy} semantics).
+     * Files marked lossy in the in-scope corpus: {@code wild/cpython-226484e4.py},
+     * {@code imported/lh3lh3-reb-howto.txt}.
      */
     public String resolveHaystack(java.nio.file.Path benchmarksDir) throws java.io.IOException {
         if (haystackSpec instanceof HaystackSpec.Inline i) {
             return applyTransforms(i.contents(), false, i.repeat(), i.prepend(), i.append(), null, null);
         } else if (haystackSpec instanceof HaystackSpec.FromPath p) {
             var file = benchmarksDir.resolve("haystacks").resolve(p.path());
-            String raw = java.nio.file.Files.readString(file);
+            String raw = p.utf8Lossy() ? readStringLossy(file) : java.nio.file.Files.readString(file);
             return applyTransforms(raw, p.trim(), p.repeat(), p.prepend(), p.append(),
                     p.lineStart(), p.lineEnd());
         } else {
             throw new IllegalStateException("unknown haystack spec: " + haystackSpec);
+        }
+    }
+
+    /**
+     * Read {@code file} as UTF-8 with invalid byte sequences replaced by
+     * U+FFFD (matching rebar's {@code utf8-lossy = true} semantics — see
+     * FORMAT.md §Haystacks). Used for in-scope corpus files like
+     * {@code wild/cpython-226484e4.py} and {@code imported/lh3lh3-reb-howto.txt}
+     * that contain legacy Latin-1 / ISO-8859 octets in comments.
+     */
+    private static String readStringLossy(java.nio.file.Path file) throws java.io.IOException {
+        byte[] bytes = java.nio.file.Files.readAllBytes(file);
+        // CharsetDecoder is not thread-safe; create a fresh one per call.
+        java.nio.charset.CharsetDecoder decoder = java.nio.charset.StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPLACE)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPLACE);
+        try {
+            return decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString();
+        } catch (java.nio.charset.CharacterCodingException e) {
+            // CodingErrorAction.REPLACE makes this practically unreachable,
+            // but CharacterCodingException is checked so we must handle it.
+            throw new java.io.IOException("lossy UTF-8 decode failed for " + file, e);
         }
     }
 

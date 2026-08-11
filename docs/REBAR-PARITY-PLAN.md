@@ -7,9 +7,12 @@ self-contained commits make it possible to tell which change moved the needle
 and to roll back the ones that didn't. One phase item per commit (or finer);
 never accumulate a phase's worth of work into a single drop.
 
-Suite runs in **~3 seconds** for the 45 runnable cases (was 9 s for 114
-before the scope cut, and 12+ minutes before per-case virtual-thread
-timeouts landed in `08a83ba`).
+Suite runs in **~21 min wall** for 359 cases (108 pass, 2 fail, 4 in-scope
+COMPILE_TIMEOUT, 245 out-of-scope) under the radical relaxation
+(`COMPILE_TIMEOUT_MS` = 2 min, `RUN_TIMEOUT_MS` = 10 min). Was 29 s when
+most cases skipped on the old 5 s / 10 s / 16 MB / 32 KB ceilings. The
+end-of-suite `@AfterAll` summary prints the slowest tests so the perf
+bombs are visible — see Phase 6.1 for the fix path.
 
 ## Scope (locked 2025-08)
 
@@ -32,27 +35,43 @@ diverges from our actual output — `test/unicode/utf8/dot-matches-byte`
 record our count under an explicit `{ engine = 're2', count = 1 }` entry
 (`vendor/patches/rebar/01-dot-matches-byte-codepoint.patch`).
 
-## Current breakdown: 359 cases
+## Current breakdown: 359 cases (post time-out/cap relaxation, 2025-08)
 
-| Bucket          | Count | Meaning                                                            |
-|-----------------|-------|-------------------------------------------------------------------|
-| PASS            | 72    | Engine produces correct count                                     |
-| FAIL            | 4     | Real semantic divergence from rebar's expected count              |
-| SKIP — scope    | 245   | `java/hotspot` not in `engines` list (see Scope above)            |
-| SKIP — other    | 38    | Filtered out — see "skip categories" below                        |
+| Bucket              | Count | Meaning                                                            |
+|---------------------|------:|-------------------------------------------------------------------|
+| PASS                | 108   | Engine produces correct count                                     |
+| FAIL                |   2   | Real semantic divergence from rebar's expected count              |
+| SKIP — scope        | 245   | `java/hotspot` not in `engines` list (see Scope above)            |
+| SKIP — COMPILE_TIMEOUT |   4 | Bounded-repeat `[\s\S]{0,100}` × 2, date alternation, AWS-keys `.*?` — all > 2 min compile |
 
-The 38 in-scope skips break down as 34 `HAYSTACK_TOO_BIG` (16 MB cap — the
-remaining cases are 32 MB+ files out-of-scope anyway), 3 `COMPILE_TIMEOUT`
-(`\p{L}{256}`-class state explosion), and 1 `REGEX_TOO_LONG`. The skip
-reasons are surfaced in each test's `Assumption failed: …` message so
-they're visible in IDE/CI rather than silently filtered.
+**In-scope pass rate: 108 / 114 = 94.7 %** (was 64.9 % before the timeout/cap
+relaxation). Suite takes ~21 min wall (was 29 s — the headroom got used).
 
-## The 4 failures
+The 4 compile timeouts are:
 
-Two are the original tracer-bullet bugs; two were surfaced by the Phase 3
-cap bumps (previously hidden by the 200 KB haystack ceiling).
+| Scenario | Regex shape | Wall |
+|---|---|---|
+| `curated/03-date/ascii` | `((19\d\d01[0-3]\d[0-5]\d[0-5]\d[0-5]\d\|20\d\d01...)` — alternation × bounded quantifier | > 2 min, killed |
+| `curated/03-date/unicode` | same, with `unicode = true` | > 2 min, killed |
+| `curated/09-aws-keys/full` | `((?:ASIA\|AKIA\|AROA\|AIDA)([A-Z0-7]{16}))...*?\n^...` — `.*?` over 32 MB + multiline | > 2 min, ASM + VM both killed |
+| `curated/10-bounded-repeat/context` | `[A-Za-z]{10}\s+[\s\S]{0,100}Result[\s\S]{0,100}\s+...` — bounded `[\s\S]{0,100}` × 2 | > 2 min, killed |
+
+All four are DFA-state explosions (the bounded `[\s\S]{0,100}` alone is ~10 K
+states per repetition site). They need DFA minimization or an AST-budget
+fast-fail at parse time — see Phase 6 below.
 
 ## The 2 failures
+
+Two previous "real bug" failures have been resolved:
+
+- ~~**`\w` / `\b` ASCII-only (2 tests)**~~ — the test now enables
+  `UNICODE_CHARACTER_CLASS` when `unicode = true` is set in the scenario
+  (commit `c21c3a2`); `\w` / `\b` build from the provider's `L|N` categories
+  plus `_`. The residual ~0.05 % divergence vs rebar's `java.*` baseline
+  (newer Unicode DB) is patched in
+  `vendor/patches/rebar/03-unicode-character-class.patch`.
+- ~~**`\p{L}{N}` base-field overflow**~~ — split `base` into a separate
+  `stateBase[]` array (commit `70f21dd`).
 
 ### A. PERL `\b` + alternation priority (1 test)
 
@@ -92,41 +111,21 @@ folds like `s ↔ ſ` (U+017F). re2j/re2 do Unicode simple case folding.
 **Fix**: extend `UnicodeDataProvider` with a `caseFolds(codepoint)` API and
 use it in those two parser paths.
 
-### C. `\w` / `\b` ASCII-only (2 tests) — surfaced by Phase 3 cap bump
-
-```
-curated/08-words/all-russian       want=107391  got=529    /\b\w+\b/
-curated/08-words/long-russian      want=5481    got=12     /\b\w{12,}\b/
-```
-
-**Root cause**: `Parser.java:761` hard-codes `\w` as `[_0-9A-Za-z]`. re2 in
-UTF-8 mode (which rebar uses) treats `\w` as Unicode word runes. Fix: build
-`\w` from the provider's `L|N` categories + `_`.
-
-### D. `\p{L}{N}` base-field overflow — **FIXED**
-
-~~`\p{L}{256}` returned 0 matches because `stateMeta` packed the range-base
-into only 15 bits (max 32767), overflowing at state 24 (24×1369 ranges).~~
-Fixed by splitting `base` into a separate `stateBase[]` array (full 32-bit
-range). Both `unicode-compile` and `unicode-search` now pass; the search
-variant's codepoint-vs-byte span divergence (256 vs 512) is patched in the
-vendored corpus (`02-unicode-spans-codepoint.patch`).
-
 ---
 
-## Skip categories (69 in-scope skips)
+## Skip categories (post relaxation, 4 in-scope skips)
 
 | Reason                  | Count | Notes                                              |
 |-------------------------|------:|----------------------------------------------------|
-| `HAYSTACK_TOO_BIG`      |    52 | Cap is 200 KB; most are 1–10 MB files              |
-| `UNSUPPORTED_MODEL`     |    13 | `compile`, `grep-captures`, `regex-redux`           |
-| `REGEX_TOO_LONG`        |     3 | Cap is 2 KB; dictionary mega-alternations          |
-| `COMPILE_TIMEOUT`       |     1 | `\p{L}{256}` — 510 ms on VM                         |
+| `COMPILE_TIMEOUT`       |     4 | see table above — bounded-repeat `[\s\S]{0,100}` × 2, date alternation, AWS-keys `.*?` |
 
-(The 245 out-of-scope scenarios are not counted here — see the Scope section
-above. If a future Phase reopens them, e.g. by supporting multi-pattern
-`grep-captures` for Java, the scope filter would lift for those scenarios
-automatically.)
+The 245 out-of-scope scenarios (`java/hotspot` not in `engines`) are not a
+target — see the Scope section above. Every in-scope scenario now runs to
+completion except for the 4 compile bombs; the 2 real bugs surface as
+failures, not skips. The radical relaxation is captured by the test's
+end-of-suite `@AfterAll` summary, which prints a skip-reason histogram, a
+top-20 slowest list, and a compile/run/wall total — copy-paste that into
+this section when the numbers move.
 
 ---
 
@@ -138,27 +137,29 @@ engine bugs the parity test surfaces) but infrastructure-skip causes go to
 zero, or to a small, documented set we accept. The 245 out-of-scope
 scenarios are not a target — see the Scope section above.
 
-## Where the bombs are today
+**Status (2025-08):** 108/114 in-scope pass (94.7 %), 2 fail (engine bugs),
+4 skip on COMPILE_TIMEOUT. Infrastructure skips are gone — only the 4
+compile bombs remain. The path to "100 % in-scope green" is Phase 5 + 6
+below; the path to "100 % of all 359" additionally requires reopening the
+locked scope (Phase 7).
 
-Profiled directly (not from the test report, which under-reports because the
-filters hide things). Counts reflect in-scope scenarios only — most of the
-pre-scope-cut bombs (`noseyparker`, the big `wild/*` alternations, the
-majority of the >200 KB haystack cases) are now out of scope and not listed
-here.
+## Where the bombs are today (post relaxation)
+
+Profiled from the `@AfterAll` summary printed at the end of
+`./gradlew :tests:parity:rebar:test`. Counts reflect in-scope scenarios only
+— the 245 out-of-scope scenarios are excluded by the scope filter (Scope
+section above).
 
 | Class | Repro | Cost today | Root cause |
 |---|---|---|---|
-| **Compile: alternation under `{N}`** | `(a\|b\|c\|...\|z){50}` | **1.5 s**, 1301 DFA states | Tnfa expands the repetition × alternatives; Tdfa determinization builds 25× the NFA's states |
-| **Compile: `\p{...}` under `{N}`** | `\p{L}{5}` | ASM MethodTooLarge; `\p{L}{256}` is 510 ms on VM | ASM backend inlines every range check (`emitDfaDispatch:797`), `\p{L}` has ~400 Unicode ranges → ~30 KB bytecode per state |
-| **Compile: any wide class + repetition** | i787-keywords, parol-veryl | ASM MethodTooLarge (~11 scenarios) | `emitDfaDispatch` design — VM fallback already in place |
-| **Compile: long-form Unicode property** | `\p{Letter}`, `\p{gc=Letter}`, `\p{math}` | Parse error | Parser only knows 1-/2-letter aliases, not the long names |
-| **Run: O(n²) `find()` on no-match** | `opt/nfa-sparse/small-repeated-class-{bytes,unicode}` | ~30 s on 92 KB haystack, >5 s on most `curated/06-cloud-flare-redos` shapes | `TdfaRunner.runStringFindFast:227` and `runStringExtractFast:252` restart the DFA from every position; same shape in ASM `TdfaAsmBackend.emitRunCore:510` |
-| **Memory: large haystacks** | 52 in-scope scenarios over the 200 KB cap | Skipped today | The cap is conservative — 2 GB heap can easily hold the largest *tested* in-scope haystack. The real risk is `repeat = N` in the spec blowing the resolved size |
-| **Models** | 13 in-scope scenarios | Skipped today | `compile`, `grep-captures`, `regex-redux` not implemented in the harness |
+| **Run: O(n²) `find()` on dense matches** | `[a-zA-Z]+ing` on 16 MB leipzig corpus (78 K matches) | **249 s** (was 167 s, variance is GC) | `TdfaRunner.runStringExtractFast:368` — the inner loop walks from each `startSearch` all the way to `to` looking for the longest match; with dense matches `Matcher.find()` is called O(n) times → O(n²) total. The multi-state fix from Phase 2.1 only short-circuits the *no-match* pre-check; the *extract* path is still O(n²). Same shape in `ing-whitespace` (182 s), `quotes-bounded` (33 s), `i13-subset-regex/*` (8–20 s), `tom-sawyer/*` (5–13 s). |
+| **Compile: alternation under `{N}` / bounded `[\s\S]{0,100}`** | `curated/12-dictionary/single` (57 K-char alternation) | **120 s compile** | Tnfa expands the repetition × alternatives; Tdfa determinization builds N× the NFA's states |
+| **Compile: bounded-repeat state explosion** | `curated/03-date/{ascii,unicode}`, `curated/09-aws-keys/full`, `curated/10-bounded-repeat/context` | **>2 min, killed** | Bounded `[\s\S]{0,100}` × 2 ≈ 10 K DFA states per site; alternation × bounded quantifier in the date regex. ASM MethodTooLarge triggers VM fallback, VM keeps expanding. |
+| **Compile: `\p{...}` under `{N}`** | `\p{L}{256}` | 2.6 s compile on ASM (was 510 ms on VM); ASM table-scan dispatch (Phase 2.2 fix) keeps it from MethodTooLarge | Same shape as above; the ASM dispatch fixed the bytecode-limit symptom, not the state-count cost. |
 
-The smallest bucket of "real work" is making the test infra robust; the biggest
-single perf win is the O(n²) `find()` fix; the biggest *correctness* win is the
-PERL `\b` + alternation priority bug.
+The smallest correctness win is the Unicode case-folding bug; the biggest
+*single* perf win is the O(n²) extract fix (Phase 6.1); the biggest *scope*
+win is reopening the 245 locked scenarios (Phase 7).
 
 ---
 
@@ -410,40 +411,142 @@ Plus the engine-adjacent items that don't show up as test failures today:
 
 ---
 
+## Phase 6 — the perf bombs surfaced by the radical timeout relaxation
+
+The 5 s / 10 s ceilings used to skip ~38 in-scope scenarios on
+HAYSTACK_TOO_BIG / REGEX_TOO_LONG / COMPILE_TIMEOUT. The radical relaxation
+(`COMPILE_TIMEOUT_MS` 5 s → 2 min, `RUN_TIMEOUT_MS` 10 s → 10 min,
+`MAX_HAYSTACK_BYTES` 16 MB → 80 MB, `MAX_REGEX_LEN` 32 KB → 2 MB, plus the
+`utf8-lossy` loader fix) drops those to **4** skips and **+34 passes**
+(74 → 108). It also surfaces the perf bombs that the previous ceilings were
+masking.
+
+### 6.1 Multi-state *extract* — the O(n²) on dense matches — single biggest perf win
+
+The Phase 2.1 fix (multi-state `find()` for boolean/no-match pre-check) only
+short-circuits the no-match case. The *extract* path
+(`TdfaRunner.runStringExtractFast`) still has the O(n²) outer-loop shape:
+
+```java
+for (int startSearch = from; startSearch <= to; startSearch++) {
+    int[] regs = new int[regSize]; ...                       // per position
+    for (int pos = startSearch; pos <= to; pos++) {          // O(n) inner
+        if ((sm[state] & 1) != 0) { lastAcceptPos = pos; }  // remember, keep going
+        ...
+    }
+    if (haveAccept) return new MatchHolder(startSearch, lastAcceptPos, r);
+}
+```
+
+For a regex like `[a-zA-Z]+ing` on a 16 MB haystack, the inner loop walks
+*all the way to `to`* before reporting the (leftmost-longest) accept, and
+`Matcher.find()` is called once per match (78 424 times for `ing`). Net cost
+is O(n × matches) ≈ 249 s on 16 MB.
+
+**Fix (principled):** carry one `regs[]` per live state, like Phase 2.1's
+bitset — O(n × |states| × regWidth) instead of O(n × matches × scan).
+
+**Fix (pragmatic, much smaller):** once `multiStateAnyMatch` reports a hit,
+re-run the **anchored** extract from the discovered leftmost-start position
+(O(scan) per match). Drop the `for (int startSearch = from; …)` outer loop
+in the extract path entirely; have `multiStateAnyMatch` return the leftmost
+start position. This is O(n × |states|) for the search + O(scan × matches)
+for the extracts ≈ O(n) for typical match densities.
+
+**Exit criterion:** `imported/leipzig/ing` < 1 s on 16 MB haystack (was 249 s).
+
+### 6.2 Compile: bounded-repeat state explosion — DFA minimization
+
+The 4 remaining COMPILE_TIMEOUTs share a shape: a bounded quantifier
+(`{0,100}`) over a wide class (`[\s\S]`, `\d\d[...]{2,2}\d`) explodes the
+TNFA → TDFA determinization to 10 K+ states per repetition site. The DFA is
+almost certainly reducible (most of those states are equivalent after
+moore-style minimization), but we don't minimize today.
+
+**Fix:** implement Moore-style DFA minimization (register-aware — BT22 §6)
+between `Tdfa.compile` and ASM/VM backend codegen. Expected to drop the 4
+bombs below the 2-min ceiling; bonus, makes ASM codegen smaller too.
+
+**Alternative:** pre-compile AST budget check (Phase 1.1, never implemented)
+— fast-fail with `compile-budget: …` instead of burning the 2-min timeout.
+This is a test-side workaround, not a fix.
+
+**Exit criterion:** zero `COMPILE_TIMEOUT` in the suite; the 4 currently-
+timed-out scenarios run to completion (PASS or FAIL).
+
+### 6.3 utf8-lossy haystack loading — DONE
+
+`Scenario.resolveHaystack` was using `Files.readString`, which throws on the
+in-scope corpus files containing legacy Latin-1 octets
+(`wild/cpython-226484e4.py`, `imported/lh3lh3-reb-howto.txt`). Replaced with
+a `CharsetDecoder` configured with `CodingErrorAction.REPLACE` when the
+scenario sets `utf8-lossy = true`. Unblocked 7 scenarios (4 ruff-noqa /
+aws-keys / lh3lh3-reb cases).
+
+---
+
+## Phase 7 — reopening the scope (only if we want "100 % of all 359")
+
+The 245 out-of-scope scenarios are excluded because rebar itself doesn't
+test them against Java. They break down roughly as:
+
+- Multi-pattern / regex-set APIs (rust/regex-style) — `wild/parol-veryl/*`,
+  `curated/05-lexer-veryl/multi`, `curated/12-dictionary/multi`,
+  `curated/13-noseyparker/multi`. Would need a new `RegexSet`-style API.
+- Hyperscan-only overlap reporting — out of reach for any pure-Java engine.
+- aho-corasick / dictionary benchmarks — would need a literal-string
+  dispatcher front-end (interesting but a separate library).
+- compile-only model scenarios for specific engines — we already implement
+  `compile`; some scenarios are still engine-specific.
+
+The lowest-effort scope wins is `RegexSet` (multi-pattern simultaneous
+search) — would unlock the `wild/parol-veryl/*` and `curated/*/multi`
+clusters, probably 30–50 scenarios. It's a real API addition, not a bug fix.
+
+---
+
 ## Sequencing and effort
 
 | Phase | Effort | Unlocks (approx) | Risk | Status |
 |---|---|---|---|---|
-| 1 — fast-fail | ½ day | 0 scenarios (just stops hangs) | low — pure test code | not yet needed (O(n²) bombs out of scope) |
-| 2.1 — multi-state find | 1 day | headroom for Phase 3 | medium — touches VM core, needs benching | **DONE** (14 ms for 200 K chars, was >30 s) |
-| 2.3 — timeout raise | — | — | low | **DONE** |
-| 3 — size caps | ½ day | ~50 in-scope haystack-skips → runnable | low | **DONE** (43→70 pass; surfaced 4 engine bugs) |
-| 4.1/4.2 — compile + grep-captures | — | ~13 in-scope model skips | low — additive | **DONE** |
-| 4.4 — long-name Unicode | ½ day | a few parse skips | low — additive | not done |
-| 5 — engine bugs | 2–4 days | fixes the 6 current failures | high — engine core | not done |
+| 2.1 — multi-state find (no-match pre-check) | 1 day | headroom for Phase 3 | medium | **DONE** |
+| 2.3 / 3 — radical timeout + cap bump + utf8-lossy | ½ day | +34 scenarios pass (74 → 108) | low | **DONE** |
+| 4.1/4.2 — compile + grep-captures models | — | model skips → 0 | low | **DONE** |
+| 4.4 — long-name Unicode | ½ day | a few parse skips | low | not done |
+| 5 — engine correctness bugs | 2–4 days | fixes the 2 current failures | high — engine core | not done |
+| 6.1 — multi-state extract (O(n²) fix) | 1–2 days | suite wall time 21 min → <2 min; no scenario-count change | high — VM core | not done |
+| 6.2 — DFA minimization | 2–3 days | 4 COMPILE_TIMEOUT → runnable | high — engine core | not done |
+| 7 — `RegexSet` API | 1–2 weeks | ~30–50 of the 245 scope-skips | medium — new API | not in scope |
 
-After Phase 1–4: **~110 of 114 in-scope scenarios run to completion**, the
-few remaining skips are `regex-redux` plus whatever the compile-budget
-estimator flags. The 2 failures from Phase 5 are the only red.
+After Phase 5 + 6: **114 / 114 in-scope green**, suite wall < 2 min.
 
-After Phase 5: the suite goes green (modulo the few intentional skips).
+After Phase 7 (out of current scope): **~150 / 359 green**; the rest need
+features (hyperscan overlap, aho-corasick dictionaries) that aren't on the
+roadmap for a bounded-scope library.
 
 ## Order to actually do this in
 
-1. **Phase 1** first — it's pure test code and stops the suite from being
-   unusable when you bump the timeouts.
-2. **Phase 3.1 / 3.3** (the easy parts: bump caps, bump Xmx) — instant,
-   exposes the run-time bombs that Phase 2 has to fix.
-3. **Phase 2.1** (VM multi-state find) — single biggest perf win.
-4. **Phase 4** — cheap, removes a category of skips.
-5. **Phase 2.2** (ASM multi-state) — only if 2.1 isn't enough on its own.
-6. **Phase 5** as separate engine work.
+1. **Phase 6.1** (multi-state extract) first — drops suite wall from 21 min
+   to <2 min, unblocks rapid iteration on everything else.
+2. **Phase 5.A** (PERL `\b` priority) — 1 of 2 reds.
+3. **Phase 5.B** (Unicode case folding) — 2 of 2 reds.
+4. **Phase 6.2** (DFA minimization) — last 4 in-scope skips.
+5. **Phase 7** only if/when the scope reopens.
 
 ## How to reproduce
 
 ```sh
 ./gradlew :tests:parity:rebar:test --rerun-tasks
 ```
+
+The `@AfterAll` `printSummary` in `RebarScenarioParityTest` prints:
+- pass/fail/skip totals
+- a skip-reason histogram
+- a top-20 slowest-tests list (compile + run)
+- a compile/run/wall-time grand total
+
+That summary is the source of truth for the "Where the bombs are today"
+table above. For per-test detail, use the triage script below.
 
 Triage script (extract from XML):
 

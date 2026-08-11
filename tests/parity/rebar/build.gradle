@@ -33,10 +33,13 @@ tasks.named('test') {
     // compiling hundreds of patterns; that's no longer needed and was masking
     // ASM-specific bugs (the README positions ASM as the primary engine).
     // Override on the command line with -Dtdfa.engine=VM if needed.
-    // 4 GB heap matches rebar's host default for big-engine benchmarks; needed
-    // now that MAX_HAYSTACK_BYTES is 16 MB (PARITY-PLAN §3.3) — materializing the
-    // largest in-scope haystacks as UTF-16 Strings peaks around 4× bytes.
-    jvmArgs '-Xmx4g'
+    // 8 GB heap: the largest in-scope haystack is 39 MB, which materializes
+    // as a ~80 MB UTF-16 String; the matcher wraps without copying but the
+    // DFA compilation of large alternations can also be allocation-heavy.
+    // 8 GB leaves comfortable headroom for the radical timeout/cap bumps
+    // (MAX_HAYSTACK_BYTES = 80 MB, COMPILE_TIMEOUT = 2 min) — see
+    // RebarScenarioParityTest for the budget rationale.
+    jvmArgs '-Xmx8g'
     // KNOWN: a handful of rebar scenarios currently fail parity (real bugs —
     // see TODO.md "Correctness" section). ignoreFailures keeps the migration
     // green while still surfacing the failures in IDE/CI reports. Drop once
