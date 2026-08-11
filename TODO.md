@@ -15,7 +15,9 @@ finished. See the [vision](README.md#vision).
 ## Correctness
 
 - [ ] VM backend: regex `(?:(?:^)|.)?` matches `[0,1]` instead of `[0,0]` at start of input — caught by Google's ExecTest running against both backends (`:tests:parity:re2j-suite:testOnVm`).
-- [ ] 14 rebar scenario mismatches — see `:tests:parity:rebar:test` report. Includes: catastrophic-backtracking test handling, literal-uppercase-in-pattern detection (`fooYbarZquux`), `[A-Z]awyer|[A-Z]inn` alternation captures.
+- [ ] **PERL disambiguation picks wrong alternative** when the first alternation is anchored with `\b` and a later alternation matches the same prefix via a character class. Repro: `(\bvar\b)|([a-zA-Z_][0-9a-zA-Z_]*)` on `"var"` returns group 2 (identifier), should be group 1 (`\bvar\b`). Affects all 6 parol-veryl lexer scenarios in `:tests:parity:rebar:test` (`[32]`, `[34]`, `[344]`–`[347]`) — the missed alternations sum to ~1800 captures / ~4800 spans. Bug is in TDFA compilation (both backends repro), not yet localised to a specific phase.
+- [ ] **Unicode case folding for single-char literals** — `(?i)s` doesn't match `ſ` (U+017F, Latin small letter long s). The parser at `Parser.java:160-164` and `:537-541` only folds via `Character.toLowerCase` / `toUpperCase`, which doesn't see non-ASCII folds of ASCII letters (or vice versa). re2j/re2 do Unicode simple case folding here. Surfaced by rebar's `test/unicode/case/ascii-with-unicode`.
+- [ ] **`.` on non-BMP codepoints undercounts vs re2** — `.` on `💩` (U+1F4A9) gives 1 match in our engine (one codepoint); re2 gives 4 (UTF-8 bytes). Our engine is codepoint-oriented like `java.util.regex`, not byte-oriented like re2. Either: pick `java/.*` count in rebar identity, or skip `test/unicode/utf8/dot-matches-byte`. Fundamental architecture choice, not a bug.
 - [ ] Differential fuzzing vs `re2j` and `java.util.regex` (Jazzer or custom harness)
 - [ ] Deterministic compilation — same regex → identical TDFA across runs
 - [ ] `map` + topological sort: reject non-trivial cycles (BT22 §3.3)
@@ -26,10 +28,11 @@ finished. See the [vision](README.md#vision).
 
 ## Performance
 
+- [ ] **O(n²) unanchored `find()`** — `TdfaRunner.runStringFindFast` (line 227) and `runStringExtractFast` (line 252) restart the DFA from every position; on a non-matching haystack each restart walks to end-of-input. ASM backend has the same shape (`emitRunCore`, line 510). Repro: rebar's `opt/nfa-sparse/small-repeated-class-{bytes,unicode}` (~92 K-char haystack, regex never matches) takes >30 s; should be < 50 ms with a single-pass multi-state search (re2/re2j do this). Fix is the standard NFA-style parallel simulation — track the set of live states at each position so a single pass suffices.
+- [ ] **ASM backend hits the 65 KB JVM method limit** on moderately large DFAs (200+ states) — `TdfaAsmBackend.java` generates one giant `runExtract` / `<clinit>`. Repro: rebar's i787-keywords alternation (209 states), parol-veryl lexer (88 branches), `[0-9A-Za-z_]{256}`. Affects ~11 rebar scenarios; the rebar test now falls back to the VM backend automatically (see `RebarScenarioParityTest.java`), but the underlying fix is method-splitting. Track which scenarios use the fallback via the `ASM-FAIL` log line.
 - [ ] DFA minimization (Moore-style, register-aware)
 - [ ] ASM register coalescing / scalar replacement (registers → JVM locals)
 - [ ] Cache-friendly flat-array data layout for VM backend
-- [ ] Unanchored `find()` — scan DFA or `.*?` desugaring instead of O(n × states) restart
 - [ ] ASM method-size splitting for large automata (>65 KB bytecode limit)
 - [ ] Lazy accept-snapshot (avoid `regs.clone()` on every accept-state visit)
 - [ ] ASCII fast-path specialization (128-entry byte table per state)
@@ -37,8 +40,8 @@ finished. See the [vision](README.md#vision).
 ## Benchmark coverage
 
 - [x] Vendor [rebar](https://github.com/BurntSushi/rebar) scenario corpus — `vendor/rebar-<sha>.tar.gz`; parsed by `:testlib:rebar`.
-- [x] Tracer-bullet parity test against rebar scenarios — `:tests:parity:rebar:RebarScenarioParityTest`. 30 scenarios run; 16 pass, 14 surface real bugs (quadratic-backtracking handling, `[A-Z]` literal detection, alternation capture).
-- [ ] Expand rebar parity — bump MAX_RAN cap, fix surfaced bugs, add ASM backend, support more rebar models (`grep`, `count-captures`).
+- [x] Tracer-bullet parity test against rebar scenarios — `:tests:parity:rebar:RebarScenarioParityTest`. With the loader now spec-compliant (per-line alternate/pattern, prepend/append, literal, array→alternation, `re2` count selection) and the engine running in its real default mode (ASM + PERL), **106 of 114 runnable** scenarios pass; 8 surface known engine bugs (see "Correctness" above); 245 skip on size/model filters.
+- [ ] Expand rebar parity — bump `MAX_HAYSTACK_BYTES` / `MAX_REGEX_LEN` caps once the O(n²) `find()` is fixed (would unlock ~150 currently-skipped scenarios); add `grep-captures` and `compile` models; fix surfaced bugs.
 - [ ] Hyperscan corpus / Snort rule set
 - [ ] Long-input scan across diverse patterns (not just `\w+\d+\w+`)
 - [ ] CI performance regression tracking (JMH + comparison thresholds)
