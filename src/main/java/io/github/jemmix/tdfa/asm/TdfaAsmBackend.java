@@ -159,6 +159,14 @@ public final class TdfaAsmBackend {
         // on non-matching haystacks). The ASM inlined transitions are still used
         // for the actual extraction; the runner is only consulted for the pre-check.
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "runner", RUNNER_D, null, null).visitEnd();
+        // Per-instance CharSequence → char[] cache for match(). Without this,
+        // each find() call re-copies the entire haystack via toCharArray,
+        // producing G1 humongous allocations and O(n²) wall time on long
+        // inputs (e.g. [a-zA-Z]+ing on 16 MB leipzig). Keyed by reference
+        // identity; safe because Matcher (and therefore the Pattern's engine)
+        // is single-thread per owner. See docs/REBAR-SPEEDUP-PLAN.md §Tier-2 #3.
+        cw.visitField(Opcodes.ACC_PRIVATE, "cachedInput", CS_D, null, null).visitEnd();
+        cw.visitField(Opcodes.ACC_PRIVATE, "cachedChars", "[C", null, null).visitEnd();
         // Static fields for the table-scan dispatch fallback (wide Unicode classes
         // like \p{L}{N} that would blow the 65 KB method limit if inlined). Set
         // from <init> because the arrays come from the Tdfa param and are too large
@@ -301,9 +309,33 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.ACONST_NULL);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitLabel(extract);
+        // cached chars lookup: if (input == cachedInput) use cachedChars,
+        // else convert via toCharArray and update cache. Avoids re-copying
+        // the entire haystack on every find() call (G1 humongous allocations).
+        // locals: 0=this, 1=input, 2=from, 3=chars
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "cachedInput", CS_D);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        Label cacheMiss = new Label();
+        // ACMPNE on references: jump if cachedInput != input
+        mv.visitJumpInsn(Opcodes.IF_ACMPNE, cacheMiss);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "cachedChars", "[C");
+        mv.visitVarInsn(Opcodes.ASTORE, 3);
+        Label runExtract = new Label();
+        mv.visitJumpInsn(Opcodes.GOTO, runExtract);
+        mv.visitLabel(cacheMiss);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "toCharArray", "(" + CS_D + ")[C", false);
         mv.visitVarInsn(Opcodes.ASTORE, 3);
+        // this.cachedInput = input; this.cachedChars = chars;
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitFieldInsn(Opcodes.PUTFIELD, owner, "cachedInput", CS_D);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitFieldInsn(Opcodes.PUTFIELD, owner, "cachedChars", "[C");
+        mv.visitLabel(runExtract);
         mv.visitVarInsn(Opcodes.ALOAD, 3);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
         mv.visitVarInsn(Opcodes.ALOAD, 3);

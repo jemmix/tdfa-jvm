@@ -374,16 +374,30 @@ public final class TdfaRunner implements Regex.Engine {
         final int[] rg = this.ranges;
         final int[] op = this.ops;
         final int[] sfo = this.stateFinalOpsOff;
+        // PERL stopOnAccept: pre-load the mask table when in Perl mode so the
+        // inner loop can short-circuit on first accepting state (matching the
+        // slow path's leftmost-first semantics). Without this, the inner loop
+        // walks the DFA all the way to `to` tracking lastAcceptPos — O(n) per
+        // find × O(n) finds = O(n²) on dense-match regexes like [a-zA-Z]+ing.
+        // See docs/REBAR-SPEEDUP-PLAN.md §Tier-2 #3.
+        final boolean pm = this.perlMode;
+        final int[] soa = this.stopOnAcceptMask;
         for (int startSearch = from; startSearch <= to; startSearch++) {
             final int[] regs = regSize == 0 ? null : new int[regSize];
             if (regs != null) Arrays.fill(regs, -1);
             int state = startState;
             int lastAcceptPos = -1, lastAcceptState = -1;
             boolean haveAccept = false;
+            int posFlags = -1; // lazy: -1 means not yet computed for current pos
             for (int pos = startSearch; pos <= to; pos++) {
                 int meta = sm[state];
                 if ((meta & 1) != 0) {
                     haveAccept = true; lastAcceptPos = pos; lastAcceptState = state;
+                    if (pm) {
+                        posFlags = positionFlags(input, pos, to);
+                        int stopMask = soa[state * 64 + posFlags];
+                        if (stopOnAccept(stopMask, posFlags)) break;
+                    }
                 }
                 if (pos == to) break;
                 char c = input.charAt(pos);
