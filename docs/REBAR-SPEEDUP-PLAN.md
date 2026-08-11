@@ -9,7 +9,37 @@ This plan is the speed-focused companion to `REBAR-PARITY-PLAN.md`. The
 engine-correctness bugs (Phase 5 in the parity plan) are out of scope here —
 this doc is only about wall time.
 
-## Where the 21 minutes go today
+## Status — landed wins
+
+| Item | Status | Wall before | Wall after | Cumulative |
+|---|---|---:|---:|---:|
+| Baseline | — | — | 21 min | 21 min |
+| **#1 Parallel exec** | ✅ done (888f36b) | 21 min | 9 min | 9 min |
+| **#2 AST-budget fast-fail** | ✅ done (776a3f7) | 9 min | 4.5 min | 4.5 min |
+| **#3 Haystack cache** | ✅ done (d2a4dfd) | 4.5 min | 4.2 min | 4.2 min |
+| **#4 char[] cache fix** | ✅ done (f9971ea) | 4.2 min | **1.1 min** | **1.1 min** |
+| #5 indexOf prefilter | deferred (low ROI) | 1.1 min | ~1 min | ~1 min |
+| #6 DFA minimization | deferred (complex) | 1.1 min | ~30 s | ~30 s |
+| #7 ASM method-splitting | not needed | — | — | — |
+
+**Actual wall today: 1 min 7 s.** Cumulative speedup: **18.8×** (21 min → 67 s).
+
+#1–#3 were test-side / infra-side wins. #4 turned out to be the single
+biggest win and the root cause was different from the original plan's
+prediction: the ASM backend was re-copying the haystack to `char[]` on
+every `find()` call, producing G1 humongous allocations and O(n²) wall
+on long inputs. The fix was a 32-line per-instance input cache in the
+generated ASM class, not the multi-state-extract rewrite originally
+drafted under Tier 2.
+
+The remaining items (#5–#7) are documented below for future reference
+but are low ROI at the current 1 min wall. The new dominant cost is
+`curated/12-dictionary/single` compile at ~50 s (next attack surface:
+DFA minimization, #6).
+
+---
+
+## Where the 21 minutes went (historical baseline)
 
 From the `@AfterAll` summary on commit `c821283` (108 pass / 2 fail / 249
 skip, 1 258 s wall). Top 20 tests account for 1 201 s (~20 min); everything
