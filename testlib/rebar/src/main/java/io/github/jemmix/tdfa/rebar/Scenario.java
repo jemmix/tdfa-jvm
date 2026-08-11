@@ -66,12 +66,44 @@ public record Scenario(
             return applyTransforms(i.contents(), false, i.repeat(), i.prepend(), i.append(), null, null);
         } else if (haystackSpec instanceof HaystackSpec.FromPath p) {
             var file = benchmarksDir.resolve("haystacks").resolve(p.path());
-            String raw = p.utf8Lossy() ? readStringLossy(file) : java.nio.file.Files.readString(file);
+            String raw = readHaystackFile(file, p.utf8Lossy());
             return applyTransforms(raw, p.trim(), p.repeat(), p.prepend(), p.append(),
                     p.lineStart(), p.lineEnd());
         } else {
             throw new IllegalStateException("unknown haystack spec: " + haystackSpec);
         }
+    }
+
+    /**
+     * Per-process haystack-file cache. Many rebar scenarios share the same
+     * haystack file (e.g. {@code imported/leipzig-3200.txt} is used by 26
+     * scenarios; {@code sherlock.txt} by 51). Without this cache each
+     * scenario re-reads + re-decodes the file, costing ~200–500 ms per
+     * 15 MB file. With cache, only the first scenario pays that cost.
+     *
+     * <p>Keyed by {@code (absolute path, utf8Lossy)} because the same file
+     * may be referenced both with and without {@code utf8-lossy} (e.g.
+     * {@code wild/cpython-226484e4.py}). Files larger than 50 MB aren't
+     * cached to avoid hogging heap for the rest of the run.
+     *
+     * <p>Thread-safe: {@link java.util.concurrent.ConcurrentHashMap} plus
+     * {@code String} (immutable). Worst case under a race is two reads of
+     * the same file, with one result discarded.
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<CacheKey, String> FILE_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private record CacheKey(java.nio.file.Path path, boolean utf8Lossy) {}
+
+    private static String readHaystackFile(java.nio.file.Path file, boolean utf8Lossy) throws java.io.IOException {
+        CacheKey key = new CacheKey(file, utf8Lossy);
+        String cached = FILE_CACHE.get(key);
+        if (cached != null) return cached;
+        String raw = utf8Lossy ? readStringLossy(file) : java.nio.file.Files.readString(file);
+        if (raw.length() <= 50_000_000) {
+            FILE_CACHE.putIfAbsent(key, raw);
+        }
+        return raw;
     }
 
     /**
