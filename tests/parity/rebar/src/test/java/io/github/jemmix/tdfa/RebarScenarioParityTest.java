@@ -66,10 +66,10 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * <ul>
  *   <li><b>Java not in {@code engines} list</b> — rebar itself doesn't test
  *       Java on this scenario (see scope note above)</li>
- *   <li>model not in {count, count-spans, count-captures, grep}
- *       (regex-redux, grep-captures, compile need infrastructure we don't have)</li>
- *   <li>haystack &gt; 200 KB (avoid OOM + ReDoS time bombs)</li>
- *   <li>regex &gt; 2 000 chars (mega-alternations like dictionary lookups)</li>
+ *   <li>model not in {count, count-spans, count-captures, grep, compile, grep-captures}
+ *       (regex-redux is the only remaining unsupported model)</li>
+ *   <li>haystack &gt; 16 MB (avoids OOM on repeated/mega-haystacks)</li>
+ *   <li>regex &gt; 32 000 chars (mega-alternations like dictionary lookups)</li>
  *   <li>expected count has no entry matching our {@code "re2"} identity</li>
  *   <li>haystack contains invalid UTF-8 (Java strings can't represent them)</li>
  *   <li>parser rejects the pattern (Unicode property long-names, backrefs, lookaround)</li>
@@ -108,14 +108,17 @@ class RebarScenarioParityTest {
     @ParameterizedTest(name = "[{index}] {0}")
     @MethodSource("scenariosProvider")
     void runScenarioThroughTdfa(String displayName, Scenario s) throws Exception {
-        // Models we run; everything else is a clean skip.
-        Set<String> supportedModels = Set.of("count", "count-spans", "count-captures", "grep");
-        // Quick-and-dirty budgets: tight enough that 359 cases finish in
-        // ~2 minutes worst-case, loose enough to not flap on a slow CI box.
-        final long COMPILE_TIMEOUT_MS = 300;     // regex compilation wall-clock
-        final long RUN_TIMEOUT_MS    = 500;     // match execution wall-clock
-        final int  MAX_HAYSTACK_BYTES = 200_000;
-        final int  MAX_REGEX_LEN = 2_000;
+        // Models we run; regex-redux is the only intentionally-skipped model
+        // (bespoke embedded-regex harness, ~1–2 scenarios — see PARITY-PLAN §4.3).
+        Set<String> supportedModels = Set.of("count", "count-spans", "count-captures",
+                "grep", "compile", "grep-captures");
+        // Budgets: per PARITY-PLAN Phase 2.3/3.1. The caps cover every in-scope
+        // haystack (largest is a few MB); the 10 s run timeout matches rebar's
+        // own ceiling. One test runs at a time (JUnit 5 default) under -Xmx4g.
+        final long COMPILE_TIMEOUT_MS = 5_000;      // regex compilation wall-clock
+        final long RUN_TIMEOUT_MS    = 10_000;      // match execution wall-clock
+        final int  MAX_HAYSTACK_BYTES = 16_000_000; // covers all in-scope haystacks
+        final int  MAX_REGEX_LEN = 32_000;
 
         // --- Filter: skip cleanly via assumeTrue so IDE shows gray "skipped" ---
 
@@ -312,10 +315,17 @@ class RebarScenarioParityTest {
     /** Dispatch to the right model implementation. */
     private static long runModel(Scenario s, Regex r, String haystack) {
         switch (s.model()) {
-            case "count":          return countMatches(r, haystack);
-            case "count-spans":    return countSpans(r, haystack);
-            case "count-captures": return countCaptures(r, haystack);
-            case "grep":           return grepLines(r, haystack);
+            case "count":            return countMatches(r, haystack);
+            case "count-spans":      return countSpans(r, haystack);
+            case "count-captures":   return countCaptures(r, haystack);
+            case "grep":             return grepLines(r, haystack);
+            // compile model: per rebar, "like count, but uses the compile model to
+            // ensure the count is correct" (test/model.toml §compile). We've already
+            // compiled by this point, so the verification IS the count.
+            case "compile":          return countMatches(r, haystack);
+            // grep-captures model: count all captures across all non-overlapping
+            // matches, line-oriented with \r stripped (test/model.toml §grep-captures).
+            case "grep-captures":    return grepCaptureCounts(r, haystack);
             default: throw new IllegalStateException("unsupported model: " + s.model());
         }
     }
@@ -342,7 +352,11 @@ class RebarScenarioParityTest {
         } else {
             return -1;
         }
-        return base * repeat + extra;
+        try {
+            return Math.multiplyExact(base, repeat) + extra;
+        } catch (ArithmeticException overflow) {
+            return Long.MAX_VALUE; // trips the haystack-too-big assumeTrue
+        }
     }
 
     private static String abbrev(String s, int max) {
@@ -425,5 +439,39 @@ class RebarScenarioParityTest {
             }
         }
         return matched;
+    }
+
+    /**
+     * Count total capturing groups across all non-overlapping matches on each
+     * line (rebar's 'grep-captures' model). Line iteration matches {@link #grepLines}
+     * (split on {@code \n}, strip trailing {@code \r}); the per-line inner loop
+     * matches {@link #countCaptures}. See {@code test/model.toml §grep-captures}.
+     */
+    private static long grepCaptureCounts(Regex r, String hs) {
+        long n = 0;
+        int lineStart = 0;
+        for (int i = 0; i <= hs.length(); i++) {
+            if (i == hs.length() || hs.charAt(i) == '\n') {
+                int lineEnd = i;
+                if (lineEnd > lineStart && hs.charAt(lineEnd - 1) == '\r') {
+                    lineEnd--;
+                }
+                String line = hs.substring(lineStart, lineEnd);
+                int pos = 0;
+                try {
+                    while (pos <= line.length()) {
+                        MatchResult m = r.find(line, pos);
+                        if (m == null) break;
+                        for (int g = 0; g <= m.groupCount(); g++) {
+                            if (m.start(g) >= 0) n++;
+                        }
+                        int end = m.end(0);
+                        pos = (end <= m.start(0)) ? end + 1 : end;
+                    }
+                } catch (Exception ignored) { /* engine hiccup on this line */ }
+                lineStart = i + 1;
+            }
+        }
+        return n;
     }
 }

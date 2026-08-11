@@ -75,10 +75,18 @@ public final class Tdfa {
 
     // === Flat packed arrays (4 arrays total; per-match regs adds a 5th at runtime) ===
     /**
-     * [state] -> packed (rangeBase << 17) | (rangeCount << 1) | acceptBit.
-     * One load per char gives accept + rangeBase + rangeCount.
+     * [state] -> packed (rangeCount << 1) | acceptBit.
+     * One load per char gives accept + rangeCount; the range base is in
+     * {@link #stateBase} (split out so it isn't bit-width-limited — see below).
      */
     public final int[] stateMeta;
+    /**
+     * [state] -> range base index into {@link #ranges}. Stored separately from
+     * {@link #stateMeta} so it can use the full 32-bit range — the old packing
+     * (base in bits 17-31 of stateMeta, 15 bits) overflowed at ~25 states for
+     * wide Unicode classes like {@code \p{L}} (~1369 ranges per state).
+     */
+    public final int[] stateBase;
     /** [state] -> finalOpsOff (offset into `ops`), 0 if none. Read only once per match. */
     public final int[] stateFinalOpsOff;
     /**
@@ -97,13 +105,14 @@ public final class Tdfa {
     public static final int OP_END     = 0;  // terminator for op blocks
 
     private Tdfa(int tagCount, int groupCount, int registerCount, int startState, int stateCount,
-                 int[] stateMeta, int[] stateFinalOpsOff, int[] ranges, int[] ops,
+                 int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] ranges, int[] ops,
                  int[] stateEntryMask, int[] stateAcceptMask, boolean perlMode, int[] stopOnAcceptMask, boolean multiline) {
         this.tagCount = tagCount; this.groupCount = groupCount;
         this.registerCount = registerCount;
         this.startState = startState;
         this.stateCount = stateCount;
         this.stateMeta = stateMeta;
+        this.stateBase = stateBase;
         this.stateFinalOpsOff = stateFinalOpsOff;
         this.ranges = ranges;
         this.ops = ops;
@@ -117,8 +126,8 @@ public final class Tdfa {
 
     public boolean isAccept(int state) { return (stateMeta[state] & 1) != 0; }
     public int finalOpsOffset(int state) { return stateFinalOpsOff[state]; }
-    /** Unpack range base from packed stateMeta. */
-    public static int rangeBase(int meta) { return meta >>> 17; }
+    /** Range base index into {@link #ranges} for the given state. */
+    public int rangeBase(int state) { return stateBase[state]; }
     /** Unpack range count from packed stateMeta. */
     public static int rangeCount(int meta) { return (meta >>> 1) & 0xFFFF; }
     /** Accept bit. */
@@ -380,6 +389,7 @@ public final class Tdfa {
 
             // Second pass: allocate flat arrays and populate.
             int[] stateMeta = new int[n];
+            int[] stateBase = new int[n];
             int[] stateFinalOpsOff = new int[n];
             int[] flatRanges = new int[totalRanges * 5];
             int[] flatOps = new int[totalOpsSlots];
@@ -431,12 +441,12 @@ public final class Tdfa {
                     flatOps[opsHead++] = OP_END;
                 }
                 boolean isAccept = accept.get(s);
-                // Pack: (rangeBase << 9) | (rangeCount << 1) | acceptBit
-                stateMeta[s] = (rangeBase << 17) | ((k & 0xFFFF) << 1) | (isAccept ? 1 : 0);
+                stateBase[s] = rangeBase;
+                stateMeta[s] = ((k & 0xFFFF) << 1) | (isAccept ? 1 : 0);
                 stateFinalOpsOff[s] = finalOpsOff;
             }
             return new Tdfa(tags, nfa.groupCount, globalMaxReg, 0, n,
-                    stateMeta, stateFinalOpsOff, flatRanges, flatOps,
+                    stateMeta, stateBase, stateFinalOpsOff, flatRanges, flatOps,
                     stateEntryMask, stateAcceptMask, perl, stateStopOnAcceptMask, nfa.multiline);
         }
 

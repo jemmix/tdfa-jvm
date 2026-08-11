@@ -26,6 +26,7 @@ import java.util.Arrays;
 public final class TdfaRunner implements Regex.Engine {
     private final Tdfa tdfa;
     private final int[] stateMeta;
+    private final int[] stateBase;
     private final int[] stateFinalOpsOff;
     private final int[] stateEntryMask;
     private final int[] stateAcceptMask;
@@ -41,6 +42,9 @@ public final class TdfaRunner implements Regex.Engine {
     private final int[] asciiTarget;    // flat: [state * 128 + c] → target state (-1 = dead)
     private final int[] asciiRangeFlat; // flat: [state * 128 + c] → range index (-1 = dead)
     private final boolean fastPath;     // true = no masks + disjoint + not multiline
+    private final int stateCount;
+    private final int stateWords;       // # of 32-bit words in state bitsets
+    private final int[] acceptBits;     // bitset of accepting states (over-approximate)
 
     public TdfaRunner(Tnfa nfa) {
         this(Tdfa.compile(nfa));
@@ -49,6 +53,7 @@ public final class TdfaRunner implements Regex.Engine {
     public TdfaRunner(Tdfa tdfa) {
         this.tdfa = tdfa;
         this.stateMeta = tdfa.stateMeta;
+        this.stateBase = tdfa.stateBase;
         this.stateFinalOpsOff = tdfa.stateFinalOpsOff;
         this.stateEntryMask = tdfa.stateEntryMask;
         this.stateAcceptMask = tdfa.stateAcceptMask;
@@ -69,9 +74,22 @@ public final class TdfaRunner implements Regex.Engine {
         this.perlMode = tdfa.perlMode;
         this.multiline = tdfa.multiline;
         this.stopOnAcceptMask = tdfa.stopOnAcceptMask;
+        this.stateCount = tdfa.stateCount;
+        this.stateWords = (tdfa.stateCount + 31) >>> 5;
+        this.acceptBits = buildAcceptBits(tdfa);
     }
 
     public Tdfa tdfa() { return tdfa; }
+
+    /**
+     * Fast no-match pre-check: returns {@code true} if the DFA could match
+     * starting at any position in {@code [from, input.length())}. Sound
+     * over-approximation (ignores masks). Used by the ASM backend to avoid its
+     * O(n²) outer-loop scan on non-matching haystacks — see {@link #multiStateAnyMatch}.
+     */
+    public final boolean anyMatch(CharSequence input, int from) {
+        return multiStateAnyMatch(input, from, input.length());
+    }
 
     @Override public boolean matches(CharSequence input) {
         if (input instanceof String) {
@@ -88,6 +106,7 @@ public final class TdfaRunner implements Regex.Engine {
             int len = s.length();
             if (fastPath) return runStringFindFast(s, len);
             int maxStart = (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) ? 0 : len;
+            if (maxStart > 0 && !multiStateAnyMatch(s, 0, len)) return false;
             for (int from = 0; from <= maxStart; from++) {
                 int res = runStringMatchFrom(s, from, len);
                 if (res >= 0) return true;
@@ -117,6 +136,9 @@ public final class TdfaRunner implements Regex.Engine {
         final int[] sem = this.stateEntryMask;
         final int[] sam = this.stateAcceptMask;
         int maxStart = (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) ? 0 : to;
+        // Multi-state no-match pre-check (over-approximate masks). Only helps
+        // the unanchored case — anchored regexes have maxStart == 0.
+        if (maxStart > 0 && !multiStateAnyMatch(input, from, to)) return null;
         for (int startSearch = from; startSearch <= maxStart; startSearch++) {
             final int[] regs = regSize == 0 ? null : new int[regSize];
             if (regs != null) Arrays.fill(regs, -1);
@@ -158,7 +180,7 @@ public final class TdfaRunner implements Regex.Engine {
                 if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to
                         && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF)
                     c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
-                int base = meta >>> 17;
+                int base = stateBase[state];
                 int count = (meta >>> 1) & 0xFFFF;
                 for (int i = 0; i < count; i++) {
                     int o = (base + i) * 5;
@@ -202,6 +224,116 @@ public final class TdfaRunner implements Regex.Engine {
         public MatchHolder(int s, int e, int[] r) { matchStart = s; matchEnd = e; regs = r; }
     }
 
+    // ===== Multi-state parallel simulation (unanchored search) =====
+
+    /**
+     * Multi-state parallel simulation for unanchored search. Maintains the set
+     * of all DFA states reachable from some start position in {@code [from, pos]},
+     * checking for any accepting state at each position. Returns {@code true} as
+     * soon as any accepting state enters the live set.
+     *
+     * <p>This is O(n × |states|) per call — a single forward pass — instead of
+     * the O(n²) outer-loop restart used by the single-state extract paths. It
+     * replaces the boolean {@code find()} path and serves as a fast no-match
+     * pre-check for the extract paths: if this returns {@code false}, the
+     * extract short-circuits to {@code null} without the O(n²) scan.
+     *
+     * <p>The implicit {@code .*?} prefix (unanchored search can start anywhere)
+     * is modelled by re-adding the start state to the live set at every position.
+     *
+     * <p>For the generic path (masks / non-disjoint ranges) this is a sound
+     * over-approximation: entry/accept/required masks are ignored and all
+     * matching range targets are followed. A {@code false} result is definitive;
+     * a {@code true} result means "might match" and the caller re-runs the exact
+     * single-state path for registers / PERL priority.
+     */
+    private boolean multiStateAnyMatch(CharSequence input, int from, int to) {
+        final int nwords = stateWords;
+        if (nwords == 0) return false;
+        final int[] sm = stateMeta;
+        final int[] rg = ranges;
+        final int[] at = asciiTarget;
+        final int[] ab = acceptBits;
+        final int ss = startState;
+        final boolean disjoint = rangesDisjoint;
+
+        int[] live = new int[nwords];
+        int[] next = new int[nwords];
+        live[ss >>> 5] |= 1 << (ss & 31);
+
+        for (int pos = from; pos <= to; pos++) {
+            for (int w = 0; w < nwords; w++) {
+                if ((live[w] & ab[w]) != 0) return true;
+            }
+            if (pos == to) break;
+
+            char c0 = input.charAt(pos);
+            int c = c0;
+            int adv = 1;
+            if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to) {
+                char c1 = input.charAt(pos + 1);
+                if (c1 >= 0xDC00 && c1 <= 0xDFFF) {
+                    c = ((c0 - 0xD800) << 10) + (c1 - 0xDC00) + 0x10000;
+                    adv = 2;
+                }
+            }
+
+            Arrays.fill(next, 0);
+            next[ss >>> 5] |= 1 << (ss & 31);
+
+            if (at != null && c < 128) {
+                for (int w = 0; w < nwords; w++) {
+                    int bits = live[w];
+                    while (bits != 0) {
+                        int bit = Integer.numberOfTrailingZeros(bits);
+                        bits &= bits - 1;
+                        int s = (w << 5) + bit;
+                        int target = at[s * 128 + c];
+                        if (target >= 0) {
+                            next[target >>> 5] |= 1 << (target & 31);
+                        }
+                    }
+                }
+            } else {
+                for (int w = 0; w < nwords; w++) {
+                    int bits = live[w];
+                    while (bits != 0) {
+                        int bit = Integer.numberOfTrailingZeros(bits);
+                        bits &= bits - 1;
+                        int s = (w << 5) + bit;
+                        int meta = sm[s];
+                        int base = stateBase[s];
+                        int count = (meta >>> 1) & 0xFFFF;
+                        if (disjoint) {
+                            int rlo = 0, rhi = count - 1;
+                            while (rlo <= rhi) {
+                                int mid = (rlo + rhi) >>> 1;
+                                int mo = (base + mid) * 5;
+                                if (c < rg[mo]) { rhi = mid - 1; continue; }
+                                if (c > rg[mo + 1]) { rlo = mid + 1; continue; }
+                                int target = rg[mo + 2];
+                                if (target >= 0) next[target >>> 5] |= 1 << (target & 31);
+                                break;
+                            }
+                        } else {
+                            for (int i = 0; i < count; i++) {
+                                int mo = (base + i) * 5;
+                                if (c >= rg[mo] && c <= rg[mo + 1]) {
+                                    int target = rg[mo + 2];
+                                    if (target >= 0) next[target >>> 5] |= 1 << (target & 31);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            int[] tmp = live; live = next; next = tmp;
+            if (adv == 2) pos++;
+        }
+        return false;
+    }
+
     // ===== Fast paths: no masks, disjoint ranges, ASCII-only =====
 
     /**
@@ -223,33 +355,16 @@ public final class TdfaRunner implements Regex.Engine {
         return (sm[state] & 1) != 0;
     }
 
-    /** Fast unanchored boolean search. */
+    /** Unanchored boolean search via single-pass multi-state simulation. O(n × |states|). */
     private boolean runStringFindFast(String input, int to) {
-        final int[] sm = this.stateMeta;
-        final int[] at = this.asciiTarget;
-        for (int from = 0; from <= to; from++) {
-            int state = startState;
-            for (int pos = from; pos <= to; pos++) {
-                if ((sm[state] & 1) != 0) return true;
-                if (pos == to) break;
-                char c = input.charAt(pos);
-                if (c >= 128) {
-                    int maxStart = to;
-                    for (int f = from; f <= maxStart; f++) {
-                        if (runStringMatchFrom(input, f, to) >= 0) return true;
-                    }
-                    return false;
-                }
-                int target = at[state * 128 + c];
-                if (target < 0) break;
-                state = target;
-            }
-        }
-        return false;
+        return multiStateAnyMatch(input, 0, to);
     }
 
     /** Fast extract with register updates. */
     private MatchHolder runStringExtractFast(String input, int from, int to) {
+        // Multi-state no-match pre-check: avoids the O(n²) outer-loop scan when
+        // the regex doesn't match anywhere in the haystack. O(n × |states|).
+        if (!multiStateAnyMatch(input, from, to)) return null;
         final int[] sm = this.stateMeta;
         final int[] arf = this.asciiRangeFlat;
         final int[] rg = this.ranges;
@@ -271,7 +386,7 @@ public final class TdfaRunner implements Regex.Engine {
                 if (c >= 128) return runStringExtract(input, from, to);
                 int ri = arf[state * 128 + c];
                 if (ri < 0) break;
-                int mo = ((meta >>> 17) + ri) * 5;
+                int mo = (stateBase[state] + ri) * 5;
                 int target = rg[mo + 2];
                 if (target < 0) break;
                 if (regs != null) {
@@ -324,7 +439,7 @@ public final class TdfaRunner implements Regex.Engine {
             if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to
                     && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF)
                 c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
-            int base = meta >>> 17;
+            int base = stateBase[state];
             int count = (meta >>> 1) & 0xFFFF;
             boolean matched = false;
             if (rangesDisjoint) {
@@ -454,7 +569,7 @@ public final class TdfaRunner implements Regex.Engine {
             if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to
                     && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF)
                 c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
-            int base = meta >>> 17;
+            int base = stateBase[state];
             int count = (meta >>> 1) & 0xFFFF;
             boolean matched = false;
             if (rangesDisjoint) {
@@ -561,7 +676,7 @@ public final class TdfaRunner implements Regex.Engine {
                 if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to
                         && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF)
                     c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
-                int base = meta >>> 17;
+                int base = stateBase[state];
                 int count = (meta >>> 1) & 0xFFFF;
                 for (int i = 0; i < count; i++) {
                     int o = (base + i) * 5;
@@ -675,7 +790,7 @@ public final class TdfaRunner implements Regex.Engine {
         int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
         for (int s = 0; s < tdfa.stateCount; s++) {
             int meta = sm[s];
-            int base = meta >>> 17, cnt = (meta >>> 1) & 0xFFFF;
+            int base = tdfa.stateBase[s], cnt = (meta >>> 1) & 0xFFFF;
             for (int i = 0; i < cnt; i++) {
                 int o1 = (base + i) * 5;
                 int lo1 = rg[o1], hi1 = rg[o1 + 1];
@@ -689,6 +804,23 @@ public final class TdfaRunner implements Regex.Engine {
         return true;
     }
 
+    /**
+     * Bitset of states with accept capability (stateMeta bit 0 set). This is an
+     * over-approximation for the generic path — a state may be only conditionally
+     * accepting (non-zero acceptMask), but for the multi-state no-match pre-check
+     * we want to err on the side of "might accept" so we never skip a real match.
+     */
+    private static int[] buildAcceptBits(Tdfa tdfa) {
+        int words = (tdfa.stateCount + 31) >>> 5;
+        int[] bits = new int[words];
+        for (int s = 0; s < tdfa.stateCount; s++) {
+            if ((tdfa.stateMeta[s] & 1) != 0) {
+                bits[s >>> 5] |= 1 << (s & 31);
+            }
+        }
+        return bits;
+    }
+
     /** Build flat per-state ASCII target lookup: [state * 128 + c] → target state (-1 = dead). */
     private static int[] buildAsciiTarget(Tdfa tdfa) {
         int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
@@ -696,7 +828,7 @@ public final class TdfaRunner implements Regex.Engine {
         java.util.Arrays.fill(flat, -1);
         for (int s = 0; s < tdfa.stateCount; s++) {
             int meta = sm[s];
-            int base = meta >>> 17, cnt = (meta >>> 1) & 0xFFFF;
+            int base = tdfa.stateBase[s], cnt = (meta >>> 1) & 0xFFFF;
             for (int i = 0; i < cnt; i++) {
                 int o = (base + i) * 5;
                 int lo = Math.max(rg[o], 0);
@@ -715,7 +847,7 @@ public final class TdfaRunner implements Regex.Engine {
         java.util.Arrays.fill(flat, -1);
         for (int s = 0; s < tdfa.stateCount; s++) {
             int meta = sm[s];
-            int base = meta >>> 17, cnt = (meta >>> 1) & 0xFFFF;
+            int base = tdfa.stateBase[s], cnt = (meta >>> 1) & 0xFFFF;
             for (int i = 0; i < cnt; i++) {
                 int o = (base + i) * 5;
                 int lo = Math.max(rg[o], 0);

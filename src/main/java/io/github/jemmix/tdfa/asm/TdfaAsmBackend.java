@@ -23,6 +23,10 @@ public final class TdfaAsmBackend {
     private static final String STR = "java/lang/String";
     private static final String CS_D = "Ljava/lang/CharSequence;";
     private static final String ARRAYS = "java/util/Arrays";
+    private static final String RUNNER = "io/github/jemmix/tdfa/tdfa/TdfaRunner";
+    private static final String RUNNER_D = "L" + RUNNER + ";";
+    private static final String TDFA = "io/github/jemmix/tdfa/tdfa/Tdfa";
+    private static final String TDFA_D = "L" + TDFA + ";";
 
     public static Regex.Engine compile(Tdfa tdfa) {
         byte[] bc;
@@ -43,24 +47,41 @@ public final class TdfaAsmBackend {
                     return super.findClass(n);
                 }
             };
-            return (Regex.Engine) Class.forName(cn, true, cl).getDeclaredConstructor().newInstance();
+            return (Regex.Engine) Class.forName(cn, true, cl)
+                    .getDeclaredConstructor(Tdfa.class).newInstance(tdfa);
         } catch (Exception e) {
             throw new IllegalStateException("ASM backend failed", e);
         }
     }
 
+    /**
+     * Maximum total live range count for inlined ASM dispatch. Above this,
+     * {@code runExtract}'s inlined range checks would exceed the JVM 65 KB
+     * method-size limit (each inlined range is ~25 bytes of bytecode). The
+     * ASM engine delegates {@code match()} to the VM runner instead — correct,
+     * just slower, and avoids {@code MethodTooLargeException}.
+     */
+    private static final int MAX_INLINED_RANGES = 1_500;
+
     private static byte[] generate(Tdfa tdfa, String owner) {
-        boolean fastPath = computeFastPath(tdfa);
+        boolean dispatchTooLarge = estimateLiveRangeCount(tdfa) > MAX_INLINED_RANGES;
+        // Disable the fast path (ASCII_TARGET table) when dispatchTooLarge — the
+        // 257-state × 128-entry table would itself blow <clinit>'s 65 KB limit.
+        // matches() falls back to the runner, which is fine for these wide DFAs.
+        boolean fastPath = !dispatchTooLarge && computeFastPath(tdfa);
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, owner, null, "java/lang/Object", new String[]{ENGINE});
         genClinit(cw, tdfa, owner, fastPath);
-        genInit(cw);
+        genInit(cw, owner);
         genMatches(cw, owner, fastPath);
         genFind(cw, owner);
-        genMatch(cw, tdfa, owner);
+        genMatch(cw, tdfa, owner, dispatchTooLarge);
         genToCharArray(cw);
-        genRunBoolean(cw, tdfa, owner);
-        genRunExtract(cw, tdfa, owner);
+        genRunExtract(cw, tdfa, owner, dispatchTooLarge);
+        if (dispatchTooLarge) {
+            genScanRanges(cw, owner);
+            genApplyOpsRuntime(cw, owner);
+        }
         genEntryOkC(cw, owner);
         genPositionFlagsC(cw, owner, tdfa.multiline);
         cw.visitEnd();
@@ -103,10 +124,10 @@ public final class TdfaAsmBackend {
             mv.visitInsn(Opcodes.DUP);
             mv.visitInsn(Opcodes.ICONST_M1);
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, ARRAYS, "fill", "([II)V", false);
-            int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
+            int[] sm = tdfa.stateMeta, sb = tdfa.stateBase, rg = tdfa.ranges;
             for (int s = 0; s < tdfa.stateCount; s++) {
                 int meta = sm[s];
-                int base = meta >>> 17, cnt = (meta >>> 1) & 0xFFFF;
+                int base = sb[s], cnt = (meta >>> 1) & 0xFFFF;
                 for (int i = 0; i < cnt; i++) {
                     int o = (base + i) * 5;
                     int lo = Math.max(rg[o], 0), hi = Math.min(rg[o + 1], 127);
@@ -129,11 +150,36 @@ public final class TdfaAsmBackend {
 
     // ===== <init> =====
 
-    private static void genInit(ClassWriter cw) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+    private static void genInit(ClassWriter cw, String owner) {
+        // Instance field holding a TdfaRunner for the multi-state no-match
+        // pre-check (avoids the O(n²) outer-loop scan in runBoolean/runExtract
+        // on non-matching haystacks). The ASM inlined transitions are still used
+        // for the actual extraction; the runner is only consulted for the pre-check.
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "runner", RUNNER_D, null, null).visitEnd();
+        // Static fields for the table-scan dispatch fallback (wide Unicode classes
+        // like \p{L}{N} that would blow the 65 KB method limit if inlined). Set
+        // from <init> because the arrays come from the Tdfa param and are too large
+        // to populate via per-element IASTORE in <clinit>. One instance per class.
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "RANGES_TABLE", "[I", null, null).visitEnd();
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "OPS_TABLE", "[I", null, null).visitEnd();
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(" + TDFA_D + ")V", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitTypeInsn(Opcodes.NEW, RUNNER);
+        mv.visitInsn(Opcodes.DUP);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, RUNNER, "<init>", "(" + TDFA_D + ")V", false);
+        mv.visitFieldInsn(Opcodes.PUTFIELD, owner, "runner", RUNNER_D);
+        // RANGES_TABLE = tdfa.ranges
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "ranges", "[I");
+        mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "RANGES_TABLE", "[I");
+        // OPS_TABLE = tdfa.ops
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "ops", "[I");
+        mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "OPS_TABLE", "[I");
         mv.visitInsn(Opcodes.RETURN);
         mv.visitMaxs(0, 0); mv.visitEnd();
     }
@@ -200,39 +246,50 @@ public final class TdfaAsmBackend {
             // Fall through to generic path
         }
 
-        // Generic path: toCharArray + runBoolean
+        // Generic path: delegate to the runner (anchored match — single DFA
+        // walk from position 0, no O(n²) concern; the multi-state fix is
+        // only needed for unanchored find/extract).
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "toCharArray", "(" + CS_D + ")[C", false);
-        mv.visitVarInsn(Opcodes.ASTORE, 2);
-        mv.visitVarInsn(Opcodes.ALOAD, 2);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitVarInsn(Opcodes.ALOAD, 2);
-        mv.visitInsn(Opcodes.ARRAYLENGTH);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "runBoolean", "([CIIZ)Z", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "matches", "(" + CS_D + ")Z", false);
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitMaxs(0, 0); mv.visitEnd();
     }
 
     private static void genFind(ClassWriter cw, String owner) {
+        // Delegate to the runner's find(), which uses the multi-state parallel
+        // simulation — O(n × |states|) instead of the O(n²) outer-loop restart
+        // that runBoolean used. The boolean result is identical; only the path
+        // differs. The ASM inlined transitions don't help here because the O(n²)
+        // restart dominates for non-matching haystacks.
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "find", "(" + CS_D + ")Z", null, null);
         mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "toCharArray", "(" + CS_D + ")[C", false);
-        mv.visitVarInsn(Opcodes.ASTORE, 2);
-        mv.visitVarInsn(Opcodes.ALOAD, 2);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitVarInsn(Opcodes.ALOAD, 2);
-        mv.visitInsn(Opcodes.ARRAYLENGTH);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "runBoolean", "([CIIZ)Z", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "find", "(" + CS_D + ")Z", false);
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitMaxs(0, 0); mv.visitEnd();
     }
 
-    private static void genMatch(ClassWriter cw, Tdfa tdfa, String owner) {
+    private static void genMatch(ClassWriter cw, Tdfa tdfa, String owner, boolean dispatchTooLarge) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I)L" + RESULT + ";", null, null);
         mv.visitCode();
+        // Multi-state no-match pre-check via the runner: O(n × |states|) single
+        // pass. If no match is possible, short-circuit to null without entering
+        // runExtract's O(n²) outer-loop scan. When a match IS possible, runExtract
+        // (with its inlined ASM transitions) handles the exact extraction.
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "anyMatch", "(" + CS_D + "I)Z", false);
+        Label extract = new Label();
+        mv.visitJumpInsn(Opcodes.IFNE, extract);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitLabel(extract);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "toCharArray", "(" + CS_D + ")[C", false);
         mv.visitVarInsn(Opcodes.ASTORE, 3);
@@ -303,22 +360,12 @@ public final class TdfaAsmBackend {
         mv.visitMaxs(0, 0); mv.visitEnd();
     }
 
-    // ===== runBoolean — zero-alloc DFA walk =====
-
-    private static void genRunBoolean(ClassWriter cw, Tdfa tdfa, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "runBoolean", "([CIIZ)Z", null, null);
-        mv.visitCode();
-        emitRunCore(mv, tdfa, owner, false);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
-    }
-
     // ===== runExtract — DFA walk with register tracking =====
 
-    private static void genRunExtract(ClassWriter cw, Tdfa tdfa, String owner) {
+    private static void genRunExtract(ClassWriter cw, Tdfa tdfa, String owner, boolean tableScan) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "runExtract", "([CII)L" + HOLDER + ";", null, null);
         mv.visitCode();
-        emitRunCore(mv, tdfa, owner, true);
+        emitRunCore(mv, tdfa, owner, true, tableScan);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
@@ -507,7 +554,7 @@ public final class TdfaAsmBackend {
 
     // ===== shared core: DFA walk + search loop =====
 
-    private static void emitRunCore(MethodVisitor mv, Tdfa tdfa, String owner, boolean extract) {
+    private static void emitRunCore(MethodVisitor mv, Tdfa tdfa, String owner, boolean extract, boolean tableScan) {
         final boolean perl = tdfa.perlMode;
         final boolean startReqBT = !tdfa.multiline && tdfa.startRequiresBeginText();
         final int nStates = tdfa.stateCount;
@@ -686,7 +733,7 @@ public final class TdfaAsmBackend {
         emitCodePointDecode(mv, IN, C_LV, POS, LEN, T1);
 
         // ===== DFA DISPATCH (TABLESWITCH) =====
-        emitDfaDispatch(mv, tdfa, owner, extract,
+        emitDfaDispatch(mv, tdfa, owner, extract, tableScan,
                 IN, STATE, POS, LEN, PF, C_LV, REGS, T1, T2, PF2, T3, T4,
                 dfaLoop, dfaEnd, op);
 
@@ -769,12 +816,12 @@ public final class TdfaAsmBackend {
     // ===== DFA TABLESWITCH + range checks =====
 
     private static void emitDfaDispatch(MethodVisitor mv, Tdfa tdfa, String owner,
-                                        boolean extract,
+                                        boolean extract, boolean tableScan,
                                         int IN, int STATE, int POS, int LEN, int PF, int C_LV,
                                         int REGS, int T1, int T2, int PF2, int T3, int T4,
                                         Label dfaLoop, Label dfaEnd, int[] op) {
         int nStates = tdfa.stateCount;
-        int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
+        int[] sm = tdfa.stateMeta, sb = tdfa.stateBase, rg = tdfa.ranges;
 
         Label[] sl = new Label[nStates];
         Label def = new Label();
@@ -785,7 +832,13 @@ public final class TdfaAsmBackend {
         for (int s = 0; s < nStates; s++) {
             mv.visitLabel(sl[s]);
             int meta = sm[s];
-            int base = meta >>> 17, cnt = (meta >>> 1) & 0xFFFF;
+            int base = sb[s], cnt = (meta >>> 1) & 0xFFFF;
+
+            if (tableScan) {
+                emitTableScanState(mv, owner, extract, base, cnt,
+                        IN, STATE, POS, LEN, PF, C_LV, REGS, T1, T2, T3, T4, dfaLoop, dfaEnd);
+                continue;
+            }
 
             List<int[]> live = new ArrayList<>();
             for (int i = 0; i < cnt; i++) {
@@ -862,6 +915,258 @@ public final class TdfaAsmBackend {
         }
         mv.visitLabel(def);
         mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
+    }
+
+    // ===== table-scan dispatch (one state) =====
+
+    /**
+     * Emit the DFA dispatch for a single state using a runtime binary search
+     * over the {@code RANGES_TABLE} static array, instead of inlining range
+     * checks. Compact (fixed-size per state) — used for wide character classes
+     * like {@code \p{L}} (1369 ranges/state) that would exceed the 65 KB method
+     * limit if inlined.
+     */
+    private static void emitTableScanState(MethodVisitor mv, String owner,
+                                           boolean extract, int base, int cnt,
+                                           int IN, int STATE, int POS, int LEN, int PF, int C_LV,
+                                           int REGS, int T1, int T2, int T3, int T4,
+                                           Label dfaLoop, Label dfaEnd) {
+        Label stateDead = new Label();
+
+        // ri = scanRanges(RANGES_TABLE, base, cnt, c)
+        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "RANGES_TABLE", "[I");
+        ic(mv, base);
+        ic(mv, cnt);
+        mv.visitVarInsn(Opcodes.ILOAD, C_LV);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "scanRanges", "([IIII)I", false);
+        mv.visitVarInsn(Opcodes.ISTORE, T1);
+
+        // if (ri < 0) goto dead
+        mv.visitVarInsn(Opcodes.ILOAD, T1);
+        mv.visitJumpInsn(Opcodes.IFLT, stateDead);
+
+        // target = RANGES_TABLE[ri + 2]
+        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "RANGES_TABLE", "[I");
+        mv.visitVarInsn(Opcodes.ILOAD, T1);
+        mv.visitInsn(Opcodes.ICONST_2);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitInsn(Opcodes.IALOAD);
+        mv.visitVarInsn(Opcodes.ISTORE, T2);
+
+        // Dead range (target < 0, inserted by fillGaps) — inline path filters
+        // these out; table-scan must do the same.
+        mv.visitVarInsn(Opcodes.ILOAD, T2);
+        mv.visitJumpInsn(Opcodes.IFLT, stateDead);
+
+        // reqMask = RANGES_TABLE[ri + 4]
+        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "RANGES_TABLE", "[I");
+        mv.visitVarInsn(Opcodes.ILOAD, T1);
+        mv.visitInsn(Opcodes.ICONST_4);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitInsn(Opcodes.IALOAD);
+        mv.visitVarInsn(Opcodes.ISTORE, T4);
+
+        // if (reqMask != 0 && (PF & reqMask) != reqMask) goto dead
+        Label maskOk = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, T4);
+        mv.visitJumpInsn(Opcodes.IFEQ, maskOk);
+        mv.visitVarInsn(Opcodes.ILOAD, PF);
+        mv.visitVarInsn(Opcodes.ILOAD, T4);
+        mv.visitInsn(Opcodes.IAND);
+        mv.visitVarInsn(Opcodes.ILOAD, T4);
+        mv.visitJumpInsn(Opcodes.IF_ICMPNE, stateDead);
+        mv.visitLabel(maskOk);
+
+        // Apply ops (extract only): opsOff = RANGES_TABLE[ri + 3]
+        if (extract && REGS >= 0) {
+            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "RANGES_TABLE", "[I");
+            mv.visitVarInsn(Opcodes.ILOAD, T1);
+            mv.visitInsn(Opcodes.ICONST_3);
+            mv.visitInsn(Opcodes.IADD);
+            mv.visitInsn(Opcodes.IALOAD);
+            mv.visitVarInsn(Opcodes.ISTORE, T3);
+            Label opsDone = new Label();
+            mv.visitVarInsn(Opcodes.ILOAD, T3);
+            mv.visitJumpInsn(Opcodes.IFEQ, opsDone);
+            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "OPS_TABLE", "[I");
+            mv.visitVarInsn(Opcodes.ILOAD, T3);
+            mv.visitVarInsn(Opcodes.ALOAD, REGS);
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "applyOpsRuntime", "([II[II)V", false);
+            mv.visitLabel(opsDone);
+        }
+
+        // state = target
+        mv.visitVarInsn(Opcodes.ILOAD, T2);
+        mv.visitVarInsn(Opcodes.ISTORE, STATE);
+
+        // Codepoint advance: hi = RANGES_TABLE[ri + 1]; if (hi > 0x10000 && c >= 0x10000) pos++
+        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "RANGES_TABLE", "[I");
+        mv.visitVarInsn(Opcodes.ILOAD, T1);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitInsn(Opcodes.IALOAD);
+        mv.visitLdcInsn(0x10000);
+        Label noAdv = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPLE, noAdv);
+        mv.visitVarInsn(Opcodes.ILOAD, C_LV);
+        mv.visitLdcInsn(0x10000);
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, noAdv);
+        mv.visitIincInsn(POS, 1);
+        mv.visitLabel(noAdv);
+
+        // Entry check for target (runtime: ENTRY_MASK[STATE])
+        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ENTRY_MASK", "[I");
+        mv.visitVarInsn(Opcodes.ILOAD, STATE);
+        mv.visitInsn(Opcodes.IALOAD);
+        Label entryOk = new Label();
+        mv.visitJumpInsn(Opcodes.IFEQ, entryOk);
+        mv.visitVarInsn(Opcodes.ILOAD, STATE);
+        mv.visitVarInsn(Opcodes.ILOAD, POS);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitVarInsn(Opcodes.ILOAD, LEN);
+        mv.visitVarInsn(Opcodes.ALOAD, IN);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "entryOkC", "(III[C)Z", false);
+        mv.visitJumpInsn(Opcodes.IFNE, entryOk);
+        mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
+        mv.visitLabel(entryOk);
+
+        mv.visitIincInsn(POS, 1);
+        mv.visitJumpInsn(Opcodes.GOTO, dfaLoop);
+
+        mv.visitLabel(stateDead);
+        mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
+    }
+
+    // ===== shared binary-search helper (table-scan dispatch) =====
+
+    /**
+     * Generate {@code static int scanRanges(int[] ranges, int base, int count, int c)}.
+     * Linear scan {@code ranges} for the entry matching {@code c}. Returns the
+     * flat offset into {@code ranges} (i.e. {@code (base + i) * 5}) of the first
+     * matching entry, or {@code -1} if no range contains {@code c}.
+     *
+     * <p>Linear scan (not binary search) because the DFA builder's
+     * {@code sortByMaskSpecificity} may reorder ranges by mask priority, breaking
+     * the sort-by-lo invariant that binary search requires. For wide classes
+     * like {@code \p{L}} (~1369 ranges), this is still fast on typical inputs.
+     */
+    private static void genScanRanges(ClassWriter cw, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "scanRanges", "([IIII)I", null, null);
+        // 0=ranges, 1=base, 2=count, 3=c; local 4=i, 5=o
+        mv.visitCode();
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitVarInsn(Opcodes.ISTORE, 4);
+        Label loop = new Label(), nf = new Label();
+        mv.visitLabel(loop);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGE, nf);
+        // o = (base + i) * 5
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitIntInsn(Opcodes.BIPUSH, 5);
+        mv.visitInsn(Opcodes.IMUL);
+        mv.visitVarInsn(Opcodes.ISTORE, 5);
+        // if (c >= ranges[o]) — c < ranges[o] → skip
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
+        mv.visitInsn(Opcodes.IALOAD);
+        Label skip = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, skip);
+        // if (c <= ranges[o+1]) — c > ranges[o+1] → skip
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitInsn(Opcodes.IALOAD);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGT, skip);
+        // return o
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitLabel(skip);
+        // i++
+        mv.visitIincInsn(4, 1);
+        mv.visitJumpInsn(Opcodes.GOTO, loop);
+        mv.visitLabel(nf);
+        mv.visitInsn(Opcodes.ICONST_M1);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // ===== shared runtime ops applier (table-scan dispatch) =====
+
+    /**
+     * Generate {@code static void applyOpsRuntime(int[] ops, int opsOff, int[] regs, int pos)}.
+     * Interprets the ops array at runtime — same semantics as {@code TdfaRunner.applyOps}
+     * but emitted as ASM so the table-scan dispatch stays in generated code.
+     */
+    private static void genApplyOpsRuntime(ClassWriter cw, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "applyOpsRuntime", "([II[II)V", null, null);
+        // 0=ops, 1=opsOff, 2=regs, 3=pos; local 4=j, 5=op, 6=dst
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        mv.visitVarInsn(Opcodes.ISTORE, 4);
+        Label loop = new Label(), done = new Label();
+        mv.visitLabel(loop);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitInsn(Opcodes.IALOAD);
+        mv.visitVarInsn(Opcodes.ISTORE, 5);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
+        mv.visitJumpInsn(Opcodes.IFEQ, done);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitInsn(Opcodes.IALOAD);
+        mv.visitVarInsn(Opcodes.ISTORE, 6);
+        Label checkCopy = new Label(), setNil = new Label(), next = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitJumpInsn(Opcodes.IF_ICMPNE, checkCopy);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.IASTORE);
+        mv.visitJumpInsn(Opcodes.GOTO, next);
+        mv.visitLabel(checkCopy);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
+        mv.visitInsn(Opcodes.ICONST_3);
+        mv.visitJumpInsn(Opcodes.IF_ICMPNE, setNil);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitInsn(Opcodes.ICONST_2);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitInsn(Opcodes.IALOAD);
+        mv.visitInsn(Opcodes.IALOAD);
+        mv.visitInsn(Opcodes.IASTORE);
+        mv.visitJumpInsn(Opcodes.GOTO, next);
+        mv.visitLabel(setNil);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitInsn(Opcodes.ICONST_M1);
+        mv.visitInsn(Opcodes.IASTORE);
+        mv.visitLabel(next);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitInsn(Opcodes.ICONST_3);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitVarInsn(Opcodes.ISTORE, 4);
+        mv.visitJumpInsn(Opcodes.GOTO, loop);
+        mv.visitLabel(done);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 
     // ===== final ops (LOOKUPSWITCH) =====
@@ -1164,6 +1469,21 @@ public final class TdfaAsmBackend {
 
     // ===== fast-path eligibility =====
 
+    /** Count total live (non-dead-target) ranges across all states. */
+    private static int estimateLiveRangeCount(Tdfa tdfa) {
+        int[] sm = tdfa.stateMeta, sb = tdfa.stateBase, rg = tdfa.ranges;
+        int total = 0;
+        for (int s = 0; s < tdfa.stateCount; s++) {
+            int meta = sm[s];
+            int base = sb[s], cnt = (meta >>> 1) & 0xFFFF;
+            for (int i = 0; i < cnt; i++) {
+                int o = (base + i) * 5;
+                if (rg[o + 2] >= 0) total++;
+            }
+        }
+        return total;
+    }
+
     private static boolean computeFastPath(Tdfa tdfa) {
         if (tdfa.multiline) return false;
         if (!checkRangesDisjoint(tdfa)) return false;
@@ -1174,10 +1494,10 @@ public final class TdfaAsmBackend {
     }
 
     private static boolean checkRangesDisjoint(Tdfa tdfa) {
-        int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
+        int[] sm = tdfa.stateMeta, sb = tdfa.stateBase, rg = tdfa.ranges;
         for (int s = 0; s < tdfa.stateCount; s++) {
             int meta = sm[s];
-            int base = meta >>> 17, cnt = (meta >>> 1) & 0xFFFF;
+            int base = sb[s], cnt = (meta >>> 1) & 0xFFFF;
             for (int i = 0; i < cnt; i++) {
                 int o1 = (base + i) * 5;
                 int lo1 = rg[o1], hi1 = rg[o1 + 1];
