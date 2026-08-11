@@ -42,6 +42,7 @@ public final class Parser {
     boolean dotall = false;
     boolean multiline = false;
     boolean disableUnicodeGroups = false;
+    boolean unicodeShorthand = false;
     io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider;
 
     private Parser(String src) { this.src = src; this.provider = io.github.jemmix.tdfa.unicode.UnicodeProviders.get(); }
@@ -170,7 +171,7 @@ public final class Parser {
         expect('(');
         boolean capturing = true;
         boolean restoreFlags = false;
-        boolean savedCi = false, savedDs = false, savedMl = false;
+        boolean savedCi = false, savedDs = false, savedMl = false, savedUs = false;
         String groupName = null;
         if (pos + 1 < src.length() && src.charAt(pos) == '?' && src.charAt(pos + 1) == ':') {
             pos += 2; capturing = false;
@@ -192,8 +193,8 @@ public final class Parser {
                 groupName = readGroupName();
             } else {
                 // Parse inline flags: (?i) (?s) (?m) (?-s) (?i:...) (?ism:...)
-                boolean ci = false, ds = false, ml = false;
-                boolean ciSet = false, dsSet = false, mlSet = false;
+                boolean ci = false, ds = false, ml = false, us = false;
+                boolean ciSet = false, dsSet = false, mlSet = false, usSet = false;
                 boolean neg = false;
                 while (pos < src.length() && peek() != ':' && peek() != ')') {
                     char f = peek();
@@ -202,6 +203,7 @@ public final class Parser {
                         case 'i': ci = !neg; ciSet = true; break;
                         case 's': ds = !neg; dsSet = true; break;
                         case 'm': ml = !neg; mlSet = true; break;
+                        case 'u': us = !neg; usSet = true; break;
                     }
                     neg = false;
                     pos++;
@@ -213,14 +215,17 @@ public final class Parser {
                     savedCi = this.caseInsensitive;
                     savedDs = this.dotall;
                     savedMl = this.multiline;
+                    savedUs = this.unicodeShorthand;
                     if (ciSet) this.caseInsensitive = ci;
                     if (dsSet) this.dotall = ds;
                     if (mlSet) this.multiline = ml;
+                    if (usSet) this.unicodeShorthand = us;
                 } else {
                     expect(')');
                     if (ciSet) this.caseInsensitive = ci;
                     if (dsSet) this.dotall = ds;
                     if (mlSet) this.multiline = ml;
+                    if (usSet) this.unicodeShorthand = us;
                     return new Ast.Empty(); // flag-only group, continue
                 }
             }
@@ -247,6 +252,7 @@ public final class Parser {
             this.caseInsensitive = savedCi;
             this.dotall = savedDs;
             this.multiline = savedMl;
+            this.unicodeShorthand = savedUs;
         }
         if (!capturing) return body;
         return new Ast.Concat(List.of(new Ast.Tag(open), body, new Ast.Tag(close)));
@@ -274,7 +280,7 @@ public final class Parser {
             // Check for shorthand escapes (\s \S \d \D \w \W)
             if (peek() == '\\' && pos + 1 < src.length()) {
                 char next = src.charAt(pos + 1);
-                int[] sr = shorthandClassRanges(next);
+                int[] sr = shorthandRanges(next);
                 if (sr != null) {
                     pos += 2;
                     for (int v : sr) ranges.add(v);
@@ -324,18 +330,87 @@ public final class Parser {
         return new CharClass(arr, negated);
     }
 
-    /** Returns ranges for shorthand escapes inside char classes, or null if not a shorthand. */
-    private static int[] shorthandClassRanges(char c) {
+    /**
+     * Returns ranges for shorthand escapes inside char classes, or null if not a shorthand.
+     * Returns explicit complement ranges for uppercase variants ({@code \D}, {@code \W}, {@code \S})
+     * since they are merged into the class's own range list.
+     * When {@link #unicodeShorthand} is true, returns Unicode-aware ranges (matching
+     * {@code java.util.regex} with {@code UNICODE_CHARACTER_CLASS}).
+     */
+    private int[] shorthandRanges(char c) {
+        if (!unicodeShorthand) {
+            return switch (c) {
+                case 'd' -> R_DIGIT;
+                case 'D' -> R_NOT_DIGIT;
+                case 'w' -> R_WORD;
+                case 'W' -> R_NOT_WORD;
+                case 's' -> R_SPACE;
+                case 'S' -> R_NOT_SPACE;
+                default -> null;
+            };
+        }
         return switch (c) {
-            case 'd' -> R_DIGIT;
-            case 'D' -> R_NOT_DIGIT;
-            case 'w' -> R_WORD;
-            case 'W' -> R_NOT_WORD;
-            case 's' -> R_SPACE;
-            case 'S' -> R_NOT_SPACE;
+            case 'd' -> unicodeDigitRanges();
+            case 'D' -> complementRanges(unicodeDigitRanges());
+            case 'w' -> computeUnicodeWordRanges();
+            case 'W' -> complementRanges(computeUnicodeWordRanges());
+            case 's' -> R_UNICODE_SPACE;
+            case 'S' -> complementRanges(R_UNICODE_SPACE);
             default -> null;
         };
     }
+
+    /** Build a shorthand escape atom (called from {@link #parseEscape}). */
+    private Ast shorthandEscape(char c) {
+        boolean negated = Character.isUpperCase(c);
+        char base = Character.toLowerCase(c);
+        if (!unicodeShorthand) {
+            return switch (c) {
+                case 'd' -> DIGIT;
+                case 'D' -> NOT_DIGIT;
+                case 'w' -> WORD;
+                case 'W' -> NOT_WORD;
+                case 's' -> WHITESPACE;
+                case 'S' -> NOT_WHITESPACE;
+                default -> throw new IllegalStateException("not a shorthand: \\" + c);
+            };
+        }
+        int[] ranges;
+        if (base == 'w') ranges = computeUnicodeWordRanges();
+        else if (base == 'd') ranges = unicodeDigitRanges();
+        else ranges = R_UNICODE_SPACE;
+        return new CharClass(ranges, negated);
+    }
+
+    /** Unicode {@code \d} ranges = {@code \p{Nd}} (decimal digit number). */
+    private int[] unicodeDigitRanges() {
+        if (cachedUnicodeDigit == null) {
+            int[] t = provider.tableFor("Nd");
+            if (t == null) t = R_DIGIT; // fallback
+            cachedUnicodeDigit = t;
+        }
+        return cachedUnicodeDigit;
+    }
+
+    /**
+     * Unicode {@code \w} ranges = {@code L + N + Mn + Me + Pc + Sc + Sk},
+     * matching {@code java.util.regex} with {@code UNICODE_CHARACTER_CLASS}.
+     * Cached for reuse by {@code \b} runtime.
+     */
+    private int[] computeUnicodeWordRanges() {
+        if (cachedUnicodeWord == null) {
+            int[] merged = null;
+            for (String cat : new String[]{"L", "N", "Mn", "Me", "Pc", "Sc", "Sk"}) {
+                int[] t = provider.tableFor(cat);
+                if (t != null) merged = (merged == null) ? t : mergeRanges(merged, t);
+            }
+            cachedUnicodeWord = merged != null ? merged : R_WORD; // fallback
+        }
+        return cachedUnicodeWord;
+    }
+
+    private int[] cachedUnicodeWord;
+    private int[] cachedUnicodeDigit;
 
     /**
      * Parses a POSIX character class {@code [:name:]} or {@code [:^name:]} (called only
@@ -482,12 +557,12 @@ public final class Parser {
             case 'v' -> new Ast.Symbol((char) 11);  // vertical tab, like re2j
             case '\\' -> new Ast.Symbol('\\');
             case 'x' -> parseHexEscape();
-            case 'd' -> DIGIT;
-            case 'D' -> NOT_DIGIT;
-            case 'w' -> WORD;
-            case 'W' -> NOT_WORD;
-            case 's' -> WHITESPACE;
-            case 'S' -> NOT_WHITESPACE;
+            case 'd' -> shorthandEscape('d');
+            case 'D' -> shorthandEscape('D');
+            case 'w' -> shorthandEscape('w');
+            case 'W' -> shorthandEscape('W');
+            case 's' -> shorthandEscape('s');
+            case 'S' -> shorthandEscape('S');
             // RE2 (and re2j) reject \C as "any byte" — see re2j Parser.java:913.
             // We don't support it either; reject at parse time so silent misparse
             // (treating \C as literal C) doesn't yield wrong matches.
@@ -738,6 +813,9 @@ public final class Parser {
     public int groupCount() { return groupCount; }
     public int tagCount() { return nextTag - 1; }
     public boolean multiline() { return multiline; }
+    public boolean unicodeShorthand() { return unicodeShorthand; }
+    /** Unicode {@code \w} ranges for runtime {@code \b} word-boundary checks, or null if Unicode shorthand not enabled. */
+    public int[] unicodeWordRanges() { return unicodeShorthand ? computeUnicodeWordRanges() : null; }
     public Map<String, Integer> namedGroups() { return groupNames; }
 
     /** Read a group name between '<' and '>' (caller has consumed '<'). */
@@ -756,6 +834,7 @@ public final class Parser {
     }
 
     // ---- predefined classes ----
+
     private static final int[] R_DIGIT = {'0', '9'};
     private static final int[] R_NOT_DIGIT = {0, '/', ':', 0x10FFFF};
     private static final int[] R_WORD = {'a','z','A','Z','0','9','_','_'};
@@ -763,6 +842,21 @@ public final class Parser {
     // re2j's \s = [\t\n\f\r ] — note: no \v (U+000B), unlike POSIX [:space:].
     private static final int[] R_SPACE = {'\t', '\n', '\f', '\r', ' ', ' '};
     private static final int[] R_NOT_SPACE = {0, '\t' - 1, 0x0B, 0x0B, '\r' + 1, ' ' - 1, ' ' + 1, 0x10FFFF};
+
+    // Unicode IsWhite_Space property (java.util.regex \s with UNICODE_CHARACTER_CLASS).
+    private static final int[] R_UNICODE_SPACE = {
+        '\t', '\r',           // U+0009-U+000D (HT, LF, VT, FF, CR)
+        0x1C, 0x1F,           // FS, GS, RS, US
+        ' ', ' ',             // Space
+        0x85, 0x85,           // NEL
+        0xA0, 0xA0,           // NBSP
+        0x1680, 0x1680,       // Ogham Space
+        0x2000, 0x200A,       // En–Hair Space
+        0x2028, 0x2029,       // LS, PS
+        0x202F, 0x202F,       // Narrow NBSP
+        0x205F, 0x205F,       // Medium Math Space
+        0x3000, 0x3000        // Ideographic Space
+    };
 
     // POSIX character classes — ASCII-only, matching re2j's CharGroup tables.
     // Note: [:space:] INCLUDES \v (U+000B) per POSIX, unlike Perl's \s.

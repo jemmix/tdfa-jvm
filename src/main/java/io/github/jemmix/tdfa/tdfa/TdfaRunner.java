@@ -45,6 +45,8 @@ public final class TdfaRunner implements Regex.Engine {
     private final int stateCount;
     private final int stateWords;       // # of 32-bit words in state bitsets
     private final int[] acceptBits;     // bitset of accepting states (over-approximate)
+    private final boolean unicodeWordBoundary;
+    private final int[] wordRanges;     // Unicode \w ranges for \b when unicodeWordBoundary is true
 
     public TdfaRunner(Tnfa nfa) {
         this(Tdfa.compile(nfa));
@@ -77,6 +79,8 @@ public final class TdfaRunner implements Regex.Engine {
         this.stateCount = tdfa.stateCount;
         this.stateWords = (tdfa.stateCount + 31) >>> 5;
         this.acceptBits = buildAcceptBits(tdfa);
+        this.unicodeWordBoundary = tdfa.unicodeWordBoundary;
+        this.wordRanges = tdfa.wordRanges;
     }
 
     public Tdfa tdfa() { return tdfa; }
@@ -867,8 +871,30 @@ public final class TdfaRunner implements Regex.Engine {
         return true;
     }
 
-    /** RE2's isWordRune: ASCII word chars [_0-9A-Za-z]. */
-    private static boolean isWordChar(char c) {
-        return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    /**
+     * RE2's isWordRune: ASCII word chars [_0-9A-Za-z].
+     * When {@link #unicodeWordBoundary} is true, checks the Unicode {@code \w}
+     * ranges (matching {@code java.util.regex} with {@code UNICODE_CHARACTER_CLASS}).
+     */
+    private boolean isWordChar(char c) {
+        if (!unicodeWordBoundary) {
+            return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+        }
+        return isUnicodeWordChar(c);
+    }
+
+    /** Binary-search the Unicode {@code \w} ranges in {@link #wordRanges}. */
+    private boolean isUnicodeWordChar(char c) {
+        int[] wr = wordRanges;
+        if (wr == null) return false;
+        int lo = 0, hi = wr.length / 2 - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            int rLo = wr[2 * mid], rHi = wr[2 * mid + 1];
+            if (c < rLo) hi = mid - 1;
+            else if (c > rHi) lo = mid + 1;
+            else return true;
+        }
+        return false;
     }
 }

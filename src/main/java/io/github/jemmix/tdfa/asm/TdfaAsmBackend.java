@@ -72,7 +72,7 @@ public final class TdfaAsmBackend {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, owner, null, "java/lang/Object", new String[]{ENGINE});
         genClinit(cw, tdfa, owner, fastPath);
-        genInit(cw, owner);
+        genInit(cw, owner, tdfa);
         genMatches(cw, owner, fastPath);
         genFind(cw, owner);
         genMatch(cw, tdfa, owner, dispatchTooLarge);
@@ -83,7 +83,10 @@ public final class TdfaAsmBackend {
             genApplyOpsRuntime(cw, owner);
         }
         genEntryOkC(cw, owner);
-        genPositionFlagsC(cw, owner, tdfa.multiline);
+        genPositionFlagsC(cw, owner, tdfa.multiline, tdfa.unicodeWordBoundary);
+        if (tdfa.unicodeWordBoundary) {
+            genIsUnicodeWordChar(cw, owner);
+        }
         cw.visitEnd();
         return cw.toByteArray();
     }
@@ -150,7 +153,7 @@ public final class TdfaAsmBackend {
 
     // ===== <init> =====
 
-    private static void genInit(ClassWriter cw, String owner) {
+    private static void genInit(ClassWriter cw, String owner, Tdfa tdfa) {
         // Instance field holding a TdfaRunner for the multi-state no-match
         // pre-check (avoids the O(n²) outer-loop scan in runBoolean/runExtract
         // on non-matching haystacks). The ASM inlined transitions are still used
@@ -162,6 +165,9 @@ public final class TdfaAsmBackend {
         // to populate via per-element IASTORE in <clinit>. One instance per class.
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "RANGES_TABLE", "[I", null, null).visitEnd();
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "OPS_TABLE", "[I", null, null).visitEnd();
+        if (tdfa.unicodeWordBoundary) {
+            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "WORD_RANGES", "[I", null, null).visitEnd();
+        }
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(" + TDFA_D + ")V", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -180,6 +186,11 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "ops", "[I");
         mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "OPS_TABLE", "[I");
+        if (tdfa.unicodeWordBoundary) {
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "wordRanges", "[I");
+            mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "WORD_RANGES", "[I");
+        }
         mv.visitInsn(Opcodes.RETURN);
         mv.visitMaxs(0, 0); mv.visitEnd();
     }
@@ -406,7 +417,7 @@ public final class TdfaAsmBackend {
 
     // ===== positionFlagsC — position flags for char[] input (helper) =====
 
-    private static void genPositionFlagsC(ClassWriter cw, String owner, boolean multiline) {
+    private static void genPositionFlagsC(ClassWriter cw, String owner, boolean multiline, boolean unicodeWord) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
                 "positionFlagsC", "(II[C)I", null, null);
         mv.visitCode();
@@ -507,7 +518,7 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.ISUB);
         mv.visitInsn(Opcodes.CALOAD);
         mv.visitVarInsn(Opcodes.ISTORE, 4);
-        emitIsWordBranch(mv, 4, pf);
+        emitIsWordBranch(mv, 4, pf, unicodeWord, owner);
         mv.visitInsn(Opcodes.ICONST_1);
         mv.visitJumpInsn(Opcodes.GOTO, pd);
         mv.visitLabel(pf);
@@ -524,7 +535,7 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, 0);
         mv.visitInsn(Opcodes.CALOAD);
         mv.visitVarInsn(Opcodes.ISTORE, 5);
-        emitIsWordBranch(mv, 5, cf);
+        emitIsWordBranch(mv, 5, cf, unicodeWord, owner);
         mv.visitInsn(Opcodes.ICONST_1);
         mv.visitJumpInsn(Opcodes.GOTO, cd);
         mv.visitLabel(cf);
@@ -655,7 +666,7 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ILOAD, T1);
             Label initEntryOk = new Label();
             mv.visitJumpInsn(Opcodes.IFEQ, initEntryOk);
-            emitPFInline(mv, owner, IN, ST, LEN, PF2, T2, T3, T4, tdfa.multiline);
+            emitPFInline(mv, owner, IN, ST, LEN, PF2, T2, T3, T4, tdfa.multiline, tdfa.unicodeWordBoundary);
             mv.visitVarInsn(Opcodes.ILOAD, PF2);
             mv.visitVarInsn(Opcodes.ILOAD, T1);
             mv.visitInsn(Opcodes.IAND);
@@ -676,7 +687,7 @@ public final class TdfaAsmBackend {
 
         // pf = positionFlags(pos, len, input) — skip when never needed
         if (pfNeeded)
-            emitPFInline(mv, owner, IN, POS, LEN, PF, T1, T2, T3, tdfa.multiline);
+            emitPFInline(mv, owner, IN, POS, LEN, PF, T1, T2, T3, tdfa.multiline, tdfa.unicodeWordBoundary);
         else {
             mv.visitInsn(Opcodes.ICONST_0);
             mv.visitVarInsn(Opcodes.ISTORE, PF);
@@ -1199,7 +1210,7 @@ public final class TdfaAsmBackend {
 
     private static void emitPFInline(MethodVisitor mv, String owner,
                                      int IN, int POS, int LEN, int RESULT, int T1, int T2, int T3,
-                                     boolean multiline) {
+                                     boolean multiline, boolean unicodeWord) {
         // pf = 0
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitVarInsn(Opcodes.ISTORE, RESULT);
@@ -1297,7 +1308,7 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.ISUB);
         mv.visitInsn(Opcodes.CALOAD);
         mv.visitVarInsn(Opcodes.ISTORE, T1);
-        emitIsWordBranch(mv, T1, prevFalse);
+        emitIsWordBranch(mv, T1, prevFalse, unicodeWord, owner);
         mv.visitInsn(Opcodes.ICONST_1);
         mv.visitJumpInsn(Opcodes.GOTO, prevDone);
         mv.visitLabel(prevFalse);
@@ -1314,7 +1325,7 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, POS);
         mv.visitInsn(Opcodes.CALOAD);
         mv.visitVarInsn(Opcodes.ISTORE, T2);
-        emitIsWordBranch(mv, T2, currFalse);
+        emitIsWordBranch(mv, T2, currFalse, unicodeWord, owner);
         mv.visitInsn(Opcodes.ICONST_1);
         mv.visitJumpInsn(Opcodes.GOTO, currDone);
         mv.visitLabel(currFalse);
@@ -1341,7 +1352,14 @@ public final class TdfaAsmBackend {
 
     // ===== isWord (branch to notWord if false) =====
 
-    private static void emitIsWordBranch(MethodVisitor mv, int lvChar, Label notWord) {
+    private static void emitIsWordBranch(MethodVisitor mv, int lvChar, Label notWord,
+                                         boolean unicodeWord, String owner) {
+        if (unicodeWord) {
+            mv.visitVarInsn(Opcodes.ILOAD, lvChar);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isUnicodeWordChar", "(I)Z", false);
+            mv.visitJumpInsn(Opcodes.IFEQ, notWord);
+            return;
+        }
         Label isWord = new Label();
         mv.visitVarInsn(Opcodes.ILOAD, lvChar);
         mv.visitLdcInsn(95); // '_'
@@ -1412,6 +1430,84 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.IADD);
         mv.visitVarInsn(Opcodes.ISTORE, C_LV);
         mv.visitLabel(notSur);
+    }
+
+    // ===== isUnicodeWordChar: binary-search WORD_RANGES for \b under (?u) =====
+
+    private static void genIsUnicodeWordChar(ClassWriter cw, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "isUnicodeWordChar", "(I)Z", null, null);
+        mv.visitCode();
+        // locals: 0 = c, 1 = lo, 2 = hi
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitVarInsn(Opcodes.ISTORE, 1);
+        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "WORD_RANGES", "[I");
+        mv.visitInsn(Opcodes.ARRAYLENGTH);
+        mv.visitInsn(Opcodes.ICONST_2);
+        mv.visitInsn(Opcodes.IDIV);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.ISUB);
+        mv.visitVarInsn(Opcodes.ISTORE, 2);
+        // while (lo <= hi)
+        Label loop = new Label(), notFound = new Label();
+        mv.visitLabel(loop);
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGT, notFound);
+        // mid = (lo + hi) >>> 1
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IUSHR);
+        mv.visitVarInsn(Opcodes.ISTORE, 3); // mid (local 3)
+        // rLo = WORD_RANGES[mid * 2]
+        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "WORD_RANGES", "[I");
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.ICONST_2);
+        mv.visitInsn(Opcodes.IMUL);
+        mv.visitInsn(Opcodes.IALOAD);
+        mv.visitVarInsn(Opcodes.ISTORE, 4); // rLo (local 4)
+        // rHi = WORD_RANGES[mid * 2 + 1]
+        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "WORD_RANGES", "[I");
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.ICONST_2);
+        mv.visitInsn(Opcodes.IMUL);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitInsn(Opcodes.IALOAD);
+        mv.visitVarInsn(Opcodes.ISTORE, 5); // rHi (local 5)
+        // if (c < rLo) { hi = mid - 1; goto loop }
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        Label geLo = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPGE, geLo);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.ISUB);
+        mv.visitVarInsn(Opcodes.ISTORE, 2);
+        mv.visitJumpInsn(Opcodes.GOTO, loop);
+        mv.visitLabel(geLo);
+        // if (c > rHi) { lo = mid + 1; goto loop }
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
+        Label inRange = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPLE, inRange);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitVarInsn(Opcodes.ISTORE, 1);
+        mv.visitJumpInsn(Opcodes.GOTO, loop);
+        mv.visitLabel(inRange);
+        // return true
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitLabel(notFound);
+        // return false
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 
     // ===== register ops (inline, transition) =====

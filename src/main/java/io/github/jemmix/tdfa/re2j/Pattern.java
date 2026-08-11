@@ -34,6 +34,18 @@ public final class Pattern implements java.io.Serializable {
     /** Flag: matches longest possible string (POSIX leftmost-longest). */
     public static final int LONGEST_MATCH = 16;
 
+    /**
+     * Flag: enables Unicode-aware versions of the predefined character classes
+     * {@code \w}, {@code \d}, {@code \s} and the word-boundary assertion
+     * {@code \b} — matching {@code java.util.regex.Pattern.UNICODE_CHARACTER_CLASS}.
+     *
+     * <p>When set, {@code \w} matches {@code [\p{L}\p{N}\p{Mn}\p{Me}\p{Pc}\p{Sc}\p{Sk}]},
+     * {@code \d} matches {@code \p{Nd}}, {@code \s} matches the Unicode
+     * {@code White_Space} property, and {@code \b} uses the Unicode-aware
+     * word-character predicate.
+     */
+    public static final int UNICODE_CHARACTER_CLASS = 32;
+
     /** Flag: disable Unicode groups ({@code \p{...}} / {@code \P{...}} rejected at compile time, like re2j). */
     public static final int DISABLE_UNICODE_GROUPS = 8;
 
@@ -82,14 +94,15 @@ public final class Pattern implements java.io.Serializable {
         if (regex == null) throw new NullPointerException("pattern is null");
         if (factory == null) throw new NullPointerException("factory is null");
         if (unicodeProvider == null) throw new NullPointerException("unicodeProvider is null");
-        if ((flags & ~(CASE_INSENSITIVE | DOTALL | MULTILINE | DISABLE_UNICODE_GROUPS | LONGEST_MATCH)) != 0) {
+        if ((flags & ~(CASE_INSENSITIVE | DOTALL | MULTILINE | DISABLE_UNICODE_GROUPS | LONGEST_MATCH | UNICODE_CHARACTER_CLASS)) != 0) {
             throw new IllegalArgumentException(
-                    "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS, LONGEST_MATCH");
+                    "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS, LONGEST_MATCH, UNICODE_CHARACTER_CLASS");
         }
         String flregex = regex;
         if ((flags & CASE_INSENSITIVE) != 0) flregex = "(?i)" + flregex;
         if ((flags & DOTALL) != 0)          flregex = "(?s)" + flregex;
         if ((flags & MULTILINE) != 0)       flregex = "(?m)" + flregex;
+        if ((flags & UNICODE_CHARACTER_CLASS) != 0) flregex = "(?u)" + flregex;
         Disambiguation disamb = (flags & LONGEST_MATCH) != 0
                 ? Disambiguation.POSIX : Disambiguation.PERL;
         boolean disableUnicodeGroups = (flags & DISABLE_UNICODE_GROUPS) != 0;

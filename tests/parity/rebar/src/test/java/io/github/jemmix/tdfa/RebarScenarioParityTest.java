@@ -1,9 +1,9 @@
 package io.github.jemmix.tdfa;
 
+import io.github.jemmix.tdfa.re2j.Matcher;
+import io.github.jemmix.tdfa.re2j.Pattern;
 import io.github.jemmix.tdfa.rebar.Scenario;
 import io.github.jemmix.tdfa.rebar.ScenarioLoader;
-import io.github.jemmix.tdfa.tdfa.Disambiguation;
-import io.github.jemmix.tdfa.vm.MatchResult;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -141,40 +141,33 @@ class RebarScenarioParityTest {
         assumeTrue(hsBytes >= 0 && hsBytes <= MAX_HAYSTACK_BYTES,
                 "haystack too big (" + hsBytes + " bytes)");
 
-        // --- Compile. rebar's "re2" identity is a Perl leftmost-first
-        //     automata engine, so we use PERL disambiguation (the same default
-        //     our public re2j Pattern uses at Pattern.java:93-94). The factory
-        //     is whatever -Dtdfa.engine resolves to (ASM by default — the
-        //     library's primary backend). Case-insensitivity is applied via
-        //     the (?i) inline flag, the same way our re2j Pattern does it
-        //     (Pattern.java:90).
+        // --- Compile via the re2j-compat API (Pattern/Matcher). Flags are
+        //     translated to inline prefixes by Pattern.compile — (?i) for
+        //     caseInsensitive, (?u) for unicode (UNICODE_CHARACTER_CLASS).
+        //     PERL disambiguation is the default (matches re2/re2j semantics).
         //
         //     ASM fallback: when the pattern produces a DFA big enough to
-        //     blow the JVM 65 KB method-size limit (e.g. the i787 keywords
-        //     alternation, the parol-veryl lexer), ASM throws
-        //     IllegalStateException→MethodTooLargeException. The result is
-        //     identical on the VM backend — only slower — so we retry there
-        //     instead of skipping. The underlying ASM splitting fix is
-        //     tracked in TODO.md ("Performance" section).
+        //     blow the JVM 65 KB method-size limit, ASM throws
+        //     PatternSyntaxException wrapping IllegalStateException→
+        //     MethodTooLargeException. The result is identical on the VM
+        //     backend — only slower — so we retry there instead of skipping.
 
-        String flPat = s.caseInsensitive() ? "(?i)" + s.regex() : s.regex();
+        int flags = 0;
+        if (s.caseInsensitive()) flags |= Pattern.CASE_INSENSITIVE;
+        if (s.unicode()) flags |= Pattern.UNICODE_CHARACTER_CLASS;
         long compileStart = System.nanoTime();
         EngineFactory factory = EngineFactory.DEFAULT;
-        Regex compiled = null;
+        Pattern compiled = null;
         try {
+            final int fl = flags;
             final EngineFactory f0 = factory;
             compiled = withTimeout(COMPILE_TIMEOUT_MS, "compile",
-                    () -> Regex.compile(flPat, f0, Disambiguation.PERL));
+                    () -> Pattern.compile(s.regex(), fl, f0));
         } catch (TimeoutException e) {
             skipCount.incrementAndGet();
             assumeTrue(false, "COMPILE_TIMEOUT " + COMPILE_TIMEOUT_MS + "ms");
             return;
         } catch (Exception e) {
-            // ASM failures arrive as ExecutionException(IllegalStateException)
-            // via the FutureTask wrapper; recurse to find the ASM backend
-            // sentinel. We retry on VM below if it looks like an ASM-only
-            // problem (method-too-large etc.); the VM and ASM backends
-            // produce identical match results, only speed differs.
             if (!looksLikeAsmOnlyFailure(e)) {
                 skipCount.incrementAndGet();
                 assumeTrue(false, "compile failed: " + e.getClass().getSimpleName()
@@ -182,9 +175,10 @@ class RebarScenarioParityTest {
                 return;
             }
             try {
+                final int fl = flags;
                 final EngineFactory f1 = EngineFactory.VM;
                 compiled = withTimeout(COMPILE_TIMEOUT_MS, "compile-vm",
-                        () -> Regex.compile(flPat, f1, Disambiguation.PERL));
+                        () -> Pattern.compile(s.regex(), fl, f1));
                 factory = EngineFactory.VM;
             } catch (TimeoutException te) {
                 skipCount.incrementAndGet();
@@ -203,7 +197,7 @@ class RebarScenarioParityTest {
             assumeTrue(false, "compile returned null");
             return;
         }
-        final Regex r = compiled;
+        final Pattern p = compiled;
         long compileMs = (System.nanoTime() - compileStart) / 1_000_000;
 
         // --- Resolve haystack (not budgeted — should be I/O only) ---
@@ -222,7 +216,7 @@ class RebarScenarioParityTest {
         final long runStart = System.nanoTime();
         final long actual;
         try {
-            actual = withTimeout(RUN_TIMEOUT_MS, "run", () -> runModel(s, r, haystack));
+            actual = withTimeout(RUN_TIMEOUT_MS, "run", () -> runModel(s, p, haystack));
         } catch (TimeoutException e) {
             skipCount.incrementAndGet();
             System.out.printf("TIMEOUT  %-60s compile=%dms  run>%dms  /%s/%n",
@@ -313,19 +307,19 @@ class RebarScenarioParityTest {
     }
 
     /** Dispatch to the right model implementation. */
-    private static long runModel(Scenario s, Regex r, String haystack) {
+    private static long runModel(Scenario s, Pattern p, String haystack) {
         switch (s.model()) {
-            case "count":            return countMatches(r, haystack);
-            case "count-spans":      return countSpans(r, haystack);
-            case "count-captures":   return countCaptures(r, haystack);
-            case "grep":             return grepLines(r, haystack);
+            case "count":            return countMatches(p, haystack);
+            case "count-spans":      return countSpans(p, haystack);
+            case "count-captures":   return countCaptures(p, haystack);
+            case "grep":             return grepLines(p, haystack);
             // compile model: per rebar, "like count, but uses the compile model to
             // ensure the count is correct" (test/model.toml §compile). We've already
             // compiled by this point, so the verification IS the count.
-            case "compile":          return countMatches(r, haystack);
+            case "compile":          return countMatches(p, haystack);
             // grep-captures model: count all captures across all non-overlapping
             // matches, line-oriented with \r stripped (test/model.toml §grep-captures).
-            case "grep-captures":    return grepCaptureCounts(r, haystack);
+            case "grep-captures":    return grepCaptureCounts(p, haystack);
             default: throw new IllegalStateException("unsupported model: " + s.model());
         }
     }
@@ -365,49 +359,27 @@ class RebarScenarioParityTest {
         return oneLine.length() <= max ? oneLine : oneLine.substring(0, max - 3) + "...";
     }
 
-    private static long countMatches(Regex r, String hs) {
+    private static long countMatches(Pattern p, String hs) {
         long n = 0;
-        int pos = 0;
-        while (pos <= hs.length()) {
-            MatchResult m = r.find(hs, pos);
-            if (m == null) break;
-            n++;
-            int end = m.end(0);
-            // Empty-match safe advance: if the match consumed no chars (e.g.
-            // `$`, `(?=)`, `a*` on a non-matching position), step past it
-            // so we don't loop forever — and so a leftmost match reported
-            // ahead of `pos` isn't counted twice (once for the start search
-            // that finds it, once for the next find at the same end pos).
-            pos = (end <= m.start(0)) ? end + 1 : end;
-        }
+        for (Matcher m = p.matcher(hs); m.find(); ) n++;
         return n;
     }
 
-    private static long countSpans(Regex r, String hs) {
+    private static long countSpans(Pattern p, String hs) {
         long sum = 0;
-        int pos = 0;
-        while (pos <= hs.length()) {
-            MatchResult m = r.find(hs, pos);
-            if (m == null) break;
-            sum += m.end(0) - m.start(0);
-            int end = m.end(0);
-            pos = (end <= m.start(0)) ? end + 1 : end;
-        }
+        Matcher m = p.matcher(hs);
+        while (m.find()) sum += m.end() - m.start();
         return sum;
     }
 
     /** Count total capturing groups across all non-overlapping matches. */
-    private static long countCaptures(Regex r, String hs) {
+    private static long countCaptures(Pattern p, String hs) {
         long n = 0;
-        int pos = 0;
-        while (pos <= hs.length()) {
-            MatchResult m = r.find(hs, pos);
-            if (m == null) break;
+        Matcher m = p.matcher(hs);
+        while (m.find()) {
             for (int g = 0; g <= m.groupCount(); g++) {
                 if (m.start(g) >= 0) n++;
             }
-            int end = m.end(0);
-            pos = (end <= m.start(0)) ? end + 1 : end;
         }
         return n;
     }
@@ -418,23 +390,19 @@ class RebarScenarioParityTest {
      * a trailing {@code \r} from CRLF-terminated lines, then ask the engine
      * for any match within the line (line terminator excluded).
      */
-    private static long grepLines(Regex r, String hs) {
+    private static long grepLines(Pattern p, String hs) {
         long matched = 0;
+        Matcher m = p.matcher("");
         int lineStart = 0;
         for (int i = 0; i <= hs.length(); i++) {
             if (i == hs.length() || hs.charAt(i) == '\n') {
                 int lineEnd = i;
-                // Strip a trailing \r so CRLF-terminated lines match the same
-                // way LF-terminated lines do.
-                if (lineEnd > lineStart && hs.charAt(lineEnd - 1) == '\r') {
-                    lineEnd--;
-                }
+                if (lineEnd > lineStart && hs.charAt(lineEnd - 1) == '\r') lineEnd--;
                 String line = hs.substring(lineStart, lineEnd);
-                MatchResult m = null;
+                m.reset(line);
                 try {
-                    m = r.find(line, 0);
+                    if (m.find()) matched++;
                 } catch (Exception ignored) { /* engine hiccup on this line */ }
-                if (m != null) matched++;
                 lineStart = i + 1;
             }
         }
@@ -447,26 +415,21 @@ class RebarScenarioParityTest {
      * (split on {@code \n}, strip trailing {@code \r}); the per-line inner loop
      * matches {@link #countCaptures}. See {@code test/model.toml §grep-captures}.
      */
-    private static long grepCaptureCounts(Regex r, String hs) {
+    private static long grepCaptureCounts(Pattern p, String hs) {
         long n = 0;
+        Matcher m = p.matcher("");
         int lineStart = 0;
         for (int i = 0; i <= hs.length(); i++) {
             if (i == hs.length() || hs.charAt(i) == '\n') {
                 int lineEnd = i;
-                if (lineEnd > lineStart && hs.charAt(lineEnd - 1) == '\r') {
-                    lineEnd--;
-                }
+                if (lineEnd > lineStart && hs.charAt(lineEnd - 1) == '\r') lineEnd--;
                 String line = hs.substring(lineStart, lineEnd);
-                int pos = 0;
+                m.reset(line);
                 try {
-                    while (pos <= line.length()) {
-                        MatchResult m = r.find(line, pos);
-                        if (m == null) break;
+                    while (m.find()) {
                         for (int g = 0; g <= m.groupCount(); g++) {
                             if (m.start(g) >= 0) n++;
                         }
-                        int end = m.end(0);
-                        pos = (end <= m.start(0)) ? end + 1 : end;
                     }
                 } catch (Exception ignored) { /* engine hiccup on this line */ }
                 lineStart = i + 1;

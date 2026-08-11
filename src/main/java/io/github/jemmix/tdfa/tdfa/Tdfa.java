@@ -52,6 +52,14 @@ public final class Tdfa {
     public final boolean perlMode;
     public final boolean multiline;
     /**
+     * True iff the DFA was compiled with Unicode-aware shorthand ({@code (?u)}),
+     * so {@code \b}/{@code \B} word-boundary checks must use the Unicode
+     * word-character ranges in {@link #wordRanges} instead of ASCII-only.
+     */
+    public final boolean unicodeWordBoundary;
+    /** Unicode {@code \w} ranges for runtime {@code \b} when {@link #unicodeWordBoundary} is true; null otherwise. */
+    public final int[] wordRanges;
+    /**
      * Position-aware Perl-mode stop-on-accept decision table.
      * Indexed as {@code stopOnAcceptMask[state * 64 + posFlags]} where {@code posFlags}
      * is the runtime position-flags bitmask ({@code BEGIN_TEXT|END_TEXT|WORD_BOUNDARY|NO_WORD_BOUNDARY|ABS_BEGIN|ABS_END},
@@ -106,7 +114,8 @@ public final class Tdfa {
 
     private Tdfa(int tagCount, int groupCount, int registerCount, int startState, int stateCount,
                  int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] ranges, int[] ops,
-                 int[] stateEntryMask, int[] stateAcceptMask, boolean perlMode, int[] stopOnAcceptMask, boolean multiline) {
+                 int[] stateEntryMask, int[] stateAcceptMask, boolean perlMode, int[] stopOnAcceptMask, boolean multiline,
+                 boolean unicodeWordBoundary, int[] wordRanges) {
         this.tagCount = tagCount; this.groupCount = groupCount;
         this.registerCount = registerCount;
         this.startState = startState;
@@ -122,6 +131,8 @@ public final class Tdfa {
         this.perlMode = perlMode;
         this.stopOnAcceptMask = stopOnAcceptMask;
         this.multiline = multiline;
+        this.unicodeWordBoundary = unicodeWordBoundary;
+        this.wordRanges = wordRanges;
     }
 
     public boolean isAccept(int state) { return (stateMeta[state] & 1) != 0; }
@@ -447,7 +458,8 @@ public final class Tdfa {
             }
             return new Tdfa(tags, nfa.groupCount, globalMaxReg, 0, n,
                     stateMeta, stateBase, stateFinalOpsOff, flatRanges, flatOps,
-                    stateEntryMask, stateAcceptMask, perl, stateStopOnAcceptMask, nfa.multiline);
+                    stateEntryMask, stateAcceptMask, perl, stateStopOnAcceptMask, nfa.multiline,
+                    nfa.unicodeWordBoundary, nfa.wordRanges);
         }
 
         static final boolean debug = Boolean.getBoolean("tdfa.debug");

@@ -87,13 +87,19 @@ final class RE2 {
      */
     static PatternSyntaxException translate(RuntimeException e, String pattern) {
         String msg = e.getMessage();
+        PatternSyntaxException pse;
         if (msg != null) {
             // Special-case: \C escape. Match re2j's exact format.
             if (msg.equals("invalid escape sequence: \\C")) {
-                return new PatternSyntaxException("invalid escape sequence", "\\C");
+                pse = new PatternSyntaxException("invalid escape sequence", "\\C");
+            } else {
+                pse = new PatternSyntaxException(msg, pattern);
             }
+        } else {
+            pse = new PatternSyntaxException("internal error", pattern);
         }
-        return new PatternSyntaxException(msg == null ? "internal error" : msg, pattern);
+        pse.initCause(e);
+        return pse;
     }
 
     /** Quote regexp metacharacters in {@code pattern}; matches re2j's RE2.quoteMeta. */

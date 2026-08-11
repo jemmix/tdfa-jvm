@@ -113,7 +113,7 @@ public final class ScenarioLoader {
         }
         boolean caseInsensitive = boolOr(b.getBoolean("case-insensitive"), false);
         boolean unicode = boolOr(b.getBoolean("unicode"), false);
-        long count = resolveExpectedCount(b.get("count"));
+        long count = resolveExpectedCount(b.get("count"), unicode);
         List<String> engines = new ArrayList<>();
         TomlArray eng = b.getArray("engines");
         if (eng != null) {
@@ -311,11 +311,13 @@ public final class ScenarioLoader {
      * regex to match the engine name (in order) wins.
      *
      * <p>Our engine is a drop-in re2j replacement, so we present ourselves as
-     * {@code "re2"} (re2j's upstream) and pick the first matching entry. If
-     * none matches, fall back to the {@code .*} catch-all. Returns
-     * {@link Long#MIN_VALUE} to signal "no scalar expectation".
+     * {@code "re2"} (re2j's upstream) for ASCII-class scenarios. When
+     * {@code unicode = true}, the parity test enables
+     * {@code UNICODE_CHARACTER_CLASS}, so our {@code \w}/{@code \d}/{@code \s}
+     * behavior matches {@code java.util.regex} — we therefore resolve as
+     * {@code "java/hotspot"} first to pick up Java-specific counts.
      */
-    private long resolveExpectedCount(Object countValue) {
+    private long resolveExpectedCount(Object countValue, boolean unicode) {
         if (countValue == null) {
             return Long.MIN_VALUE;
         }
@@ -324,11 +326,15 @@ public final class ScenarioLoader {
         }
         if (countValue instanceof TomlArray arr) {
             // rebar anchors each engine regex with ^...$ and matches in order.
-            // We claim the "re2" identity (re2j's upstream algorithm) so
-            // entries like { engine = 'go/regexp|re2|regress', count = 0 }
-            // select the count matching our automata / ASCII-class semantics.
-            // If no entry matches "re2", we fall back to the ".*" catch-all.
-            for (String identity : new String[]{"re2", ".*"}) {
+            // When unicode=true we enable UNICODE_CHARACTER_CLASS, so our
+            // \w/\d/\s/\b behavior matches java.util.regex — resolve as
+            // "java/hotspot" first to pick up Java-specific counts (e.g.
+            // char-based span counting vs re2's byte-based).
+            // When unicode=false we use ASCII classes — resolve as "re2".
+            String[] identities = unicode
+                    ? new String[]{"java/hotspot", "re2", ".*"}
+                    : new String[]{"re2", ".*"};
+            for (String identity : identities) {
                 for (int i = 0; i < arr.size(); i++) {
                     TomlTable t = arr.getTable(i);
                     if (t == null) continue;
