@@ -27,14 +27,13 @@ import java.util.List;
  *
  * <p><b>Tracer-bullet limitations:</b>
  * <ul>
- *   <li>Per-engine count overrides ({@code count = [{engine=..., count=...}, ...]})
- *       are skipped — only the scalar form is captured.</li>
  *   <li>{@code regex = { path = "..." }} (regex loaded from file) is supported
- *       via {@link #resolveRegexPath}.</li>
- *   <li>{@code regex = { per-line = "alternate" }} and other regex-table
- *       transformations are not yet implemented.</li>
+ *       together with {@code per-line}, {@code literal}, {@code prepend},
+ *       {@code append} per rebar's {@code WireRegexOptions::transform_from_file}.</li>
  *   <li>{@code haystack = { path = "..." }} is resolved against
  *       {@code benchmarks/haystacks/}.</li>
+ *   <li>Per-engine {@code count} overrides pick the entry matching our
+ *       {@code "re2"} identity first, then the {@code .*} catch-all.</li>
  * </ul>
  */
 public final class ScenarioLoader {
@@ -128,39 +127,135 @@ public final class ScenarioLoader {
                 List.copyOf(engines));
     }
 
-    /** Resolve a {@code regex} field that may be a string, array, or table. */
+    /**
+     * Resolve a {@code regex} field into a single pattern string, faithfully
+     * following rebar's {@code WireRegexOptions::transform_from_file} /
+     * {@code transform_from_inline} (FORMAT.md §regex). Multi-pattern inputs
+     * (inline array, {@code per-line = "pattern"}) are folded into one
+     * alternation — rebar searches them as a combined leftmost scan, which is
+     * exactly Perl-mode {@code A|B|C}.
+     *
+     * <p>Supported shapes:
+     * <ul>
+     *   <li>string → as-is</li>
+     *   <li>array of strings → {@code (?:p1)|(?:p2)|...}</li>
+     *   <li>table with {@code patterns = ...} (string or array)</li>
+     *   <li>table with {@code path = "..."} + optional
+     *       {@code per-line = "alternate"|"pattern"}, {@code literal},
+     *       {@code prepend}, {@code append}</li>
+     * </ul>
+     *
+     * <p>Returns {@code null} when no pattern can be derived.
+     */
     private String resolveRegex(Object regexValue) {
+        List<String> patterns;
         if (regexValue == null) {
             return null;
         }
         if (regexValue instanceof String s) {
-            return s;
-        }
-        if (regexValue instanceof TomlArray arr) {
-            // array of strings — for tracer-bullet take the first
-            if (arr.size() > 0) {
-                String first = arr.getString(0);
-                if (first != null) return first;
+            patterns = List.of(s);
+        } else if (regexValue instanceof TomlArray arr) {
+            patterns = new ArrayList<>(arr.size());
+            for (int i = 0; i < arr.size(); i++) {
+                String p = arr.getString(i);
+                if (p != null) patterns.add(p);
             }
+        } else if (regexValue instanceof TomlTable t) {
+            boolean literal = boolOr(t.getBoolean("literal"), false);
+            String prepend = t.getString("prepend");
+            String append  = t.getString("append");
+            String perLine = t.getString("per-line");
+
+            if (t.isString("patterns")) {
+                patterns = transform(List.of(t.getString("patterns")),
+                        literal, prepend, append);
+            } else if (t.isArray("patterns")) {
+                TomlArray arr = t.getArray("patterns");
+                List<String> ps = new ArrayList<>(arr.size());
+                for (int i = 0; i < arr.size(); i++) {
+                    ps.add(arr.getString(i));
+                }
+                patterns = transform(ps, literal, prepend, append);
+            } else if (t.isString("path")) {
+                String raw = resolveRegexPath(t.getString("path"));
+                if (raw == null) return null;
+                if ("alternate".equals(perLine)) {
+                    // rebar wraps each line in (?:...) and joins with |.
+                    List<String> lines = raw.lines().toList();
+                    List<String> transformed = transform(lines, literal, prepend, append);
+                    return joinAlternation(transformed);
+                }
+                if ("pattern".equals(perLine)) {
+                    // Multi-pattern → fold to one alternation (preserving each
+                    // line's internal groups so capture-based models still
+                    // count correctly).
+                    List<String> lines = raw.lines().toList();
+                    List<String> transformed = transform(lines, literal, prepend, append);
+                    return joinAlternation(transformed);
+                }
+                patterns = transform(List.of(raw.strip()), literal, prepend, append);
+            } else {
+                return null;
+            }
+        } else {
             return null;
         }
-        if (regexValue instanceof TomlTable t) {
-            // { patterns = "...", path = "...", literal = bool, ... }
-            if (t.isString("patterns")) {
-                return t.getString("patterns");
-            }
-            if (t.isArray("patterns")) {
-                TomlArray arr = t.getArray("patterns");
-                if (arr.size() > 0) {
-                    String first = arr.getString(0);
-                    if (first != null) return first;
-                }
-            }
-            if (t.isString("path")) {
-                return resolveRegexPath(t.getString("path"));
+        if (patterns.isEmpty()) return null;
+        return joinAlternation(patterns);
+    }
+
+    /**
+     * Mirror of rebar's {@code WireRegexOptions::transform}: apply
+     * {@code literal} (regex-escape), {@code prepend}, {@code append} to each
+     * pattern.
+     */
+    private static List<String> transform(List<String> patterns,
+                                          boolean literal, String prepend, String append) {
+        List<String> out = new ArrayList<>(patterns.size());
+        for (String p : patterns) {
+            if (p == null) continue;
+            if (literal) p = regexEscape(p);
+            if (prepend != null) p = prepend + p;
+            if (append  != null) p = p + append;
+            out.add(p);
+        }
+        return out;
+    }
+
+    /**
+     * Join patterns into a single Perl-style alternation. A singleton is
+     * returned as-is. Multiple patterns are wrapped in non-capturing groups
+     * so any {@code |} inside an individual pattern doesn't bleed across the
+     * join. Capture groups inside each pattern are preserved.
+     */
+    private static String joinAlternation(List<String> patterns) {
+        if (patterns.size() == 1) {
+            return patterns.get(0);
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < patterns.size(); i++) {
+            if (i > 0) sb.append('|');
+            sb.append("(?:").append(patterns.get(i)).append(')');
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Escape regex metacharacters in {@code s} so it matches literally.
+     * Matches {@code regex_lite::escape} / {@code regex::escape}: every
+     * ASCII byte outside {@code [A-Za-z0-9]} is backslash-escaped.
+     */
+    private static String regexEscape(String s) {
+        StringBuilder sb = new StringBuilder(s.length() * 2);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+                sb.append(c);
+            } else {
+                sb.append('\\').append(c);
             }
         }
-        return null;
+        return sb.toString();
     }
 
     private String resolveRegexPath(String path) {
@@ -211,8 +306,13 @@ public final class ScenarioLoader {
     }
 
     /**
-     * Resolve the expected count. Per-engine overrides
-     * ({@code count = [{engine=..., count=...}, ...]}) are skipped — we return
+     * Resolve the expected count. Per-engine overrides come as an array of
+     * {@code {engine = "<regex>", count = N}} tables; per FORMAT.md the first
+     * regex to match the engine name (in order) wins.
+     *
+     * <p>Our engine is a drop-in re2j replacement, so we present ourselves as
+     * {@code "re2"} (re2j's upstream) and pick the first matching entry. If
+     * none matches, fall back to the {@code .*} catch-all. Returns
      * {@link Long#MIN_VALUE} to signal "no scalar expectation".
      */
     private long resolveExpectedCount(Object countValue) {
@@ -223,12 +323,24 @@ public final class ScenarioLoader {
             return l;
         }
         if (countValue instanceof TomlArray arr) {
-            // Per-engine array — find the catch-all entry (engine = ".*") if present.
-            for (int i = 0; i < arr.size(); i++) {
-                TomlTable t = arr.getTable(i);
-                if (t != null) {
-                    String eng = t.getString("engine");
-                    if (".*".equals(eng)) {
+            // rebar anchors each engine regex with ^...$ and matches in order.
+            // We claim the "re2" identity (re2j's upstream algorithm) so
+            // entries like { engine = 'go/regexp|re2|regress', count = 0 }
+            // select the count matching our automata / ASCII-class semantics.
+            // If no entry matches "re2", we fall back to the ".*" catch-all.
+            for (String identity : new String[]{"re2", ".*"}) {
+                for (int i = 0; i < arr.size(); i++) {
+                    TomlTable t = arr.getTable(i);
+                    if (t == null) continue;
+                    String engRegex = t.getString("engine");
+                    if (engRegex == null) continue;
+                    java.util.regex.Pattern r;
+                    try {
+                        r = java.util.regex.Pattern.compile("^(" + engRegex + ")$");
+                    } catch (Exception e) {
+                        continue;
+                    }
+                    if (r.matcher(identity).matches()) {
                         Long c = t.getLong("count");
                         return c != null ? c : Long.MIN_VALUE;
                     }

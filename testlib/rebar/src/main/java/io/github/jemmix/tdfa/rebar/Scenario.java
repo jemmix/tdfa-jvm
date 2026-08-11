@@ -8,6 +8,14 @@ import java.util.List;
  * scenario against our own engine; ignores engine-specific orchestration
  * (we are the only engine under test).
  *
+ * <p><b>Regex:</b> rebar's {@code regex} field may expand to multiple
+ * patterns (inline array, or {@code per-line = "pattern"} from a file).
+ * Per rebar's FORMAT.md those patterns are searched <em>together</em> — a
+ * single combined scan reporting the leftmost match across all patterns.
+ * That's exactly Perl alternation semantics, so we collapse multi-pattern
+ * specs into one regex by joining with {@code |}. Capture-group counts in
+ * each original pattern are preserved.
+ *
  * <p><b>Lazy haystack:</b> {@link #haystackSpec()} captures the raw spec
  * (inline string or path reference). Use {@link #resolveHaystack(Path)} to
  * materialize on demand — avoids loading 100+ MB of haystacks at parse time.
