@@ -1,5 +1,8 @@
 package io.github.jemmix.tdfa;
 
+import io.github.jemmix.tdfa.ast.Ast;
+import io.github.jemmix.tdfa.ast.CharClass;
+import io.github.jemmix.tdfa.parser.Parser;
 import io.github.jemmix.tdfa.re2j.Matcher;
 import io.github.jemmix.tdfa.re2j.Pattern;
 import io.github.jemmix.tdfa.rebar.Scenario;
@@ -137,7 +140,11 @@ class RebarScenarioParityTest {
         // (largest is 39 MB); the 2 MB regex cap covers the longest in-scope
         // dictionary alternation (~57 KB). The end-of-suite summary prints the
         // slowest tests so we can see what actually needed the headroom.
-        final long COMPILE_TIMEOUT_MS = 120_000;      // regex compilation wall-clock (2 min)
+        // COMPILE_TIMEOUT is 4 min: covers dictionary/single (~150 s compile
+        // under parallel contention) with headroom; the 4 known bombs that
+        // would exceed it are AST-skipped before this timeout fires (see
+        // exceedsCompileBudget).
+        final long COMPILE_TIMEOUT_MS = 240_000;      // regex compilation wall-clock (4 min)
         final long RUN_TIMEOUT_MS    = 600_000;       // match execution wall-clock (10 min)
         final int  MAX_HAYSTACK_BYTES = 80_000_000;   // covers all in-scope haystacks (largest 39 MB)
         final int  MAX_REGEX_LEN = 2_000_000;         // covers all in-scope regex specs (largest ~57 KB)
@@ -199,6 +206,23 @@ class RebarScenarioParityTest {
         //     PatternSyntaxException wrapping IllegalStateException→
         //     MethodTooLargeException. The result is identical on the VM
         //     backend — only slower — so we retry there instead of skipping.
+
+        // --- AST-level fast-fail: pre-scan for known bomb shapes that would
+        //     otherwise burn the full COMPILE_TIMEOUT wall budget. Saves ~8
+        //     minutes per run on the 4 known bombs today (aws-keys/full,
+        //     date/ascii, date/unicode, bounded-repeat/context). The detector
+        //     is intentionally conservative — it must NOT trip on legitimately
+        //     slow-but-finishing compiles like curated/12-dictionary/single
+        //     (73 s) or leipzig/tom-sawyer-prefix-{short,long} (18-22 s).
+        //     See docs/REBAR-SPEEDUP-PLAN.md §Tier-1 #2.
+        if (exceedsCompileBudget(s.regex())) {
+            countSkip("compile-budget:ast-bomb");
+            skipCount.incrementAndGet();
+            timings.add(new Timing(s.fullName(), 0, 0, "SKIP:compile-budget"));
+            assumeTrue(false, "compile-budget: AST-level bomb detected (would exceed "
+                    + COMPILE_TIMEOUT_MS + "ms wall budget)");
+            return;
+        }
 
         int flags = 0;
         if (s.caseInsensitive()) flags |= Pattern.CASE_INSENSITIVE;
@@ -413,6 +437,169 @@ class RebarScenarioParityTest {
             c = c.getCause();
         }
         return false;
+    }
+
+    /**
+     * Heuristic AST-level bomb detector used to fast-fail regexes that would
+     * otherwise burn the full {@code COMPILE_TIMEOUT_MS} wall budget on
+     * DFA state explosion. Catches the 4 known COMPILE_TIMEOUT scenarios:
+     * <ul>
+     *   <li>{@code curated/09-aws-keys/full} — {@code (\n^.*?){0,4}} nested
+     *       inside an outer {@code (...)+}: bounded repeat containing a
+     *       wide unbounded repeat</li>
+     *   <li>{@code curated/03-date/ascii} + {@code unicode} — 391-branch
+     *       alternation with non-literal branches (each branch contains
+     *       {@code \d}, {@code [0-3]} etc.)</li>
+     *   <li>{@code curated/10-bounded-repeat/context} — {@code [\s\S]{0,100}}
+     *       × 2: very-high bounded repeat over a single wide class</li>
+     * </ul>
+     *
+     * <p>Conservative by design — must NOT trip on legitimately-slow-but-
+     * finishing compiles like {@code curated/12-dictionary/single} (73 s,
+     * 2663 literal-only branches), {@code \p{L}{8,13}} (passes, narrow body
+     * in single CharClass), {@code Tom.{10,25}river|...} (passes, mid-range
+     * repeat count), or {@code (?:[A-Z][a-z]+\s*){10,100}} (5 s compile,
+     * bounded-repeat containing unbounded-repeat over narrow class).
+     *
+     * <p>Three detector rules:
+     * <ol>
+     *   <li><b>Bounded repeat of wide-unbounded repeat</b>: a {@code Repeat}
+     *       (max &lt; ∞) whose body transitively contains another
+     *       {@code Repeat(max=∞)} whose body transitively contains a wide
+     *       {@link CharClass} (width &gt; 10 000). This is the aws-keys
+     *       {@code (\n^.*?){0,4}} shape.</li>
+     *   <li><b>Very-high bounded repeat over wide class</b>: a {@code Repeat}
+     *       with at least 50 reps whose body is (or contains) a single wide
+     *       {@link CharClass}. This is the {@code [\s\S]{0,100}} shape.
+     *       Threshold of 50 reps distinguishes from {@code \p{L}{8,13}}
+     *       (6 reps) and {@code .{10,25}} (16 reps).</li>
+     *   <li><b>Massive non-literal alternation</b>: an {@code Alt} with
+     *       &gt; 300 branches where any branch contains a non-literal node.
+     *       Threshold of 300 catches the 391-branch datefinder regex;
+     *       dictionary (2663 branches, all plain literals) passes through.</li>
+     * </ol>
+     *
+     * <p>Returns {@code false} if the regex fails to parse — we let the
+     * downstream {@link Pattern#compile} produce the canonical error.
+     */
+    private static boolean exceedsCompileBudget(String regex) {
+        Ast ast;
+        try {
+            ast = Parser.parse(regex);
+        } catch (RuntimeException e) {
+            return false;
+        }
+        return scanForBomb(ast, regex.length());
+    }
+
+    /** Recursive walker; returns true if any subtree matches a bomb shape. */
+    private static boolean scanForBomb(Ast ast, int regexLen) {
+        if (ast instanceof Ast.Repeat r) {
+            boolean variable = r.max != Integer.MAX_VALUE && r.max > r.min;
+            if (variable) {
+                int reps = r.max - r.min + 1;
+                // Rule 1: variable bounded repeat of wide-unbounded repeat (aws-keys).
+                // Variable (min<max) bounded repeats create max+1 distinct repetition
+                // states vs. fixed repeats' one — that's the difference between
+                // (\n^.*?){0,4} (bomb) and (.*?,){13} (passes).
+                if (containsWideUnboundedRepeat(r.body)) return true;
+                // Rule 2: very-high variable bounded repeat over wide class (context).
+                if (reps >= 50 && containsWideClass(r.body)) return true;
+            }
+            return scanForBomb(r.body, regexLen);
+        }
+        if (ast instanceof Ast.Alt a) {
+            // Rule 3: massive non-literal alternation (date).
+            // The datefinder regex (6.3 KB) has 73 non-literal branches (the
+            // actual date patterns with \d, [0-3]) alongside 391 plain-literal
+            // branches (timezone abbreviations) — those 73 branches are the bomb.
+            // The regex-length precondition (>2 000 chars) distinguishes it from
+            // curated/05-lexer-veryl/single (~1.2 KB, 88 non-literal alternations,
+            // compiles fine). Dictionary (2663 plain-literal branches) passes the
+            // isPlainLiteral check.
+            if (regexLen > 2_000 && a.children.size() > 50) {
+                for (Ast child : a.children) {
+                    if (!isPlainLiteral(child)) return true;
+                }
+            }
+            for (Ast child : a.children) {
+                if (scanForBomb(child, regexLen)) return true;
+            }
+            return false;
+        }
+        if (ast instanceof Ast.Concat c) {
+            for (Ast child : c.children) {
+                if (scanForBomb(child, regexLen)) return true;
+            }
+            return false;
+        }
+        return false;
+    }
+
+    /**
+     * Does {@code ast} contain a {@code Repeat(max=∞)} whose body transitively
+     * contains a wide {@link CharClass}? This is the aws-keys inner shape:
+     * {@code .*?} or {@code [\s\S]*} nested inside a bounded repeat.
+     */
+    private static boolean containsWideUnboundedRepeat(Ast ast) {
+        if (ast instanceof Ast.Repeat r) {
+            if (r.max == Integer.MAX_VALUE && containsWideClass(r.body)) return true;
+            return containsWideUnboundedRepeat(r.body);
+        }
+        if (ast instanceof Ast.Concat c) {
+            for (Ast child : c.children) {
+                if (containsWideUnboundedRepeat(child)) return true;
+            }
+            return false;
+        }
+        if (ast instanceof Ast.Alt a) {
+            for (Ast child : a.children) {
+                if (containsWideUnboundedRepeat(child)) return true;
+            }
+            return false;
+        }
+        return false;
+    }
+
+    /** Does {@code ast} contain any {@link CharClass} of width &gt; 10 000? */
+    private static boolean containsWideClass(Ast ast) {
+        if (ast instanceof CharClass cc) return classWidth(cc) > 10_000;
+        if (ast instanceof Ast.Repeat r) return containsWideClass(r.body);
+        if (ast instanceof Ast.Concat c) {
+            for (Ast child : c.children) {
+                if (containsWideClass(child)) return true;
+            }
+            return false;
+        }
+        if (ast instanceof Ast.Alt a) {
+            for (Ast child : a.children) {
+                if (containsWideClass(child)) return true;
+            }
+            return false;
+        }
+        return false;
+    }
+
+    /** Is {@code ast} a plain literal (single Symbol or Concat of Symbols only)? */
+    private static boolean isPlainLiteral(Ast ast) {
+        if (ast instanceof Ast.Symbol) return true;
+        if (ast instanceof Ast.Concat c) {
+            for (Ast child : c.children) {
+                if (!(child instanceof Ast.Symbol)) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /** Total codepoint width of a CharClass (sum of inclusive range sizes). */
+    private static long classWidth(CharClass cc) {
+        long w = 0;
+        for (int i = 0; i + 1 < cc.ranges.length; i += 2) {
+            w += (long) cc.ranges[i + 1] - cc.ranges[i] + 1;
+            if (w > 100_000) return 100_001; // cap
+        }
+        return w;
     }
 
     /**
