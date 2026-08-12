@@ -23,8 +23,8 @@ mirror of our compile-once-match-many model — see README §Vision).
 | 6.1 | UTree prefix tree for tag paths | (BT19, `tag_history.h`) | ✅ done (`UTree.java`) |
 | 6.2.2 | Register-aware Moore minimization | `src/dfa/minimization.cc` | ✅ done (`Tdfa.DfaMinimizer`) |
 | 6.4 | Fixed tags | `src/regexp/fixed_tags.cc` | ✅ done (`io.github.jemmix.tdfa.opt.FixedTags`) |
+| 6.3 | Register optimizations pipeline | `src/cfg/{compact,dce,interfere,liveanal,normalize,varalloc,optimize,rename}.cc` | ✅ done (`io.github.jemmix.tdfa.cfg.{Cfg,Optimize}`) |
 | **6.2** | **Fallback operations** | `src/dfa/fallback_tags.cc` | ❌ **next** |
-| **6.3** | **Register optimizations pipeline** | `src/cfg/{compact,dce,interfere,liveanal,normalize,varalloc,optimize,rename}.cc` | ❌ **planned** |
 | 7 | Multi-pass TDFA | `lib/reg{comp,exec}_dfa_multipass.*` | out of scope — JIT use case, see README §Vision |
 | 9 | Deterministic points | (future work in paper itself) | out of scope — paper has no concrete algorithm |
 
@@ -160,11 +160,12 @@ registers, or regops. They're reconstructed lazily at match time.
 
 ---
 
-## #2 Register optimizations pipeline (BT22 §6.3)
+## #2 Register optimizations pipeline (BT22 §6.3) — ✅ DONE
 
 > Paper algorithms: Figure 7 (alg_opt1 — compaction, liveness, DCE,
 > interference, register allocation) + Figure 8 (alg_opt2 — normalization,
-> topological sort). re2c: `src/cfg/*`.
+> topological sort). re2c: `src/cfg/*`. **Landed** in
+> `io.github.jemmix.tdfa.cfg.{Cfg,Optimize}` (commits eeeac46, 18c0561, 5abba8c).
 
 ### What it does
 
@@ -341,7 +342,7 @@ the paper (or re2c) publishes one.
 | Milestone | Items | Faithfulness delta | Wall-time delta on rebar |
 |---|---|---|---|
 | M1 | #1 Fixed tags ✅ | Tag count down on capture-heavy REs | ~2 s (56 s → 56 s; gain masked by other compile cost) |
-| M2 | #2 Register optimizations | `globalMaxReg` down, minimization starts firing | -5..-10 s overall; more on capture-heavy |
+| M2 | #2 Register optimizations ✅ | `globalMaxReg` down 50–66%; minimization fires more often | neutral at suite level (gains masked; large-DFAs skip via cap) |
 | M3 | #3 Fallback operations | POSIX capture correctness; README caveat removed | neutral (correctness fix) |
 
 After M3, `README.md` §"How it was tested" can drop the "Full POSIX closure
@@ -362,3 +363,19 @@ After M3, `README.md` §"How it was tested" can drop the "Full POSIX closure
 | `(a+)` | 0/2 | variable body → no fixing |
 
 Rebar parity: pass=108 fail=2 skip=249 (unchanged); both failures pre-existing.
+
+### M2 verification (observed)
+
+| Pattern | Initial regs | After §6.3 | Reduction |
+|---|---|---|---|
+| `(abc)` | 4 | 2 | 50% |
+| `(\w+@(\w+\.)*\w+)` | 12 | 4 | 66% |
+| `(a\|b)*c` | 5 | 2 | 60% |
+| `(\d+\.)+\d+` | 7 | 3 | 57% |
+| `(\d+)\.(\d+)` | 10 | 4 | 60% |
+| `(a+)(b+)` | 10 | 4 | 60% |
+| `((ab)+)` | 10 | 4 | 60% |
+
+Rebar parity: pass=108 fail=2 skip=249 (unchanged); both failures pre-existing.
+REGOPT_MAX_STATES defaults to 2000: above that the per-DFA pipeline cost
+outweighs the benefit. Disable with `-Dtdfa.noregopt=true`.
