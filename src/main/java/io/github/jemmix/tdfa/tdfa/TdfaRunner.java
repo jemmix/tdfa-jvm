@@ -130,9 +130,9 @@ public final class TdfaRunner implements Regex.Engine {
         }
         if (h == null) return null;
         if (tdfa.fixedBase != null) {
-            MatchResult.reconstructFixed(h.regs, tdfa.tagCount, tdfa.fixedBase, tdfa.fixedOffset);
+            MatchResult.reconstructFixed(h.regs, tdfa.finalRegBase, tdfa.fixedBase, tdfa.fixedOffset);
         }
-        return new MatchResult(h.regs, tdfa.tagCount, tdfa.groupCount, h.matchStart, h.matchEnd);
+        return new MatchResult(h.regs, tdfa.finalRegBase, tdfa.groupCount, h.matchStart, h.matchEnd);
     }
 
     /** String find with anchor enforcement and register extraction. */

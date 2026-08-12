@@ -375,7 +375,7 @@ public final class TdfaAsmBackend {
             // holder's regs from their base tag values, before constructing MatchResult.
             mv.visitVarInsn(Opcodes.ALOAD, 4);
             mv.visitFieldInsn(Opcodes.GETFIELD, HOLDER, "regs", "[I");
-            ic(mv, tdfa.tagCount);
+            ic(mv, tdfa.finalRegBase);
             mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "FIXED_BASE", "[I");
             mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "FIXED_OFFSET", "[I");
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, RESULT, "reconstructFixed", "([II[I[I)V", false);
@@ -384,7 +384,7 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.DUP);
         mv.visitVarInsn(Opcodes.ALOAD, 4);
         mv.visitFieldInsn(Opcodes.GETFIELD, HOLDER, "regs", "[I");
-        ic(mv, tdfa.tagCount);
+        ic(mv, tdfa.finalRegBase);
         ic(mv, tdfa.groupCount);
         mv.visitVarInsn(Opcodes.ALOAD, 4);
         mv.visitFieldInsn(Opcodes.GETFIELD, HOLDER, "matchStart", "I");

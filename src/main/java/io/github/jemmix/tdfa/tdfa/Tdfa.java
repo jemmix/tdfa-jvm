@@ -26,6 +26,15 @@ public final class Tdfa {
     public final int tagCount;
     public final int groupCount;
     public final int registerCount;
+    /**
+     * Offset of the final-register block within the runtime register file. Working
+     * registers occupy {@code [0..finalRegBase-1]}; final registers (one per tag,
+     * holding the match-end tag offsets read by {@link io.github.jemmix.tdfa.vm.MatchResult})
+     * occupy {@code [finalRegBase..finalRegBase+tagCount-1]}. Defaults to
+     * {@code tagCount} (the pre-optimization layout); may be smaller after BT22 §6.3
+     * register optimizations consolidate the working space.
+     */
+    public final int finalRegBase;
     public final int startState;
     public final int stateCount;
     /**
@@ -119,12 +128,13 @@ public final class Tdfa {
     public static final int OP_COPY    = 3;
     public static final int OP_END     = 0;  // terminator for op blocks
 
-    private Tdfa(int tagCount, int groupCount, int registerCount, int startState, int stateCount,
+    private Tdfa(int tagCount, int groupCount, int registerCount, int finalRegBase, int startState, int stateCount,
                  int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] ranges, int[] ops,
                  int[] stateEntryMask, int[] stateAcceptMask, boolean perlMode, int[] stopOnAcceptMask, boolean multiline,
                  boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset) {
         this.tagCount = tagCount; this.groupCount = groupCount;
         this.registerCount = registerCount;
+        this.finalRegBase = finalRegBase;
         this.startState = startState;
         this.stateCount = stateCount;
         this.stateMeta = stateMeta;
@@ -171,6 +181,20 @@ public final class Tdfa {
      * dictionary alternations, skipping saves ~30s of pure overhead. Override with -Dtdfa.minimize.max=N.
      */
     private static final int MINIMIZE_MAX_STATES = Integer.getInteger("tdfa.minimize.max", 20000);
+    /**
+     * Toggle BT22 §6.3 register optimizations on the post-determinization CFG. Default on;
+     * disable with {@code -Dtdfa.noregopt=true}. Currently runs Stage 1 (compaction) only;
+     * Stages 2-4 (liveness, DCE, interference, allocation, normalization) land incrementally.
+     */
+    private static final boolean REGOPT_ENABLED = !Boolean.getBoolean("tdfa.noregopt");
+    /**
+     * Skip CFG-based register optimizations for DFAs above this state count. CFG
+     * construction is O(n · avg_ranges_per_state) and the per-block BFS for successor
+     * arcs adds another O(n) factor on dense DFAs. The benefit on huge DFAs is small
+     * (most have 0 tags anyway), so skip above the cap. Override with
+     * {@code -Dtdfa.regopt.max=N}.
+     */
+    private static final int REGOPT_MAX_STATES = Integer.getInteger("tdfa.regopt.max", 5000);
     static final boolean DEBUG = Boolean.getBoolean("tdfa.debug");
 
     private static final class Compiler {
@@ -399,6 +423,25 @@ public final class Tdfa {
                     }
                 }
             }
+            // Pre-pass: compute finalRegops for each accepting state up front, so the
+            // CFG optimization (BT22 §6.3) can see them along with transition ops.
+            for (int s = 0; s < n; s++) {
+                if (accept.get(s)) {
+                    builders.get(s).finalOpsArr = finalRegops(states.get(s));
+                }
+            }
+
+            // === BT22 §6.3 register optimizations (compaction for now; full pipeline TODO) ===
+            int finalRegBase = tags;  // default: working [0..T-1], final [T..2T-1]
+            if (REGOPT_ENABLED && tags > 0 && n > 1 && n <= REGOPT_MAX_STATES) {
+                io.github.jemmix.tdfa.cfg.Cfg cfg = buildCfg(builders, accept, states, tags, nfa.groupCount, nextReg);
+                io.github.jemmix.tdfa.cfg.Optimize.optimize(cfg);
+                cfgWriteBack(cfg, builders);
+                finalRegBase = cfg.finalRegBase;
+                if (debug) System.err.println("[tdfa] regopt: regs " + cfg.initialRegCount + " -> " + cfg.regCount
+                        + " (finalRegBase=" + finalRegBase + ")");
+            }
+
             // First pass: coalesce + fillGaps on every state's ranges, compute totals.
             int totalRanges = 0;
             int totalOpsSlots = 1;  // reserve ops[0] = OP_END for the "no ops" case (opsOff=0 means empty)
@@ -412,8 +455,7 @@ public final class Tdfa {
                     if (r.ops != null && r.ops.length > 0) totalOpsSlots += r.ops.length + 1;  // +1 for OP_END
                 }
                 if (accept.get(s)) {
-                    int[] f = finalRegops(states.get(s));
-                    sb.finalOpsArr = f;
+                    int[] f = sb.finalOpsArr;  // populated in pre-pass above (possibly optimized by CFG)
                     if (f != null && f.length > 0) totalOpsSlots += f.length + 1;
                 }
             }
@@ -550,7 +592,7 @@ public final class Tdfa {
                     stateCount = newN;
                 }
             }
-            return new Tdfa(tags, nfa.groupCount, globalMaxReg, 0, stateCount,
+            return new Tdfa(tags, nfa.groupCount, globalMaxReg, finalRegBase, 0, stateCount,
                     minMeta, minBase, minFinalOpsOff, minRanges, flatOps,
                     minEntryMask, minAcceptMask, perl, minStopMask, nfa.multiline,
                     nfa.unicodeWordBoundary, nfa.wordRanges,
@@ -562,6 +604,123 @@ public final class Tdfa {
             if (fixedBase == null) return false;
             for (int i = 1; i < fixedBase.length; i++) if (fixedBase[i] != 0) return true;
             return false;
+        }
+
+        // ============================ CFG construction (BT22 §6.3) ============================
+
+        /**
+         * Build a {@link io.github.jemmix.tdfa.cfg.Cfg} from the post-determinization
+         * {@code DfaStateBuilder} list. Each {@code (state, range-with-ops)} pair becomes
+         * a BASIC block; each accepting state with non-empty {@code finalOpsArr} becomes
+         * a FINAL block. Arcs skip zero-op transitions.
+         *
+         * <p>Lives inline in {@code Tdfa.Compiler} so it has direct access to the
+         * package-private nested {@code DfaStateBuilder}/{@code Range} types
+         * (avoiding reflection on synthetic nested-class field names).
+         */
+        io.github.jemmix.tdfa.cfg.Cfg buildCfg(List<DfaStateBuilder> builders, BitSet accept,
+                                               @SuppressWarnings("unused") List<List<Config>> states,
+                                               int tagCount, int groupCount, int initialRegCount) {
+            io.github.jemmix.tdfa.cfg.Cfg cfg = new io.github.jemmix.tdfa.cfg.Cfg(tagCount, groupCount, initialRegCount);
+            int n = builders.size();
+            // First pass: create blocks.
+            int[][] rangeBlockIds = new int[n][];
+            List<Integer>[] basicLeaving = new List[n];
+            int[] finalBlockAt = new int[n];
+            java.util.Arrays.fill(finalBlockAt, -1);
+            for (int s = 0; s < n; s++) basicLeaving[s] = new ArrayList<>();
+            for (int s = 0; s < n; s++) {
+                DfaStateBuilder sb = builders.get(s);
+                rangeBlockIds[s] = new int[sb.ranges.size()];
+                java.util.Arrays.fill(rangeBlockIds[s], -1);
+                for (int r = 0; r < sb.ranges.size(); r++) {
+                    Range range = sb.ranges.get(r);
+                    if (range.ops == null || range.ops.length == 0) continue;
+                    io.github.jemmix.tdfa.cfg.Cfg.Block blk = cfg.newBlock(io.github.jemmix.tdfa.cfg.Cfg.BLOCK_BASIC, s, r);
+                    decodeOps(range.ops, blk.ops);
+                    rangeBlockIds[s][r] = cfg.blocks.size() - 1;
+                    basicLeaving[s].add(rangeBlockIds[s][r]);
+                }
+                if (accept.get(s)) {
+                    io.github.jemmix.tdfa.cfg.Cfg.Block fb = cfg.newBlock(io.github.jemmix.tdfa.cfg.Cfg.BLOCK_FINAL, s, -1);
+                    if (sb.finalOpsArr != null) decodeOps(sb.finalOpsArr, fb.ops);
+                    finalBlockAt[s] = cfg.blocks.size() - 1;
+                }
+            }
+            // Second pass: successor arcs. BASIC block at state s with range.target s' ->
+            // all blocks (BASIC + FINAL) reachable from s' through zero-op transitions.
+            for (io.github.jemmix.tdfa.cfg.Cfg.Block blk : cfg.blocks) {
+                if (blk.kind != io.github.jemmix.tdfa.cfg.Cfg.BLOCK_BASIC) continue;
+                int target = builders.get(blk.stateId).ranges.get(blk.rangeIndex).target;
+                BitSet visited = new BitSet();
+                List<Integer> frontier = new ArrayList<>();
+                frontier.add(target);
+                visited.set(target);
+                while (!frontier.isEmpty()) {
+                    int t = frontier.remove(frontier.size() - 1);
+                    blk.successors.addAll(basicLeaving[t]);
+                    if (finalBlockAt[t] != -1) blk.successors.add(finalBlockAt[t]);
+                    DfaStateBuilder tb = builders.get(t);
+                    for (int r = 0; r < tb.ranges.size(); r++) {
+                        Range tr = tb.ranges.get(r);
+                        if (tr.ops != null && tr.ops.length > 0) continue;  // op-bearing: not skipped
+                        if (tr.target < 0) continue;
+                        if (!visited.get(tr.target)) {
+                            visited.set(tr.target);
+                            frontier.add(tr.target);
+                        }
+                    }
+                }
+            }
+            return cfg;
+        }
+
+        private static void decodeOps(int[] flat, List<io.github.jemmix.tdfa.cfg.Cfg.Op> out) {
+            for (int i = 0; i < flat.length; i += 3) {
+                int op = flat[i], dst = flat[i + 1], src = flat[i + 2];
+                if (op == OP_END) break;
+                switch (op) {
+                    case OP_SET_POS: out.add(io.github.jemmix.tdfa.cfg.Cfg.Op.setPos(dst)); break;
+                    case OP_SET_NIL: out.add(io.github.jemmix.tdfa.cfg.Cfg.Op.setNil(dst)); break;
+                    case OP_COPY:    out.add(io.github.jemmix.tdfa.cfg.Cfg.Op.copy(dst, src)); break;
+                    default: throw new IllegalStateException("bad op: " + op);
+                }
+            }
+        }
+
+        /** Flush optimized CFG ops back into the builders' Range/finalOpsArr slots. */
+        void cfgWriteBack(io.github.jemmix.tdfa.cfg.Cfg cfg, List<DfaStateBuilder> builders) {
+            for (io.github.jemmix.tdfa.cfg.Cfg.Block blk : cfg.blocks) {
+                int[] encoded = encodeOps(blk.ops);
+                DfaStateBuilder sb = builders.get(blk.stateId);
+                if (blk.kind == io.github.jemmix.tdfa.cfg.Cfg.BLOCK_BASIC) {
+                    sb.ranges.get(blk.rangeIndex).ops = encoded;
+                } else if (blk.kind == io.github.jemmix.tdfa.cfg.Cfg.BLOCK_FINAL) {
+                    sb.finalOpsArr = encoded;
+                }
+            }
+        }
+
+        private static int[] encodeOps(List<io.github.jemmix.tdfa.cfg.Cfg.Op> ops) {
+            if (ops.isEmpty()) return null;
+            int[] flat = new int[ops.size() * 3];
+            for (int i = 0; i < ops.size(); i++) {
+                io.github.jemmix.tdfa.cfg.Cfg.Op op = ops.get(i);
+                switch (op.kind) {
+                    case io.github.jemmix.tdfa.cfg.Cfg.KIND_SET:
+                        flat[i * 3] = op.value == io.github.jemmix.tdfa.cfg.Cfg.VAL_POS ? OP_SET_POS : OP_SET_NIL;
+                        flat[i * 3 + 1] = op.dst;
+                        flat[i * 3 + 2] = 0;
+                        break;
+                    case io.github.jemmix.tdfa.cfg.Cfg.KIND_COPY:
+                        flat[i * 3] = OP_COPY;
+                        flat[i * 3 + 1] = op.dst;
+                        flat[i * 3 + 2] = op.src;
+                        break;
+                    default: throw new IllegalStateException("cannot encode op kind " + op.kind);
+                }
+            }
+            return flat;
         }
 
         static final boolean debug = Boolean.getBoolean("tdfa.debug");
@@ -1087,7 +1246,7 @@ public final class Tdfa {
 
     static final class Range {
         final int lo, hi, target;
-        final int[] ops;
+        int[] ops;  // non-final: rewritten in place by CFG optimization (BT22 §6.3)
         final int requiredMask;
         Range(int lo, int hi, int target, int[] ops, int requiredMask) {
             this.lo = lo; this.hi = hi; this.target = target; this.ops = ops; this.requiredMask = requiredMask;
