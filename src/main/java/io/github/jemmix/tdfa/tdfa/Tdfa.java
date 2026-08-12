@@ -188,13 +188,13 @@ public final class Tdfa {
      */
     private static final boolean REGOPT_ENABLED = !Boolean.getBoolean("tdfa.noregopt");
     /**
-     * Skip CFG-based register optimizations for DFAs above this state count. CFG
-     * construction is O(n · avg_ranges_per_state) and the per-block BFS for successor
-     * arcs adds another O(n) factor on dense DFAs. The benefit on huge DFAs is small
-     * (most have 0 tags anyway), so skip above the cap. Override with
-     * {@code -Dtdfa.regopt.max=N}.
+     * Skip CFG-based register optimizations for DFAs above this state count. The full
+     * §6.3 pipeline (compaction + 2× (liveness + DCE + interference + allocation +
+     * normalization)) has O(n² · ops-per-block) cost on the interference matrix and
+     * copy-coalescing passes. The benefit on huge DFAs is small (most have 0 tags
+     * anyway), so skip above the cap. Override with {@code -Dtdfa.regopt.max=N}.
      */
-    private static final int REGOPT_MAX_STATES = Integer.getInteger("tdfa.regopt.max", 5000);
+    private static final int REGOPT_MAX_STATES = Integer.getInteger("tdfa.regopt.max", 2000);
     static final boolean DEBUG = Boolean.getBoolean("tdfa.debug");
 
     private static final class Compiler {
