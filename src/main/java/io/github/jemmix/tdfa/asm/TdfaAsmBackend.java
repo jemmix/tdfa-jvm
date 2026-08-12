@@ -98,6 +98,11 @@ public final class TdfaAsmBackend {
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, f, "[I", null, null).visitEnd();
         if (fastPath)
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "ASCII_TARGET", "[I", null, null).visitEnd();
+        boolean hasFixed = tdfa.fixedBase != null;
+        if (hasFixed) {
+            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "FIXED_BASE", "[I", null, null).visitEnd();
+            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "FIXED_OFFSET", "[I", null, null).visitEnd();
+        }
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
         mv.visitCode();
         int n = tdfa.stateCount;
@@ -145,6 +150,26 @@ public final class TdfaAsmBackend {
                 }
             }
             mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "ASCII_TARGET", "[I");
+        }
+
+        if (hasFixed) {
+            int len = tdfa.fixedBase.length;
+            ic(mv, len);
+            mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
+            for (int i = 0; i < len; i++) {
+                if (tdfa.fixedBase[i] != 0) {
+                    mv.visitInsn(Opcodes.DUP); ic(mv, i); ic(mv, tdfa.fixedBase[i]); mv.visitInsn(Opcodes.IASTORE);
+                }
+            }
+            mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "FIXED_BASE", "[I");
+            ic(mv, len);
+            mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
+            for (int i = 0; i < len; i++) {
+                if (tdfa.fixedOffset[i] != 0) {
+                    mv.visitInsn(Opcodes.DUP); ic(mv, i); ic(mv, tdfa.fixedOffset[i]); mv.visitInsn(Opcodes.IASTORE);
+                }
+            }
+            mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "FIXED_OFFSET", "[I");
         }
 
         mv.visitInsn(Opcodes.RETURN);
@@ -345,6 +370,16 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, 4);
         Label ret = new Label();
         mv.visitJumpInsn(Opcodes.IFNULL, ret);
+        if (tdfa.fixedBase != null) {
+            // BT22 §6.4 fixed-tag reconstruction: rewrite fixed-tag slots in the
+            // holder's regs from their base tag values, before constructing MatchResult.
+            mv.visitVarInsn(Opcodes.ALOAD, 4);
+            mv.visitFieldInsn(Opcodes.GETFIELD, HOLDER, "regs", "[I");
+            ic(mv, tdfa.tagCount);
+            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "FIXED_BASE", "[I");
+            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "FIXED_OFFSET", "[I");
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, RESULT, "reconstructFixed", "([II[I[I)V", false);
+        }
         mv.visitTypeInsn(Opcodes.NEW, RESULT);
         mv.visitInsn(Opcodes.DUP);
         mv.visitVarInsn(Opcodes.ALOAD, 4);

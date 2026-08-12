@@ -42,6 +42,14 @@ public final class Tnfa {
     public final boolean unicodeWordBoundary;
     public final int[] wordRanges;
     public final Map<String, Integer> namedGroups;
+    /**
+     * Fixed-tag annotations per tag id (1-based; index 0 unused). {@code fixedBase[t] != 0}
+     * means tag {@code t} was omitted from the NFA and its match-time value should be
+     * reconstructed as {@code tag[fixedBase[t]] - fixedOffset[t]} (or NIL if the base is NIL).
+     * Built by {@link io.github.jemmix.tdfa.opt.FixedTags} (BT22 §6.4).
+     */
+    public final int[] fixedBase;
+    public final int[] fixedOffset;
 
     // Zero-width assertion bits. BEGIN_TEXT/END_TEXT (^/$) are multiline-sensitive
     // (also hold after/before \n under (?m)); ABS_BEGIN/ABS_END (\A/\z) are absolute
@@ -58,7 +66,7 @@ public final class Tnfa {
                 int[] symFrom, int[] symTo, CharClass[] symClass,
                 int start, int accept, int tagCount, int groupCount, boolean multiline,
                 boolean unicodeWordBoundary, int[] wordRanges,
-                Map<String, Integer> namedGroups) {
+                Map<String, Integer> namedGroups, int[] fixedBase, int[] fixedOffset) {
         this.stateCount = stateCount;
         this.epsFrom = epsFrom; this.epsTo = epsTo; this.epsPri = epsPri; this.epsTag = epsTag;
         this.epsEmptyMask = epsEmptyMask;
@@ -70,6 +78,8 @@ public final class Tnfa {
         this.unicodeWordBoundary = unicodeWordBoundary;
         this.wordRanges = wordRanges;
         this.namedGroups = namedGroups;
+        this.fixedBase = fixedBase;
+        this.fixedOffset = fixedOffset;
     }
 
     // ====== Builder / construction ======
@@ -90,11 +100,40 @@ public final class Tnfa {
                                io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
         Parser parser = Parser.capture(pattern, disableUnicodeGroups, anchorBoth, provider);
         Ast ast = parser.lastAst();
+        io.github.jemmix.tdfa.opt.FixedTags.apply(ast);
+        int tagCount = parser.tagCount();
+        int[] fixedBase = new int[tagCount + 1];
+        int[] fixedOffset = new int[tagCount + 1];
+        collectFixedAnnotations(ast, fixedBase, fixedOffset);
+        if (Boolean.getBoolean("tdfa.debug")) {
+            int n = 0;
+            for (int t = 1; t <= tagCount; t++) if (fixedBase[t] != 0) n++;
+            if (n > 0) System.err.println("[tdfa] fixed-tags: dropped " + n + "/" + tagCount);
+        }
         Builder b = new Builder();
         int accept = b.fresh();
         int start = b.build(ast, accept);
-        return b.build(start, accept, parser.tagCount(), parser.groupCount(), parser.multiline(),
-                parser.unicodeShorthand(), parser.unicodeWordRanges(), parser.namedGroups());
+        return b.build(start, accept, tagCount, parser.groupCount(), parser.multiline(),
+                parser.unicodeShorthand(), parser.unicodeWordRanges(), parser.namedGroups(),
+                fixedBase, fixedOffset);
+    }
+
+    /** Collect {@link Ast.Tag#fixedOn} / {@link Ast.Tag#fixedOffset} annotations into
+     *  1-indexed arrays for forwarding to {@link Tdfa}. */
+    private static void collectFixedAnnotations(Ast e, int[] fixedBase, int[] fixedOffset) {
+        if (e instanceof Ast.Tag) {
+            Ast.Tag t = (Ast.Tag) e;
+            if (t.fixedOn != 0) {
+                fixedBase[t.tag] = t.fixedOn;
+                fixedOffset[t.tag] = t.fixedOffset;
+            }
+        } else if (e instanceof Ast.Concat) {
+            for (Ast c : ((Ast.Concat) e).children) collectFixedAnnotations(c, fixedBase, fixedOffset);
+        } else if (e instanceof Ast.Alt) {
+            for (Ast c : ((Ast.Alt) e).children) collectFixedAnnotations(c, fixedBase, fixedOffset);
+        } else if (e instanceof Ast.Repeat) {
+            collectFixedAnnotations(((Ast.Repeat) e).body, fixedBase, fixedOffset);
+        }
     }
 
     private static final class Builder {
@@ -131,8 +170,15 @@ public final class Tnfa {
                 return s;
             }
             if (e instanceof Ast.Tag) {
+                Ast.Tag t = (Ast.Tag) e;
                 int s = fresh();
-                taggedEps(s, entryTo, 1, ((Ast.Tag) e).tag);
+                if (t.fixedOn != 0) {
+                    // Fixed tag: omit from NFA. Position reconstructed at match time
+                    // from tag[fixedOn] - fixedOffset (see MatchResult.reconstructFixed).
+                    eps(s, entryTo, 1);
+                } else {
+                    taggedEps(s, entryTo, 1, t.tag);
+                }
                 return s;
             }
             if (e instanceof Ast.StartAnchor a) {      // ^ or \A
@@ -298,7 +344,8 @@ public final class Tnfa {
         }
 
         Tnfa build(int start, int accept, int tagCount, int groupCount, boolean multiline,
-                   boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups) {
+                   boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
+                   int[] fixedBase, int[] fixedOffset) {
             int n = eps.size();
             int[] eFrom = new int[n], eTo = new int[n], ePri = new int[n], eTag = new int[n], eEmpty = new int[n];
             for (int i = 0; i < n; i++) {
@@ -309,7 +356,8 @@ public final class Tnfa {
             int[] sTo = syms.stream().mapToInt(a -> a[1]).toArray();
             CharClass[] sClass = symClasses.toArray(new CharClass[0]);
             return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, sFrom, sTo, sClass, start, accept,
-                    tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups);
+                    tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups,
+                    fixedBase, fixedOffset);
         }
     }
 }

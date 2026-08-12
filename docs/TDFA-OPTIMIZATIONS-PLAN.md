@@ -22,9 +22,9 @@ mirror of our compile-once-match-many model — see README §Vision).
 | 5 | `topological_sort` for copy ops | (in `tcmd.cc`) | ✅ done (`Compiler.topologicalSort`) |
 | 6.1 | UTree prefix tree for tag paths | (BT19, `tag_history.h`) | ✅ done (`UTree.java`) |
 | 6.2.2 | Register-aware Moore minimization | `src/dfa/minimization.cc` | ✅ done (`Tdfa.DfaMinimizer`) |
-| **6.2** | **Fallback operations** | `src/dfa/fallback_tags.cc` | ❌ **planned** |
+| 6.4 | Fixed tags | `src/regexp/fixed_tags.cc` | ✅ done (`io.github.jemmix.tdfa.opt.FixedTags`) |
+| **6.2** | **Fallback operations** | `src/dfa/fallback_tags.cc` | ❌ **next** |
 | **6.3** | **Register optimizations pipeline** | `src/cfg/{compact,dce,interfere,liveanal,normalize,varalloc,optimize,rename}.cc` | ❌ **planned** |
-| **6.4** | **Fixed tags** | `src/regexp/fixed_tags.cc` | ❌ **planned** |
 | 7 | Multi-pass TDFA | `lib/reg{comp,exec}_dfa_multipass.*` | out of scope — JIT use case, see README §Vision |
 | 9 | Deterministic points | (future work in paper itself) | out of scope — paper has no concrete algorithm |
 
@@ -76,10 +76,11 @@ removed and goal G1 ("faithful BT2022 §5–6") is genuinely met.
 
 ---
 
-## #1 Fixed tags (BT22 §6.4)
+## #1 Fixed tags (BT22 §6.4) — ✅ DONE
 
 > Paper algorithm: Figure 9 (alg_fixed_tags), p. 28. re2c:
-> `src/regexp/fixed_tags.cc`.
+> `src/regexp/fixed_tags.cc`. **Landed** in `io.github.jemmix.tdfa.opt.FixedTags`
+> (commit pending).
 
 ### What it does
 
@@ -339,9 +340,25 @@ the paper (or re2c) publishes one.
 
 | Milestone | Items | Faithfulness delta | Wall-time delta on rebar |
 |---|---|---|---|
-| M1 | #1 Fixed tags | Tag count down on capture-heavy REs | -2..-5 s on lexer-veryl compile |
+| M1 | #1 Fixed tags ✅ | Tag count down on capture-heavy REs | ~2 s (56 s → 56 s; gain masked by other compile cost) |
 | M2 | #2 Register optimizations | `globalMaxReg` down, minimization starts firing | -5..-10 s overall; more on capture-heavy |
 | M3 | #3 Fallback operations | POSIX capture correctness; README caveat removed | neutral (correctness fix) |
 
 After M3, `README.md` §"How it was tested" can drop the "Full POSIX closure
 — heuristic only" line and goal G1 (*faithful BT2022 §5–6*) is met.
+
+### M1 verification (observed)
+
+| Pattern | Tags dropped | Notes |
+|---|---|---|
+| `(abc)` | 1/2 | close fixes on open, offset 3 |
+| `(a)(b)(c)` | 5/6 | all fix on rightmost close |
+| `(ab)(cd)` | 3/4 | all fix on rightmost close |
+| `((ab))` | 3/4 | nested-group case |
+| `(a){3}` | 1/2 | single-iteration fixing; outer count is bounded fixed |
+| `(a\|b)c` | 1/2 | same-length alt branches |
+| `(a\|bb)c` | 0/4 | different-length alt → NaN propagation |
+| `(\d+)\.(\d+)` | 1/4 | only the across-`.` adjacency fixes |
+| `(a+)` | 0/2 | variable body → no fixing |
+
+Rebar parity: pass=108 fail=2 skip=249 (unchanged); both failures pre-existing.

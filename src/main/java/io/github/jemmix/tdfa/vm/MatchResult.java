@@ -48,4 +48,23 @@ public final class MatchResult {
     }
 
     int[] raw() { return regs; }
+
+    /**
+     * Apply BT22 §6.4 fixed-tag reconstruction in place on {@code regs}.
+     * <p>For each tag {@code t} with {@code fixedBase[t] != 0}, set
+     * {@code regs[tagCount + t - 1]} to {@code baseVal - fixedOffset[t]} if the
+     * base tag's slot is non-NIL, else NIL. Base tags are never themselves fixed,
+     * so iteration order doesn't matter.
+     * <p>No-op if {@code fixedBase == null} (no tags were fixed for this regex).
+     */
+    public static void reconstructFixed(int[] regs, int tagCount, int[] fixedBase, int[] fixedOffset) {
+        if (fixedBase == null) return;
+        for (int t = 1; t <= tagCount; t++) {
+            int base = fixedBase[t];
+            if (base != 0) {
+                int baseVal = regs[tagCount + base - 1];
+                regs[tagCount + t - 1] = baseVal < 0 ? -1 : baseVal - fixedOffset[t];
+            }
+        }
+    }
 }

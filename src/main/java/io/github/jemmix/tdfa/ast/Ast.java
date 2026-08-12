@@ -16,9 +16,16 @@ public abstract class Ast {
         @Override public String toString() { return String.valueOf(c); }
     }
 
-    /** Tag (capture-group boundary). Numbered 1..n. */
+    /** Tag (capture-group boundary). Numbered 1..n.
+     *  <p>{@code fixedOn} / {@code fixedOffset} are mutable annotations set by
+     *  the BT22 §6.4 fixed-tags pass (see {@code io.github.jemmix.tdfa.opt.FixedTags}).
+     *  When {@code fixedOn != 0}, this tag's position can be reconstructed at match
+     *  time as {@code tag[fixedOn] - fixedOffset} (or NIL if the base is NIL), so
+     *  the tag is omitted from NFA construction and register allocation. */
     public static final class Tag extends Ast {
         public final int tag;
+        public int fixedOn;
+        public int fixedOffset;
         public Tag(int tag) { this.tag = tag; }
         @Override public String toString() { return Integer.toString(tag); }
     }

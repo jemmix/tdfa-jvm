@@ -128,7 +128,11 @@ public final class TdfaRunner implements Regex.Engine {
         } else {
             h = runGeneric(input, from, input.length(), false);
         }
-        return h == null ? null : new MatchResult(h.regs, tdfa.tagCount, tdfa.groupCount, h.matchStart, h.matchEnd);
+        if (h == null) return null;
+        if (tdfa.fixedBase != null) {
+            MatchResult.reconstructFixed(h.regs, tdfa.tagCount, tdfa.fixedBase, tdfa.fixedOffset);
+        }
+        return new MatchResult(h.regs, tdfa.tagCount, tdfa.groupCount, h.matchStart, h.matchEnd);
     }
 
     /** String find with anchor enforcement and register extraction. */

@@ -60,6 +60,13 @@ public final class Tdfa {
     /** Unicode {@code \w} ranges for runtime {@code \b} when {@link #unicodeWordBoundary} is true; null otherwise. */
     public final int[] wordRanges;
     /**
+     * Fixed-tag annotations (BT22 §6.4), forwarded from {@link Tnfa}. Null if no
+     * tags were fixed. Otherwise 1-indexed: {@code fixedBase[t] != 0} means tag
+     * {@code t} was omitted from the NFA and should be reconstructed at match time.
+     */
+    public final int[] fixedBase;
+    public final int[] fixedOffset;
+    /**
      * Position-aware Perl-mode stop-on-accept decision table.
      * Indexed as {@code stopOnAcceptMask[state * 64 + posFlags]} where {@code posFlags}
      * is the runtime position-flags bitmask ({@code BEGIN_TEXT|END_TEXT|WORD_BOUNDARY|NO_WORD_BOUNDARY|ABS_BEGIN|ABS_END},
@@ -115,7 +122,7 @@ public final class Tdfa {
     private Tdfa(int tagCount, int groupCount, int registerCount, int startState, int stateCount,
                  int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] ranges, int[] ops,
                  int[] stateEntryMask, int[] stateAcceptMask, boolean perlMode, int[] stopOnAcceptMask, boolean multiline,
-                 boolean unicodeWordBoundary, int[] wordRanges) {
+                 boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset) {
         this.tagCount = tagCount; this.groupCount = groupCount;
         this.registerCount = registerCount;
         this.startState = startState;
@@ -133,6 +140,8 @@ public final class Tdfa {
         this.multiline = multiline;
         this.unicodeWordBoundary = unicodeWordBoundary;
         this.wordRanges = wordRanges;
+        this.fixedBase = fixedBase;
+        this.fixedOffset = fixedOffset;
     }
 
     public boolean isAccept(int state) { return (stateMeta[state] & 1) != 0; }
@@ -544,7 +553,15 @@ public final class Tdfa {
             return new Tdfa(tags, nfa.groupCount, globalMaxReg, 0, stateCount,
                     minMeta, minBase, minFinalOpsOff, minRanges, flatOps,
                     minEntryMask, minAcceptMask, perl, minStopMask, nfa.multiline,
-                    nfa.unicodeWordBoundary, nfa.wordRanges);
+                    nfa.unicodeWordBoundary, nfa.wordRanges,
+                    hasFixed(nfa.fixedBase) ? nfa.fixedBase : null,
+                    hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null);
+        }
+
+        private static boolean hasFixed(int[] fixedBase) {
+            if (fixedBase == null) return false;
+            for (int i = 1; i < fixedBase.length; i++) if (fixedBase[i] != 0) return true;
+            return false;
         }
 
         static final boolean debug = Boolean.getBoolean("tdfa.debug");
