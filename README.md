@@ -50,8 +50,20 @@ One algorithm (TDFA) for every pattern. If a pattern requires backtracking
 (backreferences, lookaround), we reject it at compile time rather than silently
 falling back to a slower engine.
 
+**AOT, not JIT.** The paper presents two TDFA architectures: canonical
+single-pass TDFA with registers (§5–6, suited to ahead-of-time determinization
+such as lexer generators) and multi-pass TDFA without registers (§7, suited to
+just-in-time determinization such as runtime regex libraries). We implement
+only the **canonical AOT algorithm** — `Regex.compile()` is the AOT step,
+matching is then bytecode-fast. This mirrors re2c's `src/` (AOT lexer
+generator, full §6 optimization pipeline) rather than re2c's `lib/` (JIT
+regex library using multi-pass TDFA). The tradeoff is correct for our
+compile-once-match-many model; multi-pass is solving a different problem.
+
 **Goals**
-- Faithful implementation of BT2022 (TNFA, TDFA(1), lookahead tags, registers).
+- Faithful implementation of BT2022 §5–6 (TNFA, TDFA(1), lookahead tags,
+  registers, and the §6 optimization pipeline: fixed tags, register
+  optimizations, fallback operations, minimization).
 - Drop-in `re2j` replacement that is faster, not slower.
 - Compile regexes to JVM bytecode for state-of-the-art throughput.
 
