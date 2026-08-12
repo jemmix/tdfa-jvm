@@ -38,6 +38,8 @@ public final class TdfaRunner implements Regex.Engine {
     private final boolean perlMode;
     private final boolean multiline;
     private final int[] stopOnAcceptMask;
+    private final boolean[] stateIsFallback;
+    private final int[] stateFallbackOpsOff;
     private final boolean rangesDisjoint;
     private final int[] asciiTarget;    // flat: [state * 128 + c] → target state (-1 = dead)
     private final int[] asciiRangeFlat; // flat: [state * 128 + c] → range index (-1 = dead)
@@ -76,6 +78,8 @@ public final class TdfaRunner implements Regex.Engine {
         this.perlMode = tdfa.perlMode;
         this.multiline = tdfa.multiline;
         this.stopOnAcceptMask = tdfa.stopOnAcceptMask;
+        this.stateIsFallback = tdfa.stateIsFallback;
+        this.stateFallbackOpsOff = tdfa.stateFallbackOpsOff;
         this.stateCount = tdfa.stateCount;
         this.stateWords = (tdfa.stateCount + 31) >>> 5;
         this.acceptBits = buildAcceptBits(tdfa);
@@ -218,7 +222,7 @@ public final class TdfaRunner implements Regex.Engine {
             }
             if (haveAccept) {
                 int[] r = regs == null ? new int[0] : regs.clone();
-                int foff = sfo[lastAcceptState];
+                int foff = pickFinalOpsOff(lastAcceptState, lastAcceptPos, pos);
                 if (foff != 0 && regs != null) applyOps(op, foff, r, lastAcceptPos);
                 return new MatchHolder(startSearch, lastAcceptPos, r);
             }
@@ -393,7 +397,8 @@ public final class TdfaRunner implements Regex.Engine {
             int lastAcceptPos = -1, lastAcceptState = -1;
             boolean haveAccept = false;
             int posFlags = -1; // lazy: -1 means not yet computed for current pos
-            for (int pos = startSearch; pos <= to; pos++) {
+            int pos = startSearch;
+            for (; pos <= to; pos++) {
                 int meta = sm[state];
                 if ((meta & 1) != 0) {
                     haveAccept = true; lastAcceptPos = pos; lastAcceptState = state;
@@ -419,7 +424,7 @@ public final class TdfaRunner implements Regex.Engine {
             }
             if (haveAccept) {
                 int[] r = regs == null ? new int[0] : regs.clone();
-                int foff = sfo[lastAcceptState];
+                int foff = pickFinalOpsOff(lastAcceptState, lastAcceptPos, pos);
                 if (foff != 0 && regs != null) applyOps(op, foff, r, lastAcceptPos);
                 return new MatchHolder(startSearch, lastAcceptPos, r);
             }
@@ -729,7 +734,7 @@ public final class TdfaRunner implements Regex.Engine {
             if (haveAccept) {
                 if (anchored && lastAcceptPos != to) return null;
                 int[] r = regs == null ? new int[0] : regs.clone();
-                int foff = stateFinalOpsOff[lastAcceptState];
+                int foff = pickFinalOpsOff(lastAcceptState, lastAcceptPos, pos);
                 if (foff != 0 && regs != null) applyOps(ops, foff, r, lastAcceptPos);
                 return new MatchHolder(startSearch, lastAcceptPos, r);
             }
@@ -749,6 +754,21 @@ public final class TdfaRunner implements Regex.Engine {
             else if (op == Tdfa.OP_COPY) regs[dst] = regs[ops[j + 2]];
             else regs[dst] = -1;
         }
+    }
+
+    /**
+     * Pick the right final-ops offset for {@code lastAcceptState}: if it's a
+     * fallback state AND the runner took at least one transition since the last
+     * accept ({@code pos > lastAcceptPos}), use the §6.2 ψ quasi-transition
+     * (whose clobbered COPYs were routed through backups on the way out).
+     * Otherwise use the regular {@code φ}.
+     */
+    private int pickFinalOpsOff(int lastAcceptState, int lastAcceptPos, int pos) {
+        if (stateIsFallback != null && stateIsFallback.length > lastAcceptState
+                && stateIsFallback[lastAcceptState] && pos > lastAcceptPos) {
+            return stateFallbackOpsOff[lastAcceptState];
+        }
+        return stateFinalOpsOff[lastAcceptState];
     }
 
     // ===== Zero-width assertion position-flag computation =====

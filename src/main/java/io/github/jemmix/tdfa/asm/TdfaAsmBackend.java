@@ -839,7 +839,7 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ASTORE, R);
 
             // final ops switch
-            emitFinalOps(mv, tdfa, owner, R, LAS, LAP, T1, op, sfo, sm);
+            emitFinalOps(mv, tdfa, owner, R, LAS, LAP, POS, op, sfo, sm);
 
             // return new MatchHolder(start, lastAcceptPos, r)
             mv.visitTypeInsn(Opcodes.NEW, HOLDER);
@@ -1250,9 +1250,11 @@ public final class TdfaAsmBackend {
     // ===== final ops (LOOKUPSWITCH) =====
 
     private static void emitFinalOps(MethodVisitor mv, Tdfa tdfa, String owner,
-                                     int R, int LAS, int LAP, int T1,
+                                     int R, int LAS, int LAP, int POS,
                                      int[] op, int[] sfo, int[] sm) {
         int n = tdfa.stateCount;
+        boolean[] isFallback = tdfa.stateIsFallback;
+        int[] fallbackOff = tdfa.stateFallbackOpsOff;
         List<int[]> finals = new ArrayList<>();
         for (int s = 0; s < n; s++)
             if ((sm[s] & 1) != 0 && sfo[s] != 0) finals.add(new int[]{s, sfo[s]});
@@ -1266,7 +1268,23 @@ public final class TdfaAsmBackend {
         mv.visitLookupSwitchInsn(fDef, keys, fl);
         for (int k = 0; k < nf; k++) {
             mv.visitLabel(fl[k]);
-            emitOpsInlineFinal(mv, op, finals.get(k)[1], R, LAP);
+            int state = finals.get(k)[0];
+            int phiOff = finals.get(k)[1];
+            boolean hasPsi = isFallback != null && state < isFallback.length
+                    && isFallback[state] && fallbackOff[state] != 0;
+            if (hasPsi) {
+                // if (POS > LAP) applyOps(ψ); else applyOps(φ).
+                Label usePhi = new Label();
+                mv.visitVarInsn(Opcodes.ILOAD, POS);
+                mv.visitVarInsn(Opcodes.ILOAD, LAP);
+                mv.visitJumpInsn(Opcodes.IF_ICMPLE, usePhi);
+                emitOpsInlineFinal(mv, op, fallbackOff[state], R, LAP);
+                mv.visitJumpInsn(Opcodes.GOTO, fAfter);
+                mv.visitLabel(usePhi);
+                emitOpsInlineFinal(mv, op, phiOff, R, LAP);
+            } else {
+                emitOpsInlineFinal(mv, op, phiOff, R, LAP);
+            }
             mv.visitJumpInsn(Opcodes.GOTO, fAfter);
         }
         mv.visitLabel(fDef);

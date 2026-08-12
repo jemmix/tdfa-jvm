@@ -76,6 +76,18 @@ public final class Tdfa {
     public final int[] fixedBase;
     public final int[] fixedOffset;
     /**
+     * Per-state fallback annotation (BT22 §6.2). {@code true} iff state is
+     * final with at least one non-accepting path out of it AND its
+     * {@code φ(S)} contains a clobbered COPY that needed backup ops. Such
+     * states have a separate {@link #stateFallbackOpsOff} slot (ψ); the runner
+     * chooses ψ vs φ based on whether transitions were taken since the last
+     * accept. Length = {@link #stateCount}; all-false if M3 disabled or no
+     * fallback states needed processing.
+     */
+    public final boolean[] stateIsFallback;
+    /** Per-state ψ (fallback quasi-transition) ops offset into {@link #ops}; 0 if none. */
+    public final int[] stateFallbackOpsOff;
+    /**
      * Position-aware Perl-mode stop-on-accept decision table.
      * Indexed as {@code stopOnAcceptMask[state * 64 + posFlags]} where {@code posFlags}
      * is the runtime position-flags bitmask ({@code BEGIN_TEXT|END_TEXT|WORD_BOUNDARY|NO_WORD_BOUNDARY|ABS_BEGIN|ABS_END},
@@ -131,7 +143,8 @@ public final class Tdfa {
     private Tdfa(int tagCount, int groupCount, int registerCount, int finalRegBase, int startState, int stateCount,
                  int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] ranges, int[] ops,
                  int[] stateEntryMask, int[] stateAcceptMask, boolean perlMode, int[] stopOnAcceptMask, boolean multiline,
-                 boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset) {
+                 boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset,
+                 boolean[] stateIsFallback, int[] stateFallbackOpsOff) {
         this.tagCount = tagCount; this.groupCount = groupCount;
         this.registerCount = registerCount;
         this.finalRegBase = finalRegBase;
@@ -152,6 +165,8 @@ public final class Tdfa {
         this.wordRanges = wordRanges;
         this.fixedBase = fixedBase;
         this.fixedOffset = fixedOffset;
+        this.stateIsFallback = stateIsFallback;
+        this.stateFallbackOpsOff = stateFallbackOpsOff;
     }
 
     public boolean isAccept(int state) { return (stateMeta[state] & 1) != 0; }
@@ -195,6 +210,12 @@ public final class Tdfa {
      * anyway), so skip above the cap. Override with {@code -Dtdfa.regopt.max=N}.
      */
     private static final int REGOPT_MAX_STATES = Integer.getInteger("tdfa.regopt.max", 2000);
+    /**
+     * Toggle BT22 §6.2 fallback operations (backup COPYs on transitions out of
+     * fallback states, ψ quasi-transitions). Default on; disable with
+     * {@code -Dtdfa.nofallback=true}.
+     */
+    private static final boolean FALLBACK_ENABLED = !Boolean.getBoolean("tdfa.nofallback");
     static final boolean DEBUG = Boolean.getBoolean("tdfa.debug");
 
     private static final class Compiler {
@@ -593,12 +614,34 @@ public final class Tdfa {
                     stateCount = newN;
                 }
             }
+            // === BT22 §6.2 fallback operations ===
+            // Add backup COPY ops on transitions out of fallback states (those final
+            // states with non-accepting paths), and generate ψ quasi-transitions
+            // that route through the backups. Closes a latent POSIX capture bug
+            // where stepping past an accept then falling back clobbers registers.
+            boolean[] stateIsFallback = new boolean[stateCount];
+            int[] stateFallbackOpsOff = new int[stateCount];
+            if (FALLBACK_ENABLED && tags > 0) {
+                FallbackOps.Result fr = FallbackOps.add(stateCount, minMeta, minBase, minRanges, flatOps,
+                        minFinalOpsOff, globalMaxReg);
+                flatOps = fr.flatOps;
+                minRanges = fr.ranges;
+                stateIsFallback = fr.stateIsFallback;
+                stateFallbackOpsOff = fr.stateFallbackOpsOff;
+                globalMaxReg = fr.registerCount;
+                if (debug && fr.fallbackStateCount > 0) {
+                    System.err.println("[tdfa] fallback: " + fr.fallbackStateCount + " states, "
+                            + fr.backupTransitionCount + " backup transitions, "
+                            + fr.backupSlotCount + " backup slots");
+                }
+            }
             return new Tdfa(tags, nfa.groupCount, globalMaxReg, finalRegBase, 0, stateCount,
                     minMeta, minBase, minFinalOpsOff, minRanges, flatOps,
                     minEntryMask, minAcceptMask, perl, minStopMask, nfa.multiline,
                     nfa.unicodeWordBoundary, nfa.wordRanges,
                     hasFixed(nfa.fixedBase) ? nfa.fixedBase : null,
-                    hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null);
+                    hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null,
+                    stateIsFallback, stateFallbackOpsOff);
         }
 
         private static boolean hasFixed(int[] fixedBase) {
