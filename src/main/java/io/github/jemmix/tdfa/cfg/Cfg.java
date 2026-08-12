@@ -92,6 +92,8 @@ public final class Cfg {
     /** Index of the first final register. Working registers are [0..finalRegBase-1];
      *  final registers are [finalRegBase..finalRegBase+tagCount-1]. */
     public int finalRegBase;
+    /** Diagnostic: ops removed by DCE (0 if none). */
+    public int dceRemovedOps;
 
     public Cfg(int tagCount, int groupCount, int initialRegCount) {
         this.tagCount = tagCount;

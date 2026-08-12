@@ -439,7 +439,8 @@ public final class Tdfa {
                 cfgWriteBack(cfg, builders);
                 finalRegBase = cfg.finalRegBase;
                 if (debug) System.err.println("[tdfa] regopt: regs " + cfg.initialRegCount + " -> " + cfg.regCount
-                        + " (finalRegBase=" + finalRegBase + ")");
+                        + " (finalRegBase=" + finalRegBase + ")"
+                        + (cfg.dceRemovedOps > 0 ? " DCE removed " + cfg.dceRemovedOps + " ops" : ""));
             }
 
             // First pass: coalesce + fillGaps on every state's ranges, compute totals.
