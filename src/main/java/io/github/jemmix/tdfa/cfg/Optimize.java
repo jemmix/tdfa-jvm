@@ -39,16 +39,17 @@ public final class Optimize {
         // Stages 2-4: liveness, DCE, interference, allocation, normalization.
         // Paper runs this sub-pipeline N=2 times; each iteration can find new
         // coalescing opportunities revealed by the previous renaming.
+        // Normalization runs INSIDE the loop (paper Figure 7: renaming; normalization).
         for (int iter = 0; iter < 2; iter++) {
             boolean[][] L = livenessAnalysis(cfg);
             deadCodeElimination(cfg, L);
             boolean[][] I = interferenceAnalysis(cfg, L);
             int[] V = registerAllocation(cfg, I);
             rename(cfg, V);
+            normalization(cfg);
             cfg.regCount = countUsed(V);
             cfg.finalRegBase = findFinalRegBase(V, cfg.tagCount);
         }
-        normalization(cfg);
     }
 
     private static int countOps(Cfg cfg) {
@@ -312,8 +313,13 @@ public final class Optimize {
     static boolean[][] interferenceAnalysis(Cfg cfg, boolean[][] L) {
         int nr = cfg.regCount;
         boolean[][] I = new boolean[nr][nr];
+        // Value-history sentinels: must be distinct from any register id (in [0, nr-1])
+        // and from each other, so that two SETs to the same value can share a slot
+        // (paper: "registers that have the same value" don't interfere).
+        final int NO_VALUE = -1;
+        final int POS_VALUE = -2;
+        final int NIL_VALUE = -3;
         int[] V = new int[nr];
-        int NO_VALUE = -1;
         java.util.Arrays.fill(V, NO_VALUE);
         for (int bi = 0; bi < cfg.blocks.size(); bi++) {
             Cfg.Block b = cfg.blocks.get(bi);
@@ -328,12 +334,10 @@ public final class Optimize {
             for (Cfg.Op op : b.ops) {
                 if (op.dst >= nr) continue;
                 boolean[] Ib = Lb.clone();
-                // Update V for this op.
+                // Update V for this op per paper: V[i] = v for SET, V[i] = V[j] for COPY.
                 switch (op.kind) {
                     case Cfg.KIND_SET:
-                        // Encode value as a unique sentinel: dst index is enough to
-                        // distinguish set-values within a block (no other reg gets same V).
-                        V[op.dst] = op.dst | 0x40000;
+                        V[op.dst] = (op.value == Cfg.VAL_POS) ? POS_VALUE : NIL_VALUE;
                         break;
                     case Cfg.KIND_COPY:
                         if (op.src < nr) {
@@ -345,7 +349,7 @@ public final class Optimize {
                     default: break;
                 }
                 Ib[op.dst] = false;
-                // Mask out registers with the same value as op.dst.
+                // Mask out registers with the same value as op.dst (paper: same value → no interference).
                 int vDst = V[op.dst];
                 if (vDst != NO_VALUE) {
                     for (int k = 0; k < nr; k++) {
@@ -540,47 +544,59 @@ public final class Optimize {
         return a.kind == b.kind && a.dst == b.dst && a.src == b.src && a.value == b.value;
     }
 
-    /** Topologically sort COPY ops so that i ← j comes after any op writing i or j. */
+    /**
+     * Topologically sort COPY ops per paper Figure 8 ({@code topological_sort}).
+     *
+     * <p>Paper algorithm: {@code I[r] = number of ops in O that read register r}.
+     * Repeatedly remove ops with {@code I[dst] = 0} (no remaining readers of dst),
+     * appending them to the result; when removing op {@code i←j}, decrement
+     * {@code I[j]}. This handles both RAW and WAR hazards correctly: a writer
+     * (op with dst = R) is gated on {@code I[R] = 0} — i.e., all readers of R
+     * must have been processed first.
+     *
+     * <p>If a cycle remains, append the rest as-is. The paper tracks a
+     * {@code nontrivial_cycle} flag (true if any non-self cycle exists); we
+     * don't currently surface it.
+     */
     private static void topoSortCopy(List<Cfg.Op> run) {
-        // Build dependency graph: op[a] depends on op[b] if op[b].dst ∈ {op[a].dst, op[a].src}.
         int n = run.size();
-        // in-degree[a] = number of ops that must come before a.
-        int[] indeg = new int[n];
-        java.util.List<List<Integer>> succ = new ArrayList<>(n);
-        for (int k = 0; k < n; k++) succ.add(new ArrayList<>());
-        for (int a = 0; a < n; a++) {
-            Cfg.Op opA = run.get(a);
-            for (int b = 0; b < n; b++) {
-                if (a == b) continue;
-                Cfg.Op opB = run.get(b);
-                // If opB writes a register that opA reads (src) or writes (dst),
-                // and they're not the same op, opA must come after opB.
-                if (opB.dst == opA.src || opB.dst == opA.dst) {
-                    // Edge case: if opB.dst == opA.dst and opA.src == opB.src, it's a cycle.
-                    if (opA.dst == opB.src && opA.src == opB.dst) continue;  // trivial cycle, skip
-                    succ.get(b).add(a);
-                    indeg[a]++;
+        if (n < 2) return;
+        // Find max register id to size the I[] array.
+        int maxReg = 0;
+        for (Cfg.Op op : run) maxReg = Math.max(maxReg, Math.max(op.dst, op.src));
+        int[] I = new int[maxReg + 1];
+        // I[r] = number of ops in O with src = r (i.e., reading register r).
+        for (Cfg.Op op : run) I[op.src]++;
+
+        List<Cfg.Op> Oprime = new ArrayList<>(n);
+        boolean[] removed = new boolean[n];
+        int remaining = n;
+        while (remaining > 0) {
+            boolean added = false;
+            for (int i = 0; i < n; i++) {
+                if (removed[i]) continue;
+                Cfg.Op op = run.get(i);
+                if (I[op.dst] == 0) {
+                    Oprime.add(op);
+                    removed[i] = true;
+                    remaining--;
+                    I[op.src]--;
+                    added = true;
+                }
+            }
+            if (!added) {
+                // Cycle: append remaining ops as-is.
+                for (int i = 0; i < n; i++) {
+                    if (!removed[i]) {
+                        Oprime.add(run.get(i));
+                        removed[i] = true;
+                        remaining--;
+                    }
                 }
             }
         }
-        List<Cfg.Op> sorted = new ArrayList<>(n);
-        java.util.Deque<Integer> ready = new java.util.ArrayDeque<>();
-        for (int a = 0; a < n; a++) if (indeg[a] == 0) ready.add(a);
-        while (!ready.isEmpty()) {
-            int a = ready.poll();
-            sorted.add(run.get(a));
-            for (int s : succ.get(a)) {
-                if (--indeg[s] == 0) ready.add(s);
-            }
-        }
-        // If any ops weren't added (cycles), append them in original order.
-        if (sorted.size() < n) {
-            for (int a = 0; a < n; a++) {
-                if (indeg[a] > 0) sorted.add(run.get(a));
-            }
-        }
         run.clear();
-        run.addAll(sorted);
+        run.addAll(Oprime);
     }
 }
 
