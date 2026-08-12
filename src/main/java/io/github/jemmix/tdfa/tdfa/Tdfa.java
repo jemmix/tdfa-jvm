@@ -153,6 +153,17 @@ public final class Tdfa {
         return new Compiler(nfa, disamb).compile();
     }
 
+    /** Toggle post-determinization minimization (Moore's algorithm). Default on; disable with -Dtdfa.nominimize. */
+    private static final boolean MINIMIZE_ENABLED = !Boolean.getBoolean("tdfa.nominimize");
+    /**
+     * Skip minimization for DFAs above this state count. Moore's algorithm is O(n²) worst-case
+     * and provides no benefit when the DFA is already minimal (which subset construction with
+     * construction-time {@code map} deduping tends to produce). For pathological cases like
+     * dictionary alternations, skipping saves ~30s of pure overhead. Override with -Dtdfa.minimize.max=N.
+     */
+    private static final int MINIMIZE_MAX_STATES = Integer.getInteger("tdfa.minimize.max", 20000);
+    static final boolean DEBUG = Boolean.getBoolean("tdfa.debug");
+
     private static final class Compiler {
         final Tnfa nfa;
         final int tags;
@@ -456,9 +467,83 @@ public final class Tdfa {
                 stateMeta[s] = ((k & 0xFFFF) << 1) | (isAccept ? 1 : 0);
                 stateFinalOpsOff[s] = finalOpsOff;
             }
-            return new Tdfa(tags, nfa.groupCount, globalMaxReg, 0, n,
-                    stateMeta, stateBase, stateFinalOpsOff, flatRanges, flatOps,
-                    stateEntryMask, stateAcceptMask, perl, stateStopOnAcceptMask, nfa.multiline,
+            // === Minimize via register-aware Moore's algorithm (paper §6.2.2 Minimization) ===
+            // Treat transitions on the same symbol but with different register ops as different
+            // transitions. Op sequences are interned to unique numeric IDs for O(1) comparison
+            // (paper: "operation sequences are inserted into a hash map and represented with
+            // unique numeric identifiers"). Comparison may have false negatives (non-identical
+            // but semantically equivalent op lists), but that only yields a suboptimal — not
+            // incorrect — minimization. Apply after register optimizations for best results.
+            int stateCount = n;
+            int[] minMeta = stateMeta, minBase = stateBase, minFinalOpsOff = stateFinalOpsOff,
+                    minRanges = flatRanges, minEntryMask = stateEntryMask,
+                    minAcceptMask = stateAcceptMask, minStopMask = stateStopOnAcceptMask;
+            if (MINIMIZE_ENABLED && n > 1 && n <= MINIMIZE_MAX_STATES) {
+                DfaMinimizer m = new DfaMinimizer(n, stateMeta, stateBase, stateFinalOpsOff,
+                        flatRanges, flatOps, stateEntryMask, stateAcceptMask,
+                        stateStopOnAcceptMask, perl);
+                int[] partition = m.computePartition();
+                int newN = 0;
+                for (int p : partition) newN = Math.max(newN, p + 1);
+                if (newN < n) {
+                    // Renumber so the start state's partition becomes state 0 (preserves invariant).
+                    int[] renum = new int[newN];
+                    java.util.Arrays.fill(renum, -1);
+                    int nextId = 0;
+                    for (int s = 0; s < n; s++) {
+                        int p = partition[s];
+                        if (renum[p] == -1) renum[p] = nextId++;
+                    }
+                    newN = nextId;
+                    int[] rep = new int[newN];
+                    java.util.Arrays.fill(rep, -1);
+                    for (int s = 0; s < n; s++) {
+                        int g = renum[partition[s]];
+                        partition[s] = g;
+                        if (rep[g] == -1) rep[g] = s;
+                    }
+                    int newTotalRanges = 0;
+                    for (int g = 0; g < newN; g++) newTotalRanges += rangeCount(stateMeta[rep[g]]);
+                    minMeta = new int[newN];
+                    minBase = new int[newN];
+                    minFinalOpsOff = new int[newN];
+                    minEntryMask = new int[newN];
+                    minAcceptMask = new int[newN];
+                    minStopMask = new int[newN * 64];
+                    minRanges = new int[newTotalRanges * 5];
+                    if (!perl) java.util.Arrays.fill(minStopMask, NEVER_STOP);
+                    int minRangesHead = 0;
+                    for (int g = 0; g < newN; g++) {
+                        int r = rep[g];
+                        minMeta[g] = stateMeta[r];
+                        minBase[g] = minRangesHead;
+                        minFinalOpsOff[g] = stateFinalOpsOff[r];
+                        minEntryMask[g] = stateEntryMask[r];
+                        minAcceptMask[g] = stateAcceptMask[r];
+                        if (perl) {
+                            System.arraycopy(stateStopOnAcceptMask, r * 64, minStopMask, g * 64, 64);
+                        }
+                        int base = stateBase[r];
+                        int count = rangeCount(stateMeta[r]);
+                        for (int i = 0; i < count; i++) {
+                            int o = (base + i) * 5;
+                            int no = minRangesHead * 5;
+                            minRanges[no]     = flatRanges[o];
+                            minRanges[no + 1] = flatRanges[o + 1];
+                            int t = flatRanges[o + 2];
+                            minRanges[no + 2] = (t == -1) ? -1 : partition[t];
+                            minRanges[no + 3] = flatRanges[o + 3];
+                            minRanges[no + 4] = flatRanges[o + 4];
+                            minRangesHead++;
+                        }
+                    }
+                    if (Tdfa.DEBUG) System.err.println("[tdfa] minimized: " + n + " -> " + newN + " states");
+                    stateCount = newN;
+                }
+            }
+            return new Tdfa(tags, nfa.groupCount, globalMaxReg, 0, stateCount,
+                    minMeta, minBase, minFinalOpsOff, minRanges, flatOps,
+                    minEntryMask, minAcceptMask, perl, minStopMask, nfa.multiline,
                     nfa.unicodeWordBoundary, nfa.wordRanges);
         }
 
@@ -1050,5 +1135,295 @@ public final class Tdfa {
             ranges.clear();
             ranges.addAll(out);
         }
+    }
+
+    /**
+     * Register-aware Moore's algorithm for tagged-DFA minimization (paper §6.2.2).
+     *
+     * <p>Two states are equivalent iff:
+     * <ol>
+     *   <li>Same accept bit, entry mask, accept mask, Perl stop-on-accept mask
+     *       (behavioral attributes that affect runtime control flow);</li>
+     *   <li>Same final-ops content (capture effects on accept);</li>
+     *   <li>For every input range, transitions go to equivalent states with
+     *       bit-identical transition-ops content.</li>
+     * </ol>
+     *
+     * <p>Op sequences are interned to unique numeric IDs (paper's recommended
+     * O(1) comparison strategy). Comparison may have false negatives —
+     * non-identical but semantically equivalent op lists are treated as
+     * different — but this only yields a suboptimal minimization, never an
+     * incorrect one. Best results require applying after register optimizations
+     * (not yet implemented), which can normalize op lists.
+     *
+     * <p><b>Range normalization:</b> states whose transitions have the same
+     * per-codepoint behavior but different range boundaries (e.g. one state
+     * has [(0..9), (10..MAX)] and another has [(0..99), (100..MAX)] with the
+     * same targets) should still merge. We compute global breakpoints (the
+     * union of every state's range boundaries) and rebuild each state's
+     * transition signature on the global partition. This is the difference
+     * between minimization working for large literal-alternation DFAs
+     * (dictionary, lexer) vs. not working at all. If any state has overlapping
+     * ranges (assertion-gated transitions), we conservatively fall back to the
+     * unnormalized form for the whole DFA.
+     *
+     * <p>Complexity: O((n + R) · I) where R = total ranges and I = iterations
+     * to fixpoint (bounded by n in the worst case, typically O(log n)).
+     */
+    static final class DfaMinimizer {
+        final int n;
+        final int[] stateMeta, stateBase, stateFinalOpsOff, ranges, ops;
+        final int[] stateEntryMask, stateAcceptMask, stateStopOnAcceptMask;
+        final boolean perl;
+        /** Op-sequence interning: maps the byte content of an OP_END-terminated block to a unique int id. */
+        final Map<OpSeq, Integer> opSeqIds = new HashMap<>();
+        /** Cached op-sequence id per ops[] offset (lazily computed). -1 = not computed. */
+        final int[] opsIdAt;
+
+        /** Global breakpoints partitioning the codepoint space; sorted ascending, includes 0 and 0x110000 sentinel. */
+        int[] globalBps;
+        /** Per (state, global-bp-index): the state-range index covering that global range, or -1 if no range. */
+        int[] stateRangeAt;
+        /** True iff every state's ranges are non-overlapping (so per-bp lookup is well-defined). */
+        boolean useNormalized;
+
+        DfaMinimizer(int n, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
+                     int[] ranges, int[] ops, int[] stateEntryMask, int[] stateAcceptMask,
+                     int[] stateStopOnAcceptMask, boolean perl) {
+            this.n = n;
+            this.stateMeta = stateMeta;
+            this.stateBase = stateBase;
+            this.stateFinalOpsOff = stateFinalOpsOff;
+            this.ranges = ranges;
+            this.ops = ops;
+            this.stateEntryMask = stateEntryMask;
+            this.stateAcceptMask = stateAcceptMask;
+            this.stateStopOnAcceptMask = stateStopOnAcceptMask;
+            this.perl = perl;
+            this.opsIdAt = new int[ops.length];
+            java.util.Arrays.fill(this.opsIdAt, -1);
+            detectOverlapsAndInit();
+        }
+
+        /** Detect overlapping ranges; if any state has them, disable normalization (conservative fallback). */
+        private void detectOverlapsAndInit() {
+            useNormalized = true;
+            outer:
+            for (int s = 0; s < n; s++) {
+                int base = stateBase[s];
+                int count = rangeCount(stateMeta[s]);
+                int prevHi = -1;
+                for (int r = 0; r < count; r++) {
+                    int o = (base + r) * 5;
+                    int lo = ranges[o];
+                    if (lo <= prevHi) { useNormalized = false; break outer; }
+                    prevHi = ranges[o + 1];
+                }
+            }
+            if (!useNormalized) return;
+            computeGlobalBreakpoints();
+            computeStateRangeMapping();
+        }
+
+        private void computeGlobalBreakpoints() {
+            java.util.TreeSet<Integer> bps = new java.util.TreeSet<>();
+            bps.add(0);
+            bps.add(0x110000);  // sentinel upper bound (exclusive)
+            for (int s = 0; s < n; s++) {
+                int base = stateBase[s];
+                int count = rangeCount(stateMeta[s]);
+                for (int r = 0; r < count; r++) {
+                    int o = (base + r) * 5;
+                    bps.add(ranges[o]);
+                    int hi = ranges[o + 1];
+                    if (hi < 0x10FFFF) bps.add(hi + 1);
+                }
+            }
+            globalBps = new int[bps.size()];
+            int i = 0;
+            for (int b : bps) globalBps[i++] = b;
+        }
+
+        /** Per state, per global bp, find the state-range index covering it. Linear merge scan. */
+        private void computeStateRangeMapping() {
+            int K = globalBps.length;
+            stateRangeAt = new int[n * K];
+            for (int s = 0; s < n; s++) {
+                int base = stateBase[s];
+                int count = rangeCount(stateMeta[s]);
+                int rangeIdx = 0;
+                int rowBase = s * K;
+                for (int k = 0; k < K; k++) {
+                    int cp = globalBps[k];
+                    if (cp >= 0x110000) { stateRangeAt[rowBase + k] = -1; continue; }
+                    while (rangeIdx < count && ranges[(base + rangeIdx) * 5 + 1] < cp) rangeIdx++;
+                    if (rangeIdx < count) {
+                        int o = (base + rangeIdx) * 5;
+                        stateRangeAt[rowBase + k] = (ranges[o] <= cp) ? rangeIdx : -1;
+                    } else {
+                        stateRangeAt[rowBase + k] = -1;
+                    }
+                }
+            }
+        }
+
+        /**
+         * Return the unique numeric id for the OP_END-terminated op block starting at {@code off}.
+         * Two blocks with bit-identical content return the same id (paper's O(1) comparison).
+         */
+        int opSeqId(int off) {
+            if (off < 0 || off >= opsIdAt.length) return 0;
+            int cached = opsIdAt[off];
+            if (cached != -1) return cached;
+            int p = off;
+            while (p < ops.length && ops[p] != OP_END) p += 3;
+            OpSeq key = new OpSeq(ops, off, p);
+            Integer id = opSeqIds.get(key);
+            if (id == null) { id = opSeqIds.size() + 1; opSeqIds.put(key, id); }
+            opsIdAt[off] = id;
+            return id;
+        }
+
+        /** Compute the partition (mapping old state id -> new state id) via Moore's algorithm. */
+        int[] computePartition() {
+            int[] partition = initialPartition();
+            int groups = 0;
+            for (int p : partition) groups = Math.max(groups, p + 1);
+            if (groups == n) return partition;  // every state already unique; no merging possible
+
+            boolean changed = true;
+            int iter = 0;
+            while (changed && iter < n + 5) {
+                changed = false;
+                Map<SigKey, Integer> newGroupMap = new HashMap<>();
+                int[] newPartition = new int[n];
+                int nextGroup = 0;
+                for (int s = 0; s < n; s++) {
+                    SigKey key = transSig(s, partition);
+                    Integer g = newGroupMap.get(key);
+                    if (g == null) { g = nextGroup++; newGroupMap.put(key, g); }
+                    newPartition[s] = g;
+                }
+                if (!java.util.Arrays.equals(partition, newPartition)) {
+                    changed = true;
+                    partition = newPartition;
+                }
+                iter++;
+            }
+            return partition;
+        }
+
+        /** Initial partition: group states by per-state attributes (accept, final-ops, masks). */
+        private int[] initialPartition() {
+            int[] partition = new int[n];
+            Map<SigKey, Integer> groupMap = new HashMap<>();
+            int nextGroup = 0;
+            for (int s = 0; s < n; s++) {
+                SigKey key = attrSig(s);
+                Integer g = groupMap.get(key);
+                if (g == null) { g = nextGroup++; groupMap.put(key, g); }
+                partition[s] = g;
+            }
+            return partition;
+        }
+
+        /** Per-state attribute signature: accept bit, final-ops id, masks. */
+        SigKey attrSig(int s) {
+            int extra = perl ? 1 : 0;
+            int[] sig = new int[5 + extra];
+            fillAttrs(sig, s, 0);
+            return new SigKey(sig);
+        }
+
+        /** Fill the per-state attribute prefix into sig starting at index i. Returns new index. */
+        int fillAttrs(int[] sig, int s, int i) {
+            sig[i++] = stateMeta[s] & 1;
+            sig[i++] = opSeqId(stateFinalOpsOff[s]);
+            sig[i++] = stateEntryMask[s];
+            sig[i++] = stateAcceptMask[s];
+            sig[i++] = (stateMeta[s] >>> 1) & 0xFFFF;  // range count (structural disambiguator)
+            if (perl) {
+                int h = 0;
+                int baseSM = s * 64;
+                for (int j = 0; j < 64; j++) h = h * 31 + stateStopOnAcceptMask[baseSM + j];
+                sig[i++] = h;
+            }
+            return i;
+        }
+
+        /** Transition signature, normalized on global breakpoints when possible. */
+        SigKey transSig(int s, int[] partition) {
+            int extra = perl ? 1 : 0;
+            int base = stateBase[s];
+            int count = rangeCount(stateMeta[s]);
+            int[] sig;
+            int i;
+            if (useNormalized) {
+                int K = globalBps.length - 1;  // # of codepoint-covering ranges
+                sig = new int[5 + extra + K * 3];
+                i = fillAttrs(sig, s, 0);
+                int rowBase = s * globalBps.length;
+                for (int k = 0; k < K; k++) {
+                    int rIdx = stateRangeAt[rowBase + k];
+                    if (rIdx < 0) {
+                        sig[i++] = -1; sig[i++] = 0; sig[i++] = 0;
+                    } else {
+                        int o = (base + rIdx) * 5;
+                        int t = ranges[o + 2];
+                        sig[i++] = (t == -1) ? -1 : partition[t];
+                        sig[i++] = opSeqId(ranges[o + 3]);
+                        sig[i++] = ranges[o + 4];
+                    }
+                }
+            } else {
+                // Unnormalized fallback: per-range (lo, hi, target_partition, opSeqId, requiredMask).
+                sig = new int[5 + extra + count * 5];
+                i = fillAttrs(sig, s, 0);
+                for (int r = 0; r < count; r++) {
+                    int o = (base + r) * 5;
+                    int t = ranges[o + 2];
+                    sig[i++] = ranges[o];                                  // lo
+                    sig[i++] = ranges[o + 1];                              // hi
+                    sig[i++] = (t == -1) ? -1 : partition[t];              // target's current partition
+                    sig[i++] = opSeqId(ranges[o + 3]);                     // transition-ops content id
+                    sig[i++] = ranges[o + 4];                              // requiredMask
+                }
+            }
+            return new SigKey(sig);
+        }
+    }
+
+    /** Wrapper around a slice of an int[] for use as a HashMap key with value equality. */
+    static final class OpSeq {
+        final int[] arr;
+        final int off;
+        final int end;  // exclusive
+        final int hash;
+        OpSeq(int[] arr, int off, int end) {
+            this.arr = arr; this.off = off; this.end = end;
+            int h = 1;
+            for (int i = off; i < end; i++) h = h * 31 + arr[i];
+            this.hash = h;
+        }
+        @Override public boolean equals(Object o) {
+            if (!(o instanceof OpSeq)) return false;
+            OpSeq that = (OpSeq) o;
+            int len = end - off;
+            if (len != that.end - that.off) return false;
+            for (int i = 0; i < len; i++) if (arr[off + i] != that.arr[that.off + i]) return false;
+            return true;
+        }
+        @Override public int hashCode() { return hash; }
+    }
+
+    /** int[] wrapper for HashMap keys with value equality (avoids storing Strings). */
+    static final class SigKey {
+        final int[] sig;
+        final int hash;
+        SigKey(int[] sig) { this.sig = sig; this.hash = java.util.Arrays.hashCode(sig); }
+        @Override public boolean equals(Object o) {
+            return o instanceof SigKey && java.util.Arrays.equals(sig, ((SigKey) o).sig);
+        }
+        @Override public int hashCode() { return hash; }
     }
 }

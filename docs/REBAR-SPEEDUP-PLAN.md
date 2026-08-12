@@ -19,10 +19,10 @@ this doc is only about wall time.
 | **#3 Haystack cache** | ✅ done (d2a4dfd) | 4.5 min | 4.2 min | 4.2 min |
 | **#4 char[] cache fix** | ✅ done (f9971ea) | 4.2 min | **1.1 min** | **1.1 min** |
 | #5 indexOf prefilter | deferred (low ROI) | 1.1 min | ~1 min | ~1 min |
-| #6 DFA minimization | deferred (complex) | 1.1 min | ~30 s | ~30 s |
+| #6 DFA minimization | ✅ done | 1.1 min | 0.95 min | 0.95 min |
 | #7 ASM method-splitting | not needed | — | — | — |
 
-**Actual wall today: 1 min 7 s.** Cumulative speedup: **18.8×** (21 min → 67 s).
+**Actual wall today: ~58 s.** Cumulative speedup: **21.7×** (21 min → 58 s).
 
 #1–#3 were test-side / infra-side wins. #4 turned out to be the single
 biggest win and the root cause was different from the original plan's
@@ -32,10 +32,20 @@ on long inputs. The fix was a 32-line per-instance input cache in the
 generated ASM class, not the multi-state-extract rewrite originally
 drafted under Tier 2.
 
+#6 (register-aware Moore's algorithm) is implemented per the BT22 paper
+§6.2.2 with op-sequence interning and global-breakpoint range
+normalization. It works correctly (4→3 on `(a|b)c|ac`, 8→4 on
+`abc|bbc|cbc`, 4→2 on `.*a|.*b`) but the rebar suite's DFAs are already
+minimal — the existing `tryMap` construction-time register-bijection
+dedup produces minimal DFAs for these patterns. For pathological cases
+like the dictionary alternation (44 846 states, provably minimal), the
+DFA is genuinely irreducible, so minimization is gated behind a
+`MINIMIZE_MAX_STATES = 20000` cap to avoid ~30 s of pure overhead.
+
 The remaining items (#5–#7) are documented below for future reference
 but are low ROI at the current 1 min wall. The new dominant cost is
 `curated/12-dictionary/single` compile at ~50 s (next attack surface:
-DFA minimization, #6).
+DFA minimization, #6 — implemented but provides no further reduction on this suite).
 
 ---
 
