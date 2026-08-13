@@ -78,7 +78,7 @@ some items unblock others.
 | 4 | `String.indexOf` prefilter on literal prefixes | 1 day | **2–4 min** (the leipzig/mariomka literal-prefix scenarios) | medium — needs care around `(?i)` and word-boundary edges | unit tests + leipzig `Twain`, `Tom\|Sawyer\|…` < 100 ms |
 | 5 | Haystack cache for repeated files | 1 h | ~30 s (19 leipzig scenarios share `leipzig-3200.txt`; smaller wins elsewhere) | very low | `Files.readAllBytes` counted once per file per run |
 | 6 | DFA minimization (Moore, register-aware) | 2–3 days | **2 min** (dictionary compile + the 4 Phase 6.2 bombs become fast) | high — engine core | `curated/12-dictionary/single` compile < 5 s; the 4 bombs compile < 30 s |
-| 7 | ASM method-splitting for >200-state DFAs | 2 days | ~30 s (no test-count change — ASM stops falling back to VM, faster matching on the 11 currently-flagged scenarios) | medium — ASM codegen | `ASM-FAIL` count in summary → 0 |
+| 7 | ~~ASM method-splitting for >200-state DFAs~~ **DONE** (`411cac8`) | n/a | ASM emits all scenarios via `INLINED` / `TABLE_SCAN` / `DELEGATE`; no more `ASM-FAIL` |
 
 **Projected cumulative wall time** (assuming 8-core parallelism and every
 item landing): ~21 min → **~1 min**. The biggest single win is parallel
@@ -274,15 +274,12 @@ footprint per Pattern.
 **Risk:** correctness — register-aware minimization is subtle. Add
 differential tests vs the un-minized DFAs before flipping the default on.
 
-### 7. ASM method-splitting for >200-state DFAs — 30 s saved, 2 days
+### 7. ASM method-splitting for >200-state DFAs — DONE
 
-Today the ASM backend falls back to VM on ~11 scenarios (visible via the
-`ASM-FAIL` log in the summary). The VM fallback is correct but slower.
-Splitting the generated method into per-state helper methods would let
-ASM stay on the fast path.
-
-Pure perf — no test-count change. Skip unless the post-parallel wall is
-still over ~5 min and the profile says ASM-fallback scenarios dominate.
+ASM now emits a class for every in-scope rebar pattern via three dispatch
+modes (`INLINED` / `TABLE_SCAN` / `DELEGATE`); the prior `ASM-FAIL` /
+VM-retry path was removed. See `TdfaAsmBackend.pickMode` and commit
+`411cac8`.
 
 ---
 

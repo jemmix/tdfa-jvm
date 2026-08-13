@@ -28,11 +28,9 @@ tasks.named('compileTestJava') {
 tasks.named('test') {
     useJUnitPlatform()
     systemProperty 'rebar.benchmarks.dir', rebarBenchmarksDir.absolutePath
-    // Match the library's actual default backend (ASM). The tracer-bullet
-    // originally pinned VM to sidestep ASM per-regex codegen cost when
-    // compiling hundreds of patterns; that's no longer needed and was masking
-    // ASM-specific bugs (the README positions ASM as the primary engine).
-    // Override on the command line with -Dtdfa.engine=VM if needed.
+    // Each (scenario, backend) pair runs as its own parameterized test case
+    // — EngineFactory.ASM and EngineFactory.VM both compile and run every
+    // in-scope regex. See RebarScenarioParityTest#scenariosProvider.
     // 8 GB heap: the largest in-scope haystack is 39 MB, which materializes
     // as a ~80 MB UTF-16 String; the matcher wraps without copying but the
     // DFA compilation of large alternations can also be allocation-heavy.

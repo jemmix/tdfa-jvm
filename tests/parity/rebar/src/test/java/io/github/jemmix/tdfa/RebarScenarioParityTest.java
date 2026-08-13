@@ -41,12 +41,18 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * <p>Engine identity: rebar's {@code regex = [...]} multi-pattern inputs are
  * folded into a single Perl-style alternation (preserving each pattern's
  * capture groups), and the test compiles with {@link Disambiguation#PERL}
- * (leftmost-first, like re2/re2j) on the default backend ({@link EngineFactory#DEFAULT},
- * ASM unless {@code -Dtdfa.engine=VM}). Per-engine {@code count} entries are
+ * (leftmost-first, like re2/re2j). Per-engine {@code count} entries are
  * resolved in the {@code "re2"} identity first, falling back to {@code .*}.
  * Scenario flag {@code case-insensitive} is applied via the {@code (?i)}
- * inline flag. ASM-only failures (method-too-large etc.) automatically retry
- * on the VM backend — logged via {@code ASM-FAIL} on stdout.
+ * inline flag.
+ *
+ * <p><b>Backend coverage:</b> every (scenario, backend) pair runs as its own
+ * parameterized test case — {@link EngineFactory#ASM} and {@link EngineFactory#VM}
+ * each compile and run the same regex against the same haystack. A divergence
+ * between the two engines shows up directly as a test failure rather than
+ * being silently masked by a retry. The ASM backend handles every in-scope
+ * pattern via its three {@code DispatchMode}s ({@code INLINED} / {@code TABLE_SCAN}
+ * / {@code DELEGATE}), so VM is exercised as a peer engine, not as a fallback.
  *
  * <p><b>Scope:</b> we only run scenarios that rebar <em>actually tests against
  * Java</em> — i.e. whose {@code engines = [...]} list contains a {@code java/.*}
@@ -120,16 +126,29 @@ class RebarScenarioParityTest {
         }
     }
 
+    /**
+     * Cross-product of every in-scope scenario with both built-in backends
+     * ({@link EngineFactory#ASM} and {@link EngineFactory#VM}). Each
+     * (scenario, backend) pair becomes its own test case, so a divergence
+     * between the two engines on the same regex shows up directly in the
+     * test report. The test name includes {@code [ASM]} or {@code [VM]} so
+     * IDE / CI output identifies the engine at a glance.
+     */
     static Stream<Arguments> scenariosProvider() {
-        return scenarios.stream().map(s -> Arguments.of(
+        return scenarios.stream().flatMap(s -> Stream.of(EngineFactory.ASM, EngineFactory.VM).map(f -> Arguments.of(
                 /*displayName=*/ s.fullName() + "  want=" + s.expectedCount()
-                        + "  /" + abbrev(s.regex(), 60) + "/",
-                /*scenario=*/ s));
+                        + "  /" + abbrev(s.regex(), 60) + "/  [" + labelFor(f) + "]",
+                /*scenario=*/ s,
+                /*factory=*/ f)));
+    }
+
+    static String labelFor(EngineFactory f) {
+        return f == EngineFactory.ASM ? "ASM" : f == EngineFactory.VM ? "VM" : "?";
     }
 
     @ParameterizedTest(name = "[{index}] {0}")
     @MethodSource("scenariosProvider")
-    void runScenarioThroughTdfa(String displayName, Scenario s) throws Exception {
+    void runScenarioThroughTdfa(String displayName, Scenario s, EngineFactory factory) throws Exception {
         // Models we run; regex-redux is the only intentionally-skipped model
         // (bespoke embedded-regex harness, ~1–2 scenarios — see PARITY-PLAN §4.3).
         Set<String> supportedModels = Set.of("count", "count-spans", "count-captures",
@@ -201,11 +220,11 @@ class RebarScenarioParityTest {
         //     caseInsensitive, (?u) for unicode (UNICODE_CHARACTER_CLASS).
         //     PERL disambiguation is the default (matches re2/re2j semantics).
         //
-        //     ASM fallback: when the pattern produces a DFA big enough to
-        //     blow the JVM 65 KB method-size limit, ASM throws
-        //     PatternSyntaxException wrapping IllegalStateException→
-        //     MethodTooLargeException. The result is identical on the VM
-        //     backend — only slower — so we retry there instead of skipping.
+        //     The ASM backend no longer throws MethodTooLargeException for any
+        //     in-scope rebar pattern (DispatchMode.DELEGATE handles arbitrary
+        //     DFA sizes — see TdfaAsmBackend.pickMode), so there's no longer a
+        //     VM-retry path: each parameter value runs its own backend
+        //     independently, and a divergence shows up as a real test failure.
 
         // --- AST-level fast-fail: pre-scan for known bomb shapes that would
         //     otherwise burn the full COMPILE_TIMEOUT wall budget. Saves ~8
@@ -213,7 +232,7 @@ class RebarScenarioParityTest {
         //     date/ascii, date/unicode, bounded-repeat/context). The detector
         //     is intentionally conservative — it must NOT trip on legitimately
         //     slow-but-finishing compiles like curated/12-dictionary/single
-        //     (73 s) or leipzig/tom-sawyer-prefix-{short,long} (18-22 s).
+        //     (3.6 s) or leipzig/tom-sawyer-prefix-{short,long} (18-22 s).
         //     See docs/REBAR-SPEEDUP-PLAN.md §Tier-1 #2.
         if (exceedsCompileBudget(s.regex())) {
             countSkip("compile-budget:ast-bomb");
@@ -228,64 +247,29 @@ class RebarScenarioParityTest {
         if (s.caseInsensitive()) flags |= Pattern.CASE_INSENSITIVE;
         if (s.unicode()) flags |= Pattern.UNICODE_CHARACTER_CLASS;
         long compileStart = System.nanoTime();
-        EngineFactory factory = EngineFactory.DEFAULT;
-        Pattern compiled = null;
+        Pattern compiled;
         try {
             final int fl = flags;
-            final EngineFactory f0 = factory;
             compiled = withTimeout(COMPILE_TIMEOUT_MS, "compile",
-                    () -> Pattern.compile(s.regex(), fl, f0));
+                    () -> Pattern.compile(s.regex(), fl, factory));
         } catch (TimeoutException e) {
-            countSkip("COMPILE_TIMEOUT");
+            countSkip("COMPILE_TIMEOUT:" + labelFor(factory));
             skipCount.incrementAndGet();
             timings.add(new Timing(s.fullName(),
-                    (System.nanoTime() - compileStart) / 1_000_000, 0, "SKIP:COMPILE_TIMEOUT"));
-            System.out.printf("TIMEOUT  %-60s compile>%dms  /%s/%n",
-                    s.fullName(), COMPILE_TIMEOUT_MS, abbrev(s.regex(), 50));
-            assumeTrue(false, "COMPILE_TIMEOUT " + COMPILE_TIMEOUT_MS + "ms");
+                    (System.nanoTime() - compileStart) / 1_000_000, 0,
+                    "SKIP:COMPILE_TIMEOUT:" + labelFor(factory)));
+            System.out.printf("TIMEOUT  %-50s [%s] compile>%dms  /%s/%n",
+                    s.fullName(), labelFor(factory), COMPILE_TIMEOUT_MS, abbrev(s.regex(), 50));
+            assumeTrue(false, "COMPILE_TIMEOUT " + COMPILE_TIMEOUT_MS + "ms (" + labelFor(factory) + ")");
             return;
         } catch (Exception e) {
-            if (!looksLikeAsmOnlyFailure(e)) {
-                countSkip("compile-failed:" + e.getClass().getSimpleName());
-                skipCount.incrementAndGet();
-                timings.add(new Timing(s.fullName(),
-                        (System.nanoTime() - compileStart) / 1_000_000, 0,
-                        "SKIP:compile-failed:" + e.getClass().getSimpleName()));
-                assumeTrue(false, "compile failed: " + e.getClass().getSimpleName()
-                        + (e.getMessage() != null ? ": " + e.getMessage() : ""));
-                return;
-            }
-            try {
-                final int fl = flags;
-                final EngineFactory f1 = EngineFactory.VM;
-                compiled = withTimeout(COMPILE_TIMEOUT_MS, "compile-vm",
-                        () -> Pattern.compile(s.regex(), fl, f1));
-                factory = EngineFactory.VM;
-            } catch (TimeoutException te) {
-                countSkip("COMPILE_TIMEOUT(ASM+VM)");
-                skipCount.incrementAndGet();
-                timings.add(new Timing(s.fullName(),
-                        (System.nanoTime() - compileStart) / 1_000_000, 0, "SKIP:COMPILE_TIMEOUT(VM)"));
-                assumeTrue(false, "COMPILE_TIMEOUT on ASM+VM fallback");
-                return;
-            } catch (Exception vmE) {
-                countSkip("compile-failed-both:" + vmE.getClass().getSimpleName());
-                skipCount.incrementAndGet();
-                timings.add(new Timing(s.fullName(),
-                        (System.nanoTime() - compileStart) / 1_000_000, 0,
-                        "SKIP:compile-failed-both:" + vmE.getClass().getSimpleName()));
-                assumeTrue(false, "compile failed on both ASM and VM: "
-                        + vmE.getClass().getSimpleName()
-                        + (vmE.getMessage() != null ? ": " + vmE.getMessage() : ""));
-                return;
-            }
-        }
-        if (compiled == null) {  // shouldn't happen; defensive
-            countSkip("compile-null");
+            countSkip("compile-failed:" + labelFor(factory) + ":" + e.getClass().getSimpleName());
             skipCount.incrementAndGet();
             timings.add(new Timing(s.fullName(),
-                    (System.nanoTime() - compileStart) / 1_000_000, 0, "SKIP:compile-null"));
-            assumeTrue(false, "compile returned null");
+                    (System.nanoTime() - compileStart) / 1_000_000, 0,
+                    "SKIP:compile-failed:" + labelFor(factory) + ":" + e.getClass().getSimpleName()));
+            assumeTrue(false, "compile failed (" + labelFor(factory) + "): " + e.getClass().getSimpleName()
+                    + (e.getMessage() != null ? ": " + e.getMessage() : ""));
             return;
         }
         final Pattern p = compiled;
@@ -323,12 +307,8 @@ class RebarScenarioParityTest {
         long runMs = (System.nanoTime() - runStart) / 1_000_000;
 
         if (compileMs > 50 || runMs > 50) {
-            System.out.printf("SLOW     %-60s compile=%dms  run=%dms  /%s/%n",
-                    s.fullName(), compileMs, runMs, abbrev(s.regex(), 50));
-        }
-        if (factory == EngineFactory.VM && EngineFactory.DEFAULT == EngineFactory.ASM) {
-            System.out.printf("ASM-FAIL %-60s (fell back to VM)  /%s/%n",
-                    s.fullName(), abbrev(s.regex(), 50));
+            System.out.printf("SLOW     %-50s [%s] compile=%dms  run=%dms  /%s/%n",
+                    s.fullName(), labelFor(factory), compileMs, runMs, abbrev(s.regex(), 50));
         }
 
         // --- Assert ---
@@ -418,25 +398,6 @@ class RebarScenarioParityTest {
      */
     private static boolean enginesIncludeJava(Scenario s) {
         return s.engines().stream().anyMatch(e -> e.startsWith("java/"));
-    }
-
-    /**
-     * Does {@code e} look like an ASM-backend-only failure (method-too-large
-     * etc.) that the VM backend can recover from? We unwrap
-     * {@link java.util.concurrent.ExecutionException} from the FutureTask
-     * wrapper, then look for the ASM backend's sentinel message or
-     * {@code org.objectweb.asm.MethodTooLargeException} in the cause chain.
-     */
-    private static boolean looksLikeAsmOnlyFailure(Throwable e) {
-        Throwable c = e;
-        for (int i = 0; i < 6 && c != null; i++) {
-            String name = c.getClass().getName();
-            if (name.equals("org.objectweb.asm.MethodTooLargeException")) return true;
-            String msg = c.getMessage();
-            if (msg != null && msg.contains("ASM backend failed")) return true;
-            c = c.getCause();
-        }
-        return false;
     }
 
     /**

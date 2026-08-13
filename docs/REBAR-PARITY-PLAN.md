@@ -195,11 +195,15 @@ flagged and nothing else.
 Wrap the body in `try { … } catch (Throwable t)` and convert
 `OutOfMemoryError` to a skip with reason `"compile OOM"`. Don't swallow — log.
 
-### 1.3 ASM MethodTooLarge: VM retry is already in place
+### 1.3 ASM MethodTooLarge — solved at the source
 
-Keep the existing `looksLikeAsmOnlyFailure` path; just make sure the
-`ASM-FAIL` log line is parsed by the suite summary so we can see the count
-without grepping stdout.
+ASM no longer throws `MethodTooLargeException` for any in-scope rebar pattern:
+`TdfaAsmBackend.pickMode` selects one of three dispatch modes
+(`INLINED` / `TABLE_SCAN` / `DELEGATE`) based on DFA shape, and the largest
+DFAs (e.g. dictionary alternations, 21 K states) emit a thin wrapper class
+that forwards to `TdfaRunner`. The old `looksLikeAsmOnlyFailure` VM-retry
+path in `RebarScenarioParityTest` was removed; both backends now run as
+peer parameter values via `@MethodSource`.
 
 ### 1.4 Add a global `COMPILE_HARD_TIMEOUT_MS = 5_000`
 
