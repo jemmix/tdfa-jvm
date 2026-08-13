@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.parser;
 
 import io.github.jemmix.tdfa.ast.Ast;
 import io.github.jemmix.tdfa.ast.CharClass;
+import io.github.jemmix.tdfa.unicode.CaseFoldTable;
 import io.github.jemmix.tdfa.unicode.UnicodeProviders;
 
 import java.util.ArrayList;
@@ -147,6 +148,25 @@ public final class Parser {
         return new Ast.Repeat(atom, min, max, greedy);
     }
 
+    /**
+     * Expands a literal char under case-insensitive mode into a CharClass,
+     * or returns {@code null} if the char should remain a plain Symbol
+     * (no case-fold equivalents). Uses full Unicode case folding
+     * (e.g., {@code s ↔ ſ}) when {@code unicodeShorthand} is enabled,
+     * falling back to {@code toLowerCase}/{@code toUpperCase} otherwise.
+     */
+    private Ast caseFoldChar(char c) {
+        if (unicodeShorthand) {
+            int[] ranges = CaseFoldTable.foldRanges(c);
+            if (ranges != null) return new CharClass(ranges, false);
+            return null;
+        }
+        char lo = Character.toLowerCase(c);
+        char hi = Character.toUpperCase(c);
+        if (lo != hi) return new CharClass(new int[]{lo, lo, hi, hi}, false);
+        return null;
+    }
+
     /** atom := group | class | dot | anchor | escape | literal */
     private Ast parseAtom() {
         char c = cur();
@@ -159,9 +179,8 @@ public final class Parser {
         if (c == ')' || c == '|') throw fail(this, "unexpected '" + c + "'");
         pos++;
         if (caseInsensitive) {
-            char lo = Character.toLowerCase(c);
-            char hi = Character.toUpperCase(c);
-            if (lo != hi) return new CharClass(new int[]{lo, lo, hi, hi}, false);
+            Ast folded = caseFoldChar(c);
+            if (folded != null) return folded;
         }
         return new Ast.Symbol(c);
     }
@@ -610,9 +629,8 @@ public final class Parser {
         if (literal.length() == 1) {
             char ch = literal.charAt(0);
             if (caseInsensitive) {
-                char lo = Character.toLowerCase(ch);
-                char hi = Character.toUpperCase(ch);
-                if (lo != hi) return new CharClass(new int[]{lo, lo, hi, hi}, false);
+                Ast folded = caseFoldChar(ch);
+                if (folded != null) return folded;
             }
             return new Ast.Symbol(ch);
         }
@@ -620,13 +638,10 @@ public final class Parser {
         for (int i = 0; i < literal.length(); i++) {
             char ch = literal.charAt(i);
             if (caseInsensitive) {
-                char lo = Character.toLowerCase(ch);
-                char hi = Character.toUpperCase(ch);
-                if (lo != hi) parts.add(new CharClass(new int[]{lo, lo, hi, hi}, false));
-                else parts.add(new Ast.Symbol(ch));
-            } else {
-                parts.add(new Ast.Symbol(ch));
+                Ast folded = caseFoldChar(ch);
+                if (folded != null) { parts.add(folded); continue; }
             }
+            parts.add(new Ast.Symbol(ch));
         }
         return new Ast.Concat(parts);
     }
