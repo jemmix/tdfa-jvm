@@ -230,7 +230,25 @@ public final class Tdfa {
         /** If true, suppress lower-priority paths past an accept (Perl leftmost-first). */
         final boolean perl;
 
-        final Map<DfaStateKey, Integer> stateIndex = new HashMap<>();
+        /**
+         * Multimap from DFA-state shape key to the list of DFA-state IDs that
+         * share that shape. The paper's {@code map}+{@code topological_sort}
+         * dedup collapses states with identical (NFA-state-set, lookahead-tag,
+         * emptyMask, pri) signature; register-renaming via {@link #tryMap}
+         * handles the case where the same shape is reached with different
+         * register assignments.
+         *
+         * <p>Storing ALL same-shape state IDs (not just the first one) keeps
+         * {@link #addState} expected-O(1) per call. With a single-entry map
+         * (the prior design) addState had to fall back to an O(n²) scan over
+         * all known states whenever the hash-bucket primary candidate failed
+         * tryMap — or, worse, whenever the shape was brand-new (hash-miss),
+         * because the fallback couldn't tell there was nothing to find. On
+         * the 2 663-branch dictionary alternation that fallback fired
+         * 227 M times (every call, never matching) and dominated compile
+         * wall time (~13 s of ~14 s).
+         */
+        final Map<DfaStateKey, int[]> stateIndex = new HashMap<>();
         final List<List<Config>> states = new ArrayList<>();
         /** Seed configs (pre-closure) for each DFA state, used to compute per-state DFS order. */
         final List<List<Config>> stateSeeds = new ArrayList<>();
@@ -1092,31 +1110,34 @@ public final class Tdfa {
 
         AddResult addState(List<Config> configs, int[] ops, List<Config> seed) {
             DfaStateKey key = new DfaStateKey(configs, perl);
-            Integer existing = stateIndex.get(key);
-            if (existing != null) {
+            int[] candidates = stateIndex.get(key);
+            if (candidates != null) {
                 // Identity on (states, lookahead). Registers may differ — translate via tryMap.
-                int[] mapped = tryMap(configs, states.get(existing), ops);
-                if (mapped != null) return new AddResult(existing, mapped);
-                // Bijection failed (rare). Fall through to create a new state.
-            }
-            // Try mapping against every existing state with same key shape (different registers).
-            for (int sid = 0; sid < states.size(); sid++) {
-                if (sid == (existing == null ? -1 : existing)) continue;
-                if (!sameKey(states.get(sid), configs)) continue;
-                int[] mapped = tryMap(configs, states.get(sid), ops);
-                if (mapped != null) {
-                    return new AddResult(sid, mapped);
+                for (int cand : candidates) {
+                    int[] mapped = tryMap(configs, states.get(cand), ops);
+                    if (mapped != null) return new AddResult(cand, mapped);
                 }
+                // All same-shape states failed the register bijection: this shape
+                // genuinely needs a new DFA state. Fall through.
             }
             int id = states.size();
             states.add(configs);
             stateSeeds.add(seed);
-            stateIndex.put(key, id);
+            stateIndex.put(key, candidates == null
+                    ? new int[]{id}
+                    : appendInt(candidates, id));
             builders.add(new DfaStateBuilder(id));
             for (Config c : configs) {
                 if (c.state == nfa.accept) { accept.set(id); break; }
             }
             return new AddResult(id, ops);
+        }
+
+        static int[] appendInt(int[] arr, int v) {
+            int[] out = new int[arr.length + 1];
+            System.arraycopy(arr, 0, out, 0, arr.length);
+            out[arr.length] = v;
+            return out;
         }
 
         /**
@@ -1170,6 +1191,7 @@ public final class Tdfa {
         }
 
         boolean sameKey(List<Config> a, List<Config> b) {
+            // Retained for diagnostic callers; addState now uses the multimap directly.
             return new DfaStateKey(a, perl).equals(new DfaStateKey(b, perl));
         }
 
