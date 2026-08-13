@@ -7,12 +7,12 @@ self-contained commits make it possible to tell which change moved the needle
 and to roll back the ones that didn't. One phase item per commit (or finer);
 never accumulate a phase's worth of work into a single drop.
 
-Suite runs in **~21 min wall** for 359 cases (108 pass, 2 fail, 4 in-scope
-COMPILE_TIMEOUT, 245 out-of-scope) under the radical relaxation
-(`COMPILE_TIMEOUT_MS` = 2 min, `RUN_TIMEOUT_MS` = 10 min). Was 29 s when
-most cases skipped on the old 5 s / 10 s / 16 MB / 32 KB ceilings. The
-end-of-suite `@AfterAll` summary prints the slowest tests so the perf
-bombs are visible — see Phase 6.1 for the fix path.
+Suite runs in **~35 s wall** for 718 parameterized cases (216 pass, 4
+fail, 506 skip — see breakdown below). Was 29 s / 359 cases before the
+ASM+VM parameterization (commit `358a61e`) doubled the test count; the
+per-scenario wall is unchanged. The end-of-suite `@AfterAll` summary
+prints the slowest tests so the perf bombs are visible — see Phase 6.1
+for the fix path.
 
 ## Scope (locked 2025-08)
 
@@ -35,17 +35,23 @@ diverges from our actual output — `test/unicode/utf8/dot-matches-byte`
 record our count under an explicit `{ engine = 're2', count = 1 }` entry
 (`vendor/patches/rebar/01-dot-matches-byte-codepoint.patch`).
 
-## Current breakdown: 359 cases (post time-out/cap relaxation, 2025-08)
+## Current breakdown: 718 cases (parameterized over ASM + VM, 2026-08)
 
-| Bucket              | Count | Meaning                                                            |
+Each scenario runs twice — once on `EngineFactory.ASM`, once on
+`EngineFactory.VM` — as a peer parameterized test case (commit
+`358a61e`). Pre-parameterization numbers (a single backend) are in
+parentheses.
+
+| Bucket              | Count (×2) | Meaning                                                            |
 |---------------------|------:|-------------------------------------------------------------------|
-| PASS                | 108   | Engine produces correct count                                     |
-| FAIL                |   2   | Real semantic divergence from rebar's expected count              |
-| SKIP — scope        | 245   | `java/hotspot` not in `engines` list (see Scope above)            |
-| SKIP — COMPILE_TIMEOUT |   4 | Bounded-repeat `[\s\S]{0,100}` × 2, date alternation, AWS-keys `.*?` — all > 2 min compile |
+| PASS                | 216 (108) | Engine produces correct count                                     |
+| FAIL                |   4 (2)   | Real semantic divergence from rebar's expected count              |
+| SKIP — scope        | 490 (245) | `java/hotspot` not in `engines` list (see Scope above)            |
+| SKIP — COMPILE_TIMEOUT | 8 (4) | Bounded-repeat `[\s\S]{0,100}` × 2, date alternation, AWS-keys `.*?` — all > 2 min compile |
 
-**In-scope pass rate: 108 / 114 = 94.7 %** (was 64.9 % before the timeout/cap
-relaxation). Suite takes ~21 min wall (was 29 s — the headroom got used).
+**In-scope pass rate: 216 / 220 = 98.2 %** (was 94.7 % single-backend
+before the regopt interference-analysis fix in commit `6b335e2`
+unmasked the real veryl shortfall). Suite takes ~35 s wall.
 
 The 4 compile timeouts are:
 
@@ -73,30 +79,32 @@ Two previous "real bug" failures have been resolved:
 - ~~**`\p{L}{N}` base-field overflow**~~ — split `base` into a separate
   `stateBase[]` array (commit `70f21dd`).
 
-### A. PERL `\b` + alternation priority (1 test)
+### A. `\b` in alternation dead-ends the DFA (900 missing matches)
 
 ```
 curated/05-lexer-veryl/single         want=124800  got=123000
 ```
 
-**Root cause**: when an earlier alternation begins with `\b` and a later
-alternation matches the same prefix through a char-class, PERL disambiguation
-picks the wrong (later) group. Minimal repro:
+**Full analysis:** `docs/REBAR-FAILURES-ANALYSIS.md §B`.
 
-```
-(\bvar\b)|([a-zA-Z_][0-9a-zA-Z_]*)   on   "var"
-```
+**Root cause:** the veryl regex has the shape `(keyword-with-\b)|...|(identifier)`.
+The DFA produces two ranges per letter that starts a keyword: `['a']->state29 reqMask=\b`
+(keyword path) then `['a']->state25 reqMask=0` (identifier path). The runner commits
+to the first range whose `reqMask` passes — when `\b` IS satisfied, it always takes
+the keyword path. State 29 only has keyword-continuation transitions (`l` for `always`,
+`s` for `as`); it's missing identifier continuations. After seeing `a` at `\b`, if
+the next char isn't a keyword letter, the DFA dead-ends and the match is skipped.
 
-returns group 2 (identifier) instead of group 1 (`\bvar\b`). Both backends
-repro, so the bug is in TDFA compilation, not in a runner. Each missed token
-sums to ~300 captures / ~1 800 spans per scenario. (Previously also affected
-5 `wild/parol-veryl/*` and `curated/05-lexer-veryl/multi` scenarios; those
-are now out of scope — rebar doesn't include `java/hotspot` in their engines
-lists.)
+This was previously described as a "PERL `\b` + alternation priority" bug, but the
+2026-08 investigation (see `REBAR-FAILURES-ANALYSIS.md`) showed it's a deeper
+determinization flaw: the ε-closure for a `\b`-guarded transition doesn't include
+NFA states from non-`\b` alternation branches reaching the same position.
 
-**Fix**: isolate the priority bug in `Tdfa.compile` (likely in
-`computePerStateOrder` or the `stopOnAcceptMask` build at `Tdfa.java:337`),
-add a unit test from the minimal repro above.
+**Fix path:** in `Tdfa.Compiler.closure` / `closureGtop`, configs entering via
+`\b`-guarded edges should merge with configs from non-`\b` edges (rather than
+producing separate DFA states). The resulting state's transition table is the union
+of both paths' continuations. Guard with a unit test from the minimal repro
+`(\bvar\b)|([a-zA-Z_][0-9a-zA-Z_]*)` on `"a b"`.
 
 ### B. Unicode case folding for single-char literals (1 test)
 
@@ -104,12 +112,26 @@ add a unit test from the minimal repro above.
 test/unicode/case/ascii-with-unicode   want=1  got=0   /s/  on  'ſ'
 ```
 
-**Root cause**: `Parser.java:160-164` and `:537-541` only fold via
-`Character.toLowerCase` / `toUpperCase`. That doesn't see the ASCII → Unicode
-folds like `s ↔ ſ` (U+017F). re2j/re2 do Unicode simple case folding.
+**Full analysis:** `docs/REBAR-FAILURES-ANALYSIS.md §C`.
 
-**Fix**: extend `UnicodeDataProvider` with a `caseFolds(codepoint)` API and
-use it in those two parser paths.
+**Root cause:** `Parser.java:612-616` (single-char literal) and `:306-328`
+(class ranges) only fold via `Character.toLowerCase` / `toUpperCase`, which for
+ASCII `s` gives `s`/`S` — missing the Unicode simple case fold `s ↔ ſ` (U+017F).
+Comment at `Parser.java:316` already flags this: "Pending full Unicode case
+folding for arbitrary class ranges."
+
+**Fix path:** extend `UnicodeDataProvider` with a `caseFolds(codepoint) : int[]`
+API backed by Unicode `CaseFolding.txt` data, and use it in both parser paths.
+
+### A.0. Register-optimization interference analysis (FIXED, commit `6b335e2`)
+
+Previously stacked on top of bug A: the M2 register optimizer's
+`interferenceAnalysis` walked ops forward but used end-of-block liveness for every
+op, missing intra-block COPY-source liveness. Working registers from different
+alternation branches got aliased with final registers, corrupting capture-group
+readout (25701 matches with 0 participating groups, 19400 with >1). After the
+fix, all 61500 veryl matches report exactly 1 participating group, matching
+`java.util.regex`. **Full analysis:** `docs/REBAR-FAILURES-ANALYSIS.md §A`.
 
 ---
 
