@@ -1,14 +1,16 @@
-# Rebar Parity Failures — Root-Cause Analysis
+# Rebar Parity Failures — Root-Cause Analysis (All Fixed)
 
-Detailed investigation of the 4 remaining rebar parity failures (2 bugs ×
-2 backends, parameterized over `EngineFactory.ASM` and `EngineFactory.VM`).
-Both bugs reproduce identically on both backends, confirming they are in
-shared TDFA-construction code, not in the runners.
+Detailed investigation of the 4 rebar parity failures (2 bugs ×
+2 backends, parameterized over `EngineFactory.ASM` and `EngineFactory.VM`)
+that existed as of 2026-08. All are now fixed.
 
-| Scenario | Model | Expected | Got (2026-08) | Bug |
-|---|---|---|---|---|
-| `curated/05-lexer-veryl/single` | count-captures | 124800 | 123000 | §A + §B (stacked) |
-| `test/unicode/case/ascii-with-unicode` | count | 1 | 0 | §C |
+| Scenario | Model | Expected | Was | Bug | Status |
+|---|---|---|---|---|---|
+| `curated/05-lexer-veryl/single` | count-captures | 124800 | 123000 | §A + §B | Fixed |
+| `test/unicode/case/ascii-with-unicode` | count | 1 | 0 | §C | Fixed |
+
+**All three bugs are now resolved.** The rebar parity suite passes 100%
+of in-scope scenarios (220/220 parameterized over ASM + VM).
 
 The veryl scenario had **two stacked bugs**: a register-optimization
 interference-analysis flaw (§A, **fixed** in commit `6b335e2`) that
@@ -130,13 +132,12 @@ pass is skipped), confirming it as a regopt-only issue.
 
 ---
 
-## §B. `\b` in alternation produces dead-end DFA paths (OPEN)
+## §B. `\b` in alternation produces dead-end DFA paths (FIXED)
 
-**Status:** Open. Accounts for 900 missing matches in the veryl scenario.
-**Files:** `src/main/java/io/github/jemmix/tdfa/tdfa/Tdfa.java`
-(determinization / ε-closure), possibly
-`src/main/java/io/github/jemmix/tdfa/tnfa/Tnfa.java` (NFA construction
-for `\b` edges in alternation).
+**Status:** Fixed in commit `d133d20`. Accounts for 900 missing matches in
+the veryl scenario.
+**File:** `src/main/java/io/github/jemmix/tdfa/tdfa/Tdfa.java`,
+determinization loop in `Compiler.compile()` (mask-group subset inclusion).
 
 ### Symptom
 
@@ -218,48 +219,33 @@ identifier branch creates a separate DFA state keyed on `(NFA states, no
 masks differ, even though they share the same input position and the
 identifier path is viable in both.
 
-### Fix path
+### Fix
 
-The ε-closure for a `\b`-guarded transition must ALSO include NFA states
-from non-`\b` alternation branches that reach the same position. In
-`(A|\bB)`, after consuming a char that could match either `A` or the
-first char of `B`, the DFA state should track BOTH paths — the `A`
-continuation is independent of whether `\b` was satisfied.
+Modified the main determinization loop in `Tdfa.Compiler.compile()`:
+when processing mask group M, also step configs from subset-mask groups
+(mask ⊆ M). The group's own configs are added to the step input FIRST
+(higher priority), so they survive the ε-closure `(state, mask)` dedup
+with their tags and registers intact. The `requiredMask` is set to
+`groupMask` (not the intersection, which gets diluted by subset configs).
 
-Concretely, in `Tdfa.Compiler.stepOnSymbol` / `closure`, when building
-the set of NFA states for the next DFA state, configs that entered via
-a `\b`-guarded edge should be MERGED with configs from the same source
-state that entered via non-`\b` edges (rather than producing two
-separate DFA states). The resulting DFA state's transition table is the
-union of both paths' continuations.
+This ensures the `\b`-guarded transition's target DFA state includes
+continuations from BOTH the keyword path AND the identifier path. The
+non-`\b` transition (mask=0) still leads to an identifier-only state,
+correctly handling positions where `\b` doesn't hold.
 
-This may require changes to:
+The fix is minimal — it only changes the composition of the step input
+list and the requiredMask computation. The closure, register allocation,
+and state dedup machinery are unchanged. For groups with no subsets
+(mask=0, or the only group), behavior is identical to before.
 
-1. `Tdfa.DfaStateKey` — the canonical state key currently includes
-   `emptyMask` (which encodes the assertion mask). Two configs with the
-   same NFA state but different `emptyMask` values produce different DFA
-   states. For `\b`, this is correct for the BOUNDARY CHECK itself
-   (different positions have different `\b` results), but the
-   identifier path doesn't care about `\b` and should be included in
-   both states.
+### Verification
 
-2. `Tdfa.Compiler.closureGtop` / `closure` — when computing the closure,
-   if a config's NFA state is reachable both with and without a `\b`
-   edge, the closure should include the union (both paths). Currently it
-   tracks them as separate configs with separate `emptyMask` values.
-
-3. Alternatively, model `\b` differently: instead of an ε-edge with a
-   mask, expand `\b` at the NFA level into explicit transitions on the
-   word/non-word boundary. This avoids the assertion-mask dichotomy
-   entirely but grows the NFA.
-
-A targeted unit test from the minimal repro should guard the fix:
-
-```java
-// (\bvar\b)|([a-zA-Z_][0-9a-zA-Z_]*)   on   "a b"
-// Expected: match [0,1]="a" (g2), match [2,3]="b" (g2)
-// Current:  match [2,3]="b" (g2) — "a" is skipped
-```
+| Probe | Before fix | After fix |
+|---|---|---|
+| `(\bas\b)|([a-zA-Z_]...)` on `"a b"` | 1 match (`b` only) | 2 matches (`a`, `b`) |
+| Full veryl scenario | 123000 (900 short) | 124800 (exact) |
+| `:tests:unit:test`, `:tests:parity:re2j:test` | green | green |
+| `:tests:parity:rebar:test` | 2 failures (veryl × 2 backends) | 0 failures |
 
 ### Reproduction
 
@@ -282,11 +268,13 @@ Position-level probe: `find()` starting at position 26 (the `a` in
 
 ---
 
-## §C. Unicode case-fold `s ↔ ſ` for literal chars (OPEN)
+## §C. Unicode case-fold `s ↔ ſ` for literal chars (FIXED)
 
-**Status:** Open. 1 scenario (`test/unicode/case/ascii-with-unicode`).
-**File:** `src/main/java/io/github/jemmix/tdfa/parser/Parser.java`,
-single-char literal fold (line 612) and class-range fold (line 306).
+**Status:** Fixed in commit `74ab652`. 1 scenario
+(`test/unicode/case/ascii-with-unicode`).
+**File:** `src/main/java/io/github/jemmix/tdfa/unicode/CaseFoldTable.java`,
+`src/main/java/io/github/jemmix/tdfa/parser/Parser.java`
+(single-char literal fold, 3 locations).
 
 ### Symptom
 

@@ -44,14 +44,13 @@ parentheses.
 
 | Bucket              | Count (×2) | Meaning                                                            |
 |---------------------|------:|-------------------------------------------------------------------|
-| PASS                | 216 (108) | Engine produces correct count                                     |
-| FAIL                |   4 (2)   | Real semantic divergence from rebar's expected count              |
+| PASS                | 220 (110) | Engine produces correct count                                     |
+| FAIL                |   0 (0)   | Real semantic divergence from rebar's expected count              |
 | SKIP — scope        | 490 (245) | `java/hotspot` not in `engines` list (see Scope above)            |
 | SKIP — COMPILE_TIMEOUT | 8 (4) | Bounded-repeat `[\s\S]{0,100}` × 2, date alternation, AWS-keys `.*?` — all > 2 min compile |
 
-**In-scope pass rate: 216 / 220 = 98.2 %** (was 94.7 % single-backend
-before the regopt interference-analysis fix in commit `6b335e2`
-unmasked the real veryl shortfall). Suite takes ~35 s wall.
+**In-scope pass rate: 220 / 220 = 100 %** (was 98.2 % before the §B fix
+in commit `d133d20`). Suite takes ~41 s wall.
 
 The 4 compile timeouts are:
 
@@ -66,10 +65,24 @@ All four are DFA-state explosions (the bounded `[\s\S]{0,100}` alone is ~10 K
 states per repetition site). They need DFA minimization or an AST-budget
 fast-fail at parse time — see Phase 6 below.
 
-## The 2 failures
+## The 0 failures
 
-Two previous "real bug" failures have been resolved:
+All previously-known bugs have been resolved:
 
+- ~~**Register-optimization interference analysis (§A)**~~ — Fixed in
+  commit `6b335e2`. `Optimize.interferenceAnalysis` walked ops forward
+  but used end-of-block liveness for every op, missing intra-block
+  COPY-source liveness. Rewrote to walk backward per BT22 Fig. 7.
+- ~~**`\b` in alternation dead-ends the DFA (§B)**~~ — Fixed in commit
+  `d133d20`. The determinization loop's mask-group processing didn't
+  include subset-mask configs, so `\b`-guarded transitions lacked
+  identifier continuations. Modified `Compiler.compile()` to include
+  subset-mask group configs in the step input, with the group's own
+  configs first to preserve priority in ε-closure dedup.
+- ~~**Unicode case-fold `s ↔ ſ` (§C)**~~ — Fixed in commit `74ab652`.
+  Added `CaseFoldTable` with a reverse fold table mapping
+  `toUpperCase(toLowerCase(cp))` to all BMP codepoints that share it.
+  Parser uses it when `unicodeShorthand && caseInsensitive`.
 - ~~**`\w` / `\b` ASCII-only (2 tests)**~~ — the test now enables
   `UNICODE_CHARACTER_CLASS` when `unicode = true` is set in the scenario
   (commit `c21c3a2`); `\w` / `\b` build from the provider's `L|N` categories
@@ -79,59 +92,7 @@ Two previous "real bug" failures have been resolved:
 - ~~**`\p{L}{N}` base-field overflow**~~ — split `base` into a separate
   `stateBase[]` array (commit `70f21dd`).
 
-### A. `\b` in alternation dead-ends the DFA (900 missing matches)
-
-```
-curated/05-lexer-veryl/single         want=124800  got=123000
-```
-
-**Full analysis:** `docs/REBAR-FAILURES-ANALYSIS.md §B`.
-
-**Root cause:** the veryl regex has the shape `(keyword-with-\b)|...|(identifier)`.
-The DFA produces two ranges per letter that starts a keyword: `['a']->state29 reqMask=\b`
-(keyword path) then `['a']->state25 reqMask=0` (identifier path). The runner commits
-to the first range whose `reqMask` passes — when `\b` IS satisfied, it always takes
-the keyword path. State 29 only has keyword-continuation transitions (`l` for `always`,
-`s` for `as`); it's missing identifier continuations. After seeing `a` at `\b`, if
-the next char isn't a keyword letter, the DFA dead-ends and the match is skipped.
-
-This was previously described as a "PERL `\b` + alternation priority" bug, but the
-2026-08 investigation (see `REBAR-FAILURES-ANALYSIS.md`) showed it's a deeper
-determinization flaw: the ε-closure for a `\b`-guarded transition doesn't include
-NFA states from non-`\b` alternation branches reaching the same position.
-
-**Fix path:** in `Tdfa.Compiler.closure` / `closureGtop`, configs entering via
-`\b`-guarded edges should merge with configs from non-`\b` edges (rather than
-producing separate DFA states). The resulting state's transition table is the union
-of both paths' continuations. Guard with a unit test from the minimal repro
-`(\bvar\b)|([a-zA-Z_][0-9a-zA-Z_]*)` on `"a b"`.
-
-### B. Unicode case folding for single-char literals (1 test)
-
-```
-test/unicode/case/ascii-with-unicode   want=1  got=0   /s/  on  'ſ'
-```
-
-**Full analysis:** `docs/REBAR-FAILURES-ANALYSIS.md §C`.
-
-**Root cause:** `Parser.java:612-616` (single-char literal) and `:306-328`
-(class ranges) only fold via `Character.toLowerCase` / `toUpperCase`, which for
-ASCII `s` gives `s`/`S` — missing the Unicode simple case fold `s ↔ ſ` (U+017F).
-Comment at `Parser.java:316` already flags this: "Pending full Unicode case
-folding for arbitrary class ranges."
-
-**Fix path:** extend `UnicodeDataProvider` with a `caseFolds(codepoint) : int[]`
-API backed by Unicode `CaseFolding.txt` data, and use it in both parser paths.
-
-### A.0. Register-optimization interference analysis (FIXED, commit `6b335e2`)
-
-Previously stacked on top of bug A: the M2 register optimizer's
-`interferenceAnalysis` walked ops forward but used end-of-block liveness for every
-op, missing intra-block COPY-source liveness. Working registers from different
-alternation branches got aliased with final registers, corrupting capture-group
-readout (25701 matches with 0 participating groups, 19400 with >1). After the
-fix, all 61500 veryl matches report exactly 1 participating group, matching
-`java.util.regex`. **Full analysis:** `docs/REBAR-FAILURES-ANALYSIS.md §A`.
+Full root-cause analysis for all bugs: `docs/REBAR-FAILURES-ANALYSIS.md`.
 
 ---
 
