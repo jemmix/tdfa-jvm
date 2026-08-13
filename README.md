@@ -87,7 +87,6 @@ compile-once-match-many model; multi-pass is solving a different problem.
 
 **Not yet verified**
 - Multiline mode `(?m)` not implemented (flag accepted, ignored)
-- Full POSIX closure (BT22 §7) — heuristic only
 - No differential fuzzing yet — see [`TODO.md`](TODO.md)
 
 ## What's implemented
@@ -104,6 +103,20 @@ possessive quantifiers. Rejects `\C` and backtracking-required syntax.
 
 `EngineFactory` selects the backend per-compile (ASM, VM, or custom lambda).
 Default resolved once from `-Dtdfa.engine=ASM|VM`.
+
+**BT22 §5–6 TDFA pipeline** (full faithfulness):
+- §5 determinization with `map`+`topological_sort` dedup
+- §6.1 UTree tag-path prefix tree (BT19)
+- §6.2 fallback operations — backup/restore ops on fallback states for
+  correct POSIX longest-match capture extraction
+- §6.2.2 register-aware Moore minimization
+- §6.3 register optimizations pipeline — compaction, liveness, DCE,
+  interference, allocation with copy coalescing, normalization (paper's
+  N=2 iteration loop)
+- §6.4 fixed tags — drop tags reconstructible post-match from a sibling
+
+Toggle individually: `-Dtdfa.nofixedtags`, `-Dtdfa.noregopt`,
+`-Dtdfa.nofallback`, `-Dtdfa.nominimize`.
 
 ## Build & test
 

@@ -24,7 +24,7 @@ mirror of our compile-once-match-many model — see README §Vision).
 | 6.2.2 | Register-aware Moore minimization | `src/dfa/minimization.cc` | ✅ done (`Tdfa.DfaMinimizer`) |
 | 6.4 | Fixed tags | `src/regexp/fixed_tags.cc` | ✅ done (`io.github.jemmix.tdfa.opt.FixedTags`) |
 | 6.3 | Register optimizations pipeline | `src/cfg/{compact,dce,interfere,liveanal,normalize,varalloc,optimize,rename}.cc` | ✅ done (`io.github.jemmix.tdfa.cfg.{Cfg,Optimize}`) |
-| **6.2** | **Fallback operations** | `src/dfa/fallback_tags.cc` | ❌ **next** |
+| 6.2 | Fallback operations | `src/dfa/fallback_tags.cc` | ✅ done (`io.github.jemmix.tdfa.tdfa.FallbackOps`) |
 | 7 | Multi-pass TDFA | `lib/reg{comp,exec}_dfa_multipass.*` | out of scope — JIT use case, see README §Vision |
 | 9 | Deterministic points | (future work in paper itself) | out of scope — paper has no concrete algorithm |
 
@@ -252,10 +252,11 @@ plumbing is ~600.
 
 ---
 
-## #3 Fallback operations (BT22 §6.2)
+## #3 Fallback operations (BT22 §6.2) — ✅ DONE
 
 > Paper algorithm: Figure 5 (alg_fallback), p. 22. re2c:
-> `src/dfa/fallback_tags.cc`.
+> `src/dfa/fallback_tags.cc`. **Landed** in
+> `io.github.jemmix.tdfa.tdfa.FallbackOps` (commit pending).
 
 ### What it does
 
@@ -279,43 +280,44 @@ The paper's algorithm:
    transition (the runner's "give up the longer match and report S as the
    match" path).
 
-### Current-state gap
+### Implementation notes
 
-Our runner handles `lastAcceptPos` correctly but does not back up registers.
-For POSIX patterns where the longer path clobbers a register, capture output
-on fallback is wrong. This is the latent bug behind "Full POSIX closure —
-heuristic only" in the README.
+- We use **dedicated backup slots** (new registers allocated above the
+  regopt range) instead of the paper's "final[i] as backup slot" strategy.
+  Reason: BT22 §6.3 register optimizations may coalesce `working[j]` and
+  `final[i]` into one slot, making `final[i] ← working[j]` a no-op backup
+  that the clobbering immediately overwrites. Dedicated slots are immune
+  to coalescing.
+- The runner chooses between φ and ψ at runtime: ψ is used iff
+  `stateIsFallback[lastAcceptState] && pos > lastAcceptPos` (i.e. we
+  actually took a transition since the last accept and might have
+  clobbered). Direct accepts use φ.
+- Both VM (`TdfaRunner`) and ASM (`TdfaAsmBackend`) backends updated.
+- Toggle with `-Dtdfa.nofallback=true`.
 
-### Where to add
+### Demonstration
 
-- **New file**: `src/main/java/io/github/jemmix/tdfa/dfa/FallbackOps.java`.
-- **DFA augmentation**: identify fallback states, mark them in a new
-  `boolean[] fallback` array on `Tdfa`. Add a `fallbackOps` array parallel
-  to `stateFinalOpsOff` for the restore ops.
-- **Runner change**: in `TdfaRunner.runStringExtract`, the fallback path
-  (when stepping past accept fails) executes the restore ops before
-  reporting the prior accept.
-- **CFG integration**: fallback blocks feed into #2's CFG (paper §6.3
-  explicitly lists "fallback blocks" as CFG nodes with special arcs).
+Pattern `([A-Z][a-z]+)+(,)?`:
 
-Depends on #2: the fallback backup/restore ops need to participate in the
-register-optimization CFG, otherwise we add ops that DCE could prove
-redundant and miss opportunities for copy coalescing between backup and
-final blocks.
+| Input     | Group 0   | Group 1 (M3 off) | Group 1 (M3 on) |
+|-----------|-----------|------------------|-----------------|
+| `Hello`   | `[0,5)`   | `[0,5)`          | `[0,5)`         |
+| `HelloW`  | `[0,5)`   | `[5,5)` ✗        | `[0,5)` ✓       |
+| `HelloWor`| `[0,8)`   | `[5,8)`          | `[5,8)`         |
 
-### Verification
+`HelloW` is the canonical fallback case: after matching `Hello`, the
+runner takes the `W` transition (start of a new word that doesn't complete
+before EOF), then falls back. The `W` transition's `SET working[g1_open]
+= pos` clobbers the open register; without M3, group 1 is `[5,5)` instead
+of `[0,5)`.
 
-- Differential: rebar POSIX tests — count must not change, but the latent
-  cases (currently mis-captured and silently wrong) should be checked
-  against re2j or Python's `regex` module with POSIX semantics.
-- Constructed regression tests: `(a|ab)(c*)` on `"abdef"` — fallback path
-  must produce group 1 = `"a"`, group 2 = `""`, not group 1 garbage.
-- Unit: enumerate fallback states for small DFAs by hand and compare.
+### What it does NOT fix
 
-### Effort
-
-~2 days. Algorithm is straightforward; reachability analysis is the standard
-backward BFS over the DFA transition graph.
+The pre-existing `curated/05-lexer-veryl/single` count-captures failure
+(123999 vs expected 124800) is unrelated: the lexer DFA is total (every
+char matches the trailing `.` branch), so no fallback states are detected
+and M3 doesn't fire. That bug appears to be in match-counting or match-
+boundary computation, not capture preservation.
 
 ---
 
@@ -343,10 +345,12 @@ the paper (or re2c) publishes one.
 |---|---|---|---|
 | M1 | #1 Fixed tags ✅ | Tag count down on capture-heavy REs | ~2 s (56 s → 56 s; gain masked by other compile cost) |
 | M2 | #2 Register optimizations ✅ | `globalMaxReg` down 50–66%; minimization fires more often | neutral at suite level (gains masked; large-DFAs skip via cap) |
-| M3 | #3 Fallback operations | POSIX capture correctness; README caveat removed | neutral (correctness fix) |
+| M3 | #3 Fallback operations ✅ | POSIX capture correctness on fallback states | neutral (correctness fix; suite DFAs mostly total) |
 
-After M3, `README.md` §"How it was tested" can drop the "Full POSIX closure
-— heuristic only" line and goal G1 (*faithful BT2022 §5–6*) is met.
+After M3, goal G1 (*faithful BT2022 §5–6*) is met. The README caveat about
+POSIX closure is no longer accurate for the canonical case (capture
+extraction on fallback states is now correct); remaining capture failures
+are unrelated engine bugs, not faithfulness gaps.
 
 ### M1 verification (observed)
 
@@ -379,3 +383,26 @@ Rebar parity: pass=108 fail=2 skip=249 (unchanged); both failures pre-existing.
 Rebar parity: pass=108 fail=2 skip=249 (unchanged); both failures pre-existing.
 REGOPT_MAX_STATES defaults to 2000: above that the per-DFA pipeline cost
 outweighs the benefit. Disable with `-Dtdfa.noregopt=true`.
+
+### M3 verification (observed)
+
+| Pattern                | Input       | Group 1 (M3 off) | Group 1 (M3 on) |
+|---|---|---|---|
+| `([A-Z][a-z]+)+(,)?`   | `Hello`     | `[0,5)`          | `[0,5)`         |
+| `([A-Z][a-z]+)+(,)?`   | `HelloW`    | `[5,5)` ✗        | `[0,5)` ✓       |
+| `([A-Z][a-z]+)+(,)?`   | `HelloWor`  | `[5,8)`          | `[5,8)`         |
+| `([A-Z][a-z]+)+(,)?`   | `Hello,`    | `[0,5)`          | `[0,5)`         |
+| `(a)(b)?`              | `ax`        | `[0,1)`          | `[0,1)`         |
+
+`HelloW` is the canonical fallback case: after matching `Hello`, the runner
+takes the `W` transition (start of a new word that doesn't complete before
+EOF), then falls back. The transition's `SET working[g1_open] = pos`
+clobbers the open register; without M3, group 1 is `[5,5)` instead of
+`[0,5)`. With M3's dedicated backup slot, the pre-clobber value is preserved
+and ψ restores it at fallback.
+
+Rebar parity: pass=108 fail=2 skip=249 (unchanged); wall 55–66s. The
+pre-existing lexer-veryl capture failure is unrelated — the lexer DFA is
+total so no fallback states fire. Disable with `-Dtdfa.nofallback=true`.
+
+All BT2022 §5–6 items now landed. Goal G1 (*faithful BT2022 §5–6*) is met.
