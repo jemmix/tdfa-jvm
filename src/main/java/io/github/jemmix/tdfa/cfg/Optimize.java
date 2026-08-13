@@ -302,10 +302,28 @@ public final class Optimize {
      * <p>{@code I[i][j] = true} iff registers {@code i} and {@code j} cannot share a
      * physical slot (their lifetimes overlap, so one would clobber the other).
      *
-     * <p>Per block, walk ops in execution order tracking the "value history" V[i] of
-     * each register. When processing an op with dst {@code d}, every register live at
-     * the end of the block (per L[b]) — except those currently holding the same value
-     * as {@code d} — interferes with {@code d}.
+     * <p>Per block, walk ops in REVERSE order maintaining a running live set seeded
+     * from {@code L[b]} (liveness at end of block). For each op with dst {@code d},
+     * every register currently live — except those sharing {@code d}'s value —
+     * interferes with {@code d}. After the interference check, update the live set:
+     * {@code d} dies (it's killed by this op going forward); for COPY, the source
+     * becomes live (it's read by this op).
+     *
+     * <p>The backward walk is essential: walking forward and using {@code L[b]} for
+     * every op misses the fact that COPY sources become live BEFORE the op and can
+     * conflict with registers written by LATER ops in the same block. For example,
+     * in a final block with {@code COPY F0←W0; COPY F1←W1; COPY F2←W3; ...}, the
+     * working register {@code W3} is live before the third COPY and must interfere
+     * with {@code F0}/{@code F1} (which are written earlier). A forward walk using
+     * only end-of-block liveness never sees {@code W3} as live and fails to record
+     * those interferences, allowing the allocator to alias {@code W3} with
+     * {@code F0}/{@code F1} — clobbering capture positions.
+     *
+     * <p>Value tracking ({@code V[i]}) records the abstract value each register
+     * holds at the current point (a source register id, or {@link #POS_VALUE}/
+     * {@link #NIL_VALUE} for SET ops). Registers sharing the same value don't
+     * interfere and may share a slot. A forward pre-pass computes {@code V} at
+     * each op position; the backward pass reads from the pre-computed snapshot.
      *
      * <p>APPEND-vs-non-APPEND cross-interference is skipped: we have no APPEND ops
      * (single-valued tags only).
@@ -313,55 +331,59 @@ public final class Optimize {
     static boolean[][] interferenceAnalysis(Cfg cfg, boolean[][] L) {
         int nr = cfg.regCount;
         boolean[][] I = new boolean[nr][nr];
-        // Value-history sentinels: must be distinct from any register id (in [0, nr-1])
-        // and from each other, so that two SETs to the same value can share a slot
-        // (paper: "registers that have the same value" don't interfere).
         final int NO_VALUE = -1;
         final int POS_VALUE = -2;
         final int NIL_VALUE = -3;
-        int[] V = new int[nr];
-        java.util.Arrays.fill(V, NO_VALUE);
         for (int bi = 0; bi < cfg.blocks.size(); bi++) {
             Cfg.Block b = cfg.blocks.get(bi);
-            // Reset V for this block: V[src] = src for each COPY/APPEND in b.
+            int nOps = b.ops.size();
+            if (nOps == 0) continue;
+
+            // Forward pre-pass: compute V at each op position (V_after[i] = V just after op i).
+            int[] V = new int[nr];
+            java.util.Arrays.fill(V, NO_VALUE);
+            // Seed V for COPY sources: V[src] = src, so COPY A <- B gives V[A] = B.
             for (Cfg.Op op : b.ops) {
-                if (op.kind == Cfg.KIND_COPY || op.kind == Cfg.KIND_APPEND) {
-                    if (op.src < nr) V[op.src] = op.src;
+                if ((op.kind == Cfg.KIND_COPY || op.kind == Cfg.KIND_APPEND) && op.src < nr) {
+                    if (V[op.src] == NO_VALUE) V[op.src] = op.src;
                 }
             }
-            boolean[] Lb = L[bi];
-            // Walk ops in order; track V and mark interferences.
-            for (Cfg.Op op : b.ops) {
-                if (op.dst >= nr) continue;
-                boolean[] Ib = Lb.clone();
-                // Update V for this op per paper: V[i] = v for SET, V[i] = V[j] for COPY.
-                switch (op.kind) {
-                    case Cfg.KIND_SET:
-                        V[op.dst] = (op.value == Cfg.VAL_POS) ? POS_VALUE : NIL_VALUE;
-                        break;
-                    case Cfg.KIND_COPY:
-                        if (op.src < nr) {
-                            V[op.dst] = V[op.src];
-                            Ib[op.dst] = false;
-                            Ib[op.src] = false;
-                        }
-                        break;
-                    default: break;
-                }
-                Ib[op.dst] = false;
-                // Mask out registers with the same value as op.dst (paper: same value → no interference).
-                int vDst = V[op.dst];
-                if (vDst != NO_VALUE) {
-                    for (int k = 0; k < nr; k++) {
-                        if (V[k] == vDst) Ib[k] = false;
+            int[][] V_after = new int[nOps][];
+            for (int oi = 0; oi < nOps; oi++) {
+                Cfg.Op op = b.ops.get(oi);
+                if (op.dst < nr) {
+                    switch (op.kind) {
+                        case Cfg.KIND_SET:
+                            V[op.dst] = (op.value == Cfg.VAL_POS) ? POS_VALUE : NIL_VALUE;
+                            break;
+                        case Cfg.KIND_COPY:
+                            if (op.src < nr) V[op.dst] = V[op.src];
+                            break;
+                        default: break;
                     }
                 }
-                // Mark interferences between op.dst and live regs.
+                V_after[oi] = V.clone();
+            }
+
+            // Backward pass: maintain running live set, mark interferences.
+            boolean[] live = L[bi].clone();
+            for (int oi = nOps - 1; oi >= 0; oi--) {
+                Cfg.Op op = b.ops.get(oi);
+                if (op.dst >= nr) continue;
+                int[] Voi = V_after[oi];
+                int vDst = Voi[op.dst];
+                // op.dst interferes with everything live (except itself and same-value regs).
                 for (int k = 0; k < nr; k++) {
-                    if (Ib[k]) {
+                    if (k != op.dst && live[k] && Voi[k] != vDst) {
                         I[op.dst][k] = true;
                         I[k][op.dst] = true;
                     }
+                }
+                // Update live for BEFORE this op: dst dies (written by this op going forward),
+                // src becomes live (read by this op).
+                live[op.dst] = false;
+                if ((op.kind == Cfg.KIND_COPY || op.kind == Cfg.KIND_APPEND) && op.src < nr) {
+                    live[op.src] = true;
                 }
             }
         }
