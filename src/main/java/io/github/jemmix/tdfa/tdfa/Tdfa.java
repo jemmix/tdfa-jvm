@@ -351,6 +351,14 @@ public final class Tdfa {
                 // assertion requirements). Each group produces separate transitions with the
                 // correct requiredMask. E.g. for a*(^a): a* loop (mask=0) and ^a path
                 // (mask=BEGIN_TEXT) step on 'a' — without grouping, intersection 0&1=0 loses ^.
+                //
+                // Subset inclusion: when processing mask group M, also step configs from
+                // groups whose mask ⊆ M. This ensures that \b-gated transitions include
+                // continuations from non-\b alternation branches. Without this, the DFA
+                // state after a \b-guarded step (e.g. into a keyword branch) dead-ends
+                // when the keyword doesn't match but an identifier continuation is viable.
+                // Example: (\bas\b)|([a-zA-Z_]...) on "a" — the \b path must include the
+                // identifier path's continuations so "a" matches as an identifier.
                 Map<Integer, List<Config>> maskGroups = new LinkedHashMap<>();
                 for (Config c : cur) {
                     maskGroups.computeIfAbsent(c.emptyMask, k -> new ArrayList<>()).add(c);
@@ -360,10 +368,26 @@ public final class Tdfa {
                     int rangeLo = breakpoints[bi];
                     int rangeHi = breakpoints[bi + 1] - 1;
                     int repr = rangeLo;
-                    for (List<Config> groupConfigs : maskGroups.values()) {
-                        List<Config> stepped = stepOnSymbol(groupConfigs, repr, requiredMaskOut);
+                    for (int groupMask : maskGroups.keySet()) {
+                        List<Config> stepInput;
+                        if (groupMask == 0) {
+                            stepInput = maskGroups.get(0);
+                        } else {
+                            // Own configs first (higher priority), then subset-mask
+                            // configs. This ensures the group's configs survive the
+                            // ε-closure (state,mask) dedup — their tags and registers
+                            // take priority over subset configs at the same NFA state.
+                            stepInput = new ArrayList<>(maskGroups.get(groupMask));
+                            for (var e : maskGroups.entrySet()) {
+                                int otherMask = e.getKey();
+                                if (otherMask != groupMask && (otherMask & groupMask) == otherMask) {
+                                    stepInput.addAll(e.getValue());
+                                }
+                            }
+                        }
+                        List<Config> stepped = stepOnSymbol(stepInput, repr, requiredMaskOut);
                         if (stepped.isEmpty()) continue;
-                        int requiredMask = requiredMaskOut[0];
+                        int requiredMask = groupMask;
                         List<Config> closed;
                         int[] newPrectable;
                         if (perl) {
