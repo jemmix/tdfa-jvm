@@ -48,7 +48,12 @@ def main():
             regressions.append((name, base[name], None))
             continue
         b, c = base[name], cur[name]
-        delta = (c - b) / b
+        delta = (c - b) / b if b else 0.0
+        if ".info." in name or name.split(".")[-2] == "info":
+            # informational-only (quick harness can't reliably gate sub-µs ops:
+            # JIT state / core migration); use the full JMH suite for these
+            print(f"info      {name}  {b:.3f} -> {c:.3f}  ({delta:+.1%})")
+            continue
         if delta > threshold:
             regressions.append((name, b, c))
         elif delta < -threshold:

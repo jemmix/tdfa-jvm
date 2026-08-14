@@ -33,13 +33,33 @@ public final class QuickBench {
         List<double[]> scores = new ArrayList<>(); // [index, score]
         List<Op> ops = buildOps();
         java.util.Map<String, Long> expected = expectedCounts();
+        // warm the control (its own JIT + the thread) so the FIRST op's
+        // normalization isn't skewed by a cold ~4x-slower control readout
+        for (int i = 0; i < 3; i++) measureControl();
+        // TWO passes over all ops, keeping the per-op minimum of
+        // (raw / control-before-op): sustained-load frequency drift moves op and
+        // control together (the ratio is stable where raw ns/op swings 30-60% on
+        // a thermally-throttling laptop), and the two passes cancel per-op wobble
+        // (JIT deopt of one op's batch, a stray GC, control outlier). The control
+        // is a branch-free char-sum loop over the haystack — engine-independent.
+        double[] norm = new double[ops.size()];
+        double[] rawBest = new double[ops.size()];
+        java.util.Arrays.fill(norm, Double.MAX_VALUE);
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < ops.size(); i++) {
+                Op op = ops.get(i);
+                double control = measureControl();
+                double nsPerOp = measure(op.fn(), op.name(), expected.get(op.name()));
+                double n = nsPerOp * 1000.0 / control;  // x1000: keep %.3f resolution
+                if (n < norm[i]) { norm[i] = n; rawBest[i] = nsPerOp; }
+            }
+        }
         long sink = 0;
         for (int i = 0; i < ops.size(); i++) {
-            Op op = ops.get(i);
-            double nsPerOp = measure(op.fn(), op.name(), expected.get(op.name()));
-            scores.add(new double[]{i, nsPerOp});
-            sink ^= (long) nsPerOp;
-            System.err.printf(java.util.Locale.ROOT, "%-34s %12.1f ns/op%n", op.name(), nsPerOp);
+            scores.add(new double[]{i, norm[i]});
+            sink ^= (long) rawBest[i];
+            System.err.printf(java.util.Locale.ROOT, "%-34s raw %10.1f ns  norm %8.2f%n",
+                    ops.get(i).name(), rawBest[i], norm[i]);
         }
         System.err.println("(sink " + sink + ")");
 
@@ -83,10 +103,10 @@ public final class QuickBench {
         String compileRe = "(\\w+)@(\\w+)\\.(com|org|net)|#([0-9a-f]{6})|\\bword\\b";
 
         List<Op> ops = new ArrayList<>();
-        ops.add(new Op("anchored.vm", () -> vmTwo.matches(inTwo) ? 1 : 0));
-        ops.add(new Op("anchored.asm", () -> asmTwo.matches(inTwo) ? 1 : 0));
-        ops.add(new Op("extract.vm", () -> vmIp.find(inIp, 0) != null ? 1 : 0));
-        ops.add(new Op("extract.asm", () -> asmIp.find(inIp, 0) != null ? 1 : 0));
+        ops.add(new Op("info.anchored.vm", () -> vmTwo.matches(inTwo) ? 1 : 0));
+        ops.add(new Op("info.anchored.asm", () -> asmTwo.matches(inTwo) ? 1 : 0));
+        ops.add(new Op("info.extract.vm", () -> vmIp.find(inIp, 0) != null ? 1 : 0));
+        ops.add(new Op("info.extract.asm", () -> asmIp.find(inIp, 0) != null ? 1 : 0));
         ops.add(new Op("scanNoMatch.vm", () -> vmScan.find(noMatch) ? 1 : 0));
         ops.add(new Op("scanNoMatch.asm", () -> asmScan.find(noMatch) ? 1 : 0));
         ops.add(new Op("findAllDense.vm", () -> findAll(vmDense, dense)));
@@ -129,6 +149,9 @@ public final class QuickBench {
             throw new IllegalStateException("WRONG RESULT for " + name + ": " + first + " != expected " + expected);
         }
         int iters = (int) Math.max(1, 2_000_000.0 / Math.max(single, 1)); // ~2 ms worth
+        // batches must be >= 0.5 ms so a timer-granularity misread can't zero
+        // a micro-batch and poison the min (seen on a 17 ns op: raw "0.0")
+        while (iters > 1 && iters * single < 500_000.0) iters *= 2;
         // warmup ~300 ms; verify the count every batch
         runFor(op, iters, 300_000_000L, name, expected);
         // 5 reps ~300 ms, keep the best (lowest per-op time); slow ops get
@@ -150,10 +173,7 @@ public final class QuickBench {
             long t0 = System.nanoTime();
             for (int i = 0; i < iters; i++) sink ^= op.getAsLong();
             double perBatch = System.nanoTime() - t0;
-            if (expected != null && sink % iters != 0 && iters > 0) {
-                // each batch must produce iters * expected (mod-XOR can't check that;
-                // instead verify one explicit call per batch window)
-            }
+            if (perBatch < 100_000) continue;  // sub-0.1ms batch: timer noise, skip
             best = Math.min(best, perBatch / iters);
             long check = op.getAsLong();
             if (expected != null && check != expected) {
@@ -164,14 +184,46 @@ public final class QuickBench {
         return best;
     }
 
+    /**
+     * Control workload: sum chars of the haystack in batches sized to ~1-2 ms.
+     * JIT-stable, branch-free, engine-independent — used to normalize op scores
+     * against machine-frequency drift (see main).
+     */
+    static double measureControl() {
+        String data = SPARSE_INPUT;
+        // calibrate batch count for ~1 ms
+        long t0 = System.nanoTime();
+        long sink = sumChars(data, 8);
+        double per8 = System.nanoTime() - t0;
+        int batches = (int) Math.max(4, Math.min(2048, 1_000_000.0 / Math.max(per8 / 8, 1) / 8));
+        for (int i = 0; i < 20; i++) sink ^= sumChars(data, batches); // warm
+        double best = Double.MAX_VALUE;
+        for (int r = 0; r < 5; r++) {
+            long t1 = System.nanoTime();
+            sink ^= sumChars(data, batches);
+            double per = (System.nanoTime() - t1) / (double) batches;
+            best = Math.min(best, per);
+        }
+        if (sink == 42) System.err.print("");
+        return best; // ns per one haystack pass
+    }
+
+    static long sumChars(String s, int batches) {
+        long sum = 0;
+        for (int b = 0; b < batches; b++) {
+            for (int i = 0; i < s.length(); i++) sum += s.charAt(i);
+        }
+        return sum;
+    }
+
     /** Expected op results (match counts etc.) computed with java.util.regex as the oracle. */
     static java.util.Map<String, Long> expectedCounts() {
         java.util.Map<String, Long> m = new java.util.HashMap<>();
         java.util.regex.Matcher two = java.util.regex.Pattern.compile("(\\w+)\\s+(\\w+)").matcher("hello brave new world 42");
-        m.put("anchored.vm", two.matches() ? 1L : 0L);
-        m.put("anchored.asm", two.matches() ? 1L : 0L);
-        m.put("extract.vm", jurFind("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "ip=192.168.1.77 rest"));
-        m.put("extract.asm", jurFind("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "ip=192.168.1.77 rest"));
+        m.put("info.anchored.vm", two.matches() ? 1L : 0L);
+        m.put("info.anchored.asm", two.matches() ? 1L : 0L);
+        m.put("info.extract.vm", jurFind("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "ip=192.168.1.77 rest"));
+        m.put("info.extract.asm", jurFind("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "ip=192.168.1.77 rest"));
         m.put("scanNoMatch.vm", 0L);
         m.put("scanNoMatch.asm", 0L);
         m.put("findAllDense.vm", jurFindAll("[a-z]+ing", DENSE_INPUT));
