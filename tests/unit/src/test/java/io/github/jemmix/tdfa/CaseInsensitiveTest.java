@@ -4,7 +4,6 @@ import io.github.jemmix.tdfa.tdfa.Disambiguation;
 import io.github.jemmix.tdfa.unicode.CaseFoldTable;
 import io.github.jemmix.tdfa.vm.MatchResult;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -231,11 +230,6 @@ class CaseInsensitiveTest {
         assertThat(match("(?i)[^a-z]", "5", f)).isNotNull();
     }
 
-    // PENDING: JdkUnicodeDataProvider.foldTableFor("Ll") returns null (only Lu
-    // direction implemented; Greek/Cyrillic/L partial). (?i)\p{Ll} on 'A' fails with
-    // the default JDK provider. java.util.regex matches. (Parity suite misses this:
-    // it uses Re2jUnicodeProvider which has complete fold tables.)
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")
     @ParameterizedTest @MethodSource("factories")
     void unicodePropertyFold(EngineFactory f) {
         assertThat(match("(?i)\\p{Ll}", "A", f)).isNotNull();

@@ -63,23 +63,23 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
     }
 
     /**
-     * Build fold counterpart ranges for the given property table: codepoints
-     * NOT in the table whose {@code toUpperCase} IS in the table. This mirrors
-     * re2j's simple case-folding direction (uppercase → lowercase): only
-     * uppercase class members contribute new codepoints (their lowercase
-     * folds). Lowercase members' {@code toLowerCase} is themselves, so they
-     * contribute nothing.
+     * Build fold counterpart ranges for the given property table: codepoints NOT in
+     * the table that are case-fold-equivalent (per {@link CaseFoldTable}) to a
+     * codepoint that IS in the table. The fold relation is symmetric and includes
+     * multi-member groups (s/S/ſ, k/K/K), so both directions are covered: for
+     * {@code \p{Lu}} this adds the lowercase counterparts ('a' for 'A'), for
+     * {@code \p{Ll}} the uppercase ones ('A' for 'a'), and for either the extra
+     * group members (ſ for s/S).
+     *
+     * <p>BMP only, matching the other tables' fold scope.
      */
     private static int[] buildFoldTable(int[] table) {
         ArrayList<int[]> ranges = new ArrayList<>();
         int rangeStart = -1;
         for (int cp = 0; cp <= 0xFFFF; cp++) {
-            if (!inRange(table, cp)) {
-                int upper = Character.toUpperCase(cp);
-                if (upper != cp && inRange(table, upper)) {
-                    if (rangeStart < 0) rangeStart = cp;
-                    continue;
-                }
+            if (!inRange(table, cp) && foldEquivalentInRange(cp, table)) {
+                if (rangeStart < 0) rangeStart = cp;
+                continue;
             }
             if (rangeStart >= 0) {
                 ranges.add(new int[]{rangeStart, cp - 1});
@@ -89,6 +89,18 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
         if (rangeStart >= 0) ranges.add(new int[]{rangeStart, 0xFFFF});
         if (ranges.isEmpty()) return null;
         return flatten(ranges);
+    }
+
+    /** True iff any fold-group member of {@code cp} (other than itself) is in the table. */
+    private static boolean foldEquivalentInRange(int cp, int[] table) {
+        int[] fr = CaseFoldTable.foldRanges(cp);
+        if (fr == null) return false;
+        for (int i = 0; i + 1 < fr.length; i += 2) {
+            for (int m = fr[i]; m <= fr[i + 1]; m++) {
+                if (m != cp && inRange(table, m)) return true;
+            }
+        }
+        return false;
     }
 
     private static boolean inRange(int[] table, int cp) {
