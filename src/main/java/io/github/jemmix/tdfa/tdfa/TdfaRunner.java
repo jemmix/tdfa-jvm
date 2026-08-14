@@ -793,8 +793,8 @@ public final class TdfaRunner implements Regex.Engine {
         if (pos == len || (multiline && pos < len && s.charAt(pos) == '\n')) flags |= Tnfa.END_TEXT;
         if (pos == 0) flags |= Tnfa.ABS_BEGIN;   // \A: absolute start, never affected by (?m)
         if (pos == len) flags |= Tnfa.ABS_END;    // \z: absolute end, never affected by (?m)
-        boolean prevWord = pos > 0 && isWordChar(s.charAt(pos - 1));
-        boolean currWord = pos < len && isWordChar(s.charAt(pos));
+        boolean prevWord = isWordBefore(s, pos);
+        boolean currWord = isWordAt(s, pos, len);
         if (prevWord != currWord) flags |= Tnfa.WORD_BOUNDARY;
         else flags |= Tnfa.NO_WORD_BOUNDARY;
         return flags;
@@ -807,8 +807,8 @@ public final class TdfaRunner implements Regex.Engine {
         if (pos == len || (multiline && pos < len && s.charAt(pos) == '\n')) flags |= Tnfa.END_TEXT;
         if (pos == 0) flags |= Tnfa.ABS_BEGIN;
         if (pos == len) flags |= Tnfa.ABS_END;
-        boolean prevWord = pos > 0 && isWordChar(s.charAt(pos - 1));
-        boolean currWord = pos < len && isWordChar(s.charAt(pos));
+        boolean prevWord = isWordBefore(s, pos);
+        boolean currWord = isWordAt(s, pos, len);
         if (prevWord != currWord) flags |= Tnfa.WORD_BOUNDARY;
         else flags |= Tnfa.NO_WORD_BOUNDARY;
         return flags;
@@ -923,16 +923,61 @@ public final class TdfaRunner implements Regex.Engine {
 
     /** Binary-search the Unicode {@code \w} ranges in {@link #wordRanges}. */
     private boolean isUnicodeWordChar(char c) {
+        return isUnicodeWordCodepoint(c);
+    }
+
+    /**
+     * Binary-search the Unicode {@code \w} ranges by CODEPOINT. The ranges include
+     * supplementary codepoints, so decoding a surrogate pair before calling this
+     * recognises supplementary word characters (e.g. U+1D504 MATHEMATICAL FRAKTUR A).
+     */
+    private boolean isUnicodeWordCodepoint(int cp) {
         int[] wr = wordRanges;
         if (wr == null) return false;
         int lo = 0, hi = wr.length / 2 - 1;
         while (lo <= hi) {
             int mid = (lo + hi) >>> 1;
             int rLo = wr[2 * mid], rHi = wr[2 * mid + 1];
-            if (c < rLo) hi = mid - 1;
-            else if (c > rHi) lo = mid + 1;
+            if (cp < rLo) hi = mid - 1;
+            else if (cp > rHi) lo = mid + 1;
             else return true;
         }
         return false;
+    }
+
+    /**
+     * Whether the character immediately BEFORE {@code pos} is a word character.
+     * Under {@code (?u)} a supplementary letter's UTF-16 low surrogate at
+     * {@code pos-1} is decoded with its high surrogate at {@code pos-2} first,
+     * so boundaries adjacent to supplementary word chars are computed on the
+     * full codepoint. In ASCII mode surrogate halves are simply non-word.
+     */
+    private boolean isWordBefore(CharSequence s, int pos) {
+        if (pos <= 0) return false;
+        char c = s.charAt(pos - 1);
+        if (unicodeWordBoundary && c >= Character.MIN_LOW_SURROGATE && c <= Character.MAX_LOW_SURROGATE && pos >= 2) {
+            char h = s.charAt(pos - 2);
+            if (h >= Character.MIN_HIGH_SURROGATE && h <= Character.MAX_HIGH_SURROGATE) {
+                return isUnicodeWordCodepoint(((h - 0xD800) << 10) + (c - 0xDC00) + 0x10000);
+            }
+        }
+        return isWordChar(c);
+    }
+
+    /**
+     * Whether the character AT {@code pos} is a word character; a high surrogate
+     * at {@code pos} paired with a low surrogate at {@code pos+1} is decoded to
+     * the full codepoint under {@code (?u)}.
+     */
+    private boolean isWordAt(CharSequence s, int pos, int len) {
+        if (pos >= len) return false;
+        char c = s.charAt(pos);
+        if (unicodeWordBoundary && c >= Character.MIN_HIGH_SURROGATE && c <= Character.MAX_HIGH_SURROGATE && pos + 1 < len) {
+            char l = s.charAt(pos + 1);
+            if (l >= Character.MIN_LOW_SURROGATE && l <= Character.MAX_LOW_SURROGATE) {
+                return isUnicodeWordCodepoint(((c - 0xD800) << 10) + (l - 0xDC00) + 0x10000);
+            }
+        }
+        return isWordChar(c);
     }
 }

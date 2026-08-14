@@ -3,7 +3,6 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.tdfa.Disambiguation;
 import io.github.jemmix.tdfa.vm.MatchResult;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -20,10 +19,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   <li><b>Alternation dead-end</b> — {@code (\bkw\b)|(identifier)} must not
  *       lose the identifier path when the keyword prefix doesn't complete
  *       (the §B determinization fix area).</li>
- *   <li><b>Supplementary codepoints</b> — {@code isWordChar(char)} checks
- *       individual UTF-16 code units; supplementary letters (e.g.,
- *       U+1D504 MATHEMATICAL FRAKTUR A) are not recognised, so {@code \b}
- *       fires incorrectly at surrogate-pair boundaries.</li>
+ *   <li><b>Supplementary codepoints</b> — {@code isWordChar} checks individual
+ *       UTF-16 code units, so word boundaries adjacent to supplementary letters
+ *       (e.g. U+1D504 MATHEMATICAL FRAKTUR A) must decode the surrogate pair
+ *       first ({@code isWordBefore}/{@code isWordAt} in the runner, emitted
+ *       {@code isWordBefore}/{@code isWordAt} helpers in ASM).</li>
  *   <li><b>BMP non-ASCII word chars</b> — Cyrillic, CJK, etc. under
  *       {@code (?u)} mode.</li>
  * </ul>
@@ -143,40 +143,25 @@ class WordBoundaryTest {
     private static final String SUP_LETTER_B = "\uD835\uDD05"; // 𝔅
 
     /**
-     * BUG: {@code .\b.} on {@code "a𝔄b"} matches [0,3] because the engine sees
-     * a word boundary between 'a' and the surrogate half of 𝔄. In reality both
-     * are word characters, so \b should NOT fire. java.util.regex returns null.
+     * {@code .\b.} on {@code "a𝔄b"} must not match: both 'a' and 𝔄 (U+1D504)
+     * are word chars under (?u), so no boundary fires between them. The engine
+     * decodes the surrogate pair before the word-char search.
      */
-    // PENDING: isWordChar(char) checks UTF-16 code units, so supplementary letters
-    // (U+1D504 etc.) are not recognised as word chars. \b fires between 'a' and the
-    // high surrogate of 𝔄 (both word chars — no boundary), and fails at start of
-    // 𝔄𝔅 (boundary should hold). java.util.regex returns null / [0,2] respectively.
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")
     @ParameterizedTest @MethodSource("factories")
     void noBoundaryBetweenBmpAndSupplementaryWordChar(EngineFactory f) {
         MatchResult m = find("(?u).\\b.", "a" + SUP_LETTER_A + "b", f);
-        // This SHOULD be null (no \b between 'a' and 𝔄 — both word chars),
-        // but the engine incorrectly finds [0,3].
-        // TODO: fix isWordChar to handle supplementary codepoints.
         assertThat(m)
                 .as(".\b. on a𝔄b — \b should not fire between two word chars (BUG: returns non-null)")
                 .isNull();
     }
 
     /**
-     * BUG: {@code \b\w} on {@code "𝔄𝔅"} returns null because isWordChar sees
-     * the high surrogate 0xD835 (not a word char), so \b doesn't fire at
-     * position 0. java.util.regex returns [0,2].
+     * {@code \b\w} on {@code "𝔄𝔅"} matches [0,2]: the boundary holds at
+     * start-of-text before a supplementary letter.
      */
-    // PENDING: same isWordChar(char) supplementary bug — \b should fire at
-    // start-of-text before a supplementary letter, but returns null.
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")
     @ParameterizedTest @MethodSource("factories")
     void boundaryAtStartOfSupplementaryWordChars(EngineFactory f) {
         MatchResult m = find("(?u)\\b\\w", SUP_LETTER_A + SUP_LETTER_B, f);
-        // This SHOULD match [0,2] (\b holds at start-of-text → supplementary letter),
-        // but the engine returns null.
-        // TODO: fix isWordChar to handle supplementary codepoints.
         assertThat(m)
                 .as("\\b\\w on 𝔄𝔅 — \b should fire at start (BUG: returns null)")
                 .isNotNull();

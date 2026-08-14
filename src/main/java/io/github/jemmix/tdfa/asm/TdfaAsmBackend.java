@@ -109,6 +109,8 @@ public final class TdfaAsmBackend {
             genPositionFlagsC(cw, owner, tdfa.multiline, tdfa.unicodeWordBoundary);
             if (tdfa.unicodeWordBoundary) {
                 genIsUnicodeWordChar(cw, owner);
+                genIsWordBefore(cw, owner);
+                genIsWordAt(cw, owner);
             }
         }
         cw.visitEnd();
@@ -709,35 +711,53 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ISTORE, 3);
         mv.visitLabel(lae);
 
-        // prevWord
+        // prevWord = pos > 0 && isWordBefore(pos, len, input)   [unicode: decodes surrogate pairs]
+        // Under unicodeWord, isWordBefore decodes a supplementary codepoint ending at pos-1
+        // with its high surrogate, so \b adjacent to supplementary word chars is computed on
+        // the full codepoint. ASCII mode keeps the inline char check (surrogate halves are
+        // simply non-word there).
         Label pf = new Label(), pd = new Label();
         mv.visitVarInsn(Opcodes.ILOAD, 0);
         mv.visitJumpInsn(Opcodes.IFLE, pf);
-        mv.visitVarInsn(Opcodes.ALOAD, 2);
-        mv.visitVarInsn(Opcodes.ILOAD, 0);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitInsn(Opcodes.ISUB);
-        mv.visitInsn(Opcodes.CALOAD);
-        mv.visitVarInsn(Opcodes.ISTORE, 4);
-        emitIsWordBranch(mv, 4, pf, unicodeWord, owner);
-        mv.visitInsn(Opcodes.ICONST_1);
+        if (unicodeWord) {
+            mv.visitVarInsn(Opcodes.ILOAD, 0);
+            mv.visitVarInsn(Opcodes.ILOAD, 1);
+            mv.visitVarInsn(Opcodes.ALOAD, 2);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWordBefore", "(II[C)Z", false);
+        } else {
+            mv.visitVarInsn(Opcodes.ALOAD, 2);
+            mv.visitVarInsn(Opcodes.ILOAD, 0);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitInsn(Opcodes.ISUB);
+            mv.visitInsn(Opcodes.CALOAD);
+            mv.visitVarInsn(Opcodes.ISTORE, 4);
+            emitIsWordBranch(mv, 4, pf, false, owner);
+            mv.visitInsn(Opcodes.ICONST_1);
+        }
         mv.visitJumpInsn(Opcodes.GOTO, pd);
         mv.visitLabel(pf);
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitLabel(pd);
         mv.visitVarInsn(Opcodes.ISTORE, 4);
 
-        // currWord
+        // currWord = pos < len && isWordAt(pos, len, input)
         Label cf = new Label(), cd = new Label();
         mv.visitVarInsn(Opcodes.ILOAD, 0);
         mv.visitVarInsn(Opcodes.ILOAD, 1);
         mv.visitJumpInsn(Opcodes.IF_ICMPGE, cf);
-        mv.visitVarInsn(Opcodes.ALOAD, 2);
-        mv.visitVarInsn(Opcodes.ILOAD, 0);
-        mv.visitInsn(Opcodes.CALOAD);
-        mv.visitVarInsn(Opcodes.ISTORE, 5);
-        emitIsWordBranch(mv, 5, cf, unicodeWord, owner);
-        mv.visitInsn(Opcodes.ICONST_1);
+        if (unicodeWord) {
+            mv.visitVarInsn(Opcodes.ILOAD, 0);
+            mv.visitVarInsn(Opcodes.ILOAD, 1);
+            mv.visitVarInsn(Opcodes.ALOAD, 2);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWordAt", "(II[C)Z", false);
+        } else {
+            mv.visitVarInsn(Opcodes.ALOAD, 2);
+            mv.visitVarInsn(Opcodes.ILOAD, 0);
+            mv.visitInsn(Opcodes.CALOAD);
+            mv.visitVarInsn(Opcodes.ISTORE, 5);
+            emitIsWordBranch(mv, 5, cf, false, owner);
+            mv.visitInsn(Opcodes.ICONST_1);
+        }
         mv.visitJumpInsn(Opcodes.GOTO, cd);
         mv.visitLabel(cf);
         mv.visitInsn(Opcodes.ICONST_0);
@@ -1517,35 +1537,49 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ISTORE, RESULT);
         mv.visitLabel(lae);
 
-        // prevWord = pos > 0 && isWord(input[pos-1])
+        // prevWord = pos > 0 && isWordBefore(pos, len, input)   [unicode: decodes surrogate pairs]
         Label prevFalse = new Label(), prevDone = new Label();
         mv.visitVarInsn(Opcodes.ILOAD, POS);
         mv.visitJumpInsn(Opcodes.IFLE, prevFalse);
-        mv.visitVarInsn(Opcodes.ALOAD, IN);
-        mv.visitVarInsn(Opcodes.ILOAD, POS);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitInsn(Opcodes.ISUB);
-        mv.visitInsn(Opcodes.CALOAD);
-        mv.visitVarInsn(Opcodes.ISTORE, T1);
-        emitIsWordBranch(mv, T1, prevFalse, unicodeWord, owner);
-        mv.visitInsn(Opcodes.ICONST_1);
+        if (unicodeWord) {
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitVarInsn(Opcodes.ILOAD, LEN);
+            mv.visitVarInsn(Opcodes.ALOAD, IN);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWordBefore", "(II[C)Z", false);
+        } else {
+            mv.visitVarInsn(Opcodes.ALOAD, IN);
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitInsn(Opcodes.ISUB);
+            mv.visitInsn(Opcodes.CALOAD);
+            mv.visitVarInsn(Opcodes.ISTORE, T1);
+            emitIsWordBranch(mv, T1, prevFalse, false, owner);
+            mv.visitInsn(Opcodes.ICONST_1);
+        }
         mv.visitJumpInsn(Opcodes.GOTO, prevDone);
         mv.visitLabel(prevFalse);
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitLabel(prevDone);
         mv.visitVarInsn(Opcodes.ISTORE, T1); // prevWord
 
-        // currWord = pos < len && isWord(input[pos])
+        // currWord = pos < len && isWordAt(pos, len, input)
         Label currFalse = new Label(), currDone = new Label();
         mv.visitVarInsn(Opcodes.ILOAD, POS);
         mv.visitVarInsn(Opcodes.ILOAD, LEN);
         mv.visitJumpInsn(Opcodes.IF_ICMPGE, currFalse);
-        mv.visitVarInsn(Opcodes.ALOAD, IN);
-        mv.visitVarInsn(Opcodes.ILOAD, POS);
-        mv.visitInsn(Opcodes.CALOAD);
-        mv.visitVarInsn(Opcodes.ISTORE, T2);
-        emitIsWordBranch(mv, T2, currFalse, unicodeWord, owner);
-        mv.visitInsn(Opcodes.ICONST_1);
+        if (unicodeWord) {
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitVarInsn(Opcodes.ILOAD, LEN);
+            mv.visitVarInsn(Opcodes.ALOAD, IN);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWordAt", "(II[C)Z", false);
+        } else {
+            mv.visitVarInsn(Opcodes.ALOAD, IN);
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitInsn(Opcodes.CALOAD);
+            mv.visitVarInsn(Opcodes.ISTORE, T2);
+            emitIsWordBranch(mv, T2, currFalse, false, owner);
+            mv.visitInsn(Opcodes.ICONST_1);
+        }
         mv.visitJumpInsn(Opcodes.GOTO, currDone);
         mv.visitLabel(currFalse);
         mv.visitInsn(Opcodes.ICONST_0);
@@ -1723,6 +1757,157 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitLabel(notFound);
         // return false
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // ===== isWordBefore / isWordAt: word-char checks that decode surrogate pairs =====
+
+    /**
+     * Emits {@code private static boolean isWordBefore(int pos, int len, char[] input)}:
+     * whether the character immediately before {@code pos} is a word character. A low
+     * surrogate at {@code pos-1} paired with a high surrogate at {@code pos-2} is decoded
+     * to the full supplementary codepoint before the {@code isUnicodeWordChar} search, so
+     * {@code \b} adjacent to supplementary word chars (e.g. U+1D504) is computed correctly.
+     */
+    private static void genIsWordBefore(ClassWriter cw, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "isWordBefore", "(II[C)Z", null, null);
+        mv.visitCode();
+        // locals: 0=pos, 1=len, 2=input, 3=c, 4=h
+        Label notPos = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitJumpInsn(Opcodes.IFLE, notPos);
+        // c = input[pos - 1]
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.ISUB);
+        mv.visitInsn(Opcodes.CALOAD);
+        mv.visitVarInsn(Opcodes.ISTORE, 3);
+        // if (c >= 0xDC00 && c <= 0xDFFF && pos >= 2)
+        Label notLow = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitLdcInsn(0xDC00);
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, notLow);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitLdcInsn(0xDFFF);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGT, notLow);
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitIntInsn(Opcodes.BIPUSH, 2);
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, notLow);
+        // h = input[pos - 2]; if (h >= 0xD800 && h <= 0xDBFF)
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitIntInsn(Opcodes.BIPUSH, 2);
+        mv.visitInsn(Opcodes.ISUB);
+        mv.visitInsn(Opcodes.CALOAD);
+        mv.visitVarInsn(Opcodes.ISTORE, 4);
+        Label notHigh = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitLdcInsn(0xD800);
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, notHigh);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitLdcInsn(0xDBFF);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGT, notHigh);
+        // return isUnicodeWordChar(((h - 0xD800) << 10) + (c - 0xDC00) + 0x10000)
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitLdcInsn(0xD800);
+        mv.visitInsn(Opcodes.ISUB);
+        mv.visitIntInsn(Opcodes.BIPUSH, 10);
+        mv.visitInsn(Opcodes.ISHL);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitLdcInsn(0xDC00);
+        mv.visitInsn(Opcodes.ISUB);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitLdcInsn(0x10000);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isUnicodeWordChar", "(I)Z", false);
+        mv.visitInsn(Opcodes.IRETURN);
+        // return isUnicodeWordChar(c)
+        mv.visitLabel(notHigh);
+        mv.visitLabel(notLow);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isUnicodeWordChar", "(I)Z", false);
+        mv.visitInsn(Opcodes.IRETURN);
+        // return false
+        mv.visitLabel(notPos);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    /**
+     * Emits {@code private static boolean isWordAt(int pos, int len, char[] input)}:
+     * whether the character at {@code pos} is a word character; a high surrogate at
+     * {@code pos} paired with a low surrogate at {@code pos+1} is decoded first.
+     */
+    private static void genIsWordAt(ClassWriter cw, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "isWordAt", "(II[C)Z", null, null);
+        mv.visitCode();
+        // locals: 0=pos, 1=len, 2=input, 3=c, 4=l
+        Label notPos = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGE, notPos);
+        // c = input[pos]
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitInsn(Opcodes.CALOAD);
+        mv.visitVarInsn(Opcodes.ISTORE, 3);
+        // if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < len)
+        Label notHigh = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitLdcInsn(0xD800);
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, notHigh);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitLdcInsn(0xDBFF);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGT, notHigh);
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGE, notHigh);
+        // l = input[pos + 1]; if (l >= 0xDC00 && l <= 0xDFFF)
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 0);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitInsn(Opcodes.CALOAD);
+        mv.visitVarInsn(Opcodes.ISTORE, 4);
+        Label notLow = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitLdcInsn(0xDC00);
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, notLow);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitLdcInsn(0xDFFF);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGT, notLow);
+        // return isUnicodeWordChar(((c - 0xD800) << 10) + (l - 0xDC00) + 0x10000)
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitLdcInsn(0xD800);
+        mv.visitInsn(Opcodes.ISUB);
+        mv.visitIntInsn(Opcodes.BIPUSH, 10);
+        mv.visitInsn(Opcodes.ISHL);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitLdcInsn(0xDC00);
+        mv.visitInsn(Opcodes.ISUB);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitLdcInsn(0x10000);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isUnicodeWordChar", "(I)Z", false);
+        mv.visitInsn(Opcodes.IRETURN);
+        // return isUnicodeWordChar(c)
+        mv.visitLabel(notLow);
+        mv.visitLabel(notHigh);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isUnicodeWordChar", "(I)Z", false);
+        mv.visitInsn(Opcodes.IRETURN);
+        // return false
+        mv.visitLabel(notPos);
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitMaxs(0, 0);
