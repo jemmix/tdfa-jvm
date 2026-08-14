@@ -332,7 +332,13 @@ public final class Tdfa {
                     ? epsilonClosure(initSeed)
                     : closurePosix(initSeed, null, 0);
             int startId = addState(initClosure, null, initSeed).targetId;
-            if (!perl) statePrectables.add(computePrectable(initClosure, null, 0));
+            // Prectables are O(closure²) per state and currently UNUSED: closurePosix
+            // delegates to epsilonClosure (heuristic DFS order) and posixCompareExisting
+            // is a TEMP no-op — the BT19 §7 closure_gtop activation (TODO "Feature
+            // parity") is what will consume them. Skipping saves real compile time on
+            // POSIX-mode DFAs (RE2.compile builds one); flip this off when activating.
+            final boolean COMPUTE_PRECTABLES = false;
+            if (!perl && COMPUTE_PRECTABLES) statePrectables.add(computePrectable(initClosure, null, 0));
             else statePrectables.add(null);
             work.push(startId);
 
@@ -397,9 +403,9 @@ public final class Tdfa {
                             closed = epsilonClosure(stepped);
                             newPrectable = null;
                         } else {
-                            int[] parentPrectable = statePrectables.get(sid);
+                            int[] parentPrectable = COMPUTE_PRECTABLES ? statePrectables.get(sid) : null;
                             closed = closurePosix(stepped, parentPrectable, cur.size());
-                            newPrectable = computePrectable(closed, parentPrectable, cur.size());
+                            newPrectable = COMPUTE_PRECTABLES ? computePrectable(closed, parentPrectable, cur.size()) : null;
                         }
                         if (debug && closed.size() > 100) System.err.println("[tdfa] state " + sid + " range " + rangeLo + ".." + rangeHi + " closure=" + closed.size());
                         int[] ops = transitionRegops(closed, sid);

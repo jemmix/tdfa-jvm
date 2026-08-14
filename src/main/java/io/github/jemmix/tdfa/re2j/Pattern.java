@@ -54,13 +54,19 @@ public final class Pattern implements java.io.Serializable {
     private final String pattern;
     private final int flags;
     private transient Regex engine;
-    private transient Regex wholeEngine;
+    // Lazily-compiled engine for matches() (anchored both ends) — half of
+    // Pattern.compile's DFA work, paid only by callers that actually call
+    // matches(). Racy single-check: Regex.compile is deterministic, so under a
+    // race either compiled instance is correct; the volatile write publishes
+    // the (effectively immutable) Regex safely.
+    private transient volatile Regex wholeEngine;
+    private transient java.util.function.Supplier<Regex> wholeSupplier;
 
-    Pattern(String pattern, int flags, Regex engine, Regex wholeEngine) {
+    Pattern(String pattern, int flags, Regex engine, java.util.function.Supplier<Regex> wholeSupplier) {
         this.pattern = pattern;
         this.flags = flags;
         this.engine = engine;
-        this.wholeEngine = wholeEngine;
+        this.wholeSupplier = wholeSupplier;
     }
 
     /** Compile {@code regex} with default flags and the default engine (Perl leftmost-first semantics). */
@@ -108,13 +114,19 @@ public final class Pattern implements java.io.Serializable {
         boolean disableUnicodeGroups = (flags & DISABLE_UNICODE_GROUPS) != 0;
         try {
             Regex engine = Regex.compile(flregex, factory, disamb, disableUnicodeGroups, false, unicodeProvider);
-            // A second engine for matches() (anchored both ends). anchorBoth injects start/end
-            // anchors at the AST level (not text — safe against \Q..\E), and the trailing anchor
-            // supplies context that prevents the Perl leftmost-first DFA from pruning a longer
-            // alternative's continuation once a shorter branch reaches accept
-            // (e.g. (a|ab) against "ab" must retain the `ab` path).
-            Regex wholeEngine = Regex.compile(flregex, factory, disamb, disableUnicodeGroups, true, unicodeProvider);
-            return new Pattern(regex, flags, engine, wholeEngine);
+            // A second engine for matches() (anchored both ends), compiled lazily.
+            // anchorBoth injects start/end anchors at the AST level (not text — safe
+            // against \Q..\E), and the trailing anchor supplies context that prevents
+            // the Perl leftmost-first DFA from pruning a longer alternative's
+            // continuation once a shorter branch reaches accept
+            // (e.g. (a|ab) against "ab" must retain the `ab` path). Same parse input
+            // and a subset of the determinization work, so if the eager engine
+            // compiles, this one cannot fail — deferring it can't move a compile
+            // error past Pattern.compile().
+            final String fl = flregex;
+            java.util.function.Supplier<Regex> wholeSupplier =
+                    () -> Regex.compile(fl, factory, disamb, disableUnicodeGroups, true, unicodeProvider);
+            return new Pattern(regex, flags, engine, wholeSupplier);
         } catch (RuntimeException e) {
             throw RE2.translate(e, regex);
         }
@@ -218,7 +230,8 @@ public final class Pattern implements java.io.Serializable {
         in.defaultReadObject();
         Pattern tmp = compile(pattern, flags);
         this.engine = tmp.engine;
-        this.wholeEngine = tmp.wholeEngine;
+        this.wholeEngine = null;
+        this.wholeSupplier = tmp.wholeSupplier;
     }
 
     /**
@@ -257,8 +270,15 @@ public final class Pattern implements java.io.Serializable {
 
     Regex engine() { return engine; }
 
-    /** Engine for {@code matches()}: pattern wrapped in {@code \A(?:...)\z}. */
-    Regex wholeEngine() { return wholeEngine; }
+    /** Engine for {@code matches()}: pattern wrapped in {@code \A(?:...)\z}, compiled on first use. */
+    Regex wholeEngine() {
+        Regex w = wholeEngine;
+        if (w == null) {
+            w = wholeSupplier.get();
+            wholeEngine = w;
+        }
+        return w;
+    }
 
     /** Decode UTF-8 bytes to a String for the {@code byte[]} overloads (matches re2j's {@code MatcherInput.utf8}). */
     static String utf8(byte[] bytes) {

@@ -121,6 +121,9 @@ public final class QuickBench {
         ops.add(new Op("findAllLatin1.asm", () -> findAll(asmLatin, latin1)));
         ops.add(new Op("compile.vm", () -> System.identityHashCode(Regex.compile(compileRe, EngineFactory.VM))));
         ops.add(new Op("compile.asm", () -> System.identityHashCode(Regex.compile(compileRe, EngineFactory.ASM))));
+        // re2j shim compile: eager engine + (previously eager, now lazy) anchored-both engine
+        ops.add(new Op("compile.re2j", () -> System.identityHashCode(
+                io.github.jemmix.tdfa.re2j.Pattern.compile(compileRe))));
         return ops;
     }
 

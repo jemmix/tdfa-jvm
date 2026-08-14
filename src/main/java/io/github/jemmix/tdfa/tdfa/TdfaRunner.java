@@ -1082,17 +1082,42 @@ public final class TdfaRunner implements Regex.Engine {
     /** Check if all states have pairwise-disjoint ranges (no overlapping ranges). */
     private static boolean checkRangesDisjoint(Tdfa tdfa) {
         int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
+        long[] sortBuf = null;
         for (int s = 0; s < tdfa.stateCount; s++) {
             int meta = sm[s];
             int base = tdfa.stateBase[s], cnt = (meta >>> 1) & 0xFFFF;
-            for (int i = 0; i < cnt; i++) {
-                int o1 = (base + i) * 5;
-                int lo1 = rg[o1], hi1 = rg[o1 + 1];
-                for (int j = i + 1; j < cnt; j++) {
-                    int o2 = (base + j) * 5;
-                    int lo2 = rg[o2], hi2 = rg[o2 + 1];
-                    if (lo1 <= hi2 && lo2 <= hi1) return false;
+            if (cnt < 2) continue;
+            // Fast path: ranges are emitted sorted by lo at materialization
+            // (sortByMaskSpecificity is the only reorderer) — one O(cnt) scan.
+            boolean sortedByLo = true;
+            for (int i = 1; i < cnt; i++) {
+                if (rg[(base + i) * 5] < rg[(base + i - 1) * 5]) { sortedByLo = false; break; }
+            }
+            if (!sortedByLo) {
+                // Pack (lo << 32)|hi and sort — O(cnt log cnt) vs the old O(cnt²)
+                // pairwise check (significant for wide Unicode classes, ~1369 ranges).
+                if (sortBuf == null || sortBuf.length < cnt) sortBuf = new long[Math.max(cnt, 64)];
+                for (int i = 0; i < cnt; i++) {
+                    int o = (base + i) * 5;
+                    sortBuf[i] = ((long) rg[o] << 32) | (rg[o + 1] & 0xFFFFFFFFL);
                 }
+                java.util.Arrays.sort(sortBuf, 0, cnt);
+                int maxHi = (int) sortBuf[0];
+                for (int i = 1; i < cnt; i++) {
+                    int lo = (int) (sortBuf[i] >>> 32);
+                    if (lo <= maxHi) return false;  // overlaps the interval holding maxHi
+                    int hi = (int) sortBuf[i];
+                    if (hi > maxHi) maxHi = hi;
+                }
+                continue;
+            }
+            // Sorted by lo: adjacent scan with running max-hi (a long early range
+            // can overlap several later ones, so plain prev-pair checks aren't enough).
+            int maxHi = rg[base * 5 + 1];
+            for (int i = 1; i < cnt; i++) {
+                int o = (base + i) * 5;
+                if (rg[o] <= maxHi) return false;
+                if (rg[o + 1] > maxHi) maxHi = rg[o + 1];
             }
         }
         return true;

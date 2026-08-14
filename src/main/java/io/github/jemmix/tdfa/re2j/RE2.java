@@ -116,8 +116,12 @@ final class RE2 {
     }
 
     private final String pattern;
-    private final Regex perlEngine;
-    private final Regex posixEngine;
+    // Both disambiguation variants compiled lazily: only the initially-selected
+    // one is built by the constructor; the other waits for a `longest` flip.
+    // Racy single-check (compile is deterministic — either racer's result is
+    // correct; the volatile write publishes the Regex safely).
+    private transient volatile Regex perlEngine;
+    private transient volatile Regex posixEngine;
 
     /**
      * Mutable flag selecting POSIX longest-match semantics on subsequent
@@ -128,12 +132,22 @@ final class RE2 {
 
     private RE2(String pattern, boolean posix) {
         this.pattern = pattern;
-        this.perlEngine = Regex.compile(pattern, EngineFactory.DEFAULT, Disambiguation.PERL);
-        this.posixEngine = Regex.compile(pattern, EngineFactory.DEFAULT, Disambiguation.POSIX);
         this.longest = posix;
+        Regex r = Regex.compile(pattern, EngineFactory.DEFAULT,
+                posix ? Disambiguation.POSIX : Disambiguation.PERL);
+        if (posix) this.posixEngine = r; else this.perlEngine = r;
     }
 
-    private Regex engine() { return longest ? posixEngine : perlEngine; }
+    private Regex engine() {
+        if (longest) {
+            Regex p = posixEngine;
+            if (p == null) { p = Regex.compile(pattern, EngineFactory.DEFAULT, Disambiguation.POSIX); posixEngine = p; }
+            return p;
+        }
+        Regex p = perlEngine;
+        if (p == null) { p = Regex.compile(pattern, EngineFactory.DEFAULT, Disambiguation.PERL); perlEngine = p; }
+        return p;
+    }
 
     /**
      * Returns {@code [start, end, g1_start, g1_end, ...]} in UTF-16 indices,
