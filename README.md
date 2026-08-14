@@ -119,6 +119,28 @@ Default resolved once from `-Dtdfa.engine=ASM|VM`.
 Toggle individually: `-Dtdfa.nofixedtags`, `-Dtdfa.noregopt`,
 `-Dtdfa.nofallback`, `-Dtdfa.nominimize`.
 
+**Search acceleration, disclosed** — unanchored `find()` does not walk the DFA
+character-by-character in three cases, in service of scan throughput (the
+rebar-corpus goal: match re2j/jur on bulk text):
+
+1. **Lazy search-DFA trigger** (general mechanism, re2-style): the live-set
+   simulation of the implicit `.*?` prefix is memoized into a small lazily
+   materialized DFA (512-codepoint blocks, per-`Tdfa`, capped; falls back to
+   the unmemoized simulation past the cap or on short inputs). This only
+   *finds candidate windows faster* — the tagged DFA still confirms every
+   match exactly, and the over-approximation is the same one the pre-check
+   always used, so no match can be missed or invented.
+2. **Exact-literal fast path**: when the whole regex is a plain literal string
+   (no groups, no flags beyond a single case-sensitive literal), `find()` uses
+   `String.indexOf` — the JIT's intrinsified vectorized scan. The result is
+   bit-identical to the DFA's (`"Twain"` finds the same spans either way).
+3. **Latin-1 / BMP block tables** for walk dispatch (O(1) below 256, block
+   lookup above).
+
+These are throughput optimizations only; match semantics (leftmost-first,
+captures, anchors, word boundaries) are unchanged and remain fully covered by
+the parity suites.
+
 ## Build & test
 
 The repo is a multi-module Gradle build. The evergreen library lives at the

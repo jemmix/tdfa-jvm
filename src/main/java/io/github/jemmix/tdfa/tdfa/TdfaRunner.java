@@ -122,6 +122,7 @@ public final class TdfaRunner implements Regex.Engine {
         this.stateWords = (tdfa.stateCount + 31) >>> 5;
         this.acceptBits = buildAcceptBits(tdfa);
         this.searchDfa = new SearchDfa(this);   // after all table fields are assigned
+        this.literalNeedle = detectLiteralNeedle(tdfa);
         this.unicodeWordBoundary = tdfa.unicodeWordBoundary;
         this.wordRanges = tdfa.wordRanges;
     }
@@ -157,6 +158,8 @@ public final class TdfaRunner implements Regex.Engine {
      */
     public final int leftmostStart(CharSequence input, int from) {
         int to = input.length();
+        if (literalNeedle != null && input instanceof String)
+            return ((String) input).indexOf(literalNeedle, from);
         if (fastPath) {
             int w = triggerScan(input.toString(), from, to);
             if (w < 0) return -1;
@@ -178,6 +181,7 @@ public final class TdfaRunner implements Regex.Engine {
         if (input instanceof String) {
             String s = (String) input;
             int len = s.length();
+            if (literalNeedle != null) return s.indexOf(literalNeedle, 0) >= 0;
             if (fastPath) return runStringFindFast(s, len);
             int maxStart = (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) ? 0 : len;
             if (maxStart > 0) {
@@ -362,6 +366,57 @@ public final class TdfaRunner implements Regex.Engine {
     private static final int SDFA_MIN_WINDOW = 2048;   // below: unmemoized raw scan
 
     private final SearchDfa searchDfa;
+    /**
+     * Exact-literal needle when the whole regex is a plain literal string
+     * (single char-chain DFA, no captures/ops/masks): find()/leftmost-start
+     * then use String.indexOf — the JIT's intrinsified, vectorized scan —
+     * instead of DFA stepping. ~0.2 vs ~6.5 ns/char on ASCII haystacks.
+     */
+    private final String literalNeedle;
+
+    /** Detect the literal-chain shape; null otherwise. */
+    private static String detectLiteralNeedle(Tdfa tdfa) {
+        try {
+            if (tdfa.groupCount != 0 || tdfa.tagCount != 0) return null;
+            int n = tdfa.stateCount;
+            if (n < 2) return null;   // single-state: empty/anchor-only regex
+            StringBuilder sb = new StringBuilder(n - 1);
+            int s = tdfa.startState;
+            for (int step = 0; step < n - 1; step++) {
+                int meta = tdfa.stateMeta[s];
+                if ((meta & 1) != 0) return null;            // accepting mid-chain
+                int cnt = (meta >>> 1) & 0xFFFF;
+                if (cnt != 1) return null;                   // must be exactly one char
+                int o = tdfa.stateBase[s] * 5;
+                int lo = tdfa.ranges[o], hi = tdfa.ranges[o + 1];
+                if (lo != hi || lo > 0xFFFF) return null;    // single BMP codepoint
+                if (tdfa.ranges[o + 2] < 0) return null;     // dead
+                if (tdfa.ranges[o + 3] != 0) return null;    // transition ops
+                if (tdfa.ranges[o + 4] != 0) return null;    // required mask
+                if (tdfa.stateEntryMask[tdfa.ranges[o + 2]] != 0) return null;
+                sb.append((char) lo);
+                s = tdfa.ranges[o + 2];
+            }
+            // final state: accepting, no mask, no fallback, no final ops, and
+            // NO live outgoing transition (a live self-loop means the regex is
+            // unbounded — a+ misdetected as literal "a" returned [0,1) for
+            // find("a+","aaa") instead of [0,3)).
+            if ((tdfa.stateMeta[s] & 1) == 0) return null;
+            if (tdfa.stateAcceptMask[s] != 0) return null;
+            if (tdfa.stateFinalOpsOff[s] != 0) return null;
+            if (tdfa.stateEntryMask[s] != 0) return null;
+            {
+                int meta = tdfa.stateMeta[s];
+                int base = tdfa.stateBase[s];
+                for (int i = 0; i < ((meta >>> 1) & 0xFFFF); i++) {
+                    if (tdfa.ranges[(base + i) * 5 + 2] >= 0) return null;
+                }
+            }
+            return sb.length() > 0 ? sb.toString() : null;
+        } catch (RuntimeException e) {
+            return null;   // any surprise shape: not a literal
+        }
+    }
 
     /** Static nested: shared per-Tdfa lifetime; references the runner's tables. */
     static final class SearchDfa {
@@ -914,6 +969,10 @@ public final class TdfaRunner implements Regex.Engine {
 
     /** Fast extract with register updates. */
     private MatchHolder runStringExtractFast(String input, int from, int to) {
+        if (literalNeedle != null) {
+            int idx = input.indexOf(literalNeedle, from);
+            return idx < 0 ? null : new MatchHolder(idx, idx + literalNeedle.length(), new int[0]);
+        }
         // 1) Try ONE single-start walk from `from` — the common short-input case
         //    (match at/near the start) never needs the simulation at all.
         MatchHolder h = tryStartFast(input, from, to, from);
