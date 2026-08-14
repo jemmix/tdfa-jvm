@@ -161,9 +161,13 @@ public final class TdfaRunner implements Regex.Engine {
         if (literalNeedle != null && input instanceof String)
             return ((String) input).indexOf(literalNeedle, from);
         if (fastPath) {
-            int w = triggerScan(input.toString(), from, to);
-            if (w < 0) return -1;
-            return multiStateLeftmostStart(input, w, to);
+            int l = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS);
+            if (l == LSS_BUDGET) {
+                int w = triggerScan(input.toString(), from, to);
+                if (w < 0) return -1;
+                l = multiStateLeftmostStart(input, w, to);
+            }
+            return l;
         }
         return triggerScan(input.toString(), from, to) >= 0 ? from : -1;
     }
@@ -364,6 +368,8 @@ public final class TdfaRunner implements Regex.Engine {
     private static final int SDFA_MAX_ROWS = 512;      // rows: ~512B each + blockIds
     private static final int SDFA_MAX_BLOCKS = 1024;   // 1024 * 512 * 4B = 2 MB cap
     private static final int SDFA_MIN_WINDOW = 2048;   // below: unmemoized raw scan
+    /** Origin-sim budget before falling back to the memoized trigger scan. */
+    private static final int LSS_BUDGET_CHARS = 4096;
 
     private final SearchDfa searchDfa;
     /**
@@ -804,7 +810,20 @@ public final class TdfaRunner implements Regex.Engine {
      * {@code next} is zeroed each step, so "bit already set in next" exactly
      * identifies re-reachable states (origin = min) vs first-arrival (origin = set).
      */
+    /** Budget-exceeded sentinel for {@link #multiStateLeftmostStart}. */
+    private static final int LSS_BUDGET = -2;
+
     private int multiStateLeftmostStart(CharSequence input, int from, int to) {
+        return multiStateLeftmostStart(input, from, to, -1);
+    }
+
+    /**
+     * Budgeted variant: aborts with {@link #LSS_BUDGET} after {@code budget}
+     * chars without an accept (dense matches early-stop far inside; a distant
+     * or absent match is better served by the memoized trigger scan, so the
+     * caller falls back to it instead of bitset-scanning the whole tail).
+     */
+    private int multiStateLeftmostStart(CharSequence input, int from, int to, int budget) {
         final int nwords = stateWords;
         if (nwords == 0) return -1;
         final int[] sm = stateMeta;
@@ -838,7 +857,9 @@ public final class TdfaRunner implements Regex.Engine {
         origin[ss] = from;
 
         int best = -1;
+        final int limit = budget < 0 ? Integer.MAX_VALUE : from + budget;
         for (int pos = from; pos <= to; pos++) {
+            if (best < 0 && pos > limit) return LSS_BUDGET;
             // accept check with origin tracking
             for (int w = 0; w < nwords; w++) {
                 int bits = live[w] & ab[w];
@@ -977,16 +998,20 @@ public final class TdfaRunner implements Regex.Engine {
         //    (match at/near the start) never needs the simulation at all.
         MatchHolder h = tryStartFast(input, from, to, from);
         if (h != null) return h;
-        // 2) No match starting at `from`: trigger-scan to bound the window
-        // (kill-point W — nothing alive from earlier starts), then find the
-        // leftmost start via the origin-tracking multi-state simulation over
-        // just [W, to] (O(window × |states|); early-stops when the best origin
-        // can no longer be beaten). The old shape retried every failed start
-        // position with a full walk: O(n) restarts × O(n) walk = O(n²) on
-        // dense-match regexes like [a-zA-Z]+ing.
-        int w = triggerScan(input, from, to);
-        if (w < 0) return null;
-        int leftmost = multiStateLeftmostStart(input, w, to);
+        // 2) No match starting at `from`: budgeted origin-tracking sim. Dense
+        // matches early-stop inside the budget and never touch the trigger
+        // (the pre-scan would double the work — the findAll regression). A
+        // distant/absent match exhausts the budget and hands off to the
+        // memoized trigger scan, which bounds the window to [W, to] via kill
+        // points; the sim then finishes over just that window. The old shape
+        // retried every failed start with a full walk: O(n) restarts × O(n)
+        // walk = O(n²) on dense-match regexes like [a-zA-Z]+ing.
+        int leftmost = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS);
+        if (leftmost == LSS_BUDGET) {
+            int w = triggerScan(input, from, to);
+            if (w < 0) return null;
+            leftmost = multiStateLeftmostStart(input, w, to);
+        }
         if (leftmost < 0) return null;
         h = tryStartFast(input, leftmost, to, from);
         if (h != null) return h;
