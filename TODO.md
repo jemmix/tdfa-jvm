@@ -13,7 +13,7 @@ each step commits separately with the full gate: unit + re2j parity + rebar
 |---|---|---|
 | 0 | Doc truth-sync + this plan | DONE in this commit |
 | 1 | **C1** — zero-width-anchored alternation `[0,0]`-vs-`[0,1]` | last known correctness bug; clears the 2 remaining ExecTest failures; touches accept-priority logic P1 rebuilds, so it goes first |
-| 2 | **P7** — JMH regression harness | curated subset of `:benchmarks:micro` (short-input, long-scan, capture), JSON history + compare script (±10%), Gradle task; must precede all perf changes |
+| 2 | **P7** — JMH regression harness | ✅ `RegressionBench` (JMH, ~5–10 min) + `QuickBench` (plain main, ~15 s, same ops) + `scripts/bench-regression.sh [--quick|--jmh] [--capture]` + `scripts/bench-compare.py`; per-machine baselines in `benchmarks/baselines/`; quick threshold 15 %, JMH 10 % |
 | 3 | **P1** — kill O(n²) dense-match extract | anchored re-extract from `multiStateAnyMatch`'s leftmost start (design in REBAR-PARITY-PLAN §6.1); fixes both backends (ASM `find()` delegates to runner) |
 | 4 | **P2** — hot-path allocation removal | pool `regs[]`, cache `live`/`next` bitsets per instance, lazy accept snapshot instead of per-accept `regs.clone()` |
 | 5 | **P4** — Latin-1 256-entry fast-path tables | extend `asciiTarget` 128→256; gate on stateCount (memory +stateCount×512B); keep only if JMH says so |
