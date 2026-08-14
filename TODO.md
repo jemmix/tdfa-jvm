@@ -25,6 +25,63 @@ leftmost-longest activation (C4), literal prefilter (P3 — violates the
 single-algorithm design goal), `map`+toposort cycle rejection, deterministic
 compilation, multi-valued tags.
 
+## rebar 5-engine benchmark round (locked 2026-08-14, after P5 no-go)
+
+Goal: **beat re2j decisively, parity with java.util.regex** (reggie = reference).
+Harness: `scripts/bench-rebar.sh fast|accurate` — `RebarBench` runs all 110
+in-scope rebar scenarios under 5 engines (jur / re2j / reggie / vm / asm) with
+their declared rebar models, count-verified vs jur, interleaved passes,
+5-column tables (scan ms/MB + compile ms + geomeans + worst-10). Fast mode
+(~2 min, 2M-char cap, min-of-3) = triage; accurate (overnight, full
+haystacks, min-of-5) = decisions. Results: `benchmarks/results-rebar-fast.txt`.
+Baseline geomean scan ratio: **vm 0.94–1.07x / asm 1.14–1.35x vs re2j;
+vm 1.67–1.86x / asm 2.02–2.34x vs jur** — not decisive, not at parity.
+Steady-state probe numbers (isolated JVM, min-of-4) are ground truth for
+single-scenario claims; fast-mode rows run 2–5x hot vs probes on later
+scenarios (JIT-cold + thermal — documented in the bench header).
+
+Already winning: dictionary (758 vs jur 17628 ms/MB), redos-VM (8.5 vs jur
+24036), quadratic-VM (4x re2j), dense scans (`ing` 14.7 vs re2j 32.9 ns/char),
+lexer-veryl (10x re2j), i1095-ascii.
+
+### Triage — four loss clusters, root causes confirmed by JFR + DFA dumps
+
+| ID | Cluster | Evidence | Root cause (confirmed) |
+|---|---|---|---|
+| **W1** | Unicode wide-class scans: long-russian **7.2µs/char (267x jur)**, all-russian 0.9µs (32x), `\p{L}{256}` 3µs (15x; re2j equally bad), letters-ru 12x, i1095-unicode ~100x | JFR: 70% of samples in the linear range scan (`multiStateAnyMatch`/extract `for i<count`); dump: `(?u)\b\w{12,}\b` DFA has **avg 1939 / max 2800 range entries per state** | (a) Unicode classes materialize as ~1400–2800 unmerged codepoint ranges per DFA state (entries only mergeable when lo,hi,target,ops,mask ALL match — duplicated subset-union entries don't coalesce); (b) `rangesDisjoint` is a GLOBAL flag — one overlapping state poisons every state into the linear branch (JFR line 396); (c) Latin-1 table only covers c<256, so every Cyrillic/Greek/CJK char pays the full scan |
+| **W2** | Literal search: `Twain` 6.6 ns/char vs re2j **0.26** (25x), CJK literal 18 vs 0.9 (20x); affects all sherlock/literal + some leipzig rows | probe: `zzqqxv` no-match = 7.8 ns/char — pure DFA stepping, no prefilter | No required-literal-prefix prefilter: every char pays a full DFA step while re2j/jur memchr-skip (revisits the deferred P3 decision — for the rebar goal, memchr-class hopping is table stakes, not a semantics change) |
+| **W3** | ASM slower than VM on big-DFA scenarios: quadratic 1x/2x/10x asm 1074–1905 vs vm 356–547 (3x); redos simplified-long asm 155 vs vm 8.5 (10x) | bench table only (both backends equal on small DFAs) | Unknown — suspected DELEGATE-mode dispatch or INLINED extract path; needs its own profile |
+| **W4** | Backref unicode (i1095 family): ~900 ns/char vs jur 8–10 (but 2x better than re2j) | probe | Fallback (backtracking) engine over wide classes — largely W1 in disguise; re-triage after W1 |
+
+### Plan (order fixed; gate = full suites + bench-regression + rebar fast bench)
+
+1. **W1a — merge transition entries at materialization**: after subset
+   construction, coalesce entries per state with identical (target, ops,
+   requiredMask) whose ranges touch/overlap; sort by lo. Expect 2800→~800 for
+   `\w` (script-block granularity). Compile-time only, zero match-path risk.
+2. **W1b — per-state disjoint bit** (in `stateMeta` spare bits) enabling
+   binary search per state instead of the global poison flag; sim + extract +
+   ASM backend all switch on it. ~10 iters vs ~2000 for the hot states.
+3. **W1c — O(1) BMP dispatch beyond Latin-1** (two-level table, 128×512-char
+   blocks, gated on stateCount like LATIN1_MAX_STATES) so Cyrillic/Greek/CJK
+   step at table speed; measure before/after (P4 lesson: watch ASCII
+   regression from wider strides).
+4. **W2 — literal prefilter**: detect required literal prefix (or unique
+   first-char set) at compile; hop with `String.indexOf` (JIT-intrinsic,
+   vectorized) to candidate starts before DFA entry. Applies to both
+   backends' scan loops; must respect `(?i)` folded sets (fall back to
+   first-char-set scanning when folding applies).
+5. **W3 — profile ASM-vs-VM on quadratic/redos**; fix dispatch or route to
+   the P1 fast-extract path.
+6. Re-run fast bench; then **accurate overnight**; goal check: geomean vs
+   re2j ≤ 0.5x (decisive), vs jur ≈ 1.0x (parity), no scenario > 3x jur
+   except known backref/ReDoS-shape outliers where jur's backtracker wins
+   by luck of the input.
+7. W4 re-triage with measurements.
+
+Estimated W1 impact: long-russian 7164→~40 ns/char, all-russian 719→~25,
+delta256 3047→~200 — moves ~35 of 110 scenarios from losses to wins.
+
 ## Feature parity
 
 - [x] Clear all pending parity tests — 0 remaining (was 41; all cleared: POSIX classes, escape rejection, byte[] overloads, split, DISABLE_UNICODE_GROUPS, matches() anchored groups, programSize, Serializable, `\A`/`\z` multiline invariance, re2j-exact Unicode provider). See `docs/PARITY-PLAN.md`.

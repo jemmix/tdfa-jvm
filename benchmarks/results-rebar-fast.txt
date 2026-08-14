@@ -1,0 +1,283 @@
+
+═══ rebar corpus — 5-engine bench — mode=fast ═══
+scan = ms per MB of haystack (min of 3 passes after 1 warmup; haystack cap 2000000 chars)
+* count diverges from java.util.regex on this input; cTO compile>budget; TO pass>budget; ERR exception
+goal: beat re2j decisively, parity with jur; reggie = reference
+NOTE: fast mode is triage signal (JIT-cold, min-of-3); isolated steady-state probes are ground truth for
+single-scenario claims; sub-ms scenarios are noise-dominated. Use accurate mode for decisions.
+scenarios run=110 (scoped=110, out-of-scope=245, bomb-skipped=4)  wall=104.9s
+
+── SCAN ms/MB (lower is better) ──────────────────────────────────────────────
+scenario                                                   jur      re2j    reggie        vm       asm
+curated/01-literal/sherlock-en [count]                   0.70     0.67     0.71     7.84     7.36
+curated/01-literal/sherlock-casei-en [count]             3.03    21.82     1.23     7.75     7.77
+curated/01-literal/sherlock-ru [count]                   0.93     0.83     0.73    31.44    13.33
+curated/01-literal/sherlock-casei-ru [count]            11.69    31.76     0.79    33.09    13.59
+curated/01-literal/sherlock-zh [count]                   0.83     0.86     0.68    31.10    15.61
+curated/02-literal-alternate/sherlock-en [count]        12.96    61.22     3.33    10.17    10.09
+curated/02-literal-alternate/sherlock-casei-en [c...    15.38    68.19     3.46    11.42    11.14
+curated/02-literal-alternate/sherlock-ru [count]        13.46    74.74     6.23    59.85    22.78
+curated/02-literal-alternate/sherlock-casei-ru [c...    49.55   116.60     3.14    66.64    23.80
+curated/02-literal-alternate/sherlock-zh [count]        16.54    75.14     4.74    31.95    15.98
+curated/04-ruff-noqa/real [grep-captures]               30.54    51.75      ERR    14.02    12.20
+curated/04-ruff-noqa/tweaked [grep-captures]             6.12     3.04      ERR    10.58    10.24
+curated/05-lexer-veryl/single [count-captures]         309.09  5757.06   918.28   550.68   548.44
+curated/06-cloud-flare-redos/original [count-spans]   1071.65    98.51  1386.68    17.52    15.57
+curated/06-cloud-flare-redos/simplified-short [co...  1050.66    78.84   109.48    14.29   150.74
+curated/06-cloud-flare-redos/simplified-long [cou... 24325.04    67.82    89.21     8.15   122.18
+curated/07-unicode-character-data/parse-line [gre...    14.91    97.22    43.41    46.08    39.35
+curated/08-words/all-english [count-spans]              25.67    46.79 23264.25    38.83    18.07
+curated/08-words/all-russian [count-spans]              26.57   14.63* 2374.22*  804.49*  805.46*
+curated/08-words/long-english [count-spans]             24.85    28.33    75.80   109.83    80.23
+curated/08-words/long-russian [count-spans]             30.17   14.40*  101.92* 7296.68* 7290.94*
+curated/09-aws-keys/quick [grep]                        15.26     5.41     5.08    12.95    12.69
+curated/10-bounded-repeat/letters-en [count]            25.80    47.53     8.26    17.64    17.76
+curated/10-bounded-repeat/letters-ru [count]            21.31    65.38    19.53   253.26   252.08
+curated/10-bounded-repeat/capitals [count]              12.94    29.10     1.81    17.58    17.58
+curated/11-unstructured-to-json/extract [grep-cap...    22.08   134.17    61.29    66.64    66.48
+curated/12-dictionary/single [count]                 17431.89  2704.19      ERR   755.22   747.12
+curated/14-quadratic/1x [count]                        520.00  1717.50  3428.33   305.00   973.75
+curated/14-quadratic/2x [count]                        915.21  3191.46  7805.20   532.70  1725.00
+curated/14-quadratic/10x [count]                      4421.71 15935.38 11719.83  1701.38  1949.42
+imported/leipzig/twain [count]                           1.53     0.39     0.63    39.20    39.38
+imported/leipzig/twain-insensitive [count]               3.58    24.44     0.99    38.68    38.86
+imported/leipzig/shing [count]                           8.87    27.52     3.44    39.08    39.25
+imported/leipzig/huck-saw [count]                        7.88    33.80     5.04    38.72    38.26
+imported/leipzig/word-ending-nn [count]                 17.30    36.60    0.78*    37.00    11.08
+imported/leipzig/certain-long-strings-ending-x [c...    34.01    87.39     7.48    43.28    43.41
+imported/leipzig/tom-sawyer-huckle-finn [count]         14.17    60.13     0.59    40.53    39.16
+imported/leipzig/tom-sawyer-huckle-fin-insensitiv...    17.25    77.29     3.80    38.87    38.84
+imported/leipzig/tom-sawyer-huckle-fin-prefix-sho...    59.07    93.58    43.57    39.28    40.14
+imported/leipzig/tom-sawyer-huckle-fin-prefix-lon...    67.25   105.36    43.32    41.11    39.76
+imported/leipzig/tom-river [count]                       8.74    35.35     5.07    40.04    38.89
+imported/leipzig/ing [count]                            34.15    34.11     8.47    42.04    41.53
+imported/leipzig/ing-whitespace [count]                 18.98    48.52     7.02    40.92    41.75
+imported/leipzig/awyer-inn [count]                      30.15    45.78    13.57    40.20    39.30
+imported/leipzig/quotes-bounded [count]                  4.36    26.74     6.01    39.65    40.67
+imported/leipzig/non-ascii-alternate [count]            10.88    22.62     0.36    45.25    39.71
+imported/leipzig/math-symbols [count]                    6.38    23.45     8.45    39.09    39.52
+imported/leipzig/bounded-strings-ending-z [count-...   366.46    48.10     5.12    43.03    41.48
+imported/lh3lh3-reb/uri [grep]                          51.81    54.42    10.74    45.06    47.65
+imported/lh3lh3-reb/email [grep]                        82.38    47.75    35.31    47.44    46.92
+imported/lh3lh3-reb/date [grep]                         13.94    35.95    10.22    47.79    47.68
+imported/lh3lh3-reb/uri-or-email [grep]                128.31    93.47      ERR    47.79    47.24
+imported/mariomka/email [count]                         50.14    34.28     9.22    40.63    39.48
+imported/mariomka/uri [count]                           26.85    34.28     9.68    41.40    39.86
+imported/mariomka/ip [count]                            27.33    56.63    13.29    40.77    39.87
+opt/backtrack/words-english [grep-captures]             30.43    65.80    49.18    69.85    52.70
+opt/reverse-suffix/unsound-leftmost-first [count]      781.25   114.50    52.25    93.75   698.00
+opt/reverse-suffix/unsound-start-literal-order-mi...   166.75   250.00   906.25   291.50  2114.75
+reported/i1095-word-repetition/unicode-compile [c...     9.28  2396.48   159.02  1442.71  1419.76
+reported/i1095-word-repetition/unicode-search [co...     8.46  2349.93    86.75  1393.07  1366.05
+reported/i1095-word-repetition/ascii-compile [com...    14.98  1400.88    16.28    22.63    16.77
+reported/i1095-word-repetition/ascii-search [coun...    14.32  1397.30    12.70    22.30    13.35
+reported/i13-subset-regex/original-ascii [count]        48.22    91.43     7.67    48.25    47.33
+reported/i13-subset-regex/original-unicode [count]      47.26    91.79     8.09    46.97    45.80
+reported/i13-subset-regex/big-ascii [count]             60.31   105.73    16.40    50.13    51.33
+reported/i13-subset-regex/big-unicode [count]           56.01   101.85    16.19    49.33    51.76
+reported/i13-subset-regex/huge-ascii [count]            66.86   110.77    22.38    64.18    66.17
+reported/i13-subset-regex/huge-unicode [count]          66.88   110.08    22.04    62.78    66.02
+reported/i13-subset-regex/huge-ascii-nosuffixlit ...    68.00   110.96    21.94    65.57    65.10
+reported/i13-subset-regex/huge-unicode-nosuffixli...    67.89   110.43    21.86    67.37    67.17
+slow/quadratic-haystack-1x [count]                     791.67  1722.92  1344.58   323.33  1006.67
+slow/quadratic-haystack-2x [count]                    1021.25  3157.71  2433.55   550.21  1733.13
+test/dot/default-new-line [count]                       84.00    83.00   166.00   125.00   167.00
+test/dot/default-carriage-return [count]                83.00  208.00*  917.00*  125.00*  584.00*
+test/func/leftmost-first [count-spans]                  23.71    41.71    23.71    41.71   172.57
+test/func/dollar-only-matches-end [count]              291.50  479.00*  1062.50  250.00*  520.50*
+test/func/non-greedy [count]                           264.00   541.67   153.00   291.67   750.00
+test/model/count [count]                                20.27    59.68   141.89    42.81    65.32
+test/model/count-spans [count-spans]                    23.65    58.54   136.27    50.68    67.57
+test/model/count-captures [count-captures]              29.30    78.84    47.30    43.92    76.59
+test/model/grep [grep]                                  54.46    92.92   179.46    60.92   169.85
+test/model/grep-captures [grep-captures]                56.25   227.10    68.75   110.40   297.90
+test/model/compile [compile]                            16.89    55.16   154.30    45.03    72.08
+test/unicode/case/ascii-only [count]                   209.00  250.00*   166.00   250.00   167.00
+test/unicode/case/ascii-with-unicode [count]           417.00   250.00  208.00*   250.00  1167.00
+test/unicode/case/unicode [count]                      208.00   291.00  1042.00   250.00  1292.00
+test/unicode/decimal/ascii-only [count]                250.00   166.00   250.00   292.00   208.00
+test/unicode/decimal/unicode [count]                   250.00  166.00*  167.00*   292.00  1416.00
+test/unicode/letter/pL-matches-bmp-delta [count]       125.00   333.00      ERR   333.00  1417.00
+test/unicode/letter/pLbraced-matches-bmp-delta [c...   166.00   291.00  1333.00   333.00  1334.00
+test/unicode/letter/pLbraced-matches-nonbmp-delta...   145.50   312.50 2229.50* 10521.00  3292.00
+test/unicode/utf8/dot-matches-byte [count]             104.50   229.50  917.00*   916.50   896.00
+test/unicode/utf8/dot-matches-codepoint [count]         83.00   208.50  895.50*   667.00  1229.00
+test/unicode/whitespace/ascii-only [count]             125.00   166.00   208.00  1166.00   625.00
+test/unicode/whitespace/unicode [count]                250.00  167.00*  209.00*  1250.00  2375.00
+test/unicode/word-boundary/ascii-only [count]          125.00   166.00   375.00   709.00   750.00
+test/unicode/word-boundary/unicode-alphabetic [co...   208.00  167.00*  250.00*   875.00  1625.00
+test/unicode/word-boundary/unicode-join-control [...  2792.00  167.00*  334.00*  708.00* 1375.00*
+test/unicode/word-boundary/unicode-mark [count]        375.00  125.00*  292.00*   792.00  1625.00
+test/unicode/word-boundary/unicode-decimal-number...   208.00  125.00*  291.00*   583.00  1750.00
+test/unicode/word-boundary/unicode-connector-punc...   167.00  125.00*  291.00*   625.00  1667.00
+test/unicode/word/ascii-only [count]                    83.00   166.00   208.00  1166.00   666.00
+test/unicode/word/unicode-alphabetic [count]           125.00  167.00*  250.00*  1375.00  2542.00
+test/unicode/word/unicode-join-control [count]         250.00  166.00*  208.00* 1459.00*  792.00*
+test/unicode/word/unicode-mark [count]                 167.00  208.00*  250.00*   625.00  2292.00
+test/unicode/word/unicode-decimal-number [count]       167.00  166.00*  250.00*  2417.00  3625.00
+test/unicode/word/unicode-connector-punctuation [...   166.00  167.00*  208.00*  2916.00  3708.00
+unicode/overlapping-words/ascii [grep-captures]        220.36   616.05   241.53    44.94    45.32
+unicode/overlapping-words/english [grep-captures]      152.30   585.65   228.70    46.63    57.90
+unicode/overlapping-words/russian [grep-captures]      121.26   936.61  1752.25   195.18   196.87
+
+── COMPILE ms ────────────────────────────────────────────────────────────────
+scenario                                                   jur      re2j    reggie        vm       asm
+curated/01-literal/sherlock-en                              6        6       61       10        3
+curated/01-literal/sherlock-casei-en                        0        0       12        1        1
+curated/01-literal/sherlock-ru                              0        0        1        3        3
+curated/01-literal/sherlock-casei-ru                        0        0        2       17        4
+curated/01-literal/sherlock-zh                              0        0        0        1        1
+curated/02-literal-alternate/sherlock-en                    0        0        5        2        5
+curated/02-literal-alternate/sherlock-casei-en              0        0        8        2        4
+curated/02-literal-alternate/sherlock-ru                    0        0        2        2        4
+curated/02-literal-alternate/sherlock-casei-ru              0        0        4        2        3
+curated/02-literal-alternate/sherlock-zh                    0        0        1        1        1
+curated/04-ruff-noqa/real                                   0        0      ERR        8        3
+curated/04-ruff-noqa/tweaked                                0        0      ERR        1        1
+curated/05-lexer-veryl/single                               1        1       15      419      244
+curated/06-cloud-flare-redos/original                       0        0       84      165      102
+curated/06-cloud-flare-redos/simplified-short               0        0        1        0        1
+curated/06-cloud-flare-redos/simplified-long                0        0        0        0        0
+curated/07-unicode-character-data/parse-line                0        0        3        1        2
+curated/08-words/all-english                                0        0        0        0        0
+curated/08-words/all-russian                                1        0        0        2        4
+curated/08-words/long-english                               0        0        0        0        0
+curated/08-words/long-russian                               0        0        0       12       12
+curated/09-aws-keys/quick                                   0        0        1        1        1
+curated/10-bounded-repeat/letters-en                        0        0        3        0        0
+curated/10-bounded-repeat/letters-ru                        0        0        2       10       11
+curated/10-bounded-repeat/capitals                          0        0       14       54       44
+curated/11-unstructured-to-json/extract                     0        0        0       42       44
+curated/12-dictionary/single                                6       29      ERR     2321     1074
+curated/14-quadratic/1x                                     0        0        1        0        0
+curated/14-quadratic/2x                                     0        0        0        0        0
+curated/14-quadratic/10x                                    0        0        0        0        0
+imported/leipzig/twain                                      0        0        0        0        0
+imported/leipzig/twain-insensitive                          0        0        2        0        0
+imported/leipzig/shing                                      0        0        1        0        0
+imported/leipzig/huck-saw                                   0        1        1        0        0
+imported/leipzig/word-ending-nn                             0        0        0        0        0
+imported/leipzig/certain-long-strings-ending-x              0        0        1        0        0
+imported/leipzig/tom-sawyer-huckle-finn                     0        0        1        0        0
+imported/leipzig/tom-sawyer-huckle-fin-insensitive          0        0        1        0        0
+imported/leipzig/tom-sawyer-huckle-fin-prefix-short         0        0        1        0        1
+imported/leipzig/tom-sawyer-huckle-fin-prefix-long          0        0        2        0        1
+imported/leipzig/tom-river                                  0        0        2        5        6
+imported/leipzig/ing                                        0        0        1        0        0
+imported/leipzig/ing-whitespace                             0        0        2        0        1
+imported/leipzig/awyer-inn                                  0        0        1        0        0
+imported/leipzig/quotes-bounded                             0        0        3        1        2
+imported/leipzig/non-ascii-alternate                        0        0        0        0        0
+imported/leipzig/math-symbols                               0        0        1        0        0
+imported/leipzig/bounded-strings-ending-z                   0        0        0        1        2
+imported/lh3lh3-reb/uri                                     0        0        1        0        0
+imported/lh3lh3-reb/email                                   0        0        3        0        0
+imported/lh3lh3-reb/date                                    0        0        1        0        1
+imported/lh3lh3-reb/uri-or-email                            0        0      ERR        0        1
+imported/mariomka/email                                     0        0        1        0        1
+imported/mariomka/uri                                       0        0        1        0        0
+imported/mariomka/ip                                        0        0        0        0        0
+opt/backtrack/words-english                                 0        0        0        0        0
+opt/reverse-suffix/unsound-leftmost-first                   0        0        0        0        1
+opt/reverse-suffix/unsound-start-literal-order-mi...        0        0        0        0        0
+reported/i1095-word-repetition/unicode-compile              0        0        5     1074     1259
+reported/i1095-word-repetition/unicode-search               0        0        0     1150     1167
+reported/i1095-word-repetition/ascii-compile                1        1        2       12       12
+reported/i1095-word-repetition/ascii-search                 0        0        0       14       16
+reported/i13-subset-regex/original-ascii                    0        0        0        0        2
+reported/i13-subset-regex/original-unicode                  0        0        0        0        1
+reported/i13-subset-regex/big-ascii                         0        0        1        0        0
+reported/i13-subset-regex/big-unicode                       0        0        0        0        1
+reported/i13-subset-regex/huge-ascii                        0        0        2        1        2
+reported/i13-subset-regex/huge-unicode                      0        0        0        1        2
+reported/i13-subset-regex/huge-ascii-nosuffixlit            0        0        2        1        2
+reported/i13-subset-regex/huge-unicode-nosuffixlit          0        0        0        1        2
+slow/quadratic-haystack-1x                                  0        0        0        0        0
+slow/quadratic-haystack-2x                                  0        0        0        0        0
+test/dot/default-new-line                                   0        0        0        0        0
+test/dot/default-carriage-return                            0        0        0        0        0
+test/func/leftmost-first                                    0        0        0        0        0
+test/func/dollar-only-matches-end                           0        0        1        0        0
+test/func/non-greedy                                        0        0        0        0        0
+test/model/count                                            0        0        0        0        0
+test/model/count-spans                                      0        0        0        0        0
+test/model/count-captures                                   0        0        0        0        0
+test/model/grep                                             0        0        0        0        0
+test/model/grep-captures                                    0        0        0        0        0
+test/model/compile                                          0        0        0        0        0
+test/unicode/case/ascii-only                                0        0        0        0        0
+test/unicode/case/ascii-with-unicode                        0        0        0        0        0
+test/unicode/case/unicode                                   0        0        0        0        0
+test/unicode/decimal/ascii-only                             0        0        0        0        0
+test/unicode/decimal/unicode                                0        0        0        0        0
+test/unicode/letter/pL-matches-bmp-delta                    0        0      ERR        0        2
+test/unicode/letter/pLbraced-matches-bmp-delta              0        0       13        0        2
+test/unicode/letter/pLbraced-matches-nonbmp-delta           0        0        0        0        2
+test/unicode/utf8/dot-matches-byte                          0        0        0        0        0
+test/unicode/utf8/dot-matches-codepoint                     0        0        0        0        0
+test/unicode/whitespace/ascii-only                          0        0        0        0        0
+test/unicode/whitespace/unicode                             0        0        0        0        0
+test/unicode/word-boundary/ascii-only                       0        0        0        0        0
+test/unicode/word-boundary/unicode-alphabetic               0        0        0        0        0
+test/unicode/word-boundary/unicode-join-control             0        0        0        0        0
+test/unicode/word-boundary/unicode-mark                     0        0        0        0        0
+test/unicode/word-boundary/unicode-decimal-number           0        0        0        0        0
+test/unicode/word-boundary/unicode-connector-punc...        0        0        0        0        0
+test/unicode/word/ascii-only                                0        0        0        0        0
+test/unicode/word/unicode-alphabetic                        0        0        0        2        4
+test/unicode/word/unicode-join-control                      0        0        0        2        9
+test/unicode/word/unicode-mark                              0        0        0        2        4
+test/unicode/word/unicode-decimal-number                    0        0        0        1        4
+test/unicode/word/unicode-connector-punctuation             0        0        0        1        4
+unicode/overlapping-words/ascii                             0        0        2        0        1
+unicode/overlapping-words/english                           0        0      383       55       49
+unicode/overlapping-words/russian                           0        0        0       53       56
+
+── SUMMARY ───────────────────────────────────────────────────────────────────
+geomean scan ratio vs re2j: vm=1.07x  asm=1.35x   (n=110, n=110)
+geomean scan ratio vs jur : vm=1.86x  asm=2.34x   (n=110, n=110)
+worst 10 vm  vs re2j (ours slower = ratio > 1):
+  506.81x  curated/08-words/long-russian                       ours=  513694 us  theirs=    1014 us
+  100.44x  imported/leipzig/twain                              ours=   78394 us  theirs=     781 us
+   55.00x  curated/08-words/all-russian                        ours=   56637 us  theirs=    1030 us
+   37.81x  curated/01-literal/sherlock-ru                      ours=   27998 us  theirs=     741 us
+   36.04x  curated/01-literal/sherlock-zh                      ours=   10566 us  theirs=     293 us
+   33.67x  test/unicode/letter/pLbraced-matches-nonbmp-delta   ours=      21 us  theirs=       1 us
+   17.46x  test/unicode/word/unicode-connector-punctuation     ours=       3 us  theirs=       0 us
+   14.56x  test/unicode/word/unicode-decimal-number            ours=       2 us  theirs=       0 us
+   11.69x  curated/01-literal/sherlock-en                      ours=    7045 us  theirs=     603 us
+    8.79x  test/unicode/word/unicode-join-control              ours=       1 us  theirs=       0 us
+worst 10 asm vs re2j (ours slower = ratio > 1):
+  506.41x  curated/08-words/long-russian                       ours=  513290 us  theirs=    1014 us
+  100.91x  imported/leipzig/twain                              ours=   78768 us  theirs=     781 us
+   55.07x  curated/08-words/all-russian                        ours=   56705 us  theirs=    1030 us
+   22.20x  test/unicode/word/unicode-connector-punctuation     ours=       4 us  theirs=       0 us
+   21.84x  test/unicode/word/unicode-decimal-number            ours=       4 us  theirs=       0 us
+   18.08x  curated/01-literal/sherlock-zh                      ours=    5301 us  theirs=     293 us
+   16.03x  curated/01-literal/sherlock-ru                      ours=   11872 us  theirs=     741 us
+   15.22x  test/unicode/word/unicode-alphabetic                ours=       3 us  theirs=       0 us
+   14.22x  test/unicode/whitespace/unicode                     ours=       2 us  theirs=       0 us
+   14.00x  test/unicode/word-boundary/unicode-decimal-number   ours=       2 us  theirs=       0 us
+worst 10 vm  vs jur (ours slower = ratio > 1):
+  241.85x  curated/08-words/long-russian                       ours=  513694 us  theirs=    2124 us
+  164.57x  reported/i1095-word-repetition/unicode-search       ours=     357 us  theirs=       2 us
+  155.51x  reported/i1095-word-repetition/unicode-compile      ours=     369 us  theirs=       2 us
+   72.31x  test/unicode/letter/pLbraced-matches-nonbmp-delta   ours=      21 us  theirs=       0 us
+   37.58x  curated/01-literal/sherlock-zh                      ours=   10566 us  theirs=     281 us
+   33.97x  curated/01-literal/sherlock-ru                      ours=   27998 us  theirs=     824 us
+   30.27x  curated/08-words/all-russian                        ours=   56637 us  theirs=    1871 us
+   25.64x  imported/leipzig/twain                              ours=   78394 us  theirs=    3058 us
+   17.57x  test/unicode/word/unicode-connector-punctuation     ours=       3 us  theirs=       0 us
+   14.47x  test/unicode/word/unicode-decimal-number            ours=       2 us  theirs=       0 us
+worst 10 asm vs jur (ours slower = ratio > 1):
+  241.66x  curated/08-words/long-russian                       ours=  513290 us  theirs=    2124 us
+  161.38x  reported/i1095-word-repetition/unicode-search       ours=     350 us  theirs=       2 us
+  153.04x  reported/i1095-word-repetition/unicode-compile      ours=     363 us  theirs=       2 us
+   30.31x  curated/08-words/all-russian                        ours=   56705 us  theirs=    1871 us
+   25.76x  imported/leipzig/twain                              ours=   78768 us  theirs=    3058 us
+   22.63x  test/unicode/letter/pLbraced-matches-nonbmp-delta   ours=       7 us  theirs=       0 us
+   22.34x  test/unicode/word/unicode-connector-punctuation     ours=       4 us  theirs=       0 us
+   21.71x  test/unicode/word/unicode-decimal-number            ours=       4 us  theirs=       0 us
+   20.34x  test/unicode/word/unicode-alphabetic                ours=       3 us  theirs=       0 us
+   18.85x  curated/01-literal/sherlock-zh                      ours=    5301 us  theirs=     281 us
+
