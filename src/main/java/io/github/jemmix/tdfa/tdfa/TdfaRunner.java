@@ -41,6 +41,7 @@ public final class TdfaRunner implements Regex.Engine {
     private final boolean[] stateIsFallback;
     private final int[] stateFallbackOpsOff;
     private final boolean rangesDisjoint;
+    private final int[] rhp;             // tdfa.entryHiPrefix — prefix-max-hi per entry
     /** Tight 128-entry table for the SIMULATIONS: constant stride keeps the
      *  hot loop's machine code identical to the pre-Latin-1 shape (a 256-stride
      *  table measurably slowed pure-ASCII scans ~15%); codepoints >= 128 take
@@ -98,6 +99,7 @@ public final class TdfaRunner implements Regex.Engine {
         this.startState = tdfa.startState;
         this.startStateEntryMask = tdfa.startStateEntryMask;
         this.rangesDisjoint = checkRangesDisjoint(tdfa);
+        this.rhp = tdfa.entryHiPrefix;
         this.latinLimit = tdfa.stateCount <= LATIN1_MAX_STATES ? 256 : 128;
         if (rangesDisjoint) {
             this.asciiRangeFlat = buildAsciiRangeFlat(tdfa, latinLimit);
@@ -252,31 +254,45 @@ public final class TdfaRunner implements Regex.Engine {
                     c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
                 int base = stateBase[state];
                 int count = (meta >>> 1) & 0xFFFF;
-                for (int i = 0; i < count; i++) {
+                // Binary search rightmost entry with lo <= c, then walk back
+                // while the per-state prefix-max-hi still reaches c: visits
+                // exactly the entries that can contain c, in the same
+                // lowest-index-first priority the linear scan used.
+                int rlo = 0, rhi = count - 1, anchor = -1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    if (rg[(base + mid) * 5] <= c) { anchor = mid; rlo = mid + 1; }
+                    else rhi = mid - 1;
+                }
+                // Walk back over containing entries, remembering the LOWEST-index
+                // mask-satisfied one (original linear-scan priority: alternation
+                // and mask-specificity order by entry index).
+                int chosen = -1, chosenTarget = 0;
+                for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
                     int o = (base + i) * 5;
-                    if (c >= rg[o] && c <= rg[o + 1]) {
+                    if (c <= rg[o + 1]) {
                         int target = rg[o + 2];
-                        if (target < 0) break loop;
+                        if (target < 0) continue;
                         int requiredMask = rg[o + 4];
                         if (requiredMask != 0) {
                             if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                             if ((posFlags & requiredMask) != requiredMask) continue;
                         }
-                        if (regs != null) {
-                            int opsOff = rg[o + 3];
-                            if (opsOff != 0) applyOps(op, opsOff, regs, pos);
-                        }
-                        state = target;
-                        if (c > 0xFFFF) pos++;
-                        int entryReq = sem[state];
-                        if (entryReq != 0) {
-                            if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) break loop;
-                        }
-                        posFlags = -1;
-                        continue loop;
+                        chosen = o; chosenTarget = target;
                     }
                 }
-                break;
+                if (chosen < 0) break;
+                if (regs != null) {
+                    int opsOff = rg[chosen + 3];
+                    if (opsOff != 0) applyOps(op, opsOff, regs, pos);
+                }
+                state = chosenTarget;
+                if (c > 0xFFFF) pos++;
+                int entryReq = sem[state];
+                if (entryReq != 0) {
+                    if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) break loop;
+                }
+                posFlags = -1;
             }
             if (haveAccept) {
                 int[] r = regs == null ? new int[0] : regs.clone();
@@ -325,7 +341,6 @@ public final class TdfaRunner implements Regex.Engine {
         final int[] at = asciiTarget;
         final int[] ab = acceptBits;
         final int ss = startState;
-        final boolean disjoint = rangesDisjoint;
 
         Scratch sc = SCRATCH.get();
         int[] live = sc.live != null && sc.live.length >= nwords ? sc.live : new int[nwords];
@@ -377,24 +392,19 @@ public final class TdfaRunner implements Regex.Engine {
                         int meta = sm[s];
                         int base = stateBase[s];
                         int count = (meta >>> 1) & 0xFFFF;
-                        if (disjoint) {
-                            int rlo = 0, rhi = count - 1;
-                            while (rlo <= rhi) {
-                                int mid = (rlo + rhi) >>> 1;
-                                int mo = (base + mid) * 5;
-                                if (c < rg[mo]) { rhi = mid - 1; continue; }
-                                if (c > rg[mo + 1]) { rlo = mid + 1; continue; }
+                        // Binary search + prefix-max walk: all entries containing c
+                        // (over-approximation ignores masks, same as before).
+                        int rlo = 0, rhi = count - 1, anchor = -1;
+                        while (rlo <= rhi) {
+                            int mid = (rlo + rhi) >>> 1;
+                            if (rg[(base + mid) * 5] <= c) { anchor = mid; rlo = mid + 1; }
+                            else rhi = mid - 1;
+                        }
+                        for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+                            int mo = (base + i) * 5;
+                            if (c <= rg[mo + 1]) {
                                 int target = rg[mo + 2];
                                 if (target >= 0) next[target >>> 5] |= 1 << (target & 31);
-                                break;
-                            }
-                        } else {
-                            for (int i = 0; i < count; i++) {
-                                int mo = (base + i) * 5;
-                                if (c >= rg[mo] && c <= rg[mo + 1]) {
-                                    int target = rg[mo + 2];
-                                    if (target >= 0) next[target >>> 5] |= 1 << (target & 31);
-                                }
                             }
                         }
                     }
@@ -775,19 +785,31 @@ public final class TdfaRunner implements Regex.Engine {
                     }
                 }
             } else {
-            for (int i = 0; i < count; i++) {
-                int o = (base + i) * 5;
-                if (c >= rg[o] && c <= rg[o + 1]) {
-                    int target = rg[o + 2];
-                    if (target < 0) break;  // dead
-                    int requiredMask = rg[o + 4];
-                    if (requiredMask != 0) {
-                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                        if ((posFlags & requiredMask) != requiredMask) continue;
+                // Non-disjoint state: binary search + prefix-max walk, keeping the
+                // lowest-index mask-satisfied entry (original priority order).
+                int rlo = 0, rhi = count - 1, anchor = -1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    if (rg[(base + mid) * 5] <= c) { anchor = mid; rlo = mid + 1; }
+                    else rhi = mid - 1;
+                }
+                int chosen = -1, chosenTarget = 0;
+                for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+                    int o = (base + i) * 5;
+                    if (c <= rg[o + 1]) {
+                        int target = rg[o + 2];
+                        if (target < 0) continue;
+                        int requiredMask = rg[o + 4];
+                        if (requiredMask != 0) {
+                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                            if ((posFlags & requiredMask) != requiredMask) continue;
+                        }
+                        chosen = o; chosenTarget = target;
                     }
-                    state = target;
+                }
+                if (chosen >= 0) {
+                    state = chosenTarget;
                     if (c > 0xFFFF) pos++;
-                    // Entry check for target at pos+1 — inline
                     int entryReq = sem[state];
                     if (entryReq != 0) {
                         if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
@@ -795,9 +817,7 @@ public final class TdfaRunner implements Regex.Engine {
                         }
                     }
                     matched = true;
-                    break;
                 }
-            }
             }
             if (!matched) break;
             posFlags = -1;
@@ -877,17 +897,30 @@ public final class TdfaRunner implements Regex.Engine {
                     break;
                 }
             } else {
-            for (int i = 0; i < count; i++) {
-                int o = (base + i) * 5;
-                if (c >= rg[o] && c <= rg[o + 1]) {
-                    int target = rg[o + 2];
-                    if (target < 0) return haveAccept ? lastAcceptPos : -1;
-                    int requiredMask = rg[o + 4];
-                    if (requiredMask != 0) {
-                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                        if ((posFlags & requiredMask) != requiredMask) continue;
+                // Non-disjoint state: binary search + prefix-max walk, keeping the
+                // lowest-index mask-satisfied entry (original priority order).
+                int rlo = 0, rhi = count - 1, anchor = -1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    if (rg[(base + mid) * 5] <= c) { anchor = mid; rlo = mid + 1; }
+                    else rhi = mid - 1;
+                }
+                int chosen = -1, chosenTarget = 0;
+                for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+                    int o = (base + i) * 5;
+                    if (c <= rg[o + 1]) {
+                        int target = rg[o + 2];
+                        if (target < 0) continue;
+                        int requiredMask = rg[o + 4];
+                        if (requiredMask != 0) {
+                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                            if ((posFlags & requiredMask) != requiredMask) continue;
+                        }
+                        chosen = o; chosenTarget = target;
                     }
-                    state = target;
+                }
+                if (chosen >= 0) {
+                    state = chosenTarget;
                     if (c > 0xFFFF) pos++;
                     int entryReq = sem[state];
                     if (entryReq != 0) {
@@ -896,9 +929,7 @@ public final class TdfaRunner implements Regex.Engine {
                         }
                     }
                     matched = true;
-                    break;
                 }
-            }
             }
             if (!matched) break;
             posFlags = -1;
@@ -957,31 +988,39 @@ public final class TdfaRunner implements Regex.Engine {
                     c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
                 int base = stateBase[state];
                 int count = (meta >>> 1) & 0xFFFF;
-                for (int i = 0; i < count; i++) {
+                // Binary search + prefix-max walk (CharSequence variant).
+                int rlo = 0, rhi = count - 1, anchor = -1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    if (ranges[(base + mid) * 5] <= c) { anchor = mid; rlo = mid + 1; }
+                    else rhi = mid - 1;
+                }
+                int chosen = -1, chosenTarget = 0;
+                for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
                     int o = (base + i) * 5;
-                    if (c >= ranges[o] && c <= ranges[o + 1]) {
+                    if (c <= ranges[o + 1]) {
                         int target = ranges[o + 2];
-                        if (target < 0) break loop;
+                        if (target < 0) continue;
                         int requiredMask = ranges[o + 4];
                         if (requiredMask != 0) {
                             if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
                             if ((posFlags & requiredMask) != requiredMask) continue;
                         }
-                        if (regs != null) {
-                            int opsOff = ranges[o + 3];
-                            if (opsOff != 0) applyOps(ops, opsOff, regs, pos);
-                        }
-                        state = target;
-                        if (c > 0xFFFF) pos++;
-                        int entryReq = stateEntryMask[state];
-                        if (entryReq != 0) {
-                            if ((positionFlagsCS(input, pos + 1, to) & entryReq) != entryReq) break loop;
-                        }
-                        posFlags = -1;
-                        continue loop;
+                        chosen = o; chosenTarget = target;
                     }
                 }
-                break;
+                if (chosen < 0) break;
+                if (regs != null) {
+                    int opsOff = ranges[chosen + 3];
+                    if (opsOff != 0) applyOps(ops, opsOff, regs, pos);
+                }
+                state = chosenTarget;
+                if (c > 0xFFFF) pos++;
+                int entryReq = stateEntryMask[state];
+                if (entryReq != 0) {
+                    if ((positionFlagsCS(input, pos + 1, to) & entryReq) != entryReq) break loop;
+                }
+                posFlags = -1;
             }
             if (haveAccept) {
                 if (anchored && lastAcceptPos != to) return null;

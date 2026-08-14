@@ -132,6 +132,10 @@ public final class Tdfa {
      * for this transition to be live (intersection of source configs' masks).
      */
     public final int[] ranges;
+    /** Per-entry running max of hi within each state, index-aligned with ranges
+     *  entries (entry i of state s at stateBase[s]+i). Enables lo-binary-search +
+     *  prefix-max-terminated backward walk — O(log cnt + overlap) range lookup. */
+    public final int[] entryHiPrefix;
     /** Flat ops: [op, dst, src, ...] blocks terminated by OP_END=0. Transition ops + final ops share this array. */
     public final int[] ops;
 
@@ -142,6 +146,7 @@ public final class Tdfa {
 
     private Tdfa(int tagCount, int groupCount, int registerCount, int finalRegBase, int startState, int stateCount,
                  int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] ranges, int[] ops,
+                 int[] entryHiPrefix,
                  int[] stateEntryMask, int[] stateAcceptMask, boolean perlMode, int[] stopOnAcceptMask, boolean multiline,
                  boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset,
                  boolean[] stateIsFallback, int[] stateFallbackOpsOff) {
@@ -154,6 +159,7 @@ public final class Tdfa {
         this.stateBase = stateBase;
         this.stateFinalOpsOff = stateFinalOpsOff;
         this.ranges = ranges;
+        this.entryHiPrefix = entryHiPrefix;
         this.ops = ops;
         this.stateEntryMask = stateEntryMask;
         this.stateAcceptMask = stateAcceptMask;
@@ -691,8 +697,41 @@ public final class Tdfa {
                             + fr.backupSlotCount + " backup slots");
                 }
             }
+            // Ensure per-state entries are sorted by lo (stable: equal-lo groups
+            // keep their mask-specificity order). The builders emit sorted, but
+            // the minimizer / regopt rewrite can reorder within a state; the
+            // runtime's binary search over lo requires it.
+            for (int s = 0; s < stateCount; s++) {
+                int cnt = (minMeta[s] >>> 1) & 0xFFFF, b = minBase[s];
+                boolean sorted = true;
+                for (int i = 1; i < cnt; i++) {
+                    if (minRanges[(b + i) * 5] < minRanges[(b + i - 1) * 5]) { sorted = false; break; }
+                }
+                if (sorted) continue;
+                // Pack (lo << 32) | original index for a stable sort by lo, then
+                // permute the 5-int entry groups in place.
+                long[] keys = new long[cnt];
+                for (int i = 0; i < cnt; i++) keys[i] = ((long) minRanges[(b + i) * 5] << 32) | i;
+                java.util.Arrays.sort(keys);
+                int[] tmp = new int[cnt * 5];
+                for (int i = 0; i < cnt; i++) {
+                    int src = (int) (keys[i] & 0xFFFFFFFFL) * 5;
+                    System.arraycopy(minRanges, (b + src) * 5, tmp, i * 5, 5);
+                }
+                System.arraycopy(tmp, 0, minRanges, b * 5, cnt * 5);
+            }
+            // Rebuild the per-entry hi-prefix over the final (possibly remapped) arrays.
+            int[] minHiPrefix = new int[minRanges.length / 5];
+            for (int s = 0; s < stateCount; s++) {
+                int cnt = (minMeta[s] >>> 1) & 0xFFFF, b = minBase[s], maxHi = Integer.MIN_VALUE;
+                for (int i = 0; i < cnt; i++) {
+                    int hi = minRanges[(b + i) * 5 + 1];
+                    if (hi > maxHi) maxHi = hi;
+                    minHiPrefix[b + i] = maxHi;
+                }
+            }
             return new Tdfa(tags, nfa.groupCount, globalMaxReg, finalRegBase, 0, stateCount,
-                    minMeta, minBase, minFinalOpsOff, minRanges, flatOps,
+                    minMeta, minBase, minFinalOpsOff, minRanges, flatOps, minHiPrefix,
                     minEntryMask, minAcceptMask, perl, minStopMask, nfa.multiline,
                     nfa.unicodeWordBoundary, nfa.wordRanges,
                     hasFixed(nfa.fixedBase) ? nfa.fixedBase : null,
