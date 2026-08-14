@@ -69,12 +69,16 @@ failures (the parol-veryl / lexer-veryl-multiple cases) that weren't real
 divergences from any Java-relevant reference, just from rust/regex.
 
 Engine **identity** for `count` resolution stays `"re2"` (with `.*` fallback)
-because we are a drop-in re2j replacement — re2 is our north star. Switching
-to `java/hotspot` identity would be wrong: 19 scenarios in the corpus record
-different counts for Java vs re2 (Java's `\w` / `\d` / `\s` / `\b` default to
-Unicode-aware, Java treats `$` as end-of-line, Java's `count-spans` are UTF-16
-code units rather than UTF-8 bytes), and on 18 of those our engine matches
-re2 by design.
+because we are a drop-in **re2j** replacement — re2j's semantics are the
+contract, and re2j's counts match re2's on every scenario where both run.
+Beware the `.*` fallback: on scenarios where re2 itself is *excluded* (e.g.
+`curated/08-words/all-russian`, where re2's `\w` is ASCII-only), the fallback
+count belongs to Unicode-`\w` engines (rust/regex, python, perl) and is NOT
+our expected number — prefer the `java/hotspot` entry there. On 18 of the 19
+scenarios where Java and re2 disagree, our engine matches re2 by design
+(Java's `\w`/`\d`/`\s`/`\b` default to Unicode-aware, Java treats `$` as
+end-of-line, Java's `count-spans` are UTF-16 code units rather than UTF-8
+bytes).
 
 The **one exception** is `test/unicode/utf8/dot-matches-byte`, where re2's
 byte-orientation gives count=4 and our codepoint-oriented engine (matching

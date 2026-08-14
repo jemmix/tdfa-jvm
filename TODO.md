@@ -3,14 +3,36 @@
 Everything between here and "done." When this list is empty, the library is
 finished. See the [vision](README.md#vision).
 
+## Execution plan (locked 2026-08-14)
+
+Correctness-and-performance round, triaged by cost/benefit. Order is fixed;
+each step commits separately with the full gate: unit + re2j parity + rebar
+(220/220) + re2j-suite (≤ known failures) green; JMH-vs-baseline once P7 lands.
+
+| Step | Item | Scope |
+|---|---|---|
+| 0 | Doc truth-sync + this plan | DONE in this commit |
+| 1 | **C1** — zero-width-anchored alternation `[0,0]`-vs-`[0,1]` | last known correctness bug; clears the 2 remaining ExecTest failures; touches accept-priority logic P1 rebuilds, so it goes first |
+| 2 | **P7** — JMH regression harness | curated subset of `:benchmarks:micro` (short-input, long-scan, capture), JSON history + compare script (±10%), Gradle task; must precede all perf changes |
+| 3 | **P1** — kill O(n²) dense-match extract | anchored re-extract from `multiStateAnyMatch`'s leftmost start (design in REBAR-PARITY-PLAN §6.1); fixes both backends (ASM `find()` delegates to runner) |
+| 4 | **P2** — hot-path allocation removal | pool `regs[]`, cache `live`/`next` bitsets per instance, lazy accept snapshot instead of per-accept `regs.clone()` |
+| 5 | **P4** — Latin-1 256-entry fast-path tables | extend `asciiTarget` 128→256; gate on stateCount (memory +stateCount×512B); keep only if JMH says so |
+| 6 | **P6** — compile-time package | binary-search `CharClass.matches`, sweep-line `checkRangesDisjoint`, skip unused prectables, lazy 2nd-engine compile in re2j `Pattern`/`RE2` |
+| 7 | **P5** — TABLE_SCAN viability | **go/no-go checkpoint**: restore sorted-range invariant (restrict `sortByMaskSpecificity` to overlapping ranges, using P6's sweep-line), re-enable mode; demote if dictionary-class workloads don't justify it on the P7 baseline |
+
+Deferred (explicitly out of this round): differential fuzzing (C2), POSIX
+leftmost-longest activation (C4), literal prefilter (P3 — violates the
+single-algorithm design goal), `map`+toposort cycle rejection, deterministic
+compilation, multi-valued tags.
+
 ## Feature parity
 
 - [x] Clear all pending parity tests — 0 remaining (was 41; all cleared: POSIX classes, escape rejection, byte[] overloads, split, DISABLE_UNICODE_GROUPS, matches() anchored groups, programSize, Serializable, `\A`/`\z` multiline invariance, re2j-exact Unicode provider). See `docs/PARITY-PLAN.md`.
 - [ ] Add more parity tests — expand coverage to edge cases not yet exercised (backreference semantics, large repetition counts, nested quantifiers, Unicode line boundaries, canonical equivalents, etc.). Gate known-failing or not-yet-implemented cases with `@EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")` and a `// PENDING:` comment; run the full set with `./gradlew test -Dtdfa.pending=true`. Clear the gate as each feature lands.
-- [ ] Multiline mode `(?m)` — `^`/`$` at line boundaries
+- [x] Multiline mode `(?m)` — `^`/`$` at line boundaries (implemented `fa0e07d`; `\A`/`\z` immune via `8811166`)
 - [ ] Full POSIX leftmost-longest — activate BT22 §7 `closure_gtop` winner selection
-- [x] Unicode case folding for literal chars — CaseFoldTable handles all BMP simple case folds (28 groups with >2 members including s↔ſ, k↔K, Ω↔ω). Class-range folding still ASCII-only.
-- [ ] `\b` / `\B` Unicode word boundary semantics for supplementary codepoints
+- [x] Unicode case folding for literal chars — CaseFoldTable handles all BMP simple case folds (28 groups with >2 members including s↔ſ, k↔K, Ω↔ω). Class-range folding full-Unicode under `(?u)` (`5f22aee`).
+- [x] `\b` / `\B` Unicode word boundary semantics for supplementary codepoints (`ba60194`)
 
 ## Correctness
 
@@ -22,7 +44,15 @@ finished. See the [vision](README.md#vision).
 - [ ] **Zero-width-anchored alternation matches [0,1] instead of [0,0]** — patterns like `(?:(?:^)|.)?` and `^(?:(?:(?:a*)|b))` on inputs starting with 'b'/'c' report a 1-char match where the zero-width alternative should win. Caught by Google's ExecTest (`:tests:parity:re2j-suite:test`, `testRE2Exhaustive` + `testFowlerBasic`, both backends). Down from 3 failing ExecTest cases to 2 after the final-register dedicated-slot fix in `Optimize.registerAllocation` (which fixed `testFowlerRepetition`).
 - [x] **PERL disambiguation with `\b` in alternation** — was described as "picks wrong alternative" but root cause was a determinization flaw: `\b`-guarded transitions didn't include identifier continuations from non-`\b` branches, causing dead-end DFA paths. Fixed in commit `d133d20` by including subset-mask configs in the step input during mask-group processing.
 - [x] **Unicode case folding for single-char literals** — Fixed in commit `74ab652`. Added `CaseFoldTable` with a reverse fold table; parser uses it when `unicodeShorthand && caseInsensitive`. `(?i)s` now matches `ſ` (U+017F).
-- [ ] **`\w` / `\b` are ASCII-only, not Unicode-aware** — re2 (in UTF-8 mode, which rebar uses) treats `\w` as `[\p{L}\p{N}_]`-ish (Unicode word runes); our `R_WORD` at `Parser.java:761` is hard-coded `[_0-9A-Za-z]`. So `\b\w+\b` on Cyrillic text matches ~0.5% of words. Surfaced by rebar's `curated/08-words/all-russian` (want=107391, got=529) and `long-russian` (want=5481, got=12) after the 200 KB→16 MB haystack cap bump. Fix: build `\w` from the Unicode provider's `L|N` categories (plus `_`) when Unicode groups are enabled, and make `\b` ride on the same definition.
+- [x] ~~**`\w` / `\b` are ASCII-only, not Unicode-aware**~~ — NOT A BUG (phantom). Our
+  ASCII-default `\w`/`\d`/`\s`/`\b` is exactly re2j 1.8 semantics — the API contract.
+  re2's `\w` is also ASCII (re2 is *excluded* from rebar's `08-words/all-russian` for
+  exactly this reason — see the scenario's own analysis). The `want=107391` recorded
+  here earlier was the `.*` fallback count, which on that scenario belongs to
+  Unicode-`\w` engines (rust/regex, python, perl) — never re2's. Our test correctly
+  resolves `java/hotspot`'s 53986 (Unicode via `UNICODE_CHARACTER_CLASS` when the
+  scenario sets `unicode = true`) and passes. Unicode-`\w` remains available via
+  `(?u)` opt-in. Corrected `docs/PARITY-PLAN.md` accordingly.
 - [x] **`\p{L}{N}` returns 0 matches for N ≥ 25** — root cause was the `stateMeta` packing: the range-base field used only 15 bits (bits 17-31, max 32767), but `\p{L}` has ~1369 Unicode ranges per state, so `base` overflowed at state 24 (24×1369=32856). Fixed by splitting `base` into a separate `stateBase[]` array (full 32-bit range), removing the artificial limit. `\p{L}{256}` now compiles and matches correctly on both VM and ASM backends.
 - [ ] **`.` on non-BMP codepoints undercounts vs re2** — `.` on `💩` (U+1F4A9) gives 1 match in our engine (one codepoint); re2 gives 4 (UTF-8 bytes). Our engine is codepoint-oriented like `java.util.regex`, not byte-oriented like re2. **Resolved at the test level**: `vendor/patches/rebar/01-dot-matches-byte-codepoint.patch` rewrites the rebar scenario to record our actual count (1) under an explicit `{ engine = 're2', count = 1 }` entry — see the patch file for the rationale comment. Fundamental architecture choice, not a bug.
 - [ ] Differential fuzzing vs `re2j` and `java.util.regex` (Jazzer or custom harness)

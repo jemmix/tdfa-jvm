@@ -86,15 +86,16 @@ compile-once-match-many model; multi-pass is solving a different problem.
 - ReDoS resistance verified — `(a+)+b` on non-matching input is linear-time
 
 **Not yet verified**
-- Multiline mode `(?m)` not implemented (flag accepted, ignored)
 - No differential fuzzing yet — see [`TODO.md`](TODO.md)
 
 ## What's implemented
 
 **Parser** — PCRE-ish subset: literals, classes (`[a-z]`, `\d \w \s`, `[:alpha:]`,
 `\p{L}`), `.`, quantifiers (`* + ? {n,m}`, greedy + lazy), alternation, capturing
-& non-capturing groups, anchors, word boundaries, inline flags, atomic groups,
-possessive quantifiers. Rejects `\C` and backtracking-required syntax.
+& non-capturing groups, named groups, anchors (`^ $ \A \z`, multiline `(?m)`),
+word boundaries (Unicode + supplementary-codepoint aware under `(?u)`), inline
+flags. Rejects `\C`, atomic groups, possessive quantifiers, backreferences,
+lookaround, and other backtracking-required syntax.
 
 **Two backends**, same `Tdfa` IR:
 - **ASM** (default) — emits a specialized JVM class per regex via runtime
