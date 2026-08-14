@@ -5,6 +5,8 @@ import io.github.jemmix.tdfa.tnfa.Tnfa;
 import io.github.jemmix.tdfa.vm.MatchResult;
 
 import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.HashMap;
 
 /**
  * Executes a compiled {@link Tdfa} against an input char sequence using the flat packed arrays.
@@ -119,6 +121,7 @@ public final class TdfaRunner implements Regex.Engine {
         this.stateCount = tdfa.stateCount;
         this.stateWords = (tdfa.stateCount + 31) >>> 5;
         this.acceptBits = buildAcceptBits(tdfa);
+        this.searchDfa = new SearchDfa(this);   // after all table fields are assigned
         this.unicodeWordBoundary = tdfa.unicodeWordBoundary;
         this.wordRanges = tdfa.wordRanges;
     }
@@ -153,10 +156,13 @@ public final class TdfaRunner implements Regex.Engine {
      * keeps its existing restart behavior.
      */
     public final int leftmostStart(CharSequence input, int from) {
+        int to = input.length();
         if (fastPath) {
-            return multiStateLeftmostStart(input, from, input.length());
+            int w = triggerScan(input.toString(), from, to);
+            if (w < 0) return -1;
+            return multiStateLeftmostStart(input, w, to);
         }
-        return multiStateAnyMatch(input, from, input.length()) ? from : -1;
+        return triggerScan(input.toString(), from, to) >= 0 ? from : -1;
     }
 
     @Override public boolean matches(CharSequence input) {
@@ -174,12 +180,16 @@ public final class TdfaRunner implements Regex.Engine {
             int len = s.length();
             if (fastPath) return runStringFindFast(s, len);
             int maxStart = (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) ? 0 : len;
-            if (maxStart > 0 && !multiStateAnyMatch(s, 0, len)) return false;
-            for (int from = 0; from <= maxStart; from++) {
-                int res = runStringMatchFrom(s, from, len);
-                if (res >= 0) return true;
+            if (maxStart > 0) {
+                int w = triggerScan(s, 0, len);
+                if (w < 0) return false;
+                for (int from = w; from <= maxStart; from++) {
+                    int res = runStringMatchFrom(s, from, len);
+                    if (res >= 0) return true;
+                }
+                return false;
             }
-            return false;
+            return runStringMatchFrom(s, 0, len) >= 0;
         }
         return runGeneric(input, 0, input.length(), false) != null;
     }
@@ -208,9 +218,14 @@ public final class TdfaRunner implements Regex.Engine {
         final int[] sem = this.stateEntryMask;
         final int[] sam = this.stateAcceptMask;
         int maxStart = (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) ? 0 : to;
-        // Multi-state no-match pre-check (over-approximate masks). Only helps
-        // the unanchored case — anchored regexes have maxStart == 0.
-        if (maxStart > 0 && !multiStateAnyMatch(input, from, to)) return null;
+        // Trigger scan: memoized search-DFA pass that both proves no-match and
+        // bounds the restart loop to the kill-point window (no configuration
+        // alive before W can produce a match — see SearchDfa).
+        if (maxStart > 0) {
+            int w = triggerScan(input, from, to);
+            if (w < 0) return null;
+            if (w > from) from = w;
+        }
         for (int startSearch = from; startSearch <= maxStart; startSearch++) {
             final int[] regs = regSize == 0 ? null : new int[regSize];
             if (regs != null) Arrays.fill(regs, -1);
@@ -308,6 +323,306 @@ public final class TdfaRunner implements Regex.Engine {
         public final int matchStart, matchEnd;
         public final int[] regs;
         public MatchHolder(int s, int e, int[] r) { matchStart = s; matchEnd = e; regs = r; }
+    }
+
+    // ===== Lazy search-DFA (trigger scan with kill-point windows) =====
+
+    /**
+     * Memoized search DFA for unanchored find(): the states of the multi-state
+     * simulation (live-set bitsets, start state re-seeded every position — the
+     * implicit {@code .*?} of unanchored search) interned into flat rows so the
+     * scan loop is ~3 array loads per char instead of a bitset simulation step.
+     *
+     * <p>Row transitions are materialized lazily as deduplicated 512-codepoint
+     * blocks covering the whole BMP ({@code blocks[bits.blockIds[c >>> 9]][c & 511]});
+     * supplementary codepoints are computed per-step without caching (rare).
+     * A block cell is either the next row id, or the kill sentinel {@code KILL}
+     * meaning "every configuration just died; the next row is the pure-seed row
+     * and the caller may advance its match-window bound past this position"
+     * (sound: nothing alive from an earlier start survives a kill).
+     *
+     * <p>Caps ({@link #MAX_ROWS}/{@link #MAX_BLOCKS}) bound memory; past the
+     * caps the scan falls back to the unmemoized simulation (still tracking
+     * kill points, so the extract window stays bounded either way).
+     *
+     * <p><b>Soundness</b> — identical over-approximation to
+     * {@link #multiStateAnyMatch}: transition/entry masks are ignored (every
+     * matching target followed), and {@code accept} is any live state with the
+     * accept bit — so a trigger can fire without a real match (the exact
+     * extract confirms or continues), but it can never miss one.
+     */
+    private static final int SDFA_KILL = -2;
+    // Small re2-style lazy-DFA budgets: past the caps the scan degrades to the
+    // unmemoized simulation (still kill-point aware). The bomb shape if these
+    // are too high: live-set rows proliferate on .*-heavy patterns and each
+    // runner (one per compiled Regex) keeps its own ThreadLocal memo — dozens
+    // of live runners × MBs each OOMs the parity suites (seen: 27 live Tdfas).
+    private static final int SDFA_MAX_ROWS = 512;      // rows: ~512B each + blockIds
+    private static final int SDFA_MAX_BLOCKS = 1024;   // 1024 * 512 * 4B = 2 MB cap
+    private static final int SDFA_MIN_WINDOW = 2048;   // below: unmemoized raw scan
+
+    private final SearchDfa searchDfa;
+
+    /** Static nested: shared per-Tdfa lifetime; references the runner's tables. */
+    static final class SearchDfa {
+        final TdfaRunner r;
+        final int nw;
+        SearchDfa(TdfaRunner r) { this.r = r; this.nw = r.stateWords; }
+        final HashMap<Wrapper, Integer> rowById = new HashMap<>();    // bitset -> row id
+        final ArrayList<int[]> rowWords = new ArrayList<>();          // row id -> bitset
+        final ArrayList<int[]> rowBlockIds = new ArrayList<>();       // row id -> int[128] (lazy)
+        final ArrayList<boolean[]> rowHasBlock = new ArrayList<>();   // row id -> which blocks materialized
+        final HashMap<Wrapper, Integer> blockById = new HashMap<>();  // content -> block id
+        final ArrayList<int[]> blocks = new ArrayList<>();            // block id -> int[512]
+        boolean capped;
+
+        /** Immutable-ish int[] key wrapper with cached hash. */
+        private static final class Wrapper {
+            final int[] a; final int hash;
+            Wrapper(int[] a) { this.a = a; hash = java.util.Arrays.hashCode(a); }
+            @Override public int hashCode() { return hash; }
+            @Override public boolean equals(Object o) {
+                return o instanceof Wrapper w && java.util.Arrays.equals(a, w.a);
+            }
+        }
+
+        int internRow(int[] words) {
+            Wrapper probe = new Wrapper(words);
+            Integer id = rowById.get(probe);
+            if (id != null) return id;
+            if (rowWords.size() >= SDFA_MAX_ROWS || capped) { capped = true; return -1; }
+            int[] key = words.clone();
+            int nid = rowWords.size();
+            rowById.put(new Wrapper(key), nid);
+            rowWords.add(key);
+            rowBlockIds.add(new int[128]);
+            java.util.Arrays.fill(rowBlockIds.get(nid), -1);
+            rowHasBlock.add(new boolean[128]);
+            return nid;
+        }
+
+        boolean accept(int rowId) {
+            int[] w = rowWords.get(rowId);
+            for (int i = 0; i < nw; i++) if ((w[i] & r.acceptBits[i]) != 0) return true;
+            return false;
+        }
+
+        /** Pure step (no re-seed): all targets of live states on c, masks ignored. */
+        private int[] delta(int[] words, int c) {
+            int[] next = new int[nw];
+            for (int w = 0; w < nw; w++) {
+                int bits = words[w];
+                while (bits != 0) {
+                    int bit = Integer.numberOfTrailingZeros(bits);
+                    bits &= bits - 1;
+                    int s = (w << 5) + bit;
+                    int meta = r.stateMeta[s];
+                    int base = r.stateBase[s];
+                    int count = (meta >>> 1) & 0xFFFF;
+                    int rlo = 0, rhi = count - 1, anchor = -1;
+                    while (rlo <= rhi) {
+                        int mid = (rlo + rhi) >>> 1;
+                        if (r.ranges[(base + mid) * 5] <= c) { anchor = mid; rlo = mid + 1; }
+                        else rhi = mid - 1;
+                    }
+                    for (int i = anchor; i >= 0 && r.rhp[base + i] >= c; i--) {
+                        int mo = (base + i) * 5;
+                        if (c <= r.ranges[mo + 1]) {
+                            int t = r.ranges[mo + 2];
+                            if (t >= 0) next[t >>> 5] |= 1 << (t & 31);
+                        }
+                    }
+                }
+            }
+            return next;
+        }
+
+        /** Step with re-seed; returns the next bitset. */
+        private int[] step(int[] words, int c) {
+            int[] d = delta(words, c);
+            boolean empty = true;
+            for (int i = 0; i < nw; i++) if (d[i] != 0) { empty = false; break; }
+            if (empty) {
+                int[] seed = new int[nw];
+                seed[r.startState >>> 5] |= 1 << (r.startState & 31);
+                return seed;   // kill
+            }
+            d[r.startState >>> 5] |= 1 << (r.startState & 31);
+            return d;
+        }
+
+        /** Encoded transition for row on c: row id, SDFA_KILL, or -1 (uncached-cap). */
+        int transition(int rowId, int c) {
+            int[] words = rowWords.get(rowId);
+            int[] d = delta(words, c);
+            boolean empty = true;
+            for (int i = 0; i < nw; i++) if (d[i] != 0) { empty = false; break; }
+            if (empty) return SDFA_KILL;   // next = pure row 0 + kill
+            d[r.startState >>> 5] |= 1 << (r.startState & 31);
+            return internRow(d);
+        }
+
+        /** Materialize block {@code b} of {@code rowId}: 512 encoded transitions. */
+        private void buildBlock(int rowId, int b) {
+            int[] cells = new int[512];
+            int lo = b << 9;
+            boolean allKill = true;
+            for (int k = 0; k < 512; k++) {
+                int t = transition(rowId, lo + k);
+                if (t == -1) {
+                    // capped mid-block: mark whole block unusable (-1 cells handled by caller)
+                    rowBlockIds.get(rowId)[b] = -2;
+                    rowHasBlock.get(rowId)[b] = true;
+                    return;
+                }
+                if (t != SDFA_KILL) allKill = false;
+                cells[k] = t;
+            }
+            int blockId;
+            if (allKill) {
+                blockId = -3;   // shared all-kill block
+            } else {
+                Wrapper key = new Wrapper(cells);
+                Integer cached = blockById.get(key);
+                if (cached != null) blockId = cached;
+                else {
+                    if (blocks.size() >= SDFA_MAX_BLOCKS) {
+                        rowBlockIds.get(rowId)[b] = -2;
+                        rowHasBlock.get(rowId)[b] = true;
+                        return;
+                    }
+                    blocks.add(cells);
+                    blockId = blocks.size() - 1;
+                    blockById.put(key, blockId);
+                }
+            }
+            rowBlockIds.get(rowId)[b] = blockId;
+            rowHasBlock.get(rowId)[b] = true;
+        }
+
+        /** Encoded transition via blocks; builds lazily. c must be < 0x10000. */
+        int bmpTransition(int rowId, int c) {
+            int b = c >>> 9;
+            if (!rowHasBlock.get(rowId)[b]) buildBlock(rowId, b);
+            int blockId = rowBlockIds.get(rowId)[b];
+            if (blockId == -2) return transition(rowId, c);   // capped: compute directly
+            if (blockId == -3) return SDFA_KILL;              // all-kill block
+            return blocks.get(blockId)[c & 511];
+        }
+    }
+
+    /**
+     * Trigger scan: advance the search DFA over {@code [from, to)}; on the first
+     * position where an accepting state is (over-approximately) live, return the
+     * latest kill-point window start {@code W} ({@code from} if none) — every
+     * surviving configuration started at or after {@code W}, so the exact leftmost
+     * match lies in {@code [W, to]}. Returns -1 when no accept can fire at all.
+     */
+    private int triggerScan(String input, int from, int to) {
+        // Short scans never amortize the memo (block build = 512 interned steps);
+        // short-lived runners would allocate-and-die fat instead. Raw scan keeps
+        // the kill-point window either way.
+        SearchDfa sd = searchDfa;
+        if (to - from < SDFA_MIN_WINDOW || sd.capped) return rawScan(input, from, to, from, null);
+        int cur = 0;   // pure-seed row: interned first by construction below
+        if (sd.rowWords.isEmpty()) {
+            int[] seed = new int[sd.nw];
+            seed[startState >>> 5] |= 1 << (startState & 31);
+            if (sd.internRow(seed) != 0) throw new IllegalStateException("first row must be id 0");
+        }
+        int W = from;
+        for (int pos = from; pos < to; ) {
+            if (sd.accept(cur)) return W;
+            char c0 = input.charAt(pos);
+            int c = c0, adv = 1;
+            if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to) {
+                char c1 = input.charAt(pos + 1);
+                if (c1 >= 0xDC00 && c1 <= 0xDFFF) {
+                    c = ((c0 - 0xD800) << 10) + (c1 - 0xDC00) + 0x10000;
+                    adv = 2;
+                }
+            }
+            int v = c < 0x10000 ? sd.bmpTransition(cur, c) : sd.transition(cur, c);
+            if (v == -1) {
+                // Cap: continue unmemoized from pos WITH the exact live set —
+                // restarting from a bare seed would drop configurations started
+                // in [W, pos) that are still alive (and may accept later),
+                // masking real matches (seen as skipped leipzig matches).
+                return rawScan(input, pos, to, W, sd.rowWords.get(cur)); }
+            if (v == SDFA_KILL) { W = pos + adv; cur = 0; }
+            else cur = v;
+            pos += adv;
+        }
+        return sd.accept(cur) ? W : -1;
+    }
+
+    /**
+     * Uncapped fallback: the original multi-state simulation with kill-point
+     * tracking (kill = the pre-seed step set is empty). Returns W or -1.
+     */
+    private int rawScan(String input, int from, int to, int wIn, int[] liveIn) {
+        final int nwords = stateWords;
+        Scratch sc = SCRATCH.get();
+        int[] live = sc.live != null && sc.live.length >= nwords ? sc.live : new int[nwords];
+        int[] next = sc.next != null && sc.next.length >= nwords ? sc.next : new int[nwords];
+        sc.live = live; sc.next = next;
+        if (liveIn != null) {
+            System.arraycopy(liveIn, 0, live, 0, nwords);   // exact continuation
+        } else {
+            Arrays.fill(live, 0, nwords, 0);
+            live[startState >>> 5] |= 1 << (startState & 31);
+        }
+        final int[] sm = stateMeta, rg = ranges, ab = acceptBits;
+        int W = wIn;
+        for (int pos = from; pos <= to; pos++) {
+            for (int w = 0; w < nwords; w++) {
+                if ((live[w] & ab[w]) != 0) return W;
+            }
+            if (pos == to) break;
+            char c0 = input.charAt(pos);
+            int c = c0, adv = 1;
+            if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to) {
+                char c1 = input.charAt(pos + 1);
+                if (c1 >= 0xDC00 && c1 <= 0xDFFF) {
+                    c = ((c0 - 0xD800) << 10) + (c1 - 0xDC00) + 0x10000;
+                    adv = 2;
+                }
+            }
+            Arrays.fill(next, 0, nwords, 0);
+            boolean empty = true;
+            for (int w = 0; w < nwords; w++) {
+                int bits = live[w];
+                while (bits != 0) {
+                    int bit = Integer.numberOfTrailingZeros(bits);
+                    bits &= bits - 1;
+                    int s = (w << 5) + bit;
+                    int meta = sm[s];
+                    int base = stateBase[s];
+                    int count = (meta >>> 1) & 0xFFFF;
+                    int rlo = 0, rhi = count - 1, anchor = -1;
+                    while (rlo <= rhi) {
+                        int mid = (rlo + rhi) >>> 1;
+                        if (rg[(base + mid) * 5] <= c) { anchor = mid; rlo = mid + 1; }
+                        else rhi = mid - 1;
+                    }
+                    for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+                        int mo = (base + i) * 5;
+                        if (c <= rg[mo + 1]) {
+                            int t = rg[mo + 2];
+                            if (t >= 0) { next[t >>> 5] |= 1 << (t & 31); empty = false; }
+                        }
+                    }
+                }
+            }
+            // Always re-seed: after a kill the live set must be the pure seed
+            // (match may start at pos+1), not empty — an empty live set would
+            // kill every subsequent step too and mask real matches.
+            next[startState >>> 5] |= 1 << (startState & 31);
+            if (empty) W = pos + adv;
+            int[] tmp = live; live = next; next = tmp;
+            if (adv == 2) pos++;
+        }
+        return -1;
     }
 
     // ===== Multi-state parallel simulation (unanchored search) =====
@@ -594,7 +909,7 @@ public final class TdfaRunner implements Regex.Engine {
 
     /** Unanchored boolean search via single-pass multi-state simulation. O(n × |states|). */
     private boolean runStringFindFast(String input, int to) {
-        return multiStateAnyMatch(input, 0, to);
+        return triggerScan(input, 0, to) >= 0;
     }
 
     /** Fast extract with register updates. */
@@ -603,13 +918,16 @@ public final class TdfaRunner implements Regex.Engine {
         //    (match at/near the start) never needs the simulation at all.
         MatchHolder h = tryStartFast(input, from, to, from);
         if (h != null) return h;
-        // 2) No match starting at `from`: find the leftmost start via the
-        // origin-tracking multi-state simulation (O(n × |states|), early-stops
-        // when the best origin can no longer be beaten — immediately for dense
-        // matches). The old shape retried every failed start position with a
-        // full walk: O(n) restarts × O(n) walk = O(n²) on dense-match regexes
-        // like [a-zA-Z]+ing.
-        int leftmost = multiStateLeftmostStart(input, from, to);
+        // 2) No match starting at `from`: trigger-scan to bound the window
+        // (kill-point W — nothing alive from earlier starts), then find the
+        // leftmost start via the origin-tracking multi-state simulation over
+        // just [W, to] (O(window × |states|); early-stops when the best origin
+        // can no longer be beaten). The old shape retried every failed start
+        // position with a full walk: O(n) restarts × O(n) walk = O(n²) on
+        // dense-match regexes like [a-zA-Z]+ing.
+        int w = triggerScan(input, from, to);
+        if (w < 0) return null;
+        int leftmost = multiStateLeftmostStart(input, w, to);
         if (leftmost < 0) return null;
         h = tryStartFast(input, leftmost, to, from);
         if (h != null) return h;
