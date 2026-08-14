@@ -41,8 +41,20 @@ public final class TdfaRunner implements Regex.Engine {
     private final boolean[] stateIsFallback;
     private final int[] stateFallbackOpsOff;
     private final boolean rangesDisjoint;
-    private final int[] asciiTarget;    // flat: [state * 128 + c] → target state (-1 = dead)
-    private final int[] asciiRangeFlat; // flat: [state * 128 + c] → range index (-1 = dead)
+    /** Tight 128-entry table for the SIMULATIONS: constant stride keeps the
+     *  hot loop's machine code identical to the pre-Latin-1 shape (a 256-stride
+     *  table measurably slowed pure-ASCII scans ~15%); codepoints >= 128 take
+     *  the binary-search branch. */
+    private final int[] asciiTarget;
+    /** Wide Latin-1 (256-entry) table for the WALK paths (extract/matches),
+     *  where the doubled span buys direct dispatch on accented text. Same
+     *  object as asciiTarget (128) when the DFA is too large for wide tables. */
+    private final int[] latinTarget;
+    private final int[] asciiRangeFlat; // flat: [state * latinLimit + c] → range index (-1 = dead)
+    /** Table span in codepoints: 256 (Latin-1) normally, 128 when stateCount is
+     *  large enough that the doubled tables cost real memory (2 tables x
+     *  limit ints per state; 21K-state dictionary DFAs would pay ~42 MB at 256). */
+    private final int latinLimit;
     private final boolean fastPath;     // true = no masks + disjoint + not multiline
     private final int stateCount;
     private final int stateWords;       // # of 32-bit words in state bitsets
@@ -66,6 +78,9 @@ public final class TdfaRunner implements Regex.Engine {
     }
     private static final ThreadLocal<Scratch> SCRATCH = ThreadLocal.withInitial(Scratch::new);
 
+    /** DFAs at or below this state count get 256-entry (Latin-1) lookup tables; larger stay 128. */
+    private static final int LATIN1_MAX_STATES = 8192;
+
     public TdfaRunner(Tnfa nfa) {
         this(Tdfa.compile(nfa));
     }
@@ -83,12 +98,15 @@ public final class TdfaRunner implements Regex.Engine {
         this.startState = tdfa.startState;
         this.startStateEntryMask = tdfa.startStateEntryMask;
         this.rangesDisjoint = checkRangesDisjoint(tdfa);
+        this.latinLimit = tdfa.stateCount <= LATIN1_MAX_STATES ? 256 : 128;
         if (rangesDisjoint) {
-            this.asciiRangeFlat = buildAsciiRangeFlat(tdfa);
-            this.asciiTarget = buildAsciiTarget(tdfa);
+            this.asciiRangeFlat = buildAsciiRangeFlat(tdfa, latinLimit);
+            this.latinTarget = buildAsciiTarget(tdfa, latinLimit);
+            this.asciiTarget = latinLimit == 128 ? latinTarget : buildAsciiTarget(tdfa, 128);
         } else {
             this.asciiRangeFlat = null;
             this.asciiTarget = null;
+            this.latinTarget = null;
         }
         this.fastPath = computeFastPath(tdfa);
         this.perlMode = tdfa.perlMode;
@@ -551,12 +569,14 @@ public final class TdfaRunner implements Regex.Engine {
     private boolean runStringAnchoredFast(String input) {
         final int to = input.length();
         final int[] sm = this.stateMeta;
-        final int[] at = this.asciiTarget;
+        final int[] at = this.latinTarget;
+        final int tblLimit = this.latinLimit;
         int state = startState;
+        final int limit = this.latinLimit;
         for (int pos = 0; pos < to; pos++) {
             char c = input.charAt(pos);
-            if (c >= 128) return runStringAnchored(input) >= 0;
-            state = at[state * 128 + c];
+            if (c >= limit) return runStringAnchored(input) >= 0;
+            state = at[state * limit + c];
             if (state < 0) return false;
         }
         return (sm[state] & 1) != 0;
@@ -643,8 +663,8 @@ public final class TdfaRunner implements Regex.Engine {
             }
             if (pos == to) break;
             char c = input.charAt(pos);
-            if (c >= 128) return runStringExtract(input, originFrom, to);
-            int ri = arf[state * 128 + c];
+            if (c >= latinLimit) return runStringExtract(input, originFrom, to);
+            int ri = arf[state * latinLimit + c];
             if (ri < 0) break;
             int mo = (stateBase[state] + ri) * 5;
             int target = rg[mo + 2];
@@ -703,7 +723,7 @@ public final class TdfaRunner implements Regex.Engine {
             boolean matched = false;
             if (rangesDisjoint) {
                 // ASCII fast path: direct table lookup
-                int ri = c < 128 ? asciiRangeFlat[state * 128 + c] : -2;
+                int ri = c < latinLimit ? asciiRangeFlat[state * latinLimit + c] : -2;
                 if (ri >= 0) {
                     int mo = (base + ri) * 5;
                     int target = rg[mo + 2];
@@ -1095,10 +1115,15 @@ public final class TdfaRunner implements Regex.Engine {
         return bits;
     }
 
-    /** Build flat per-state ASCII target lookup: [state * 128 + c] → target state (-1 = dead). */
-    private static int[] buildAsciiTarget(Tdfa tdfa) {
+    /**
+     * Build flat per-state target lookup: {@code [state * limit + c] → target state}
+     * (-1 = dead). {@code limit} is 256 (Latin-1) for DFAs under
+     * {@link #LATIN1_MAX_STATES} states, else 128. Codepoints 128..255 are single
+     * UTF-16 units and never surrogate halves, so indexing them directly is exact.
+     */
+    private static int[] buildAsciiTarget(Tdfa tdfa, int limit) {
         int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
-        int[] flat = new int[tdfa.stateCount * 128];
+        int[] flat = new int[tdfa.stateCount * limit];
         java.util.Arrays.fill(flat, -1);
         for (int s = 0; s < tdfa.stateCount; s++) {
             int meta = sm[s];
@@ -1106,18 +1131,18 @@ public final class TdfaRunner implements Regex.Engine {
             for (int i = 0; i < cnt; i++) {
                 int o = (base + i) * 5;
                 int lo = Math.max(rg[o], 0);
-                int hi = Math.min(rg[o + 1], 127);
+                int hi = Math.min(rg[o + 1], limit - 1);
                 int target = rg[o + 2];
-                for (int c = lo; c <= hi; c++) flat[s * 128 + c] = target;
+                for (int c = lo; c <= hi; c++) flat[s * limit + c] = target;
             }
         }
         return flat;
     }
 
-    /** Build flat per-state ASCII range-index lookup: [state * 128 + c] → range index (-1 = dead). */
-    private static int[] buildAsciiRangeFlat(Tdfa tdfa) {
+    /** Build flat per-state range-index lookup: {@code [state * limit + c] → range index} (-1 = dead). */
+    private static int[] buildAsciiRangeFlat(Tdfa tdfa, int limit) {
         int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
-        int[] flat = new int[tdfa.stateCount * 128];
+        int[] flat = new int[tdfa.stateCount * limit];
         java.util.Arrays.fill(flat, -1);
         for (int s = 0; s < tdfa.stateCount; s++) {
             int meta = sm[s];
@@ -1125,8 +1150,8 @@ public final class TdfaRunner implements Regex.Engine {
             for (int i = 0; i < cnt; i++) {
                 int o = (base + i) * 5;
                 int lo = Math.max(rg[o], 0);
-                int hi = Math.min(rg[o + 1], 127);
-                for (int c = lo; c <= hi; c++) flat[s * 128 + c] = i;
+                int hi = Math.min(rg[o + 1], limit - 1);
+                for (int c = lo; c <= hi; c++) flat[s * limit + c] = i;
             }
         }
         return flat;

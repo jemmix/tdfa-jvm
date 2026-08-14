@@ -96,9 +96,13 @@ public final class QuickBench {
         Regex vmSparse = Regex.compile("z[0-9]{3}q", EngineFactory.VM);
         Regex asmSparse = Regex.compile("z[0-9]{3}q", EngineFactory.ASM);
 
+        Regex vmLatin = Regex.compile("[a-zA-Z\u00e0-\u00ff]+ement", EngineFactory.VM);
+        Regex asmLatin = Regex.compile("[a-zA-Z\u00e0-\u00ff]+ement", EngineFactory.ASM);
+
         String noMatch = rep("the quick brown fox jumps over lazy dogs 0123 ", 1 << 14) + "tail";
         String dense = DENSE_INPUT;
         String sparse = SPARSE_INPUT;
+        String latin1 = LATIN1_INPUT;
 
         String compileRe = "(\\w+)@(\\w+)\\.(com|org|net)|#([0-9a-f]{6})|\\bword\\b";
 
@@ -113,6 +117,8 @@ public final class QuickBench {
         ops.add(new Op("findAllDense.asm", () -> findAll(asmDense, dense)));
         ops.add(new Op("findAllSparse.vm", () -> findAll(vmSparse, sparse)));
         ops.add(new Op("findAllSparse.asm", () -> findAll(asmSparse, sparse)));
+        ops.add(new Op("findAllLatin1.vm", () -> findAll(vmLatin, latin1)));
+        ops.add(new Op("findAllLatin1.asm", () -> findAll(asmLatin, latin1)));
         ops.add(new Op("compile.vm", () -> System.identityHashCode(Regex.compile(compileRe, EngineFactory.VM))));
         ops.add(new Op("compile.asm", () -> System.identityHashCode(Regex.compile(compileRe, EngineFactory.ASM))));
         return ops;
@@ -131,6 +137,7 @@ public final class QuickBench {
 
     static final String DENSE_INPUT = rep("running singing hopping jumping coding ", 1 << 14);
     static final String SPARSE_INPUT = rep("lorem ipsum dolor sit z123q amet consec z987q tetur elit ", 1 << 14);
+    static final String LATIN1_INPUT = rep("d\u00e9veloppement \u00e9tablissement \u00e9v\u00e9nement diff\u00e9rent \u00e0 c\u00f4t\u00e9 engagement ", 1 << 14);
 
     static String rep(String unit, int len) {
         StringBuilder b = new StringBuilder(len + unit.length());
@@ -230,6 +237,8 @@ public final class QuickBench {
         m.put("findAllDense.asm", jurFindAll("[a-z]+ing", DENSE_INPUT));
         m.put("findAllSparse.vm", jurFindAll("z[0-9]{3}q", SPARSE_INPUT));
         m.put("findAllSparse.asm", jurFindAll("z[0-9]{3}q", SPARSE_INPUT));
+        m.put("findAllLatin1.vm", jurFindAll("[a-zA-Z\u00e0-\u00ff]+ement", LATIN1_INPUT));
+        m.put("findAllLatin1.asm", jurFindAll("[a-zA-Z\u00e0-\u00ff]+ement", LATIN1_INPUT));
         return m;
     }
 
