@@ -17,6 +17,8 @@ dependencies {
 test {
     useJUnitPlatform()
     jvmArgs '-Xmx512m', '-XX:+HeapDumpOnOutOfMemoryError'
+    // Forward -Dtdfa.pending=true so known-failing (PENDING-gated) tests run.
+    systemProperty 'tdfa.pending', System.getProperty('tdfa.pending', 'false')
     testLogging {
         events 'failed', 'standardOut', 'standardError'
         exceptionFormat 'full'
