@@ -4,7 +4,6 @@ import io.github.jemmix.tdfa.tdfa.Disambiguation;
 import io.github.jemmix.tdfa.unicode.CaseFoldTable;
 import io.github.jemmix.tdfa.vm.MatchResult;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -20,13 +19,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <ul>
  *   <li><b>Literal fold</b> — {@code (?iu)s} matches {@code ſ} (U+017F) via
  *       {@link CaseFoldTable}. Without {@code (?u)}, folding is ASCII-only.</li>
- *   <li><b>Char-class range fold</b> — {@code (?iu)[r-t]} SHOULD include
- *       {@code ſ} (fold-equivalent of {@code s} which is in the range), but
- *       {@code Parser.parseClass} only does ASCII A-Z/a-z expansion. BUG:
- *       {@code ſ} is not included.</li>
- *   <li><b>Negated class fold</b> — {@code (?iu)[^s]} SHOULD exclude
- *       {@code ſ} (fold-equivalent of {@code s}), but doesn't. BUG:
- *       {@code ſ} matches {@code [^s]}.</li>
+ *   <li><b>Char-class range fold</b> — {@code (?iu)[r-t]} includes
+ *       {@code ſ} (fold-equivalent of {@code s} which is in the range) via
+ *       {@code CaseFoldTable} expansion of every member codepoint.</li>
+ *   <li><b>Negated class fold</b> — {@code (?iu)[^s]} excludes
+ *       {@code ſ} (fold members are added to the positive set before
+ *       negation applies).</li>
  * </ul>
  */
 class CaseInsensitiveTest {
@@ -157,21 +155,17 @@ class CaseInsensitiveTest {
         assertThat(m.end(0)).isEqualTo(2);
     }
 
-    // ===== Char-class range fold (BUG: ASCII-only) =====
+    // ===== Char-class range fold =====
 
     /**
-     * BUG: {@code (?iu)[r-t]} should include {@code ſ} (U+017F) because
+     * {@code (?iu)[r-t]} includes {@code ſ} (U+017F) because
      * {@code s} is in the range [r,t] and {@code ſ} is fold-equivalent to
      * {@code s}. Currently {@code parseClass} only adds ASCII a-z/A-z
      * counterparts. java.util.regex matches ſ here; our engine does not.
      */
-    // PENDING: parseClass folds class ranges ASCII-only. Under (?iu), [r-t] should
-    // include ſ (U+017F, fold-equivalent of s in range). java.util.regex matches.
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")
     @ParameterizedTest @MethodSource("factories")
     void rangeClassShouldIncludeFoldEquivalent(EngineFactory f) {
         MatchResult m = match("(?iu)[r-t]", "\u017F", f);
-        // TODO: fix parseClass to use CaseFoldTable for range expansion under (?iu)
         assertThat(m)
                 .as("(?iu)[r-t] should match ſ (fold-equiv of s in range) — BUG: returns null")
                 .isNotNull();
@@ -183,21 +177,17 @@ class CaseInsensitiveTest {
         assertThat(match("(?iu)[A-Z]", "g", f)).isNotNull();
     }
 
-    // ===== Negated class fold (BUG: missing Unicode fold equivalents) =====
+    // ===== Negated class fold =====
 
     /**
-     * BUG: {@code (?iu)[^s]} should NOT match {@code ſ} (U+017F) because
+     * {@code (?iu)[^s]} must NOT match {@code ſ} (U+017F) because
      * {@code ſ} is fold-equivalent to {@code s}. The negated class should
      * exclude all fold-equivalents. java.util.regex returns null (no match);
      * our engine incorrectly matches.
      */
-    // PENDING: negated class doesn't exclude Unicode fold equivalents. Under (?iu),
-    // [^s] should NOT match ſ. java.util.regex returns null.
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")
     @ParameterizedTest @MethodSource("factories")
     void negatedClassShouldExcludeFoldEquivalent(EngineFactory f) {
         MatchResult m = match("(?iu)[^s]", "\u017F", f);
-        // TODO: fix parseClass negated-class fold to use CaseFoldTable
         assertThat(m)
                 .as("(?iu)[^s] should NOT match ſ — BUG: returns non-null")
                 .isNull();

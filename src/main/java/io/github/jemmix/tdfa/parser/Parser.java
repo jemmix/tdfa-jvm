@@ -323,26 +323,30 @@ public final class Parser {
         expect(']');
         int[] arr = ranges.stream().mapToInt(Integer::intValue).toArray();
         if (caseInsensitive) {
-            // For each user range [lo,hi], add the case-folded counterparts of
-            // any ASCII letter sub-range. The previous implementation computed
-            // toLowerCase(hi)/toUpperCase(hi) on the ENDPOINTS, which produced
-            // nonsense spans like [@-a] for [@-A] (covering all of [\]^_` in
-            // between). The correct semantics: for any sub-range overlapping
-            // A-Z, add the lowercase equivalent; for any overlapping a-z, add
-            // the uppercase equivalent. Non-letter chars (including _ @ ` etc.)
-            // have no case fold and contribute nothing.
-            //
-            // Pending full Unicode case folding for arbitrary class ranges;
-            // currently ASCII-only (A-Z/a-z). Unicode property classes like
-            // \p{Greek} under (?i) use foldTableFor() separately.
+            // Add the case-folded counterparts of every member of every range.
+            // Under (?u) this is full Unicode simple folding via CaseFoldTable
+            // (s ↔ ſ, k ↔ K, Ω ↔ ω, ...; ASCII pairs a ↔ A come through the same
+            // table). Without (?u), folding is ASCII-only (re2j semantics): for
+            // any sub-range overlapping A-Z add the lowercase equivalent, and
+            // for any overlapping a-z add the uppercase equivalent. Fold members
+            // are added to the POSITIVE set before CharClass negation applies,
+            // so negated classes exclude fold equivalents automatically
+            // ((?iu)[^s] doesn't match ſ).
             List<Integer> exp = new ArrayList<>();
             for (int i = 0; i < arr.length; i += 2) {
                 int lo = arr[i], hi = arr[i + 1];
                 exp.add(lo); exp.add(hi);
-                int aStart = Math.max(lo, 'A'), aEnd = Math.min(hi, 'Z');
-                if (aStart <= aEnd) { exp.add(aStart + 32); exp.add(aEnd + 32); }  // A-Z → a-z
-                int laStart = Math.max(lo, 'a'), laEnd = Math.min(hi, 'z');
-                if (laStart <= laEnd) { exp.add(laStart - 32); exp.add(laEnd - 32); }  // a-z → A-Z
+                if (unicodeShorthand) {
+                    for (int cp = Math.max(lo, 0); cp <= hi && cp <= 0xFFFF; cp++) {
+                        int[] fr = CaseFoldTable.foldRanges(cp);
+                        if (fr != null) for (int v : fr) exp.add(v);
+                    }
+                } else {
+                    int aStart = Math.max(lo, 'A'), aEnd = Math.min(hi, 'Z');
+                    if (aStart <= aEnd) { exp.add(aStart + 32); exp.add(aEnd + 32); }  // A-Z → a-z
+                    int laStart = Math.max(lo, 'a'), laEnd = Math.min(hi, 'z');
+                    if (laStart <= laEnd) { exp.add(laStart - 32); exp.add(laEnd - 32); }  // a-z → A-Z
+                }
             }
             arr = exp.stream().mapToInt(Integer::intValue).toArray();
         }
