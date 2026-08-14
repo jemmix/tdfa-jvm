@@ -99,6 +99,30 @@ public final class TdfaRunner implements Regex.Engine {
         return multiStateAnyMatch(input, from, input.length());
     }
 
+    /**
+     * Leftmost position in {@code [from, input.length())} at which a match
+     * starts, or {@code -1} if there is no match anywhere.
+     *
+     * <p>For fast-path DFAs (disjoint ranges, no assertion masks — see
+     * {@link #computeFastPath}) this runs the multi-state simulation with
+     * per-state origin tracking: {@code origin[s]} is the smallest start
+     * position from which {@code s} is currently reachable. The first
+     * accept-live position yields the answer. Early-stops once the best
+     * origin can no longer be beaten ({@code best <= pos} and
+     * {@code best <= min live origin}): future seeds have origin {@code > pos}.
+     *
+     * <p>Otherwise (mask-bearing DFAs, where the sim over-approximates) it
+     * degrades to a boolean answer — {@code from} if any match might exist,
+     * {@code -1} if definitely none — so the caller's exact extract loop
+     * keeps its existing restart behavior.
+     */
+    public final int leftmostStart(CharSequence input, int from) {
+        if (fastPath) {
+            return multiStateLeftmostStart(input, from, input.length());
+        }
+        return multiStateAnyMatch(input, from, input.length()) ? from : -1;
+    }
+
     @Override public boolean matches(CharSequence input) {
         if (input instanceof String) {
             String s = (String) input;
@@ -346,6 +370,150 @@ public final class TdfaRunner implements Regex.Engine {
         return false;
     }
 
+    /**
+     * Multi-state simulation with per-state origin tracking; returns the
+     * leftmost start position of any match in {@code [from, to]}, or -1.
+     *
+     * <p>Only called when {@link #fastPath} holds (disjoint ranges, no entry/
+     * accept/required masks, not multiline) — otherwise the mask-free
+     * transition-following would over-approximate. {@link #stopOnAcceptMask}
+     * (Perl early-stop) only shortens matches, never removes them, so it is
+     * safely ignored here: accept-live at p with origin o implies a match
+     * starting at o exists.
+     *
+     * <p>{@code origin[s]} = smallest seed position from which s is live.
+     * The start state is re-seeded at every position (unanchored search), so
+     * its origin is always {@code from}; state bits and origins move in lockstep:
+     * {@code next} is zeroed each step, so "bit already set in next" exactly
+     * identifies re-reachable states (origin = min) vs first-arrival (origin = set).
+     */
+    private int multiStateLeftmostStart(CharSequence input, int from, int to) {
+        final int nwords = stateWords;
+        if (nwords == 0) return -1;
+        final int[] sm = stateMeta;
+        final int[] rg = ranges;
+        final int[] at = asciiTarget;
+        final int[] ab = acceptBits;
+        final int ss = startState;
+
+        int[] live = new int[nwords];
+        int[] next = new int[nwords];
+        // Origins are DOUBLE-BUFFERED with the state sets: origin[] pairs with
+        // live[], originNext[] with next[]. All arrivals in a step write to
+        // originNext (bit test against next), while old-live origins in origin[]
+        // stay readable for the whole step — a single buffer would corrupt a
+        // state's own origin mid-step when another path's arrival (or the fresh
+        // re-seed) targets a still-live state before its self-loop reads it
+        // (seen as +1/step origin drift on (\d+)\.(\d+)... over "ip=192.168.1.77").
+        // Stale originNext values are never read: a bit present in next implies
+        // a this-step write (first arrival sets, later arrivals min-merge).
+        int[] origin = new int[stateCount];
+        int[] originNext = new int[stateCount];
+        live[ss >>> 5] |= 1 << (ss & 31);
+        origin[ss] = from;
+
+        int best = -1;
+        for (int pos = from; pos <= to; pos++) {
+            // accept check with origin tracking
+            for (int w = 0; w < nwords; w++) {
+                int bits = live[w] & ab[w];
+                while (bits != 0) {
+                    int bit = Integer.numberOfTrailingZeros(bits);
+                    bits &= bits - 1;
+                    int s = (w << 5) + bit;
+                    if (best < 0 || origin[s] < best) best = origin[s];
+                }
+            }
+            if (best >= 0) {
+                // Can any future accept beat `best`? Future accept origins are
+                // either origins of currently-live states or seeds > pos.
+                // best==from is the common dense case and stops immediately.
+                int minLive = Integer.MAX_VALUE;
+                for (int w = 0; w < nwords && minLive > best; w++) {
+                    int bits = live[w];
+                    while (bits != 0) {
+                        int bit = Integer.numberOfTrailingZeros(bits);
+                        bits &= bits - 1;
+                        int s = (w << 5) + bit;
+                        if (origin[s] < minLive) minLive = origin[s];
+                    }
+                }
+                if (best <= pos && best <= minLive) return best;
+            }
+            if (pos == to) break;
+
+            char c0 = input.charAt(pos);
+            int c = c0;
+            int adv = 1;
+            if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to) {
+                char c1 = input.charAt(pos + 1);
+                if (c1 >= 0xDC00 && c1 <= 0xDFFF) {
+                    c = ((c0 - 0xD800) << 10) + (c1 - 0xDC00) + 0x10000;
+                    adv = 2;
+                }
+            }
+
+            Arrays.fill(next, 0);
+            if (at != null && c < 128) {
+                for (int w = 0; w < nwords; w++) {
+                    int bits = live[w];
+                    while (bits != 0) {
+                        int bit = Integer.numberOfTrailingZeros(bits);
+                        bits &= bits - 1;
+                        int s = (w << 5) + bit;
+                        int target = at[s * 128 + c];
+                        if (target >= 0) setOrigin(next, originNext, target, origin[s]);
+                    }
+                }
+            } else {
+                for (int w = 0; w < nwords; w++) {
+                    int bits = live[w];
+                    while (bits != 0) {
+                        int bit = Integer.numberOfTrailingZeros(bits);
+                        bits &= bits - 1;
+                        int s = (w << 5) + bit;
+                        int meta = sm[s];
+                        int base = stateBase[s];
+                        int count = (meta >>> 1) & 0xFFFF;
+                        // rangesDisjoint == true on the fast path — binary search
+                        int rlo = 0, rhi = count - 1;
+                        while (rlo <= rhi) {
+                            int mid = (rlo + rhi) >>> 1;
+                            int mo = (base + mid) * 5;
+                            if (c < rg[mo]) { rhi = mid - 1; continue; }
+                            if (c > rg[mo + 1]) { rlo = mid + 1; continue; }
+                            int target = rg[mo + 2];
+                            if (target >= 0) setOrigin(next, originNext, target, origin[s]);
+                            break;
+                        }
+                    }
+                }
+            }
+            setOrigin(next, originNext, ss, pos + adv);  // unanchored re-seed (min-merge if already re-added)
+
+            int[] tmp = live; live = next; next = tmp;
+            int[] to2 = origin; origin = originNext; originNext = to2;
+            if (adv == 2) pos++;
+        }
+        return best;
+    }
+
+    /**
+     * Set state {@code s} in {@code next} (if absent) with origin {@code o} in
+     * {@code originNext}; min-merge if already present. {@code originNext} is
+     * only read for states whose bit is set in {@code next} (implying a
+     * this-step write), so stale values are never observed.
+     */
+    private static void setOrigin(int[] next, int[] originNext, int s, int o) {
+        int w = s >>> 5, b = 1 << (s & 31);
+        if ((next[w] & b) == 0) {
+            next[w] |= b;
+            originNext[s] = o;
+        } else if (o < originNext[s]) {
+            originNext[s] = o;
+        }
+    }
+
     // ===== Fast paths: no masks, disjoint ranges, ASCII-only =====
 
     /**
@@ -374,60 +542,82 @@ public final class TdfaRunner implements Regex.Engine {
 
     /** Fast extract with register updates. */
     private MatchHolder runStringExtractFast(String input, int from, int to) {
-        // Multi-state no-match pre-check: avoids the O(n²) outer-loop scan when
-        // the regex doesn't match anywhere in the haystack. O(n × |states|).
-        if (!multiStateAnyMatch(input, from, to)) return null;
+        // 1) Try ONE single-start walk from `from` — the common short-input case
+        //    (match at/near the start) never needs the simulation at all.
+        MatchHolder h = tryStartFast(input, from, to, from);
+        if (h != null) return h;
+        // 2) No match starting at `from`: find the leftmost start via the
+        // origin-tracking multi-state simulation (O(n × |states|), early-stops
+        // when the best origin can no longer be beaten — immediately for dense
+        // matches). The old shape retried every failed start position with a
+        // full walk: O(n) restarts × O(n) walk = O(n²) on dense-match regexes
+        // like [a-zA-Z]+ing.
+        int leftmost = multiStateLeftmostStart(input, from, to);
+        if (leftmost < 0) return null;
+        h = tryStartFast(input, leftmost, to, from);
+        if (h != null) return h;
+        // 3) Defensive: the sim and the walk must agree on fast-path DFAs; if
+        // they ever don't, fall back to the old restart shape rather than
+        // return a wrong null.
+        for (int s = leftmost + 1; s <= to; s++) {
+            h = tryStartFast(input, s, to, from);
+            if (h != null) return h;
+        }
+        return null;
+    }
+
+    /**
+     * One single-start extract walk (no restart loop); null if no match starts
+     * exactly at {@code start}. {@code originFrom} is the caller's search
+     * origin — only used to rerun the generic path when a non-ASCII char is
+     * met mid-walk (the generic path re-does the search from there).
+     */
+    private MatchHolder tryStartFast(String input, int start, int to, int originFrom) {
         final int[] sm = this.stateMeta;
         final int[] arf = this.asciiRangeFlat;
         final int[] rg = this.ranges;
         final int[] op = this.ops;
-        final int[] sfo = this.stateFinalOpsOff;
         // PERL stopOnAccept: pre-load the mask table when in Perl mode so the
         // inner loop can short-circuit on first accepting state (matching the
-        // slow path's leftmost-first semantics). Without this, the inner loop
-        // walks the DFA all the way to `to` tracking lastAcceptPos — O(n) per
-        // find × O(n) finds = O(n²) on dense-match regexes like [a-zA-Z]+ing.
-        // See docs/REBAR-SPEEDUP-PLAN.md §Tier-2 #3.
+        // slow path's leftmost-first semantics). See docs/REBAR-SPEEDUP-PLAN.md §Tier-2 #3.
         final boolean pm = this.perlMode;
         final int[] soa = this.stopOnAcceptMask;
-        for (int startSearch = from; startSearch <= to; startSearch++) {
-            final int[] regs = regSize == 0 ? null : new int[regSize];
-            if (regs != null) Arrays.fill(regs, -1);
-            int state = startState;
-            int lastAcceptPos = -1, lastAcceptState = -1;
-            boolean haveAccept = false;
-            int posFlags = -1; // lazy: -1 means not yet computed for current pos
-            int pos = startSearch;
-            for (; pos <= to; pos++) {
-                int meta = sm[state];
-                if ((meta & 1) != 0) {
-                    haveAccept = true; lastAcceptPos = pos; lastAcceptState = state;
-                    if (pm) {
-                        posFlags = positionFlags(input, pos, to);
-                        int stopMask = soa[state * 64 + posFlags];
-                        if (stopOnAccept(stopMask, posFlags)) break;
-                    }
+        final int[] regs = regSize == 0 ? null : new int[regSize];
+        if (regs != null) Arrays.fill(regs, -1);
+        int state = startState;
+        int lastAcceptPos = -1, lastAcceptState = -1;
+        boolean haveAccept = false;
+        int posFlags = -1; // lazy: -1 means not yet computed for current pos
+        int pos = start;
+        for (; pos <= to; pos++) {
+            int meta = sm[state];
+            if ((meta & 1) != 0) {
+                haveAccept = true; lastAcceptPos = pos; lastAcceptState = state;
+                if (pm) {
+                    posFlags = positionFlags(input, pos, to);
+                    int stopMask = soa[state * 64 + posFlags];
+                    if (stopOnAccept(stopMask, posFlags)) break;
                 }
-                if (pos == to) break;
-                char c = input.charAt(pos);
-                if (c >= 128) return runStringExtract(input, from, to);
-                int ri = arf[state * 128 + c];
-                if (ri < 0) break;
-                int mo = (stateBase[state] + ri) * 5;
-                int target = rg[mo + 2];
-                if (target < 0) break;
-                if (regs != null) {
-                    int opsOff = rg[mo + 3];
-                    if (opsOff != 0) applyOps(op, opsOff, regs, pos);
-                }
-                state = target;
             }
-            if (haveAccept) {
-                int[] r = regs == null ? new int[0] : regs.clone();
-                int foff = pickFinalOpsOff(lastAcceptState, lastAcceptPos, pos);
-                if (foff != 0 && regs != null) applyOps(op, foff, r, lastAcceptPos);
-                return new MatchHolder(startSearch, lastAcceptPos, r);
+            if (pos == to) break;
+            char c = input.charAt(pos);
+            if (c >= 128) return runStringExtract(input, originFrom, to);
+            int ri = arf[state * 128 + c];
+            if (ri < 0) break;
+            int mo = (stateBase[state] + ri) * 5;
+            int target = rg[mo + 2];
+            if (target < 0) break;
+            if (regs != null) {
+                int opsOff = rg[mo + 3];
+                if (opsOff != 0) applyOps(op, opsOff, regs, pos);
             }
+            state = target;
+        }
+        if (haveAccept) {
+            int[] r = regs == null ? new int[0] : regs.clone();
+            int foff = pickFinalOpsOff(lastAcceptState, lastAcceptPos, pos);
+            if (foff != 0 && regs != null) applyOps(op, foff, r, lastAcceptPos);
+            return new MatchHolder(start, lastAcceptPos, r);
         }
         return null;
     }

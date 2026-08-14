@@ -456,17 +456,22 @@ public final class TdfaAsmBackend {
     private static void genMatch(ClassWriter cw, Tdfa tdfa, String owner, boolean dispatchTooLarge) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I)L" + RESULT + ";", null, null);
         mv.visitCode();
-        // Multi-state no-match pre-check via the runner: O(n × |states|) single
-        // pass. If no match is possible, short-circuit to null without entering
-        // runExtract's O(n²) outer-loop scan. When a match IS possible, runExtract
-        // (with its inlined ASM transitions) handles the exact extraction.
+        // Leftmost-start via the runner's origin-tracking multi-state simulation
+        // (fast-path DFAs only; mask-bearing DFAs degrade to the boolean
+        // over-approximation, same as the old anyMatch precheck). O(n × |states|)
+        // single pass. No match → null without entering runExtract's outer-loop
+        // scan; match → runExtract starts AT the leftmost match position instead
+        // of rescanning every failed start (the O(n²) dense-match shape).
+        // locals: 0=this, 1=input, 2=from, 3=chars, 4=holder, 5=leftmost
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "anyMatch", "(" + CS_D + "I)Z", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "leftmostStart", "(" + CS_D + "I)I", false);
+        mv.visitVarInsn(Opcodes.ISTORE, 5);
         Label extract = new Label();
-        mv.visitJumpInsn(Opcodes.IFNE, extract);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
+        mv.visitJumpInsn(Opcodes.IFGE, extract);
         mv.visitInsn(Opcodes.ACONST_NULL);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitLabel(extract);
@@ -498,7 +503,7 @@ public final class TdfaAsmBackend {
         mv.visitFieldInsn(Opcodes.PUTFIELD, owner, "cachedChars", "[C");
         mv.visitLabel(runExtract);
         mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
         mv.visitVarInsn(Opcodes.ALOAD, 3);
         mv.visitInsn(Opcodes.ARRAYLENGTH);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "runExtract", "([CII)L" + HOLDER + ";", false);

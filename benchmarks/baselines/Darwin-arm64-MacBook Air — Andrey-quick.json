@@ -1,14 +1,14 @@
 [
-  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.anchored.vm","primaryMetric":{"score":10.653}},
-  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.anchored.asm","primaryMetric":{"score":17.800}},
-  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.extract.vm","primaryMetric":{"score":208.000}},
-  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.extract.asm","primaryMetric":{"score":162.037}},
-  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.scanNoMatch.vm","primaryMetric":{"score":142658.333}},
-  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.scanNoMatch.asm","primaryMetric":{"score":142591.700}},
-  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.findAllDense.vm","primaryMetric":{"score":325750.000}},
-  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.findAllDense.asm","primaryMetric":{"score":210167.000}},
-  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.findAllSparse.vm","primaryMetric":{"score":223041.571}},
-  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.findAllSparse.asm","primaryMetric":{"score":143729.000}},
-  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.compile.vm","primaryMetric":{"score":352000.000}},
-  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.compile.asm","primaryMetric":{"score":576458.000}}
+  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.anchored.vm","primaryMetric":{"score":10.417}},
+  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.anchored.asm","primaryMetric":{"score":17.241}},
+  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.extract.vm","primaryMetric":{"score":250.000}},
+  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.extract.asm","primaryMetric":{"score":201.923}},
+  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.scanNoMatch.vm","primaryMetric":{"score":140750.000}},
+  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.scanNoMatch.asm","primaryMetric":{"score":141697.000}},
+  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.findAllDense.vm","primaryMetric":{"score":321167.000}},
+  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.findAllDense.asm","primaryMetric":{"score":315833.000}},
+  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.findAllSparse.vm","primaryMetric":{"score":168750.000}},
+  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.findAllSparse.asm","primaryMetric":{"score":151958.500}},
+  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.compile.vm","primaryMetric":{"score":351625.000}},
+  {"benchmark":"io.github.jemmix.tdfa.bench.QuickBench.compile.asm","primaryMetric":{"score":563792.000}}
 ]
