@@ -515,14 +515,19 @@ public final class Tdfa {
                         + (cfg.dceRemovedOps > 0 ? " DCE removed " + cfg.dceRemovedOps + " ops" : ""));
             }
 
-            // First pass: coalesce + fillGaps on every state's ranges, compute totals.
+            // First pass: coalesce + mask-specificity sort on every state's ranges,
+            // compute totals. No gap filling: dead (target=-1) entries between live
+            // ranges are semantically unnecessary — every consumer treats "no entry
+            // matches" as death — and for wide Unicode classes they would double the
+            // entry count (~700 live + ~700 gap fillers for \w under (?u)), halving
+            // scan speed. sortByMaskSpecificity keeps ranges sorted by lo (mask bits
+            // only break ties), so downstream sorted-order assumptions still hold.
             int totalRanges = 0;
             int totalOpsSlots = 1;  // reserve ops[0] = OP_END for the "no ops" case (opsOff=0 means empty)
             for (int s = 0; s < n; s++) {
                 DfaStateBuilder sb = builders.get(s);
                 sb.coalesce();
                 sb.sortByMaskSpecificity();
-                sb.fillGaps();
                 totalRanges += sb.ranges.size();
                 for (Range r : sb.ranges) {
                     if (r.ops != null && r.ops.length > 0) totalOpsSlots += r.ops.length + 1;  // +1 for OP_END
@@ -1403,24 +1408,6 @@ public final class Tdfa {
                 if (cmp != 0) return cmp;
                 return Integer.compare(Integer.bitCount(b.requiredMask), Integer.bitCount(a.requiredMask));
             });
-        }
-        /** Insert target=-1 ranges in any gap so the ranges tile [0, 0x10FFFF] contiguously. */
-        void fillGaps() {
-            ranges.sort(Comparator.comparingInt(r -> r.lo));
-            List<Range> out = new ArrayList<>();
-            int expected = 0;
-            for (Range r : ranges) {
-                if (r.lo > expected) {
-                    out.add(new Range(expected, r.lo - 1, -1, null, 0));
-                }
-                out.add(r);
-                expected = r.hi + 1;
-            }
-            if (expected <= 0x10FFFF) {
-                out.add(new Range(expected, 0x10FFFF, -1, null, 0));
-            }
-            ranges.clear();
-            ranges.addAll(out);
         }
     }
 
