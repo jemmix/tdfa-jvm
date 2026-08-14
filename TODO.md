@@ -53,34 +53,31 @@ lexer-veryl (10x re2j), i1095-ascii.
 | **W3** | ASM slower than VM on big-DFA scenarios: quadratic 1x/2x/10x asm 1074–1905 vs vm 356–547 (3x); redos simplified-long asm 155 vs vm 8.5 (10x) | bench table only (both backends equal on small DFAs) | Unknown — suspected DELEGATE-mode dispatch or INLINED extract path; needs its own profile |
 | **W4** | Backref unicode (i1095 family): ~900 ns/char vs jur 8–10 (but 2x better than re2j) | probe | Fallback (backtracking) engine over wide classes — largely W1 in disguise; re-triage after W1 |
 
-### Plan (order fixed; gate = full suites + bench-regression + rebar fast bench)
+### Results (2026-08-15, all landed — see commits ad984c4..732a5c2)
 
-1. **W1a — merge transition entries at materialization**: after subset
-   construction, coalesce entries per state with identical (target, ops,
-   requiredMask) whose ranges touch/overlap; sort by lo. Expect 2800→~800 for
-   `\w` (script-block granularity). Compile-time only, zero match-path risk.
-2. **W1b — per-state disjoint bit** (in `stateMeta` spare bits) enabling
-   binary search per state instead of the global poison flag; sim + extract +
-   ASM backend all switch on it. ~10 iters vs ~2000 for the hot states.
-3. **W1c — O(1) BMP dispatch beyond Latin-1** (two-level table, 128×512-char
-   blocks, gated on stateCount like LATIN1_MAX_STATES) so Cyrillic/Greek/CJK
-   step at table speed; measure before/after (P4 lesson: watch ASCII
-   regression from wider strides).
-4. **W2 — literal prefilter**: detect required literal prefix (or unique
-   first-char set) at compile; hop with `String.indexOf` (JIT-intrinsic,
-   vectorized) to candidate starts before DFA entry. Applies to both
-   backends' scan loops; must respect `(?i)` folded sets (fall back to
-   first-char-set scanning when folding applies).
-5. **W3 — profile ASM-vs-VM on quadratic/redos**; fix dispatch or route to
-   the P1 fast-extract path.
-6. Re-run fast bench; then **accurate overnight**; goal check: geomean vs
-   re2j ≤ 0.5x (decisive), vs jur ≈ 1.0x (parity), no scenario > 3x jur
-   except known backref/ReDoS-shape outliers where jur's backtracker wins
-   by luck of the input.
-7. W4 re-triage with measurements.
+| Item | Outcome |
+|---|---|
+| W1a drop dead gap-fillers | \p{L} 1369→684 entries max; \w 2800→1866 |
+| W1b binary search + per-entry prefix-max-hi | all 5 scan sites O(log+overlap); long-russian 7164→117 ns/char (61x) |
+| W2' lazy search-DFA trigger | memoized 512-cp BMP blocks, kill-point windows, per-Tdfa memo, caps+fallbacks; long-russian →16, zh-lit →9 |
+| W2 exact-literal indexOf | literal-chain DFAs (self-loop check!): Twain 6.6→0.22 ns/char = re2j parity; README discloses |
+| budgeted origin-sim | dense loops keep old speed (trigger only beyond 4096 chars); scanNoMatch −21..−25% |
+| exact-walk-first (generic paths) | \p{L}{256} 1106→82 µs |
+| W3 ASM-vs-VM | **artifact** — steady-state VM=ASM=0.7µs; fast-bench gaps are cold-JIT on µs-scale rows; accurate mode arbitrates |
+| W1c BMP table for extract walks | **skipped** — measured unnecessary after W1b/W2' (long-russian beats jur at 16 vs 28 ns/char); the trigger's blocks already give O(1) BMP dispatch for scanning |
 
-Estimated W1 impact: long-russian 7164→~40 ns/char, all-russian 719→~25,
-delta256 3047→~200 — moves ~35 of 110 scenarios from losses to wins.
+Fast-bench geomean (110 scenarios): **vm 0.57x / asm 0.82x vs re2j;
+vm 0.94x / asm 1.35x vs jur** (from 1.07/1.35 and 1.86/2.34). Remaining
+known gaps: µs-scale rows dominated by ASM cold-JIT (info-grade), i1095
+\p{L}{256} walk cost (82µs vs jur 2µs — bounded-repeat DFA walking),
+applyOps register cost (56% of redos profile — future regopt work).
+Accurate overnight run = final arbiter.
+
+### Bugs found & fixed during bring-up (regression tests came free)
+- kill in rawScan left live set empty → masked ALL matches after first dead char (re2j-suite)
+- capped-memo fallback restarted from bare seed → dropped in-flight configs, skipped real matches (leipzig 541 vs 543)
+- a+ misdetected as literal "a" (self-loop check added; QuantifierParityTest)
+- per-runner memo OOM'd the 1M-compile exhaustive suite (per-Tdfa + 2048-char window floor)
 
 ## Feature parity
 
