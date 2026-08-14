@@ -116,7 +116,6 @@ final class FallbackOps {
         for (int s = 0; s < n; s++) {
             if (!stateIsFallback[s]) continue;
             BitSet clobbered = accumulateClobbered(s, n, stateMeta, stateBase, ranges, flatOps, isFinal);
-            if (clobbered == null || clobbered.isEmpty()) continue;
 
             int foff = stateFinalOpsOff[s];
             if (foff == 0) continue;  // no φ ops to back up
@@ -130,7 +129,7 @@ final class FallbackOps {
                 if (op == Tdfa.OP_END) break;
                 int dst = flatOps[j + 1];
                 int src = flatOps[j + 2];
-                if (op == Tdfa.OP_COPY && clobbered.get(src)) {
+                if (op == Tdfa.OP_COPY && clobbered != null && clobbered.get(src)) {
                     int backupSlot = nextBackupSlot++;
                     backupAssignments.add(new int[]{src, backupSlot, dst});
                     // ψ restores from backup slot into the original dst.
@@ -143,12 +142,19 @@ final class FallbackOps {
                     psiList.add(src);
                 }
             }
-            if (backupAssignments.isEmpty()) continue;  // no clobbered COPYs; nothing to do
 
+            // ALWAYS materialize ψ for a fallback state with φ ops. If no COPY
+            // source is clobbered, ψ degenerates to φ — but it must exist:
+            // pickFinalOpsOff (VM) and emitFinalOps (ASM) select ψ whenever the
+            // runner advanced past the accept (pos > lastAcceptPos), and a
+            // missing ψ block (offset 0) made them skip the final ops entirely,
+            // silently reading every capture as NIL (e.g. (?:(a){2})* on "aaa").
             int[] psiArr = new int[psiList.size() + 1];
             for (int k = 0; k < psiList.size(); k++) psiArr[k] = psiList.get(k);
             psiArr[psiArr.length - 1] = Tdfa.OP_END;
             psiPerState[s] = psiArr;
+
+            if (backupAssignments.isEmpty()) continue;  // ψ == φ; no backup transitions needed
 
             // Build the backup ops list: for each clobbered COPY, COPY backup_slot ← src.
             // (Multiple clobbered COPYs may share src; each gets its own backup slot.)

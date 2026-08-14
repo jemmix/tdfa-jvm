@@ -91,17 +91,30 @@ public final class FixedTags {
             return new int[]{bt, d, ld};
         }
         if (e instanceof Ast.Alt) {
+            // Branch agreement uses the paper's eq semantics: NaN != NaN and NaN != k.
+            // A branch whose levelDist is NaN (e.g. it contains an unbounded repeat —
+            // the construct can consume a VARIABLE number of chars, including zero)
+            // must poison the agreement. Without this, (a*|b) would claim fixed
+            // length 1 (both branches "agree" after the nullable a*'s NaN is
+            // swallowed), the group's open tag would wrongly fix onto the close tag
+            // at offset 1, and empty-iteration matches like (a*|b)* on "" would
+            // reconstruct start = end - 1 = -1 instead of 0.
             int agreed = NAN;
             boolean allAgree = true;
             for (Ast child : ((Ast.Alt) e).children) {
                 int[] r = walk(child, NO_BASE, NAN, 0);
                 int k = r[2];
                 if (allAgree) {
-                    if (agreed == NAN) agreed = k;
-                    else if (agreed != k) allAgree = false;
+                    if (k == NAN) {
+                        allAgree = false;
+                    } else if (agreed == NAN) {
+                        agreed = k;
+                    } else if (agreed != k) {
+                        allAgree = false;
+                    }
                 }
             }
-            if (allAgree && agreed != NAN) {
+            if (allAgree) {
                 return new int[]{baseTag, add(dist, agreed), add(levelDist, agreed)};
             }
             return new int[]{baseTag, NAN, NAN};

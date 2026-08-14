@@ -370,14 +370,17 @@ public final class Tdfa {
                     int repr = rangeLo;
                     for (int groupMask : maskGroups.keySet()) {
                         List<Config> stepInput;
+                        int ownCount;
                         if (groupMask == 0) {
                             stepInput = maskGroups.get(0);
+                            ownCount = stepInput.size();
                         } else {
                             // Own configs first (higher priority), then subset-mask
                             // configs. This ensures the group's configs survive the
                             // ε-closure (state,mask) dedup — their tags and registers
                             // take priority over subset configs at the same NFA state.
                             stepInput = new ArrayList<>(maskGroups.get(groupMask));
+                            ownCount = stepInput.size();
                             for (var e : maskGroups.entrySet()) {
                                 int otherMask = e.getKey();
                                 if (otherMask != groupMask && (otherMask & groupMask) == otherMask) {
@@ -385,7 +388,7 @@ public final class Tdfa {
                                 }
                             }
                         }
-                        List<Config> stepped = stepOnSymbol(stepInput, repr, requiredMaskOut);
+                        List<Config> stepped = stepOnSymbol(stepInput, repr, requiredMaskOut, ownCount);
                         if (stepped.isEmpty()) continue;
                         int requiredMask = groupMask;
                         List<Config> closed;
@@ -1002,13 +1005,24 @@ public final class Tdfa {
          * Step every config in {@code configs} that has an outgoing symbol transition matching {@code a}.
          * Returns the stepped configs (with emptyMask reset to 0) and stores the intersection of
          * contributing source config masks into {@code requiredMaskOut[0]}.
+         *
+         * <p>{@code ownCount} is the number of leading configs belonging to the mask group being
+         * stepped (the rest are subset-mask configs appended for DFA liveness by the caller —
+         * see the subset-inclusion comment in {@code compile()}). Appended configs are NOT
+         * priority competitors of the group's own configs: their true priority position is
+         * elsewhere in the closure. They must therefore neither veto accept-suppression nor
+         * be suppressed by it. Without this boundary, a pattern like
+         * {@code ^(?:x*|y)} loses Perl leftmost-first semantics: the (ungated, mask-0) start
+         * config is appended after the (BEGIN_TEXT-gated) accept config, the superset safety
+         * check fails, and the lower-priority {@code y} branch survives to extend the match
+         * ([0,1] instead of the correct [0,0] — the empty {@code x*} alternative accepts first).
          */
-        List<Config> stepOnSymbol(List<Config> configs, int a, int[] requiredMaskOut) {
+        List<Config> stepOnSymbol(List<Config> configs, int a, int[] requiredMaskOut, int ownCount) {
             // Perl leftmost-first: the closure's configs are in priority-ordered DFS arrival order.
             // If any config has reached the accept state, find the FIRST (best-priority) such config
             // and consider suppressing transitions from configs added AFTER it.
             //
-            // Suppression is safe only if every post-accept config's emptyMask is a SUPERSET of the
+            // Suppression is safe only if every post-accept OWN config's emptyMask is a SUPERSET of the
             // accept config's emptyMask — meaning those lower-priority paths are gated by (at least)
             // the same assertions as the accept. Then wherever the accept fires (assertions hold),
             // the lower-priority transitions could also fire (so we MUST suppress to keep Perl
@@ -1020,7 +1034,7 @@ public final class Tdfa {
             int acceptEmptyMask = 0;
             boolean suppress = false;
             if (perl) {
-                for (int i = 0; i < configs.size(); i++) {
+                for (int i = 0; i < ownCount; i++) {
                     Config c = configs.get(i);
                     if (c.state == nfa.accept) {
                         firstAcceptIdx = i;
@@ -1030,7 +1044,7 @@ public final class Tdfa {
                 }
                 if (firstAcceptIdx >= 0) {
                     suppress = true;
-                    for (int i = firstAcceptIdx + 1; i < configs.size(); i++) {
+                    for (int i = firstAcceptIdx + 1; i < ownCount; i++) {
                         Config c = configs.get(i);
                         if ((c.emptyMask & acceptEmptyMask) != acceptEmptyMask) {
                             suppress = false;
@@ -1044,8 +1058,9 @@ public final class Tdfa {
                     | Tnfa.ABS_BEGIN | Tnfa.ABS_END;
             boolean any = false;
             for (int ci = 0; ci < configs.size(); ci++) {
-                if (suppress && ci > firstAcceptIdx) {
-                    break;  // suppress lower-priority paths past the first accept (Perl mode)
+                if (suppress && ci > firstAcceptIdx && ci < ownCount) {
+                    continue;  // suppress lower-priority OWN paths past the first accept (Perl mode);
+                               // appended subset configs still step (DFA liveness, d133d20)
                 }
                 Config c = configs.get(ci);
                 for (int idx : symOut[c.state]) {
