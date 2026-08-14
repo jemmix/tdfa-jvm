@@ -402,21 +402,32 @@ public final class Optimize {
      *   <li>Assign leftover registers to non-interfering classes (or new ones).</li>
      * </ol>
      *
-     * @return V[old] = new register index (1-based; renaming converts to 0-based)
+     * <p><b>Final-register invariant:</b> coalescing runs over WORKING registers only.
+     * Final registers (indices {@code [finalRegBase..regCount)}) always get dedicated
+     * consecutive slots at the top, in tag order. This is required by the
+     * {@code MatchResult} readout protocol ({@code regs[finalRegBase + t - 1]}) —
+     * before this invariant, finals could coalesce with working registers or with
+     * each other (e.g. two SET-pos finals under the same-value rule), which either
+     * scattered the final block (silently wrong captures) or dropped
+     * {@code regCount} below {@code tagCount}, crashing
+     * {@link #findFinalRegBase} with a negative base (repro: {@code (a*)(a*)}).
+     *
+     * @return V[old] = new register index (0-based)
      */
     static int[] registerAllocation(Cfg cfg, boolean[][] I) {
         int nr = cfg.regCount;
+        int nw = cfg.finalRegBase;  // working registers: [0..nw); finals: [nw..nr)
         int[] B = new int[nr];
         List<BitSet> S = new ArrayList<>(nr);
         java.util.Arrays.fill(B, -1);
         for (int i = 0; i < nr; i++) S.add(new BitSet());
 
-        // Phase 1: walk COPY ops; try to coalesce src+dst.
+        // Phase 1: walk COPY ops; try to coalesce src+dst (working registers only).
         for (Cfg.Block b : cfg.blocks) {
             for (Cfg.Op op : b.ops) {
                 if (op.kind != Cfg.KIND_COPY && op.kind != Cfg.KIND_APPEND) continue;
                 if (op.dst == op.src) continue;
-                if (op.dst >= nr || op.src >= nr) continue;
+                if (op.dst >= nw || op.src >= nw) continue;
                 int i = op.dst, j = op.src;
                 int x = B[i], y = B[j];
                 if (x == -1 && y == -1) {
@@ -448,10 +459,10 @@ public final class Optimize {
             }
         }
 
-        // Phase 2: merge pairs of non-interfering classes.
-        for (int i = 0; i < nr; i++) {
+        // Phase 2: merge pairs of non-interfering classes (working registers only).
+        for (int i = 0; i < nw; i++) {
             if (B[i] != i) continue;
-            for (int j = i + 1; j < nr; j++) {
+            for (int j = i + 1; j < nw; j++) {
                 if (B[j] != j) continue;
                 if (noInterfereCross(S.get(i), S.get(j), I)) {
                     for (int m = S.get(j).nextSetBit(0); m >= 0; m = S.get(j).nextSetBit(m + 1)) {
@@ -463,11 +474,12 @@ public final class Optimize {
             }
         }
 
-        // Phase 3: assign leftover (B[i] == -1) to a non-interfering class or new class.
-        for (int i = 0; i < nr; i++) {
+        // Phase 3: assign leftover (B[i] == -1) to a non-interfering class or new class
+        // (working registers only — finals get dedicated slots below).
+        for (int i = 0; i < nw; i++) {
             if (B[i] != -1) continue;
             int assigned = -1;
-            for (int j = 0; j < nr; j++) {
+            for (int j = 0; j < nw; j++) {
                 if (B[j] != j) continue;
                 if (noInterfere(S.get(j), i, I)) {
                     assigned = j;
@@ -483,21 +495,24 @@ public final class Optimize {
             }
         }
 
-        // Final numbering: representatives get 1, 2, 3, ... in increasing index order;
-        // class members get their representative's number.
+        // Final numbering: working representatives get 0, 1, 2, ... in increasing
+        // index order; class members get their representative's number. Final
+        // registers then get dedicated consecutive slots on top, in tag order —
+        // guaranteeing the contiguous final block the readout protocol needs.
         int[] V = new int[nr];
         java.util.Arrays.fill(V, -1);
         int n = 0;
-        for (int i = 0; i < nr; i++) {
+        for (int i = 0; i < nw; i++) {
             if (B[i] == i) {
-                n++;
                 for (int m = S.get(i).nextSetBit(0); m >= 0; m = S.get(i).nextSetBit(m + 1)) {
                     V[m] = n;
                 }
+                n++;
             }
         }
-        // Convert 1-based to 0-based.
-        for (int i = 0; i < nr; i++) V[i] = V[i] - 1;
+        for (int f = nw; f < nr; f++) {
+            V[f] = n++;
+        }
         return V;
     }
 

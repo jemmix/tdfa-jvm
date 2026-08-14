@@ -3,7 +3,6 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.tdfa.Disambiguation;
 import io.github.jemmix.tdfa.vm.MatchResult;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -18,12 +17,11 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  *
  * <p>Problem areas:
  * <ul>
- *   <li><b>Adjacent greedy groups crash</b> — patterns like
- *       {@code (a*)(a*)} crash at compile time with
- *       {@code ArrayIndexOutOfBoundsException} in
- *       {@code Optimize.findFinalRegBase}. The second group matches empty
- *       after the first consumes everything, and the register allocator
- *       produces a -1 index that is used as an array offset.</li>
+ *   <li><b>Adjacent greedy groups</b> — patterns like {@code (a*)(a*)} where
+ *       a group matches empty adjacent to another greedy group. These used to
+ *       crash at compile time ({@code ArrayIndexOutOfBoundsException} in
+ *       {@code Optimize.findFinalRegBase}) because allocation coalesced final
+ *       registers; fixed by keeping finals in dedicated consecutive slots.</li>
  *   <li><b>Alternation aliasing</b> — many-branch alternation with one
  *       capture group per branch must report exactly one participating
  *       group per match (the §A interference analysis area).</li>
@@ -48,17 +46,8 @@ class CaptureGroupAllocationTest {
         return c;
     }
 
-    // ===== Adjacent greedy groups crash (BUG) =====
+    // ===== Adjacent greedy groups (fixed: final-register dedicated-slot invariant) =====
 
-    // PENDING: all of the following crash at compile time with
-    // ArrayIndexOutOfBoundsException in Optimize.findFinalRegBase (Optimize.java:71).
-    // Root cause: the BT22 §6.4 fixed-tags pass drops a tag ("dropped 1/4" for
-    // (a*)(a*)), but findFinalRegBase still assumes a full tagCount-sized final
-    // block at the top of V. After the first regopt iteration shrinks V below
-    // tagCount, oldFinalBase = V.length - tagCount goes negative.
-
-    // PENDING: (a*)(a*) — java.util.regex returns g1=[0,3] g2=[3,3].
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")
     @ParameterizedTest @MethodSource("factories")
     void adjacentStarGroups(EngineFactory f) {
         assertThatCode(() -> {
@@ -74,8 +63,6 @@ class CaptureGroupAllocationTest {
     }
 
     /** Same crash with (a+)(a*): a+ eats everything, a* gets nothing. */
-    // PENDING: findFinalRegBase crash
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")
     @ParameterizedTest @MethodSource("factories")
     void adjacentPlusStarGroups(EngineFactory f) {
         assertThatCode(() -> find("(a+)(a*)", "aaa", f, Disambiguation.PERL))
@@ -84,8 +71,6 @@ class CaptureGroupAllocationTest {
     }
 
     /** Same crash with (.*)(.*). */
-    // PENDING: findFinalRegBase crash
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")
     @ParameterizedTest @MethodSource("factories")
     void adjacentDotStarGroups(EngineFactory f) {
         assertThatCode(() -> find("(.*)(.*)", "abc", f, Disambiguation.PERL))
@@ -94,8 +79,6 @@ class CaptureGroupAllocationTest {
     }
 
     /** Same crash with (a*)(a?): optional second group can be empty. */
-    // PENDING: findFinalRegBase crash
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")
     @ParameterizedTest @MethodSource("factories")
     void adjacentStarOptionalGroups(EngineFactory f) {
         assertThatCode(() -> find("(a*)(a?)", "aaa", f, Disambiguation.PERL))
@@ -104,8 +87,6 @@ class CaptureGroupAllocationTest {
     }
 
     /** Three adjacent groups: (a*)(a*)(a*). */
-    // PENDING: findFinalRegBase crash
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")
     @ParameterizedTest @MethodSource("factories")
     void threeAdjacentStarGroups(EngineFactory f) {
         assertThatCode(() -> find("(a*)(a*)(a*)", "aaa", f, Disambiguation.PERL))
@@ -114,8 +95,6 @@ class CaptureGroupAllocationTest {
     }
 
     /** The crash also affects POSIX mode. */
-    // PENDING: findFinalRegBase crash
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")
     @ParameterizedTest @MethodSource("factories")
     void adjacentStarGroupsPosix(EngineFactory f) {
         assertThatCode(() -> find("(a*)(a*)", "aaa", f, Disambiguation.POSIX))
