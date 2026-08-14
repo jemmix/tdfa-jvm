@@ -189,9 +189,13 @@ public final class TdfaRunner implements Regex.Engine {
             if (fastPath) return runStringFindFast(s, len);
             int maxStart = (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) ? 0 : len;
             if (maxStart > 0) {
+                // One exact walk from 0 first: for prefix-chain DFAs (e.g.
+                // \p{L}{256}) a match at/near 0 answers in O(len) while the
+                // trigger's raw-scan pre-check is O(len^2) in live-set size.
+                if (runStringMatchFrom(s, 0, len) >= 0) return true;
                 int w = triggerScan(s, 0, len);
                 if (w < 0) return false;
-                for (int from = w; from <= maxStart; from++) {
+                for (int from = Math.max(w, 1); from <= maxStart; from++) {
                     int res = runStringMatchFrom(s, from, len);
                     if (res >= 0) return true;
                 }
@@ -226,105 +230,121 @@ public final class TdfaRunner implements Regex.Engine {
         final int[] sem = this.stateEntryMask;
         final int[] sam = this.stateAcceptMask;
         int maxStart = (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) ? 0 : to;
+        // One exact walk from `from` first (match at/near from is the common
+        // case and answers in O(len) — cheaper than any pre-check; see find()).
+        {
+            MatchHolder direct = extractFrom(input, from, to);
+            if (direct != null) return direct;
+        }
         // Trigger scan: memoized search-DFA pass that both proves no-match and
         // bounds the restart loop to the kill-point window (no configuration
         // alive before W can produce a match — see SearchDfa).
         if (maxStart > 0) {
             int w = triggerScan(input, from, to);
             if (w < 0) return null;
-            if (w > from) from = w;
+            if (w > from + 1) from = w - 1;
         }
-        for (int startSearch = from; startSearch <= maxStart; startSearch++) {
-            final int[] regs = regSize == 0 ? null : new int[regSize];
-            if (regs != null) Arrays.fill(regs, -1);
-            int state = startState;
-            int lastAcceptPos = -1, lastAcceptState = -1;
-            boolean haveAccept = false;
-            int pos = startSearch;
-
-            // Entry check for start state — inline
-            {
-                int entryReq = sem[state];
-                if (entryReq != 0 && (positionFlags(input, pos, to) & entryReq) != entryReq) continue;
-            }
-
-            int posFlags = -1;
-            loop:
-            for (; ; pos++) {
-                int meta = sm[state];
-                if ((meta & 1) != 0) {
-                    int acceptMask = sam[state];
-                    if (acceptMask == 0) {
-                        lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                        if (perlMode) {
-                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                            int stopMask = stopOnAcceptMask[state * 64 + posFlags];
-                            if (stopOnAccept(stopMask, posFlags)) break loop;
-                        }
-                    } else {
-                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                        if ((posFlags & acceptMask) == acceptMask) {
-                            lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                            int stopMask = stopOnAcceptMask[state * 64 + posFlags];
-                            if (perlMode && stopOnAccept(stopMask, posFlags)) break loop;
-                        }
-                    }
-                }
-                if (pos >= to) break;
-                char c0 = input.charAt(pos); int c = c0;
-                if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to
-                        && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF)
-                    c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
-                int base = stateBase[state];
-                int count = (meta >>> 1) & 0xFFFF;
-                // Binary search rightmost entry with lo <= c, then walk back
-                // while the per-state prefix-max-hi still reaches c: visits
-                // exactly the entries that can contain c, in the same
-                // lowest-index-first priority the linear scan used.
-                int rlo = 0, rhi = count - 1, anchor = -1;
-                while (rlo <= rhi) {
-                    int mid = (rlo + rhi) >>> 1;
-                    if (rg[(base + mid) * 5] <= c) { anchor = mid; rlo = mid + 1; }
-                    else rhi = mid - 1;
-                }
-                // Walk back over containing entries, remembering the LOWEST-index
-                // mask-satisfied one (original linear-scan priority: alternation
-                // and mask-specificity order by entry index).
-                int chosen = -1, chosenTarget = 0;
-                for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
-                    int o = (base + i) * 5;
-                    if (c <= rg[o + 1]) {
-                        int target = rg[o + 2];
-                        if (target < 0) continue;
-                        int requiredMask = rg[o + 4];
-                        if (requiredMask != 0) {
-                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                            if ((posFlags & requiredMask) != requiredMask) continue;
-                        }
-                        chosen = o; chosenTarget = target;
-                    }
-                }
-                if (chosen < 0) break;
-                if (regs != null) {
-                    int opsOff = rg[chosen + 3];
-                    if (opsOff != 0) applyOps(op, opsOff, regs, pos);
-                }
-                state = chosenTarget;
-                if (c > 0xFFFF) pos++;
-                int entryReq = sem[state];
-                if (entryReq != 0) {
-                    if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) break loop;
-                }
-                posFlags = -1;
-            }
-            if (haveAccept) {
-                int[] r = regs == null ? new int[0] : regs.clone();
-                int foff = pickFinalOpsOff(lastAcceptState, lastAcceptPos, pos);
-                if (foff != 0 && regs != null) applyOps(op, foff, r, lastAcceptPos);
-                return new MatchHolder(startSearch, lastAcceptPos, r);
-            }
+        for (int startSearch = from + 1; startSearch <= maxStart; startSearch++) {
+            MatchHolder h = extractFrom(input, startSearch, to);
+            if (h != null) return h;
         }
         return null;
+    }
+
+    /** One exact single-start walk; null = no match starting at startSearch. */
+    private MatchHolder extractFrom(String input, int startSearch, int to) {
+        final int[] sm = this.stateMeta;
+        final int[] rg = this.ranges;
+        final int[] op = this.ops;
+        final int[] sem = this.stateEntryMask;
+        final int[] sam = this.stateAcceptMask;
+        final int[] regs = regSize == 0 ? null : new int[regSize];
+        if (regs != null) Arrays.fill(regs, -1);
+        int state = startState;
+        int lastAcceptPos = -1, lastAcceptState = -1;
+        boolean haveAccept = false;
+        int pos = startSearch;
+
+        // Entry check for start state — inline
+        {
+            int entryReq = sem[state];
+            if (entryReq != 0 && (positionFlags(input, pos, to) & entryReq) != entryReq) return null;
+        }
+
+        int posFlags = -1;
+        loop:
+        for (; ; pos++) {
+            int meta = sm[state];
+            if ((meta & 1) != 0) {
+                int acceptMask = sam[state];
+                if (acceptMask == 0) {
+                    lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
+                    if (perlMode) {
+                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                        int stopMask = stopOnAcceptMask[state * 64 + posFlags];
+                        if (stopOnAccept(stopMask, posFlags)) break loop;
+                    }
+                } else {
+                    if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                    if ((posFlags & acceptMask) == acceptMask) {
+                        lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
+                        int stopMask = stopOnAcceptMask[state * 64 + posFlags];
+                        if (perlMode && stopOnAccept(stopMask, posFlags)) break loop;
+                    }
+                }
+            }
+            if (pos >= to) break;
+            char c0 = input.charAt(pos); int c = c0;
+            if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to
+                    && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF)
+                c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
+            int base = stateBase[state];
+            int count = (meta >>> 1) & 0xFFFF;
+            // Binary search rightmost entry with lo <= c, then walk back
+            // while the per-state prefix-max-hi still reaches c: visits
+            // exactly the entries that can contain c, in the same
+            // lowest-index-first priority the linear scan used.
+            int rlo = 0, rhi = count - 1, anchor = -1;
+            while (rlo <= rhi) {
+                int mid = (rlo + rhi) >>> 1;
+                if (rg[(base + mid) * 5] <= c) { anchor = mid; rlo = mid + 1; }
+                else rhi = mid - 1;
+            }
+            // Walk back over containing entries, remembering the LOWEST-index
+            // mask-satisfied one (original linear-scan priority: alternation
+            // and mask-specificity order by entry index).
+            int chosen = -1, chosenTarget = 0;
+            for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+                int o = (base + i) * 5;
+                if (c <= rg[o + 1]) {
+                    int target = rg[o + 2];
+                    if (target < 0) continue;
+                    int requiredMask = rg[o + 4];
+                    if (requiredMask != 0) {
+                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                        if ((posFlags & requiredMask) != requiredMask) continue;
+                    }
+                    chosen = o; chosenTarget = target;
+                }
+            }
+            if (chosen < 0) break;
+            if (regs != null) {
+                int opsOff = rg[chosen + 3];
+                if (opsOff != 0) applyOps(op, opsOff, regs, pos);
+            }
+            state = chosenTarget;
+            if (c > 0xFFFF) pos++;
+            int entryReq = sem[state];
+            if (entryReq != 0) {
+                if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) break loop;
+            }
+            posFlags = -1;
+        }
+        if (!haveAccept) return null;
+        int[] r = regs == null ? new int[0] : regs.clone();
+        int foff = pickFinalOpsOff(lastAcceptState, lastAcceptPos, pos);
+        if (foff != 0 && regs != null) applyOps(op, foff, r, lastAcceptPos);
+        return new MatchHolder(startSearch, lastAcceptPos, r);
     }
 
     public static final class MatchHolder {
