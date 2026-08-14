@@ -4,6 +4,7 @@ import io.github.jemmix.tdfa.tdfa.Disambiguation;
 import io.github.jemmix.tdfa.unicode.CaseFoldTable;
 import io.github.jemmix.tdfa.vm.MatchResult;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
