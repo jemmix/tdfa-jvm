@@ -50,6 +50,22 @@ public final class TdfaRunner implements Regex.Engine {
     private final boolean unicodeWordBoundary;
     private final int[] wordRanges;     // Unicode \w ranges for \b when unicodeWordBoundary is true
 
+    // ===== per-thread scratch (P2: hot-path allocation removal) =====
+    //
+    // A runner is shared when its Pattern is used from several threads (re2j
+    // semantics: Pattern thread-safe, Matcher not), so scratch buffers are
+    // ThreadLocal, not instance fields. Sizes are re-validated on every use —
+    // a single Scratch object serves all runners on the thread, growing to the
+    // largest DFA seen. Eliminates the 4 sim allocations per find()/match()
+    // (O(stateWords + stateCount) each — significant for dictionary-scale DFAs)
+    // and the regs[] allocation on failed single-start walks. Successful walks
+    // still clone regs into the returned MatchHolder (it escapes the runner).
+    private static final class Scratch {
+        int[] regs;
+        int[] live, next, origin, originNext;
+    }
+    private static final ThreadLocal<Scratch> SCRATCH = ThreadLocal.withInitial(Scratch::new);
+
     public TdfaRunner(Tnfa nfa) {
         this(Tdfa.compile(nfa));
     }
@@ -293,8 +309,11 @@ public final class TdfaRunner implements Regex.Engine {
         final int ss = startState;
         final boolean disjoint = rangesDisjoint;
 
-        int[] live = new int[nwords];
-        int[] next = new int[nwords];
+        Scratch sc = SCRATCH.get();
+        int[] live = sc.live != null && sc.live.length >= nwords ? sc.live : new int[nwords];
+        int[] next = sc.next != null && sc.next.length >= nwords ? sc.next : new int[nwords];
+        sc.live = live; sc.next = next;
+        Arrays.fill(live, 0, nwords, 0);
         live[ss >>> 5] |= 1 << (ss & 31);
 
         for (int pos = from; pos <= to; pos++) {
@@ -396,8 +415,17 @@ public final class TdfaRunner implements Regex.Engine {
         final int[] ab = acceptBits;
         final int ss = startState;
 
-        int[] live = new int[nwords];
-        int[] next = new int[nwords];
+        int[] live, next, origin, originNext;
+        Scratch sc = SCRATCH.get();
+        if (sc.live != null && sc.live.length >= nwords && sc.next.length >= nwords
+                && sc.origin != null && sc.origin.length >= stateCount && sc.originNext.length >= stateCount) {
+            live = sc.live; next = sc.next;
+            origin = sc.origin; originNext = sc.originNext;
+        } else {
+            live = new int[nwords]; next = new int[nwords];
+            origin = new int[stateCount]; originNext = new int[stateCount];
+            sc.live = live; sc.next = next; sc.origin = origin; sc.originNext = originNext;
+        }
         // Origins are DOUBLE-BUFFERED with the state sets: origin[] pairs with
         // live[], originNext[] with next[]. All arrivals in a step write to
         // originNext (bit test against next), while old-live origins in origin[]
@@ -407,8 +435,7 @@ public final class TdfaRunner implements Regex.Engine {
         // (seen as +1/step origin drift on (\d+)\.(\d+)... over "ip=192.168.1.77").
         // Stale originNext values are never read: a bit present in next implies
         // a this-step write (first arrival sets, later arrivals min-merge).
-        int[] origin = new int[stateCount];
-        int[] originNext = new int[stateCount];
+        Arrays.fill(live, 0, nwords, 0);
         live[ss >>> 5] |= 1 << (ss & 31);
         origin[ss] = from;
 
@@ -582,8 +609,23 @@ public final class TdfaRunner implements Regex.Engine {
         // slow path's leftmost-first semantics). See docs/REBAR-SPEEDUP-PLAN.md §Tier-2 #3.
         final boolean pm = this.perlMode;
         final int[] soa = this.stopOnAcceptMask;
-        final int[] regs = regSize == 0 ? null : new int[regSize];
-        if (regs != null) Arrays.fill(regs, -1);
+        // Pooled regs (per-thread scratch): no allocation on the (frequent)
+        // failed-walk path. On success the array is cloned into the MatchHolder
+        // before returning, so the pool is never handed out. NOTE: the
+        // non-ASCII fallback below re-enters the generic extract path, which
+        // allocates its own regs — no pool aliasing.
+        Scratch sc = SCRATCH.get();
+        final int[] regs;
+        if (regSize == 0) {
+            regs = null;
+        } else if (sc.regs != null && sc.regs.length >= regSize) {
+            regs = sc.regs;
+            Arrays.fill(regs, 0, regSize, -1);
+        } else {
+            regs = new int[regSize];
+            java.util.Arrays.fill(regs, -1);
+            sc.regs = regs;
+        }
         int state = startState;
         int lastAcceptPos = -1, lastAcceptState = -1;
         boolean haveAccept = false;
