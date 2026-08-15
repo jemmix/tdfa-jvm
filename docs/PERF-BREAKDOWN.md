@@ -165,7 +165,7 @@ What landed (see `TODO.md` rebar section for the full table):
 | # | cluster | evidence | root cause | fix | effort |
 |---|---|---|---|---|---|
 | R6 | short-input residual rows: wordUnicodeCls 2.28x, boundedSpan 1.82x, emailNoMatch 1.61x, lettersRu 1.44x, caseiLit 1.31x | JMH | per-candidate walk + Matcher/MatchHolder layers vs jur's lazy NFA on inputs where the whole match is ~10 walk steps | accept (all rows beat re2j 3–7x), or regs scalar replacement + leaner extract; diminishing | S–M, deferred |
-| R6′ | asm = vm + 1–3% on short inputs (was +90% on litFind: 65-char input missed the 64 delegation threshold) | probe | delegation frame doesn't inline — `Regex.find`'s `engine.match` site is megamorphic once generated classes are loaded (Engine has TdfaRunner + N generated impls) | generated classes extend TdfaRunner → monomorphic receivers; M effort, ~2–3 ns, short inputs only | M, backlog |
+| R6′ | ~~asm = vm + 1–3% on short inputs~~ | — | **closed by the kernel refactor**: one strategy brain + generated own-loop leaves + generated Pattern/Matcher tier; asm/vm geomean 0.89x, no warm regressions | done (2026-08-15) |
 | R2′ | shim `matches()` residual: 9–64 ns vs jur 6–26 | FloorProbe-style probe | MatchHolder + MatchResult + eager register ops in the anchored extract | only matters if matches() becomes hot; route is regs scalar replacement | M, deferred |
 | R7 | rebar unicode scan tail (all-russian 3.9x, letters-ru 4.7x, casei scans 3.2–3.3x, quotes-bounded 4.7x vs jur) | accurate | haystack-scale walks; candidate scan is ≤64-char-only by design; scan itself already beats re2j | re-measure after this round (walk blocks help the extract tail); possibly extend candidate scan threshold | — |
 | R8 | compile time (dictionary 2.2s, i1095 0.9s) | accurate | eager determinization + minimization | separate roadmap (lazy DFA build, better minimization) | M–L |
@@ -205,6 +205,29 @@ Structural corners where 2 ns/char does not hold: VM capture dispatch
 ~#branches/char; none in the 5.8M-case corpus exceed 1), first-call/cold-memo
 (one-time). Rejected syntax (backrefs, lookaround) means no backtracking path
 can reintroduce per-char blowup.
+
+## 9a. Kernel refactor round (2026-08-15, commits 858b2f6..bab3fde)
+
+P0 strategy trace hook (`TdfaRunner.Strategy`, `-Dtdfa.trace.strategy`) →
+P1 ASM emission = shared strategy + own-loop leaves (deleted: chars cache,
+SHORT_DELEGATE_LEN, O(n²) restart, TABLE_SCAN mode) → P2 Pattern/Matcher
+interfaces + `EngineFactory.generatesPerPattern()` → P3 generated
+Regex/Pattern/Matcher under ASM (per-pattern classloader, writeReplace
+serialization proxy) → P4 benchmarks.
+
+| metric | pre-kernel | post-kernel |
+|---|---|---|
+| ShortFindBench asm/jur geomean | 0.93x | **0.77x** (vm 0.86x) |
+| asm/vm geomean | ~1.00x | **0.89x** (lettersRu 0.42x, ipExtract 0.74x) |
+| LogExtractMacro (200k lines) | — | asm = vm warm (0.95–1.00x), both 3–4x re2j; jur wins 3/4 rows via literal-prefix search (deferred prefix-acceleration family) |
+| compile latency | — | vm 52 µs / asm 301 µs / jur 4.5 µs (unchanged in kind) |
+| metaspace | — | generated patterns unload with their loader; 135 B/compile residual |
+| drift protection | two ladders (litFind bug class) | one strategy brain + emitted transcription + strategy-conformance CI test |
+
+ASM's selling point, post-kernel: faster than VM on walk/capture-dense
+shapes (0.42–0.87x) and never measurably slower warm; the cost is compile
+latency (+250 µs/pattern) and per-pattern classloading. See
+`benchmarks/results-shortfind-jmh.txt` and `benchmarks/results-logextract-macro.txt`.
 
 ## 9. Harness inventory
 

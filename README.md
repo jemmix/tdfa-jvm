@@ -145,10 +145,22 @@ rebar-corpus goal: match re2j/jur on bulk text):
    consume its first character. Built only when the start state cannot accept
    (an accepting start admits empty matches anywhere, which the bits cannot
    represent — those shapes keep the simulation paths).
-5. **ASM short-input delegation**: generated `match()` forwards to the
-   interpreter runner for inputs ≤ 64 chars, where the runner's extract fast
-   path has a lower per-call constant. Identical semantics by construction —
-   both are the same `Tdfa`.
+
+**Backend architecture (kernel refactor)** — the search strategy (which
+ladder branch serves a call: literal / candidate scan / origin sim /
+trigger / walk) lives in exactly one place, the `TdfaRunner`; both backends
+call it. The VM backend interprets it directly. The ASM backend generates a
+per-pattern class whose `match()` transcribes the same ladder (calling the
+runner's monomorphic hooks) and owns only the walk leaf — per-state switch
+dispatch with register ops inlined as straight-line bytecode. Under the ASM
+factory, `Pattern.compile` additionally generates the Regex/Pattern/Matcher
+tier into the same classloader, so the whole `Matcher.find()` chain
+devirtualizes and inlines end-to-end. Non-fastPath DFAs (word boundaries,
+anchors, big DFAs) and literal needles compile to thin delegate classes.
+A **strategy-conformance test** (`StrategyConformanceTest`, traceable via
+`-Dtdfa.trace.strategy`) asserts both backends pick identical strategy
+sequences across shape × boundary-length sweeps — the guard against the
+ladders drifting with identical results.
 
 These are throughput optimizations only; match semantics (leftmost-first,
 captures, anchors, word boundaries) are unchanged and remain fully covered by

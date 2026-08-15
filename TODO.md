@@ -73,6 +73,30 @@ known gaps: µs-scale rows dominated by ASM cold-JIT (info-grade), i1095
 applyOps register cost (56% of redos profile — future regopt work).
 Accurate overnight run = final arbiter.
 
+### Kernel refactor round (2026-08-15, commits 858b2f6..bab3fde)
+
+Goal: unify the search ladders (one brain in TdfaRunner), make ASM a
+generated-transcription backend with own-loop leaves, generate the full
+Pattern/Matcher/Regex tier under ASM ("we're not doing JIT, generate
+everything"), and benchmark honestly. Scope locked with user: ASM stays
+unless definite regressions; no default flip; results presented before
+action.
+
+| Phase | Outcome |
+|---|---|
+| P0 trace hook | TdfaRunner.Strategy enum recorded at ladder decision points; setTracing runtime toggle |
+| P1 new emission | shared statics + private extractOne leaf (TABLESWITCH + inlined ops, String.charAt, no copy); deleted chars cache / SHORT_DELEGATE_LEN / O(n²) restart / TABLE_SCAN; non-fast → DELEGATE |
+| P2 interfaces | Pattern/Matcher interfaces + VmPattern/VmMatcher + PatternSpi; generatesPerPattern capability; AsmEngineFactory named singleton |
+| P3 generated tier | GenNRegex/GenNPattern/GenNMatcher per pattern in one classloader (unload together); writeReplace serialization proxy; public VmPattern/VmMatcher with protected state |
+| P4 benchmarks | ShortFindBench asm/jur 0.77x geomean (vm 0.86x), asm/vm 0.89x; LogExtractMacro asm=vm warm, both 3-4x re2j; compile 301µs vs 52µs; metaspace unloads; baseline recaptured (old file had corrupted entries) |
+| conformance | StrategyConformanceTest: 12 shapes × 20 boundary lengths × {core,shim} — identical results AND traces; caught the genMatches double-record pre-ship |
+
+Known follow-ups: literal-prefix acceleration for medium inputs (jur wins
+log-extract rows via ip=/path= Boyer-Moore shapes — same family as the
+deferred P3/memchr item), us-scale test/* cold-JIT rows in rebar fast
+(artifact), ASM compile latency (emission+classload; deterministic
+compilation is the long-term lever).
+
 ### Short-input parity round (2026-08-15, commits d192462 + e949759)
 
 JMH ShortFindBench (10 slugs × 5 engines, ≤64-char inputs) had vm/jur
