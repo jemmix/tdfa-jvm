@@ -7,6 +7,7 @@ import io.github.jemmix.tdfa.vm.MatchResult;
 import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 
 /**
  * Executes a compiled {@link Tdfa} against an input char sequence using the flat packed arrays.
@@ -160,6 +161,51 @@ public final class TdfaRunner implements Regex.Engine {
 
     public Tdfa tdfa() { return tdfa; }
 
+    // ===== strategy trace (conformance instrument) =====
+    //
+    // Records WHICH branch of the search ladder served each public entry
+    // call. The interpreter records at its decision points; the ASM backend's
+    // generator emits recordStrategy calls at the same points of its emitted
+    // ladder (single template). The strategy-conformance test asserts both
+    // backends produce identical sequences over a shape x length sweep — the
+    // structural guard against the two ladders drifting (the litFind bug:
+    // identical results, different algorithm).
+    // Zero cost when disabled: TRACE is static final, branches prune.
+    // TODO: revisit as first-class internals access (observer/event API) —
+    // see TODO.md "internals access".
+
+    /** Which branch of the search ladder served one public entry call. */
+    public enum Strategy {
+        LITERAL,        // literalNeedle -> String.indexOf
+        CAND_SCAN,      // first-char-set bit scan + exact walks (short input)
+        EXACT_FROM,     // one exact walk from the requested start
+        ORIGIN_SIM,     // budgeted origin-tracking multi-state simulation
+        TRIGGER,        // memoized search-DFA trigger scan
+        RAW_SCAN,       // unmemoized live-set simulation (short window / cap)
+        WALK_RESTART,   // defensive per-start restart loop
+        ANCHORED_FAST,  // flat-table anchored loop (fastPath)
+        ANCHORED,       // generic anchored walk
+        GENERIC         // CharSequence (non-String) fallback
+    }
+
+    /** Enabled by -Dtdfa.trace.strategy=true. */
+    private static final boolean TRACE = Boolean.getBoolean("tdfa.trace.strategy");
+    private static final ThreadLocal<ArrayList<Strategy>> TRACE_BUF =
+            ThreadLocal.withInitial(ArrayList::new);
+
+    /** Record a strategy decision point (no-op unless tracing). */
+    static void trace(Strategy s) {
+        if (TRACE) TRACE_BUF.get().add(s);
+    }
+
+    /** Snapshot and clear this thread's recorded strategy sequence. */
+    public static List<Strategy> traceSnapshot() {
+        ArrayList<Strategy> buf = TRACE_BUF.get();
+        List<Strategy> out = List.copyOf(buf);
+        buf.clear();
+        return out;
+    }
+
     /**
      * Fast no-match pre-check: returns {@code true} if the DFA could match
      * starting at any position in {@code [from, input.length())}. Sound
@@ -189,8 +235,10 @@ public final class TdfaRunner implements Regex.Engine {
      */
     public final int leftmostStart(CharSequence input, int from) {
         int to = input.length();
-        if (literalNeedle != null && input instanceof String)
+        if (literalNeedle != null && input instanceof String) {
+            trace(Strategy.LITERAL);
             return ((String) input).indexOf(literalNeedle, from);
+        }
         // Short-input candidate scan: bit-test per char, exact walk per
         // candidate. Cheaper than the origin sim's per-live-state dispatch
         // when the input is tiny; the walk verifies exactly, so the result
@@ -198,6 +246,7 @@ public final class TdfaRunner implements Regex.Engine {
         // Non-fastPath DFAs walk via runStringMatchFrom (mask-exact); the
         // sim's mask-ignoring over-approximation is not involved at all.
         if (input instanceof String && startBits != null && to - from <= CAND_SCAN_MAX) {
+            trace(Strategy.CAND_SCAN);
             String s = (String) input;
             final long[] sb = this.startBits;
             if (fastPath) {
@@ -214,6 +263,7 @@ public final class TdfaRunner implements Regex.Engine {
             return -1;
         }
         if (fastPath) {
+            trace(Strategy.ORIGIN_SIM);
             int l = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS);
             if (l == LSS_BUDGET) {
                 int w = triggerScan(input.toString(), from, to);
@@ -228,9 +278,11 @@ public final class TdfaRunner implements Regex.Engine {
     @Override public boolean matches(CharSequence input) {
         if (input instanceof String) {
             String s = (String) input;
-            if (fastPath) return runStringAnchoredFast(s);
+            if (fastPath) { trace(Strategy.ANCHORED_FAST); return runStringAnchoredFast(s); }
+            trace(Strategy.ANCHORED);
             return runStringAnchored(s) >= 0;
         }
+        trace(Strategy.GENERIC);
         return runGeneric(input, 0, input.length(), true) != null;
     }
 
@@ -238,17 +290,19 @@ public final class TdfaRunner implements Regex.Engine {
         if (input instanceof String) {
             String s = (String) input;
             int len = s.length();
-            if (literalNeedle != null) return s.indexOf(literalNeedle, 0) >= 0;
+            if (literalNeedle != null) { trace(Strategy.LITERAL); return s.indexOf(literalNeedle, 0) >= 0; }
             if (fastPath) return runStringFindFast(s, len);
             int maxStart = (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) ? 0 : len;
             if (maxStart > 0) {
                 // One exact walk from 0 first: for prefix-chain DFAs (e.g.
                 // \p{L}{256}) a match at/near 0 answers in O(len) while the
                 // trigger's raw-scan pre-check is O(len^2) in live-set size.
+                trace(Strategy.EXACT_FROM);
                 if (runStringMatchFrom(s, 0, len) >= 0) return true;
                 // Short inputs: first-char-set candidate scan with exact
                 // (mask-aware) walks instead of the raw-scan simulation.
                 if (startBits != null && len <= CAND_SCAN_MAX) {
+                    trace(Strategy.CAND_SCAN);
                     final long[] sb = this.startBits;
                     for (int p = 1; p < len; p++) {
                         char c = s.charAt(p);
@@ -258,14 +312,17 @@ public final class TdfaRunner implements Regex.Engine {
                 }
                 int w = triggerScan(s, 0, len);
                 if (w < 0) return false;
+                trace(Strategy.WALK_RESTART);
                 for (int from = Math.max(w, 1); from <= maxStart; from++) {
                     int res = runStringMatchFrom(s, from, len);
                     if (res >= 0) return true;
                 }
                 return false;
             }
+            trace(Strategy.EXACT_FROM);
             return runStringMatchFrom(s, 0, len) >= 0;
         }
+        trace(Strategy.GENERIC);
         return runGeneric(input, 0, input.length(), false) != null;
     }
 
@@ -275,6 +332,7 @@ public final class TdfaRunner implements Regex.Engine {
             String s = (String) input;
             h = fastPath ? runStringExtractFast(s, from, s.length()) : runStringExtract(s, from, s.length());
         } else {
+            trace(Strategy.GENERIC);
             h = runGeneric(input, from, input.length(), false);
         }
         if (h == null) return null;
@@ -296,6 +354,7 @@ public final class TdfaRunner implements Regex.Engine {
         // One exact walk from `from` first (match at/near from is the common
         // case and answers in O(len) — cheaper than any pre-check; see find()).
         {
+            trace(Strategy.EXACT_FROM);
             MatchHolder direct = extractFrom(input, from, to);
             if (direct != null) return direct;
         }
@@ -306,6 +365,7 @@ public final class TdfaRunner implements Regex.Engine {
         // failed register walks the no-allocation boolean walk filters the
         // remaining candidates (dense-candidate no-match shapes).
         if (maxStart > 0 && startBits != null && to - from <= CAND_SCAN_MAX) {
+            trace(Strategy.CAND_SCAN);
             final long[] sb = this.startBits;
             int fails = 0;
             for (int p = from + 1; p < to; p++) {
@@ -326,6 +386,7 @@ public final class TdfaRunner implements Regex.Engine {
             if (w < 0) return null;
             if (w > from + 1) from = w - 1;
         }
+        trace(Strategy.WALK_RESTART);
         for (int startSearch = from + 1; startSearch <= maxStart; startSearch++) {
             MatchHolder h = extractFrom(input, startSearch, to);
             if (h != null) return h;
@@ -858,7 +919,11 @@ public final class TdfaRunner implements Regex.Engine {
         // short-lived runners would allocate-and-die fat instead. Raw scan keeps
         // the kill-point window either way.
         SearchDfa sd = searchDfa;
-        if (to - from < SDFA_MIN_WINDOW || sd.capped) return rawScan(input, from, to, from, null);
+        if (to - from < SDFA_MIN_WINDOW || sd.capped) {
+            trace(Strategy.RAW_SCAN);
+            return rawScan(input, from, to, from, null);
+        }
+        trace(Strategy.TRIGGER);
         int cur = 0;   // pure-seed row: interned first by construction below
         if (sd.rowWords.isEmpty()) {
             int[] seed = new int[sd.nw];
@@ -1262,6 +1327,7 @@ public final class TdfaRunner implements Regex.Engine {
         // Short inputs: first-char-set candidate scan (one bit test per char,
         // exact walk per candidate) beats the raw-scan live-set simulation.
         if (startBits != null && to <= CAND_SCAN_MAX) {
+            trace(Strategy.CAND_SCAN);
             final long[] sb = this.startBits;
             for (int p = 0; p < to; p++) {
                 char c = input.charAt(p);
@@ -1333,11 +1399,13 @@ public final class TdfaRunner implements Regex.Engine {
     /** Fast extract with register updates. */
     private MatchHolder runStringExtractFast(String input, int from, int to) {
         if (literalNeedle != null) {
+            trace(Strategy.LITERAL);
             int idx = input.indexOf(literalNeedle, from);
             return idx < 0 ? null : new MatchHolder(idx, idx + literalNeedle.length(), new int[0]);
         }
         // 1) Try ONE single-start walk from `from` — the common short-input case
         //    (match at/near the start) never needs the simulation at all.
+        trace(Strategy.EXACT_FROM);
         MatchHolder h = tryStartFast(input, from, to, from);
         if (h != null) return h;
         // 1b) Short inputs: first-char-set candidate scan. Coverage is exact
@@ -1348,6 +1416,7 @@ public final class TdfaRunner implements Regex.Engine {
         //     shapes, e.g. \w+@... on prose — per-walk regs + applyOps cost),
         //     a no-regs boolean walk filters the remaining candidates first.
         if (startBits != null && to - from <= CAND_SCAN_MAX) {
+            trace(Strategy.CAND_SCAN);
             final long[] sb = this.startBits;
             int fails = 0;
             for (int p = from + 1; p < to; p++) {
@@ -1361,13 +1430,14 @@ public final class TdfaRunner implements Regex.Engine {
             return null;
         }
         // 2) No match starting at `from`: budgeted origin-tracking sim. Dense
-        // matches early-stop inside the budget and never touch the trigger
-        // (the pre-scan would double the work — the findAll regression). A
-        // distant/absent match exhausts the budget and hands off to the
-        // memoized trigger scan, which bounds the window to [W, to] via kill
-        // points; the sim then finishes over just that window. The old shape
-        // retried every failed start with a full walk: O(n) restarts × O(n)
-        // walk = O(n²) on dense-match regexes like [a-zA-Z]+ing.
+        //    matches early-stop inside the budget and never touch the trigger
+        //    (the pre-scan would double the work — the findAll regression). A
+        //    distant/absent match exhausts the budget and hands off to the
+        //    memoized trigger scan, which bounds the window to [W, to] via kill
+        //    points; the sim then finishes over just that window. The old shape
+        //    retried every failed start with a full walk: O(n) restarts × O(n)
+        //    walk = O(n²) on dense-match regexes like [a-zA-Z]+ing.
+        trace(Strategy.ORIGIN_SIM);
         int leftmost = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS);
         if (leftmost == LSS_BUDGET) {
             int w = triggerScan(input, from, to);
@@ -1378,8 +1448,9 @@ public final class TdfaRunner implements Regex.Engine {
         h = tryStartFast(input, leftmost, to, from);
         if (h != null) return h;
         // 3) Defensive: the sim and the walk must agree on fast-path DFAs; if
-        // they ever don't, fall back to the old restart shape rather than
-        // return a wrong null.
+        //    they ever don't, fall back to the old restart shape rather than
+        //    return a wrong null.
+        trace(Strategy.WALK_RESTART);
         for (int s = leftmost + 1; s <= to; s++) {
             h = tryStartFast(input, s, to, from);
             if (h != null) return h;

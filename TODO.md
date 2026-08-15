@@ -151,6 +151,7 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
 - [x] **`\b` in alternation causes dead-end DFA paths** — Fixed in commit `d133d20`. Modified `Tdfa.Compiler.compile()` to include subset-mask group configs in the step input, ensuring `\b`-guarded transitions include identifier continuations. Group's own configs added first to preserve priority in ε-closure dedup. The veryl scenario now reports the expected 124800 captures.
 - [x] **Unicode case-fold `s ↔ ſ` for literal chars under `(?i)`** — Fixed in commit `74ab652`. Added `CaseFoldTable` (unicode/CaseFoldTable.java) with a reverse fold table mapping `toUpperCase(toLowerCase(cp))` to all BMP codepoints sharing it. Parser uses it when `unicodeShorthand && caseInsensitive`.
 - [ ] ASM register coalescing / scalar replacement (registers → JVM locals)
+- [ ] Revisit internals access: replace the strategy-trace hook (`-Dtdfa.trace.strategy`, `TdfaRunner.traceSnapshot`) with first-class observer/event API. Direction agreed 2026-08-15: expose the compilation pipeline (String regex → AST → TNFA → TDFA) to end-users for maximum reusability; the trace hook is a temporary conformance instrument, out of scope until the API-surface review.
 - [ ] Cache-friendly flat-array data layout for VM backend
 
 ## Benchmark coverage
