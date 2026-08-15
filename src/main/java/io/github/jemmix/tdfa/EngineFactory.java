@@ -25,8 +25,18 @@ public interface EngineFactory {
 
     Regex.Engine create(Tdfa tdfa);
 
+    /**
+     * Whether this factory generates dedicated per-pattern classes. When true,
+     * API layers above (e.g. the re2j-compat {@code Pattern.compile}) may
+     * generate Pattern/Matcher/Regex implementations that devirtualize and
+     * inline end-to-end; when false (interpreter backends, custom tracing
+     * engines), shared implementations are used — generating classes would
+     * buy no dispatch and only cost classload/metaspace/warmup.
+     */
+    default boolean generatesPerPattern() { return false; }
+
     /** ASM bytecode backend: generates a dedicated hidden class per pattern. Fastest at match time. */
-    EngineFactory ASM = TdfaAsmBackend::compile;
+    EngineFactory ASM = io.github.jemmix.tdfa.asm.AsmEngineFactory.INSTANCE;
 
     /** Interpreted VM backend: walks the TDFA tables directly. No code generation. */
     EngineFactory VM = TdfaRunner::new;
