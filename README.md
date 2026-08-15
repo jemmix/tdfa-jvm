@@ -3,9 +3,10 @@
 A regex engine for the JVM that compiles every accepted pattern to a tagged
 deterministic finite automaton, then to JVM bytecode. **No backtracking — ever.**
 
-- vs [`java.util.regex`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/regex/package-summary.html): 4–25× faster on typical patterns — a modest improvement. The real difference is **ReDoS immunity**: patterns like `(a+)+b` that send `java.util.regex` into near-infinite loops run in linear time here.
-- vs [`re2j`](https://github.com/google/re2j): radically faster — 35–68× across all tested patterns — while remaining a drop-in replacement.
+- vs [`java.util.regex`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/regex/package-summary.html): 2.8–20× faster on typical patterns, at parity-or-faster on search workloads — and the real difference is **ReDoS immunity**: patterns like `(a+)+b` that send `java.util.regex` into near-infinite backtracking run in linear time here (111× on the benchmark row).
+- vs [`re2j`](https://github.com/google/re2j): **19–58× faster on short matches, 2–6× faster on search workloads** (scan geomeans 0.18–0.50×, faster on the large majority of corpus rows) — while remaining a drop-in replacement with identical results on 5.7 M differential cases.
 - vs [`reggie`](https://github.com/DataDog/java-reggie): a huge inspiration. They dispatch across multiple regex engines per pattern for peak performance; we use one algorithm for everything by design. Different tradeoffs.
+- **Cost, stated up front**: compile is ~52 µs (VM) / ~301 µs (ASM) per pattern vs ~4 µs for `java.util.regex` — eager AOT determinization is the price of the linear-time guarantee.
 
 An implementation of Borsotti–Trofimovich 2022
 (*A closer look at TDFA* — [paper](https://github.com/skvadrik/re2c/blob/master/doc/papers/2022_a_closer_look_at_tdfa/2022_borsotti_trofimovich_a_closer_look_at_tdfa.pdf)).
@@ -13,33 +14,38 @@ Apache 2.0.
 
 ## Headline benchmark
 
-JMH AverageTime, ns/op. JDK 26. 500 measurement iterations. Reproduce with `./gradlew jmh`.
-Full tables in [`BENCHMARKS.md`](BENCHMARKS.md).
+JMH SingleShotTime, ns/op. JDK 26.0.2, 2026-08-15 (post-kernel refactor).
+Reproduce with `./gradlew :benchmarks:micro:jmh -Pjmh.include='ParameterizedShortInputBench'`.
+Full tables + committed artifacts in [`BENCHMARKS.md`](BENCHMARKS.md).
 
-Boolean match, short inputs:
+Anchored match, short inputs:
 
 | Engine | `(a\|b)*c` | `(\w+)\s+(\w+)` | IPv4 | `abc` | `(a+)+b` ReDoS¹ |
 |---|---:|---:|---:|---:|---:|
-| **tdfa-jvm ASM** | **3.6** | **10.5** | **10.5** | **2.7** | 12.6 |
-| tdfa-jvm VM | 4.0 | 10.8 | 11.0 | 3.0 | 12.8 |
-| java.util.regex | 89.7 | 39.0 | 55.1 | 51.8 | 1,582 |
-| re2j 1.8 | 226 | 426 | 368 | 98.6 | 850 |
-| reggie | 274 | 17.6 | 11.1 | 0.04² | **4.9** |
+| **tdfa-jvm ASM** | **5.8** | **14.1** | **14.2** | 4.3 | 15.0 |
+| tdfa-jvm VM | 5.8 | 14.2 | 14.5 | 4.6 | 15.3 |
+| java.util.regex | 112.9 | 40.0 | 55.8 | 34.6 | 1,670 |
+| re2j 1.8 | 220.7 | 437.4 | 381.4 | 83.0 | 875.4 |
+| reggie | 280.0 | 18.0 | 11.1 | 0.03² | **4.9** |
 
-¹ Input: 20 × `a` + `c` — `java.util.regex` goes exponential (125× slower than ASM).
-² Reggie special-cases literal patterns to `String.indexOf`, which the JVM vectorizes (SIMD). Single-algorithm design means we don't do this.
+¹ Input: 20 × `a` + `c` — `java.util.regex` goes exponential (111× slower than ASM).
+² Reggie special-cases literal patterns to `String.indexOf`, which the JVM vectorizes (SIMD). We do this too when the *whole pattern* is one literal — disclosed in the search-acceleration section below — but not per-alternative branch.
 
-Long-input scan (1000 chars, pattern never matches):
+Unanchored search (the harder regime for DFA engines; committed artifacts):
 
-| Engine | ns/char | vs ASM |
-|---|---:|---|
-| **tdfa-jvm ASM** | **793** | — |
-| tdfa-jvm VM | 3,216 | 4.1× slower |
-| java.util.regex | 5,417 | 6.8× slower |
-| reggie | 206,776 | 261× slower |
+| Benchmark | tdfa-jvm VM | tdfa-jvm ASM |
+|---|---|---|
+| Short-input `find()`, 10 shapes — geomean vs `java.util.regex` | 0.86× | **0.77×** |
+| Short-input `find()` — geomean vs re2j | **0.18×** | 0.19× |
+| rebar corpus, 110 scenarios — scan geomean vs re2j | **0.44×** (fast) / 0.50× (accurate) | 0.83× / 0.74× |
+| Log-field extraction, 200 k lines — geomean vs re2j | 2.3× faster | 2.3× faster |
+| Literal search (`"Twain"` in 16 MB corpus) | 0.22 ns/char | 0.22 ns/char (`String.indexOf` path) |
 
-vs `java.util.regex`: **4–25× faster** on typical patterns, **125× faster** on ReDoS.
-vs `re2j`: **35–68× faster** everywhere.
+**Known gaps** (so the numbers above stay credible): `java.util.regex` wins
+literal-*prefixed* search on medium inputs (its Boyer-Moore-class filtering
+beats us ~4× on `ip=`-shaped log queries — tracked as the next work item);
+2.2× on unicode-class short-input rows; ASM compile costs ~300 µs/pattern
+and a per-pattern classload (cold start) — VM is the zero-codegen tier.
 
 ## Vision
 
@@ -75,15 +81,26 @@ compile-once-match-many model; multi-pass is solving a different problem.
 
 **Correctness**
 - **5,716,884** differential cases from RE2's exhaustive test suite — 0 failures
-- 1127 tests across 14 parameterized parity suites, each running on **both** ASM and VM backends
-- Full `re2j` API surface covered (Pattern, Matcher, RE2)
-- Perl (leftmost-first) and POSIX (leftmost-longest) disambiguation tested independently
-- Zero-width assertions, Unicode, non-BMP, named groups, case folding
+  (each suite runs on both backends)
+- 427 unit tests — including a **strategy-conformance sweep**: both backends
+  must pick *identical search strategies* (literal / candidate-scan /
+  simulation / walk) across a shape × boundary-length catalog, not just
+  identical results — the guard against silently running different algorithms
+- 890 re2j-parity tests with the re2j engine as a live oracle
+- 220 in-scope rebar scenarios × both backends (compile + grep-captures models)
+- Full `re2j` API surface (Pattern, Matcher, RE2); Perl (leftmost-first) and
+  POSIX (leftmost-longest) disambiguation tested independently; zero-width
+  assertions, Unicode, non-BMP, named groups, case folding
 
-**Performance**
-- JMH microbenchmarks vs `java.util.regex`, `re2j 1.8`, `DataDog/java-reggie`
-- Short-input (11-char) and long-input (1000-char) patterns
-- ReDoS resistance verified — `(a+)+b` on non-matching input is linear-time
+**Performance** — all harnesses in-repo, results committed as artifacts
+(`benchmarks/results-*.txt`):
+- `ParameterizedShortInputBench` / `ShortFindBench` (JMH): anchored /
+  unanchored short inputs, 5 engines
+- `RebarBench` fast|accurate: 110-scenario rebar corpus, count-verified vs
+  `java.util.regex`
+- `LogExtractMacro`: log-pipeline field extraction (200 k lines, cold + warm)
+- `QuickBench` + per-machine baselines (`scripts/bench-regression.sh`):
+  15 % regression gate on every landing
 
 **Not yet verified**
 - No differential fuzzing yet — see [`TODO.md`](TODO.md)
@@ -97,10 +114,21 @@ word boundaries (Unicode + supplementary-codepoint aware under `(?u)`), inline
 flags. Rejects `\C`, atomic groups, possessive quantifiers, backreferences,
 lookaround, and other backtracking-required syntax.
 
-**Two backends**, same `Tdfa` IR:
-- **ASM** (default) — emits a specialized JVM class per regex via runtime
-  bytecode generation. 4–10× faster than the VM backend.
-- **VM** — table-walking interpreter. Correct, portable, slower.
+**Two backends, one algorithm** — both run the *same* search strategy (see
+"Backend architecture" below) over the same `Tdfa` IR; a conformance test
+proves they pick identical strategies, so results and complexity guarantees
+are the same by construction. What differs is who executes the walk:
+
+- **ASM** (default) — compiles the pattern all the way to generated JVM
+  classes: a per-pattern engine whose walk loop is emitted as bytecode
+  (per-state switch dispatch, register ops inlined as straight-line stores),
+  plus — under the re2j API — generated Pattern/Matcher classes so the whole
+  `find()` chain devirtualizes and inlines end-to-end. **0.42–0.89× the VM's
+  time on capture-dense walks, never measurably slower warm.** Cost:
+  ~300 µs compile and a classload per pattern (per-pattern JIT warmup).
+- **VM** — table-walking interpreter, zero code generation. Equal on
+  scan-dominated workloads, ~1.1× behind ASM on capture-dense walks, ~52 µs
+  compile. The portability/reference tier.
 
 `EngineFactory` selects the backend per-compile (ASM, VM, or custom lambda).
 Default resolved once from `-Dtdfa.engine=ASM|VM`.
