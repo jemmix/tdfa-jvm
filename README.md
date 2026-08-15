@@ -136,6 +136,19 @@ rebar-corpus goal: match re2j/jur on bulk text):
    bit-identical to the DFA's (`"Twain"` finds the same spans either way).
 3. **Latin-1 / BMP block tables** for walk dispatch (O(1) below 256, block
    lookup above).
+4. **First-char-set candidate scan** (short inputs, ≤ 64 chars): a bitset of
+   the start state's outgoing characters skips positions that cannot begin a
+   match; each surviving candidate gets an exact walk. The bitset is a
+   superset of true first characters (mask-gated entries included), and the
+   walk checks masks exactly — candidates can be tried and rejected, never
+   wrongly accepted; coverage is complete because a consuming match must
+   consume its first character. Built only when the start state cannot accept
+   (an accepting start admits empty matches anywhere, which the bits cannot
+   represent — those shapes keep the simulation paths).
+5. **ASM short-input delegation**: generated `match()` forwards to the
+   interpreter runner for inputs ≤ 64 chars, where the runner's extract fast
+   path has a lower per-call constant. Identical semantics by construction —
+   both are the same `Tdfa`.
 
 These are throughput optimizations only; match semantics (leftmost-first,
 captures, anchors, word boundaries) are unchanged and remain fully covered by

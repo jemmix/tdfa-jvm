@@ -73,6 +73,30 @@ known gaps: µs-scale rows dominated by ASM cold-JIT (info-grade), i1095
 applyOps register cost (56% of redos profile — future regopt work).
 Accurate overnight run = final arbiter.
 
+### Short-input parity round (2026-08-15, commits d192462 + e949759)
+
+JMH ShortFindBench (10 slugs × 5 engines, ≤64-char inputs) had vm/jur
+geomean **1.48x** despite the haystack-scale parity — per-call machinery,
+not scan throughput. Round outcome (results in
+`benchmarks/results-shortfind-jmh.txt`):
+
+| Item | Outcome |
+|---|---|
+| R1 first-char-set candidate scan (≤64 chars) | startBits bitset + exact walk in find/extract/leftmostStart; adaptive boolean pre-filter after 3 failed extract walks (emailNoMatch 634→1143 without it, 498 with); boundedSpan 310→82, caseiLit 176→59, ipExtract 492→132 |
+| R5 word-flag trim | needsWordFlags gate (stop-table variant equality) + wordBits bitset; every PERL pattern without \b stops paying 2 word checks per posFlags |
+| R3 ASM short-input delegation | genMatch → runner.match ≤64 chars; asm/vm anomaly (+25 ns constant) gone — alternation 299→72 |
+| R2 shim matches() 51.6→9–64 ns | flat walk dispatch for disjoint DFAs in extractFrom/runStringMatchFrom + R5; residual vs jur (6–26) = MatchHolder/MatchResult + eager ops layers — declared VM corner |
+| R4 lazy BMP walk blocks | per-state 512-cp blocks, volatile copy-on-grow publish, 64-block cap; wordUnicodeCls 135→83 |
+| tryStartFast non-Latin bail | re-walks from the SAME start (extractFrom) instead of re-running the whole generic search |
+| extractFrom pooled regs | candidate loops call it per candidate; failed walks no longer allocate |
+
+JMH geomean: **vm/jur 0.85x / asm/jur 0.93x** (was 1.48x / ~2.0x);
+vm/re2j 0.18x. Worst remaining rows: wordUnicodeCls 2.28x, boundedSpan
+1.82x, emailNoMatch 1.61x (all also beat re2j 3–7x). CAND_SCAN_MAX=64
+bounds the worst case at O(64²) walk steps; longer inputs keep the
+budgeted-sim/trigger regime (unchanged, regression-gated).
+
+
 ### Bugs found & fixed during bring-up (regression tests came free)
 - kill in rawScan left live set empty → masked ALL matches after first dead char (re2j-suite)
 - capped-memo fallback restarted from bare seed → dropped in-flight configs, skipped real matches (leipzig 541 vs 543)

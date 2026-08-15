@@ -109,44 +109,72 @@ Compile: vm 4.8s / asm 3.8s total vs jur ~0.1s — 80% is dictionary (2.2s) +
 i1095 (0.9s); the known eager-determinization cost, separate roadmap
 (minimization, lazy determinization).
 
-## 5. Short inputs — the honest picture (JMH ShortFindBench, ns/op)
+## 5. Short inputs — before and after the parity round (JMH ShortFindBench, ns/op)
+
+After the short-input round (commits d192462, e949759):
 
 | slug | jur | re2j | reggie | vm | asm | vm/jur |
 |---|---|---|---|---|---|---|
-| litFind | 75 | 173 | 13 | **24** | 51 | 0.31x |
-| caseiLit `(?i)sherlock` | **33** | 278 | 12 | 176 | 183 | 5.3x |
-| wordB `\bword\b` | **171** | 462 | 42 | 276 | 424 | 1.6x |
-| wordUnicodeCls `\p{L}{2,}` | **25** | 266 | 80 | 135 | 135 | 5.3x |
-| lettersRu | **65** | 252 | 4 | 68 | 155 | 1.04x |
-| boundedSpan `"[^"]{5,20}"` | **40** | 452 | 31 | 310 | 428 | 7.8x |
-| ipExtract | **159** | 1203 | 111 | 492 | 676 | 3.1x |
-| alternation | 124 | 428 | 537 | **68** | 299 | 0.55x |
-| emailNoMatch | **343** | 1601 | 241 | 634 | 1082 | 1.85x |
-| litNoMatch | 37 | 37 | 12 | **19** | 25 | 0.51x |
-| **geomean** | | | | | | **1.48x** (vs 0.66x on full haystacks) |
+| litFind | 94 | 215 | 16 | **26** | 49 | 0.27x |
+| caseiLit `(?i)sherlock` | **37** | 350 | 15 | 49 | 49 | 1.31x |
+| wordB `\bword\b` | 202 | 632 | 50 | **89** | 91 | 0.44x |
+| wordUnicodeCls `\p{L}{2,}` | **36** | 358 | 83 | 83 | 87 | 2.28x |
+| lettersRu | **74** | 316 | 4 | 106 | 107 | 1.44x |
+| boundedSpan `"[^"]{5,20}"` | **45** | 571 | 34 | 82 | 84 | 1.82x |
+| ipExtract | 188 | 1512 | 127 | **128** | 133 | 0.68x |
+| alternation | 143 | 527 | 562 | **67** | 67 | 0.47x |
+| emailNoMatch | 437 | 1965 | 242 | **703** | 744 | 1.61x |
+| litNoMatch | 46 | 43 | 12 | **18** | 19 | 0.39x |
+| **geomean** | | | | | | **vm 0.85x / asm 0.93x** |
 
-vs re2j: **0.37x geomean — decisive at every input size.** vs jur: short
-inputs are exactly where we lose; every loss traces to per-call machinery,
-not fixed overhead (FloorProbe: our Matcher allocation = 0.0 ns delta
-fresh-vs-reset — escape-analyzed away; jur pays 7.5 ns; no string copying).
+Pre-round geomean was vm/jur **1.48x**; per-row then→now: caseiLit
+5.3x→1.31x, wordB 1.6x→0.44x, wordUnicodeCls 5.3x→2.28x, boundedSpan
+7.8x→1.82x, ipExtract 3.1x→0.68x, emailNoMatch 1.85x→1.61x. vs re2j:
+**0.18x geomean, decisive at every input size.** FloorProbe attribution
+correction (measured): Matcher allocation = 0.0 ns delta fresh-vs-reset
+(escape analysis; jur pays 7.5 ns), no string copying, vm intercept ~6 ns
+on the shim find path (the core anchored path is ~2 ns and can inline to
+~0) — the short-input losses were sim/walk machinery, which is what the
+round removed.
+
+What landed (see `TODO.md` rebar section for the full table):
+- **R1 first-char-set candidate scan** — startBits long[1024] over UTF-16
+  units from the start state's outgoing ranges; ≤64-char inputs do
+  bit-test + exact-walk in find/extract/leftmostStart instead of the
+  raw-scan simulation and the budgeted origin sim. Built only when the
+  start state cannot accept (empty-match completeness). Adaptive boolean
+  pre-filter after 3 failed extract walks (dense-candidate no-match
+  shapes: emailNoMatch 634→1143 without the filter, 498 with it).
+- **R5 word-flag trim** — needsWordFlags (stop-table variant equality +
+  mask scan) gates both word-class checks in positionFlags; the class
+  itself became a BMP bitset. wordB 276→89.
+- **R3 ASM short-input delegation** — generated match() forwards to
+  runner.match ≤64 chars; the +25 ns asm/vm constant is gone
+  (alternation 299→72).
+- **Flat walk dispatch** — extractFrom/runStringMatchFrom use
+  asciiRangeFlat wherever ranges are disjoint (priority only matters
+  when they overlap). This is what took shim matches() from 51.6 ns to
+  9–64 ns.
+- **R4 lazy BMP walk blocks** — per-state 512-cp blocks for c ≥ 256,
+  volatile copy-on-grow publication (JMM-correct lazy init), 64-block
+  cap with binary-search fallback, disjoint DFAs only (non-disjoint
+  priority needs the mask-aware walk-back). wordUnicodeCls 135→83.
 
 ## 6. Remaining gaps, root-caused and sized
 
 | # | cluster | evidence | root cause | fix | effort |
 |---|---|---|---|---|---|
-| R1 | short-input sim machinery (boundedSpan 7.8x, caseiLit 5.3x, ipExtract 3.1x, emailNoMatch 1.85x) | JMH | origin-sim + budgeting costs more than the walk it guards on 40-char inputs | first-char-set candidate scan (start state's outgoing char set, 256-bit table loop) + exact walk; engage below a length threshold so the long-input trigger regime is untouched | S–M |
-| R2 | shim `matches()` path 51.6 ns vs 2 ns core | FloorProbe | layer chain + volatile wholeEngine lookup on the anchored hot path | trim the shim path | S |
-| R3 | ASM +25 ns constant on short matches (m@0: asm 31.7 vs vm 6.3; alternation 299 vs 68) | FloorProbe | genMatch chars-cache + emitted extract cost more per call than the runner fast path | delegate to `runner.match` below length threshold | S |
-| R4 | c≥0x100 walk dispatch (wordUnicodeCls 5.3x) | JMH | extract walks binary-search 684-entry tables per char for non-Latin-1 | W1c: 512-cp BMP blocks for the walk path (same shape as trigger blocks) | M |
-| R5 | wordB 1.6x | JMH | positionFlags word-class checks per position | bitset for the word class | S |
-| R6 | rebar unicode scan tail (all-russian 3.9x, letters-ru 4.7x, casei scans 3.2–3.3x, quotes-bounded 4.7x vs jur) | accurate | same families as R1/R4 at haystack scale | mostly falls out of R1+R4; re-measure | — |
-| R7 | compile time (dictionary 2.2s, i1095 0.9s) | accurate | eager determinization + minimization | separate roadmap (lazy DFA build, better minimization) | M–L |
+| R6 | short-input residual rows: wordUnicodeCls 2.28x, boundedSpan 1.82x, emailNoMatch 1.61x, lettersRu 1.44x, caseiLit 1.31x | JMH | per-candidate walk + Matcher/MatchHolder layers vs jur's lazy NFA on inputs where the whole match is ~10 walk steps | accept (all rows beat re2j 3–7x), or regs scalar replacement + leaner extract; diminishing | S–M, deferred |
+| R2′ | shim `matches()` residual: 9–64 ns vs jur 6–26 | FloorProbe-style probe | MatchHolder + MatchResult + eager register ops in the anchored extract | only matters if matches() becomes hot; route is regs scalar replacement | M, deferred |
+| R7 | rebar unicode scan tail (all-russian 3.9x, letters-ru 4.7x, casei scans 3.2–3.3x, quotes-bounded 4.7x vs jur) | accurate | haystack-scale walks; candidate scan is ≤64-char-only by design; scan itself already beats re2j | re-measure after this round (walk blocks help the extract tail); possibly extend candidate scan threshold | — |
+| R8 | compile time (dictionary 2.2s, i1095 0.9s) | accurate | eager determinization + minimization | separate roadmap (lazy DFA build, better minimization) | M–L |
 
 ## 7. Deliberately not done (with reasons)
 
 - **W1c for scan loops** — measured unnecessary after W1b+W2' (the trigger's
   blocks already give O(1) BMP dispatch for scanning; long-russian beats jur).
-  The walk-path variant survives as R4.
+  The walk-path variant WAS later built as R4 (lazy per-state walk blocks,
+  short-input round) — see §5.
 - **W3 "ASM slower than VM on big DFAs"** — closed as measurement artifact:
   steady-state VM=ASM=0.7 µs (sustained warmup); fast-bench gaps were
   JIT-cold asymmetry at few reps.
@@ -161,15 +189,15 @@ fresh-vs-reset — escape-analyzed away; jur pays 7.5 ns; no string copying).
 - **reggie-class direct-call API** (no Matcher allocation, 4–13 ns floors) —
   out of scope; it's a different API contract.
 
-## 8. The per-character contract (targets after R1–R5)
+## 8. The per-character contract (post-round status)
 
-| regime | target | basis |
+| regime | target | status (measured) |
 |---|---|---|
-| fixed per-call cost (warm) | **~2 ns core / ~5 ns shim** | core measured 1.9 ns (matches, ParameterizedShortInputBench lineage); shim fat is R2/R3 |
-| SIMD-skippable (literal, narrow first-char sets) | **0.3–0.4 ns/char** | measured 0.44 slope (indexOf intrinsic); re2j 0.39, jur 1.12 |
-| general DFA stepping | **~2 ns/char** | serial load-after-load chain at L1 latency; re2's DFA sits at the same bound; lettersRu already 1.5 |
-| capture walks | **2–2.5 ns/char ASM / 4–5 ns/char VM** | ops ≤1/char measured; ASM emits stores (~0.5 ns), VM dispatches (~2–3 ns) |
-| sub-15-char inputs | **≤2x reggie floor** | ns/char is the wrong unit below the fixed cost; our 19–24 ns floor already beats jur's 33–37 |
+| fixed per-call cost (warm) | ~2 ns core / ~5 ns shim | core anchored ~2 ns (inlines to ~0); shim find ~6 ns intercept; shim matches() 9–64 ns (R2′ residual: holder/result + eager ops) |
+| SIMD-skippable (literal, narrow first-char sets) | 0.3–0.4 ns/char | 0.44 measured (indexOf intrinsic); re2j 0.39, jur 1.12 |
+| general DFA stepping | ~2 ns/char | lettersRu 106/45 ≈ 2.3; candidate scan skips non-candidates entirely (bit test) |
+| capture walks | 2–2.5 ns/char ASM / 4–5 ns/char VM | ipExtract 128 ns/13-char ≈ 10 ns/char total incl. layers — walk itself ~2–3; VM dispatch corner stands |
+| sub-15-char inputs | ≤2x reggie floor | alternation 67 vs reggie 562; litNoMatch 18 vs jur 46 |
 
 Structural corners where 2 ns/char does not hold: VM capture dispatch
 (declared, portability backend), adversarial tag-dense patterns (bounded by
