@@ -64,6 +64,14 @@ public final class TdfaAsmBackend {
     private static final int MAX_INLINED_RANGES = 600;
 
     /**
+     * Inputs at or below this length make {@code match} delegate to the
+     * embedded runner (lower per-call constant: pooled regs, lazy position
+     * flags, first-char-set candidate scan) instead of running the generated
+     * leftmostStart + chars-cache + runExtract shape.
+     */
+    private static final int SHORT_DELEGATE_LEN = 64;
+
+    /**
      * Maximum DFA state count for TABLE_SCAN dispatch. Each table-scan state
      * emits ~100 bytes of bytecode; above ~600 states the per-state snippets
      * alone blow the 65 KB method limit on {@code runExtract}. Above this
@@ -456,6 +464,23 @@ public final class TdfaAsmBackend {
     private static void genMatch(ClassWriter cw, Tdfa tdfa, String owner, boolean dispatchTooLarge) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I)L" + RESULT + ";", null, null);
         mv.visitCode();
+        // Short-input delegation: the runner's extract fast path (pooled regs,
+        // lazy position flags, first-char-set candidate scan) has a lower
+        // per-call constant than this class's leftmostStart + chars-cache +
+        // static runExtract shape (measured +25 ns on every short match).
+        // Above the threshold the generated walk's flat dispatch wins.
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, CS, "length", "()I", true);
+        ic(mv, SHORT_DELEGATE_LEN);
+        Label genPath = new Label();
+        mv.visitJumpInsn(Opcodes.IF_ICMPGT, genPath);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "match", "(" + CS_D + "I)L" + RESULT + ";", false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitLabel(genPath);
         // Leftmost-start via the runner's origin-tracking multi-state simulation
         // (fast-path DFAs only; mask-bearing DFAs degrade to the boolean
         // over-approximation, same as the old anyMatch precheck). O(n × |states|)

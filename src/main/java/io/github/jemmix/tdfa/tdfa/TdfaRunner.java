@@ -64,6 +64,19 @@ public final class TdfaRunner implements Regex.Engine {
     private final int[] acceptBits;     // bitset of accepting states (over-approximate)
     private final boolean unicodeWordBoundary;
     private final int[] wordRanges;     // Unicode \w ranges for \b when unicodeWordBoundary is true
+    /** Whether any mask / stop-table cell actually consults the word-boundary
+     *  flags — when false, positionFlags skips both word-class checks. */
+    private final boolean needsWordFlags;
+    /** Word-class bitset over UTF-16 units (BMP): replaces the ASCII branch
+     *  chain / Unicode range binary search with one array load. Supplementary
+     *  codepoints still use the range search. */
+    private final long[] wordBits;
+    /** First-character candidate set over UTF-16 units: a consuming match can
+     *  only start at p when input[p] is set (over-approximation when entries
+     *  carry required masks — the exact walk confirms). Built only when the
+     *  start state is NOT accepting (an accepting start admits zero-length
+     *  matches anywhere, which the candidate scan cannot see). */
+    private final long[] startBits;
 
     // ===== per-thread scratch (P2: hot-path allocation removal) =====
     //
@@ -125,6 +138,10 @@ public final class TdfaRunner implements Regex.Engine {
         this.literalNeedle = detectLiteralNeedle(tdfa);
         this.unicodeWordBoundary = tdfa.unicodeWordBoundary;
         this.wordRanges = tdfa.wordRanges;
+        this.needsWordFlags = computeNeedsWordFlags(tdfa);
+        this.wordBits = buildWordBits(tdfa.unicodeWordBoundary ? tdfa.wordRanges : null);
+        this.startBits = (literalNeedle == null && (tdfa.stateMeta[tdfa.startState] & 1) == 0)
+                ? buildStartBits() : null;
     }
 
     public Tdfa tdfa() { return tdfa; }
@@ -160,6 +177,28 @@ public final class TdfaRunner implements Regex.Engine {
         int to = input.length();
         if (literalNeedle != null && input instanceof String)
             return ((String) input).indexOf(literalNeedle, from);
+        // Short-input candidate scan: bit-test per char, exact walk per
+        // candidate. Cheaper than the origin sim's per-live-state dispatch
+        // when the input is tiny; the walk verifies exactly, so the result
+        // is the true leftmost start (no sim/walk agreement caveat).
+        // Non-fastPath DFAs walk via runStringMatchFrom (mask-exact); the
+        // sim's mask-ignoring over-approximation is not involved at all.
+        if (input instanceof String && startBits != null && to - from <= CAND_SCAN_MAX) {
+            String s = (String) input;
+            final long[] sb = this.startBits;
+            if (fastPath) {
+                for (int p = from; p < to; p++) {
+                    char c = s.charAt(p);
+                    if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && matchFromFast(s, p, to)) return p;
+                }
+            } else {
+                for (int p = from; p < to; p++) {
+                    char c = s.charAt(p);
+                    if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && runStringMatchFrom(s, p, to) >= 0) return p;
+                }
+            }
+            return -1;
+        }
         if (fastPath) {
             int l = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS);
             if (l == LSS_BUDGET) {
@@ -193,6 +232,16 @@ public final class TdfaRunner implements Regex.Engine {
                 // \p{L}{256}) a match at/near 0 answers in O(len) while the
                 // trigger's raw-scan pre-check is O(len^2) in live-set size.
                 if (runStringMatchFrom(s, 0, len) >= 0) return true;
+                // Short inputs: first-char-set candidate scan with exact
+                // (mask-aware) walks instead of the raw-scan simulation.
+                if (startBits != null && len <= CAND_SCAN_MAX) {
+                    final long[] sb = this.startBits;
+                    for (int p = 1; p < len; p++) {
+                        char c = s.charAt(p);
+                        if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && runStringMatchFrom(s, p, len) >= 0) return true;
+                    }
+                    return false;
+                }
                 int w = triggerScan(s, 0, len);
                 if (w < 0) return false;
                 for (int from = Math.max(w, 1); from <= maxStart; from++) {
@@ -236,6 +285,25 @@ public final class TdfaRunner implements Regex.Engine {
             MatchHolder direct = extractFrom(input, from, to);
             if (direct != null) return direct;
         }
+        // Short inputs: first-char-set candidate scan with exact (mask-aware)
+        // walks instead of the trigger scan + restart loop. Zero-length
+        // matches are impossible here (startBits is only built when the start
+        // state cannot accept), so bit coverage is complete. After a few
+        // failed register walks the no-allocation boolean walk filters the
+        // remaining candidates (dense-candidate no-match shapes).
+        if (maxStart > 0 && startBits != null && to - from <= CAND_SCAN_MAX) {
+            final long[] sb = this.startBits;
+            int fails = 0;
+            for (int p = from + 1; p < to; p++) {
+                char c = input.charAt(p);
+                if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) continue;
+                if (fails >= 3 && runStringMatchFrom(input, p, to) < 0) continue;
+                MatchHolder h = extractFrom(input, p, to);
+                if (h != null) return h;
+                fails++;
+            }
+            return null;
+        }
         // Trigger scan: memoized search-DFA pass that both proves no-match and
         // bounds the restart loop to the kill-point window (no configuration
         // alive before W can produce a match — see SearchDfa).
@@ -258,8 +326,22 @@ public final class TdfaRunner implements Regex.Engine {
         final int[] op = this.ops;
         final int[] sem = this.stateEntryMask;
         final int[] sam = this.stateAcceptMask;
-        final int[] regs = regSize == 0 ? null : new int[regSize];
-        if (regs != null) Arrays.fill(regs, -1);
+        // Pooled regs (per-thread scratch): the candidate-scan loops call this
+        // per candidate and most walks fail — no allocation on that path. The
+        // success path clones (line below) before returning, so the pool is
+        // never handed out.
+        Scratch sc = SCRATCH.get();
+        final int[] regs;
+        if (regSize == 0) {
+            regs = null;
+        } else if (sc.regs != null && sc.regs.length >= regSize) {
+            regs = sc.regs;
+            Arrays.fill(regs, 0, regSize, -1);
+        } else {
+            regs = new int[regSize];
+            java.util.Arrays.fill(regs, -1);
+            sc.regs = regs;
+        }
         int state = startState;
         int lastAcceptPos = -1, lastAcceptState = -1;
         boolean haveAccept = false;
@@ -390,6 +472,12 @@ public final class TdfaRunner implements Regex.Engine {
     private static final int SDFA_MIN_WINDOW = 2048;   // below: unmemoized raw scan
     /** Origin-sim budget before falling back to the memoized trigger scan. */
     private static final int LSS_BUDGET_CHARS = 4096;
+    /** Inputs at or below this length use the first-char-set candidate scan
+     *  (bit test per char + exact walk per candidate) instead of the
+     *  multi-state simulation. Worst case is O(len²) walk steps (dense
+     *  candidates, long failing walks) — 64² = 4K steps bounds it while the
+     *  sim stays the better shape for haystack-scale inputs. */
+    private static final int CAND_SCAN_MAX = 64;
 
     private final SearchDfa searchDfa;
     /**
@@ -442,6 +530,75 @@ public final class TdfaRunner implements Regex.Engine {
         } catch (RuntimeException e) {
             return null;   // any surprise shape: not a literal
         }
+    }
+
+    /**
+     * Build the first-char candidate bitset from the start state's outgoing
+     * ranges (dead targets excluded; mask-gated entries included — sound
+     * over-approximation, the exact walk confirms). Ranges above the BMP OR
+     * in the high-surrogate block: a supplementary first char begins with a
+     * high surrogate unit, so those positions stay candidates.
+     */
+    private long[] buildStartBits() {
+        final int[] sm = this.stateMeta, rg = this.ranges;
+        int meta = sm[startState];
+        int base = stateBase[startState], cnt = (meta >>> 1) & 0xFFFF;
+        long[] bits = new long[1024];
+        boolean any = false;
+        for (int i = 0; i < cnt; i++) {
+            int o = (base + i) * 5;
+            if (rg[o + 2] < 0) continue;               // dead: never a first char
+            int lo = Math.max(rg[o], 0), hi = Math.min(rg[o + 1], 0xFFFF);
+            for (int c = lo; c <= hi; c++) bits[c >>> 6] |= 1L << (c & 63);
+            if (rg[o + 1] > 0xFFFF)
+                for (int c = 0xD800; c <= 0xDBFF; c++) bits[c >>> 6] |= 1L << (c & 63);
+            any = true;
+        }
+        return any ? bits : null;
+    }
+
+    /** Word-class bitset over BMP UTF-16 units. ASCII mode (null ranges):
+     *  the 63-char [_0-9A-Za-z] set; unicode mode: wordRanges clipped to the BMP. */
+    private static long[] buildWordBits(int[] ranges) {
+        long[] bits = new long[1024];
+        if (ranges == null) {
+            setBit(bits, '_');
+            for (int c = '0'; c <= '9'; c++) setBit(bits, c);
+            for (int c = 'a'; c <= 'z'; c++) setBit(bits, c);
+            for (int c = 'A'; c <= 'Z'; c++) setBit(bits, c);
+            return bits;
+        }
+        for (int i = 0; i + 1 < ranges.length; i += 2) {
+            int lo = Math.max(ranges[i], 0), hi = Math.min(ranges[i + 1], 0xFFFF);
+            for (int c = lo; c <= hi; c++) bits[c >>> 6] |= 1L << (c & 63);
+        }
+        return bits;
+    }
+
+    private static void setBit(long[] bits, int c) { bits[c >>> 6] |= 1L << (c & 63); }
+
+    /**
+     * Whether the word-boundary flags are observable anywhere: an entry /
+     * accept / required mask with a word bit, or a stop-table row whose cells
+     * differ between the WB / NWB / no-word variants of the same base flags
+     * (positionFlags only ever produces those three variants — both-set never
+     * occurs — so cell equality across them makes the word bits irrelevant).
+     */
+    private static boolean computeNeedsWordFlags(Tdfa tdfa) {
+        final int WM = Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY;
+        for (int m : tdfa.stateEntryMask) if ((m & WM) != 0) return true;
+        for (int m : tdfa.stateAcceptMask) if ((m & WM) != 0) return true;
+        for (int i = 4; i < tdfa.ranges.length; i += 5) if ((tdfa.ranges[i] & WM) != 0) return true;
+        int[] soa = tdfa.stopOnAcceptMask;
+        for (int s = 0; s < tdfa.stateCount; s++) {
+            int row = s * 64;
+            for (int base = 0; base < 16; base++) {
+                int c0 = soa[row + base], c1 = soa[row + (base | Tnfa.WORD_BOUNDARY)],
+                        c2 = soa[row + (base | Tnfa.NO_WORD_BOUNDARY)];
+                if (c0 != c1 || c0 != c2) return true;
+            }
+        }
+        return false;
     }
 
     /** Static nested: shared per-Tdfa lifetime; references the runner's tables. */
@@ -1005,7 +1162,69 @@ public final class TdfaRunner implements Regex.Engine {
 
     /** Unanchored boolean search via single-pass multi-state simulation. O(n × |states|). */
     private boolean runStringFindFast(String input, int to) {
+        // Short inputs: first-char-set candidate scan (one bit test per char,
+        // exact walk per candidate) beats the raw-scan live-set simulation.
+        if (startBits != null && to <= CAND_SCAN_MAX) {
+            final long[] sb = this.startBits;
+            for (int p = 0; p < to; p++) {
+                char c = input.charAt(p);
+                if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && matchFromFast(input, p, to)) return true;
+            }
+            return false;
+        }
         return triggerScan(input, 0, to) >= 0;
+    }
+
+    /**
+     * Tight boolean walk for fastPath DFAs: does some match start exactly at
+     * {@code from}? Flat range-index dispatch below {@code latinLimit},
+     * disjoint binary search above; no regs, no masks (fastPath guarantees
+     * all zero), no PERL stop logic — any accept is a match for boolean
+     * purposes, so the first accepting state returns true. Never called when
+     * the start state accepts (startBits is null then), so no empty-match
+     * check is needed before the first step.
+     */
+    private boolean matchFromFast(String input, int from, int to) {
+        final int[] sm = this.stateMeta;
+        final int[] arf = this.asciiRangeFlat;
+        final int[] rg = this.ranges;
+        final int limit = this.latinLimit;
+        int state = startState;
+        int pos = from;
+        while (pos < to) {
+            char c0 = input.charAt(pos);
+            int c = c0, adv = 1;
+            if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to) {
+                char c1 = input.charAt(pos + 1);
+                if (c1 >= 0xDC00 && c1 <= 0xDFFF) {
+                    c = ((c0 - 0xD800) << 10) + (c1 - 0xDC00) + 0x10000;
+                    adv = 2;
+                }
+            }
+            int ri;
+            if (c < limit) {
+                ri = arf[state * limit + c];
+            } else {
+                int base = stateBase[state], cnt = (sm[state] >>> 1) & 0xFFFF;
+                int rlo = 0, rhi = cnt - 1;
+                ri = -1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    int mo = (base + mid) * 5;
+                    if (c < rg[mo]) { rhi = mid - 1; continue; }
+                    if (c > rg[mo + 1]) { rlo = mid + 1; continue; }
+                    ri = mid;
+                    break;
+                }
+            }
+            if (ri < 0) return false;
+            int target = rg[(stateBase[state] + ri) * 5 + 2];
+            if (target < 0) return false;
+            state = target;
+            pos += adv;
+            if ((sm[state] & 1) != 0) return true;
+        }
+        return false;
     }
 
     /** Fast extract with register updates. */
@@ -1018,6 +1237,26 @@ public final class TdfaRunner implements Regex.Engine {
         //    (match at/near the start) never needs the simulation at all.
         MatchHolder h = tryStartFast(input, from, to, from);
         if (h != null) return h;
+        // 1b) Short inputs: first-char-set candidate scan. Coverage is exact
+        //     (start state not accepting — else startBits is null — so every
+        //     match consumes a first char carrying its bit); each candidate
+        //     gets an exact walk, so the first hit is the true leftmost match.
+        //     After a few failed extract walks (dense-candidate no-match
+        //     shapes, e.g. \w+@... on prose — per-walk regs + applyOps cost),
+        //     a no-regs boolean walk filters the remaining candidates first.
+        if (startBits != null && to - from <= CAND_SCAN_MAX) {
+            final long[] sb = this.startBits;
+            int fails = 0;
+            for (int p = from + 1; p < to; p++) {
+                char c = input.charAt(p);
+                if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) continue;
+                if (fails >= 3 && !matchFromFast(input, p, to)) continue;
+                h = tryStartFast(input, p, to, from);
+                if (h != null) return h;
+                fails++;
+            }
+            return null;
+        }
         // 2) No match starting at `from`: budgeted origin-tracking sim. Dense
         // matches early-stop inside the budget and never touch the trigger
         // (the pre-scan would double the work — the findAll regression). A
@@ -1047,9 +1286,9 @@ public final class TdfaRunner implements Regex.Engine {
 
     /**
      * One single-start extract walk (no restart loop); null if no match starts
-     * exactly at {@code start}. {@code originFrom} is the caller's search
-     * origin — only used to rerun the generic path when a non-ASCII char is
-     * met mid-walk (the generic path re-does the search from there).
+     * exactly at {@code start}. Non-Latin-1 codepoints mid-walk fall back to
+     * the generic exact walk from the SAME start (single-start semantics —
+     * callers treat null as "no match here", not "no match anywhere").
      */
     private MatchHolder tryStartFast(String input, int start, int to, int originFrom) {
         final int[] sm = this.stateMeta;
@@ -1095,7 +1334,7 @@ public final class TdfaRunner implements Regex.Engine {
             }
             if (pos == to) break;
             char c = input.charAt(pos);
-            if (c >= latinLimit) return runStringExtract(input, originFrom, to);
+            if (c >= latinLimit) return extractFrom(input, start, to);
             int ri = arf[state * latinLimit + c];
             if (ri < 0) break;
             int mo = (stateBase[state] + ri) * 5;
@@ -1506,10 +1745,12 @@ public final class TdfaRunner implements Regex.Engine {
         if (pos == len || (multiline && pos < len && s.charAt(pos) == '\n')) flags |= Tnfa.END_TEXT;
         if (pos == 0) flags |= Tnfa.ABS_BEGIN;   // \A: absolute start, never affected by (?m)
         if (pos == len) flags |= Tnfa.ABS_END;    // \z: absolute end, never affected by (?m)
-        boolean prevWord = isWordBefore(s, pos);
-        boolean currWord = isWordAt(s, pos, len);
-        if (prevWord != currWord) flags |= Tnfa.WORD_BOUNDARY;
-        else flags |= Tnfa.NO_WORD_BOUNDARY;
+        if (needsWordFlags) {
+            boolean prevWord = isWordBefore(s, pos);
+            boolean currWord = isWordAt(s, pos, len);
+            if (prevWord != currWord) flags |= Tnfa.WORD_BOUNDARY;
+            else flags |= Tnfa.NO_WORD_BOUNDARY;
+        }
         return flags;
     }
 
@@ -1520,10 +1761,12 @@ public final class TdfaRunner implements Regex.Engine {
         if (pos == len || (multiline && pos < len && s.charAt(pos) == '\n')) flags |= Tnfa.END_TEXT;
         if (pos == 0) flags |= Tnfa.ABS_BEGIN;
         if (pos == len) flags |= Tnfa.ABS_END;
-        boolean prevWord = isWordBefore(s, pos);
-        boolean currWord = isWordAt(s, pos, len);
-        if (prevWord != currWord) flags |= Tnfa.WORD_BOUNDARY;
-        else flags |= Tnfa.NO_WORD_BOUNDARY;
+        if (needsWordFlags) {
+            boolean prevWord = isWordBefore(s, pos);
+            boolean currWord = isWordAt(s, pos, len);
+            if (prevWord != currWord) flags |= Tnfa.WORD_BOUNDARY;
+            else flags |= Tnfa.NO_WORD_BOUNDARY;
+        }
         return flags;
     }
 
@@ -1656,17 +1899,10 @@ public final class TdfaRunner implements Regex.Engine {
      * RE2's isWordRune: ASCII word chars [_0-9A-Za-z].
      * When {@link #unicodeWordBoundary} is true, checks the Unicode {@code \w}
      * ranges (matching {@code java.util.regex} with {@code UNICODE_CHARACTER_CLASS}).
+     * Both via the {@link #wordBits} BMP bitset — one array load.
      */
     private boolean isWordChar(char c) {
-        if (!unicodeWordBoundary) {
-            return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-        }
-        return isUnicodeWordChar(c);
-    }
-
-    /** Binary-search the Unicode {@code \w} ranges in {@link #wordRanges}. */
-    private boolean isUnicodeWordChar(char c) {
-        return isUnicodeWordCodepoint(c);
+        return (wordBits[c >>> 6] >>> (c & 63) & 1L) != 0L;
     }
 
     /**
