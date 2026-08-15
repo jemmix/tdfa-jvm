@@ -659,8 +659,8 @@ public final class RebarBench {
         StringBuilder sb = new StringBuilder(title + " (ours slower = ratio > 1):" + System.lineSeparator());
         for (int i = 0; i < Math.min(10, list.size()); i++) {
             Ratio x = list.get(i);
-            sb.append(String.format(Locale.ROOT, "  %6.2fx  %-50s  ours=%8.0f us  theirs=%8.0f us%n",
-                    x.ratio(), abbrev(x.name(), 50), x.aNs() / 1000.0, x.bNs() / 1000.0));
+            sb.append(String.format(Locale.ROOT, "  %6.2fx  %-50s  ours=%9d ns  theirs=%9d ns%n",
+                    x.ratio(), abbrev(x.name(), 50), x.aNs(), x.bNs()));
         }
         return sb.toString();
     }
