@@ -1,30 +1,26 @@
 # ShortFindBench — short-input find() across 5 engines (JMH SingleShotTime, ns/op)
-# Run: 2026-08-15, JDK 26.0.2, after the short-input parity round
-# (commits d192462 + e949759: first-char-set candidate scan, word-flag trim,
-# ASM short-input delegation, flat walk dispatch, lazy BMP walk blocks).
-# Previous run (pre-round) in git history: geomean vm/jur 1.48x.
+# Run: 2026-08-15, JDK 26.0.2, AFTER the kernel refactor (P0-P3: shared strategy
+# ladder + generated Regex/Pattern/Matcher under ASM; commits 858b2f6..adf176b).
+# Previous run (pre-kernel short-input round): geomean vm/jur 0.85x / asm/jur 0.93x.
 
-slug              jur    re2j  reggie      vm     asm   vm/jur   asm/jur   vm/re2j
-litFind          94.1   214.6    16.2   25.6   48.8   0.27x    0.52x     0.12x
-caseiLit         37.2   350.2    15.2   48.8   49.4   1.31x    1.33x     0.14x
-wordB           202.4   632.3    50.3   88.6   91.2   0.44x    0.45x     0.14x
-wordUnicodeCls   36.5   357.8    83.2   83.2   86.5   2.28x    2.37x     0.23x
-lettersRu        73.8   316.1     4.5  106.1  107.1   1.44x    1.45x     0.34x
-boundedSpan      45.2   571.4    33.9   82.3   83.8   1.82x    1.86x     0.14x
-ipExtract       188.2  1511.7   126.8  128.2  132.8   0.68x    0.71x     0.08x
-alternation     142.6   526.5   561.9   66.7   66.8   0.47x    0.47x     0.13x
-emailNoMatch    436.9  1965.2   242.2  703.3  743.6   1.61x    1.70x     0.36x
-litNoMatch       46.3    43.1    11.9   18.1   19.3   0.39x    0.42x     0.42x
+slug              jur    re2j  reggie      vm     asm   vm/jur   asm/jur   asm/vm
+litFind            88.4  207.3   13.8   29.8   29.4    0.34x    0.33x    0.98x
+caseiLit           36.8  342.1   12.3   48.6   53.5    1.32x    1.45x    1.10x
+wordB             219.5  528.0   42.5   81.3   80.1    0.37x    0.37x    0.99x
+wordUnicodeCls     35.0  310.8   80.5   76.2   77.4    2.18x    2.21x    1.02x
+lettersRu          74.8  287.8    4.3  100.0   42.3    1.34x    0.57x    0.42x
+boundedSpan        51.6  523.9   31.0   84.8   74.1    1.65x    1.44x    0.87x
+ipExtract         171.3 1356.6  113.0  126.7   94.4    0.74x    0.55x    0.74x
+alternation       155.9  430.6  527.7   61.3   65.1    0.39x    0.42x    1.06x
+emailNoMatch      398.3 1637.0  237.7  728.1  728.2    1.83x    1.83x    1.00x
+litNoMatch         44.9   36.8   11.5   24.9   24.6    0.55x    0.55x    0.99x
 
-geomean: vm/jur 0.85x   asm/jur 0.93x   vm/re2j 0.18x
-(pre-round: vm/jur 1.48x; per-row vm/jur then -> now:
- caseiLit 5.3x->1.31x, wordB 1.6x->0.44x, wordUnicodeCls 5.3x->2.28x,
- boundedSpan 7.8x->1.82x, ipExtract 3.1x->0.68x, alternation 0.55x->0.47x,
- emailNoMatch 1.85x->1.61x, litNoMatch 0.51x->0.39x)
+geomean: vm/jur 0.86x  asm/jur 0.77x  asm/vm 0.890x
 
-Machine drifts +-30% between runs (documented); lettersRu rows in particular
-move 68..107 ns across runs (probe min-of-5 range 74..100). Remaining per-row
-gaps vs jur: wordUnicodeCls 2.28x (walk+extract fixed machinery vs jur's
-first-char prefilter on a 45-char input), boundedSpan 1.82x and caseiLit
-1.31x (candidate-walk + Matcher layers), emailNoMatch 1.61x (candidate
-walks on a dense-candidate no-match scan; re2j beaten 2.8x on the same row).
+asm wins where predicted (walk/capture-dense): lettersRu 0.42x vm / 0.57x jur
+(generated TABLESWITCH walk vs flat-table+block loads), ipExtract 0.74x vm /
+0.55x jur (inlined ops), boundedSpan 0.87x vm. Delegate rows (litFind,
+litNoMatch, wordB, emailNoMatch) at 0.98-1.00x vm by construction.
+alternation 1.06x / caseiLit 1.10x asm-vs-vm are within this machine's
+documented single-shot noise (probe min-of-N disagrees: 56 vs 60).
+Machine drifts +-30% between runs; JMH single-shot rows move with it.
