@@ -54,51 +54,22 @@ public final class TdfaAsmBackend {
         }
     }
 
-    /**
-     * Maximum total live range count for inlined ASM dispatch. Above this,
-     * {@code runExtract}'s inlined range checks would exceed the JVM 65 KB
-     * method-size limit (each inlined range is ~25 bytes of bytecode). The
-     * ASM engine falls back to TABLE_SCAN dispatch (one compact runtime
-     * helper call per state) instead.
-     */
-    private static final int MAX_INLINED_RANGES = 600;
-
-    /**
-     * Inputs at or below this length make {@code match} delegate to the
-     * embedded runner (lower per-call constant: pooled regs, lazy position
-     * flags, first-char-set candidate scan) instead of running the generated
-     * leftmostStart + chars-cache + runExtract shape. 128: measured break-even
-     * (the runner's extract fast path wins through ~128 chars; the 65-char
-     * litFind JMH row sits just above the old 64 threshold and paid +23 ns).
-     */
-    private static final int SHORT_DELEGATE_LEN = 128;
-
-    /**
-     * Maximum DFA state count for TABLE_SCAN dispatch. Each table-scan state
-     * emits ~100 bytes of bytecode; above ~600 states the per-state snippets
-     * alone blow the 65 KB method limit on {@code runExtract}. Above this
-     * threshold the engine uses DELEGATE mode (every hot method just forwards
-     * to the embedded {@link TdfaRunner}); the class is a thin wrapper, with
-     * no inlined dispatch at all.
-     */
-    private static final int MAX_TABLESCAN_STATES = 600;
-
     /** Dispatch mode picked at class-emit time, see {@link #pickMode}. */
-    enum DispatchMode { INLINED, TABLE_SCAN, DELEGATE }
+    enum DispatchMode { INLINED, DELEGATE }
 
     private static byte[] generate(Tdfa tdfa, String owner) {
+        // One brain, one ladder: the search strategy (literal / candidate
+        // scan / origin sim / trigger / walk ordering) lives in TdfaRunner;
+        // generated code CALLS it (monomorphic hooks) and owns only the leaf
+        // loops (inlined-dispatch walk with inlined ops, flat-table anchored
+        // loop). Non-fastPath DFAs and literal needles delegate entirely —
+        // the runner's ladder is already optimal there. The emitted ladder in
+        // genMatch is a transcription of runStringExtractFast; the
+        // strategy-conformance test asserts trace equality with the VM.
         DispatchMode mode = pickMode(tdfa);
-        boolean dispatchTooLarge = mode != DispatchMode.INLINED;
-        // Literal-needle DFAs always fully delegate: the runner's indexOf
-        // short-circuit beats the generated leftmostStart + chars-cache +
-        // runExtract shape at every input length (measured +23 ns even on a
-        // 5-char match), and delegation mode adds no static tables.
         boolean delegate = mode == DispatchMode.DELEGATE
                 || TdfaRunner.detectLiteralNeedle(tdfa) != null;
-        // Disable the fast path (ASCII_TARGET table) outside INLINED mode.
-        // In DELEGATE mode matches()/runExtract() forward to the runner, so
-        // the table would never be consulted anyway.
-        boolean fastPath = mode == DispatchMode.INLINED && computeFastPath(tdfa);
+        boolean fastPath = mode == DispatchMode.INLINED;   // pickMode only INLINES fastPath-eligible DFAs
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, owner, null, "java/lang/Object", new String[]{ENGINE});
         if (delegate) {
@@ -113,13 +84,9 @@ public final class TdfaAsmBackend {
             genInit(cw, owner, tdfa, fastPath);
             genMatches(cw, owner, fastPath);
             genFind(cw, owner);
-            genMatch(cw, tdfa, owner, dispatchTooLarge);
-            genToCharArray(cw);
-            genRunExtract(cw, tdfa, owner, dispatchTooLarge);
-            if (dispatchTooLarge) {
-                genScanRanges(cw, owner);
-                genApplyOpsRuntime(cw, owner);
-            }
+            genMatch(cw, tdfa, owner);
+            genExtractOne(cw, tdfa, owner);
+            genToResult(cw, tdfa, owner);
             genEntryOkC(cw, owner);
             genPositionFlagsC(cw, owner, tdfa.multiline, tdfa.unicodeWordBoundary);
             if (tdfa.unicodeWordBoundary) {
@@ -162,25 +129,10 @@ public final class TdfaAsmBackend {
     // ===== <init> =====
 
     private static void genInit(ClassWriter cw, String owner, Tdfa tdfa, boolean fastPath) {
-        // Instance field holding a TdfaRunner for the multi-state no-match
-        // pre-check (avoids the O(n²) outer-loop scan in runBoolean/runExtract
-        // on non-matching haystacks). The ASM inlined transitions are still used
-        // for the actual extraction; the runner is only consulted for the pre-check.
+        // Instance field holding the TdfaRunner: the shared strategy brain
+        // (ladder hooks are monomorphic final-class calls) and the full
+        // delegate path for everything the generated class doesn't own.
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "runner", RUNNER_D, null, null).visitEnd();
-        // Per-instance CharSequence → char[] cache for match(). Without this,
-        // each find() call re-copies the entire haystack via toCharArray,
-        // producing G1 humongous allocations and O(n²) wall time on long
-        // inputs (e.g. [a-zA-Z]+ing on 16 MB leipzig). Keyed by reference
-        // identity; safe because Matcher (and therefore the Pattern's engine)
-        // is single-thread per owner. See docs/REBAR-SPEEDUP-PLAN.md §Tier-2 #3.
-        cw.visitField(Opcodes.ACC_PRIVATE, "cachedInput", CS_D, null, null).visitEnd();
-        cw.visitField(Opcodes.ACC_PRIVATE, "cachedChars", "[C", null, null).visitEnd();
-        // Static fields for the table-scan dispatch fallback (wide Unicode classes
-        // like \p{L}{N} that would blow the 65 KB method limit if inlined). Set
-        // from <init> because the arrays come from the Tdfa param and are too large
-        // to populate via per-element IASTORE in <clinit>. One instance per class.
-        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "RANGES_TABLE", "[I", null, null).visitEnd();
-        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "OPS_TABLE", "[I", null, null).visitEnd();
         if (tdfa.unicodeWordBoundary) {
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "WORD_RANGES", "[I", null, null).visitEnd();
         }
@@ -194,14 +146,6 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, RUNNER, "<init>", "(" + TDFA_D + ")V", false);
         mv.visitFieldInsn(Opcodes.PUTFIELD, owner, "runner", RUNNER_D);
-        // RANGES_TABLE = tdfa.ranges
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "ranges", "[I");
-        mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "RANGES_TABLE", "[I");
-        // OPS_TABLE = tdfa.ops
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "ops", "[I");
-        mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "OPS_TABLE", "[I");
         if (tdfa.unicodeWordBoundary) {
             mv.visitVarInsn(Opcodes.ALOAD, 1);
             mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "wordRanges", "[I");
@@ -269,6 +213,10 @@ public final class TdfaAsmBackend {
         //                            target=ranges[o+2]; if (target<0) continue;
         //                            for c in lo..hi: ASCII_TARGET[s*128+c] = target;
         if (fastPath) {
+            // ranges from the Tdfa param (local 14) — RANGES_TABLE static is gone
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "ranges", "[I");
+            mv.visitVarInsn(Opcodes.ASTORE, 14);
             int tableSize = tdfa.stateCount * 128;
             ic(mv, tableSize);
             mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
@@ -315,7 +263,7 @@ public final class TdfaAsmBackend {
             mv.visitInsn(Opcodes.IMUL);
             mv.visitVarInsn(Opcodes.ISTORE, 9);
             // target = RANGES_TABLE[o+2]
-            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "RANGES_TABLE", "[I");
+            mv.visitVarInsn(Opcodes.ALOAD, 14);
             mv.visitVarInsn(Opcodes.ILOAD, 9);
             mv.visitInsn(Opcodes.ICONST_2);
             mv.visitInsn(Opcodes.IADD);
@@ -326,7 +274,7 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ILOAD, 12);
             mv.visitJumpInsn(Opcodes.IFLT, iNext);
             // lo = max(RANGES_TABLE[o], 0)
-            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "RANGES_TABLE", "[I");
+            mv.visitVarInsn(Opcodes.ALOAD, 14);
             mv.visitVarInsn(Opcodes.ILOAD, 9);
             mv.visitInsn(Opcodes.IALOAD);
             mv.visitInsn(Opcodes.DUP);
@@ -337,7 +285,7 @@ public final class TdfaAsmBackend {
             mv.visitLabel(loSet);
             mv.visitVarInsn(Opcodes.ISTORE, 10);
             // hi = min(RANGES_TABLE[o+1], 127)
-            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "RANGES_TABLE", "[I");
+            mv.visitVarInsn(Opcodes.ALOAD, 14);
             mv.visitVarInsn(Opcodes.ILOAD, 9);
             mv.visitInsn(Opcodes.ICONST_1);
             mv.visitInsn(Opcodes.IADD);
@@ -386,7 +334,7 @@ public final class TdfaAsmBackend {
         mv.visitCode();
 
         if (fastPath) {
-            // locals: 0=this, 1=input, 2=s(String), 3=len, 4=state, 5=pos
+            // locals: 0=this, 1=input, 2=s(String), 3=len, 4=state, 5=pos, 6=c
             Label slowPath = new Label();
             mv.visitVarInsn(Opcodes.ALOAD, 1);
             mv.visitTypeInsn(Opcodes.INSTANCEOF, STR);
@@ -397,6 +345,7 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ALOAD, 2);
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "length", "()I", false);
             mv.visitVarInsn(Opcodes.ISTORE, 3);
+            emitTrace(mv, "ANCHORED_FAST");
             mv.visitInsn(Opcodes.ICONST_0);
             mv.visitVarInsn(Opcodes.ISTORE, 4); // state = 0 (startState)
             mv.visitInsn(Opcodes.ICONST_0);
@@ -468,85 +417,272 @@ public final class TdfaAsmBackend {
         mv.visitMaxs(0, 0); mv.visitEnd();
     }
 
-    private static void genMatch(ClassWriter cw, Tdfa tdfa, String owner, boolean dispatchTooLarge) {
+    /**
+     * The emitted strategy ladder — a bytecode transcription of
+     * {@code TdfaRunner.runStringExtractFast}. Strategy pieces (literal
+     * needle, candidate bounds, origin sim, trigger scan) are calls into the
+     * embedded runner (monomorphic: TdfaRunner is final); the walk itself is
+     * the generated {@code extractOne} leaf (inlined dispatch + inlined ops).
+     * Emits {@code TdfaRunner.trace} calls at the same decision points the
+     * runner records, so the strategy-conformance test can assert the two
+     * backends pick identical sequences.
+     *
+     * <p>Only emitted for fastPath INLINED classes (pickMode guarantees
+     * fastPath: no masks, disjoint ranges) — non-fastPath shapes never see
+     * this method because they compile to DELEGATE classes.
+     */
+    private static void genMatch(ClassWriter cw, Tdfa tdfa, String owner) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I)L" + RESULT + ";", null, null);
         mv.visitCode();
-        // Short-input delegation: the runner's extract fast path (pooled regs,
-        // lazy position flags, first-char-set candidate scan) has a lower
-        // per-call constant than this class's leftmostStart + chars-cache +
-        // static runExtract shape (measured +25 ns on every short match).
-        // Above the threshold the generated walk's flat dispatch wins.
+        // locals: 0=this, 1=input, 2=from, 3=s, 4=len, 5=holder, 6=leftmost/idx,
+        //         7=p, 8=fails, 9=c, 10=bits, 11=needle
+        Label isStr = new Label();
         mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, CS, "length", "()I", true);
-        ic(mv, SHORT_DELEGATE_LEN);
-        Label genPath = new Label();
-        mv.visitJumpInsn(Opcodes.IF_ICMPGT, genPath);
+        mv.visitTypeInsn(Opcodes.INSTANCEOF, STR);
+        mv.visitJumpInsn(Opcodes.IFNE, isStr);
+        // non-String: full delegate (runner records GENERIC)
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "match", "(" + CS_D + "I)L" + RESULT + ";", false);
         mv.visitInsn(Opcodes.ARETURN);
-        mv.visitLabel(genPath);
-        // Leftmost-start via the runner's origin-tracking multi-state simulation
-        // (fast-path DFAs only; mask-bearing DFAs degrade to the boolean
-        // over-approximation, same as the old anyMatch precheck). O(n × |states|)
-        // single pass. No match → null without entering runExtract's outer-loop
-        // scan; match → runExtract starts AT the leftmost match position instead
-        // of rescanning every failed start (the O(n²) dense-match shape).
-        // locals: 0=this, 1=input, 2=from, 3=chars, 4=holder, 5=leftmost
+        mv.visitLabel(isStr);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, STR);
+        mv.visitVarInsn(Opcodes.ASTORE, 3);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "length", "()I", false);
+        mv.visitVarInsn(Opcodes.ISTORE, 4);
+
+        // --- literal needle: indexOf short-circuit (runner-identical) ---
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "literalNeedle", "()Ljava/lang/String;", false);
+        mv.visitVarInsn(Opcodes.ASTORE, 11);
+        Label noNeedle = new Label();
+        mv.visitVarInsn(Opcodes.ALOAD, 11);
+        mv.visitJumpInsn(Opcodes.IFNULL, noNeedle);
+        emitTrace(mv, "LITERAL");
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitVarInsn(Opcodes.ALOAD, 11);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "leftmostStart", "(" + CS_D + "I)I", false);
-        mv.visitVarInsn(Opcodes.ISTORE, 5);
-        Label extract = new Label();
-        mv.visitVarInsn(Opcodes.ILOAD, 5);
-        mv.visitJumpInsn(Opcodes.IFGE, extract);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "indexOf", "(Ljava/lang/String;I)I", false);
+        mv.visitVarInsn(Opcodes.ISTORE, 6);
+        Label litMiss = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitJumpInsn(Opcodes.IFLT, litMiss);
+        // hit: toResult(new MatchHolder(idx, idx + needle.length(), new int[0]))
+        mv.visitTypeInsn(Opcodes.NEW, HOLDER);
+        mv.visitInsn(Opcodes.DUP);
+        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitVarInsn(Opcodes.ALOAD, 11);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "length", "()I", false);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, HOLDER, "<init>", "(II[I)V", false);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "toResult", "(L" + HOLDER + ";)L" + RESULT + ";", false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitLabel(litMiss);
         mv.visitInsn(Opcodes.ACONST_NULL);
         mv.visitInsn(Opcodes.ARETURN);
-        mv.visitLabel(extract);
-        // cached chars lookup: if (input == cachedInput) use cachedChars,
-        // else convert via toCharArray and update cache. Avoids re-copying
-        // the entire haystack on every find() call (G1 humongous allocations).
-        // locals: 0=this, 1=input, 2=from, 3=chars
+        mv.visitLabel(noNeedle);
+
+        // --- 1) one exact walk from `from` ---
+        emitTrace(mv, "EXACT_FROM");
+        emitExtractOne(mv, owner, 3, 2, 4, 5);
+        emitReturnToResult(mv, owner, 5);
+
+        // --- 1b) short-input candidate scan ---
         mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "cachedInput", CS_D);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        Label cacheMiss = new Label();
-        // ACMPNE on references: jump if cachedInput != input
-        mv.visitJumpInsn(Opcodes.IF_ACMPNE, cacheMiss);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "startBits", "()[J", false);
+        mv.visitVarInsn(Opcodes.ASTORE, 10);
+        Label skipCand = new Label();
+        mv.visitVarInsn(Opcodes.ALOAD, 10);
+        mv.visitJumpInsn(Opcodes.IFNULL, skipCand);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitInsn(Opcodes.ISUB);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "cachedChars", "[C");
-        mv.visitVarInsn(Opcodes.ASTORE, 3);
-        Label runExtract = new Label();
-        mv.visitJumpInsn(Opcodes.GOTO, runExtract);
-        mv.visitLabel(cacheMiss);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "toCharArray", "(" + CS_D + ")[C", false);
-        mv.visitVarInsn(Opcodes.ASTORE, 3);
-        // this.cachedInput = input; this.cachedChars = chars;
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, owner, "cachedInput", CS_D);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "candScanMax", "()I", false);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGT, skipCand);
+        emitTrace(mv, "CAND_SCAN");
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitVarInsn(Opcodes.ISTORE, 8);                       // fails = 0
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitVarInsn(Opcodes.ISTORE, 7);                       // p = from + 1
+        Label candLoop = new Label(), candDone = new Label(), candNext = new Label(), candWalk = new Label();
+        mv.visitLabel(candLoop);
+        mv.visitVarInsn(Opcodes.ILOAD, 7);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGE, candDone);
         mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, owner, "cachedChars", "[C");
-        mv.visitLabel(runExtract);
+        mv.visitVarInsn(Opcodes.ILOAD, 7);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
+        mv.visitVarInsn(Opcodes.ISTORE, 9);
+        // bit test: (bits[c >>> 6] >>> (c & 63) & 1L) != 0L
+        mv.visitVarInsn(Opcodes.ALOAD, 10);
+        mv.visitVarInsn(Opcodes.ILOAD, 9);
+        mv.visitIntInsn(Opcodes.BIPUSH, 6);
+        mv.visitInsn(Opcodes.ISHR);
+        mv.visitInsn(Opcodes.LALOAD);
+        mv.visitVarInsn(Opcodes.ILOAD, 9);
+        mv.visitIntInsn(Opcodes.BIPUSH, 63);
+        mv.visitInsn(Opcodes.IAND);
+        mv.visitInsn(Opcodes.LSHR);
+        mv.visitInsn(Opcodes.LCONST_1);
+        mv.visitInsn(Opcodes.LAND);
+        mv.visitInsn(Opcodes.LCONST_0);
+        mv.visitInsn(Opcodes.LCMP);
+        mv.visitJumpInsn(Opcodes.IFEQ, candNext);
+        // adaptive boolean pre-filter after 3 failed extract walks
+        mv.visitVarInsn(Opcodes.ILOAD, 8);
+        mv.visitInsn(Opcodes.ICONST_3);
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, candWalk);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitVarInsn(Opcodes.ILOAD, 5);
+        mv.visitVarInsn(Opcodes.ILOAD, 7);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "booleanMatchFrom", "(Ljava/lang/String;II)Z", false);
+        mv.visitJumpInsn(Opcodes.IFNE, candWalk);
+        mv.visitJumpInsn(Opcodes.GOTO, candNext);
+        mv.visitLabel(candWalk);
+        emitExtractOne(mv, owner, 3, 7, 4, 5);
+        emitReturnToResult(mv, owner, 5);
+        mv.visitIincInsn(8, 1);                                   // fails++
+        mv.visitLabel(candNext);
+        mv.visitIincInsn(7, 1);
+        mv.visitJumpInsn(Opcodes.GOTO, candLoop);
+        mv.visitLabel(candDone);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitLabel(skipCand);
+
+        // --- 2) budgeted origin sim, trigger fallback ---
+        emitTrace(mv, "ORIGIN_SIM");
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitInsn(Opcodes.ARRAYLENGTH);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "runExtract", "([CII)L" + HOLDER + ";", false);
-        mv.visitVarInsn(Opcodes.ASTORE, 4);
-        mv.visitVarInsn(Opcodes.ALOAD, 4);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "originSimBudget", "()I", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "originSimLeftmost", "(" + CS_D + "III)I", false);
+        mv.visitVarInsn(Opcodes.ISTORE, 6);
+        Label noBudget = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitFieldInsn(Opcodes.GETSTATIC, RUNNER, "LSS_BUDGET", "I");
+        mv.visitJumpInsn(Opcodes.IF_ICMPNE, noBudget);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "triggerScanTop", "(Ljava/lang/String;II)I", false);
+        mv.visitVarInsn(Opcodes.ISTORE, 6);
+        Label noMatch1 = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitJumpInsn(Opcodes.IFLT, noMatch1);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitInsn(Opcodes.ICONST_M1);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "originSimLeftmost", "(" + CS_D + "III)I", false);
+        mv.visitVarInsn(Opcodes.ISTORE, 6);
+        mv.visitLabel(noBudget);
+        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitJumpInsn(Opcodes.IFLT, noMatch1);
+        // exact walk from leftmost
+        emitExtractOne(mv, owner, 3, 6, 4, 5);
+        emitReturnToResult(mv, owner, 5);
+        // --- 3) defensive restart ---
+        emitTrace(mv, "WALK_RESTART");
+        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitVarInsn(Opcodes.ISTORE, 7);
+        Label rstLoop = new Label(), rstDone = new Label();
+        mv.visitLabel(rstLoop);
+        mv.visitVarInsn(Opcodes.ILOAD, 7);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGT, rstDone);
+        emitExtractOne(mv, owner, 3, 7, 4, 5);
+        emitReturnToResult(mv, owner, 5);
+        mv.visitIincInsn(7, 1);
+        mv.visitJumpInsn(Opcodes.GOTO, rstLoop);
+        mv.visitLabel(rstDone);
+        mv.visitLabel(noMatch1);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0); mv.visitEnd();
+    }
+
+    /** extractOne(s, fromLocal, toLocal) → holderLocal. */
+    private static void emitExtractOne(MethodVisitor mv, String owner, int sL, int fromL, int toL, int holderL) {
+        mv.visitVarInsn(Opcodes.ALOAD, sL);
+        mv.visitVarInsn(Opcodes.ILOAD, fromL);
+        mv.visitVarInsn(Opcodes.ILOAD, toL);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "extractOne", "(Ljava/lang/String;II)L" + HOLDER + ";", false);
+        mv.visitVarInsn(Opcodes.ASTORE, holderL);
+    }
+
+    /** if (holderL != null) return toResult(holderL); */
+    private static void emitReturnToResult(MethodVisitor mv, String owner, int holderL) {
+        Label cont = new Label();
+        mv.visitVarInsn(Opcodes.ALOAD, holderL);
+        mv.visitJumpInsn(Opcodes.IFNULL, cont);
+        mv.visitVarInsn(Opcodes.ALOAD, holderL);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "toResult", "(L" + HOLDER + ";)L" + RESULT + ";", false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitLabel(cont);
+    }
+
+    /** TdfaRunner.trace(TdfaRunner.Strategy.X) — strategy-conformance point. */
+    private static void emitTrace(MethodVisitor mv, String strategy) {
+        mv.visitFieldInsn(Opcodes.GETSTATIC, RUNNER + "$Strategy", strategy, "L" + RUNNER + "$Strategy;");
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "trace", "(L" + RUNNER + "$Strategy;)V", false);
+    }
+
+    // ===== extractOne — single-start DFA walk with register tracking =====
+
+    /**
+     * The generated walk leaf: one exact walk from {@code from} over the
+     * String (no char[] copy, no restart loop — the emitted ladder in
+     * genMatch positions every call). Inlined per-state dispatch + inlined
+     * register ops; reads via String.charAt.
+     */
+    private static void genExtractOne(ClassWriter cw, Tdfa tdfa, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "extractOne", "(Ljava/lang/String;II)L" + HOLDER + ";", null, null);
+        mv.visitCode();
+        emitRunCore(mv, tdfa, owner);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    /** Shared result epilogue: holder → MatchResult (fixed-tag rewrite + ctor). */
+    private static void genToResult(ClassWriter cw, Tdfa tdfa, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "toResult", "(L" + HOLDER + ";)L" + RESULT + ";", null, null);
+        mv.visitCode();
+        // local 0 = h
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
         Label ret = new Label();
         mv.visitJumpInsn(Opcodes.IFNULL, ret);
         if (tdfa.fixedBase != null) {
             // BT22 §6.4 fixed-tag reconstruction: rewrite fixed-tag slots in the
             // holder's regs from their base tag values, before constructing MatchResult.
-            mv.visitVarInsn(Opcodes.ALOAD, 4);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
             mv.visitFieldInsn(Opcodes.GETFIELD, HOLDER, "regs", "[I");
             ic(mv, tdfa.finalRegBase);
             mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "FIXED_BASE", "[I");
@@ -555,13 +691,13 @@ public final class TdfaAsmBackend {
         }
         mv.visitTypeInsn(Opcodes.NEW, RESULT);
         mv.visitInsn(Opcodes.DUP);
-        mv.visitVarInsn(Opcodes.ALOAD, 4);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, HOLDER, "regs", "[I");
         ic(mv, tdfa.finalRegBase);
         ic(mv, tdfa.groupCount);
-        mv.visitVarInsn(Opcodes.ALOAD, 4);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, HOLDER, "matchStart", "I");
-        mv.visitVarInsn(Opcodes.ALOAD, 4);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, HOLDER, "matchEnd", "I");
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, RESULT, "<init>", "([IIIII)V", false);
         mv.visitInsn(Opcodes.ARETURN);
@@ -571,61 +707,11 @@ public final class TdfaAsmBackend {
         mv.visitMaxs(0, 0); mv.visitEnd();
     }
 
-    // ===== toCharArray =====
-
-    private static void genToCharArray(ClassWriter cw) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "toCharArray", "(" + CS_D + ")[C", null, null);
-        mv.visitCode();
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitTypeInsn(Opcodes.INSTANCEOF, STR);
-        Label notStr = new Label();
-        mv.visitJumpInsn(Opcodes.IFEQ, notStr);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitTypeInsn(Opcodes.CHECKCAST, STR);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "toCharArray", "()[C", false);
-        mv.visitInsn(Opcodes.ARETURN);
-        mv.visitLabel(notStr);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, CS, "length", "()I", true);
-        mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_CHAR);
-        mv.visitVarInsn(Opcodes.ASTORE, 1);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitVarInsn(Opcodes.ISTORE, 2);
-        Label loop = new Label(), end = new Label();
-        mv.visitLabel(loop);
-        mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitInsn(Opcodes.ARRAYLENGTH);
-        mv.visitJumpInsn(Opcodes.IF_ICMPGE, end);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, CS, "charAt", "(I)C", true);
-        mv.visitInsn(Opcodes.CASTORE);
-        mv.visitIincInsn(2, 1);
-        mv.visitJumpInsn(Opcodes.GOTO, loop);
-        mv.visitLabel(end);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitInsn(Opcodes.ARETURN);
-        mv.visitMaxs(0, 0); mv.visitEnd();
-    }
-
-    // ===== runExtract — DFA walk with register tracking =====
-
-    private static void genRunExtract(ClassWriter cw, Tdfa tdfa, String owner, boolean tableScan) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "runExtract", "([CII)L" + HOLDER + ";", null, null);
-        mv.visitCode();
-        emitRunCore(mv, tdfa, owner, true, tableScan);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
-    }
-
-    // ===== entryOkC — entry mask check using char[] input (helper for DFA dispatch) =====
+    // ===== entryOkC — entry mask check over String (helper for DFA dispatch) =====
 
     private static void genEntryOkC(ClassWriter cw, String owner) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "entryOkC", "(III[C)Z", null, null);
+                "entryOkC", "(IIILjava/lang/String;)Z", null, null);
         mv.visitCode();
         // locals: 0=state, 1=pos, 2=len, 3=input, 4=required
         mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ENTRY_MASK", "[I");
@@ -639,7 +725,7 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, 1);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
         mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "positionFlagsC", "(II[C)I", false);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "positionFlagsC", "(IILjava/lang/String;)I", false);
         mv.visitVarInsn(Opcodes.ILOAD, 4);
         mv.visitInsn(Opcodes.IAND);
         mv.visitVarInsn(Opcodes.ILOAD, 4);
@@ -655,11 +741,11 @@ public final class TdfaAsmBackend {
         mv.visitEnd();
     }
 
-    // ===== positionFlagsC — position flags for char[] input (helper) =====
+    // ===== positionFlagsC — position flags over String (helper) =====
 
     private static void genPositionFlagsC(ClassWriter cw, String owner, boolean multiline, boolean unicodeWord) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "positionFlagsC", "(II[C)I", null, null);
+                "positionFlagsC", "(IILjava/lang/String;)I", null, null);
         mv.visitCode();
         // locals: 0=pos, 1=len, 2=input, 3=flags, 4=t1, 5=t2
         mv.visitInsn(Opcodes.ICONST_0);
@@ -684,7 +770,7 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ILOAD, 0);
             mv.visitInsn(Opcodes.ICONST_1);
             mv.visitInsn(Opcodes.ISUB);
-            mv.visitInsn(Opcodes.CALOAD);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
             mv.visitIntInsn(Opcodes.BIPUSH, '\n');
             Label l1c = new Label();
             mv.visitJumpInsn(Opcodes.IF_ICMPNE, l1c);
@@ -715,7 +801,7 @@ public final class TdfaAsmBackend {
             mv.visitJumpInsn(Opcodes.IF_ICMPGE, l2b);
             mv.visitVarInsn(Opcodes.ALOAD, 2);
             mv.visitVarInsn(Opcodes.ILOAD, 0);
-            mv.visitInsn(Opcodes.CALOAD);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
             mv.visitIntInsn(Opcodes.BIPUSH, '\n');
             Label l2c = new Label();
             mv.visitJumpInsn(Opcodes.IF_ICMPNE, l2c);
@@ -760,13 +846,13 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ILOAD, 0);
             mv.visitVarInsn(Opcodes.ILOAD, 1);
             mv.visitVarInsn(Opcodes.ALOAD, 2);
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWordBefore", "(II[C)Z", false);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWordBefore", "(IILjava/lang/String;)Z", false);
         } else {
             mv.visitVarInsn(Opcodes.ALOAD, 2);
             mv.visitVarInsn(Opcodes.ILOAD, 0);
             mv.visitInsn(Opcodes.ICONST_1);
             mv.visitInsn(Opcodes.ISUB);
-            mv.visitInsn(Opcodes.CALOAD);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
             mv.visitVarInsn(Opcodes.ISTORE, 4);
             emitIsWordBranch(mv, 4, pf, false, owner);
             mv.visitInsn(Opcodes.ICONST_1);
@@ -786,11 +872,11 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ILOAD, 0);
             mv.visitVarInsn(Opcodes.ILOAD, 1);
             mv.visitVarInsn(Opcodes.ALOAD, 2);
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWordAt", "(II[C)Z", false);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWordAt", "(IILjava/lang/String;)Z", false);
         } else {
             mv.visitVarInsn(Opcodes.ALOAD, 2);
             mv.visitVarInsn(Opcodes.ILOAD, 0);
-            mv.visitInsn(Opcodes.CALOAD);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
             mv.visitVarInsn(Opcodes.ISTORE, 5);
             emitIsWordBranch(mv, 5, cf, false, owner);
             mv.visitInsn(Opcodes.ICONST_1);
@@ -823,9 +909,8 @@ public final class TdfaAsmBackend {
 
     // ===== shared core: DFA walk + search loop =====
 
-    private static void emitRunCore(MethodVisitor mv, Tdfa tdfa, String owner, boolean extract, boolean tableScan) {
+    private static void emitRunCore(MethodVisitor mv, Tdfa tdfa, String owner) {
         final boolean perl = tdfa.perlMode;
-        final boolean startReqBT = !tdfa.multiline && tdfa.startRequiresBeginText();
         final int nStates = tdfa.stateCount;
         final int[] sm = tdfa.stateMeta, rg = tdfa.ranges, op = tdfa.ops, sfo = tdfa.stateFinalOpsOff;
 
@@ -845,39 +930,16 @@ public final class TdfaAsmBackend {
             }
         }
 
-        // Locals (extract adds: regs, lastAcceptState, r)
-        // 0=input, 1=from, 2=len, 3=anchored(runBoolean only)
-        final int IN=0, FROM=1, LEN=2, ANC=3;
+        // Locals: 0=input(String), 1=from, 2=len; 4..9 search/accept state
+        final int IN=0, FROM=1, LEN=2;
         final int MS=4, ST=5, STATE=6, POS=7, HA=8, LAP=9;
-        final int PF, C_LV, T1, T2, PF2, T3, T4, R, REGS, LAS;
-        if (extract) {
-            REGS = 10; LAS = 11; PF = 12; C_LV = 13;
-            T1 = 14; T2 = 15; PF2 = 16; T3 = 17; T4 = 18; R = 19;
-        } else {
-            REGS = -1; LAS = -1;
-            PF = 10; C_LV = 11; T1 = 12; T2 = 13; PF2 = 14; T3 = 15; T4 = 16; R = -1;
-        }
+        final int REGS = 10, LAS = 11, PF = 12, C_LV = 13;
+        final int T1 = 14, T2 = 15, PF2 = 16, T3 = 17, T4 = 18, R = 19;
 
-        // maxStart = anchored ? from : (startReqBT ? 0 : len)
-        // For extract (no anchored param): maxStart = startReqBT ? 0 : len
-        if (extract) {
-            if (startReqBT) mv.visitInsn(Opcodes.ICONST_0);
-            else mv.visitVarInsn(Opcodes.ILOAD, LEN);
-            mv.visitVarInsn(Opcodes.ISTORE, MS);
-        } else {
-            mv.visitVarInsn(Opcodes.ILOAD, ANC);
-            Label aPath = new Label();
-            mv.visitJumpInsn(Opcodes.IFNE, aPath);
-            if (startReqBT) mv.visitInsn(Opcodes.ICONST_0);
-            else mv.visitVarInsn(Opcodes.ILOAD, LEN);
-            mv.visitVarInsn(Opcodes.ISTORE, MS);
-            Label msDone = new Label();
-            mv.visitJumpInsn(Opcodes.GOTO, msDone);
-            mv.visitLabel(aPath);
-            mv.visitVarInsn(Opcodes.ILOAD, FROM);
-            mv.visitVarInsn(Opcodes.ISTORE, MS);
-            mv.visitLabel(msDone);
-        }
+        // Single start: the emitted ladder in genMatch positions every call;
+        // the walk itself never restarts (MS = ST = from).
+        mv.visitVarInsn(Opcodes.ILOAD, FROM);
+        mv.visitVarInsn(Opcodes.ISTORE, MS);
 
         // start = from
         mv.visitVarInsn(Opcodes.ILOAD, FROM);
@@ -888,20 +950,18 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, FROM); mv.visitVarInsn(Opcodes.ISTORE, POS);
         mv.visitInsn(Opcodes.ICONST_0); mv.visitVarInsn(Opcodes.ISTORE, HA);
         mv.visitInsn(Opcodes.ICONST_M1); mv.visitVarInsn(Opcodes.ISTORE, LAP);
-        if (extract) {
-            mv.visitInsn(Opcodes.ACONST_NULL); mv.visitVarInsn(Opcodes.ASTORE, REGS);
-            mv.visitInsn(Opcodes.ICONST_M1); mv.visitVarInsn(Opcodes.ISTORE, LAS);
-        }
+        mv.visitInsn(Opcodes.ACONST_NULL); mv.visitVarInsn(Opcodes.ASTORE, REGS);
+        mv.visitInsn(Opcodes.ICONST_M1); mv.visitVarInsn(Opcodes.ISTORE, LAS);
 
-        // ===== SEARCH LOOP =====
+        // ===== SEARCH LOOP (single pass: MS == from) =====
         Label searchLoop = new Label(), searchEnd = new Label(), searchNext = new Label();
         mv.visitLabel(searchLoop);
         mv.visitVarInsn(Opcodes.ILOAD, ST);
         mv.visitVarInsn(Opcodes.ILOAD, MS);
         mv.visitJumpInsn(Opcodes.IF_ICMPGT, searchEnd);
 
-        // Per-start: allocate regs (extract only)
-        if (extract) {
+        // Per-start: allocate regs
+        {
             if (tdfa.registerCount == 0) {
                 mv.visitInsn(Opcodes.ACONST_NULL);
                 mv.visitVarInsn(Opcodes.ASTORE, REGS);
@@ -972,7 +1032,7 @@ public final class TdfaAsmBackend {
         mv.visitLabel(doAccept);
         mv.visitInsn(Opcodes.ICONST_1); mv.visitVarInsn(Opcodes.ISTORE, HA);
         mv.visitVarInsn(Opcodes.ILOAD, POS); mv.visitVarInsn(Opcodes.ISTORE, LAP);
-        if (extract) { mv.visitVarInsn(Opcodes.ILOAD, STATE); mv.visitVarInsn(Opcodes.ISTORE, LAS); }
+        mv.visitVarInsn(Opcodes.ILOAD, STATE); mv.visitVarInsn(Opcodes.ISTORE, LAS);
         if (perl) {
             mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "STOP_MASK", "[I");
             mv.visitVarInsn(Opcodes.ILOAD, STATE);
@@ -994,29 +1054,26 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, LEN);
         mv.visitJumpInsn(Opcodes.IF_ICMPGE, dfaEnd);
 
-        // c = input[pos] (CALOAD), then decode codepoint from surrogate pair
+        // c = input.charAt(pos), then decode codepoint from surrogate pair
         mv.visitVarInsn(Opcodes.ALOAD, IN);
         mv.visitVarInsn(Opcodes.ILOAD, POS);
-        mv.visitInsn(Opcodes.CALOAD);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
         mv.visitVarInsn(Opcodes.ISTORE, C_LV);
         emitCodePointDecode(mv, IN, C_LV, POS, LEN, T1);
 
         // ===== DFA DISPATCH (TABLESWITCH) =====
-        emitDfaDispatch(mv, tdfa, owner, extract, tableScan,
+        emitDfaDispatch(mv, tdfa, owner,
                 IN, STATE, POS, LEN, PF, C_LV, REGS, T1, T2, PF2, T3, T4,
                 dfaLoop, dfaEnd, op);
 
         mv.visitLabel(dfaEnd);
 
         // ===== POST-DFA: check accept =====
-        if (extract) {
+        {
             // if (haveAccept) { ... return MatchHolder }
             Label noResult = new Label();
             mv.visitVarInsn(Opcodes.ILOAD, HA);
             mv.visitJumpInsn(Opcodes.IFEQ, noResult);
-
-            // anchored check (only in runBoolean, not here)
-            // For extract: just build result
 
             // r = regs == null ? new int[0] : regs.clone()
             if (tdfa.registerCount == 0) {
@@ -1041,29 +1098,6 @@ public final class TdfaAsmBackend {
             mv.visitMethodInsn(Opcodes.INVOKESPECIAL, HOLDER, "<init>", "(II[I)V", false);
             mv.visitInsn(Opcodes.ARETURN);
             mv.visitLabel(noResult);
-        } else {
-            // runBoolean post-DFA
-            mv.visitVarInsn(Opcodes.ILOAD, ANC);
-            Label unanchored = new Label();
-            mv.visitJumpInsn(Opcodes.IFEQ, unanchored);
-            // anchored: return haveAccept && lastAcceptPos == len
-            mv.visitVarInsn(Opcodes.ILOAD, HA);
-            Label retFalse1 = new Label();
-            mv.visitJumpInsn(Opcodes.IFEQ, retFalse1);
-            mv.visitVarInsn(Opcodes.ILOAD, LAP);
-            mv.visitVarInsn(Opcodes.ILOAD, LEN);
-            mv.visitJumpInsn(Opcodes.IF_ICMPNE, retFalse1);
-            mv.visitInsn(Opcodes.ICONST_1);
-            mv.visitInsn(Opcodes.IRETURN);
-            mv.visitLabel(retFalse1);
-            mv.visitInsn(Opcodes.ICONST_0);
-            mv.visitInsn(Opcodes.IRETURN);
-            mv.visitLabel(unanchored);
-            // unanchored: if haveAccept → return true; else fall through to searchNext
-            mv.visitVarInsn(Opcodes.ILOAD, HA);
-            mv.visitJumpInsn(Opcodes.IFEQ, searchNext);
-            mv.visitInsn(Opcodes.ICONST_1);
-            mv.visitInsn(Opcodes.IRETURN);
         }
 
         // searchNext: start++; goto searchLoop
@@ -1071,21 +1105,15 @@ public final class TdfaAsmBackend {
         mv.visitIincInsn(ST, 1);
         mv.visitJumpInsn(Opcodes.GOTO, searchLoop);
 
-        // searchEnd: return false / null
+        // searchEnd: no match at any start (single-start leaf: the one start)
         mv.visitLabel(searchEnd);
-        if (extract) {
-            mv.visitInsn(Opcodes.ACONST_NULL);
-            mv.visitInsn(Opcodes.ARETURN);
-        } else {
-            mv.visitInsn(Opcodes.ICONST_0);
-            mv.visitInsn(Opcodes.IRETURN);
-        }
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ARETURN);
     }
 
     // ===== DFA TABLESWITCH + range checks =====
 
     private static void emitDfaDispatch(MethodVisitor mv, Tdfa tdfa, String owner,
-                                        boolean extract, boolean tableScan,
                                         int IN, int STATE, int POS, int LEN, int PF, int C_LV,
                                         int REGS, int T1, int T2, int PF2, int T3, int T4,
                                         Label dfaLoop, Label dfaEnd, int[] op) {
@@ -1102,12 +1130,6 @@ public final class TdfaAsmBackend {
             mv.visitLabel(sl[s]);
             int meta = sm[s];
             int base = sb[s], cnt = (meta >>> 1) & 0xFFFF;
-
-            if (tableScan) {
-                emitTableScanState(mv, owner, extract, base, cnt,
-                        IN, STATE, POS, LEN, PF, C_LV, REGS, T1, T2, T3, T4, dfaLoop, dfaEnd);
-                continue;
-            }
 
             List<int[]> live = new ArrayList<>();
             for (int i = 0; i < cnt; i++) {
@@ -1140,7 +1162,7 @@ public final class TdfaAsmBackend {
                 }
 
                 // register ops (extract only)
-                if (extract && opsOff != 0 && REGS >= 0)
+                if (opsOff != 0)
                     emitOpsInline(mv, op, opsOff, REGS, POS);
 
                 // state = target
@@ -1166,7 +1188,7 @@ public final class TdfaAsmBackend {
                     mv.visitVarInsn(Opcodes.ILOAD, LEN);
                     mv.visitVarInsn(Opcodes.ALOAD, IN);
                     mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "entryOkC",
-                            "(III[C)Z", false);
+                            "(IIILjava/lang/String;)Z", false);
                     Label entryOk = new Label();
                     mv.visitJumpInsn(Opcodes.IFNE, entryOk);
                     mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
@@ -1184,258 +1206,6 @@ public final class TdfaAsmBackend {
         }
         mv.visitLabel(def);
         mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
-    }
-
-    // ===== table-scan dispatch (one state) =====
-
-    /**
-     * Emit the DFA dispatch for a single state using a runtime binary search
-     * over the {@code RANGES_TABLE} static array, instead of inlining range
-     * checks. Compact (fixed-size per state) — used for wide character classes
-     * like {@code \p{L}} (1369 ranges/state) that would exceed the 65 KB method
-     * limit if inlined.
-     */
-    private static void emitTableScanState(MethodVisitor mv, String owner,
-                                           boolean extract, int base, int cnt,
-                                           int IN, int STATE, int POS, int LEN, int PF, int C_LV,
-                                           int REGS, int T1, int T2, int T3, int T4,
-                                           Label dfaLoop, Label dfaEnd) {
-        Label stateDead = new Label();
-
-        // ri = scanRanges(RANGES_TABLE, base, cnt, c)
-        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "RANGES_TABLE", "[I");
-        ic(mv, base);
-        ic(mv, cnt);
-        mv.visitVarInsn(Opcodes.ILOAD, C_LV);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "scanRanges", "([IIII)I", false);
-        mv.visitVarInsn(Opcodes.ISTORE, T1);
-
-        // if (ri < 0) goto dead
-        mv.visitVarInsn(Opcodes.ILOAD, T1);
-        mv.visitJumpInsn(Opcodes.IFLT, stateDead);
-
-        // target = RANGES_TABLE[ri + 2]
-        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "RANGES_TABLE", "[I");
-        mv.visitVarInsn(Opcodes.ILOAD, T1);
-        mv.visitInsn(Opcodes.ICONST_2);
-        mv.visitInsn(Opcodes.IADD);
-        mv.visitInsn(Opcodes.IALOAD);
-        mv.visitVarInsn(Opcodes.ISTORE, T2);
-
-        // Dead range (target < 0, inserted by fillGaps) — inline path filters
-        // these out; table-scan must do the same.
-        mv.visitVarInsn(Opcodes.ILOAD, T2);
-        mv.visitJumpInsn(Opcodes.IFLT, stateDead);
-
-        // reqMask = RANGES_TABLE[ri + 4]
-        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "RANGES_TABLE", "[I");
-        mv.visitVarInsn(Opcodes.ILOAD, T1);
-        mv.visitInsn(Opcodes.ICONST_4);
-        mv.visitInsn(Opcodes.IADD);
-        mv.visitInsn(Opcodes.IALOAD);
-        mv.visitVarInsn(Opcodes.ISTORE, T4);
-
-        // if (reqMask != 0 && (PF & reqMask) != reqMask) goto dead
-        Label maskOk = new Label();
-        mv.visitVarInsn(Opcodes.ILOAD, T4);
-        mv.visitJumpInsn(Opcodes.IFEQ, maskOk);
-        mv.visitVarInsn(Opcodes.ILOAD, PF);
-        mv.visitVarInsn(Opcodes.ILOAD, T4);
-        mv.visitInsn(Opcodes.IAND);
-        mv.visitVarInsn(Opcodes.ILOAD, T4);
-        mv.visitJumpInsn(Opcodes.IF_ICMPNE, stateDead);
-        mv.visitLabel(maskOk);
-
-        // Apply ops (extract only): opsOff = RANGES_TABLE[ri + 3]
-        if (extract && REGS >= 0) {
-            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "RANGES_TABLE", "[I");
-            mv.visitVarInsn(Opcodes.ILOAD, T1);
-            mv.visitInsn(Opcodes.ICONST_3);
-            mv.visitInsn(Opcodes.IADD);
-            mv.visitInsn(Opcodes.IALOAD);
-            mv.visitVarInsn(Opcodes.ISTORE, T3);
-            Label opsDone = new Label();
-            mv.visitVarInsn(Opcodes.ILOAD, T3);
-            mv.visitJumpInsn(Opcodes.IFEQ, opsDone);
-            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "OPS_TABLE", "[I");
-            mv.visitVarInsn(Opcodes.ILOAD, T3);
-            mv.visitVarInsn(Opcodes.ALOAD, REGS);
-            mv.visitVarInsn(Opcodes.ILOAD, POS);
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "applyOpsRuntime", "([II[II)V", false);
-            mv.visitLabel(opsDone);
-        }
-
-        // state = target
-        mv.visitVarInsn(Opcodes.ILOAD, T2);
-        mv.visitVarInsn(Opcodes.ISTORE, STATE);
-
-        // Codepoint advance: hi = RANGES_TABLE[ri + 1]; if (hi > 0x10000 && c >= 0x10000) pos++
-        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "RANGES_TABLE", "[I");
-        mv.visitVarInsn(Opcodes.ILOAD, T1);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitInsn(Opcodes.IADD);
-        mv.visitInsn(Opcodes.IALOAD);
-        mv.visitLdcInsn(0x10000);
-        Label noAdv = new Label();
-        mv.visitJumpInsn(Opcodes.IF_ICMPLE, noAdv);
-        mv.visitVarInsn(Opcodes.ILOAD, C_LV);
-        mv.visitLdcInsn(0x10000);
-        mv.visitJumpInsn(Opcodes.IF_ICMPLT, noAdv);
-        mv.visitIincInsn(POS, 1);
-        mv.visitLabel(noAdv);
-
-        // Entry check for target (runtime: ENTRY_MASK[STATE])
-        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ENTRY_MASK", "[I");
-        mv.visitVarInsn(Opcodes.ILOAD, STATE);
-        mv.visitInsn(Opcodes.IALOAD);
-        Label entryOk = new Label();
-        mv.visitJumpInsn(Opcodes.IFEQ, entryOk);
-        mv.visitVarInsn(Opcodes.ILOAD, STATE);
-        mv.visitVarInsn(Opcodes.ILOAD, POS);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitInsn(Opcodes.IADD);
-        mv.visitVarInsn(Opcodes.ILOAD, LEN);
-        mv.visitVarInsn(Opcodes.ALOAD, IN);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "entryOkC", "(III[C)Z", false);
-        mv.visitJumpInsn(Opcodes.IFNE, entryOk);
-        mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
-        mv.visitLabel(entryOk);
-
-        mv.visitIincInsn(POS, 1);
-        mv.visitJumpInsn(Opcodes.GOTO, dfaLoop);
-
-        mv.visitLabel(stateDead);
-        mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
-    }
-
-    // ===== shared binary-search helper (table-scan dispatch) =====
-
-    /**
-     * Generate {@code static int scanRanges(int[] ranges, int base, int count, int c)}.
-     * Linear scan {@code ranges} for the entry matching {@code c}. Returns the
-     * flat offset into {@code ranges} (i.e. {@code (base + i) * 5}) of the first
-     * matching entry, or {@code -1} if no range contains {@code c}.
-     *
-     * <p>Linear scan (not binary search) because the DFA builder's
-     * {@code sortByMaskSpecificity} may reorder ranges by mask priority, breaking
-     * the sort-by-lo invariant that binary search requires. For wide classes
-     * like {@code \p{L}} (~1369 ranges), this is still fast on typical inputs.
-     */
-    private static void genScanRanges(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "scanRanges", "([IIII)I", null, null);
-        // 0=ranges, 1=base, 2=count, 3=c; local 4=i, 5=o
-        mv.visitCode();
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitVarInsn(Opcodes.ISTORE, 4);
-        Label loop = new Label(), nf = new Label();
-        mv.visitLabel(loop);
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
-        mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitJumpInsn(Opcodes.IF_ICMPGE, nf);
-        // o = (base + i) * 5
-        mv.visitVarInsn(Opcodes.ILOAD, 1);
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
-        mv.visitInsn(Opcodes.IADD);
-        mv.visitIntInsn(Opcodes.BIPUSH, 5);
-        mv.visitInsn(Opcodes.IMUL);
-        mv.visitVarInsn(Opcodes.ISTORE, 5);
-        // if (c >= ranges[o]) — c < ranges[o] → skip
-        mv.visitVarInsn(Opcodes.ILOAD, 3);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ILOAD, 5);
-        mv.visitInsn(Opcodes.IALOAD);
-        Label skip = new Label();
-        mv.visitJumpInsn(Opcodes.IF_ICMPLT, skip);
-        // if (c <= ranges[o+1]) — c > ranges[o+1] → skip
-        mv.visitVarInsn(Opcodes.ILOAD, 3);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ILOAD, 5);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitInsn(Opcodes.IADD);
-        mv.visitInsn(Opcodes.IALOAD);
-        mv.visitJumpInsn(Opcodes.IF_ICMPGT, skip);
-        // return o
-        mv.visitVarInsn(Opcodes.ILOAD, 5);
-        mv.visitInsn(Opcodes.IRETURN);
-        mv.visitLabel(skip);
-        // i++
-        mv.visitIincInsn(4, 1);
-        mv.visitJumpInsn(Opcodes.GOTO, loop);
-        mv.visitLabel(nf);
-        mv.visitInsn(Opcodes.ICONST_M1);
-        mv.visitInsn(Opcodes.IRETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
-    }
-
-    // ===== shared runtime ops applier (table-scan dispatch) =====
-
-    /**
-     * Generate {@code static void applyOpsRuntime(int[] ops, int opsOff, int[] regs, int pos)}.
-     * Interprets the ops array at runtime — same semantics as {@code TdfaRunner.applyOps}
-     * but emitted as ASM so the table-scan dispatch stays in generated code.
-     */
-    private static void genApplyOpsRuntime(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "applyOpsRuntime", "([II[II)V", null, null);
-        // 0=ops, 1=opsOff, 2=regs, 3=pos; local 4=j, 5=op, 6=dst
-        mv.visitCode();
-        mv.visitVarInsn(Opcodes.ILOAD, 1);
-        mv.visitVarInsn(Opcodes.ISTORE, 4);
-        Label loop = new Label(), done = new Label();
-        mv.visitLabel(loop);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
-        mv.visitInsn(Opcodes.IALOAD);
-        mv.visitVarInsn(Opcodes.ISTORE, 5);
-        mv.visitVarInsn(Opcodes.ILOAD, 5);
-        mv.visitJumpInsn(Opcodes.IFEQ, done);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitInsn(Opcodes.IADD);
-        mv.visitInsn(Opcodes.IALOAD);
-        mv.visitVarInsn(Opcodes.ISTORE, 6);
-        Label checkCopy = new Label(), setNil = new Label(), next = new Label();
-        mv.visitVarInsn(Opcodes.ILOAD, 5);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitJumpInsn(Opcodes.IF_ICMPNE, checkCopy);
-        mv.visitVarInsn(Opcodes.ALOAD, 2);
-        mv.visitVarInsn(Opcodes.ILOAD, 6);
-        mv.visitVarInsn(Opcodes.ILOAD, 3);
-        mv.visitInsn(Opcodes.IASTORE);
-        mv.visitJumpInsn(Opcodes.GOTO, next);
-        mv.visitLabel(checkCopy);
-        mv.visitVarInsn(Opcodes.ILOAD, 5);
-        mv.visitInsn(Opcodes.ICONST_3);
-        mv.visitJumpInsn(Opcodes.IF_ICMPNE, setNil);
-        mv.visitVarInsn(Opcodes.ALOAD, 2);
-        mv.visitVarInsn(Opcodes.ILOAD, 6);
-        mv.visitVarInsn(Opcodes.ALOAD, 2);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
-        mv.visitInsn(Opcodes.ICONST_2);
-        mv.visitInsn(Opcodes.IADD);
-        mv.visitInsn(Opcodes.IALOAD);
-        mv.visitInsn(Opcodes.IALOAD);
-        mv.visitInsn(Opcodes.IASTORE);
-        mv.visitJumpInsn(Opcodes.GOTO, next);
-        mv.visitLabel(setNil);
-        mv.visitVarInsn(Opcodes.ALOAD, 2);
-        mv.visitVarInsn(Opcodes.ILOAD, 6);
-        mv.visitInsn(Opcodes.ICONST_M1);
-        mv.visitInsn(Opcodes.IASTORE);
-        mv.visitLabel(next);
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
-        mv.visitInsn(Opcodes.ICONST_3);
-        mv.visitInsn(Opcodes.IADD);
-        mv.visitVarInsn(Opcodes.ISTORE, 4);
-        mv.visitJumpInsn(Opcodes.GOTO, loop);
-        mv.visitLabel(done);
-        mv.visitInsn(Opcodes.RETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
     }
 
     // ===== final ops (LOOKUPSWITCH) =====
@@ -1510,7 +1280,7 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ILOAD, POS);
             mv.visitInsn(Opcodes.ICONST_1);
             mv.visitInsn(Opcodes.ISUB);
-            mv.visitInsn(Opcodes.CALOAD);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
             mv.visitIntInsn(Opcodes.BIPUSH, '\n');
             Label l1c = new Label();
             mv.visitJumpInsn(Opcodes.IF_ICMPNE, l1c);
@@ -1541,7 +1311,7 @@ public final class TdfaAsmBackend {
             mv.visitJumpInsn(Opcodes.IF_ICMPGE, l2b);
             mv.visitVarInsn(Opcodes.ALOAD, IN);
             mv.visitVarInsn(Opcodes.ILOAD, POS);
-            mv.visitInsn(Opcodes.CALOAD);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
             mv.visitIntInsn(Opcodes.BIPUSH, '\n');
             Label l2c = new Label();
             mv.visitJumpInsn(Opcodes.IF_ICMPNE, l2c);
@@ -1582,13 +1352,13 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ILOAD, POS);
             mv.visitVarInsn(Opcodes.ILOAD, LEN);
             mv.visitVarInsn(Opcodes.ALOAD, IN);
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWordBefore", "(II[C)Z", false);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWordBefore", "(IILjava/lang/String;)Z", false);
         } else {
             mv.visitVarInsn(Opcodes.ALOAD, IN);
             mv.visitVarInsn(Opcodes.ILOAD, POS);
             mv.visitInsn(Opcodes.ICONST_1);
             mv.visitInsn(Opcodes.ISUB);
-            mv.visitInsn(Opcodes.CALOAD);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
             mv.visitVarInsn(Opcodes.ISTORE, T1);
             emitIsWordBranch(mv, T1, prevFalse, false, owner);
             mv.visitInsn(Opcodes.ICONST_1);
@@ -1608,11 +1378,11 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ILOAD, POS);
             mv.visitVarInsn(Opcodes.ILOAD, LEN);
             mv.visitVarInsn(Opcodes.ALOAD, IN);
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWordAt", "(II[C)Z", false);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWordAt", "(IILjava/lang/String;)Z", false);
         } else {
             mv.visitVarInsn(Opcodes.ALOAD, IN);
             mv.visitVarInsn(Opcodes.ILOAD, POS);
-            mv.visitInsn(Opcodes.CALOAD);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
             mv.visitVarInsn(Opcodes.ISTORE, T2);
             emitIsWordBranch(mv, T2, currFalse, false, owner);
             mv.visitInsn(Opcodes.ICONST_1);
@@ -1699,7 +1469,7 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, POS);
         mv.visitInsn(Opcodes.ICONST_1);
         mv.visitInsn(Opcodes.IADD);
-        mv.visitInsn(Opcodes.CALOAD);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
         mv.visitVarInsn(Opcodes.ISTORE, T1);
         mv.visitVarInsn(Opcodes.ILOAD, T1);
         mv.visitLdcInsn(0xDC00);
@@ -1803,7 +1573,7 @@ public final class TdfaAsmBackend {
     // ===== isWordBefore / isWordAt: word-char checks that decode surrogate pairs =====
 
     /**
-     * Emits {@code private static boolean isWordBefore(int pos, int len, char[] input)}:
+     * Emits {@code private static boolean isWordBefore(int pos, int len, String input)}:
      * whether the character immediately before {@code pos} is a word character. A low
      * surrogate at {@code pos-1} paired with a high surrogate at {@code pos-2} is decoded
      * to the full supplementary codepoint before the {@code isUnicodeWordChar} search, so
@@ -1811,7 +1581,7 @@ public final class TdfaAsmBackend {
      */
     private static void genIsWordBefore(ClassWriter cw, String owner) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "isWordBefore", "(II[C)Z", null, null);
+                "isWordBefore", "(IILjava/lang/String;)Z", null, null);
         mv.visitCode();
         // locals: 0=pos, 1=len, 2=input, 3=c, 4=h
         Label notPos = new Label();
@@ -1822,7 +1592,7 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, 0);
         mv.visitInsn(Opcodes.ICONST_1);
         mv.visitInsn(Opcodes.ISUB);
-        mv.visitInsn(Opcodes.CALOAD);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
         mv.visitVarInsn(Opcodes.ISTORE, 3);
         // if (c >= 0xDC00 && c <= 0xDFFF && pos >= 2)
         Label notLow = new Label();
@@ -1840,7 +1610,7 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, 0);
         mv.visitIntInsn(Opcodes.BIPUSH, 2);
         mv.visitInsn(Opcodes.ISUB);
-        mv.visitInsn(Opcodes.CALOAD);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
         mv.visitVarInsn(Opcodes.ISTORE, 4);
         Label notHigh = new Label();
         mv.visitVarInsn(Opcodes.ILOAD, 4);
@@ -1878,13 +1648,13 @@ public final class TdfaAsmBackend {
     }
 
     /**
-     * Emits {@code private static boolean isWordAt(int pos, int len, char[] input)}:
+     * Emits {@code private static boolean isWordAt(int pos, int len, String input)}:
      * whether the character at {@code pos} is a word character; a high surrogate at
      * {@code pos} paired with a low surrogate at {@code pos+1} is decoded first.
      */
     private static void genIsWordAt(ClassWriter cw, String owner) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "isWordAt", "(II[C)Z", null, null);
+                "isWordAt", "(IILjava/lang/String;)Z", null, null);
         mv.visitCode();
         // locals: 0=pos, 1=len, 2=input, 3=c, 4=l
         Label notPos = new Label();
@@ -1894,7 +1664,7 @@ public final class TdfaAsmBackend {
         // c = input[pos]
         mv.visitVarInsn(Opcodes.ALOAD, 2);
         mv.visitVarInsn(Opcodes.ILOAD, 0);
-        mv.visitInsn(Opcodes.CALOAD);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
         mv.visitVarInsn(Opcodes.ISTORE, 3);
         // if (c >= 0xD800 && c <= 0xDBFF && pos + 1 < len)
         Label notHigh = new Label();
@@ -1914,7 +1684,7 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, 0);
         mv.visitInsn(Opcodes.ICONST_1);
         mv.visitInsn(Opcodes.IADD);
-        mv.visitInsn(Opcodes.CALOAD);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
         mv.visitVarInsn(Opcodes.ISTORE, 4);
         Label notLow = new Label();
         mv.visitVarInsn(Opcodes.ILOAD, 4);
@@ -2065,44 +1835,28 @@ public final class TdfaAsmBackend {
     // ===== fast-path eligibility =====
 
     /**
-     * Pick the ASM dispatch mode based on DFA shape. Three modes, in order of
-     * decreasing speed and decreasing per-class bytecode cost:
+     * Pick the ASM dispatch mode. Two modes:
      *
      * <ol>
-     *   <li><b>INLINED</b> — per-state inlined range checks in {@code runExtract}.
-     *       Fastest dispatch (~25 bytes per live range, plus ~7 bytes per op
-     *       for SET/COPY register instructions; O(1) per-char). Fits when
-     *       the size estimate is below {@link #INLINE_BUDGET_BYTES}.</li>
-     *   <li><b>TABLE_SCAN</b> — per-state compact snippet that binary-searches
-     *       {@code RANGES_TABLE} at runtime. ~100 bytes per state; O(log R)
-     *       per-char. Fits when {@code stateCount ≤ MAX_TABLESCAN_STATES}.</li>
+     *   <li><b>INLINED</b> — fastPath-eligible DFAs only (no masks, disjoint
+     *       ranges): per-state inlined range checks + inlined register ops in
+     *       the emitted extract leaf, flat-table anchored matches loop, and an
+     *       emitted strategy ladder mirroring {@code runStringExtractFast}.
+     *       Fits when the size estimate is below {@link #INLINE_BUDGET_BYTES}.</li>
      *   <li><b>DELEGATE</b> — every hot method forwards to the embedded
-     *       {@link TdfaRunner}. Bytecode is trivially small; runtime is
-     *       VM-equivalent. Used when neither of the above fits (e.g. the
-     *       21 K-state dictionary alternation DFA, or 268-state / 352-tag
-     *       lexer DFAs whose inlined ops alone would blow 65 KB).</li>
+     *       {@link TdfaRunner}. Bytecode trivially small; runtime
+     *       VM-equivalent (it IS the VM ladder). Used for big DFAs (the 21
+     *       K-state dictionary alternation, 268-state/352-tag lexer DFAs),
+     *       non-fastPath DFAs (masks: word boundaries, anchors — the runner's
+     *       generic walk is already optimal there), and literal needles
+     *       (indexOf short-circuit).</li>
      * </ol>
-     *
-     * <p>The prior design had only INLINED + TABLE_SCAN (selected by a single
-     * 1 500-range threshold); DFAs too big for TABLE_SCAN (notably dictionary)
-     * threw {@code MethodTooLargeException} from {@code runExtract}, which the
-     * parity harness then retried by re-compiling the regex on the VM factory
-     * (doubling wall time). DELEGATE keeps the class emittable in all cases.
      */
     private static DispatchMode pickMode(Tdfa tdfa) {
-        // INLINED — fastest dispatch (~25 B per range; ~7 B per transition op;
-        // ~7 B per final-op). Used when the runExtract bytecode estimate fits
-        // the 30 KB soft budget (the JVM hard cap is 65 KB; the estimate is a
-        // lower bound, so leave headroom).
+        // INLINED only pays for fastPath DFAs (the emitted leaf + ladder are
+        // fastPath-shaped); everything else delegates to the runner ladder.
+        if (!computeFastPath(tdfa)) return DispatchMode.DELEGATE;
         if (estimateInlinedBytes(tdfa) <= INLINE_BUDGET_BYTES) return DispatchMode.INLINED;
-        // TABLE_SCAN mode is preserved as a code path (per-state compact binary-
-        // search dispatch via RANGES_TABLE) but isn't currently selected by
-        // pickMode: on the workloads where INLINED doesn't fit, the embedded
-        // TdfaRunner (DELEGATE mode) is faster thanks to its asciiRangeFlat
-        // per-(state, ASCII-char) cache, which beats binary search on the
-        // ASCII-heavy inputs that dominate the rebar suite. TABLE_SCAN remains
-        // useful for non-ASCII workloads with few tags; flip the policy here to
-        // re-enable it.
         return DispatchMode.DELEGATE;
     }
 

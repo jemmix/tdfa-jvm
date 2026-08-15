@@ -193,8 +193,9 @@ public final class TdfaRunner implements Regex.Engine {
     private static final ThreadLocal<ArrayList<Strategy>> TRACE_BUF =
             ThreadLocal.withInitial(ArrayList::new);
 
-    /** Record a strategy decision point (no-op unless tracing). */
-    static void trace(Strategy s) {
+    /** Record a strategy decision point (no-op unless tracing). Public: the
+     *  ASM backend's emitted ladder calls it from generated classes. */
+    public static void trace(Strategy s) {
         if (TRACE) TRACE_BUF.get().add(s);
     }
 
@@ -1150,7 +1151,43 @@ public final class TdfaRunner implements Regex.Engine {
      * identifies re-reachable states (origin = min) vs first-arrival (origin = set).
      */
     /** Budget-exceeded sentinel for {@link #multiStateLeftmostStart}. */
-    private static final int LSS_BUDGET = -2;
+    public static final int LSS_BUDGET = -2;
+
+    // ===== ASM ladder hooks: strategy pieces the generated ladder calls.
+    // TdfaRunner is final, so these invokevirtual sites are monomorphic and
+    // inline wherever emitted. The generated ladder mirrors
+    // runStringExtractFast exactly; the strategy-conformance test asserts
+    // trace equality between backends. =====
+
+    /** The exact-literal needle, or null (see detectLiteralNeedle). */
+    public String literalNeedle() { return literalNeedle; }
+
+    /** First-char candidate bitset, or null when the start state accepts. */
+    public long[] startBits() { return startBits; }
+
+    /** Max input length for the candidate scan. */
+    public int candScanMax() { return CAND_SCAN_MAX; }
+
+    /** True = no masks + disjoint ranges: the fast extract ladder applies. */
+    public boolean fastPath() { return fastPath; }
+
+    /** Char budget for the origin sim before the trigger fallback. */
+    public int originSimBudget() { return LSS_BUDGET_CHARS; }
+
+    /** Origin-sim leftmost start; {@link #LSS_BUDGET} = budget exhausted. */
+    public int originSimLeftmost(CharSequence input, int from, int to, int budget) {
+        return multiStateLeftmostStart(input, from, to, budget);
+    }
+
+    /** Memoized search-DFA trigger scan: window start W, or -1 = no match. */
+    public int triggerScanTop(String input, int from, int to) {
+        return triggerScan(input, from, to);
+    }
+
+    /** Boolean single-start walk (fastPath only): does a match start at from? */
+    public boolean booleanMatchFrom(String input, int from, int to) {
+        return matchFromFast(input, from, to);
+    }
 
     private int multiStateLeftmostStart(CharSequence input, int from, int to) {
         return multiStateLeftmostStart(input, from, to, -1);
