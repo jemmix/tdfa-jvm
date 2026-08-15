@@ -85,6 +85,13 @@ public interface Pattern extends java.io.Serializable {
             throw new IllegalArgumentException(
                     "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS, LONGEST_MATCH, UNICODE_CHARACTER_CLASS");
         }
+        // Per-pattern generation: under a generating factory, Pattern/Matcher
+        // classes are emitted into the engine's classloader and call it
+        // directly (devirtualized, inline end-to-end). Falls back to the
+        // shared implementation internally on emission problems.
+        if (factory instanceof io.github.jemmix.tdfa.asm.AsmEngineFactory a) {
+            return GenPatternSupport.compile(regex, flags, a, unicodeProvider);
+        }
         return VmPattern.compile(regex, flags, factory, unicodeProvider);
     }
 
@@ -151,7 +158,7 @@ public interface Pattern extends java.io.Serializable {
     /** Package-private UTF-8 decode shared by the byte[] overloads (re2j's {@code MatcherInput.utf8}). */
     final class Utf8 {
         private Utf8() { }
-        static String decode(byte[] bytes) {
+        public static String decode(byte[] bytes) {
             return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
         }
     }

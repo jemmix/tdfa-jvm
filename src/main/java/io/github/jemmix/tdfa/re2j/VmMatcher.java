@@ -7,20 +7,20 @@ import io.github.jemmix.tdfa.vm.MatchResult;
  * Shared {@link Matcher} implementation: stateful iteration over a
  * {@link VmPattern}'s engines via the {@link Regex} API.
  */
-final class VmMatcher implements Matcher {
+public class VmMatcher implements Matcher {
 
-    private final PatternSpi pattern;
-    private CharSequence input;
-    private int inputLength;
+    protected final PatternSpi pattern;
+    protected CharSequence input;
+    protected int inputLength;
 
-    private MatchResult match;
-    private boolean hasMatch;
+    protected MatchResult match;
+    protected boolean hasMatch;
 
-    private int lastMatchStart;
-    private int lastMatchEnd;
-    private int appendPos;
+    protected int lastMatchStart;
+    protected int lastMatchEnd;
+    protected int appendPos;
 
-    VmMatcher(PatternSpi pattern, CharSequence input) {
+    protected VmMatcher(PatternSpi pattern, CharSequence input) {
         this.pattern = pattern;
         this.input = input;
         this.inputLength = input.length();
@@ -28,7 +28,7 @@ final class VmMatcher implements Matcher {
 
     @Override public Pattern pattern() { return pattern; }
 
-    private PatternSpi spi() { return pattern; }
+    PatternSpi spi() { return pattern; }
 
     @Override public Matcher reset() {
         hasMatch = false;

@@ -188,8 +188,10 @@ public final class TdfaRunner implements Regex.Engine {
         GENERIC         // CharSequence (non-String) fallback
     }
 
-    /** Enabled by -Dtdfa.trace.strategy=true. */
-    private static final boolean TRACE = Boolean.getBoolean("tdfa.trace.strategy");
+    /** Enabled by -Dtdfa.trace.strategy=true at startup, or at runtime via
+     *  {@link #setTracing(boolean)} (the strategy-conformance test). Volatile
+     *  load + never-taken branch is ~free on the hot paths. */
+    private static volatile boolean TRACE = Boolean.getBoolean("tdfa.trace.strategy");
     private static final ThreadLocal<ArrayList<Strategy>> TRACE_BUF =
             ThreadLocal.withInitial(ArrayList::new);
 
@@ -198,6 +200,9 @@ public final class TdfaRunner implements Regex.Engine {
     public static void trace(Strategy s) {
         if (TRACE) TRACE_BUF.get().add(s);
     }
+
+    /** Enable/disable strategy tracing at runtime (conformance-test hook). */
+    public static void setTracing(boolean on) { TRACE = on; }
 
     /** Snapshot and clear this thread's recorded strategy sequence. */
     public static List<Strategy> traceSnapshot() {

@@ -29,35 +29,79 @@ public final class TdfaAsmBackend {
     private static final String TDFA_D = "L" + TDFA + ";";
 
     public static Regex.Engine compile(Tdfa tdfa) {
-        byte[] bc;
+        return generate(tdfa).engine();
+    }
+
+    /** A per-pattern generation result: the engine instance plus the classloader
+     *  that defines its class (and any additionally generated per-pattern classes,
+     *  e.g. the Regex/Pattern/Matcher tier) plus the Tdfa backing it. The loader
+     *  is unreferenced once the pattern is garbage → all its classes unload together. */
+    public record Generated(Regex.Engine engine, java.lang.ClassLoader loader, String owner, Tdfa tdfa) { }
+
+    /** Child loader that can define any number of registered classes for one pattern. */
+    public static final class GenClassLoader extends ClassLoader {
+        private final java.util.Map<String, byte[]> classes = new java.util.HashMap<>();
+        GenClassLoader(ClassLoader parent) { super(parent); }
+        /** Register another class to be defined by this loader (same pattern). */
+        public void register(String name, byte[] bytes) { classes.put(name, bytes); }
+        @Override protected Class<?> findClass(String n) throws ClassNotFoundException {
+            byte[] b = classes.remove(n);
+            if (b != null) return defineClass(n, b, 0, b.length);
+            return super.findClass(n);
+        }
+    }
+
+    public static Generated generate(Tdfa tdfa) {
         try {
             long id = COUNTER.incrementAndGet();
             String cn = "io.github.jemmix.tdfa.gen.Gen" + id;
             String owner = cn.replace('.', '/');
-            bc = generate(tdfa, owner);
+            byte[] bc = generateBytes(tdfa, owner);
             if (Boolean.getBoolean("tdfa.asm.dump")) {
                 String dp = "/tmp/" + owner.replace('/', '.') + ".class";
                 try { java.nio.file.Files.write(java.nio.file.Paths.get(dp), bc); } catch (Exception ignored) {}
             }
-            final byte[] bytes = bc;
-            final String className = cn;
-            ClassLoader cl = new ClassLoader(TdfaAsmBackend.class.getClassLoader()) {
-                @Override protected Class<?> findClass(String n) throws ClassNotFoundException {
-                    if (n.equals(className)) return defineClass(className, bytes, 0, bytes.length);
-                    return super.findClass(n);
-                }
-            };
-            return (Regex.Engine) Class.forName(cn, true, cl)
+            GenClassLoader cl = new GenClassLoader(TdfaAsmBackend.class.getClassLoader());
+            cl.register(cn, bc);
+            Regex.Engine engine = (Regex.Engine) Class.forName(cn, true, cl)
                     .getDeclaredConstructor(Tdfa.class).newInstance(tdfa);
+            return new Generated(engine, cl, owner, tdfa);
         } catch (Exception e) {
             throw new IllegalStateException("ASM backend failed", e);
         }
     }
 
+    /**
+     * Core-API per-pattern generation: emit a Regex subclass whose overridden
+     * matches/find/findFrom call the generated engine class directly
+     * (monomorphic, inline end-to-end). Returns null on any emission problem —
+     * the caller falls back to the shared Regex shape via factory.create.
+     */
+    public static Regex generateRegex(Tdfa tdfa, int groupCount, int programSize,
+                                      java.util.Map<String, Integer> namedGroups) {
+        try {
+            Generated g = generate(tdfa);
+            return GenRegexEmitter.emit(g, groupCount, programSize, namedGroups);
+        } catch (Throwable t) {
+            return null;   // fall back to shared Regex
+        }
+    }
+
+    /** {@link #generateRegex} plus the {@link Generated} handle, for API layers
+     *  (re2j Pattern tier) that emit further per-pattern classes into the same
+     *  loader (Pattern/Matcher subclasses reaching the engine class directly). */
+    public record GeneratedRegex(Regex regex, Generated generated) { }
+
+    public static GeneratedRegex generateRegexWithHandle(Tdfa tdfa, int groupCount, int programSize,
+                                                         java.util.Map<String, Integer> namedGroups) {
+        Generated g = generate(tdfa);
+        return new GeneratedRegex(GenRegexEmitter.emit(g, groupCount, programSize, namedGroups), g);
+    }
+
     /** Dispatch mode picked at class-emit time, see {@link #pickMode}. */
     enum DispatchMode { INLINED, DELEGATE }
 
-    private static byte[] generate(Tdfa tdfa, String owner) {
+    private static byte[] generateBytes(Tdfa tdfa, String owner) {
         // One brain, one ladder: the search strategy (literal / candidate
         // scan / origin sim / trigger / walk ordering) lives in TdfaRunner;
         // generated code CALLS it (monomorphic hooks) and owns only the leaf
@@ -329,70 +373,15 @@ public final class TdfaAsmBackend {
 
     // ===== interface methods =====
 
+    /**
+     * Anchored matches: full delegate to the runner. The flat-table anchored
+     * loop is identical work in both backends (measured equal), so emitting it
+     * buys nothing — and the runner owns the ANCHORED_FAST/ANCHORED/GENERIC
+     * strategy recording, keeping the traces trivially conformant.
+     */
     private static void genMatches(ClassWriter cw, String owner, boolean fastPath) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matches", "(" + CS_D + ")Z", null, null);
         mv.visitCode();
-
-        if (fastPath) {
-            // locals: 0=this, 1=input, 2=s(String), 3=len, 4=state, 5=pos, 6=c
-            Label slowPath = new Label();
-            mv.visitVarInsn(Opcodes.ALOAD, 1);
-            mv.visitTypeInsn(Opcodes.INSTANCEOF, STR);
-            mv.visitJumpInsn(Opcodes.IFEQ, slowPath);
-            mv.visitVarInsn(Opcodes.ALOAD, 1);
-            mv.visitTypeInsn(Opcodes.CHECKCAST, STR);
-            mv.visitVarInsn(Opcodes.ASTORE, 2);
-            mv.visitVarInsn(Opcodes.ALOAD, 2);
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "length", "()I", false);
-            mv.visitVarInsn(Opcodes.ISTORE, 3);
-            emitTrace(mv, "ANCHORED_FAST");
-            mv.visitInsn(Opcodes.ICONST_0);
-            mv.visitVarInsn(Opcodes.ISTORE, 4); // state = 0 (startState)
-            mv.visitInsn(Opcodes.ICONST_0);
-            mv.visitVarInsn(Opcodes.ISTORE, 5); // pos = 0
-
-            Label loop = new Label(), done = new Label(), deadFail = new Label();
-            mv.visitLabel(loop);
-            mv.visitVarInsn(Opcodes.ILOAD, 5);
-            mv.visitVarInsn(Opcodes.ILOAD, 3);
-            mv.visitJumpInsn(Opcodes.IF_ICMPGE, done);
-            mv.visitVarInsn(Opcodes.ALOAD, 2);
-            mv.visitVarInsn(Opcodes.ILOAD, 5);
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
-            mv.visitVarInsn(Opcodes.ISTORE, 6); // c (use local 6 temporarily, no conflict)
-            mv.visitVarInsn(Opcodes.ILOAD, 6);
-            mv.visitIntInsn(Opcodes.SIPUSH, 128);
-            mv.visitJumpInsn(Opcodes.IF_ICMPGE, slowPath); // non-ASCII → fallback
-            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ASCII_TARGET", "[I");
-            mv.visitVarInsn(Opcodes.ILOAD, 4);
-            ic(mv, 128);
-            mv.visitInsn(Opcodes.IMUL);
-            mv.visitVarInsn(Opcodes.ILOAD, 6);
-            mv.visitInsn(Opcodes.IADD);
-            mv.visitInsn(Opcodes.IALOAD);
-            mv.visitVarInsn(Opcodes.ISTORE, 4); // state = ASCII_TARGET[state * 128 + c]
-            mv.visitVarInsn(Opcodes.ILOAD, 4);
-            mv.visitJumpInsn(Opcodes.IFLT, deadFail);
-            mv.visitIincInsn(5, 1);
-            mv.visitJumpInsn(Opcodes.GOTO, loop);
-
-            mv.visitLabel(deadFail);
-            mv.visitInsn(Opcodes.ICONST_0);
-            mv.visitInsn(Opcodes.IRETURN);
-
-            mv.visitLabel(done);
-            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "IS_ACCEPT", "[I");
-            mv.visitVarInsn(Opcodes.ILOAD, 4);
-            mv.visitInsn(Opcodes.IALOAD);
-            mv.visitInsn(Opcodes.IRETURN);
-
-            mv.visitLabel(slowPath);
-            // Fall through to generic path
-        }
-
-        // Generic path: delegate to the runner (anchored match — single DFA
-        // walk from position 0, no O(n²) concern; the multi-state fix is
-        // only needed for unanchored find/extract).
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitVarInsn(Opcodes.ALOAD, 1);

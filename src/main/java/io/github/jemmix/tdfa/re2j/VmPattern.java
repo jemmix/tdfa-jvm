@@ -15,7 +15,7 @@ import java.util.Map;
  * VM engines; the ASM backend with per-pattern generation subclasses its
  * structure into generated classes.
  */
-final class VmPattern implements PatternSpi {
+public class VmPattern implements PatternSpi {
 
     private static final long serialVersionUID = 1L;
 
@@ -30,7 +30,7 @@ final class VmPattern implements PatternSpi {
     private transient volatile Regex wholeEngine;
     private transient java.util.function.Supplier<Regex> wholeSupplier;
 
-    VmPattern(String pattern, int flags, Regex engine, java.util.function.Supplier<Regex> wholeSupplier) {
+    protected VmPattern(String pattern, int flags, Regex engine, java.util.function.Supplier<Regex> wholeSupplier) {
         this.pattern = pattern;
         this.flags = flags;
         this.engine = engine;
@@ -133,6 +133,13 @@ final class VmPattern implements PatternSpi {
     }
 
     @Override public void reset() { }
+
+    /** Serialize as the {@link SerialProxy} (pattern+flags; recompiles on read) —
+     *  generated subclasses' classes live in child loaders that won't exist in
+     *  the reading process, so the state proxy is the only stable form. */
+    private Object writeReplace() {
+        return new SerialProxy(pattern, flags);
+    }
 
     /** Recompile the (transient) engines after deserialization, from {@code pattern}+{@code flags}. */
     private void readObject(java.io.ObjectInputStream in)

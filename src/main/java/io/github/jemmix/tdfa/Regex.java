@@ -19,8 +19,15 @@ import java.util.Map;
  *
  * Disambiguation: POSIX (default) yields leftmost-longest matches; PERL yields
  * leftmost-first matches (compatible with re2j/RE2/PCRE/Perl). Both run in O(n).
+ *
+ * <p>Non-final with a protected constructor since the kernel refactor: under a
+ * per-pattern-generating {@link EngineFactory} (see
+ * {@link EngineFactory#generatesPerPattern()}), {@link #compile} returns a
+ * generated subclass whose overridden entry points call the generated engine
+ * class directly — monomorphic, inlining end-to-end — instead of routing
+ * through the (potentially megamorphic) {@code engine} field.
  */
-public final class Regex {
+public class Regex {
     private final Engine engine;
     private final int groupCount;
     private final int programSize;
@@ -59,11 +66,18 @@ public final class Regex {
                                 io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
         Tnfa nfa = Tnfa.compile(pattern, disableUnicodeGroups, anchorBoth, provider);
         io.github.jemmix.tdfa.tdfa.Tdfa tdfa = io.github.jemmix.tdfa.tdfa.Tdfa.compile(nfa, disamb);
+        // Per-pattern generation: a generated Regex subclass whose overridden
+        // matches/find/findFrom call the generated engine class directly.
+        if (factory instanceof io.github.jemmix.tdfa.asm.AsmEngineFactory) {
+            Regex r = io.github.jemmix.tdfa.asm.TdfaAsmBackend.generateRegex(
+                    tdfa, nfa.groupCount, tdfa.stateCount, nfa.namedGroups);
+            if (r != null) return r;
+        }
         Engine engine = factory.create(tdfa);
         return new Regex(engine, nfa.groupCount, tdfa.stateCount, nfa.namedGroups);
     }
 
-    private Regex(Engine engine, int groupCount, int programSize, Map<String, Integer> namedGroups) {
+    protected Regex(Engine engine, int groupCount, int programSize, Map<String, Integer> namedGroups) {
         this.engine = engine; this.groupCount = groupCount; this.programSize = programSize;
         this.namedGroups = namedGroups != null ? namedGroups : Map.of();
     }
@@ -76,4 +90,7 @@ public final class Regex {
     /** Cost estimate: the number of states in the compiled DFA. */
     public int programSize() { return programSize; }
     public Map<String, Integer> namedGroups() { return namedGroups; }
+
+    /** The engine backing this Regex (shared impls route through it; generated subclasses may bypass). */
+    protected final Engine engine() { return engine; }
 }

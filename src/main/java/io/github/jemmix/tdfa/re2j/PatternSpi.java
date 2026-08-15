@@ -7,7 +7,7 @@ import io.github.jemmix.tdfa.Regex;
  * {@link VmPattern} and by generated per-pattern Patterns alike, so the shared
  * Matcher machinery can reach the engines without knowing the implementation.
  */
-interface PatternSpi extends Pattern {
+public interface PatternSpi extends Pattern {
 
     /** The main (unanchored) engine. */
     Regex engine();
