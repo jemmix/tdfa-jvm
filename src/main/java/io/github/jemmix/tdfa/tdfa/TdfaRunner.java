@@ -77,6 +77,19 @@ public final class TdfaRunner implements Regex.Engine {
      *  start state is NOT accepting (an accepting start admits zero-length
      *  matches anywhere, which the candidate scan cannot see). */
     private final long[] startBits;
+    /** Lazy per-state 512-codepoint walk blocks for codepoints >= latinLimit:
+     *  cell = the (unique, disjoint-only) containing range's index, or -1.
+     *  turns wide-class walks (\p{L}{2,} on Cyrillic: ~600-range binary
+     *  searches per char) into one array load. Published via the volatile
+     *  {@link #walkBlocksArr} snapshot (copy-on-grow; build is synchronized
+     *  and double-checked, so races only cost a redundant lock). */
+    private volatile int[][] walkBlocksArr = EMPTY_BLOCKS;
+    private int walkBlockCount;                       // guarded by this
+    private final int[][] walkBlockIdx;               // [state] -> int[128] block ids (lazy)
+    private static final int[][] EMPTY_BLOCKS = {};
+    /** Cap on walk blocks (512 ints each): past it, dispatch falls back to
+     *  binary search (dictionary-scale DFAs must not grow unbounded memos). */
+    private static final int WALK_MAX_BLOCKS = 64;
 
     // ===== per-thread scratch (P2: hot-path allocation removal) =====
     //
@@ -142,6 +155,7 @@ public final class TdfaRunner implements Regex.Engine {
         this.wordBits = buildWordBits(tdfa.unicodeWordBoundary ? tdfa.wordRanges : null);
         this.startBits = (literalNeedle == null && (tdfa.stateMeta[tdfa.startState] & 1) == 0)
                 ? buildStartBits() : null;
+        this.walkBlockIdx = rangesDisjoint ? new int[tdfa.stateCount][] : null;
     }
 
     public Tdfa tdfa() { return tdfa; }
@@ -326,6 +340,8 @@ public final class TdfaRunner implements Regex.Engine {
         final int[] op = this.ops;
         final int[] sem = this.stateEntryMask;
         final int[] sam = this.stateAcceptMask;
+        final int[] arf = this.asciiRangeFlat;   // non-null iff rangesDisjoint
+        final int limit = this.latinLimit;
         // Pooled regs (per-thread scratch): the candidate-scan loops call this
         // per candidate and most walks fail — no allocation on that path. The
         // success path clones (line below) before returning, so the pool is
@@ -382,31 +398,58 @@ public final class TdfaRunner implements Regex.Engine {
                 c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
             int base = stateBase[state];
             int count = (meta >>> 1) & 0xFFFF;
-            // Binary search rightmost entry with lo <= c, then walk back
-            // while the per-state prefix-max-hi still reaches c: visits
-            // exactly the entries that can contain c, in the same
-            // lowest-index-first priority the linear scan used.
-            int rlo = 0, rhi = count - 1, anchor = -1;
-            while (rlo <= rhi) {
-                int mid = (rlo + rhi) >>> 1;
-                if (rg[(base + mid) * 5] <= c) { anchor = mid; rlo = mid + 1; }
-                else rhi = mid - 1;
-            }
-            // Walk back over containing entries, remembering the LOWEST-index
-            // mask-satisfied one (original linear-scan priority: alternation
-            // and mask-specificity order by entry index).
             int chosen = -1, chosenTarget = 0;
-            for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
-                int o = (base + i) * 5;
-                if (c <= rg[o + 1]) {
-                    int target = rg[o + 2];
-                    if (target < 0) continue;
-                    int requiredMask = rg[o + 4];
-                    if (requiredMask != 0) {
-                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                        if ((posFlags & requiredMask) != requiredMask) continue;
+            int ri;
+            if (arf != null && c < limit) {
+                // Disjoint ranges: at most one entry contains c, so entry
+                // priority is moot and the flat table is exact.
+                ri = arf[state * limit + c];
+            } else if (arf != null && c < 0x10000) {
+                // Beyond the flat table: lazy walk block (one array load) or,
+                // past the block cap, the binary search below.
+                ri = walkRangeIndex(state, c);
+                if (ri == -2) ri = Integer.MIN_VALUE;
+            } else {
+                ri = Integer.MIN_VALUE;
+            }
+            if (ri == Integer.MIN_VALUE) {
+                // Binary search rightmost entry with lo <= c, then walk back
+                // while the per-state prefix-max-hi still reaches c: visits
+                // exactly the entries that can contain c, in the same
+                // lowest-index-first priority the linear scan used.
+                int rlo = 0, rhi = count - 1, anchor = -1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    if (rg[(base + mid) * 5] <= c) { anchor = mid; rlo = mid + 1; }
+                    else rhi = mid - 1;
+                }
+                // Walk back over containing entries, remembering the LOWEST-index
+                // mask-satisfied one (original linear-scan priority: alternation
+                // and mask-specificity order by entry index).
+                for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+                    int o = (base + i) * 5;
+                    if (c <= rg[o + 1]) {
+                        int target = rg[o + 2];
+                        if (target < 0) continue;
+                        int requiredMask = rg[o + 4];
+                        if (requiredMask != 0) {
+                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                            if ((posFlags & requiredMask) != requiredMask) continue;
+                        }
+                        chosen = o; chosenTarget = target;
                     }
-                    chosen = o; chosenTarget = target;
+                }
+            } else if (ri >= 0) {
+                int o = (base + ri) * 5;
+                int target = rg[o + 2];
+                if (target >= 0) {
+                    int requiredMask = rg[o + 4];
+                    boolean ok = requiredMask == 0;
+                    if (!ok) {
+                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                        ok = (posFlags & requiredMask) == requiredMask;
+                    }
+                    if (ok) { chosen = o; chosenTarget = target; }
                 }
             }
             if (chosen < 0) break;
@@ -576,6 +619,57 @@ public final class TdfaRunner implements Regex.Engine {
     }
 
     private static void setBit(long[] bits, int c) { bits[c >>> 6] |= 1L << (c & 63); }
+
+    /**
+     * Range index for codepoint {@code c} (BMP, disjoint DFA) via lazy walk
+     * blocks: -1 = dead entry, -2 = block cap exceeded (caller falls back to
+     * binary search). See {@link #walkBlocksArr} for the publication scheme.
+     */
+    private int walkRangeIndex(int state, int c) {
+        int[] idx = walkBlockIdx[state];
+        int b = c >>> 9;
+        int id;
+        if (idx == null) {
+            idx = new int[128];
+            java.util.Arrays.fill(idx, -1);
+            walkBlockIdx[state] = idx;
+            id = -1;
+        } else {
+            id = idx[b];
+        }
+        if (id == -1) id = buildWalkBlock(state, b, idx);
+        if (id < 0) return id;
+        int[][] arr = walkBlocksArr;
+        if (id < arr.length) {
+            int ri = arr[id][c & 511];
+            return ri;   // -1 cell = dead entry
+        }
+        return -2;       // stale id vs a fresh snapshot: treat as capped (rare, safe)
+    }
+
+    /** Build one 512-cp block for `state` (lowest entry index per cell — for
+     *  disjoint DFAs the containing entry is unique). Synchronized + double-checked. */
+    private synchronized int buildWalkBlock(int state, int b, int[] idx) {
+        int id = idx[b];
+        if (id != -1) return id;
+        if (walkBlockCount >= WALK_MAX_BLOCKS) { idx[b] = -2; return -2; }
+        int[] cells = new int[512];
+        java.util.Arrays.fill(cells, -1);
+        int lo = b << 9, hi = lo + 511;
+        int base = stateBase[state], cnt = (stateMeta[state] >>> 1) & 0xFFFF;
+        final int[] rg = this.ranges;
+        for (int i = 0; i < cnt; i++) {
+            int o = (base + i) * 5;
+            int eLo = Math.max(rg[o], lo), eHi = Math.min(rg[o + 1], hi);
+            for (int cp = eLo; cp <= eHi; cp++) cells[cp - lo] = i;
+        }
+        int n = walkBlockCount++;
+        int[][] next = java.util.Arrays.copyOf(walkBlocksArr, n + 1);
+        next[n] = cells;
+        walkBlocksArr = next;    // volatile publish: cells contents visible to readers
+        idx[b] = n;
+        return n;
+    }
 
     /**
      * Whether the word-boundary flags are observable anywhere: an entry /
@@ -1204,7 +1298,13 @@ public final class TdfaRunner implements Regex.Engine {
             int ri;
             if (c < limit) {
                 ri = arf[state * limit + c];
+            } else if (c < 0x10000) {
+                ri = walkRangeIndex(state, c);
+                if (ri == -2) ri = Integer.MIN_VALUE;
             } else {
+                ri = Integer.MIN_VALUE;
+            }
+            if (ri == Integer.MIN_VALUE) {
                 int base = stateBase[state], cnt = (sm[state] >>> 1) & 0xFFFF;
                 int rlo = 0, rhi = cnt - 1;
                 ri = -1;
@@ -1492,6 +1592,8 @@ public final class TdfaRunner implements Regex.Engine {
         final int[] rg = this.ranges;
         final int[] sem = this.stateEntryMask;
         final int[] sam = this.stateAcceptMask;
+        final int[] arf = this.asciiRangeFlat;   // non-null iff rangesDisjoint
+        final int limit = this.latinLimit;
         int state = startState;
         int lastAcceptPos = -1;
         boolean haveAccept = false;
@@ -1532,7 +1634,37 @@ public final class TdfaRunner implements Regex.Engine {
             int base = stateBase[state];
             int count = (meta >>> 1) & 0xFFFF;
             boolean matched = false;
-            if (rangesDisjoint) {
+            int riFlat;
+            if (arf != null && c < limit) {
+                riFlat = arf[state * limit + c];
+            } else if (arf != null && c < 0x10000) {
+                riFlat = walkRangeIndex(state, c);
+                if (riFlat == -2) riFlat = Integer.MIN_VALUE;   // block cap: binary search
+            } else {
+                riFlat = Integer.MIN_VALUE;
+            }
+            if (riFlat != Integer.MIN_VALUE) {
+                // disjoint flat/block lookup: exact (priority moot, single entry)
+                if (riFlat >= 0) {
+                    int mo = (base + riFlat) * 5;
+                    int target = rg[mo + 2];
+                    if (target < 0) return haveAccept ? lastAcceptPos : -1;
+                    int requiredMask = rg[mo + 4];
+                    if (requiredMask != 0) {
+                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                        if ((posFlags & requiredMask) != requiredMask) return haveAccept ? lastAcceptPos : -1;
+                    }
+                    state = target;
+                    if (c > 0xFFFF) pos++;
+                    int entryReq = sem[state];
+                    if (entryReq != 0) {
+                        if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
+                            return haveAccept ? lastAcceptPos : -1;
+                        }
+                    }
+                    matched = true;
+                }
+            } else if (rangesDisjoint) {
                 int rlo = 0, rhi = count - 1;
                 while (rlo <= rhi) {
                     int mid = (rlo + rhi) >>> 1;
