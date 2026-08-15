@@ -67,9 +67,11 @@ public final class TdfaAsmBackend {
      * Inputs at or below this length make {@code match} delegate to the
      * embedded runner (lower per-call constant: pooled regs, lazy position
      * flags, first-char-set candidate scan) instead of running the generated
-     * leftmostStart + chars-cache + runExtract shape.
+     * leftmostStart + chars-cache + runExtract shape. 128: measured break-even
+     * (the runner's extract fast path wins through ~128 chars; the 65-char
+     * litFind JMH row sits just above the old 64 threshold and paid +23 ns).
      */
-    private static final int SHORT_DELEGATE_LEN = 64;
+    private static final int SHORT_DELEGATE_LEN = 128;
 
     /**
      * Maximum DFA state count for TABLE_SCAN dispatch. Each table-scan state
@@ -87,7 +89,12 @@ public final class TdfaAsmBackend {
     private static byte[] generate(Tdfa tdfa, String owner) {
         DispatchMode mode = pickMode(tdfa);
         boolean dispatchTooLarge = mode != DispatchMode.INLINED;
-        boolean delegate = mode == DispatchMode.DELEGATE;
+        // Literal-needle DFAs always fully delegate: the runner's indexOf
+        // short-circuit beats the generated leftmostStart + chars-cache +
+        // runExtract shape at every input length (measured +23 ns even on a
+        // 5-char match), and delegation mode adds no static tables.
+        boolean delegate = mode == DispatchMode.DELEGATE
+                || TdfaRunner.detectLiteralNeedle(tdfa) != null;
         // Disable the fast path (ASCII_TARGET table) outside INLINED mode.
         // In DELEGATE mode matches()/runExtract() forward to the runner, so
         // the table would never be consulted anyway.

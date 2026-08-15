@@ -531,8 +531,11 @@ public final class TdfaRunner implements Regex.Engine {
      */
     private final String literalNeedle;
 
-    /** Detect the literal-chain shape; null otherwise. */
-    private static String detectLiteralNeedle(Tdfa tdfa) {
+    /** Detect the literal-chain shape; null otherwise. Public static: the
+     *  ASM backend asks at emit time so literal DFAs get the fully-delegated
+     *  generated class (its indexOf short-circuit beats the generated walk
+     *  at every input length). */
+    public static String detectLiteralNeedle(Tdfa tdfa) {
         try {
             if (tdfa.groupCount != 0 || tdfa.tagCount != 0) return null;
             int n = tdfa.stateCount;
