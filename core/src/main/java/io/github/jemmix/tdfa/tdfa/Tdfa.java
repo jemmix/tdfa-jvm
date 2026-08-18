@@ -378,7 +378,53 @@ public final class Tdfa {
             for (int t = 1; t <= tags; t++) {
                 tagHeights[t] = (t + 1) / 2;
             }
+            // Per-cell active symbol-edge sets (see rangeActiveEdges). Each class range
+            // [lo, hi] covers a contiguous run of breakpoint cells: lo and hi+1 are
+            // themselves breakpoints (they are boundaries of this very class), so the
+            // run is exactly [bpIdx(lo), bpIdx(hi+1)-1] — hence one cc.matches probe
+            // per cell representative suffices here. Identical sets are interned to a
+            // shared id (activeSetId) so the determinize sweep can cache results per
+            // distinct set instead of per adjacent cell: the sets interleave along the
+            // codepoint line (letter / space / other cells), so adjacency-only reuse
+            // would never fire.
+            int cells = breakpoints.length - 1;
+            int edgeCount = nfa.symClass.length;
+            int words = (edgeCount + 63) >> 6;
+            this.rangeActiveEdges = new long[cells][];
+            this.rangeSameEdges = new boolean[cells];
+            this.activeSetId = new int[cells];
+            this.cellCount = cells;
+            long[] prevBits = null;
+            java.util.ArrayList<long[]> distinctSets = new java.util.ArrayList<>();
+            for (int bi = 0; bi < cells; bi++) {
+                long[] bits = new long[words];
+                for (int idx = 0; idx < edgeCount; idx++) {
+                    CharClass cc = nfa.symClass[idx];
+                    if (cc != null && cc.matches(breakpoints[bi])) bits[idx >> 6] |= 1L << (idx & 63);
+                }
+                rangeActiveEdges[bi] = bits;
+                if (bi > 0) rangeSameEdges[bi] = java.util.Arrays.equals(bits, prevBits);
+                int id = -1;
+                for (int d = 0; d < distinctSets.size(); d++) {
+                    if (java.util.Arrays.equals(bits, distinctSets.get(d))) { id = d; break; }
+                }
+                if (id < 0) { id = distinctSets.size(); distinctSets.add(bits); }
+                activeSetId[bi] = id;
+                prevBits = bits;
+            }
+            this.activeSetCount = distinctSets.size();
         }
+
+        /** Number of breakpoint cells (cells = equivalence classes between adjacent breakpoints). */
+        final int cellCount;
+        /** Per breakpoint cell: bitset of active symbol-edge ids (edges whose class matches the cell's representative). */
+        final long[][] rangeActiveEdges;
+        /** rangeSameEdges[bi] == true iff cell bi's active edge set equals cell bi-1's. */
+        final boolean[] rangeSameEdges;
+        /** Interned id of cell bi's active edge set (equal sets share the id). */
+        final int[] activeSetId;
+        /** Number of distinct active edge sets. */
+        final int activeSetCount;
 
         int[][] sortedOutgoing(int[] fromArr, int[] pri) {
             int[][] out = plainOutgoing(fromArr);
@@ -473,34 +519,53 @@ public final class Tdfa {
                 for (Config c : cur) {
                     maskGroups.computeIfAbsent(c.emptyMask, k -> new ArrayList<>()).add(c);
                 }
-                // For each equivalence range, compute one transition per mask group
-                for (int bi = 0; bi < breakpoints.length - 1; bi++) {
-                    int rangeLo = breakpoints[bi];
-                    int rangeHi = breakpoints[bi + 1] - 1;
-                    int repr = rangeLo;
-                    for (int groupMask : maskGroups.keySet()) {
-                        List<Config> stepInput;
-                        int ownCount;
-                        if (groupMask == 0) {
-                            stepInput = maskGroups.get(0);
-                            ownCount = stepInput.size();
-                        } else {
-                            // Own configs first (higher priority), then subset-mask
-                            // configs. This ensures the group's configs survive the
-                            // ε-closure (state,mask) dedup — their tags and registers
-                            // take priority over subset configs at the same NFA state.
-                            stepInput = new ArrayList<>(maskGroups.get(groupMask));
-                            ownCount = stepInput.size();
-                            for (var e : maskGroups.entrySet()) {
-                                int otherMask = e.getKey();
-                                if (otherMask != groupMask && (otherMask & groupMask) == otherMask) {
-                                    stepInput.addAll(e.getValue());
-                                }
+                // Group-major, range-inner sweep with per-active-set result caching.
+                // The stepped configs are a pure function of (stepInput, active edge
+                // set), and the active edge set is a pure function of the breakpoint
+                // cell — so cells sharing an interned active-set id (activeSetId[bi])
+                // yield identical stepped lists, ε-closures, shape keys and addState
+                // results. The expensive closure/key/addState pipeline runs at most
+                // once per distinct active set per mask group, and the builder's
+                // coalesce() later merges the same-target ranges. On wide-class
+                // patterns ([\s\S]{0,100} etc.) this skips the large majority of
+                // per-cell work; on narrow patterns every cell is distinct and the
+                // cache degenerates to one entry per cell.
+                for (int groupMask : maskGroups.keySet()) {
+                    List<Config> stepInput;
+                    int ownCount;
+                    if (groupMask == 0) {
+                        stepInput = maskGroups.get(0);
+                        ownCount = stepInput.size();
+                    } else {
+                        // Own configs first (higher priority), then subset-mask
+                        // configs. This ensures that the group's configs survive the
+                        // ε-closure (state,mask) dedup — their tags and registers
+                        // take priority over subset configs at the same NFA state.
+                        stepInput = new ArrayList<>(maskGroups.get(groupMask));
+                        ownCount = stepInput.size();
+                        for (var e : maskGroups.entrySet()) {
+                            int otherMask = e.getKey();
+                            if (otherMask != groupMask && (otherMask & groupMask) == otherMask) {
+                                stepInput.addAll(e.getValue());
                             }
                         }
-                        List<Config> stepped = stepOnSymbol(stepInput, repr, requiredMaskOut, ownCount);
-                        if (stepped.isEmpty()) continue;
-                        int requiredMask = groupMask;
+                    }
+                    AddResult[] perSet = new AddResult[activeSetCount];
+                    boolean[] perSetDone = new boolean[activeSetCount];
+                    for (int bi = 0; bi < cellCount; bi++) {
+                        int rangeLo = breakpoints[bi];
+                        int rangeHi = breakpoints[bi + 1] - 1;
+                        int setId = activeSetId[bi];
+                        if (perSetDone[setId]) {
+                            AddResult ar = perSet[setId];
+                            if (ar != null) {
+                                builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, groupMask);
+                            }
+                            continue;
+                        }
+                        perSetDone[setId] = true;
+                        List<Config> stepped = stepOnSymbol(stepInput, rangeActiveEdges[bi], requiredMaskOut, ownCount);
+                        if (stepped.isEmpty()) { perSet[setId] = null; continue; }
                         List<Config> closed;
                         int[] newPrectable;
                         if (!longest) {
@@ -521,9 +586,10 @@ public final class Tdfa {
                                 statePrectables.set(ar.targetId, newPrectable);
                             }
                         }
-                        if (debug) System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> " + ar.targetId + " ops.len=" + ar.ops.length + " mask=" + requiredMask);
-                        builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, requiredMask);
+                        if (debug) System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> " + ar.targetId + " ops.len=" + ar.ops.length + " mask=" + groupMask);
+                        builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, groupMask);
                         if (!processed.get(ar.targetId)) work.push(ar.targetId);
+                        perSet[setId] = ar;
                     }
                 }
             }
@@ -1003,30 +1069,54 @@ public final class Tdfa {
          * that follow lower-priority alternatives past an accept.
          */
         List<Config> epsilonClosure(List<Config> seed) {
-            List<Config> out = new ArrayList<>();
+            List<Config> out = new ArrayList<>(seed.size() * 2);
             // For deterministic exploration we visit (state, mask) pairs — same NFA state
             // can appear with different assertion masks (e.g. loop entered 0 vs 1 times).
             // The visited set keyed only on state would wrongly suppress the second path.
-            // Use a LongSet of (state << 32) | mask to dedupe within a closure.
-            java.util.HashSet<Long> visitedSM = new java.util.HashSet<>();
+            // Open-addressing primitive (state<<32|mask) set: the boxed HashSet<Long> this
+            // replaces allocated a Long per visited config per closure call — the #1
+            // allocation hotspot on wide-class determinization.
+            long[] visitedSM = new long[Math.max(16, Integer.highestOneBit(seed.size() * 8 - 1) << 1)];
+            int visitedMask = visitedSM.length - 1;
+            int visitedCount = 0;
             ArrayDeque<Config> stack = new ArrayDeque<>();
-            // Push seed configs in reverse so the first seed config is on top (popped first)
+            // Push seed configs in reverse so the first seed config is on top (popped first).
+            // A pre-push membership check skips seeds whose (state,mask) was already
+            // POPPED (marked visited) — they would die at the pop check anyway. Seeds
+            // still un-popped are pushed normally: the first POP of a key wins (DFS
+            // priority order), so marking at push time would reverse the winner among
+            // co-resident duplicates — see the child-loop comment below.
             for (int i = seed.size() - 1; i >= 0; i--) {
-                stack.push(seed.get(i));
+                Config c = seed.get(i);
+                long key = (((long) c.state) << 32) | (c.emptyMask & 0xFFFFFFFFL);
+                if (containsKey(visitedSM, visitedMask, key)) continue;
+                stack.push(c);
             }
             while (!stack.isEmpty()) {
                 Config c = stack.pop();
                 long key = (((long) c.state) << 32) | (c.emptyMask & 0xFFFFFFFFL);
-                if (!visitedSM.add(key)) continue;
+                int slot = (int) (mix(key) & visitedMask);
+                while (visitedSM[slot] != 0) {
+                    if (visitedSM[slot] == key) { slot = -1; break; }
+                    slot = (slot + 1) & visitedMask;
+                }
+                if (slot < 0) continue;
+                visitedSM[slot] = key;
+                if (++visitedCount * 2 > visitedMask) { visitedSM = growVisited(visitedSM); visitedMask = visitedSM.length - 1; }
                 out.add(c);
-                // Push children in REVERSE priority order.
+                // Push children in REVERSE priority order. Same contract as the seeds:
+                // the pre-push check skips only already-POPPED keys; co-resident
+                // duplicates are all pushed (each needs its own tag history — the
+                // first pop decides which survives) and resolved at pop time.
                 int[] eps = epsOut[c.state];
                 for (int i = eps.length - 1; i >= 0; i--) {
                     int idx = eps[i];
                     int to = nfa.epsTo[idx];
-                    int tag = nfa.epsTag[idx];
                     int edgeEmpty = nfa.epsEmptyMask[idx];
                     int newMask = c.emptyMask | edgeEmpty;
+                    long childKey = (((long) to) << 32) | (newMask & 0xFFFFFFFFL);
+                    if (containsKey(visitedSM, visitedMask, childKey)) continue;
+                    int tag = nfa.epsTag[idx];
                     int[] newL;
                     if (tag == Tnfa.NO_TAG || tag < 0) {
                         newL = c.l;
@@ -1045,6 +1135,37 @@ public final class Tdfa {
                 }
             }
             return out;
+        }
+
+        /** Membership test against an open-addressing primitive long set. */
+        private static boolean containsKey(long[] table, int mask, long key) {
+            int slot = (int) (mix(key) & mask);
+            while (table[slot] != 0) {
+                if (table[slot] == key) return true;
+                slot = (slot + 1) & mask;
+            }
+            return false;
+        }
+
+        /** Double an open-addressing long set, rehashing all live keys. */
+        private static long[] growVisited(long[] table) {
+            long[] grown = new long[table.length << 1];
+            int gMask = grown.length - 1;
+            for (long k : table) {
+                if (k == 0) continue;
+                int s2 = (int) (mix(k) & gMask);
+                while (grown[s2] != 0) s2 = (s2 + 1) & gMask;
+                grown[s2] = k;
+            }
+            return grown;
+        }
+
+        /** 64-bit finalizer for hash-set slots (splitmix-style). */
+        static long mix(long key) {
+            key ^= key >>> 33;
+            key *= 0xff51afd7ed558ccdL;
+            key ^= key >>> 33;
+            return key;
         }
 
         // ---------------- BT19 §7 longest-match closure (closure_gtop) ----------------
@@ -1145,17 +1266,30 @@ public final class Tdfa {
          *         or -1 for unreachable states (incl. states only reachable via
          *         assertion edges whose requirements aren't in posMask).
          */
+        /** Scratch for computePerStateOrder: reused across the 64-mask loop and states. */
+        private int[] psoOrder;
+        private boolean[] psoVisited;
+        private int[] psoStack;
+
         int[] computePerStateOrder(List<Config> seed, int posMask) {
-            int[] order = new int[nfa.stateCount];
-            java.util.Arrays.fill(order, -1);
-            boolean[] visited = new boolean[nfa.stateCount];
-            ArrayDeque<Integer> stack = new ArrayDeque<>();
+            if (psoOrder == null || psoOrder.length < nfa.stateCount) {
+                psoOrder = new int[nfa.stateCount];
+                psoVisited = new boolean[nfa.stateCount];
+                psoStack = new int[Math.max(nfa.stateCount * 2, 64)];
+            }
+            int[] order = psoOrder;
+            boolean[] visited = psoVisited;
+            int[] stackArr = psoStack;
+            java.util.Arrays.fill(order, 0, nfa.stateCount, -1);
+            java.util.Arrays.fill(visited, 0, nfa.stateCount, false);
+            int sp = 0;
             for (int i = seed.size() - 1; i >= 0; i--) {
-                stack.push(seed.get(i).state);
+                int s = seed.get(i).state;
+                if (!visited[s]) stackArr[sp++] = s;
             }
             int counter = 0;
-            while (!stack.isEmpty()) {
-                int s = stack.pop();
+            while (sp > 0) {
+                int s = stackArr[--sp];
                 if (visited[s]) continue;
                 visited[s] = true;
                 order[s] = counter++;
@@ -1165,7 +1299,13 @@ public final class Tdfa {
                     int required = nfa.epsEmptyMask[idx];
                     if ((required & ~posMask) != 0) continue;  // assertion fails at this position
                     int to = nfa.epsTo[idx];
-                    if (!visited[to]) stack.push(to);
+                    if (!visited[to]) {
+                        if (sp == stackArr.length) {
+                            stackArr = java.util.Arrays.copyOf(stackArr, sp * 2);
+                            psoStack = stackArr;
+                        }
+                        stackArr[sp++] = to;
+                    }
                 }
             }
             return order;
@@ -1187,7 +1327,7 @@ public final class Tdfa {
          * check fails, and the lower-priority {@code y} branch survives to extend the match
          * ([0,1] instead of the correct [0,0] — the empty {@code x*} alternative accepts first).
          */
-        List<Config> stepOnSymbol(List<Config> configs, int a, int[] requiredMaskOut, int ownCount) {
+        List<Config> stepOnSymbol(List<Config> configs, long[] activeEdges, int[] requiredMaskOut, int ownCount) {
             // Perl leftmost-first: the closure's configs are in priority-ordered DFS arrival order.
             // If any config has reached the accept state, find the FIRST (best-priority) such config
             // and consider suppressing transitions from configs added AFTER it.
@@ -1234,8 +1374,7 @@ public final class Tdfa {
                 }
                 Config c = configs.get(ci);
                 for (int idx : symOut[c.state]) {
-                    CharClass cc = nfa.symClass[idx];
-                    if (cc != null && cc.matches(a)) {
+                    if ((activeEdges[idx >> 6] & (1L << (idx & 63))) != 0) {
                         // emptyMask resets on step — assertions are position-bound, gated via requiredMask.
                     out.add(new Config(nfa.symTo[idx], c.regs, c.l, EMPTY, 0, c.pri, c.path, ci));
                     intersection &= c.emptyMask;
@@ -1317,8 +1456,44 @@ public final class Tdfa {
 
         static final class AddResult { final int targetId; final int[] ops; AddResult(int t, int[] o) { targetId=t; ops=o; } }
 
+        /** Scratch buffers for canonical key building, reused across addState calls. */
+        private int[] keyCounts;
+        private Config[] keyBuf;
+
+        /**
+         * Build the canonical (state-sorted, stable) key signature on this compiler's
+         * scratch buffers. Counting sort by NFA state — O(n + stateCount) — replaces
+         * the former ArrayList copy + TimSort, a per-call hotspot on large closures.
+         */
+        private DfaStateKey buildKey(List<Config> configs) {
+            int n = configs.size();
+            int maxState = 0;
+            for (Config c : configs) maxState = Math.max(maxState, c.state);
+            if (keyCounts == null || keyCounts.length < maxState + 2)
+                keyCounts = new int[Math.max(maxState + 2, 64)];
+            else java.util.Arrays.fill(keyCounts, 0, maxState + 2, 0);
+            for (Config c : configs) keyCounts[c.state + 1]++;
+            for (int s = 0; s <= maxState; s++) keyCounts[s + 1] += keyCounts[s];
+            if (keyBuf == null || keyBuf.length < n) keyBuf = new Config[Math.max(n, 32)];
+            // iterate forward for stable placement (equal states keep arrival order)
+            for (int i = 0; i < n; i++) keyBuf[keyCounts[configs.get(i).state]++] = configs.get(i);
+            int total = 0;
+            for (int i = 0; i < n; i++) total += 3 + keyBuf[i].l.length + (longest ? 1 : 0);
+            int[] arr = new int[total];
+            int j = 0;
+            for (int i = 0; i < n; i++) {
+                Config c = keyBuf[i];
+                arr[j++] = c.state;
+                arr[j++] = c.l.length;
+                for (int v : c.l) arr[j++] = v;
+                arr[j++] = c.emptyMask;
+                if (longest) arr[j++] = c.pri;
+            }
+            return new DfaStateKey(arr);
+        }
+
         AddResult addState(List<Config> configs, int[] ops, List<Config> seed) {
-            DfaStateKey key = new DfaStateKey(configs, longest);
+            DfaStateKey key = buildKey(configs);
             int[] candidates = stateIndex.get(key);
             if (candidates != null) {
                 // Identity on (states, lookahead). Registers may differ — translate via tryMap.
@@ -1486,33 +1661,34 @@ public final class Tdfa {
      *  Two states with same key are candidates for {@code map} (register bijection).
      *  In Perl mode {@code includePri} adds per-config pri to the signature so that closures
      *  whose suppression behaviour would differ are not merged. */
-    static final class DfaStateKey {
-        final int[] sig;
-        final int hash;
-        DfaStateKey(List<Config> configs) { this(configs, false); }
-        DfaStateKey(List<Config> configs, boolean includePri) {
-            // Sort by state for canonical comparison (configs may be in DFS order)
-            List<Config> sorted = new ArrayList<>(configs);
-            sorted.sort(Comparator.comparingInt(c -> c.state));
-            int total = 0;
-            for (Config c : sorted) total += 3 + c.l.length + (includePri ? 1 : 0);
-            int[] arr = new int[total];
-            int i = 0;
-            for (Config c : sorted) {
-                arr[i++] = c.state;
-                arr[i++] = c.l.length;
-                for (int v : c.l) arr[i++] = v;
-                arr[i++] = c.emptyMask;
-                if (includePri) arr[i++] = c.pri;
-            }
-            this.sig = arr;
-            this.hash = Arrays.hashCode(arr);
-        }
-        @Override public boolean equals(Object o) {
-            return o instanceof DfaStateKey && Arrays.equals(sig, ((DfaStateKey) o).sig);
-        }
-        @Override public int hashCode() { return hash; }
-    }
+     static final class DfaStateKey {
+         final int[] sig;
+         final int hash;
+         DfaStateKey(int[] sig) { this.sig = sig; this.hash = Arrays.hashCode(sig); }
+         DfaStateKey(List<Config> configs) { this(configs, false); }
+         DfaStateKey(List<Config> configs, boolean includePri) {
+             // Sort by state for canonical comparison (configs may be in DFS order)
+             List<Config> sorted = new ArrayList<>(configs);
+             sorted.sort(Comparator.comparingInt(c -> c.state));
+             int total = 0;
+             for (Config c : sorted) total += 3 + c.l.length + (includePri ? 1 : 0);
+             int[] arr = new int[total];
+             int i = 0;
+             for (Config c : sorted) {
+                 arr[i++] = c.state;
+                 arr[i++] = c.l.length;
+                 for (int v : c.l) arr[i++] = v;
+                 arr[i++] = c.emptyMask;
+                 if (includePri) arr[i++] = c.pri;
+             }
+             this.sig = arr;
+             this.hash = Arrays.hashCode(arr);
+         }
+         @Override public boolean equals(Object o) {
+             return o instanceof DfaStateKey && Arrays.equals(sig, ((DfaStateKey) o).sig);
+         }
+         @Override public int hashCode() { return hash; }
+     }
 
     static final class Range {
         final int lo, hi, target;
