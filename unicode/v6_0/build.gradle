@@ -1,0 +1,41 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'io.github.jemmix'
+// Artifact: io.github.jemmix:tdfa-unicode-6.0 — Unicode 6.0.0 tables (re2j's version).
+version = '0.1.0-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    api project(':core')
+}
+
+// Deterministic regeneration from vendored UCD files (checksums verified
+// by the generator). Committed output — python3 only needed to regenerate.
+tasks.register('generateTables', Exec) {
+    description = 'Regenerate Unicode6_0.java from vendor/ucd/6.0.0.'
+    group = 'build'
+    commandLine 'python3', rootProject.file('scripts/gen-unicode.py').absolutePath,
+            rootProject.file('vendor/ucd/6.0.0').absolutePath, '6_0', '6.0.0',
+            file('src/gen/java/io/github/jemmix/tdfa/unicode/v6_0/Unicode6_0.java').absolutePath
+}
+
+sourceSets {
+    main {
+        java.srcDir 'src/gen/java'
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.debug = true
+}

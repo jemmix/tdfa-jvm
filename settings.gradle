@@ -6,6 +6,7 @@ pluginManagement {
 }
 
 include ':core', ':asm',
+        ':unicode:v6_0', ':unicode:v17_0',
         ':tests:unit',
         ':tests:parity:re2j',
         ':tests:parity:re2j-suite',
