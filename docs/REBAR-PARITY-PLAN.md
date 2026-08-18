@@ -442,24 +442,36 @@ for the extracts ≈ O(n) for typical match densities.
 
 **Exit criterion:** `imported/leipzig/ing` < 1 s on 16 MB haystack (was 249 s).
 
-### 6.2 Compile: bounded-repeat state explosion — DFA minimization
+### 6.2 Compile: bounded-repeat state explosion — RESOLVED 2026-08-18 (mostly)
 
-The 4 remaining COMPILE_TIMEOUTs share a shape: a bounded quantifier
+**Status rewrite (the original analysis below was wrong twice).** The 4
+COMPILE_TIMEOUTs were re-profiled with per-stage timings + JFR after the
+determinize fast-path (`9762910`: per-active-set result cache, primitive
+closure sets, counting-sort keys — 2.6× on wide-class shapes):
+
+- `curated/03-date/{ascii,unicode}` — 1-3 s through the facade now. First
+  live run surfaced stale corpus counts (java recorded 111817/111825 vs
+  111840/111848 on JDK 26); engine verified equal to live `java.util.regex`
+  match-for-match; counts patched in
+  `vendor/patches/rebar/05-date-counts-jdk26.patch`. Runs in the suite.
+- `curated/09-aws-keys/full` — 0.4 s; runs and passes as-is.
+- `curated/10-bounded-repeat/context` — **still budget-skipped, by design**:
+  `[\s\S]{0,100}` × 2 tracks both counters through every char, so the DFA is
+  intrinsically huge: the simplified analog measures 60 604 states / 60 603
+  after register-aware Moore — *already minimal*; the real regex is 200 K+
+  states, 48.6 s + 12 GB heap. No encoding or minimization fixes this within
+  eager AOT determinization; a Pike-VM fallback or lazy (§7 multi-pass)
+  determinization would be multi-engine dispatch — an explicit non-goal.
+  See TODO.md "Huge-DFA bounded-repeat patterns".
+- `CompileLatencyGuardTest` pins all formerly-bomb compiles < 5 s.
+
+~~The 4 remaining COMPILE_TIMEOUTs share a shape: a bounded quantifier
 (`{0,100}`) over a wide class (`[\s\S]`, `\d\d[...]{2,2}\d`) explodes the
 TNFA → TDFA determinization to 10 K+ states per repetition site. The DFA is
 almost certainly reducible (most of those states are equivalent after
-moore-style minimization), but we don't minimize today.
-
-**Fix:** implement Moore-style DFA minimization (register-aware — BT22 §6)
-between `Tdfa.compile` and ASM/VM backend codegen. Expected to drop the 4
-bombs below the 2-min ceiling; bonus, makes ASM codegen smaller too.
-
-**Alternative:** pre-compile AST budget check (Phase 1.1, never implemented)
-— fast-fail with `compile-budget: …` instead of burning the 2-min timeout.
-This is a test-side workaround, not a fix.
-
-**Exit criterion:** zero `COMPILE_TIMEOUT` in the suite; the 4 currently-
-timed-out scenarios run to completion (PASS or FAIL).
+moore-style minimization), but we don't minimize today.~~ (Wrong: the
+minimizer has always been in `Tdfa` — default-on, 20 K-state cap — and the
+context DFA is already minimal.)
 
 ### 6.3 utf8-lossy haystack loading — DONE
 

@@ -169,7 +169,13 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
 - [x] **`(?iu)` char-class ranges don't include Unicode fold equivalents** — FIXED. `Parser.parseClass` now expands every member codepoint's `CaseFoldTable.foldRanges` when `unicodeShorthand && caseInsensitive` (`(?iu)[r-t]` matches `ſ`); ASCII-only fold retained without `(?u)` (re2j semantics).
 - [x] **`(?iu)` negated classes don't exclude Unicode fold equivalents** — FIXED by the same range-fold expansion (fold members join the positive set before `CharClass` negation, so `(?iu)[^s]` rejects `ſ`).
 - [x] **`JdkUnicodeDataProvider.foldTableFor` incomplete** — FIXED. `buildFoldTable` only closed the `toUpperCase` direction (worked for `\p{Lu}`, null for `\p{Ll}`). Now checks all `CaseFoldTable` fold-group members, so `(?i)\p{Ll}` matches `A` and multi-member groups (s/S/ſ) close in both directions.
-- [ ] **Zero-width-anchored alternation matches [0,1] instead of [0,0]** — patterns like `(?:(?:^)|.)?` and `^(?:(?:(?:a*)|b))` on inputs starting with 'b'/'c' report a 1-char match where the zero-width alternative should win. Caught by Google's ExecTest (`:tests:parity:re2j-suite:test`, `testRE2Exhaustive` + `testFowlerBasic`, both backends). Down from 3 failing ExecTest cases to 2 after the final-register dedicated-slot fix in `Optimize.registerAllocation` (which fixed `testFowlerRepetition`).
+- [x] ~~**Zero-width-anchored alternation matches [0,1] instead of [0,0]**~~ — RESOLVED
+      BY AUDIT (2026-08, commit `66f31ef`): does not reproduce; the re2j-suite
+      mask hiding it was stale (6/6 green unmasked at the session baseline). The
+      final-register dedicated-slot fix in `Optimize.registerAllocation` plus the
+      accept-suppression safety rule in `stepOnSymbol` (ungated lower-priority
+      paths kept when their assertions differ from the accept's — the
+      `^x*|y` [0,1]-vs-[0,0] shape) cover the family. re2j-suite is hard-gated.
 - [x] **PERL disambiguation with `\b` in alternation** — was described as "picks wrong alternative" but root cause was a determinization flaw: `\b`-guarded transitions didn't include identifier continuations from non-`\b` branches, causing dead-end DFA paths. Fixed in commit `d133d20` by including subset-mask configs in the step input during mask-group processing.
 - [x] **Unicode case folding for single-char literals** — Fixed in commit `74ab652`. Added `CaseFoldTable` with a reverse fold table; parser uses it when `unicodeShorthand && caseInsensitive`. `(?i)s` now matches `ſ` (U+017F).
 - [x] ~~**`\w` / `\b` are ASCII-only, not Unicode-aware**~~ — NOT A BUG (phantom). Our
@@ -196,7 +202,27 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
 - [x] **O(n²) unanchored `find()` — no-match case** — fixed via multi-state parallel simulation in `TdfaRunner.multiStateAnyMatch`: a single forward pass tracks the set of all DFA states reachable from any start position (O(n × |states|)), replacing the outer-loop restart. Used for boolean `find()` directly and as a no-match pre-check for the extract path. 200 K-char no-match haystack: ~14 ms (was >30 s).
 - [x] **O(n²) `find()` on dense matches** — FIXED (P1). `multiStateLeftmostStart` runs the multi-state simulation with per-state origin tracking (double-buffered with the state sets); the extract walk starts directly at the leftmost match position, replacing the retry-every-failed-start shape. leipzig `[a-zA-Z]+ing` findAll: 41 ms → 19 ms per 512 KB (2.2×, both backends, same 2351 matches). Note: the original 249 s/16 MB figure was stale — the stopOnAccept short-circuit (REBAR-SPEEDUP-PLAN §Tier-2 #3) had already cut it to ~41 ms/512 KB before P1 landed.
 - [x] **ASM backend hits the 65 KB JVM method limit** — fully solved via `TdfaAsmBackend.pickMode`, which selects one of three dispatch modes per pattern: `INLINED` (per-state range checks, fastest), `TABLE_SCAN` (per-state compact binary search over `RANGES_TABLE`), or `DELEGATE` (thin wrapper that forwards to a `TdfaRunner`). Combined with `<clinit>` no longer materializing per-element arrays (ENTRY/ACCEPT/STOP/IS_ACCEPT/ASCII_TARGET all become reference copies or runtime loops in `<init>`), no in-scope rebar pattern throws `MethodTooLargeException`. The old VM-retry path in `RebarScenarioParityTest` was removed; both backends now run as peer parameter values.
-- [ ] DFA minimization (Moore-style, register-aware) — would clear the 4 remaining `COMPILE_TIMEOUT` skips (bounded-repeat state explosion in `curated/03-date`, `curated/09-aws-keys/full`, `curated/10-bounded-repeat/context`). See `docs/REBAR-PARITY-PLAN.md §6.2`.
+- [x] ~~DFA minimization (Moore-style, register-aware)~~ — DONE (has been in
+      `Tdfa` all along, default-on, `-Dtdfa.nominimize` to disable; 20 K-state
+      cap via `-Dtdfa.minimize.max`). The TODO claim that it "would clear the
+      COMPILE_TIMEOUT skips" was doubly wrong: the bombs explode during
+      DETERMINIZATION (before the minimizer runs, above its cap), and their
+      DFAs are essentially minimal anyway (see next item).
+- [ ] **Huge-DFA bounded-repeat patterns** — e.g. rebar `curated/10-bounded-repeat/context`:
+      `[\s\S]{0,100}` × 2 makes the DFA track both counters through every char,
+      so the MINIMAL DFA is the counter cross-product. Measured: simplified
+      analog `[A-Z]{10}\s+[\s\S]{0,100}Z[\s\S]{0,100}\s+[A-Z]{10}` = 60 604
+      states, 60 603 after Moore (already minimal); the real regex = 200 K+
+      states, 48.6 s + 12 GB heap after the determinize fast-path (was >2 min
+      kill + OOM). Remaining levers, in the single-algorithm AOT design:
+      constant-factor determinize speedups (2.6× so far: per-active-set result
+      cache, primitive closure sets, counting-sort keys) and Config memory
+      compaction. REJECTED: a Pike-VM/NFA fallback engine for over-budget
+      patterns (2026-08-18) — that is multi-engine dispatch, an explicit
+      non-goal. Lazy/multi-pass determinization (paper §7) is likewise a
+      different architecture. The scenario stays budget-skipped; every other
+      formerly-bomb pattern is under a 5 s latency guard
+      (`CompileLatencyGuardTest`).
 - [x] **M2 regopt interference-analysis bug** — Fixed in commit `6b335e2`. `Optimize.interferenceAnalysis` walked ops FORWARD and cloned `L[b]` (end-of-block liveness) for EACH op, missing the fact that COPY sources become live BEFORE the op and conflict with registers written by LATER ops in the same block. Rewrote to walk ops in REVERSE with a running live set (BT22 Fig. 7), keeping a forward pre-pass for the value-tracking `V[]` snapshots. All 61500 veryl matches now report exactly 1 participating group, matching `java.util.regex`.
 - [x] **`\b` in alternation causes dead-end DFA paths** — Fixed in commit `d133d20`. Modified `Tdfa.Compiler.compile()` to include subset-mask group configs in the step input, ensuring `\b`-guarded transitions include identifier continuations. Group's own configs added first to preserve priority in ε-closure dedup. The veryl scenario now reports the expected 124800 captures.
 - [x] **Unicode case-fold `s ↔ ſ` for literal chars under `(?i)`** — Fixed in commit `74ab652`. Added `CaseFoldTable` (unicode/CaseFoldTable.java) with a reverse fold table mapping `toUpperCase(toLowerCase(cp))` to all BMP codepoints sharing it. Parser uses it when `unicodeShorthand && caseInsensitive`.
@@ -209,7 +235,7 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
 - [x] Vendor [rebar](https://github.com/BurntSushi/rebar) scenario corpus — `vendor/rebar-<sha>.tar.gz`; parsed by `:testlib:rebar`.
 - [x] Tracer-bullet parity test against rebar scenarios — `:tests:parity:rebar:RebarScenarioParityTest`. With the radical timeout/cap relaxation (`COMPILE_TIMEOUT_MS` 5 s → 2 min, `RUN_TIMEOUT_MS` 10 s → 10 min, `MAX_HAYSTACK_BYTES` 16 MB → 80 MB, `MAX_REGEX_LEN` 32 KB → 2 MB), `utf8-lossy` loader support, the scope restricted to scenarios rebar actually tests against Java (`java/hotspot` in engines list — see `docs/PARITY-PLAN.md`), and `compile` / `grep-captures` models implemented: **108 of 114 in-scope scenarios pass** (94.7 %), 2 surface known engine bugs (see "Correctness" below), 4 skip on `COMPILE_TIMEOUT` (bounded-repeat state explosion — see Performance below), 245 skip on the Java-scope filter (out of scope per the locked 2025-08 rule). End-of-suite `@AfterAll` summary prints skip-reason histogram + top-20 slowest tests + wall-time totals — see `docs/REBAR-PARITY-PLAN.md`.
 - [x] Expand rebar parity — Phase 6.3 of `REBAR-PARITY-PLAN.md`: utf8-lossy loader fix, radical timeout/cap bumps. Surfaced the O(n²) extract bug (Phase 6.1) and the 4 bounded-repeat compile bombs (Phase 6.2). +34 scenarios passing (74 → 108).
-- [x] Remaining rebar parity — **All in-scope scenarios now pass** (220/220 parameterized over ASM+VM). The 3 engine correctness bugs (§A regopt interference, §B `\b` dead-end, §C Unicode case-fold) are fixed. Remaining skips: 490 scope (no `java/hotspot` engine), 8 COMPILE_TIMEOUT (DFA state explosion — needs minimization, see Performance below).
+- [x] Remaining rebar parity — **All in-scope scenarios now pass** (718/718 parameterized cases, 0 failures). The 3 engine correctness bugs (§A regopt interference, §B `\b` dead-end, §C Unicode case-fold) are fixed. 2026-08-18: the date/aws compile bombs were un-skipped after the determinize fast-path (date counts verified equal to live `java.util.regex` — JDK-26 tables drift patched in `vendor/patches/rebar/05-*.patch`); `CompileLatencyGuardTest` pins <5 s facade compiles. Remaining skips: 490 scope (no `java/hotspot` engine) + 2 budget (`10-bounded-repeat/context`, the intrinsically-huge-DFA shape — see Performance).
 - [ ] Hyperscan corpus / Snort rule set
 - [ ] Long-input scan across diverse patterns (not just `\w+\d+\w+`)
 - [ ] CI performance regression tracking (JMH + comparison thresholds)
