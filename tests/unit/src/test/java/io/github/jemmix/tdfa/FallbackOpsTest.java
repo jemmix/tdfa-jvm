@@ -1,7 +1,7 @@
 package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.tdfa.Disambiguation;
-import io.github.jemmix.tdfa.vm.MatchResult;
+import io.github.jemmix.tdfa.core.MatchResult;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;

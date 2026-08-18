@@ -1,4 +1,4 @@
-package io.github.jemmix.tdfa.vm;
+package io.github.jemmix.tdfa.core;
 
 /**
  * A successful match. Per-tag offsets are stored in the final-register block of the

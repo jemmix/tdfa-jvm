@@ -1,9 +1,10 @@
 package io.github.jemmix.tdfa.asm;
 
 import io.github.jemmix.tdfa.Regex;
+import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import io.github.jemmix.tdfa.vm.MatchResult;
+import io.github.jemmix.tdfa.core.MatchResult;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -16,9 +17,9 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class TdfaAsmBackend {
 
     private static final AtomicLong COUNTER = new AtomicLong();
-    private static final String ENGINE = "io/github/jemmix/tdfa/Regex$Engine";
+    private static final String ENGINE = "io/github/jemmix/tdfa/core/RegexEngine";
     private static final String HOLDER = "io/github/jemmix/tdfa/tdfa/TdfaRunner$MatchHolder";
-    private static final String RESULT = "io/github/jemmix/tdfa/vm/MatchResult";
+    private static final String RESULT = "io/github/jemmix/tdfa/core/MatchResult";
     private static final String CS = "java/lang/CharSequence";
     private static final String STR = "java/lang/String";
     private static final String CS_D = "Ljava/lang/CharSequence;";
@@ -28,7 +29,7 @@ public final class TdfaAsmBackend {
     private static final String TDFA = "io/github/jemmix/tdfa/tdfa/Tdfa";
     private static final String TDFA_D = "L" + TDFA + ";";
 
-    public static Regex.Engine compile(Tdfa tdfa) {
+    public static RegexEngine compile(Tdfa tdfa) {
         return generate(tdfa).engine();
     }
 
@@ -36,7 +37,7 @@ public final class TdfaAsmBackend {
      *  that defines its class (and any additionally generated per-pattern classes,
      *  e.g. the Regex/Pattern/Matcher tier) plus the Tdfa backing it. The loader
      *  is unreferenced once the pattern is garbage → all its classes unload together. */
-    public record Generated(Regex.Engine engine, java.lang.ClassLoader loader, String owner, Tdfa tdfa) { }
+    public record Generated(RegexEngine engine, java.lang.ClassLoader loader, String owner, Tdfa tdfa) { }
 
     /** Child loader that can define any number of registered classes for one pattern. */
     public static final class GenClassLoader extends ClassLoader {
@@ -63,7 +64,7 @@ public final class TdfaAsmBackend {
             }
             GenClassLoader cl = new GenClassLoader(TdfaAsmBackend.class.getClassLoader());
             cl.register(cn, bc);
-            Regex.Engine engine = (Regex.Engine) Class.forName(cn, true, cl)
+            RegexEngine engine = (RegexEngine) Class.forName(cn, true, cl)
                     .getDeclaredConstructor(Tdfa.class).newInstance(tdfa);
             return new Generated(engine, cl, owner, tdfa);
         } catch (Exception e) {

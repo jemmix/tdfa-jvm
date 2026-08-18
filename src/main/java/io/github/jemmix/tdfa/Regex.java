@@ -1,9 +1,9 @@
 package io.github.jemmix.tdfa;
 
+import io.github.jemmix.tdfa.core.MatchResult;
+import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.tdfa.Disambiguation;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
-import io.github.jemmix.tdfa.vm.MatchResult;
 
 import java.util.Map;
 
@@ -28,16 +28,10 @@ import java.util.Map;
  * through the (potentially megamorphic) {@code engine} field.
  */
 public class Regex {
-    private final Engine engine;
+    private final RegexEngine engine;
     private final int groupCount;
     private final int programSize;
     private final Map<String, Integer> namedGroups;
-
-    public interface Engine {
-        boolean matches(CharSequence input);
-        boolean find(CharSequence input);
-        MatchResult match(CharSequence input, int from);
-    }
 
     public static Regex compile(String pattern) {
         return compile(pattern, EngineFactory.DEFAULT, Disambiguation.POSIX);
@@ -73,11 +67,11 @@ public class Regex {
                     tdfa, nfa.groupCount, tdfa.stateCount, nfa.namedGroups);
             if (r != null) return r;
         }
-        Engine engine = factory.create(tdfa);
+        RegexEngine engine = factory.create(tdfa);
         return new Regex(engine, nfa.groupCount, tdfa.stateCount, nfa.namedGroups);
     }
 
-    protected Regex(Engine engine, int groupCount, int programSize, Map<String, Integer> namedGroups) {
+    protected Regex(RegexEngine engine, int groupCount, int programSize, Map<String, Integer> namedGroups) {
         this.engine = engine; this.groupCount = groupCount; this.programSize = programSize;
         this.namedGroups = namedGroups != null ? namedGroups : Map.of();
     }
@@ -92,5 +86,5 @@ public class Regex {
     public Map<String, Integer> namedGroups() { return namedGroups; }
 
     /** The engine backing this Regex (shared impls route through it; generated subclasses may bypass). */
-    protected final Engine engine() { return engine; }
+    protected final RegexEngine engine() { return engine; }
 }

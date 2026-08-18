@@ -1,5 +1,5 @@
 plugins {
-    id 'java'
+    id 'java-library'
 }
 
 group = 'io.github.jemmix'
@@ -16,6 +16,8 @@ repositories {
 }
 
 dependencies {
+    // Evergreen pipeline + core API tier (interpreter reference implementation).
+    api project(':core')
     // ASM bytecode backend (M4)
     implementation 'org.ow2.asm:asm:9.9.1'
 }

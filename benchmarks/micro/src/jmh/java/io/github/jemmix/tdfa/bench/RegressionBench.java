@@ -2,7 +2,7 @@ package io.github.jemmix.tdfa.bench;
 
 import io.github.jemmix.tdfa.EngineFactory;
 import io.github.jemmix.tdfa.Regex;
-import io.github.jemmix.tdfa.vm.MatchResult;
+import io.github.jemmix.tdfa.core.MatchResult;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 

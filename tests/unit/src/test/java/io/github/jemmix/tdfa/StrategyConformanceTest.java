@@ -1,7 +1,7 @@
 package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import io.github.jemmix.tdfa.vm.MatchResult;
+import io.github.jemmix.tdfa.core.MatchResult;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;

@@ -147,7 +147,7 @@ public final class Optimize {
      * Backward dataflow liveness analysis. Computes {@code L[b][i]} = true iff
      * register {@code i} is live at the END of block {@code b} (i.e., its value
      * will be read by some downstream op before being overwritten, or it's a
-     * final register consumed by {@link io.github.jemmix.tdfa.vm.MatchResult}).
+     * final register consumed by {@link io.github.jemmix.tdfa.core.MatchResult}).
      *
      * <p>Paper algorithm: Figure 7 ({@code liveness_analysis}).
      *

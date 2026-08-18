@@ -47,7 +47,7 @@ final class GenPatternSupport {
     private static final String VM = "io/github/jemmix/tdfa/re2j/VmMatcher";
     private static final String MATCHER = "io/github/jemmix/tdfa/re2j/Matcher";
     private static final String PATTERN = "io/github/jemmix/tdfa/re2j/Pattern";
-    private static final String RESULT = "io/github/jemmix/tdfa/vm/MatchResult";
+    private static final String RESULT = "io/github/jemmix/tdfa/core/MatchResult";
     private static final String RESULT_D = "L" + RESULT + ";";
     private static final String CS = "Ljava/lang/CharSequence;";
     private static final String REGEX = "io/github/jemmix/tdfa/Regex";

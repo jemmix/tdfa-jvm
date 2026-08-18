@@ -25,11 +25,13 @@ import java.util.*;
 public final class Tdfa {
     public final int tagCount;
     public final int groupCount;
+    /** Unmodifiable name&rarr;index map for named capturing groups (from the source pattern). */
+    public final java.util.Map<String, Integer> namedGroups;
     public final int registerCount;
     /**
      * Offset of the final-register block within the runtime register file. Working
      * registers occupy {@code [0..finalRegBase-1]}; final registers (one per tag,
-     * holding the match-end tag offsets read by {@link io.github.jemmix.tdfa.vm.MatchResult})
+     * holding the match-end tag offsets read by {@link io.github.jemmix.tdfa.core.MatchResult})
      * occupy {@code [finalRegBase..finalRegBase+tagCount-1]}. Defaults to
      * {@code tagCount} (the pre-optimization layout); may be smaller after BT22 §6.3
      * register optimizations consolidate the working space.
@@ -144,13 +146,14 @@ public final class Tdfa {
     public static final int OP_COPY    = 3;
     public static final int OP_END     = 0;  // terminator for op blocks
 
-    private Tdfa(int tagCount, int groupCount, int registerCount, int finalRegBase, int startState, int stateCount,
+    private Tdfa(int tagCount, int groupCount, java.util.Map<String, Integer> namedGroups, int registerCount, int finalRegBase, int startState, int stateCount,
                  int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] ranges, int[] ops,
                  int[] entryHiPrefix,
                  int[] stateEntryMask, int[] stateAcceptMask, boolean perlMode, int[] stopOnAcceptMask, boolean multiline,
                  boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset,
                  boolean[] stateIsFallback, int[] stateFallbackOpsOff) {
         this.tagCount = tagCount; this.groupCount = groupCount;
+        this.namedGroups = namedGroups != null ? java.util.Collections.unmodifiableMap(namedGroups) : java.util.Map.of();
         this.registerCount = registerCount;
         this.finalRegBase = finalRegBase;
         this.startState = startState;
@@ -730,7 +733,7 @@ public final class Tdfa {
                     minHiPrefix[b + i] = maxHi;
                 }
             }
-            return new Tdfa(tags, nfa.groupCount, globalMaxReg, finalRegBase, 0, stateCount,
+            return new Tdfa(tags, nfa.groupCount, nfa.namedGroups, globalMaxReg, finalRegBase, 0, stateCount,
                     minMeta, minBase, minFinalOpsOff, minRanges, flatOps, minHiPrefix,
                     minEntryMask, minAcceptMask, perl, minStopMask, nfa.multiline,
                     nfa.unicodeWordBoundary, nfa.wordRanges,

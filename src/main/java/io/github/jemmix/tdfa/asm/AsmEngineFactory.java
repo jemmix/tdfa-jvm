@@ -1,7 +1,7 @@
 package io.github.jemmix.tdfa.asm;
 
 import io.github.jemmix.tdfa.EngineFactory;
-import io.github.jemmix.tdfa.Regex;
+import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 
 /**
@@ -19,7 +19,7 @@ public final class AsmEngineFactory implements EngineFactory {
 
     private AsmEngineFactory() { }
 
-    @Override public Regex.Engine create(Tdfa tdfa) {
+    @Override public RegexEngine create(Tdfa tdfa) {
         return TdfaAsmBackend.compile(tdfa);
     }
 

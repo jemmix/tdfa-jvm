@@ -1,13 +1,14 @@
 package io.github.jemmix.tdfa.tdfa;
 
-import io.github.jemmix.tdfa.Regex;
+import io.github.jemmix.tdfa.core.MatchResult;
+import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
-import io.github.jemmix.tdfa.vm.MatchResult;
 
 import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Executes a compiled {@link Tdfa} against an input char sequence using the flat packed arrays.
@@ -26,7 +27,7 @@ import java.util.List;
  *   - Lazy accept snapshot
  *   - String specialization
  */
-public final class TdfaRunner implements Regex.Engine {
+public final class TdfaRunner implements RegexEngine {
     private final Tdfa tdfa;
     private final int[] stateMeta;
     private final int[] stateBase;
@@ -160,6 +161,12 @@ public final class TdfaRunner implements Regex.Engine {
     }
 
     public Tdfa tdfa() { return tdfa; }
+
+    @Override public int groupCount() { return tdfa.groupCount; }
+
+    @Override public Map<String, Integer> namedGroups() { return tdfa.namedGroups; }
+
+    @Override public int programSize() { return tdfa.stateCount; }
 
     // ===== strategy trace (conformance instrument) =====
     //

@@ -3,7 +3,7 @@ package io.github.jemmix.tdfa.re2j;
 import io.github.jemmix.tdfa.EngineFactory;
 import io.github.jemmix.tdfa.Regex;
 import io.github.jemmix.tdfa.tdfa.Disambiguation;
-import io.github.jemmix.tdfa.vm.MatchResult;
+import io.github.jemmix.tdfa.core.MatchResult;
 
 import java.util.ArrayList;
 import java.util.Collections;

@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
+import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 
@@ -23,7 +24,7 @@ import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 @FunctionalInterface
 public interface EngineFactory {
 
-    Regex.Engine create(Tdfa tdfa);
+    RegexEngine create(Tdfa tdfa);
 
     /**
      * Whether this factory generates dedicated per-pattern classes. When true,

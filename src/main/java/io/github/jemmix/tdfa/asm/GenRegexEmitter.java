@@ -50,7 +50,7 @@ final class GenRegexEmitter {
         mv.visitVarInsn(Opcodes.ILOAD, 3);
         mv.visitVarInsn(Opcodes.ALOAD, 4);
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "io/github/jemmix/tdfa/Regex", "<init>",
-                "(Lio/github/jemmix/tdfa/Regex$Engine;II" + "Ljava/util/Map;)V", false);
+                "(Lio/github/jemmix/tdfa/core/RegexEngine;II" + "Ljava/util/Map;)V", false);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitFieldInsn(Opcodes.PUTFIELD, regexOwner, "eng", engDesc);
@@ -81,13 +81,13 @@ final class GenRegexEmitter {
         mv.visitEnd();
 
         // public MatchResult find(CharSequence, int)
-        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "find", "(Ljava/lang/CharSequence;I)Lio/github/jemmix/tdfa/vm/MatchResult;", null, null);
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "find", "(Ljava/lang/CharSequence;I)Lio/github/jemmix/tdfa/core/MatchResult;", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, regexOwner, "eng", engDesc);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, engOwner, "match", "(Ljava/lang/CharSequence;I)Lio/github/jemmix/tdfa/vm/MatchResult;", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, engOwner, "match", "(Ljava/lang/CharSequence;I)Lio/github/jemmix/tdfa/core/MatchResult;", false);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();

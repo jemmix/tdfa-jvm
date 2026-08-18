@@ -111,7 +111,7 @@ public class CaptureBench {
     // ============ with group extraction ============
     @Benchmark
     public void tdfaAltStarGroups(Blackhole bh) {
-        io.github.jemmix.tdfa.vm.MatchResult m = TDFA_ALT_STAR.find(IN_ALT_STAR, 0);
+        io.github.jemmix.tdfa.core.MatchResult m = TDFA_ALT_STAR.find(IN_ALT_STAR, 0);
         if (m != null) bh.consume(m.start(1));
     }
 
@@ -123,7 +123,7 @@ public class CaptureBench {
 
     @Benchmark
     public void tdfaIpGroups(Blackhole bh) {
-        io.github.jemmix.tdfa.vm.MatchResult m = TDFA_IP.find(IN_IP, 0);
+        io.github.jemmix.tdfa.core.MatchResult m = TDFA_IP.find(IN_IP, 0);
         if (m != null) {
             bh.consume(m.start(1));
             bh.consume(m.start(2));
