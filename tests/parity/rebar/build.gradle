@@ -38,11 +38,9 @@ tasks.named('test') {
     // (MAX_HAYSTACK_BYTES = 80 MB, COMPILE_TIMEOUT = 2 min) — see
     // RebarScenarioParityTest for the budget rationale.
     jvmArgs '-Xmx8g'
-    // KNOWN: a handful of rebar scenarios currently fail parity (real bugs —
-    // see TODO.md "Correctness" section). ignoreFailures keeps the migration
-    // green while still surfacing the failures in IDE/CI reports. Drop once
-    // the surfaced bugs are addressed.
-    ignoreFailures = true
+    // Historical note: once ran with ignoreFailures=true masking failing
+    // rebar scenarios; all in-scope scenarios now pass (718/718 as of the
+    // 2026-08 restructure) and this is a hard gate.
     testLogging {
         events 'failed', 'standardOut', 'standardError'
         exceptionFormat 'full'

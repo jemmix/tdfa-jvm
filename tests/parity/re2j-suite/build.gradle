@@ -55,11 +55,11 @@ tasks.named('test') {
 // different engine selection system property. Ensures re2j's full corpus
 // exercises both backends.
 //
-// KNOWN ISSUE: VM backend currently fails testRE2Exhaustive on patterns like
-// `(?:(?:(?:^)|.)?)` — matches [0,1] instead of [0,0] (should match empty
-// at start of input via the `^` branch + `?`). ASM passes. Tracked as a
-// real bug; `ignoreFailures` keeps the build green while the test still
-// runs and reports the differential clearly. Drop ignoreFailures once fixed.
+// Historical note: this task once ran with ignoreFailures=true masking a
+// zero-width VM bug (patterns like (?:(?:(?:^)|.)?) matching [0,1] instead
+// of [0,0]). Verified fixed well before the 2026-08 restructure (baseline
+// 287bdca passes 6/6); the mask was stale and has been removed — this task
+// is a hard gate again.
 tasks.register('testOnVm', Test) {
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath
@@ -67,7 +67,6 @@ tasks.register('testOnVm', Test) {
     systemProperty 'tdfa.engine', 'VM'
     jvmArgs '-Xmx512m', '-XX:+HeapDumpOnOutOfMemoryError'
     shouldRunAfter tasks.named('test')
-    ignoreFailures = true   // see KNOWN ISSUE above
     testLogging {
         events 'failed', 'standardOut', 'standardError'
         exceptionFormat 'full'

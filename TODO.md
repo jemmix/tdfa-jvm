@@ -147,7 +147,17 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
 - [x] Clear all pending parity tests — 0 remaining (was 41; all cleared: POSIX classes, escape rejection, byte[] overloads, split, DISABLE_UNICODE_GROUPS, matches() anchored groups, programSize, Serializable, `\A`/`\z` multiline invariance, re2j-exact Unicode provider). See `docs/PARITY-PLAN.md`.
 - [ ] Add more parity tests — expand coverage to edge cases not yet exercised (backreference semantics, large repetition counts, nested quantifiers, Unicode line boundaries, canonical equivalents, etc.). Gate known-failing or not-yet-implemented cases with `@EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")` and a `// PENDING:` comment; run the full set with `./gradlew test -Dtdfa.pending=true`. Clear the gate as each feature lands.
 - [x] Multiline mode `(?m)` — `^`/`$` at line boundaries (implemented `fa0e07d`; `\A`/`\z` immune via `8811166`)
-- [ ] **BUG CANDIDATE** — counted repetition of non-BMP classes: `\p{Lu}{3}` and up fail to match supplementary letters in the Math-Fraktur block (U+1D504..) while `{1}`/`{2}` match; Osage (U+104B0..) matches at `{5}`. Reproduces under JDK-default and pinned providers alike — engine-side (desugar? breakpoints?), not table-side.
+- [x] **REFUTED bug candidate** (2026-08, post-mortem): "`\p{Lu}{3}`+ fails on
+      Math-Fraktur" — engine was correct all along; the probe inputs were wrong.
+      Three separate traps: (1) U+1D504 is Lu since Unicode 3.1 (first premise);
+      (2) the Math Alphanumeric block has HOLES at letterlike-symbol duplicates —
+      1D506/1D50B/1D50C/1D515/1D51D in the Fraktur caps run are UNASSIGNED
+      (ℭ U+212D, ℌ U+210C, ℑ U+2111, ℊ U+210A, ℨ U+2128 are canonical), so
+      "1D504 1D505 1D506" is not three letters; (3) Gothic (U+10330..) is
+      caseless **Lo**, not Lu. Verified: distinct-assigned Fraktur Lu matches at
+      {1}..{5}, {2,4}, lazy {2,4}?, Gothic matches `\p{Lo}{3}`, and all
+      negatives hold — 12/12 with the JDK provider and pinned tables alike.
+      Guardian test: `SupplementaryCodepointClassTest`.
 - [ ] Full POSIX leftmost-longest — activate BT22 §7 `closure_gtop` winner selection
 - [x] Unicode case folding for literal chars — CaseFoldTable handles all BMP simple case folds (28 groups with >2 members including s↔ſ, k↔K, Ω↔ω). Class-range folding full-Unicode under `(?u)` (`5f22aee`).
 - [x] `\b` / `\B` Unicode word boundary semantics for supplementary codepoints (`ba60194`)
