@@ -163,20 +163,20 @@ public final class TdfaAsmBackend {
         mv.visitFieldInsn(Opcodes.PUTFIELD, owner, "runner", RUNNER_D);
         if (tdfa.unicodeWordBoundary()) {
             mv.visitVarInsn(Opcodes.ALOAD, 1);
-            mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "wordRanges", "[I");
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "wordRanges", "()[I", false);
             mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "WORD_RANGES", "[I");
         }
         // ENTRY_MASK = tdfa.stateEntryMask() (reference copy — no per-element bytecode)
         mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "stateEntryMask", "[I");
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "stateEntryMask", "()[I", false);
         mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "ENTRY_MASK", "[I");
         // ACCEPT_MASK = tdfa.stateAcceptMask()
         mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "stateAcceptMask", "[I");
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "stateAcceptMask", "()[I", false);
         mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "ACCEPT_MASK", "[I");
         // STOP_MASK = tdfa.stopOnAcceptMask()
         mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "stopOnAcceptMask", "[I");
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "stopOnAcceptMask", "()[I", false);
         mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "STOP_MASK", "[I");
         // IS_ACCEPT = new int[n]; for each state s, IS_ACCEPT[s] = (stateMeta[s] & 1)
         // Computed in a fixed-size runtime loop — bytecode is ~30 bytes regardless
@@ -197,7 +197,7 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, 2);
         mv.visitVarInsn(Opcodes.ILOAD, 3);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "stateMeta", "[I");
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "stateMeta", "()[I", false);
         mv.visitVarInsn(Opcodes.ILOAD, 3);
         mv.visitInsn(Opcodes.IALOAD);
         mv.visitInsn(Opcodes.ICONST_1);
@@ -211,10 +211,10 @@ public final class TdfaAsmBackend {
         // FIXED_BASE / FIXED_OFFSET (if fixed-tag optimization applied)
         if (tdfa.fixedBase() != null) {
             mv.visitVarInsn(Opcodes.ALOAD, 1);
-            mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "fixedBase", "[I");
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "fixedBase", "()[I", false);
             mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "FIXED_BASE", "[I");
             mv.visitVarInsn(Opcodes.ALOAD, 1);
-            mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "fixedOffset", "[I");
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "fixedOffset", "()[I", false);
             mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "FIXED_OFFSET", "[I");
         }
         // ASCII_TARGET (fastPath only): populate via a runtime loop over RANGES_TABLE.
@@ -230,7 +230,7 @@ public final class TdfaAsmBackend {
         if (fastPath) {
             // ranges from the Tdfa param (local 14) — RANGES_TABLE static is gone
             mv.visitVarInsn(Opcodes.ALOAD, 1);
-            mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "ranges", "[I");
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "ranges", "()[I", false);
             mv.visitVarInsn(Opcodes.ASTORE, 14);
             int tableSize = tdfa.stateCount() * 128;
             ic(mv, tableSize);
@@ -249,7 +249,7 @@ public final class TdfaAsmBackend {
             mv.visitJumpInsn(Opcodes.IF_ICMPGE, sDone);
             // cnt = (stateMeta[s] >>> 1) & 0xFFFF
             mv.visitVarInsn(Opcodes.ALOAD, 1);
-            mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "stateMeta", "[I");
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "stateMeta", "()[I", false);
             mv.visitVarInsn(Opcodes.ILOAD, 5);
             mv.visitInsn(Opcodes.IALOAD);
             mv.visitInsn(Opcodes.ICONST_1);
@@ -259,7 +259,7 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ISTORE, 6);
             // base = stateBase[s]
             mv.visitVarInsn(Opcodes.ALOAD, 1);
-            mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "stateBase", "[I");
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "stateBase", "()[I", false);
             mv.visitVarInsn(Opcodes.ILOAD, 5);
             mv.visitInsn(Opcodes.IALOAD);
             mv.visitVarInsn(Opcodes.ISTORE, 7);
