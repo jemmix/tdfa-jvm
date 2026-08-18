@@ -1,4 +1,4 @@
-package io.github.jemmix.tdfa.opt;
+package io.github.jemmix.tdfa.ast;
 
 import io.github.jemmix.tdfa.ast.Ast;
 import io.github.jemmix.tdfa.ast.CharClass;

@@ -46,7 +46,7 @@ public final class Tnfa {
      * Fixed-tag annotations per tag id (1-based; index 0 unused). {@code fixedBase[t] != 0}
      * means tag {@code t} was omitted from the NFA and its match-time value should be
      * reconstructed as {@code tag[fixedBase[t]] - fixedOffset[t]} (or NIL if the base is NIL).
-     * Built by {@link io.github.jemmix.tdfa.opt.FixedTags} (BT22 §6.4).
+     * Built by {@link io.github.jemmix.tdfa.ast.FixedTags} (BT22 §6.4).
      */
     public final int[] fixedBase;
     public final int[] fixedOffset;
@@ -98,10 +98,11 @@ public final class Tnfa {
 
     public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
                                io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
-        Parser parser = Parser.capture(pattern, disableUnicodeGroups, anchorBoth, provider);
-        Ast ast = parser.lastAst();
-        io.github.jemmix.tdfa.opt.FixedTags.apply(ast);
-        int tagCount = parser.tagCount();
+        io.github.jemmix.tdfa.parser.ParseResult parsed =
+                Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth, provider);
+        Ast ast = parsed.ast();
+        io.github.jemmix.tdfa.ast.FixedTags.apply(ast);
+        int tagCount = parsed.tagCount();
         int[] fixedBase = new int[tagCount + 1];
         int[] fixedOffset = new int[tagCount + 1];
         collectFixedAnnotations(ast, fixedBase, fixedOffset);
@@ -113,8 +114,8 @@ public final class Tnfa {
         Builder b = new Builder();
         int accept = b.fresh();
         int start = b.build(ast, accept);
-        return b.build(start, accept, tagCount, parser.groupCount(), parser.multiline(),
-                parser.unicodeShorthand(), parser.unicodeWordRanges(), parser.namedGroups(),
+        return b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(),
+                parsed.unicodeShorthand(), parsed.unicodeWordRanges(), parsed.namedGroups(),
                 fixedBase, fixedOffset);
     }
 

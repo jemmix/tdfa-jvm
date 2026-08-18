@@ -54,8 +54,6 @@ public final class Parser {
         this.provider = provider;
     }
 
-    private Ast lastAst;
-
     public static Ast parse(String src) {
         return parse(src, false);
     }
@@ -70,34 +68,19 @@ public final class Parser {
 
     public static Ast parse(String src, boolean disableUnicodeGroups, boolean anchorBoth,
                             io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
+        return parseResult(src, disableUnicodeGroups, anchorBoth, provider).ast();
+    }
+
+    /** Parse and return the full result: AST plus tag/group counters, effective
+     *  flags, and named-group metadata (the composable-pipeline entry point). */
+    public static ParseResult parseResult(String src, boolean disableUnicodeGroups, boolean anchorBoth,
+                                          io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
         Parser p = new Parser(src, disableUnicodeGroups, provider);
         Ast e = p.parseAlt();
         if (p.pos != p.src.length()) throw fail(p, "unexpected '" + p.cur() + "'");
-        return anchorBoth ? anchorBoth(e) : e;
-    }
-
-    /** Side-effect: parses, leaves tag/group counters accessible. */
-    public static Parser capture(String src) {
-        return capture(src, false);
-    }
-
-    /** Side-effect: parses, leaves tag/group counters accessible. */
-    public static Parser capture(String src, boolean disableUnicodeGroups) {
-        return capture(src, disableUnicodeGroups, false);
-    }
-
-    /** Side-effect: parses, leaves tag/group counters accessible. */
-    public static Parser capture(String src, boolean disableUnicodeGroups, boolean anchorBoth) {
-        return capture(src, disableUnicodeGroups, anchorBoth, io.github.jemmix.tdfa.unicode.UnicodeProviders.get());
-    }
-
-    /** Side-effect: parses, leaves tag/group counters accessible. */
-    public static Parser capture(String src, boolean disableUnicodeGroups, boolean anchorBoth,
-                                 io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
-        Parser p = new Parser(src, disableUnicodeGroups, provider);
-        p.lastAst = anchorBoth ? anchorBoth(p.parseAlt()) : p.parseAlt();
-        if (p.pos != p.src.length()) throw fail(p, "unexpected '" + p.cur() + "'");
-        return p;
+        e = anchorBoth ? anchorBoth(e) : e;
+        return new ParseResult(e, p.tagCount(), p.groupCount(), p.multiline(),
+                p.unicodeShorthand(), p.unicodeWordRanges(), p.namedGroups());
     }
 
     /** Wrap a parsed body in start/end-text anchors (matches() = anchored both ends).
@@ -107,8 +90,6 @@ public final class Parser {
     private static Ast anchorBoth(Ast e) {
         return new Ast.Concat(List.of(new Ast.StartAnchor(true), e, new Ast.EndAnchor(true)));
     }
-
-    public Ast lastAst() { return lastAst; }
 
     /** alt := concat ('|' concat)* */
     private Ast parseAlt() {

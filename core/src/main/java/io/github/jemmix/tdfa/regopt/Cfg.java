@@ -1,4 +1,4 @@
-package io.github.jemmix.tdfa.cfg;
+package io.github.jemmix.tdfa.regopt;
 
 import java.util.ArrayList;
 import java.util.List;

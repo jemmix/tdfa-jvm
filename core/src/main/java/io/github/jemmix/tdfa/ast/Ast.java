@@ -18,7 +18,7 @@ public abstract class Ast {
 
     /** Tag (capture-group boundary). Numbered 1..n.
      *  <p>{@code fixedOn} / {@code fixedOffset} are mutable annotations set by
-     *  the BT22 §6.4 fixed-tags pass (see {@code io.github.jemmix.tdfa.opt.FixedTags}).
+     *  the BT22 §6.4 fixed-tags pass (see {@code io.github.jemmix.tdfa.ast.FixedTags}).
      *  When {@code fixedOn != 0}, this tag's position can be reconstructed at match
      *  time as {@code tag[fixedOn] - fixedOffset} (or NIL if the base is NIL), so
      *  the tag is omitted from NFA construction and register allocation. */

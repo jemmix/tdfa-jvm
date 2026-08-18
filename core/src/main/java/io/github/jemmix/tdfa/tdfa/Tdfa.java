@@ -520,8 +520,8 @@ public final class Tdfa {
             // === BT22 §6.3 register optimizations (compaction for now; full pipeline TODO) ===
             int finalRegBase = tags;  // default: working [0..T-1], final [T..2T-1]
             if (REGOPT_ENABLED && tags > 0 && n > 1 && n <= REGOPT_MAX_STATES) {
-                io.github.jemmix.tdfa.cfg.Cfg cfg = buildCfg(builders, accept, states, tags, nfa.groupCount, nextReg);
-                io.github.jemmix.tdfa.cfg.Optimize.optimize(cfg);
+                io.github.jemmix.tdfa.regopt.Cfg cfg = buildCfg(builders, accept, states, tags, nfa.groupCount, nextReg);
+                io.github.jemmix.tdfa.regopt.Optimize.optimize(cfg);
                 cfgWriteBack(cfg, builders);
                 finalRegBase = cfg.finalRegBase;
                 if (debug) System.err.println("[tdfa] regopt: regs " + cfg.initialRegCount + " -> " + cfg.regCount
@@ -756,7 +756,7 @@ public final class Tdfa {
         // ============================ CFG construction (BT22 §6.3) ============================
 
         /**
-         * Build a {@link io.github.jemmix.tdfa.cfg.Cfg} from the post-determinization
+         * Build a {@link io.github.jemmix.tdfa.regopt.Cfg} from the post-determinization
          * {@code DfaStateBuilder} list. Each {@code (state, range-with-ops)} pair becomes
          * a BASIC block; each accepting state with non-empty {@code finalOpsArr} becomes
          * a FINAL block. Arcs skip zero-op transitions.
@@ -765,10 +765,10 @@ public final class Tdfa {
          * package-private nested {@code DfaStateBuilder}/{@code Range} types
          * (avoiding reflection on synthetic nested-class field names).
          */
-        io.github.jemmix.tdfa.cfg.Cfg buildCfg(List<DfaStateBuilder> builders, BitSet accept,
+        io.github.jemmix.tdfa.regopt.Cfg buildCfg(List<DfaStateBuilder> builders, BitSet accept,
                                                @SuppressWarnings("unused") List<List<Config>> states,
                                                int tagCount, int groupCount, int initialRegCount) {
-            io.github.jemmix.tdfa.cfg.Cfg cfg = new io.github.jemmix.tdfa.cfg.Cfg(tagCount, groupCount, initialRegCount);
+            io.github.jemmix.tdfa.regopt.Cfg cfg = new io.github.jemmix.tdfa.regopt.Cfg(tagCount, groupCount, initialRegCount);
             int n = builders.size();
             // First pass: create blocks.
             int[][] rangeBlockIds = new int[n][];
@@ -783,21 +783,21 @@ public final class Tdfa {
                 for (int r = 0; r < sb.ranges.size(); r++) {
                     Range range = sb.ranges.get(r);
                     if (range.ops == null || range.ops.length == 0) continue;
-                    io.github.jemmix.tdfa.cfg.Cfg.Block blk = cfg.newBlock(io.github.jemmix.tdfa.cfg.Cfg.BLOCK_BASIC, s, r);
+                    io.github.jemmix.tdfa.regopt.Cfg.Block blk = cfg.newBlock(io.github.jemmix.tdfa.regopt.Cfg.BLOCK_BASIC, s, r);
                     decodeOps(range.ops, blk.ops);
                     rangeBlockIds[s][r] = cfg.blocks.size() - 1;
                     basicLeaving[s].add(rangeBlockIds[s][r]);
                 }
                 if (accept.get(s)) {
-                    io.github.jemmix.tdfa.cfg.Cfg.Block fb = cfg.newBlock(io.github.jemmix.tdfa.cfg.Cfg.BLOCK_FINAL, s, -1);
+                    io.github.jemmix.tdfa.regopt.Cfg.Block fb = cfg.newBlock(io.github.jemmix.tdfa.regopt.Cfg.BLOCK_FINAL, s, -1);
                     if (sb.finalOpsArr != null) decodeOps(sb.finalOpsArr, fb.ops);
                     finalBlockAt[s] = cfg.blocks.size() - 1;
                 }
             }
             // Second pass: successor arcs. BASIC block at state s with range.target s' ->
             // all blocks (BASIC + FINAL) reachable from s' through zero-op transitions.
-            for (io.github.jemmix.tdfa.cfg.Cfg.Block blk : cfg.blocks) {
-                if (blk.kind != io.github.jemmix.tdfa.cfg.Cfg.BLOCK_BASIC) continue;
+            for (io.github.jemmix.tdfa.regopt.Cfg.Block blk : cfg.blocks) {
+                if (blk.kind != io.github.jemmix.tdfa.regopt.Cfg.BLOCK_BASIC) continue;
                 int target = builders.get(blk.stateId).ranges.get(blk.rangeIndex).target;
                 BitSet visited = new BitSet();
                 List<Integer> frontier = new ArrayList<>();
@@ -822,44 +822,44 @@ public final class Tdfa {
             return cfg;
         }
 
-        private static void decodeOps(int[] flat, List<io.github.jemmix.tdfa.cfg.Cfg.Op> out) {
+        private static void decodeOps(int[] flat, List<io.github.jemmix.tdfa.regopt.Cfg.Op> out) {
             for (int i = 0; i < flat.length; i += 3) {
                 int op = flat[i], dst = flat[i + 1], src = flat[i + 2];
                 if (op == OP_END) break;
                 switch (op) {
-                    case OP_SET_POS: out.add(io.github.jemmix.tdfa.cfg.Cfg.Op.setPos(dst)); break;
-                    case OP_SET_NIL: out.add(io.github.jemmix.tdfa.cfg.Cfg.Op.setNil(dst)); break;
-                    case OP_COPY:    out.add(io.github.jemmix.tdfa.cfg.Cfg.Op.copy(dst, src)); break;
+                    case OP_SET_POS: out.add(io.github.jemmix.tdfa.regopt.Cfg.Op.setPos(dst)); break;
+                    case OP_SET_NIL: out.add(io.github.jemmix.tdfa.regopt.Cfg.Op.setNil(dst)); break;
+                    case OP_COPY:    out.add(io.github.jemmix.tdfa.regopt.Cfg.Op.copy(dst, src)); break;
                     default: throw new IllegalStateException("bad op: " + op);
                 }
             }
         }
 
         /** Flush optimized CFG ops back into the builders' Range/finalOpsArr slots. */
-        void cfgWriteBack(io.github.jemmix.tdfa.cfg.Cfg cfg, List<DfaStateBuilder> builders) {
-            for (io.github.jemmix.tdfa.cfg.Cfg.Block blk : cfg.blocks) {
+        void cfgWriteBack(io.github.jemmix.tdfa.regopt.Cfg cfg, List<DfaStateBuilder> builders) {
+            for (io.github.jemmix.tdfa.regopt.Cfg.Block blk : cfg.blocks) {
                 int[] encoded = encodeOps(blk.ops);
                 DfaStateBuilder sb = builders.get(blk.stateId);
-                if (blk.kind == io.github.jemmix.tdfa.cfg.Cfg.BLOCK_BASIC) {
+                if (blk.kind == io.github.jemmix.tdfa.regopt.Cfg.BLOCK_BASIC) {
                     sb.ranges.get(blk.rangeIndex).ops = encoded;
-                } else if (blk.kind == io.github.jemmix.tdfa.cfg.Cfg.BLOCK_FINAL) {
+                } else if (blk.kind == io.github.jemmix.tdfa.regopt.Cfg.BLOCK_FINAL) {
                     sb.finalOpsArr = encoded;
                 }
             }
         }
 
-        private static int[] encodeOps(List<io.github.jemmix.tdfa.cfg.Cfg.Op> ops) {
+        private static int[] encodeOps(List<io.github.jemmix.tdfa.regopt.Cfg.Op> ops) {
             if (ops.isEmpty()) return null;
             int[] flat = new int[ops.size() * 3];
             for (int i = 0; i < ops.size(); i++) {
-                io.github.jemmix.tdfa.cfg.Cfg.Op op = ops.get(i);
+                io.github.jemmix.tdfa.regopt.Cfg.Op op = ops.get(i);
                 switch (op.kind) {
-                    case io.github.jemmix.tdfa.cfg.Cfg.KIND_SET:
-                        flat[i * 3] = op.value == io.github.jemmix.tdfa.cfg.Cfg.VAL_POS ? OP_SET_POS : OP_SET_NIL;
+                    case io.github.jemmix.tdfa.regopt.Cfg.KIND_SET:
+                        flat[i * 3] = op.value == io.github.jemmix.tdfa.regopt.Cfg.VAL_POS ? OP_SET_POS : OP_SET_NIL;
                         flat[i * 3 + 1] = op.dst;
                         flat[i * 3 + 2] = 0;
                         break;
-                    case io.github.jemmix.tdfa.cfg.Cfg.KIND_COPY:
+                    case io.github.jemmix.tdfa.regopt.Cfg.KIND_COPY:
                         flat[i * 3] = OP_COPY;
                         flat[i * 3 + 1] = op.dst;
                         flat[i * 3 + 2] = op.src;
