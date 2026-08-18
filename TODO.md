@@ -1,5 +1,12 @@
 # tdfa-jvm — Roadmap
 
+> 2026-08 restructure: 1.0 API shape landed — modules core/asm/facade,
+> `io.github.jemmix.tdfa.Pattern` facade + `core.RegexEngine`/`CompiledRegex`
+> evergreen tier, BYO-engine shells, PERL default + `longestMatch`, §7
+> scaffolding under paper names (closureGtop/GtopCompare/utree). RE2 is now a
+> test fixture in :tests:parity:re2j-suite. japicmp baselines + module-info
+> still pending (freeze-phase work).
+
 Everything between here and "done." When this list is empty, the library is
 finished. See the [vision](README.md#vision).
 

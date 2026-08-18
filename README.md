@@ -60,7 +60,7 @@ falling back to a slower engine.
 single-pass TDFA with registers (§5–6, suited to ahead-of-time determinization
 such as lexer generators) and multi-pass TDFA without registers (§7, suited to
 just-in-time determinization such as runtime regex libraries). We implement
-only the **canonical AOT algorithm** — `Regex.compile()` is the AOT step,
+only the **canonical AOT algorithm** — compilation is the AOT step,
 matching is then bytecode-fast. This mirrors re2c's `src/` (AOT lexer
 generator, full §6 optimization pipeline) rather than re2c's `lib/` (JIT
 regex library using multi-pass TDFA). The tradeoff is correct for our
@@ -88,8 +88,8 @@ compile-once-match-many model; multi-pass is solving a different problem.
   identical results — the guard against silently running different algorithms
 - 890 re2j-parity tests with the re2j engine as a live oracle
 - 220 in-scope rebar scenarios × both backends (compile + grep-captures models)
-- Full `re2j` API surface (Pattern, Matcher, RE2); Perl (leftmost-first) and
-  POSIX (leftmost-longest) disambiguation tested independently; zero-width
+- Full `re2j` API surface (Pattern, Matcher); leftmost-first (default) and
+  leftmost-longest (`LONGEST_MATCH`) semantics tested independently; zero-width
   assertions, Unicode, non-BMP, named groups, case folding
 
 **Performance** — all harnesses in-repo, results committed as artifacts
@@ -122,16 +122,19 @@ are the same by construction. What differs is who executes the walk:
 - **ASM** (default) — compiles the pattern all the way to generated JVM
   classes: a per-pattern engine whose walk loop is emitted as bytecode
   (per-state switch dispatch, register ops inlined as straight-line stores),
-  plus — under the re2j API — generated Pattern/Matcher classes so the whole
-  `find()` chain devirtualizes and inlines end-to-end. **0.42–0.89× the VM's
-  time on capture-dense walks, never measurably slower warm.** Cost:
-  ~300 µs compile and a classload per pattern (per-pattern JIT warmup).
+  plus a generated Pattern/Matcher shell so the whole `find()` chain
+  devirtualizes and inlines end-to-end. **0.42–0.89× the VM's time on
+  capture-dense walks, never measurably slower warm.** Cost: ~300 µs compile
+  and a classload per pattern (per-pattern JIT warmup).
 - **VM** — table-walking interpreter, zero code generation. Equal on
   scan-dominated workloads, ~1.1× behind ASM on capture-dense walks, ~52 µs
-  compile. The portability/reference tier.
+  compile. The portability/reference tier. Select globally with
+  `-Dtdfa.engine=VM` (no code generation anywhere).
 
-`EngineFactory` selects the backend per-compile (ASM, VM, or custom lambda).
-Default resolved once from `-Dtdfa.engine=ASM|VM`.
+**Bring your own engine:** pass any `RegexEngineFactory`
+(`Pattern.compile(regex, flags, TdfaRunner::new)`) and the facade emits a
+generic shell around your engine — same monomorphic call chain, custom
+execution.
 
 **BT22 §5–6 TDFA pipeline** (full faithfulness):
 - §5 determinization with `map`+`topological_sort` dedup
@@ -181,8 +184,8 @@ call it. The VM backend interprets it directly. The ASM backend generates a
 per-pattern class whose `match()` transcribes the same ladder (calling the
 runner's monomorphic hooks) and owns only the walk leaf — per-state switch
 dispatch with register ops inlined as straight-line bytecode. Under the ASM
-factory, `Pattern.compile` additionally generates the Regex/Pattern/Matcher
-tier into the same classloader, so the whole `Matcher.find()` chain
+default, `Pattern.compile` additionally generates the Pattern/Matcher shell
+into the same classloader, so the whole `Matcher.find()` chain
 devirtualizes and inlines end-to-end. Non-fastPath DFAs (word boundaries,
 anchors, big DFAs) and literal needles compile to thin delegate classes.
 A **strategy-conformance test** (`StrategyConformanceTest`, traceable via
@@ -196,13 +199,16 @@ the parity suites.
 
 ## Build & test
 
-The repo is a multi-module Gradle build. The evergreen library lives at the
-root (`src/main/java/`); the growing test/benchmark surface is split into
-self-contained subprojects.
+The repo is a multi-module Gradle build: `core` (evergreen pipeline +
+interpreter, frozen when finished), `asm` (per-pattern bytecode generation,
+swappable backend), and the root facade `tdfa` (the re2j-mirroring API most
+users want). The growing test/benchmark surface is split into self-contained
+subprojects.
 
 ```
-tdfa-jvm/                             ← root = the library
-├── src/main/java/...                 ← evergreen core (frozen when finished)
+tdfa-jvm/                             ← root = the facade artifact (io.github.jemmix:tdfa)
+├── core/                             ← tdfa-core: pipeline + core API tier (interpreter-only)
+├── asm/                              ← tdfa-asm: per-pattern engine + shell emission
 ├── tests/
 │   ├── unit/                         ← own correctness tests
 │   └── parity/
@@ -223,7 +229,7 @@ tdfa-jvm/                             ← root = the library
 ./gradlew :benchmarks:micro:jmh       # JMH microbenchmarks
 ```
 
-JDK 17+. Targets JDK 11 bytecode. Vendored deps (re2j, rebar) are extracted
+JDK 17+. Vendored deps (re2j, rebar) are extracted
 automatically by the `:prepareVendor` task before any test that needs them;
 run `./gradlew prepareVendor` once before opening in IntelliJ so generated
 sources appear in the IDE. See [`vendor/README.md`](vendor/README.md) for the
@@ -231,25 +237,34 @@ upgrade workflow.
 
 ## API
 
-```java
-import io.github.jemmix.tdfa.re2j.Pattern;
-import io.github.jemmix.tdfa.re2j.Matcher;
-import io.github.jemmix.tdfa.EngineFactory;
+The facade mirrors the re2j / `java.util.regex` surface:
 
-Pattern p = Pattern.compile("(\\w+)@(\\w+)");                    // ASM by default
-Pattern p = Pattern.compile(regex, flags, EngineFactory.VM);     // explicit
+```java
+import io.github.jemmix.tdfa.Pattern;
+import io.github.jemmix.tdfa.core.Matcher;
+
+Pattern p = Pattern.compile("(\\w+)@(\\w+)");                    // generated engine by default
+Pattern p = Pattern.compile(regex, flags, TdfaRunner::new);      // bring-your-own engine
 
 Matcher m = p.matcher("hello user@host bye");
 while (m.find())
     System.out.println(m.group(1) + " @ " + m.group(2));
 ```
 
-```java
-import io.github.jemmix.tdfa.Regex;
+The core module ships the evergreen, interpreter-only tier (zero
+dependencies):
 
-Regex r = Regex.compile("(\\w+)\\s+(\\w+)");                      // ASM by default
-Regex r = Regex.compile(pattern, EngineFactory.VM);              // explicit
+```java
+import io.github.jemmix.tdfa.core.CompiledRegex;
+
+CompiledRegex r = CompiledRegex.compile("(\\w+)\\s+(\\w+)");       // leftmost-first
+CompiledRegex longest = CompiledRegex.compile(re, CompileOptions.of().longestMatch());
+for (MatchResult m : r.findAll(text)) { ... }                  // tag-level captures: m.tag(t)
 ```
+
+Modules: `tdfa` (facade, depends on `tdfa-asm` + `tdfa-core`) ·
+`tdfa-core` (pipeline + interpreter; frozen) · `tdfa-asm` (per-pattern
+bytecode generation; swappable).
 
 ## License
 
