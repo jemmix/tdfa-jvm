@@ -135,7 +135,7 @@ class ComprehensiveTest {
         cases.add(Case.c("(a)(b)(c)", "abc", true,
                 new int[]{0,3, 0,1, 1,2, 2,3}, "three captures"));
         cases.add(Case.c("(a(b)c)", "abc", true,
-                null, "nested captures (TODO: tag timing bug)"));
+                new int[]{0,3, 0,3, 1,2}, "nested captures"));
         cases.add(Case.c("(ab)+", "abab", true,
                 new int[]{0,4, 2,4}, "repeated capture — last iteration"));
         cases.add(Case.c("(ab)+", "ababab", true,
@@ -149,7 +149,7 @@ class ComprehensiveTest {
         cases.add(Case.c("(a|b)*c", "aabbc", true,
                 new int[]{0,5, 3,4}, "alt under star before literal"));
         cases.add(Case.c("((a)(b))*", "abab", true,
-                null, "nested groups under star (TODO: tag timing bug)"));
+                new int[]{0,4, 2,4, 2,3, 3,4}, "nested groups under star"));
         cases.add(Case.c("(\\w+)", "hello", true,
                 new int[]{0,5, 0,5}, "word capture"));
         cases.add(Case.c("(\\w+)\\s+(\\w+)", "hello world", true,
