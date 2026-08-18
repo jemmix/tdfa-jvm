@@ -2025,19 +2025,6 @@ public final class TdfaRunner implements RegexEngine {
         return flags;
     }
 
-    /** True iff stateEntryMask[state] is satisfied at `pos` in `input[0..len)`. */
-    private boolean entryMaskOk(int[] sem, int state, String input, int pos, int len) {
-        int required = sem[state];
-        if (required == 0) return true;
-        return (positionFlags(input, pos, len) & required) == required;
-    }
-
-    private boolean entryMaskOkCharSeq(int[] sem, int state, CharSequence input, int pos, int len) {
-        int required = sem[state];
-        if (required == 0) return true;
-        return (positionFlagsCS(input, pos, len) & required) == required;
-    }
-
     /** Check if all states have pairwise-disjoint ranges (no overlapping ranges). */
     private static boolean checkRangesDisjoint(Tdfa tdfa) {
         int[] sm = tdfa.stateMeta, rg = tdfa.ranges;

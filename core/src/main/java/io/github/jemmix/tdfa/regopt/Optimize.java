@@ -52,12 +52,6 @@ public final class Optimize {
         }
     }
 
-    private static int countOps(Cfg cfg) {
-        int n = 0;
-        for (Cfg.Block b : cfg.blocks) n += b.ops.size();
-        return n;
-    }
-
     /** After renaming, find the index where the T contiguous final registers landed. */
     private static int findFinalRegBase(int[] V, int tagCount) {
         // Final registers were the top tagCount entries before renaming. After renaming,

@@ -54,7 +54,7 @@ public final class TdfaAsmBackend {
             String owner = cn.replace('.', '/');
             byte[] bc = generateBytes(tdfa, owner);
             if (Boolean.getBoolean("tdfa.asm.dump")) {
-                String dp = "/tmp/" + owner.replace('/', '.') + ".class";
+                String dp = System.getProperty("java.io.tmpdir") + "/" + owner.replace('/', '.') + ".class";
                 try { java.nio.file.Files.write(java.nio.file.Paths.get(dp), bc); } catch (Exception ignored) {}
             }
             GenClassLoader cl = new GenClassLoader(TdfaAsmBackend.class.getClassLoader());

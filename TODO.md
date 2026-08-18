@@ -4,8 +4,16 @@
 > `io.github.jemmix.tdfa.Pattern` facade + `core.RegexEngine`/`CompiledRegex`
 > evergreen tier, BYO-engine shells, PERL default + `longestMatch`, §7
 > scaffolding under paper names (closureGtop/GtopCompare/utree). RE2 is now a
-> test fixture in :tests:parity:re2j-suite. japicmp baselines + module-info
-> still pending (freeze-phase work).
+> test fixture in :tests:parity:re2j-suite.
+>
+> Follow-up rounds landed: ParseResult (capture side-channel killed), package
+> homes (ast/regopt), Tdfa accessors (fields package-private; generated code
+> reads via accessors), CompileObserver/CompilationReport, pinned-Unicode
+> modules tdfa-unicode-6.0/17.0 (vendored UCD + deterministic generator),
+> Automatic-Module-Names on all artifacts, dead-code sweep.
+> Still pending (freeze-phase): japicmp baselines ×4, module-info for core,
+> TdfaRunner static trace → per-engine (test instrument only), license
+> headers, first Maven publish.
 
 Everything between here and "done." When this list is empty, the library is
 finished. See the [vision](README.md#vision).

@@ -1356,7 +1356,7 @@ public final class Tdfa {
          */
         int[] tryMap(List<Config> newConfigs, List<Config> oldConfigs, int[] ops) {
             if (newConfigs.size() != oldConfigs.size()) return null;
-            // Same NFA states + lookahead tags? (already checked via sameKey but double-check)
+            // Same NFA states + lookahead tags? (already checked via the shape key but double-check)
             for (int i = 0; i < newConfigs.size(); i++) {
                 if (newConfigs.get(i).state != oldConfigs.get(i).state) return null;
                 if (!Arrays.equals(newConfigs.get(i).l, oldConfigs.get(i).l)) return null;
@@ -1397,11 +1397,6 @@ public final class Tdfa {
             // Topological sort: copy ops must come before any op that reads their src.
             topologicalSort(rewritten);
             return flatten(rewritten);
-        }
-
-        boolean sameKey(List<Config> a, List<Config> b) {
-            // Retained for diagnostic callers; addState now uses the multimap directly.
-            return new DfaStateKey(a, longest).equals(new DfaStateKey(b, longest));
         }
 
         /** Stabilize copy chains so reads happen before writes clobber their source.

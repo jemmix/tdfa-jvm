@@ -305,7 +305,8 @@ public final class ShellEmitter {
         byte[] patBytes = cw.toByteArray();
         if (Boolean.getBoolean("tdfa.asm.dump")) {
             try {
-                java.nio.file.Files.createDirectories(java.nio.file.Paths.get("/tmp/shells"));
+                java.nio.file.Files.createDirectories(
+                        java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), "shells"));
                 java.nio.file.Files.write(java.nio.file.Paths.get("/tmp/shells/" + matOwner.substring(matOwner.lastIndexOf('/') + 1) + ".class"), matBytes);
                 java.nio.file.Files.write(java.nio.file.Paths.get("/tmp/shells/" + patOwner.substring(patOwner.lastIndexOf('/') + 1) + ".class"), patBytes);
             } catch (Exception ignored) { }

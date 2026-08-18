@@ -19,6 +19,13 @@ dependencies {
     implementation 'org.ow2.asm:asm:9.9.1'
 }
 
+
+jar {
+    manifest {
+        attributes 'Automatic-Module-Name': 'io.github.jemmix.tdfa.asm'
+    }
+}
+
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     options.debug = true
