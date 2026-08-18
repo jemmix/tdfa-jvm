@@ -49,7 +49,7 @@ final class PatternCompiler {
         try {
             Tnfa nfa = Tnfa.compile(fl, disableUnicodeGroups, false, prov);
             Tdfa tdfa = Tdfa.compile(nfa, longest);
-            int ps = tdfa.stateCount;
+            int ps = tdfa.stateCount();
 
             if (vmSwitched()) {
                 return new TDFAPattern(regex, flags, ps,
