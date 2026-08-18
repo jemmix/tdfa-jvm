@@ -32,6 +32,12 @@ final class PatternCompiler {
 
     static Pattern compile(String regex, int flags, RegexEngineFactory factory,
                            UnicodeDataProvider provider) {
+        return compile(regex, flags, factory, provider, null);
+    }
+
+    static Pattern compile(String regex, int flags, RegexEngineFactory factory,
+                           UnicodeDataProvider provider,
+                           io.github.jemmix.tdfa.core.CompileObserver observer) {
         if (regex == null) throw new NullPointerException("pattern is null");
         if ((flags & ~VALID_FLAGS) != 0) {
             throw new IllegalArgumentException(
@@ -46,49 +52,65 @@ final class PatternCompiler {
         boolean disableUnicodeGroups = (flags & Pattern.DISABLE_UNICODE_GROUPS) != 0;
         final UnicodeDataProvider prov = provider != null ? provider : UnicodeProviders.get();
         final String fl = flregex;
+        final io.github.jemmix.tdfa.core.CompileObserver obs = observer != null
+                ? observer : io.github.jemmix.tdfa.core.CompileObserver.NONE;
         try {
-            Tnfa nfa = Tnfa.compile(fl, disableUnicodeGroups, false, prov);
-            Tdfa tdfa = Tdfa.compile(nfa, longest);
+            Tnfa nfa = Tnfa.compile(fl, disableUnicodeGroups, false, prov, obs);
+            Tdfa tdfa = Tdfa.compile(nfa, longest, obs);
             int ps = tdfa.stateCount();
 
             if (vmSwitched()) {
+                obs.note("engine", "shared-interpreter (tdfa.engine=VM)");
                 return new TDFAPattern(regex, flags, ps,
-                        new TdfaRunner(tdfa), anchoredVm(fl, disableUnicodeGroups, longest, prov));
+                        new TdfaRunner(tdfa), anchoredVm(fl, disableUnicodeGroups, longest, prov, obs));
             }
 
             if (factory != null) {
+                long t0 = System.nanoTime();
                 RegexEngine eng = factory.create(tdfa);
+                obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.ENGINE,
+                        System.nanoTime() - t0, 0);
                 Supplier<RegexEngine> whole =
                         () -> factory.create(anchorTdfa(fl, disableUnicodeGroups, longest, prov));
                 try {
-                    return (Pattern) io.github.jemmix.tdfa.asm.ShellEmitter.emit(
+                    Pattern p = (Pattern) io.github.jemmix.tdfa.asm.ShellEmitter.emit(
                             new io.github.jemmix.tdfa.asm.ShellEmitter.Spec(
                                     regex, flags, ps, eng, whole, null));
+                    obs.note("engine", "byo-shell");
+                    return p;
                 } catch (RuntimeException ex) {
                     if (Boolean.getBoolean("tdfa.gen.debug")) ex.printStackTrace();
+                    obs.note("engine", "shared (byo-shell emission failed)");
                     return new TDFAPattern(regex, flags, ps, eng, whole);
                 }
             }
 
             // Default: ASM per-pattern engine + concrete-typed shell.
             io.github.jemmix.tdfa.asm.TdfaAsmBackend.Generated gen;
+            long t1 = System.nanoTime();
             try {
                 gen = io.github.jemmix.tdfa.asm.TdfaAsmBackend.generate(tdfa);
             } catch (RuntimeException genFailure) {
                 if (Boolean.getBoolean("tdfa.gen.debug")) genFailure.printStackTrace();
+                obs.note("engine", "shared-interpreter (engine emission failed)");
                 return new TDFAPattern(regex, flags, ps,
-                        new TdfaRunner(tdfa), anchoredVm(fl, disableUnicodeGroups, longest, prov));
+                        new TdfaRunner(tdfa), anchoredVm(fl, disableUnicodeGroups, longest, prov, obs));
             }
+            obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.ENGINE,
+                    System.nanoTime() - t1, 0);
             try {
-                return (Pattern) io.github.jemmix.tdfa.asm.ShellEmitter.emit(
+                Pattern p = (Pattern) io.github.jemmix.tdfa.asm.ShellEmitter.emit(
                         new io.github.jemmix.tdfa.asm.ShellEmitter.Spec(
                                 regex, flags, ps, gen.engine(),
-                                anchoredAsm(fl, disableUnicodeGroups, longest, prov),
+                                anchoredAsm(fl, disableUnicodeGroups, longest, prov, obs),
                                 gen.owner()));
+                obs.note("engine", "generated");
+                return p;
             } catch (RuntimeException ex) {
                 if (Boolean.getBoolean("tdfa.gen.debug")) ex.printStackTrace();
+                obs.note("engine", "shared-interpreter (shell emission failed)");
                 return new TDFAPattern(regex, flags, ps,
-                        new TdfaRunner(tdfa), anchoredVm(fl, disableUnicodeGroups, longest, prov));
+                        new TdfaRunner(tdfa), anchoredVm(fl, disableUnicodeGroups, longest, prov, obs));
             }
         } catch (RuntimeException e) {
             throw io.github.jemmix.tdfa.core.CompiledRegex.translate(e, regex);
@@ -111,12 +133,14 @@ final class PatternCompiler {
     }
 
     private static Supplier<RegexEngine> anchoredVm(String flregex, boolean disableUnicodeGroups,
-                                                    boolean longest, UnicodeDataProvider prov) {
+                                                    boolean longest, UnicodeDataProvider prov,
+                                                    io.github.jemmix.tdfa.core.CompileObserver obs) {
         return () -> new TdfaRunner(anchorTdfa(flregex, disableUnicodeGroups, longest, prov));
     }
 
     private static Supplier<RegexEngine> anchoredAsm(String flregex, boolean disableUnicodeGroups,
-                                                     boolean longest, UnicodeDataProvider prov) {
+                                                     boolean longest, UnicodeDataProvider prov,
+                                                     io.github.jemmix.tdfa.core.CompileObserver obs) {
         return () -> {
             Tdfa at = anchorTdfa(flregex, disableUnicodeGroups, longest, prov);
             try {

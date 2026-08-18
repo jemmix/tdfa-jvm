@@ -278,6 +278,12 @@ public final class Tdfa {
         return new Compiler(nfa, longestMatch).compile();
     }
 
+    /** Compile with a transparency hook receiving stage timings/decisions (may be {@code null}). */
+    public static Tdfa compile(Tnfa nfa, boolean longestMatch,
+                               io.github.jemmix.tdfa.core.CompileObserver observer) {
+        return new Compiler(nfa, longestMatch).compile(observer);
+    }
+
     /** Toggle post-determinization minimization (Moore's algorithm). Default on; disable with -Dtdfa.nominimize. */
     private static final boolean MINIMIZE_ENABLED = !Boolean.getBoolean("tdfa.nominimize");
     /**
@@ -417,7 +423,12 @@ public final class Tdfa {
             return arr;
         }
 
-        Tdfa compile() {
+        Tdfa compile() { return compile(null); }
+
+        Tdfa compile(io.github.jemmix.tdfa.core.CompileObserver observer) {
+            final io.github.jemmix.tdfa.core.CompileObserver obs =
+                    observer != null ? observer : io.github.jemmix.tdfa.core.CompileObserver.NONE;
+            long tDet = System.nanoTime();
             nextReg = 2 * tags;
             if (debug) System.err.println("[tdfa] tags=" + tags + " breakpoints=" + breakpoints.length);
             List<Config> initSeed = List.of(
@@ -596,8 +607,12 @@ public final class Tdfa {
                 }
             }
 
-            // === BT22 §6.3 register optimizations (compaction for now; full pipeline TODO) ===
+            obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.DETERMINIZE,
+                    System.nanoTime() - tDet, n);
+
+            // === BT22 §6.3 register optimizations ===
             int finalRegBase = tags;  // default: working [0..T-1], final [T..2T-1]
+            long tReg = System.nanoTime();
             if (REGOPT_ENABLED && tags > 0 && n > 1 && n <= REGOPT_MAX_STATES) {
                 io.github.jemmix.tdfa.regopt.Cfg cfg = buildCfg(builders, accept, states, tags, nfa.groupCount, nextReg);
                 io.github.jemmix.tdfa.regopt.Optimize.optimize(cfg);
@@ -606,6 +621,13 @@ public final class Tdfa {
                 if (debug) System.err.println("[tdfa] regopt: regs " + cfg.initialRegCount + " -> " + cfg.regCount
                         + " (finalRegBase=" + finalRegBase + ")"
                         + (cfg.dceRemovedOps > 0 ? " DCE removed " + cfg.dceRemovedOps + " ops" : ""));
+                obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.REGOPT,
+                        System.nanoTime() - tReg, cfg.regCount);
+                obs.note("regopt", "regs " + cfg.initialRegCount + "->" + cfg.regCount);
+            } else {
+                obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.REGOPT,
+                        System.nanoTime() - tReg, 2 * tags);
+                obs.note("regopt", REGOPT_ENABLED ? "skipped (bounds)" : "disabled");
             }
 
             // First pass: coalesce + mask-specificity sort on every state's ranges,
@@ -700,6 +722,7 @@ public final class Tdfa {
             int[] minMeta = stateMeta, minBase = stateBase, minFinalOpsOff = stateFinalOpsOff,
                     minRanges = flatRanges, minEntryMask = stateEntryMask,
                     minAcceptMask = stateAcceptMask, minStopMask = stateStopOnAcceptMask;
+            long tMin = System.nanoTime();
             if (MINIMIZE_ENABLED && n > 1 && n <= MINIMIZE_MAX_STATES) {
                 DfaMinimizer m = new DfaMinimizer(n, stateMeta, stateBase, stateFinalOpsOff,
                         flatRanges, flatOps, stateEntryMask, stateAcceptMask,
@@ -768,8 +791,13 @@ public final class Tdfa {
             // states with non-accepting paths), and generate ψ quasi-transitions
             // that route through the backups. Closes a latent POSIX capture bug
             // where stepping past an accept then falling back clobbers registers.
+            obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.MINIMIZE,
+                    System.nanoTime() - tMin, stateCount);
+
             boolean[] stateIsFallback = new boolean[stateCount];
             int[] stateFallbackOpsOff = new int[stateCount];
+            long tFb = System.nanoTime();
+            int fallbackStates = 0;
             if (FALLBACK_ENABLED && tags > 0) {
                 FallbackOps.Result fr = FallbackOps.add(stateCount, minMeta, minBase, minRanges, flatOps,
                         minFinalOpsOff, globalMaxReg);
@@ -778,12 +806,15 @@ public final class Tdfa {
                 stateIsFallback = fr.stateIsFallback;
                 stateFallbackOpsOff = fr.stateFallbackOpsOff;
                 globalMaxReg = fr.registerCount;
+                fallbackStates = fr.fallbackStateCount;
                 if (debug && fr.fallbackStateCount > 0) {
                     System.err.println("[tdfa] fallback: " + fr.fallbackStateCount + " states, "
                             + fr.backupTransitionCount + " backup transitions, "
                             + fr.backupSlotCount + " backup slots");
                 }
             }
+            obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.FALLBACK,
+                    System.nanoTime() - tFb, fallbackStates);
             // Ensure per-state entries are sorted by lo (stable: equal-lo groups
             // keep their mask-specificity order). The builders emit sorted, but
             // the minimizer / regopt rewrite can reorder within a state; the

@@ -17,33 +17,36 @@ public final class CompileOptions {
     private final boolean disableUnicodeGroups;
     private final UnicodeDataProvider unicodeProvider;
     private final RegexEngineFactory engineFactory;
+    private final CompileObserver observer;
 
     private CompileOptions(boolean longestMatch, boolean disableUnicodeGroups,
-                           UnicodeDataProvider unicodeProvider, RegexEngineFactory engineFactory) {
+                           UnicodeDataProvider unicodeProvider, RegexEngineFactory engineFactory,
+                           CompileObserver observer) {
         this.longestMatch = longestMatch;
         this.disableUnicodeGroups = disableUnicodeGroups;
         this.unicodeProvider = unicodeProvider;
         this.engineFactory = engineFactory;
+        this.observer = observer;
     }
 
     /** Default options: leftmost-first (Perl) semantics, JDK-default Unicode tables. */
     public static CompileOptions of() {
-        return new CompileOptions(false, false, null, null);
+        return new CompileOptions(false, false, null, null, null);
     }
 
     /** POSIX leftmost-longest match semantics (re2j {@code LONGEST_MATCH}). */
     public CompileOptions longestMatch() {
-        return new CompileOptions(true, disableUnicodeGroups, unicodeProvider, engineFactory);
+        return new CompileOptions(true, disableUnicodeGroups, unicodeProvider, engineFactory, observer);
     }
 
     /** Reject {@code \p{...}} / {@code \P{...}} at compile time (re2j {@code DISABLE_UNICODE_GROUPS}). */
     public CompileOptions disableUnicodeGroups() {
-        return new CompileOptions(longestMatch, true, unicodeProvider, engineFactory);
+        return new CompileOptions(longestMatch, true, unicodeProvider, engineFactory, observer);
     }
 
     /** Resolve {@code \p{...}} property classes against the given tables instead of the JDK default. */
     public CompileOptions unicode(UnicodeDataProvider provider) {
-        return new CompileOptions(longestMatch, disableUnicodeGroups, provider, engineFactory);
+        return new CompileOptions(longestMatch, disableUnicodeGroups, provider, engineFactory, observer);
     }
 
     /**
@@ -52,7 +55,7 @@ public final class CompileOptions {
      * this setting; the facade ({@code Pattern.compile}) honors it.
      */
     public CompileOptions engineFactory(RegexEngineFactory factory) {
-        return new CompileOptions(longestMatch, disableUnicodeGroups, unicodeProvider, factory);
+        return new CompileOptions(longestMatch, disableUnicodeGroups, unicodeProvider, factory, observer);
     }
 
     public boolean isLongestMatch() { return longestMatch; }
@@ -64,4 +67,12 @@ public final class CompileOptions {
 
     /** Configured factory, or {@code null} for the tier default. */
     public RegexEngineFactory engineFactory() { return engineFactory; }
+
+    /** Attach a compilation transparency hook (stage timings, decisions). */
+    public CompileOptions observer(CompileObserver obs) {
+        return new CompileOptions(longestMatch, disableUnicodeGroups, unicodeProvider, engineFactory, obs);
+    }
+
+    /** Configured observer, or {@code null} for none. */
+    public CompileObserver observer() { return observer; }
 }

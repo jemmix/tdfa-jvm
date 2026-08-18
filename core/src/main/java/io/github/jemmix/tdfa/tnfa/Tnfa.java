@@ -98,8 +98,18 @@ public final class Tnfa {
 
     public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
                                io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
+        return compile(pattern, disableUnicodeGroups, anchorBoth, provider, null);
+    }
+
+    public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
+                               io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider,
+                               io.github.jemmix.tdfa.core.CompileObserver observer) {
+        long t0 = System.nanoTime();
         io.github.jemmix.tdfa.parser.ParseResult parsed =
                 Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth, provider);
+        if (observer != null) observer.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.PARSE,
+                System.nanoTime() - t0, parsed.tagCount());
+        long t1 = System.nanoTime();
         Ast ast = parsed.ast();
         io.github.jemmix.tdfa.ast.FixedTags.apply(ast);
         int tagCount = parsed.tagCount();
@@ -114,9 +124,12 @@ public final class Tnfa {
         Builder b = new Builder();
         int accept = b.fresh();
         int start = b.build(ast, accept);
-        return b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(),
+        Tnfa nfa = b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(),
                 parsed.unicodeShorthand(), parsed.unicodeWordRanges(), parsed.namedGroups(),
                 fixedBase, fixedOffset);
+        if (observer != null) observer.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.TNFA,
+                System.nanoTime() - t1, nfa.stateCount);
+        return nfa;
     }
 
     /** Collect {@link Ast.Tag#fixedOn} / {@link Ast.Tag#fixedOffset} annotations into

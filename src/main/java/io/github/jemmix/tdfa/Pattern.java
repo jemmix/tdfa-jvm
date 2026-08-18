@@ -84,13 +84,14 @@ public interface Pattern extends java.io.Serializable {
         return PatternCompiler.compile(regex, flags, factory, unicodeProvider);
     }
 
-    /** Compile with explicit options (semantics, tables, engine factory). */
+    /** Compile with explicit options (semantics, tables, engine factory, observer). */
     static Pattern compile(String regex, CompileOptions options) {
         if (options == null) throw new NullPointerException("options is null");
         int flags = 0;
         if (options.isLongestMatch()) flags |= LONGEST_MATCH;
         if (options.isDisableUnicodeGroups()) flags |= DISABLE_UNICODE_GROUPS;
-        return PatternCompiler.compile(regex, flags, options.engineFactory(), options.unicodeProvider());
+        return PatternCompiler.compile(regex, flags, options.engineFactory(),
+                options.unicodeProvider(), options.observer());
     }
 
     /** Convenience: compile and match the entire input. */

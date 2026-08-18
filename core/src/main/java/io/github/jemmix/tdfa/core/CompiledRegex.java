@@ -60,9 +60,14 @@ public final class CompiledRegex {
         try {
             UnicodeDataProvider provider = options.unicodeProvider() != null
                     ? options.unicodeProvider() : UnicodeProviders.get();
-            Tnfa nfa = Tnfa.compile(pattern, options.isDisableUnicodeGroups(), anchorBoth, provider);
-            Tdfa tdfa = Tdfa.compile(nfa, options.isLongestMatch());
-            return new io.github.jemmix.tdfa.tdfa.TdfaRunner(tdfa);
+            CompileObserver obs = options.observer() != null ? options.observer() : CompileObserver.NONE;
+            Tnfa nfa = Tnfa.compile(pattern, options.isDisableUnicodeGroups(), anchorBoth, provider, obs);
+            Tdfa tdfa = Tdfa.compile(nfa, options.isLongestMatch(), obs);
+            long t0 = System.nanoTime();
+            RegexEngine engine = new io.github.jemmix.tdfa.tdfa.TdfaRunner(tdfa);
+            obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
+            obs.note("engine", "interpreter");
+            return engine;
         } catch (PatternSyntaxException e) {
             throw e;
         } catch (RuntimeException e) {
