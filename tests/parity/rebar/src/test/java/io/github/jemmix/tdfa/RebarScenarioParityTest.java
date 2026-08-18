@@ -229,12 +229,21 @@ class RebarScenarioParityTest {
         //     independently, and a divergence shows up as a real test failure.
 
         // --- AST-level fast-fail: pre-scan for known bomb shapes that would
-        //     otherwise burn the full COMPILE_TIMEOUT wall budget. Saves ~8
-        //     minutes per run on the 4 known bombs today (aws-keys/full,
-        //     date/ascii, date/unicode, bounded-repeat/context). The detector
-        //     is intentionally conservative — it must NOT trip on legitimately
-        //     slow-but-finishing compiles like curated/12-dictionary/single
-        //     (3.6 s) or leipzig/tom-sawyer-prefix-{short,long} (18-22 s).
+        //     otherwise burn the full COMPILE_TIMEOUT wall budget. Only ONE such
+        //     shape remains (2026-08-18): two-or-more-site wide-class bounded
+        //     repeats like curated/10-bounded-repeat/context
+        //     ([\s\S]{0,100} × 2) whose counter cross-product is an
+        //     intrinsically huge DFA — measured on the simplified analog
+        //     [A-Z]{10}\s+[\s\S]{0,100}Z[\s\S]{0,100}\s+[A-Z]{10}: 60 604
+        //     states, 60 603 after register-aware Moore minimization, i.e.
+        //     already minimal; the real scenario regex is far larger (OOMs a
+        //     default heap during determinization). The former rules for
+        //     aws-keys/full ((\n^.*?){0,4}) and date (6.3 KB alternation) were
+        //     RETIRED: both now compile through the facade in < 3 s after the
+        //     determinize fast-path (stateIndex multimap + per-active-set
+        //     result cache + primitive closure sets). The detector must still
+        //     NOT trip on legitimately slow-but-finishing compiles like
+        //     curated/12-dictionary/single or leipzig prefix rows.
         //     See docs/REBAR-SPEEDUP-PLAN.md §Tier-1 #2.
         if (exceedsCompileBudget(s.regex())) {
             countSkip("compile-budget:ast-bomb");
@@ -455,36 +464,26 @@ class RebarScenarioParityTest {
         return scanForBomb(ast, regex.length());
     }
 
-    /** Recursive walker; returns true if any subtree matches a bomb shape. */
+    /** Recursive walker; returns true if any subtree matches the bomb shape. */
     private static boolean scanForBomb(Ast ast, int regexLen) {
         if (ast instanceof Ast.Repeat r) {
             boolean variable = r.max != Integer.MAX_VALUE && r.max > r.min;
             if (variable) {
                 int reps = r.max - r.min + 1;
-                // Rule 1: variable bounded repeat of wide-unbounded repeat (aws-keys).
-                // Variable (min<max) bounded repeats create max+1 distinct repetition
-                // states vs. fixed repeats' one — that's the difference between
-                // (\n^.*?){0,4} (bomb) and (.*?,){13} (passes).
-                if (containsWideUnboundedRepeat(r.body)) return true;
-                // Rule 2: very-high variable bounded repeat over wide class (context).
+                // The one remaining bomb shape: very-high variable bounded repeat
+                // over a wide class (context: [\s\S]{0,100} × 2). Two such sites
+                // multiply: the DFA tracks both counters through every character,
+                // so the minimal DFA is ~(max1+1)×(max2+1) states — measured
+                // already-minimal on the simplified analog (60 604 → 60 603 by
+                // register-aware Moore). Not fixable by minimization or encoding;
+                // needs either much faster determinization or lazy determinization
+                // (rejected: multi-pass §7 is a different architecture, out of the
+                // single-algorithm design goal).
                 if (reps >= 50 && containsWideClass(r.body)) return true;
             }
             return scanForBomb(r.body, regexLen);
         }
         if (ast instanceof Ast.Alt a) {
-            // Rule 3: massive non-literal alternation (date).
-            // The datefinder regex (6.3 KB) has 73 non-literal branches (the
-            // actual date patterns with \d, [0-3]) alongside 391 plain-literal
-            // branches (timezone abbreviations) — those 73 branches are the bomb.
-            // The regex-length precondition (>2 000 chars) distinguishes it from
-            // curated/05-lexer-veryl/single (~1.2 KB, 88 non-literal alternations,
-            // compiles fine). Dictionary (2663 plain-literal branches) passes the
-            // isPlainLiteral check.
-            if (regexLen > 2_000 && a.children.size() > 50) {
-                for (Ast child : a.children) {
-                    if (!isPlainLiteral(child)) return true;
-                }
-            }
             for (Ast child : a.children) {
                 if (scanForBomb(child, regexLen)) return true;
             }
@@ -493,31 +492,6 @@ class RebarScenarioParityTest {
         if (ast instanceof Ast.Concat c) {
             for (Ast child : c.children) {
                 if (scanForBomb(child, regexLen)) return true;
-            }
-            return false;
-        }
-        return false;
-    }
-
-    /**
-     * Does {@code ast} contain a {@code Repeat(max=∞)} whose body transitively
-     * contains a wide {@link CharClass}? This is the aws-keys inner shape:
-     * {@code .*?} or {@code [\s\S]*} nested inside a bounded repeat.
-     */
-    private static boolean containsWideUnboundedRepeat(Ast ast) {
-        if (ast instanceof Ast.Repeat r) {
-            if (r.max == Integer.MAX_VALUE && containsWideClass(r.body)) return true;
-            return containsWideUnboundedRepeat(r.body);
-        }
-        if (ast instanceof Ast.Concat c) {
-            for (Ast child : c.children) {
-                if (containsWideUnboundedRepeat(child)) return true;
-            }
-            return false;
-        }
-        if (ast instanceof Ast.Alt a) {
-            for (Ast child : a.children) {
-                if (containsWideUnboundedRepeat(child)) return true;
             }
             return false;
         }
@@ -539,18 +513,6 @@ class RebarScenarioParityTest {
                 if (containsWideClass(child)) return true;
             }
             return false;
-        }
-        return false;
-    }
-
-    /** Is {@code ast} a plain literal (single Symbol or Concat of Symbols only)? */
-    private static boolean isPlainLiteral(Ast ast) {
-        if (ast instanceof Ast.Symbol) return true;
-        if (ast instanceof Ast.Concat c) {
-            for (Ast child : c.children) {
-                if (!(child instanceof Ast.Symbol)) return false;
-            }
-            return true;
         }
         return false;
     }

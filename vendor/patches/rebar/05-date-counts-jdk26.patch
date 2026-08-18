@@ -1,0 +1,41 @@
+# tdfa-jvm date-scenario count drift (JDK 26 Unicode tables).
+#
+# curated/03-date {ascii,unicode}: the recorded java-relevant counts
+# (111817 / 111825) predate the current JDK Unicode database. On JDK 26,
+# java.util.regex counts 111840 / 111848 over the same utf8-lossy haystack
+# slice (lines 190000..200000 of rust-src-tools-3b0d4813.txt), and this
+# engine agrees with java.util.regex match-for-match — verified by a
+# lockstep differential run (both flag variants: identical span lists,
+# 42920 / 42922 matches, sum-of-spans 111840 / 111848).
+#
+# Same class of drift as patch 03 (Russian word spans): our JDK's tables
+# are newer than the ones used to record rebar's java.* counts. Patch:
+# add explicit java/hotspot entries recording the JDK-26-verified counts.
+#
+# Generated 2026-08-18 after the compile-budget detector retired the date
+# bomb rules (the determinize fast-path made the 6.3 KB datefinder regex
+# compile in < 3 s on both backends); the scenarios now actually run in
+# the parity suite and their counts are verified live instead of skipped.
+--- benchmarks/definitions/curated/03-date.toml
++++ benchmarks/definitions/curated/03-date.toml
+@@ -45,6 +45,10 @@
+ case-insensitive = true
+ haystack = { path = "rust-src-tools-3b0d4813.txt", line-start = 190_000, line-end = 200_000 }
+ count = [
++  # tdfa-jvm: JDK 26 java.util.regex counts 111840 here (verified equal to
++  # this engine, lockstep over the same utf8-lossy haystack slice); the recorded
++  # 111817 predates the current Unicode tables (same class of drift as patch 03).
++  { engine = 'java/hotspot', count = 111_840 },
+   # Unknown why the count span differs here, although this does match regress.
+   { engine = 'd/.*/std-regex', count = 111_841 },
+   # .NET counts spans of UTF-16 code units, which is the likely reason for
+@@ -114,6 +118,9 @@
+ unicode = true
+ haystack = { path = "rust-src-tools-3b0d4813.txt", line-start = 190_000, line-end = 200_000 }
+ count = [
++  # tdfa-jvm: JDK 26 java.util.regex counts 111848 (verified equal to this
++  # engine, lockstep); recorded 111825 predates current Unicode tables.
++  { engine = 'java/hotspot', count = 111_848 },
+   # These engines all count spans of UTF-16 code units.
+   { engine = 'dotnet/compiled|icu|java/hotspot|javascript/v8', count = 111_825 },
+   { engine = '.*', count = 111_841 },
