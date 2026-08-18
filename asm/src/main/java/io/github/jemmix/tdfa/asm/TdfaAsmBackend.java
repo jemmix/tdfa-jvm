@@ -102,8 +102,8 @@ public final class TdfaAsmBackend {
             genExtractOne(cw, tdfa, owner);
             genToResult(cw, tdfa, owner);
             genEntryOkC(cw, owner);
-            genPositionFlagsC(cw, owner, tdfa.multiline, tdfa.unicodeWordBoundary);
-            if (tdfa.unicodeWordBoundary) {
+            genPositionFlagsC(cw, owner, tdfa.multiline(), tdfa.unicodeWordBoundary());
+            if (tdfa.unicodeWordBoundary()) {
                 genIsUnicodeWordChar(cw, owner);
                 genIsWordBefore(cw, owner);
                 genIsWordAt(cw, owner);
@@ -127,7 +127,7 @@ public final class TdfaAsmBackend {
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, f, "[I", null, null).visitEnd();
         if (fastPath)
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "ASCII_TARGET", "[I", null, null).visitEnd();
-        boolean hasFixed = tdfa.fixedBase != null;
+        boolean hasFixed = tdfa.fixedBase() != null;
         if (hasFixed) {
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "FIXED_BASE", "[I", null, null).visitEnd();
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "FIXED_OFFSET", "[I", null, null).visitEnd();
@@ -148,7 +148,7 @@ public final class TdfaAsmBackend {
         // (ladder hooks are monomorphic final-class calls) and the full
         // delegate path for everything the generated class doesn't own.
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "runner", RUNNER_D, null, null).visitEnd();
-        if (tdfa.unicodeWordBoundary) {
+        if (tdfa.unicodeWordBoundary()) {
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "WORD_RANGES", "[I", null, null).visitEnd();
         }
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(" + TDFA_D + ")V", null, null);
@@ -161,27 +161,27 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, RUNNER, "<init>", "(" + TDFA_D + ")V", false);
         mv.visitFieldInsn(Opcodes.PUTFIELD, owner, "runner", RUNNER_D);
-        if (tdfa.unicodeWordBoundary) {
+        if (tdfa.unicodeWordBoundary()) {
             mv.visitVarInsn(Opcodes.ALOAD, 1);
             mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "wordRanges", "[I");
             mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "WORD_RANGES", "[I");
         }
-        // ENTRY_MASK = tdfa.stateEntryMask (reference copy — no per-element bytecode)
+        // ENTRY_MASK = tdfa.stateEntryMask() (reference copy — no per-element bytecode)
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "stateEntryMask", "[I");
         mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "ENTRY_MASK", "[I");
-        // ACCEPT_MASK = tdfa.stateAcceptMask
+        // ACCEPT_MASK = tdfa.stateAcceptMask()
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "stateAcceptMask", "[I");
         mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "ACCEPT_MASK", "[I");
-        // STOP_MASK = tdfa.stopOnAcceptMask
+        // STOP_MASK = tdfa.stopOnAcceptMask()
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "stopOnAcceptMask", "[I");
         mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "STOP_MASK", "[I");
         // IS_ACCEPT = new int[n]; for each state s, IS_ACCEPT[s] = (stateMeta[s] & 1)
         // Computed in a fixed-size runtime loop — bytecode is ~30 bytes regardless
         // of state count (matters for dictionary-scale DFAs with 20 K+ states).
-        int n = tdfa.stateCount;
+        int n = tdfa.stateCount();
         ic(mv, n);
         mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
         mv.visitVarInsn(Opcodes.ASTORE, 2);  // local 2 = IS_ACCEPT temp
@@ -209,7 +209,7 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, 2);
         mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "IS_ACCEPT", "[I");
         // FIXED_BASE / FIXED_OFFSET (if fixed-tag optimization applied)
-        if (tdfa.fixedBase != null) {
+        if (tdfa.fixedBase() != null) {
             mv.visitVarInsn(Opcodes.ALOAD, 1);
             mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "fixedBase", "[I");
             mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "FIXED_BASE", "[I");
@@ -232,7 +232,7 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ALOAD, 1);
             mv.visitFieldInsn(Opcodes.GETFIELD, TDFA, "ranges", "[I");
             mv.visitVarInsn(Opcodes.ASTORE, 14);
-            int tableSize = tdfa.stateCount * 128;
+            int tableSize = tdfa.stateCount() * 128;
             ic(mv, tableSize);
             mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
             mv.visitVarInsn(Opcodes.ASTORE, 4);  // local 4 = ASCII_TARGET
@@ -639,12 +639,12 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         Label ret = new Label();
         mv.visitJumpInsn(Opcodes.IFNULL, ret);
-        if (tdfa.fixedBase != null) {
+        if (tdfa.fixedBase() != null) {
             // BT22 §6.4 fixed-tag reconstruction: rewrite fixed-tag slots in the
             // holder's regs from their base tag values, before constructing MatchResult.
             mv.visitVarInsn(Opcodes.ALOAD, 0);
             mv.visitFieldInsn(Opcodes.GETFIELD, HOLDER, "regs", "[I");
-            ic(mv, tdfa.finalRegBase);
+            ic(mv, tdfa.finalRegBase());
             mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "FIXED_BASE", "[I");
             mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "FIXED_OFFSET", "[I");
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, RESULT, "reconstructFixed", "([II[I[I)V", false);
@@ -653,8 +653,8 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.DUP);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, HOLDER, "regs", "[I");
-        ic(mv, tdfa.finalRegBase);
-        ic(mv, tdfa.groupCount);
+        ic(mv, tdfa.finalRegBase());
+        ic(mv, tdfa.groupCount());
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, HOLDER, "matchStart", "I");
         mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -870,9 +870,9 @@ public final class TdfaAsmBackend {
     // ===== shared core: DFA walk + search loop =====
 
     private static void emitRunCore(MethodVisitor mv, Tdfa tdfa, String owner) {
-        final boolean perl = !tdfa.longestMatch;
-        final int nStates = tdfa.stateCount;
-        final int[] sm = tdfa.stateMeta, rg = tdfa.ranges, op = tdfa.ops, sfo = tdfa.stateFinalOpsOff;
+        final boolean perl = !tdfa.longestMatch();
+        final int nStates = tdfa.stateCount();
+        final int[] sm = tdfa.stateMeta(), rg = tdfa.ranges(), op = tdfa.ops(), sfo = tdfa.stateFinalOpsOff();
 
         // Compile-time check: is positionFlags ever needed?
         // PF is needed if any accepting state has ACCEPT_MASK != 0,
@@ -881,7 +881,7 @@ public final class TdfaAsmBackend {
         boolean pfNeeded = false;
         for (int s = 0; s < nStates && !pfNeeded; s++) {
             if ((sm[s] & 1) != 0) {
-                if (perl || tdfa.stateAcceptMask[s] != 0) pfNeeded = true;
+                if (perl || tdfa.stateAcceptMask()[s] != 0) pfNeeded = true;
             }
         }
         if (!pfNeeded) {
@@ -922,11 +922,11 @@ public final class TdfaAsmBackend {
 
         // Per-start: allocate regs
         {
-            if (tdfa.registerCount == 0) {
+            if (tdfa.registerCount() == 0) {
                 mv.visitInsn(Opcodes.ACONST_NULL);
                 mv.visitVarInsn(Opcodes.ASTORE, REGS);
             } else {
-                ic(mv, tdfa.registerCount);
+                ic(mv, tdfa.registerCount());
                 mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
                 mv.visitVarInsn(Opcodes.ASTORE, REGS);
                 mv.visitVarInsn(Opcodes.ALOAD, REGS);
@@ -936,7 +936,7 @@ public final class TdfaAsmBackend {
         }
 
         // Entry check for start state at ST — skip if ENTRY_MASK[0] == 0
-        if (tdfa.stateEntryMask[0] != 0) {
+        if (tdfa.stateEntryMask()[0] != 0) {
             mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ENTRY_MASK", "[I");
             mv.visitInsn(Opcodes.ICONST_0);
             mv.visitInsn(Opcodes.IALOAD);
@@ -944,7 +944,7 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ILOAD, T1);
             Label initEntryOk = new Label();
             mv.visitJumpInsn(Opcodes.IFEQ, initEntryOk);
-            emitPFInline(mv, owner, IN, ST, LEN, PF2, T2, T3, T4, tdfa.multiline, tdfa.unicodeWordBoundary);
+            emitPFInline(mv, owner, IN, ST, LEN, PF2, T2, T3, T4, tdfa.multiline(), tdfa.unicodeWordBoundary());
             mv.visitVarInsn(Opcodes.ILOAD, PF2);
             mv.visitVarInsn(Opcodes.ILOAD, T1);
             mv.visitInsn(Opcodes.IAND);
@@ -965,7 +965,7 @@ public final class TdfaAsmBackend {
 
         // pf = positionFlags(pos, len, input) — skip when never needed
         if (pfNeeded)
-            emitPFInline(mv, owner, IN, POS, LEN, PF, T1, T2, T3, tdfa.multiline, tdfa.unicodeWordBoundary);
+            emitPFInline(mv, owner, IN, POS, LEN, PF, T1, T2, T3, tdfa.multiline(), tdfa.unicodeWordBoundary());
         else {
             mv.visitInsn(Opcodes.ICONST_0);
             mv.visitVarInsn(Opcodes.ISTORE, PF);
@@ -1036,7 +1036,7 @@ public final class TdfaAsmBackend {
             mv.visitJumpInsn(Opcodes.IFEQ, noResult);
 
             // r = regs == null ? new int[0] : regs.clone()
-            if (tdfa.registerCount == 0) {
+            if (tdfa.registerCount() == 0) {
                 mv.visitInsn(Opcodes.ICONST_0);
                 mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
             } else {
@@ -1077,8 +1077,8 @@ public final class TdfaAsmBackend {
                                         int IN, int STATE, int POS, int LEN, int PF, int C_LV,
                                         int REGS, int T1, int T2, int PF2, int T3, int T4,
                                         Label dfaLoop, Label dfaEnd, int[] op) {
-        int nStates = tdfa.stateCount;
-        int[] sm = tdfa.stateMeta, sb = tdfa.stateBase, rg = tdfa.ranges;
+        int nStates = tdfa.stateCount();
+        int[] sm = tdfa.stateMeta(), sb = tdfa.stateBase(), rg = tdfa.ranges();
 
         Label[] sl = new Label[nStates];
         Label def = new Label();
@@ -1140,7 +1140,7 @@ public final class TdfaAsmBackend {
                 }
 
                 // entry check for target at pos+1 — skip call if ENTRY_MASK[target] == 0
-                if (tdfa.stateEntryMask[target] != 0) {
+                if (tdfa.stateEntryMask()[target] != 0) {
                     mv.visitVarInsn(Opcodes.ILOAD, STATE);
                     mv.visitVarInsn(Opcodes.ILOAD, POS);
                     mv.visitInsn(Opcodes.ICONST_1);
@@ -1173,9 +1173,9 @@ public final class TdfaAsmBackend {
     private static void emitFinalOps(MethodVisitor mv, Tdfa tdfa, String owner,
                                      int R, int LAS, int LAP, int POS,
                                      int[] op, int[] sfo, int[] sm) {
-        int n = tdfa.stateCount;
-        boolean[] isFallback = tdfa.stateIsFallback;
-        int[] fallbackOff = tdfa.stateFallbackOpsOff;
+        int n = tdfa.stateCount();
+        boolean[] isFallback = tdfa.stateIsFallback();
+        int[] fallbackOff = tdfa.stateFallbackOpsOff();
         List<int[]> finals = new ArrayList<>();
         for (int s = 0; s < n; s++)
             if ((sm[s] & 1) != 0 && sfo[s] != 0) finals.add(new int[]{s, sfo[s]});
@@ -1853,9 +1853,9 @@ public final class TdfaAsmBackend {
 
     /** Bytecode cost of the inlined final-ops block alone (~7 B/op). */
     private static int estimateFinalOpsBytes(Tdfa tdfa) {
-        int[] op = tdfa.ops, sfo = tdfa.stateFinalOpsOff;
+        int[] op = tdfa.ops(), sfo = tdfa.stateFinalOpsOff();
         int total = 0;
-        for (int s = 0; s < tdfa.stateCount; s++) {
+        for (int s = 0; s < tdfa.stateCount(); s++) {
             if (sfo[s] == 0) continue;
             int j = sfo[s];
             while (j < op.length && op[j] != Tdfa.OP_END) { total += 7; j += 3; }
@@ -1881,10 +1881,10 @@ public final class TdfaAsmBackend {
      * method limit if inlined).
      */
     private static int estimateInlinedBytes(Tdfa tdfa) {
-        int[] sm = tdfa.stateMeta, sb = tdfa.stateBase, rg = tdfa.ranges, op = tdfa.ops;
-        int[] sfo = tdfa.stateFinalOpsOff;
+        int[] sm = tdfa.stateMeta(), sb = tdfa.stateBase(), rg = tdfa.ranges(), op = tdfa.ops();
+        int[] sfo = tdfa.stateFinalOpsOff();
         int total = 0;
-        for (int s = 0; s < tdfa.stateCount; s++) {
+        for (int s = 0; s < tdfa.stateCount(); s++) {
             int meta = sm[s];
             int base = sb[s], cnt = (meta >>> 1) & 0xFFFF;
             total += 60;  // per-state fixed overhead (label, dead-state, mask check, etc.)
@@ -1909,9 +1909,9 @@ public final class TdfaAsmBackend {
 
     /** Count total live (non-dead-target) ranges across all states. */
     private static int estimateLiveRangeCount(Tdfa tdfa) {
-        int[] sm = tdfa.stateMeta, sb = tdfa.stateBase, rg = tdfa.ranges;
+        int[] sm = tdfa.stateMeta(), sb = tdfa.stateBase(), rg = tdfa.ranges();
         int total = 0;
-        for (int s = 0; s < tdfa.stateCount; s++) {
+        for (int s = 0; s < tdfa.stateCount(); s++) {
             int meta = sm[s];
             int base = sb[s], cnt = (meta >>> 1) & 0xFFFF;
             for (int i = 0; i < cnt; i++) {
@@ -1923,18 +1923,18 @@ public final class TdfaAsmBackend {
     }
 
     private static boolean computeFastPath(Tdfa tdfa) {
-        if (tdfa.multiline) return false;
+        if (tdfa.multiline()) return false;
         if (!checkRangesDisjoint(tdfa)) return false;
-        for (int mask : tdfa.stateEntryMask) if (mask != 0) return false;
-        for (int mask : tdfa.stateAcceptMask) if (mask != 0) return false;
-        for (int i = 4; i < tdfa.ranges.length; i += 5) if (tdfa.ranges[i] != 0) return false;
+        for (int mask : tdfa.stateEntryMask()) if (mask != 0) return false;
+        for (int mask : tdfa.stateAcceptMask()) if (mask != 0) return false;
+        for (int i = 4; i < tdfa.ranges().length; i += 5) if (tdfa.ranges()[i] != 0) return false;
         return true;
     }
 
     private static boolean checkRangesDisjoint(Tdfa tdfa) {
-        int[] sm = tdfa.stateMeta, sb = tdfa.stateBase, rg = tdfa.ranges;
+        int[] sm = tdfa.stateMeta(), sb = tdfa.stateBase(), rg = tdfa.ranges();
         long[] sortBuf = null;
-        for (int s = 0; s < tdfa.stateCount; s++) {
+        for (int s = 0; s < tdfa.stateCount(); s++) {
             int meta = sm[s];
             int base = sb[s], cnt = (meta >>> 1) & 0xFFFF;
             if (cnt < 2) continue;

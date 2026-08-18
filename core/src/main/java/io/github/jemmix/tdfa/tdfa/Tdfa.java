@@ -23,11 +23,11 @@ import java.util.*;
  * (RE2-style byte-class partitioning).
  */
 public final class Tdfa {
-    public final int tagCount;
-    public final int groupCount;
+    final int tagCount;
+    final int groupCount;
     /** Unmodifiable name&rarr;index map for named capturing groups (from the source pattern). */
-    public final java.util.Map<String, Integer> namedGroups;
-    public final int registerCount;
+    final java.util.Map<String, Integer> namedGroups;
+    final int registerCount;
     /**
      * Offset of the final-register block within the runtime register file. Working
      * registers occupy {@code [0..finalRegBase-1]}; final registers (one per tag,
@@ -36,9 +36,9 @@ public final class Tdfa {
      * {@code tagCount} (the pre-optimization layout); may be smaller after BT22 §6.3
      * register optimizations consolidate the working space.
      */
-    public final int finalRegBase;
-    public final int startState;
-    public final int stateCount;
+    final int finalRegBase;
+    final int startState;
+    final int stateCount;
     /**
      * Bit mask of zero-width assertions required to ENTER this state. Checked at the
      * position where the state is entered. Replaces the old pattern-level
@@ -46,14 +46,14 @@ public final class Tdfa {
      *   bit 1 = BEGIN_TEXT, bit 2 = END_TEXT, bit 4 = WORD_BOUNDARY, bit 8 = NO_WORD_BOUNDARY,
      *   bit 16 = ABS_BEGIN (\A), bit 32 = ABS_END (\z)
      */
-    public final int[] stateEntryMask;
+    final int[] stateEntryMask;
     /**
      * Bit mask required to declare a match in this (accepting) state. Subset of
      * {@link #stateEntryMask}. Replaces the old pattern-level {@code hasEndAnchor} flag.
      */
-    public final int[] stateAcceptMask;
+    final int[] stateAcceptMask;
     /** Mask required to take the start state at all — used to limit find() start positions. */
-    public final int startStateEntryMask;
+    final int startStateEntryMask;
 
     /**
      * True iff this TDFA was compiled for leftmost-longest semantics
@@ -61,23 +61,23 @@ public final class Tdfa {
      * find the longest match. False means Perl leftmost-first — the runner
      * stops at the first accept on the highest-priority path.
      */
-    public final boolean longestMatch;
-    public final boolean multiline;
+    final boolean longestMatch;
+    final boolean multiline;
     /**
      * True iff the DFA was compiled with Unicode-aware shorthand ({@code (?u)}),
      * so {@code \b}/{@code \B} word-boundary checks must use the Unicode
      * word-character ranges in {@link #wordRanges} instead of ASCII-only.
      */
-    public final boolean unicodeWordBoundary;
+    final boolean unicodeWordBoundary;
     /** Unicode {@code \w} ranges for runtime {@code \b} when {@link #unicodeWordBoundary} is true; null otherwise. */
-    public final int[] wordRanges;
+    final int[] wordRanges;
     /**
      * Fixed-tag annotations (BT22 §6.4), forwarded from {@link Tnfa}. Null if no
      * tags were fixed. Otherwise 1-indexed: {@code fixedBase[t] != 0} means tag
      * {@code t} was omitted from the NFA and should be reconstructed at match time.
      */
-    public final int[] fixedBase;
-    public final int[] fixedOffset;
+    final int[] fixedBase;
+    final int[] fixedOffset;
     /**
      * Per-state fallback annotation (BT22 §6.2). {@code true} iff state is
      * final with at least one non-accepting path out of it AND its
@@ -87,9 +87,9 @@ public final class Tdfa {
      * accept. Length = {@link #stateCount}; all-false if M3 disabled or no
      * fallback states needed processing.
      */
-    public final boolean[] stateIsFallback;
+    final boolean[] stateIsFallback;
     /** Per-state ψ (fallback quasi-transition) ops offset into {@link #ops}; 0 if none. */
-    public final int[] stateFallbackOpsOff;
+    final int[] stateFallbackOpsOff;
     /**
      * Position-aware Perl-mode stop-on-accept decision table.
      * Indexed as {@code stopOnAcceptMask[state * 64 + posFlags]} where {@code posFlags}
@@ -108,7 +108,7 @@ public final class Tdfa {
      * the {@code $}-loop-back MATCH outranks {@code .} (stop).
      * Unused in POSIX mode (all cells stay {@link #NEVER_STOP}).
      */
-    public final int[] stopOnAcceptMask;
+    final int[] stopOnAcceptMask;
     /** Sentinel for "don't stop on accept" — distinct from 0 (= stop). */
     public static final int NEVER_STOP = 0x40;  // sentinel bit above all real assertion bits (1|2|4|8|16|32)
 
@@ -118,29 +118,29 @@ public final class Tdfa {
      * One load per char gives accept + rangeCount; the range base is in
      * {@link #stateBase} (split out so it isn't bit-width-limited — see below).
      */
-    public final int[] stateMeta;
+    final int[] stateMeta;
     /**
      * [state] -> range base index into {@link #ranges}. Stored separately from
      * {@link #stateMeta} so it can use the full 32-bit range — the old packing
      * (base in bits 17-31 of stateMeta, 15 bits) overflowed at ~25 states for
      * wide Unicode classes like {@code \p{L}} (~1369 ranges per state).
      */
-    public final int[] stateBase;
+    final int[] stateBase;
     /** [state] -> finalOpsOff (offset into `ops`), 0 if none. Read only once per match. */
-    public final int[] stateFinalOpsOff;
+    final int[] stateFinalOpsOff;
     /**
      * Flat ranges: [lo0, hi0, target0, opsOff0, requiredMask0,
      *               lo1, hi1, target1, opsOff1, requiredMask1, ...].
      * {@code requiredMask} is the assertion mask that must hold at the source position
      * for this transition to be live (intersection of source configs' masks).
      */
-    public final int[] ranges;
+    final int[] ranges;
     /** Per-entry running max of hi within each state, index-aligned with ranges
      *  entries (entry i of state s at stateBase[s]+i). Enables lo-binary-search +
      *  prefix-max-terminated backward walk — O(log cnt + overlap) range lookup. */
-    public final int[] entryHiPrefix;
+    final int[] entryHiPrefix;
     /** Flat ops: [op, dst, src, ...] blocks terminated by OP_END=0. Transition ops + final ops share this array. */
-    public final int[] ops;
+    final int[] ops;
 
     public static final int OP_SET_POS = 1;
     public static final int OP_SET_NIL = 2;
@@ -190,6 +190,85 @@ public final class Tdfa {
 
     /** True if start state's entry mask requires {@link Tnfa#BEGIN_TEXT} (limits find() to pos 0). */
     public boolean startRequiresBeginText() { return (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0; }
+
+
+    // ===== public read accessors (fields are package-private; asm generation
+    // and external consumers read through these) =====
+
+    /** Number of capture tags (2 per group, 1-indexed). */
+    public int tagCount() { return tagCount; }
+
+    /** Number of capturing groups (excluding group 0). */
+    public int groupCount() { return groupCount; }
+
+    /** Unmodifiable name&rarr;index map for named capturing groups. */
+    public java.util.Map<String, Integer> namedGroups() { return namedGroups; }
+
+    /** Total register count (working + final blocks). */
+    public int registerCount() { return registerCount; }
+
+    /** Offset of the final-register block within the runtime register file. */
+    public int finalRegBase() { return finalRegBase; }
+
+    /** Start state id. */
+    public int startState() { return startState; }
+
+    /** Number of DFA states. */
+    public int stateCount() { return stateCount; }
+
+    /** Per-state packed metadata: accept bit + range count (see {@link #accept}, {@link #rangeCount}). */
+    public int[] stateMeta() { return stateMeta; }
+
+    /** Per-state base index into {@link #ranges()}. */
+    public int[] stateBase() { return stateBase; }
+
+    /** Per-state final-ops offset into {@link #ops()}, 0 if none. */
+    public int[] stateFinalOpsOff() { return stateFinalOpsOff; }
+
+    /** Flat transition ranges: [lo, hi, target, opsOff, requiredMask] quintets. */
+    public int[] ranges() { return ranges; }
+
+    /** Per-entry prefix-max of hi within each state, index-aligned with {@link #ranges()}. */
+    public int[] entryHiPrefix() { return entryHiPrefix; }
+
+    /** Flat register ops: [op, dst, src] triplets, blocks terminated by {@link #OP_END}. */
+    public int[] ops() { return ops; }
+
+    /** Per-state entry assertion masks (BEGIN_TEXT/END_TEXT/WORD_BOUNDARY/...). */
+    public int[] stateEntryMask() { return stateEntryMask; }
+
+    /** Per-state accept assertion masks (subset of {@link #stateEntryMask()}). */
+    public int[] stateAcceptMask() { return stateAcceptMask; }
+
+    /** Mask required to take the start state (limits find() start positions). */
+    public int startStateEntryMask() { return startStateEntryMask; }
+
+    /** True iff compiled for leftmost-longest (LONGEST_MATCH) semantics. */
+    public boolean longestMatch() { return longestMatch; }
+
+    /** Leftmost-first stop-on-accept decision table ([state*64 + posFlags]), longest-match mode only. */
+    public int[] stopOnAcceptMask() { return stopOnAcceptMask; }
+
+    /** {@code (?m)} — {@code ^}/{@code $} at line boundaries. */
+    public boolean multiline() { return multiline; }
+
+    /** Unicode-aware word boundary ({@code (?u)}). */
+    public boolean unicodeWordBoundary() { return unicodeWordBoundary; }
+
+    /** Word-character ranges for Unicode-aware {@code \b}, or {@code null}. */
+    public int[] wordRanges() { return wordRanges; }
+
+    /** Fixed-tag base annotations (BT22 §6.4), or {@code null} when none fixed. */
+    public int[] fixedBase() { return fixedBase; }
+
+    /** Fixed-tag offset annotations (BT22 §6.4). */
+    public int[] fixedOffset() { return fixedOffset; }
+
+    /** Per-state fallback classification (BT22 §6.2). */
+    public boolean[] stateIsFallback() { return stateIsFallback; }
+
+    /** Per-state fallback-ops offset into {@link #ops()}, 0 if none. */
+    public int[] stateFallbackOpsOff() { return stateFallbackOpsOff; }
 
     /** Compile with Perl leftmost-first semantics (the ecosystem default). */
     public static Tdfa compile(Tnfa nfa) { return compile(nfa, false); }
