@@ -1,6 +1,8 @@
 package io.github.jemmix.tdfa.bench;
 
-import io.github.jemmix.tdfa.EngineFactory;
+import io.github.jemmix.tdfa.core.RegexEngine;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 
@@ -88,11 +90,11 @@ public class ShortFindBench {
                     findOnce = s -> p.find(s);
                 }
                 case "vm" -> {
-                    var p = io.github.jemmix.tdfa.re2j.Pattern.compile(regex, 0, EngineFactory.VM);
+                    var p = io.github.jemmix.tdfa.Pattern.compile(regex, 0, TdfaRunner::new);
                     findOnce = s -> { var m = p.matcher(s); return m.find(); };
                 }
                 case "asm" -> {
-                    var p = io.github.jemmix.tdfa.re2j.Pattern.compile(regex, 0, EngineFactory.ASM);
+                    var p = io.github.jemmix.tdfa.Pattern.compile(regex);
                     findOnce = s -> { var m = p.matcher(s); return m.find(); };
                 }
                 default -> throw new UnsupportedOperationException(engine);

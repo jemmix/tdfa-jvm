@@ -1,13 +1,14 @@
 package io.github.jemmix.tdfa.bench;
 
-import io.github.jemmix.tdfa.EngineFactory;
-import io.github.jemmix.tdfa.Regex;
+import io.github.jemmix.tdfa.core.RegexEngine;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.Pattern;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
-import java.util.regex.Pattern;
 
 /**
  * Tight-loop short-input benchmark. Uses @OperationsPerInvocation(10_000) so JMH reports
@@ -57,8 +58,8 @@ public class ParameterizedShortInputBench {
             };
 
             switch (engine) {
-                case "tdfa" -> matches = Regex.compile(regex, EngineFactory.VM)::matches;
-                case "asmc" -> matches = Regex.compile(regex, EngineFactory.ASM)::matches;
+                case "tdfa" -> matches = Pattern.compile(regex, 0, TdfaRunner::new)::matches;
+                case "asmc" -> matches = Pattern.compile(regex)::matches;
                 case "jur" -> {
                     var pattern = Pattern.compile(regex);
                     matches = s -> pattern.matcher(s).matches();

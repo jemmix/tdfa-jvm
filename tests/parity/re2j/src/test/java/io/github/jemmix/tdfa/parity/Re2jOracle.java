@@ -1,6 +1,8 @@
 package io.github.jemmix.tdfa.parity;
 
-import io.github.jemmix.tdfa.EngineFactory;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import io.github.jemmix.tdfa.core.Matcher;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -12,16 +14,21 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Oracle helpers: compile each pattern in both com.google.re2j (upstream) and
  * io.github.jemmix.tdfa.re2j (our shim), then compare results.
  *
- * Every tdfa helper accepts an {@link EngineFactory} so tests can run on both
+ * Every tdfa helper accepts an {@link RegexEngineFactory} so tests can run on both
  * ASM and VM backends via {@code @MethodSource("engineFactories")}.
  */
 public final class Re2jOracle {
 
     private Re2jOracle() {}
 
-    /** Provides both built-in engines for parameterized tests. */
-    public static Stream<EngineFactory> engineFactories() {
-        return Stream.of(EngineFactory.ASM, EngineFactory.VM);
+    /**
+     * Engine compositions for parameterized tests: {@code null} = default
+     * per-pattern generation (ASM); {@code TdfaRunner::new} = bring-your-own
+     * interpreter via the generic shell — exercising BYO-engine composition
+     * through every parity case.
+     */
+    public static Stream<RegexEngineFactory> engineFactories() {
+        return Stream.<RegexEngineFactory>of(null, TdfaRunner::new);
     }
 
     // ---- re2j helpers (no engine parameter — upstream oracle) ----
@@ -66,9 +73,9 @@ public final class Re2jOracle {
     private static final io.github.jemmix.tdfa.unicode.UnicodeDataProvider UNICODE =
             com.google.re2j.Re2jUnicodeProvider.INSTANCE;
 
-    public static int[] tdfaFind(String pattern, String input, EngineFactory factory) {
-        io.github.jemmix.tdfa.re2j.Matcher m =
-                io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, factory, UNICODE).matcher(input);
+    public static int[] tdfaFind(String pattern, String input, RegexEngineFactory factory) {
+        Matcher m =
+                io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory, UNICODE).matcher(input);
         if (!m.find()) return null;
         int gc = m.groupCount();
         int[] out = new int[2 + 2 * gc];
@@ -80,10 +87,10 @@ public final class Re2jOracle {
         return out;
     }
 
-    public static int[] tdfaFindPosix(String pattern, String input, EngineFactory factory) {
-        io.github.jemmix.tdfa.re2j.Matcher m =
-                io.github.jemmix.tdfa.re2j.Pattern.compile(pattern,
-                        io.github.jemmix.tdfa.re2j.Pattern.LONGEST_MATCH, factory, UNICODE).matcher(input);
+    public static int[] tdfaFindPosix(String pattern, String input, RegexEngineFactory factory) {
+        Matcher m =
+                io.github.jemmix.tdfa.Pattern.compile(pattern,
+                        io.github.jemmix.tdfa.Pattern.LONGEST_MATCH, factory, UNICODE).matcher(input);
         if (!m.find()) return null;
         int gc = m.groupCount();
         int[] out = new int[2 + 2 * gc];
@@ -95,46 +102,46 @@ public final class Re2jOracle {
         return out;
     }
 
-    public static List<String> tdfaFindAll(String pattern, String input, EngineFactory factory) {
+    public static List<String> tdfaFindAll(String pattern, String input, RegexEngineFactory factory) {
         List<String> out = new ArrayList<>();
-        io.github.jemmix.tdfa.re2j.Matcher m =
-                io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, factory, UNICODE).matcher(input);
+        Matcher m =
+                io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory, UNICODE).matcher(input);
         while (m.find()) out.add(m.group());
         return out;
     }
 
     // ---- assertSame helpers ----
 
-    public static void assertSameFind(String pattern, String input, EngineFactory factory) {
+    public static void assertSameFind(String pattern, String input, RegexEngineFactory factory) {
         int[] expected = re2jFind(pattern, input);
         int[] actual = tdfaFind(pattern, input, factory);
         assertThat(actual).as("pattern=\"%s\" input=\"%s\" [%s]", pattern, input, factory)
                 .isEqualTo(expected);
     }
 
-    public static void assertSameFindPosix(String pattern, String input, EngineFactory factory) {
+    public static void assertSameFindPosix(String pattern, String input, RegexEngineFactory factory) {
         int[] expected = re2jFindPosix(pattern, input);
         int[] actual = tdfaFindPosix(pattern, input, factory);
         assertThat(actual).as("POSIX pattern=\"%s\" input=\"%s\" [%s]", pattern, input, factory)
                 .isEqualTo(expected);
     }
 
-    public static void assertSameAllMatches(String pattern, String input, EngineFactory factory) {
+    public static void assertSameAllMatches(String pattern, String input, RegexEngineFactory factory) {
         List<String> expected = re2jFindAll(pattern, input);
         List<String> actual = tdfaFindAll(pattern, input, factory);
         assertThat(actual).as("findAll pattern=\"%s\" input=\"%s\" [%s]", pattern, input, factory)
                 .isEqualTo(expected);
     }
 
-    public static void assertSameCompileSuccess(String pattern, EngineFactory factory) {
+    public static void assertSameCompileSuccess(String pattern, RegexEngineFactory factory) {
         com.google.re2j.Pattern.compile(pattern);
-        io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, factory, UNICODE);
+        io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory, UNICODE);
     }
 
-    public static void assertSameCompileReject(String pattern, EngineFactory factory) {
+    public static void assertSameCompileReject(String pattern, RegexEngineFactory factory) {
         boolean re2jThrew = false, tdfaThrew = false;
         try { com.google.re2j.Pattern.compile(pattern); } catch (Exception e) { re2jThrew = true; }
-        try { io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, factory, UNICODE); } catch (Exception e) { tdfaThrew = true; }
+        try { io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory, UNICODE); } catch (Exception e) { tdfaThrew = true; }
         assertThat(re2jThrew).as("re2j should reject: %s", pattern).isTrue();
         assertThat(tdfaThrew).as("tdfa should reject: %s [%s]", pattern, factory).isTrue();
     }

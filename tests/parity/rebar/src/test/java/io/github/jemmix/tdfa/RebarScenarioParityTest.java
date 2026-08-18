@@ -3,8 +3,10 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.ast.Ast;
 import io.github.jemmix.tdfa.ast.CharClass;
 import io.github.jemmix.tdfa.parser.Parser;
-import io.github.jemmix.tdfa.re2j.Matcher;
-import io.github.jemmix.tdfa.re2j.Pattern;
+import io.github.jemmix.tdfa.core.Matcher;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import io.github.jemmix.tdfa.Pattern;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.rebar.Scenario;
 import io.github.jemmix.tdfa.rebar.ScenarioLoader;
 import org.junit.jupiter.api.AfterAll;
@@ -47,7 +49,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * inline flag.
  *
  * <p><b>Backend coverage:</b> every (scenario, backend) pair runs as its own
- * parameterized test case — {@link EngineFactory#ASM} and {@link EngineFactory#VM}
+ * parameterized test case — generated (ASM) and bring-your-own interpreter (VM) compositions
  * each compile and run the same regex against the same haystack. A divergence
  * between the two engines shows up directly as a test failure rather than
  * being silently masked by a retry. The ASM backend handles every in-scope
@@ -128,27 +130,27 @@ class RebarScenarioParityTest {
 
     /**
      * Cross-product of every in-scope scenario with both built-in backends
-     * ({@link EngineFactory#ASM} and {@link EngineFactory#VM}). Each
+     * (generated (ASM) and bring-your-own interpreter (VM) compositions). Each
      * (scenario, backend) pair becomes its own test case, so a divergence
      * between the two engines on the same regex shows up directly in the
      * test report. The test name includes {@code [ASM]} or {@code [VM]} so
      * IDE / CI output identifies the engine at a glance.
      */
     static Stream<Arguments> scenariosProvider() {
-        return scenarios.stream().flatMap(s -> Stream.of(EngineFactory.ASM, EngineFactory.VM).map(f -> Arguments.of(
+        return scenarios.stream().flatMap(s -> Stream.of((RegexEngineFactory) null, (RegexEngineFactory) TdfaRunner::new).map(f -> Arguments.of(
                 /*displayName=*/ s.fullName() + "  want=" + s.expectedCount()
                         + "  /" + abbrev(s.regex(), 60) + "/  [" + labelFor(f) + "]",
                 /*scenario=*/ s,
                 /*factory=*/ f)));
     }
 
-    static String labelFor(EngineFactory f) {
-        return f == EngineFactory.ASM ? "ASM" : f == EngineFactory.VM ? "VM" : "?";
+    static String labelFor(RegexEngineFactory f) {
+        return f == null ? "ASM" : "VM";
     }
 
     @ParameterizedTest(name = "[{index}] {0}")
     @MethodSource("scenariosProvider")
-    void runScenarioThroughTdfa(String displayName, Scenario s, EngineFactory factory) throws Exception {
+    void runScenarioThroughTdfa(String displayName, Scenario s, RegexEngineFactory factory) throws Exception {
         // Models we run; regex-redux is the only intentionally-skipped model
         // (bespoke embedded-regex harness, ~1–2 scenarios — see PARITY-PLAN §4.3).
         Set<String> supportedModels = Set.of("count", "count-spans", "count-captures",

@@ -61,9 +61,7 @@ public final class CompiledRegex {
             UnicodeDataProvider provider = options.unicodeProvider() != null
                     ? options.unicodeProvider() : UnicodeProviders.get();
             Tnfa nfa = Tnfa.compile(pattern, options.isDisableUnicodeGroups(), anchorBoth, provider);
-            Tdfa tdfa = Tdfa.compile(nfa, options.isLongestMatch()
-                    ? io.github.jemmix.tdfa.tdfa.Disambiguation.POSIX
-                    : io.github.jemmix.tdfa.tdfa.Disambiguation.PERL);
+            Tdfa tdfa = Tdfa.compile(nfa, options.isLongestMatch());
             return new io.github.jemmix.tdfa.tdfa.TdfaRunner(tdfa);
         } catch (PatternSyntaxException e) {
             throw e;
@@ -77,7 +75,7 @@ public final class CompiledRegex {
      * with re2j's exact message format (including the special-cased
      * {@code \C} escape message re2j's test suite exact-matches on).
      */
-    static PatternSyntaxException translate(RuntimeException e, String pattern) {
+    public static PatternSyntaxException translate(RuntimeException e, String pattern) {
         String msg = e.getMessage();
         PatternSyntaxException pse;
         if (msg != null) {

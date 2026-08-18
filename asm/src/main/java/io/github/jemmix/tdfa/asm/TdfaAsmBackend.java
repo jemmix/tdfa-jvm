@@ -1,6 +1,5 @@
 package io.github.jemmix.tdfa.asm;
 
-import io.github.jemmix.tdfa.Regex;
 import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
@@ -29,13 +28,9 @@ public final class TdfaAsmBackend {
     private static final String TDFA = "io/github/jemmix/tdfa/tdfa/Tdfa";
     private static final String TDFA_D = "L" + TDFA + ";";
 
-    public static RegexEngine compile(Tdfa tdfa) {
-        return generate(tdfa).engine();
-    }
-
     /** A per-pattern generation result: the engine instance plus the classloader
      *  that defines its class (and any additionally generated per-pattern classes,
-     *  e.g. the Regex/Pattern/Matcher tier) plus the Tdfa backing it. The loader
+     *  e.g. the facade Pattern/Matcher shell tier) plus the Tdfa backing it. The loader
      *  is unreferenced once the pattern is garbage → all its classes unload together. */
     public record Generated(RegexEngine engine, java.lang.ClassLoader loader, String owner, Tdfa tdfa) { }
 
@@ -72,33 +67,6 @@ public final class TdfaAsmBackend {
         }
     }
 
-    /**
-     * Core-API per-pattern generation: emit a Regex subclass whose overridden
-     * matches/find/findFrom call the generated engine class directly
-     * (monomorphic, inline end-to-end). Returns null on any emission problem —
-     * the caller falls back to the shared Regex shape via factory.create.
-     */
-    public static Regex generateRegex(Tdfa tdfa, int groupCount, int programSize,
-                                      java.util.Map<String, Integer> namedGroups) {
-        try {
-            Generated g = generate(tdfa);
-            return GenRegexEmitter.emit(g, groupCount, programSize, namedGroups);
-        } catch (Throwable t) {
-            return null;   // fall back to shared Regex
-        }
-    }
-
-    /** {@link #generateRegex} plus the {@link Generated} handle, for API layers
-     *  (re2j Pattern tier) that emit further per-pattern classes into the same
-     *  loader (Pattern/Matcher subclasses reaching the engine class directly). */
-    public record GeneratedRegex(Regex regex, Generated generated) { }
-
-    public static GeneratedRegex generateRegexWithHandle(Tdfa tdfa, int groupCount, int programSize,
-                                                         java.util.Map<String, Integer> namedGroups) {
-        Generated g = generate(tdfa);
-        return new GeneratedRegex(GenRegexEmitter.emit(g, groupCount, programSize, namedGroups), g);
-    }
-
     /** Dispatch mode picked at class-emit time, see {@link #pickMode}. */
     enum DispatchMode { INLINED, DELEGATE }
 
@@ -119,11 +87,12 @@ public final class TdfaAsmBackend {
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, owner, null, "java/lang/Object", new String[]{ENGINE});
         if (delegate) {
             // Minimal class: just an init storing the runner, and forwarding stubs
-            // for the Regex.Engine interface. No static tables, no <clinit>.
+            // for the RegexEngine interface. No static tables, no <clinit>.
             genDelegateInit(cw, owner);
             genDelegateMatches(cw, owner);
             genDelegateFind(cw, owner);
             genDelegateMatch(cw, owner);
+            genMetadataMethods(cw, owner);
         } else {
             genClinit(cw, tdfa, owner, fastPath);
             genInit(cw, owner, tdfa, fastPath);
@@ -139,6 +108,7 @@ public final class TdfaAsmBackend {
                 genIsWordBefore(cw, owner);
                 genIsWordAt(cw, owner);
             }
+            genMetadataMethods(cw, owner);
         }
         cw.visitEnd();
         return cw.toByteArray();
@@ -900,7 +870,7 @@ public final class TdfaAsmBackend {
     // ===== shared core: DFA walk + search loop =====
 
     private static void emitRunCore(MethodVisitor mv, Tdfa tdfa, String owner) {
-        final boolean perl = tdfa.perlMode;
+        final boolean perl = !tdfa.longestMatch;
         final int nStates = tdfa.stateCount;
         final int[] sm = tdfa.stateMeta, rg = tdfa.ranges, op = tdfa.ops, sfo = tdfa.stateFinalOpsOff;
 
@@ -1820,6 +1790,37 @@ public final class TdfaAsmBackend {
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "match", "(" + CS_D + "I)L" + RESULT + ";", false);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitMaxs(0, 0); mv.visitEnd();
+    }
+    /** RegexEngine metadata (groupCount/namedGroups/programSize), delegating to
+     *  the final {@code runner} field — monomorphic. Needed by both dispatch
+     *  modes since the generated class implements RegexEngine directly. */
+    private static void genMetadataMethods(ClassWriter cw, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "groupCount", "()I", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "groupCount", "()I", false);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "namedGroups", "()Ljava/util/Map;", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "namedGroups", "()Ljava/util/Map;", false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "programSize", "()I", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "programSize", "()I", false);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 
     // ===== fast-path eligibility =====

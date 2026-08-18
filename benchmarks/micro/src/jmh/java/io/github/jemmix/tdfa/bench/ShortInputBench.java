@@ -1,12 +1,13 @@
 package io.github.jemmix.tdfa.bench;
 
-import io.github.jemmix.tdfa.EngineFactory;
-import io.github.jemmix.tdfa.Regex;
+import io.github.jemmix.tdfa.core.RegexEngine;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.Pattern;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
 
 /**
  * Tight-loop short-input benchmark. Uses @OperationsPerInvocation(10_000) so JMH reports
@@ -25,33 +26,33 @@ public class ShortInputBench {
     static final int ITERS = 10_000;
 
     // (a|b)*c on "aabbc" — small alternation-under-repetition
-    static final Regex TDFA_ALT = Regex.compile("(a|b)*c", EngineFactory.VM);
-    static final Regex ASMC_ALT = Regex.compile("(a|b)*c", EngineFactory.ASM);
-    static final Pattern JUR_ALT = Pattern.compile("(a|b)*c");
+    static final Pattern TDFA_ALT = Pattern.compile("(a|b)*c", 0, TdfaRunner::new);
+    static final Pattern ASMC_ALT = Pattern.compile("(a|b)*c");
+    static final java.util.regex.Pattern JUR_ALT = java.util.regex.Pattern.compile("(a|b)*c");
     static final com.google.re2j.Pattern RE2J_ALT = com.google.re2j.Pattern.compile("(a|b)*c");
     static final com.datadoghq.reggie.runtime.ReggieMatcher REG_ALT = com.datadoghq.reggie.Reggie.compile("(a|b)*c");
     static final String IN_ALT = "aabbc";
 
     // (\w+)\s+(\w+) on "hello world" — realistic two-group
-    static final Regex TDFA_TWO = Regex.compile("(\\w+)\\s+(\\w+)", EngineFactory.VM);
-    static final Regex ASMC_TWO = Regex.compile("(\\w+)\\s+(\\w+)", EngineFactory.ASM);
-    static final Pattern JUR_TWO = Pattern.compile("(\\w+)\\s+(\\w+)");
+    static final Pattern TDFA_TWO = Pattern.compile("(\\w+)\\s+(\\w+)", 0, TdfaRunner::new);
+    static final Pattern ASMC_TWO = Pattern.compile("(\\w+)\\s+(\\w+)");
+    static final java.util.regex.Pattern JUR_TWO = java.util.regex.Pattern.compile("(\\w+)\\s+(\\w+)");
     static final com.google.re2j.Pattern RE2J_TWO = com.google.re2j.Pattern.compile("(\\w+)\\s+(\\w+)");
     static final com.datadoghq.reggie.runtime.ReggieMatcher REG_TWO = com.datadoghq.reggie.Reggie.compile("(\\w+)\\s+(\\w+)");
     static final String IN_TWO = "hello world";
 
     // IPv4 — four capture groups
-    static final Regex TDFA_IP = Regex.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", EngineFactory.VM);
-    static final Regex ASMC_IP = Regex.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", EngineFactory.ASM);
-    static final Pattern JUR_IP = Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)");
+    static final Pattern TDFA_IP = Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", 0, TdfaRunner::new);
+    static final Pattern ASMC_IP = Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)");
+    static final java.util.regex.Pattern JUR_IP = java.util.regex.Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)");
     static final com.google.re2j.Pattern RE2J_IP = com.google.re2j.Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)");
     static final com.datadoghq.reggie.runtime.ReggieMatcher REG_IP = com.datadoghq.reggie.Reggie.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)");
     static final String IN_IP = "192.168.1.1";
 
     // abc literal — baseline
-    static final Regex TDFA_LIT = Regex.compile("abc", EngineFactory.VM);
-    static final Regex ASMC_LIT = Regex.compile("abc", EngineFactory.ASM);
-    static final Pattern JUR_LIT = Pattern.compile("abc");
+    static final Pattern TDFA_LIT = Pattern.compile("abc", 0, TdfaRunner::new);
+    static final Pattern ASMC_LIT = Pattern.compile("abc");
+    static final java.util.regex.Pattern JUR_LIT = java.util.regex.Pattern.compile("abc");
     static final com.google.re2j.Pattern RE2J_LIT = com.google.re2j.Pattern.compile("abc");
     static final com.datadoghq.reggie.runtime.ReggieMatcher REG_LIT = com.datadoghq.reggie.Reggie.compile("abc");
     static final String IN_LIT = "abc";

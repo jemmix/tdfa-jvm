@@ -1,10 +1,10 @@
-package io.github.jemmix.tdfa.re2j;
+package io.github.jemmix.tdfa;
 
 import java.io.Serializable;
 
 /**
  * Serialization proxy for Pattern implementations: serializes only
- * {@code pattern + flags} and recompiles (with the default factory) on
+ * {@code pattern + flags} and recompiles (with the default engine) on
  * readResolve. This is what makes generated per-pattern Patterns — whose
  * classes live in a child classloader that will not exist in the reading
  * process — serializable without pinning generated classes.

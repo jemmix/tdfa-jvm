@@ -21,8 +21,8 @@ public class UTreeTest {
         System.err.println("pred chain OK");
 
         int[] height = {0, 1, 1, 2};
-        long r1 = PosixCompare.compare(n2, n2, 0, 0, U, height, null, 0);
-        if (PosixCompare.l(r1) != 0) { System.err.println("FAIL: same path l=" + PosixCompare.l(r1)); return; }
+        long r1 = GtopCompare.compare(n2, n2, 0, 0, U, height, null, 0);
+        if (GtopCompare.l(r1) != 0) { System.err.println("FAIL: same path l=" + GtopCompare.l(r1)); return; }
         System.err.println("compare(n2,n2) l=0 OK");
 
         // n2 path: [1, 2] (open g1, close g1). n4 path: [1, 3] (open g1, open g2).
@@ -30,20 +30,20 @@ public class UTreeTest {
         // After common-ancestor contribution: h1 = min(1,1) = 1, h2 = min(2,1) = 1.
         // Equal heights ⇒ leftprec tiebreak. tag 2 (close) wins over tag 3 (open).
         // l = -1 (c1 wins).
-        long r2 = PosixCompare.compare(n2, n4, 0, 0, U, height, null, 0);
-        System.err.println("compare(n2,n4): h1=" + PosixCompare.h1(r2) + " h2=" + PosixCompare.h2(r2) + " l=" + PosixCompare.l(r2));
-        if (PosixCompare.h1(r2) != 1) { System.err.println("FAIL: h1 expected 1, got " + PosixCompare.h1(r2)); return; }
-        if (PosixCompare.h2(r2) != 1) { System.err.println("FAIL: h2 expected 1, got " + PosixCompare.h2(r2)); return; }
-        if (PosixCompare.l(r2) != -1) { System.err.println("FAIL: l expected -1 (close wins over open), got " + PosixCompare.l(r2)); return; }
+        long r2 = GtopCompare.compare(n2, n4, 0, 0, U, height, null, 0);
+        System.err.println("compare(n2,n4): h1=" + GtopCompare.h1(r2) + " h2=" + GtopCompare.h2(r2) + " l=" + GtopCompare.l(r2));
+        if (GtopCompare.h1(r2) != 1) { System.err.println("FAIL: h1 expected 1, got " + GtopCompare.h1(r2)); return; }
+        if (GtopCompare.h2(r2) != 1) { System.err.println("FAIL: h2 expected 1, got " + GtopCompare.h2(r2)); return; }
+        if (GtopCompare.l(r2) != -1) { System.err.println("FAIL: l expected -1 (close wins over open), got " + GtopCompare.l(r2)); return; }
 
         // Test leftprec indirectly: n5 (close g1) vs n6 (open g1 then open g1 again).
         // Common ancestor: root. Divergent: tag 2 (close, h=1) vs tag 1 (open, h=1).
         // h1 = 1, h2 = 1 (after common = 1, 1). Equal. leftprec: close beats open. l = -1.
         int n5 = U.extend(U.root(), UTree.packInfo(2, false));
         int n6 = U.extend(U.extend(U.root(), UTree.packInfo(1, false)), UTree.packInfo(1, false));
-        long r3 = PosixCompare.compare(n5, n6, 0, 0, U, height, null, 0);
-        System.err.println("compare(n5,n6): h1=" + PosixCompare.h1(r3) + " h2=" + PosixCompare.h2(r3) + " l=" + PosixCompare.l(r3));
-        if (PosixCompare.l(r3) != -1) { System.err.println("FAIL: l expected -1 (close wins), got " + PosixCompare.l(r3)); return; }
+        long r3 = GtopCompare.compare(n5, n6, 0, 0, U, height, null, 0);
+        System.err.println("compare(n5,n6): h1=" + GtopCompare.h1(r3) + " h2=" + GtopCompare.h2(r3) + " l=" + GtopCompare.l(r3));
+        if (GtopCompare.l(r3) != -1) { System.err.println("FAIL: l expected -1 (close wins), got " + GtopCompare.l(r3)); return; }
 
         System.err.println("All UTree sanity checks passed.");
     }

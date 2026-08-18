@@ -52,6 +52,11 @@ public class Matcher {
         return reset();
     }
 
+    /** Reset with UTF-8-decoded bytes as the new input (re2j's {@code MatcherInput.utf8}). */
+    public Matcher reset(byte[] bytes) {
+        return reset(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
+    }
+
     // ---- match operations ----
 
     public boolean matches() {

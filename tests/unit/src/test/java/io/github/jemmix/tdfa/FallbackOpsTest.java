@@ -1,7 +1,8 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.tdfa.Disambiguation;
-import io.github.jemmix.tdfa.core.MatchResult;
+import io.github.jemmix.tdfa.core.Matcher;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -18,6 +19,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
  */
 class FallbackOpsTest {
 
+    private static Matcher match(Pattern p, String input) {
+        Matcher m = p.matcher(input);
+        return m.find() ? m : null;
+    }
+
     @Test
     void fallbackPreservesCapture() {
         // ([A-Z][a-z]+)+(,)?
@@ -25,7 +31,7 @@ class FallbackOpsTest {
         // letters (start of new word) — a fallback state. The 'W' transition
         // clobbers group 1's open register; without M3, falling back to the
         // "Hello" accept reports group 1 = [5,5) (clobbered) instead of [0,5).
-        Regex r = Regex.compile("([A-Z][a-z]+)+(,)?", EngineFactory.VM, Disambiguation.POSIX);
+        Pattern r = Pattern.compile("([A-Z][a-z]+)+(,)?", Pattern.LONGEST_MATCH, TdfaRunner::new);
         // Direct accept at "Hello" — no clobbering.
         check(r, "Hello", 0, 5, 0, 5, -1, -1);
         // Fallback after taking the 'W' transition (start of new word that
@@ -44,7 +50,7 @@ class FallbackOpsTest {
     void optionalGroupFallback() {
         // (a)(b)? — after "a" we're at a final state; trying 'b' on a non-'b'
         // char takes us through a non-accepting path before falling back.
-        Regex r = Regex.compile("(a)(b)?", EngineFactory.VM, Disambiguation.POSIX);
+        Pattern r = Pattern.compile("(a)(b)?", Pattern.LONGEST_MATCH, TdfaRunner::new);
         check(r, "a", 0, 1, 0, 1, -1, -1);
         check(r, "ab", 0, 2, 0, 1, 1, 2);
         check(r, "ax", 0, 1, 0, 1, -1, -1);
@@ -55,14 +61,14 @@ class FallbackOpsTest {
         // (\d+\.)+\d+ — IP-like. After "1.2." we're at an intermediate final
         // state; the trailing \d+ requires digits. If the next char isn't a
         // digit, we fall back to the shorter match "1.2" (one iter + last \d+).
-        Regex r = Regex.compile("(\\d+\\.)+\\d+", EngineFactory.VM, Disambiguation.POSIX);
+        Pattern r = Pattern.compile("(\\d+\\.)+\\d+", Pattern.LONGEST_MATCH, TdfaRunner::new);
         // Match succeeds all the way: "1.2.3".
-        MatchResult m1 = r.find("1.2.3", 0);
+        Matcher m1 = match(r, "1.2.3");
         assertNotNull(m1);
         assertEquals(0, m1.start(0));
         assertEquals(5, m1.end(0));
         // Trailing 'x' breaks the final \d+: longest match is "1.2".
-        MatchResult m = r.find("1.2.x", 0);
+        Matcher m = match(r, "1.2.x");
         assertNotNull(m);
         assertEquals(0, m.start(0));
         assertEquals(3, m.end(0));  // "1.2"
@@ -72,14 +78,14 @@ class FallbackOpsTest {
     void noFallbackWhenDfaIsTotal() {
         // Lexer-style alternation: last branch is '.', so every char matches
         // somewhere. No fallback states should be needed.
-        Regex r = Regex.compile("(\\w+)|(.)", EngineFactory.VM, Disambiguation.POSIX);
+        Pattern r = Pattern.compile("(\\w+)|(.)", Pattern.LONGEST_MATCH, TdfaRunner::new);
         check(r, "abc123", 0, 6, 0, 6, -1, -1);
         check(r, "!", 0, 1, -1, -1, 0, 1);
     }
 
-    private static void check(Regex r, String input,
+    private static void check(Pattern r, String input,
                               int g0s, int g0e, int g1s, int g1e, int g2s, int g2e) {
-        MatchResult m = r.find(input, 0);
+        Matcher m = match(r, input);
         assertNotNull(m, "expected match for \"" + input + "\"");
         assertEquals(g0s, m.start(0), "g0 start for \"" + input + "\"");
         assertEquals(g0e, m.end(0), "g0 end for \"" + input + "\"");

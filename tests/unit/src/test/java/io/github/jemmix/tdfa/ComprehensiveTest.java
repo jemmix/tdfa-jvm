@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.MatchResult;
+import io.github.jemmix.tdfa.core.Matcher;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -43,6 +44,11 @@ record Case(String pattern, String input, boolean match, int[] groups, String la
 }
 
 class ComprehensiveTest {
+
+    private static Matcher match(Pattern p, String input) {
+        Matcher m = p.matcher(input);
+        return m.find() ? m : null;
+    }
 
     static List<Case> cases() {
         List<Case> cases = new ArrayList<>();
@@ -212,14 +218,15 @@ class ComprehensiveTest {
     @ParameterizedTest(name = "{4}")
     @MethodSource("cases")
     void testVm(Case c) {
-        Regex r = Regex.compile(c.pattern(), EngineFactory.VM);
-        boolean result = c.useFind() ? r.find(c.input()) : r.matches(c.input());
+        Pattern r = Pattern.compile(c.pattern(), 0, TdfaRunner::new);
+        Matcher mm = r.matcher(c.input());
+        boolean result = c.useFind() ? mm.find() : mm.matches();
         assertThat(result)
                 .as("VM: %s (pattern=%s, input=%s)", c.label(), c.pattern(), c.input())
                 .isEqualTo(c.match());
 
         if (c.match() && c.groups() != null && r.groupCount() > 0) {
-            MatchResult m = r.find(c.input(), 0);
+            Matcher m = match(r, c.input());
             assertThat(m).as("VM match result").isNotNull();
             int[] expected = c.groups();
             for (int g = 0; g <= r.groupCount(); g++) {
@@ -236,14 +243,15 @@ class ComprehensiveTest {
     @ParameterizedTest(name = "{4}")
     @MethodSource("cases")
     void testAsm(Case c) {
-        Regex r = Regex.compile(c.pattern(), EngineFactory.ASM);
-        boolean result = c.useFind() ? r.find(c.input()) : r.matches(c.input());
+        Pattern r = Pattern.compile(c.pattern());
+        Matcher mm = r.matcher(c.input());
+        boolean result = c.useFind() ? mm.find() : mm.matches();
         assertThat(result)
                 .as("ASM: %s (pattern=%s, input=%s)", c.label(), c.pattern(), c.input())
                 .isEqualTo(c.match());
 
         if (c.match() && c.groups() != null && r.groupCount() > 0) {
-            MatchResult m = r.find(c.input(), 0);
+            Matcher m = match(r, c.input());
             assertThat(m).as("ASM match result").isNotNull();
             int[] expected = c.groups();
             for (int g = 0; g <= r.groupCount(); g++) {

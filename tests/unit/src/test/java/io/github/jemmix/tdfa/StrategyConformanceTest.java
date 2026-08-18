@@ -1,7 +1,12 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.MatchResult;
+import io.github.jemmix.tdfa.core.RegexEngine;
+import io.github.jemmix.tdfa.tdfa.Tdfa;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.tnfa.Tnfa;
+import io.github.jemmix.tdfa.unicode.UnicodeProviders;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -21,9 +26,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>Sweeps a shape catalog (fastPath, mask-bearing, literal, wide-unicode,
  * dense-candidate no-match, alternation) across length boundaries (around
- * CAND_SCAN_MAX=64, Latin-1 128/256, and the trigger window 2048) and both
- * API tiers (core {@link Regex}, re2j-compat {@code Pattern.matcher}), with
- * the trace hook enabled via {@link TdfaRunner#setTracing(boolean)}.
+ * CAND_SCAN_MAX=64, Latin-1 128/256, and the trigger window 2048), at the
+ * engine tier ({@link RegexEngine}) and through the facade
+ * ({@code Pattern.matcher}), with the trace hook enabled via
+ * {@link TdfaRunner#setTracing(boolean)}.
  */
 class StrategyConformanceTest {
 
@@ -55,12 +61,27 @@ class StrategyConformanceTest {
         TdfaRunner.setTracing(false);
     }
 
+    /** Interpreter engine over the compiled DFA. */
+    private static RegexEngine vm(String pattern) {
+        return new TdfaRunner(tdfa(pattern));
+    }
+
+    /** Generated engine over the same DFA. */
+    private static RegexEngine asm(String pattern) {
+        return TdfaAsmBackend.generate(tdfa(pattern)).engine();
+    }
+
+    private static Tdfa tdfa(String pattern) {
+        Tnfa nfa = Tnfa.compile(pattern, false, false, UnicodeProviders.get());
+        return Tdfa.compile(nfa, false);
+    }
+
     @Test
-    void coreRegexIdenticalStrategiesAndResults() {
+    void engineTierIdenticalStrategiesAndResults() {
         int checks = 0;
         for (String[] shape : SHAPES) {
-            Regex vm = Regex.compile(shape[0], EngineFactory.VM);
-            Regex asm = Regex.compile(shape[0], EngineFactory.ASM);
+            RegexEngine vm = vm(shape[0]);
+            RegexEngine asm = asm(shape[0]);
             for (int len : LENGTHS) {
                 String in = padTo(shape[1], len);
                 checks += compare(vm, asm, in, "core " + shape[0] + " len=" + len);
@@ -70,24 +91,25 @@ class StrategyConformanceTest {
     }
 
     @Test
-    void shimPatternIdenticalStrategiesAndResults() {
+    void facadeIdenticalStrategiesAndResults() {
         int checks = 0;
         for (String[] shape : SHAPES) {
-            var vm = io.github.jemmix.tdfa.re2j.Pattern.compile(shape[0], 0, EngineFactory.VM);
-            var asm = io.github.jemmix.tdfa.re2j.Pattern.compile(shape[0], 0, EngineFactory.ASM);
+            var vm = Pattern.compile(shape[0], 0, TdfaRunner::new);
+            var asm = Pattern.compile(shape[0]);
             for (int len : LENGTHS) {
                 String in = padTo(shape[1], len);
-                checks += compareShim(vm, asm, in, "shim " + shape[0] + " len=" + len);
+                checks += compareFacade(vm, asm, in, "facade " + shape[0] + " len=" + len);
             }
         }
         assertThat(checks).isGreaterThan(100);
     }
 
-    /** Generated-pattern sanity: the ASM shim returns generated Pattern/Matcher
-     *  classes (Gen* in a child loader) and they behave exactly like the VM shim. */
+    /** Generated-pattern sanity: the default compile returns generated
+     *  Pattern/Matcher classes (Gen* in a child loader) and they behave
+     *  exactly like the BYO-interpreter composition. */
     @Test
     void generatedPatternClassShapeAndBehavior() {
-        var p = io.github.jemmix.tdfa.re2j.Pattern.compile("[a-z]+\\d+", 0, EngineFactory.ASM);
+        var p = Pattern.compile("[a-z]+\\d+");
         assertThat(p.getClass().getSimpleName()).startsWith("Gen").endsWith("Pattern");
         var m = p.matcher("abc123 rest");
         assertThat(m.getClass().getSimpleName()).startsWith("Gen").endsWith("Matcher");
@@ -95,7 +117,7 @@ class StrategyConformanceTest {
         assertThat(m.group()).isEqualTo("abc123");
         // serialization proxy round-trip: pattern+flags, not generated classes
         assertThat(p).hasToString("[a-z]+\\d+");
-        var p2 = io.github.jemmix.tdfa.re2j.Pattern.compile("[a-z]+\\d+", 0, EngineFactory.VM);
+        var p2 = Pattern.compile("[a-z]+\\d+", 0, TdfaRunner::new);
         assertThat(p).isEqualTo(p2);   // state-based equality across impls
     }
 
@@ -105,7 +127,7 @@ class StrategyConformanceTest {
         return base;
     }
 
-    private static int compare(Regex vm, Regex asm, String in, String ctx) {
+    private static int compare(RegexEngine vm, RegexEngine asm, String in, String ctx) {
         // find()
         TdfaRunner.traceSnapshot();
         boolean f1 = vm.find(in);
@@ -114,11 +136,11 @@ class StrategyConformanceTest {
         List<TdfaRunner.Strategy> t2 = TdfaRunner.traceSnapshot();
         assertThat(f2).as("%s: find result", ctx).isEqualTo(f1);
         assertThat(t2).as("%s: find strategy trace (vm=%s)", ctx, t1).isEqualTo(t1);
-        // find(in, 0)
+        // match(in, 0)
         TdfaRunner.traceSnapshot();
-        MatchResult m1 = vm.find(in, 0);
+        MatchResult m1 = vm.match(in, 0);
         t1 = TdfaRunner.traceSnapshot();
-        MatchResult m2 = asm.find(in, 0);
+        MatchResult m2 = asm.match(in, 0);
         t2 = TdfaRunner.traceSnapshot();
         assertSameResult(m1, m2, ctx);
         assertThat(t2).as("%s: extract strategy trace (vm=%s)", ctx, t1).isEqualTo(t1);
@@ -133,21 +155,19 @@ class StrategyConformanceTest {
         return 9;
     }
 
-    private static int compareShim(io.github.jemmix.tdfa.re2j.Pattern vm,
-                                   io.github.jemmix.tdfa.re2j.Pattern asm,
-                                   String in, String ctx) {
+    private static int compareFacade(Pattern vm, Pattern asm, String in, String ctx) {
         // Matcher iteration: find() until exhausted, then matches() on a fresh matcher
         var m1 = vm.matcher(in);
         var m2 = asm.matcher(in);
         int n1 = 0, n2 = 0;
         while (m1.find()) {
             n1++;
-            assertThat(m2.find()).as("%s: shim find #%d", ctx, n1).isTrue();
-            assertThat(m2.group()).as("%s: shim group #%d", ctx, n1).isEqualTo(m1.group());
+            assertThat(m2.find()).as("%s: facade find #%d", ctx, n1).isTrue();
+            assertThat(m2.group()).as("%s: facade group #%d", ctx, n1).isEqualTo(m1.group());
             n2++;
         }
         while (m2.find()) n2++;
-        assertThat(n2).as("%s: shim match count", ctx).isEqualTo(n1);
+        assertThat(n2).as("%s: facade match count", ctx).isEqualTo(n1);
         assertThat(vm.matcher(in).matches()).isEqualTo(asm.matcher(in).matches());
         return 1;
     }

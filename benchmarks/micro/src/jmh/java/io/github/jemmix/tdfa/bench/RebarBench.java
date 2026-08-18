@@ -1,6 +1,8 @@
 package io.github.jemmix.tdfa.bench;
 
-import io.github.jemmix.tdfa.EngineFactory;
+import io.github.jemmix.tdfa.core.RegexEngine;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.ast.Ast;
 import io.github.jemmix.tdfa.ast.CharClass;
 import io.github.jemmix.tdfa.parser.Parser;
@@ -160,23 +162,23 @@ public final class RebarBench {
         }
     };
 
-    static Engine tdfa(EngineFactory factory, String name) {
+    static Engine tdfa(RegexEngineFactory factory, String name) {
         return new Engine() {
             @Override public String name() { return name; }
             @Override public Object compile(String regex, boolean ci, boolean uni) {
-                int f = (ci ? io.github.jemmix.tdfa.re2j.Pattern.CASE_INSENSITIVE : 0)
-                        | (uni ? io.github.jemmix.tdfa.re2j.Pattern.UNICODE_CHARACTER_CLASS : 0);
-                return io.github.jemmix.tdfa.re2j.Pattern.compile(regex, f, factory);
+                int f = (ci ? io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE : 0)
+                        | (uni ? io.github.jemmix.tdfa.Pattern.UNICODE_CHARACTER_CLASS : 0);
+                return io.github.jemmix.tdfa.Pattern.compile(regex, f, factory);
             }
             @Override public M matcher(Object p, CharSequence cs) {
-                io.github.jemmix.tdfa.re2j.Matcher m =
-                        ((io.github.jemmix.tdfa.re2j.Pattern) p).matcher(cs);
+                io.github.jemmix.tdfa.core.Matcher m =
+                        ((io.github.jemmix.tdfa.Pattern) p).matcher(cs);
                 return new ReflectFreeAdapter(m::reset, m::find, m::start, m::end, m::start, m::groupCount);
             }
         };
     }
 
-    static final Engine[] ENGINES = { JUR, RE2J, REGGIE, tdfa(EngineFactory.VM, "vm"), tdfa(EngineFactory.ASM, "asm") };
+    static final Engine[] ENGINES = { JUR, RE2J, REGGIE, tdfa(TdfaRunner::new, "vm"), tdfa(null, "asm") };
 
     // ===== rebar models, engine-agnostic (ports of RebarScenarioParityTest) =====
 

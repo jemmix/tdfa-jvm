@@ -11,7 +11,7 @@ import java.util.List;
  * are shared (append-only; parent index {@code <} child index). A path is
  * addressed by its leaf node index; copying a path = copying an int.
  *
- * <p>The two-fingers fork-finding algorithm in {@link PosixCompare} walks two
+ * <p>The two-fingers fork-finding algorithm in {@link GtopCompare} walks two
  * paths upward via {@link #pred(int)} until they meet, taking the running
  * minimum of tag heights (the "trace" of BT19 §8).
  *

@@ -56,11 +56,12 @@ public final class Tdfa {
     public final int startStateEntryMask;
 
     /**
-     * True iff this TDFA was compiled for Perl (leftmost-first) disambiguation.
-     * In Perl mode the runner stops at the first accept (highest-priority path);
-     * in POSIX mode it continues stepping to find the longest match.
+     * True iff this TDFA was compiled for leftmost-longest semantics
+     * (re2j {@code LONGEST_MATCH}): the runner keeps stepping past accepts to
+     * find the longest match. False means Perl leftmost-first — the runner
+     * stops at the first accept on the highest-priority path.
      */
-    public final boolean perlMode;
+    public final boolean longestMatch;
     public final boolean multiline;
     /**
      * True iff the DFA was compiled with Unicode-aware shorthand ({@code (?u)}),
@@ -149,7 +150,7 @@ public final class Tdfa {
     private Tdfa(int tagCount, int groupCount, java.util.Map<String, Integer> namedGroups, int registerCount, int finalRegBase, int startState, int stateCount,
                  int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] ranges, int[] ops,
                  int[] entryHiPrefix,
-                 int[] stateEntryMask, int[] stateAcceptMask, boolean perlMode, int[] stopOnAcceptMask, boolean multiline,
+                 int[] stateEntryMask, int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, boolean multiline,
                  boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset,
                  boolean[] stateIsFallback, int[] stateFallbackOpsOff) {
         this.tagCount = tagCount; this.groupCount = groupCount;
@@ -167,7 +168,7 @@ public final class Tdfa {
         this.stateEntryMask = stateEntryMask;
         this.stateAcceptMask = stateAcceptMask;
         this.startStateEntryMask = stateEntryMask[startState];
-        this.perlMode = perlMode;
+        this.longestMatch = longestMatch;
         this.stopOnAcceptMask = stopOnAcceptMask;
         this.multiline = multiline;
         this.unicodeWordBoundary = unicodeWordBoundary;
@@ -190,10 +191,12 @@ public final class Tdfa {
     /** True if start state's entry mask requires {@link Tnfa#BEGIN_TEXT} (limits find() to pos 0). */
     public boolean startRequiresBeginText() { return (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0; }
 
-    public static Tdfa compile(Tnfa nfa) { return compile(nfa, Disambiguation.POSIX); }
+    /** Compile with Perl leftmost-first semantics (the ecosystem default). */
+    public static Tdfa compile(Tnfa nfa) { return compile(nfa, false); }
 
-    public static Tdfa compile(Tnfa nfa, Disambiguation disamb) {
-        return new Compiler(nfa, disamb).compile();
+    /** @param longestMatch true for leftmost-longest, false for leftmost-first. */
+    public static Tdfa compile(Tnfa nfa, boolean longestMatch) {
+        return new Compiler(nfa, longestMatch).compile();
     }
 
     /** Toggle post-determinization minimization (Moore's algorithm). Default on; disable with -Dtdfa.nominimize. */
@@ -236,8 +239,11 @@ public final class Tdfa {
         final int[] finalRegisters;
         /** Equivalence-class breakpoints across the BMP. */
         final int[] breakpoints;
-        /** If true, suppress lower-priority paths past an accept (Perl leftmost-first). */
-        final boolean perl;
+        /** If true, leftmost-longest semantics (keep stepping past accepts); if false, Perl leftmost-first (suppress lower-priority paths past an accept). */
+        final boolean longest;
+
+        /** Master switch for the dormant BT19 §7 prectable machinery (see compile()). */
+        private static final boolean COMPUTE_PRECTABLES = false;
 
         /**
          * Multimap from DFA-state shape key to the list of DFA-state IDs that
@@ -268,9 +274,9 @@ public final class Tdfa {
         /** Global register allocator counter; bumped monotonically across all states. */
         int nextReg;
 
-        Compiler(Tnfa nfa) { this(nfa, Disambiguation.POSIX); }
+        Compiler(Tnfa nfa) { this(nfa, false); }
 
-        Compiler(Tnfa nfa, Disambiguation disamb) {
+        Compiler(Tnfa nfa, boolean longestMatch) {
             this.nfa = nfa;
             this.tags = nfa.tagCount;
             this.epsOut = sortedOutgoing(nfa.epsFrom, nfa.epsPri);
@@ -280,7 +286,7 @@ public final class Tdfa {
             for (int t = 0; t < tags; t++) initialRegisters[t] = t;
             for (int t = 0; t < tags; t++) finalRegisters[t] = tags + t;
             this.breakpoints = computeBreakpoints();
-            this.perl = (disamb == Disambiguation.PERL);
+            this.longest = longestMatch;
             // Tag heights: group g → tags 2g-1, 2g → height g.
             // Index 0 unused (tags are 1-based). ntags (-tag) use height of |tag|.
             this.tagHeights = new int[tags + 1];
@@ -337,17 +343,16 @@ public final class Tdfa {
             if (debug) System.err.println("[tdfa] tags=" + tags + " breakpoints=" + breakpoints.length);
             List<Config> initSeed = List.of(
                     new Config(nfa.start, initialRegisters, EMPTY, EMPTY, 0));
-            List<Config> initClosure = perl
-                    ? epsilonClosure(initSeed)
-                    : closurePosix(initSeed, null, 0);
+            List<Config> initClosure = longest
+                    ? closureGtop(initSeed, null, 0)
+                    : epsilonClosure(initSeed);
             int startId = addState(initClosure, null, initSeed).targetId;
-            // Prectables are O(closure²) per state and currently UNUSED: closurePosix
-            // delegates to epsilonClosure (heuristic DFS order) and posixCompareExisting
+            // Prectables are O(closure²) per state and currently UNUSED: closureGtop
+            // delegates to epsilonClosure (heuristic DFS order) and compareExisting
             // is a TEMP no-op — the BT19 §7 closure_gtop activation (TODO "Feature
             // parity") is what will consume them. Skipping saves real compile time on
-            // POSIX-mode DFAs (RE2.compile builds one); flip this off when activating.
-            final boolean COMPUTE_PRECTABLES = false;
-            if (!perl && COMPUTE_PRECTABLES) statePrectables.add(computePrectable(initClosure, null, 0));
+            // longest-match DFAs; flip COMPUTE_PRECTABLES on when activating.
+            if (longest && COMPUTE_PRECTABLES) statePrectables.add(computePrectable(initClosure, null, 0));
             else statePrectables.add(null);
             work.push(startId);
 
@@ -408,18 +413,18 @@ public final class Tdfa {
                         int requiredMask = groupMask;
                         List<Config> closed;
                         int[] newPrectable;
-                        if (perl) {
+                        if (!longest) {
                             closed = epsilonClosure(stepped);
                             newPrectable = null;
                         } else {
                             int[] parentPrectable = COMPUTE_PRECTABLES ? statePrectables.get(sid) : null;
-                            closed = closurePosix(stepped, parentPrectable, cur.size());
+                            closed = closureGtop(stepped, parentPrectable, cur.size());
                             newPrectable = COMPUTE_PRECTABLES ? computePrectable(closed, parentPrectable, cur.size()) : null;
                         }
                         if (debug && closed.size() > 100) System.err.println("[tdfa] state " + sid + " range " + rangeLo + ".." + rangeHi + " closure=" + closed.size());
                         int[] ops = transitionRegops(closed, sid);
                         AddResult ar = addState(closed, ops, stepped);
-                        if (!perl) {
+                        if (longest) {
                             // Ensure prectable slot exists for the target state.
                             while (statePrectables.size() <= ar.targetId) statePrectables.add(null);
                             if (statePrectables.get(ar.targetId) == null) {
@@ -479,7 +484,7 @@ public final class Tdfa {
                 // outranks accept in that order. If yes, NEVER_STOP (extend);
                 // else 0 (stop). Accept-unreachable-under-M also gets NEVER_STOP
                 // (no accept to stop on; runner's sam check filters anyway).
-                if (perl && anyAccept) {
+                if (!longest && anyAccept) {
                     List<Config> seed = stateSeeds.get(s);
                     for (int M = 0; M < 64; M++) {
                         int[] perStateOrder = computePerStateOrder(seed, M);
@@ -619,7 +624,7 @@ public final class Tdfa {
             if (MINIMIZE_ENABLED && n > 1 && n <= MINIMIZE_MAX_STATES) {
                 DfaMinimizer m = new DfaMinimizer(n, stateMeta, stateBase, stateFinalOpsOff,
                         flatRanges, flatOps, stateEntryMask, stateAcceptMask,
-                        stateStopOnAcceptMask, perl);
+                        stateStopOnAcceptMask, longest);
                 int[] partition = m.computePartition();
                 int newN = 0;
                 for (int p : partition) newN = Math.max(newN, p + 1);
@@ -649,7 +654,7 @@ public final class Tdfa {
                     minAcceptMask = new int[newN];
                     minStopMask = new int[newN * 64];
                     minRanges = new int[newTotalRanges * 5];
-                    if (!perl) java.util.Arrays.fill(minStopMask, NEVER_STOP);
+                    if (longest) java.util.Arrays.fill(minStopMask, NEVER_STOP);
                     int minRangesHead = 0;
                     for (int g = 0; g < newN; g++) {
                         int r = rep[g];
@@ -658,7 +663,7 @@ public final class Tdfa {
                         minFinalOpsOff[g] = stateFinalOpsOff[r];
                         minEntryMask[g] = stateEntryMask[r];
                         minAcceptMask[g] = stateAcceptMask[r];
-                        if (perl) {
+                        if (!longest) {
                             System.arraycopy(stateStopOnAcceptMask, r * 64, minStopMask, g * 64, 64);
                         }
                         int base = stateBase[r];
@@ -735,7 +740,7 @@ public final class Tdfa {
             }
             return new Tdfa(tags, nfa.groupCount, nfa.namedGroups, globalMaxReg, finalRegBase, 0, stateCount,
                     minMeta, minBase, minFinalOpsOff, minRanges, flatOps, minHiPrefix,
-                    minEntryMask, minAcceptMask, perl, minStopMask, nfa.multiline,
+                    minEntryMask, minAcceptMask, longest, minStopMask, nfa.multiline,
                     nfa.unicodeWordBoundary, nfa.wordRanges,
                     hasFixed(nfa.fixedBase) ? nfa.fixedBase : null,
                     hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null,
@@ -918,26 +923,28 @@ public final class Tdfa {
                     } else {
                         newL = appendTag(c.l, tag);
                     }
-                    // In POSIX mode, extend UTree path with ALL non-zero tags (incl. ntags).
+                    // In longest-match mode, extend UTree path with ALL non-zero tags
+                    // (incl. ntags) — consumed only by the (dormant) BT19 §7 compare,
+                    // so gated behind COMPUTE_PRECTABLES to skip dead work.
                     int newPath = c.path;
-                    if (!perl && tag != Tnfa.NO_TAG) {
-                        newPath = posixUTree.extend(c.path, tag);
+                    if (longest && COMPUTE_PRECTABLES && tag != Tnfa.NO_TAG) {
+                        newPath = utree.extend(c.path, tag);
                     }
-                    int childPri = perl ? Math.max(c.pri, nfa.epsPri[idx]) : 0;
+                    int childPri = !longest ? Math.max(c.pri, nfa.epsPri[idx]) : 0;
                     stack.push(new Config(to, c.regs, c.h, newL, newMask, childPri, newPath, c.origin));
                 }
             }
             return out;
         }
 
-        // ---------------- BT19 POSIX closure ----------------
+        // ---------------- BT19 §7 longest-match closure (closure_gtop) ----------------
 
         /** Shared UTree across the entire DFA construction (BT19 §6). */
-        UTree posixUTree = new UTree();
+        UTree utree = new UTree();
         /** Tag heights: height[t] = nesting depth of tag t's group.
          *  Group g → tags 2g-1, 2g → height g. */
         final int[] tagHeights;
-        /** Per-DFA-state prectable (flat int[n*n], packed via PosixCompare.packCell). */
+        /** Per-DFA-state prectable (flat int[n*n], packed via GtopCompare.packCell). */
         final List<int[]> statePrectables = new ArrayList<>();
 
         /**
@@ -957,20 +964,20 @@ public final class Tdfa {
          * @param parentClosureSize  size of parent closure (for indexing oldPrectable)
          * @return the closure configs in priority order
          */
-        List<Config> closurePosix(List<Config> seed, int[] oldPrectable, int parentClosureSize) {
+        List<Config> closureGtop(List<Config> seed, int[] oldPrectable, int parentClosureSize) {
             return epsilonClosure(seed);
         }
 
         /**
          * Compare an existing config (at index {@code existingIdx}) against a
-         * challenger. Returns {@code l} from PosixCompare: {@code <0} = existing
+         * challenger. Returns {@code l} from GtopCompare: {@code <0} = existing
          * wins, {@code >0} = challenger wins, {@code 0} = tie.
          *
          * When heights are equal (h1 == h2), returns 0 (defer to DFS order) —
          * leftprec alone is insufficient for cross-alternative comparisons
          * where ε-edge priority should decide.
          */
-        int posixCompareExisting(int existingIdx, Config challenger,
+        int compareExisting(int existingIdx, Config challenger,
                                  List<Integer> originList, List<Integer> pathList,
                                  int[] oldPrectable, int parentClosureSize) {
             // TEMP: never replace — same as epsilonClosure DFS order.
@@ -984,16 +991,16 @@ public final class Tdfa {
             for (int i = 0; i < n; i++) {
                 for (int j = 0; j < n; j++) {
                     if (i == j) {
-                        tbl[i * n + j] = PosixCompare.packCell(PosixCompare.MAX_RHO, 0);
+                        tbl[i * n + j] = GtopCompare.packCell(GtopCompare.MAX_RHO, 0);
                     } else {
-                        long cmp = PosixCompare.compare(
+                        long cmp = GtopCompare.compare(
                                 closure.get(i).path, closure.get(j).path,
                                 closure.get(i).origin, closure.get(j).origin,
-                                posixUTree, tagHeights, oldPrectable, parentClosureSize);
-                        int h1 = PosixCompare.h1(cmp);
-                        int h2 = PosixCompare.h2(cmp);
-                        int l = (h1 == h2) ? 0 : PosixCompare.l(cmp);
-                        tbl[i * n + j] = PosixCompare.packCell(PosixCompare.h1(cmp), l);
+                                utree, tagHeights, oldPrectable, parentClosureSize);
+                        int h1 = GtopCompare.h1(cmp);
+                        int h2 = GtopCompare.h2(cmp);
+                        int l = (h1 == h2) ? 0 : GtopCompare.l(cmp);
+                        tbl[i * n + j] = GtopCompare.packCell(GtopCompare.h1(cmp), l);
                     }
                 }
             }
@@ -1086,7 +1093,7 @@ public final class Tdfa {
             int firstAcceptIdx = -1;
             int acceptEmptyMask = 0;
             boolean suppress = false;
-            if (perl) {
+            if (!longest) {
                 for (int i = 0; i < ownCount; i++) {
                     Config c = configs.get(i);
                     if (c.state == nfa.accept) {
@@ -1201,7 +1208,7 @@ public final class Tdfa {
         static final class AddResult { final int targetId; final int[] ops; AddResult(int t, int[] o) { targetId=t; ops=o; } }
 
         AddResult addState(List<Config> configs, int[] ops, List<Config> seed) {
-            DfaStateKey key = new DfaStateKey(configs, perl);
+            DfaStateKey key = new DfaStateKey(configs, longest);
             int[] candidates = stateIndex.get(key);
             if (candidates != null) {
                 // Identity on (states, lookahead). Registers may differ — translate via tryMap.
@@ -1284,7 +1291,7 @@ public final class Tdfa {
 
         boolean sameKey(List<Config> a, List<Config> b) {
             // Retained for diagnostic callers; addState now uses the multimap directly.
-            return new DfaStateKey(a, perl).equals(new DfaStateKey(b, perl));
+            return new DfaStateKey(a, longest).equals(new DfaStateKey(b, longest));
         }
 
         /** Stabilize copy chains so reads happen before writes clobber their source.
@@ -1490,7 +1497,7 @@ public final class Tdfa {
         final int n;
         final int[] stateMeta, stateBase, stateFinalOpsOff, ranges, ops;
         final int[] stateEntryMask, stateAcceptMask, stateStopOnAcceptMask;
-        final boolean perl;
+        final boolean longest;
         /** Op-sequence interning: maps the byte content of an OP_END-terminated block to a unique int id. */
         final Map<OpSeq, Integer> opSeqIds = new HashMap<>();
         /** Cached op-sequence id per ops[] offset (lazily computed). -1 = not computed. */
@@ -1505,7 +1512,7 @@ public final class Tdfa {
 
         DfaMinimizer(int n, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
                      int[] ranges, int[] ops, int[] stateEntryMask, int[] stateAcceptMask,
-                     int[] stateStopOnAcceptMask, boolean perl) {
+                     int[] stateStopOnAcceptMask, boolean longest) {
             this.n = n;
             this.stateMeta = stateMeta;
             this.stateBase = stateBase;
@@ -1515,7 +1522,7 @@ public final class Tdfa {
             this.stateEntryMask = stateEntryMask;
             this.stateAcceptMask = stateAcceptMask;
             this.stateStopOnAcceptMask = stateStopOnAcceptMask;
-            this.perl = perl;
+            this.longest = longest;
             this.opsIdAt = new int[ops.length];
             java.util.Arrays.fill(this.opsIdAt, -1);
             detectOverlapsAndInit();
@@ -1645,7 +1652,7 @@ public final class Tdfa {
 
         /** Per-state attribute signature: accept bit, final-ops id, masks. */
         SigKey attrSig(int s) {
-            int extra = perl ? 1 : 0;
+            int extra = !longest ? 1 : 0;
             int[] sig = new int[5 + extra];
             fillAttrs(sig, s, 0);
             return new SigKey(sig);
@@ -1658,7 +1665,7 @@ public final class Tdfa {
             sig[i++] = stateEntryMask[s];
             sig[i++] = stateAcceptMask[s];
             sig[i++] = (stateMeta[s] >>> 1) & 0xFFFF;  // range count (structural disambiguator)
-            if (perl) {
+            if (!longest) {
                 int h = 0;
                 int baseSM = s * 64;
                 for (int j = 0; j < 64; j++) h = h * 31 + stateStopOnAcceptMask[baseSM + j];
@@ -1669,7 +1676,7 @@ public final class Tdfa {
 
         /** Transition signature, normalized on global breakpoints when possible. */
         SigKey transSig(int s, int[] partition) {
-            int extra = perl ? 1 : 0;
+            int extra = !longest ? 1 : 0;
             int base = stateBase[s];
             int count = rangeCount(stateMeta[s]);
             int[] sig;

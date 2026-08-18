@@ -1,7 +1,9 @@
 package io.github.jemmix.tdfa.bench;
 
-import io.github.jemmix.tdfa.EngineFactory;
-import io.github.jemmix.tdfa.Regex;
+import io.github.jemmix.tdfa.core.RegexEngine;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.Pattern;
 import io.github.jemmix.tdfa.core.MatchResult;
 
 import java.util.ArrayList;
@@ -79,25 +81,25 @@ public final class QuickBench {
     // ===== ops (mirror RegressionBench families) =====
 
     static List<Op> buildOps() {
-        Regex vmTwo = Regex.compile("(\\w+)\\s+(\\w+)", EngineFactory.VM);
-        Regex asmTwo = Regex.compile("(\\w+)\\s+(\\w+)", EngineFactory.ASM);
+        Pattern vmTwo = Pattern.compile("(\\w+)\\s+(\\w+)", 0, TdfaRunner::new);
+        Pattern asmTwo = Pattern.compile("(\\w+)\\s+(\\w+)");
         String inTwo = "hello brave new world 42";
 
-        Regex vmIp = Regex.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", EngineFactory.VM);
-        Regex asmIp = Regex.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", EngineFactory.ASM);
+        Pattern vmIp = Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", 0, TdfaRunner::new);
+        Pattern asmIp = Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)");
         String inIp = "ip=192.168.1.77 rest";
 
-        Regex vmScan = Regex.compile("[a-z]+qrst", EngineFactory.VM);
-        Regex asmScan = Regex.compile("[a-z]+qrst", EngineFactory.ASM);
+        Pattern vmScan = Pattern.compile("[a-z]+qrst", 0, TdfaRunner::new);
+        Pattern asmScan = Pattern.compile("[a-z]+qrst");
 
-        Regex vmDense = Regex.compile("[a-z]+ing", EngineFactory.VM);
-        Regex asmDense = Regex.compile("[a-z]+ing", EngineFactory.ASM);
+        Pattern vmDense = Pattern.compile("[a-z]+ing", 0, TdfaRunner::new);
+        Pattern asmDense = Pattern.compile("[a-z]+ing");
 
-        Regex vmSparse = Regex.compile("z[0-9]{3}q", EngineFactory.VM);
-        Regex asmSparse = Regex.compile("z[0-9]{3}q", EngineFactory.ASM);
+        Pattern vmSparse = Pattern.compile("z[0-9]{3}q", 0, TdfaRunner::new);
+        Pattern asmSparse = Pattern.compile("z[0-9]{3}q");
 
-        Regex vmLatin = Regex.compile("[a-zA-Z\u00e0-\u00ff]+ement", EngineFactory.VM);
-        Regex asmLatin = Regex.compile("[a-zA-Z\u00e0-\u00ff]+ement", EngineFactory.ASM);
+        Pattern vmLatin = Pattern.compile("[a-zA-Z\u00e0-\u00ff]+ement", 0, TdfaRunner::new);
+        Pattern asmLatin = Pattern.compile("[a-zA-Z\u00e0-\u00ff]+ement");
 
         String noMatch = rep("the quick brown fox jumps over lazy dogs 0123 ", 1 << 14) + "tail";
         String dense = DENSE_INPUT;
@@ -109,32 +111,27 @@ public final class QuickBench {
         List<Op> ops = new ArrayList<>();
         ops.add(new Op("info.anchored.vm", () -> vmTwo.matches(inTwo) ? 1 : 0));
         ops.add(new Op("info.anchored.asm", () -> asmTwo.matches(inTwo) ? 1 : 0));
-        ops.add(new Op("info.extract.vm", () -> vmIp.find(inIp, 0) != null ? 1 : 0));
-        ops.add(new Op("info.extract.asm", () -> asmIp.find(inIp, 0) != null ? 1 : 0));
-        ops.add(new Op("scanNoMatch.vm", () -> vmScan.find(noMatch) ? 1 : 0));
-        ops.add(new Op("scanNoMatch.asm", () -> asmScan.find(noMatch) ? 1 : 0));
+        ops.add(new Op("info.extract.vm", () -> vmIp.matcher(inIp).find() ? 1 : 0));
+        ops.add(new Op("info.extract.asm", () -> asmIp.matcher(inIp).find() ? 1 : 0));
+        ops.add(new Op("scanNoMatch.vm", () -> vmScan.matcher(noMatch).find() ? 1 : 0));
+        ops.add(new Op("scanNoMatch.asm", () -> asmScan.matcher(noMatch).find() ? 1 : 0));
         ops.add(new Op("findAllDense.vm", () -> findAll(vmDense, dense)));
         ops.add(new Op("findAllDense.asm", () -> findAll(asmDense, dense)));
         ops.add(new Op("findAllSparse.vm", () -> findAll(vmSparse, sparse)));
         ops.add(new Op("findAllSparse.asm", () -> findAll(asmSparse, sparse)));
         ops.add(new Op("findAllLatin1.vm", () -> findAll(vmLatin, latin1)));
         ops.add(new Op("findAllLatin1.asm", () -> findAll(asmLatin, latin1)));
-        ops.add(new Op("compile.vm", () -> System.identityHashCode(Regex.compile(compileRe, EngineFactory.VM))));
-        ops.add(new Op("compile.asm", () -> System.identityHashCode(Regex.compile(compileRe, EngineFactory.ASM))));
+        ops.add(new Op("compile.vm", () -> System.identityHashCode(Pattern.compile(compileRe, 0, TdfaRunner::new))));
+        ops.add(new Op("compile.asm", () -> System.identityHashCode(Pattern.compile(compileRe))));
         // re2j shim compile: eager engine + (previously eager, now lazy) anchored-both engine
         ops.add(new Op("compile.re2j", () -> System.identityHashCode(
-                io.github.jemmix.tdfa.re2j.Pattern.compile(compileRe))));
+                io.github.jemmix.tdfa.Pattern.compile(compileRe))));
         return ops;
     }
 
-    static int findAll(Regex r, String in) {
+    static int findAll(Pattern r, String in) {
         int n = 0;
-        int from = 0;
-        MatchResult m;
-        while ((m = r.find(in, from)) != null) {
-            n++;
-            from = m.end(0) > m.start(0) ? m.end(0) : m.end(0) + 1;
-        }
+        for (io.github.jemmix.tdfa.core.Matcher m = r.matcher(in); m.find(); ) n++;
         return n;
     }
 

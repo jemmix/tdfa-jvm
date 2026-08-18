@@ -18,8 +18,9 @@ repositories {
 dependencies {
     // Evergreen pipeline + core API tier (interpreter reference implementation).
     api project(':core')
-    // ASM bytecode backend (M4)
-    implementation 'org.ow2.asm:asm:9.9.1'
+    // Per-pattern bytecode generation backend; the facade orchestrates it
+    // directly (no engine SPI — the module graph is the strategy).
+    api project(':asm')
 }
 
 // Materialize vendored third-party sources/resources into build/generated/.

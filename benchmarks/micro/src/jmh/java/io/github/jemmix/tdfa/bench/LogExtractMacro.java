@@ -1,6 +1,8 @@
 package io.github.jemmix.tdfa.bench;
 
-import io.github.jemmix.tdfa.EngineFactory;
+import io.github.jemmix.tdfa.core.RegexEngine;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -102,7 +104,7 @@ public final class LogExtractMacro {
                 };
             }
             case "vm" -> {
-                var p = io.github.jemmix.tdfa.re2j.Pattern.compile(row.regex(), 0, EngineFactory.VM);
+                var p = io.github.jemmix.tdfa.Pattern.compile(row.regex(), 0, TdfaRunner::new);
                 yield (line, sink) -> {
                     var m = p.matcher(line);
                     long n = 0;
@@ -114,7 +116,7 @@ public final class LogExtractMacro {
                 };
             }
             case "asm" -> {
-                var p = io.github.jemmix.tdfa.re2j.Pattern.compile(row.regex(), 0, EngineFactory.ASM);
+                var p = io.github.jemmix.tdfa.Pattern.compile(row.regex());
                 yield (line, sink) -> {
                     var m = p.matcher(line);
                     long n = 0;

@@ -39,7 +39,7 @@ public final class TdfaRunner implements RegexEngine {
     private final int regSize;
     private final int startState;
     private final int startStateEntryMask;
-    private final boolean perlMode;
+    private final boolean longestMatch;
     private final boolean multiline;
     private final int[] stopOnAcceptMask;
     private final boolean[] stateIsFallback;
@@ -141,7 +141,7 @@ public final class TdfaRunner implements RegexEngine {
             this.latinTarget = null;
         }
         this.fastPath = computeFastPath(tdfa);
-        this.perlMode = tdfa.perlMode;
+        this.longestMatch = tdfa.longestMatch;
         this.multiline = tdfa.multiline;
         this.stopOnAcceptMask = tdfa.stopOnAcceptMask;
         this.stateIsFallback = tdfa.stateIsFallback;
@@ -451,7 +451,7 @@ public final class TdfaRunner implements RegexEngine {
                 int acceptMask = sam[state];
                 if (acceptMask == 0) {
                     lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                    if (perlMode) {
+                    if (!longestMatch) {
                         if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                         int stopMask = stopOnAcceptMask[state * 64 + posFlags];
                         if (stopOnAccept(stopMask, posFlags)) break loop;
@@ -461,7 +461,7 @@ public final class TdfaRunner implements RegexEngine {
                     if ((posFlags & acceptMask) == acceptMask) {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
                         int stopMask = stopOnAcceptMask[state * 64 + posFlags];
-                        if (perlMode && stopOnAccept(stopMask, posFlags)) break loop;
+                        if (!longestMatch && stopOnAccept(stopMask, posFlags)) break loop;
                     }
                 }
             }
@@ -1518,10 +1518,10 @@ public final class TdfaRunner implements RegexEngine {
         final int[] arf = this.asciiRangeFlat;
         final int[] rg = this.ranges;
         final int[] op = this.ops;
-        // PERL stopOnAccept: pre-load the mask table when in Perl mode so the
-        // inner loop can short-circuit on first accepting state (matching the
-        // slow path's leftmost-first semantics). See docs/REBAR-SPEEDUP-PLAN.md §Tier-2 #3.
-        final boolean pm = this.perlMode;
+        // Leftmost-first stopOnAccept: pre-load the mask table when not in
+        // longest-match mode so the inner loop can short-circuit on first
+        // accepting state (matching the slow path). See docs/REBAR-SPEEDUP-PLAN.md §Tier-2 #3.
+        final boolean pm = !this.longestMatch;
         final int[] soa = this.stopOnAcceptMask;
         // Pooled regs (per-thread scratch): no allocation on the (frequent)
         // failed-walk path. On success the array is cloned into the MatchHolder
@@ -1735,7 +1735,7 @@ public final class TdfaRunner implements RegexEngine {
                 int acceptMask = sam[state];
                 if (acceptMask == 0) {
                     haveAccept = true; lastAcceptPos = pos;
-                    if (perlMode) {
+                    if (!longestMatch) {
                         if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                         int stopMask = stopOnAcceptMask[state * 64 + posFlags];
                         if (stopOnAccept(stopMask, posFlags)) break;
@@ -1745,7 +1745,7 @@ public final class TdfaRunner implements RegexEngine {
                     if ((posFlags & acceptMask) == acceptMask) {
                         haveAccept = true; lastAcceptPos = pos;
                         int stopMask = stopOnAcceptMask[state * 64 + posFlags];
-                        if (perlMode && stopOnAccept(stopMask, posFlags)) break;
+                        if (!longestMatch && stopOnAccept(stopMask, posFlags)) break;
                     }
                 }
             }
@@ -1883,7 +1883,7 @@ public final class TdfaRunner implements RegexEngine {
                     int acceptMask = stateAcceptMask[state];
                     if (acceptMask == 0) {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                        if (perlMode) {
+                        if (!longestMatch) {
                             if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
                             int stopMask = stopOnAcceptMask[state * 64 + posFlags];
                             if (stopOnAccept(stopMask, posFlags)) break loop;
@@ -1893,7 +1893,7 @@ public final class TdfaRunner implements RegexEngine {
                         if ((posFlags & acceptMask) == acceptMask) {
                             lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
                             int stopMask = stopOnAcceptMask[state * 64 + posFlags];
-                            if (perlMode && stopOnAccept(stopMask, posFlags)) break loop;
+                            if (!longestMatch && stopOnAccept(stopMask, posFlags)) break loop;
                         }
                     }
                 }

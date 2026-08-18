@@ -3,7 +3,9 @@ package io.github.jemmix.tdfa.parity;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
-import io.github.jemmix.tdfa.EngineFactory;
+import io.github.jemmix.tdfa.core.Matcher;
+import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
 
 import static io.github.jemmix.tdfa.parity.Re2jOracle.*;
 
@@ -15,139 +17,139 @@ class CharClassParityTest {
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void basicClass(EngineFactory factory) { assertSameFind("[abc]", "a", factory); }
+    void basicClass(RegexEngineFactory factory) { assertSameFind("[abc]", "a", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void basicClass2(EngineFactory factory) { assertSameFind("[abc]", "d", factory); }
+    void basicClass2(RegexEngineFactory factory) { assertSameFind("[abc]", "d", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void classRange(EngineFactory factory) { assertSameFind("[a-z]", "f", factory); }
+    void classRange(RegexEngineFactory factory) { assertSameFind("[a-z]", "f", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void classRangeUpper(EngineFactory factory) { assertSameFind("[A-Z]", "G", factory); }
+    void classRangeUpper(RegexEngineFactory factory) { assertSameFind("[A-Z]", "G", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void negatedClass(EngineFactory factory) { assertSameFind("[^abc]", "d", factory); }
+    void negatedClass(RegexEngineFactory factory) { assertSameFind("[^abc]", "d", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void negatedClassNoMatch(EngineFactory factory) { assertSameFind("[^abc]", "a", factory); }
+    void negatedClassNoMatch(RegexEngineFactory factory) { assertSameFind("[^abc]", "a", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void negatedClassRange(EngineFactory factory) { assertSameFind("[^0-9]", "x", factory); }
+    void negatedClassRange(RegexEngineFactory factory) { assertSameFind("[^0-9]", "x", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void classWithDigit(EngineFactory factory) { assertSameFind("[\\d]", "5", factory); }
+    void classWithDigit(RegexEngineFactory factory) { assertSameFind("[\\d]", "5", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void classWithWord(EngineFactory factory) { assertSameFind("[\\w]", "_", factory); }
+    void classWithWord(RegexEngineFactory factory) { assertSameFind("[\\w]", "_", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void classWithSpace(EngineFactory factory) { assertSameFind("[\\s]", " ", factory); }
+    void classWithSpace(RegexEngineFactory factory) { assertSameFind("[\\s]", " ", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void classMultipleRanges(EngineFactory factory) { assertSameFind("[a-zA-Z0-9_]", "Z", factory); }
+    void classMultipleRanges(RegexEngineFactory factory) { assertSameFind("[a-zA-Z0-9_]", "Z", factory); }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void leadingCloseBracket(EngineFactory factory) { assertSameFind("[]]", "]", factory); }
+    void leadingCloseBracket(RegexEngineFactory factory) { assertSameFind("[]]", "]", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void leadingCloseBracketWithChars(EngineFactory factory) { assertSameFind("[]a]", "]", factory); }
+    void leadingCloseBracketWithChars(RegexEngineFactory factory) { assertSameFind("[]a]", "]", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void leadingCloseBracketNegated(EngineFactory factory) { assertSameFind("[^]]", "a", factory); }
+    void leadingCloseBracketNegated(RegexEngineFactory factory) { assertSameFind("[^]]", "a", factory); }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixAlpha(EngineFactory factory) { assertSameFind("[[:alpha:]]", "g", factory); }
+    void posixAlpha(RegexEngineFactory factory) { assertSameFind("[[:alpha:]]", "g", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixDigit(EngineFactory factory) { assertSameFind("[[:digit:]]", "7", factory); }
+    void posixDigit(RegexEngineFactory factory) { assertSameFind("[[:digit:]]", "7", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixDigitNoMatch(EngineFactory factory) { assertSameFind("[[:digit:]]", "x", factory); }
+    void posixDigitNoMatch(RegexEngineFactory factory) { assertSameFind("[[:digit:]]", "x", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixSpace(EngineFactory factory) { assertSameFind("[[:space:]]", "\t", factory); }
+    void posixSpace(RegexEngineFactory factory) { assertSameFind("[[:space:]]", "\t", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixSpaceV(EngineFactory factory) { assertSameFind("[[:space:]]", "\u000B", factory); }
+    void posixSpaceV(RegexEngineFactory factory) { assertSameFind("[[:space:]]", "\u000B", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixUpper(EngineFactory factory) { assertSameFind("[[:upper:]]", "H", factory); }
+    void posixUpper(RegexEngineFactory factory) { assertSameFind("[[:upper:]]", "H", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixLower(EngineFactory factory) { assertSameFind("[[:lower:]]", "h", factory); }
+    void posixLower(RegexEngineFactory factory) { assertSameFind("[[:lower:]]", "h", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixAlnum(EngineFactory factory) { assertSameFind("[[:alnum:]]", "9", factory); }
+    void posixAlnum(RegexEngineFactory factory) { assertSameFind("[[:alnum:]]", "9", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixPunct(EngineFactory factory) { assertSameFind("[[:punct:]]", "!", factory); }
+    void posixPunct(RegexEngineFactory factory) { assertSameFind("[[:punct:]]", "!", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixXdigit(EngineFactory factory) { assertSameFind("[[:xdigit:]]", "f", factory); }
+    void posixXdigit(RegexEngineFactory factory) { assertSameFind("[[:xdigit:]]", "f", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixBlank(EngineFactory factory) { assertSameFind("[[:blank:]]", "\t", factory); }
+    void posixBlank(RegexEngineFactory factory) { assertSameFind("[[:blank:]]", "\t", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixCntrl(EngineFactory factory) { assertSameFind("[[:cntrl:]]", "\u0001", factory); }
+    void posixCntrl(RegexEngineFactory factory) { assertSameFind("[[:cntrl:]]", "\u0001", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixGraph(EngineFactory factory) { assertSameFind("[[:graph:]]", "A", factory); }
+    void posixGraph(RegexEngineFactory factory) { assertSameFind("[[:graph:]]", "A", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixPrint(EngineFactory factory) { assertSameFind("[[:print:]]", " ", factory); }
+    void posixPrint(RegexEngineFactory factory) { assertSameFind("[[:print:]]", " ", factory); }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeCategoryL(EngineFactory factory) { assertSameFind("\\p{L}", "A", factory); }
+    void unicodeCategoryL(RegexEngineFactory factory) { assertSameFind("\\p{L}", "A", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeCategoryLu(EngineFactory factory) { assertSameFind("\\p{Lu}", "A", factory); }
+    void unicodeCategoryLu(RegexEngineFactory factory) { assertSameFind("\\p{Lu}", "A", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeCategoryLl(EngineFactory factory) { assertSameFind("\\p{Ll}", "a", factory); }
+    void unicodeCategoryLl(RegexEngineFactory factory) { assertSameFind("\\p{Ll}", "a", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeCategoryNd(EngineFactory factory) { assertSameFind("\\p{Nd}", "5", factory); }
+    void unicodeCategoryNd(RegexEngineFactory factory) { assertSameFind("\\p{Nd}", "5", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeScriptGreek(EngineFactory factory) { assertSameFind("\\p{Greek}", "\u03B1", factory); }
+    void unicodeScriptGreek(RegexEngineFactory factory) { assertSameFind("\\p{Greek}", "\u03B1", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeNegated(EngineFactory factory) { assertSameFind("\\P{Nd}", "x", factory); }
+    void unicodeNegated(RegexEngineFactory factory) { assertSameFind("\\P{Nd}", "x", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeSingleLetter(EngineFactory factory) { assertSameFind("\\pL", "A", factory); }
+    void unicodeSingleLetter(RegexEngineFactory factory) { assertSameFind("\\pL", "A", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeAny(EngineFactory factory) { assertSameFind("\\p{Any}", "x", factory); }
+    void unicodeAny(RegexEngineFactory factory) { assertSameFind("\\p{Any}", "x", factory); }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void negatedClassWithInput(EngineFactory factory) { assertSameFind("[^a-z]", "A", factory); }
+    void negatedClassWithInput(RegexEngineFactory factory) { assertSameFind("[^a-z]", "A", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void negatedWithSpecial(EngineFactory factory) { assertSameFind("[^.]", "x", factory); }
+    void negatedWithSpecial(RegexEngineFactory factory) { assertSameFind("[^.]", "x", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void classWithDashAtEnd(EngineFactory factory) { assertSameFind("[a-]", "-", factory); }
+    void classWithDashAtEnd(RegexEngineFactory factory) { assertSameFind("[a-]", "-", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void classWithDashAtStart(EngineFactory factory) { assertSameFind("[-a]", "-", factory); }
+    void classWithDashAtStart(RegexEngineFactory factory) { assertSameFind("[-a]", "-", factory); }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void findAllWithClass(EngineFactory factory) { assertSameAllMatches("[aeiou]", "hello world", factory); }
+    void findAllWithClass(RegexEngineFactory factory) { assertSameAllMatches("[aeiou]", "hello world", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void findAllNegated(EngineFactory factory) { assertSameAllMatches("[^aeiou ]", "hello world", factory); }
+    void findAllNegated(RegexEngineFactory factory) { assertSameAllMatches("[^aeiou ]", "hello world", factory); }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeNonBmpCodepoint(EngineFactory factory) {
+    void unicodeNonBmpCodepoint(RegexEngineFactory factory) {
         assertSameFind("\\x{10000}", new String(Character.toChars(0x10000)), factory);
     }
 
@@ -155,182 +157,182 @@ class CharClassParityTest {
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixAscii(EngineFactory factory) { assertSameFind("[[:ascii:]]", "A", factory); }
+    void posixAscii(RegexEngineFactory factory) { assertSameFind("[[:ascii:]]", "A", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixAsciiNoMatch(EngineFactory factory) { assertSameFind("[[:ascii:]]", "\u00E9", factory); }
+    void posixAsciiNoMatch(RegexEngineFactory factory) { assertSameFind("[[:ascii:]]", "\u00E9", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixWord(EngineFactory factory) { assertSameFind("[[:word:]]", "_", factory); }
+    void posixWord(RegexEngineFactory factory) { assertSameFind("[[:word:]]", "_", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixWordNoMatch(EngineFactory factory) { assertSameFind("[[:word:]]", "!", factory); }
+    void posixWordNoMatch(RegexEngineFactory factory) { assertSameFind("[[:word:]]", "!", factory); }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedAlpha(EngineFactory factory) { assertSameFind("[[:^alpha:]]", "5", factory); }
+    void posixNegatedAlpha(RegexEngineFactory factory) { assertSameFind("[[:^alpha:]]", "5", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedAlphaMatch(EngineFactory factory) { assertSameFind("[[:^alpha:]]", "A", factory); }
+    void posixNegatedAlphaMatch(RegexEngineFactory factory) { assertSameFind("[[:^alpha:]]", "A", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedDigit(EngineFactory factory) { assertSameFind("[[:^digit:]]", "x", factory); }
+    void posixNegatedDigit(RegexEngineFactory factory) { assertSameFind("[[:^digit:]]", "x", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedDigitNoMatch(EngineFactory factory) { assertSameFind("[[:^digit:]]", "5", factory); }
+    void posixNegatedDigitNoMatch(RegexEngineFactory factory) { assertSameFind("[[:^digit:]]", "5", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedSpace(EngineFactory factory) { assertSameFind("[[:^space:]]", "x", factory); }
+    void posixNegatedSpace(RegexEngineFactory factory) { assertSameFind("[[:^space:]]", "x", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedUpper(EngineFactory factory) { assertSameFind("[[:^upper:]]", "a", factory); }
+    void posixNegatedUpper(RegexEngineFactory factory) { assertSameFind("[[:^upper:]]", "a", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedLower(EngineFactory factory) { assertSameFind("[[:^lower:]]", "A", factory); }
+    void posixNegatedLower(RegexEngineFactory factory) { assertSameFind("[[:^lower:]]", "A", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedCntrl(EngineFactory factory) { assertSameFind("[[:^cntrl:]]", "A", factory); }
+    void posixNegatedCntrl(RegexEngineFactory factory) { assertSameFind("[[:^cntrl:]]", "A", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedPunct(EngineFactory factory) { assertSameFind("[[:^punct:]]", "A", factory); }
+    void posixNegatedPunct(RegexEngineFactory factory) { assertSameFind("[[:^punct:]]", "A", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedXdigit(EngineFactory factory) { assertSameFind("[[:^xdigit:]]", "z", factory); }
+    void posixNegatedXdigit(RegexEngineFactory factory) { assertSameFind("[[:^xdigit:]]", "z", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedBlank(EngineFactory factory) { assertSameFind("[[:^blank:]]", "x", factory); }
+    void posixNegatedBlank(RegexEngineFactory factory) { assertSameFind("[[:^blank:]]", "x", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedGraph(EngineFactory factory) { assertSameFind("[[:^graph:]]", " ", factory); }
+    void posixNegatedGraph(RegexEngineFactory factory) { assertSameFind("[[:^graph:]]", " ", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedPrint(EngineFactory factory) { assertSameFind("[[:^print:]]", "\u0001", factory); }
+    void posixNegatedPrint(RegexEngineFactory factory) { assertSameFind("[[:^print:]]", "\u0001", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedAlnum(EngineFactory factory) { assertSameFind("[[:^alnum:]]", "!", factory); }
+    void posixNegatedAlnum(RegexEngineFactory factory) { assertSameFind("[[:^alnum:]]", "!", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedAscii(EngineFactory factory) { assertSameFind("[[:^ascii:]]", "\u00E9", factory); }
+    void posixNegatedAscii(RegexEngineFactory factory) { assertSameFind("[[:^ascii:]]", "\u00E9", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedAsciiMatch(EngineFactory factory) { assertSameFind("[[:^ascii:]]", "A", factory); }
+    void posixNegatedAsciiMatch(RegexEngineFactory factory) { assertSameFind("[[:^ascii:]]", "A", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedWord(EngineFactory factory) { assertSameFind("[[:^word:]]", "!", factory); }
+    void posixNegatedWord(RegexEngineFactory factory) { assertSameFind("[[:^word:]]", "!", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void posixNegatedWordMatch(EngineFactory factory) { assertSameFind("[[:^word:]]", "_", factory); }
+    void posixNegatedWordMatch(RegexEngineFactory factory) { assertSameFind("[[:^word:]]", "_", factory); }
 
     // ---- Unicode general categories ----
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeN(EngineFactory factory) { assertSameFind("\\p{N}", "5", factory); }
+    void unicodeN(RegexEngineFactory factory) { assertSameFind("\\p{N}", "5", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeNl(EngineFactory factory) { assertSameFind("\\p{Nl}", "\u2160", factory); }     // Roman numeral I
+    void unicodeNl(RegexEngineFactory factory) { assertSameFind("\\p{Nl}", "\u2160", factory); }     // Roman numeral I
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeNo(EngineFactory factory) { assertSameFind("\\p{No}", "\u00BD", factory); }     // ½
+    void unicodeNo(RegexEngineFactory factory) { assertSameFind("\\p{No}", "\u00BD", factory); }     // ½
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeM(EngineFactory factory) { assertSameFind("\\p{M}", "\u0300", factory); }       // combining grave
+    void unicodeM(RegexEngineFactory factory) { assertSameFind("\\p{M}", "\u0300", factory); }       // combining grave
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeMn(EngineFactory factory) { assertSameFind("\\p{Mn}", "\u0300", factory); }
+    void unicodeMn(RegexEngineFactory factory) { assertSameFind("\\p{Mn}", "\u0300", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeS(EngineFactory factory) { assertSameFind("\\p{S}", "+", factory); }
+    void unicodeS(RegexEngineFactory factory) { assertSameFind("\\p{S}", "+", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeSm(EngineFactory factory) { assertSameFind("\\p{Sm}", "+", factory); }
+    void unicodeSm(RegexEngineFactory factory) { assertSameFind("\\p{Sm}", "+", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeSc(EngineFactory factory) { assertSameFind("\\p{Sc}", "$", factory); }
+    void unicodeSc(RegexEngineFactory factory) { assertSameFind("\\p{Sc}", "$", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeSk(EngineFactory factory) { assertSameFind("\\p{Sk}", "\u005E", factory); }     // circumflex
+    void unicodeSk(RegexEngineFactory factory) { assertSameFind("\\p{Sk}", "\u005E", factory); }     // circumflex
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeP(EngineFactory factory) { assertSameFind("\\p{P}", ".", factory); }
+    void unicodeP(RegexEngineFactory factory) { assertSameFind("\\p{P}", ".", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodePd(EngineFactory factory) { assertSameFind("\\p{Pd}", "-", factory); }          // dash punctuation
+    void unicodePd(RegexEngineFactory factory) { assertSameFind("\\p{Pd}", "-", factory); }          // dash punctuation
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodePc(EngineFactory factory) { assertSameFind("\\p{Pc}", "_", factory); }          // connector punctuation
+    void unicodePc(RegexEngineFactory factory) { assertSameFind("\\p{Pc}", "_", factory); }          // connector punctuation
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeZ(EngineFactory factory) { assertSameFind("\\p{Z}", " ", factory); }
+    void unicodeZ(RegexEngineFactory factory) { assertSameFind("\\p{Z}", " ", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeZs(EngineFactory factory) { assertSameFind("\\p{Zs}", " ", factory); }
+    void unicodeZs(RegexEngineFactory factory) { assertSameFind("\\p{Zs}", " ", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeC(EngineFactory factory) { assertSameFind("\\p{C}", "\u0000", factory); }
+    void unicodeC(RegexEngineFactory factory) { assertSameFind("\\p{C}", "\u0000", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeCf(EngineFactory factory) { assertSameFind("\\p{Cf}", "\u200B", factory); }     // zero-width space
+    void unicodeCf(RegexEngineFactory factory) { assertSameFind("\\p{Cf}", "\u200B", factory); }     // zero-width space
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeCc(EngineFactory factory) { assertSameFind("\\p{Cc}", "\u0001", factory); }
+    void unicodeCc(RegexEngineFactory factory) { assertSameFind("\\p{Cc}", "\u0001", factory); }
 
     // ---- Unicode scripts ----
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeScriptLatin(EngineFactory factory) { assertSameFind("\\p{Latin}", "A", factory); }
+    void unicodeScriptLatin(RegexEngineFactory factory) { assertSameFind("\\p{Latin}", "A", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeScriptCyrillic(EngineFactory factory) { assertSameFind("\\p{Cyrillic}", "\u0410", factory); }
+    void unicodeScriptCyrillic(RegexEngineFactory factory) { assertSameFind("\\p{Cyrillic}", "\u0410", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeScriptHan(EngineFactory factory) { assertSameFind("\\p{Han}", "\u4E00", factory); }
+    void unicodeScriptHan(RegexEngineFactory factory) { assertSameFind("\\p{Han}", "\u4E00", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeScriptHiragana(EngineFactory factory) { assertSameFind("\\p{Hiragana}", "\u3042", factory); }
+    void unicodeScriptHiragana(RegexEngineFactory factory) { assertSameFind("\\p{Hiragana}", "\u3042", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeScriptKatakana(EngineFactory factory) { assertSameFind("\\p{Katakana}", "\u30A2", factory); }
+    void unicodeScriptKatakana(RegexEngineFactory factory) { assertSameFind("\\p{Katakana}", "\u30A2", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeScriptArabic(EngineFactory factory) { assertSameFind("\\p{Arabic}", "\u0627", factory); }
+    void unicodeScriptArabic(RegexEngineFactory factory) { assertSameFind("\\p{Arabic}", "\u0627", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeScriptHebrew(EngineFactory factory) { assertSameFind("\\p{Hebrew}", "\u05D0", factory); }
+    void unicodeScriptHebrew(RegexEngineFactory factory) { assertSameFind("\\p{Hebrew}", "\u05D0", factory); }
 
     // ---- Internal negation syntax \p{^X} ----
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeInternalNegation(EngineFactory factory) { assertSameFind("\\p{^Nd}", "x", factory); }
+    void unicodeInternalNegation(RegexEngineFactory factory) { assertSameFind("\\p{^Nd}", "x", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeInternalNegationMatch(EngineFactory factory) { assertSameFind("\\p{^Nd}", "5", factory); }
+    void unicodeInternalNegationMatch(RegexEngineFactory factory) { assertSameFind("\\p{^Nd}", "5", factory); }
 
     // ---- Edge cases ----
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void nullByteInClass(EngineFactory factory) { assertSameFind("[\\x00]", "\u0000", factory); }
+    void nullByteInClass(RegexEngineFactory factory) { assertSameFind("[\\x00]", "\u0000", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void literalDotInClass(EngineFactory factory) { assertSameFind("[.]", ".", factory); }
+    void literalDotInClass(RegexEngineFactory factory) { assertSameFind("[.]", ".", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void literalPlusInClass(EngineFactory factory) { assertSameFind("[+]", "+", factory); }
+    void literalPlusInClass(RegexEngineFactory factory) { assertSameFind("[+]", "+", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void literalPipeInClass(EngineFactory factory) { assertSameFind("[|]", "|", factory); }
+    void literalPipeInClass(RegexEngineFactory factory) { assertSameFind("[|]", "|", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void literalParenInClass(EngineFactory factory) { assertSameFind("[(]", "(", factory); }
+    void literalParenInClass(RegexEngineFactory factory) { assertSameFind("[(]", "(", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void nestedPosixInClass(EngineFactory factory) { assertSameFind("[a-z[:digit:]]", "5", factory); }
+    void nestedPosixInClass(RegexEngineFactory factory) { assertSameFind("[a-z[:digit:]]", "5", factory); }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void supplementaryPlaneInput(EngineFactory factory) {
+    void supplementaryPlaneInput(RegexEngineFactory factory) {
         String s = new String(Character.toChars(0x1F600));
         assertSameFind("\\p{So}", s, factory);
     }
@@ -339,76 +341,76 @@ class CharClassParityTest {
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeLo(EngineFactory factory) { assertSameFind("\\p{Lo}", "\u4E00", factory); }       // CJK ideograph
+    void unicodeLo(RegexEngineFactory factory) { assertSameFind("\\p{Lo}", "\u4E00", factory); }       // CJK ideograph
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeLm(EngineFactory factory) { assertSameFind("\\p{Lm}", "\u02B0", factory); }       // modifier letter
+    void unicodeLm(RegexEngineFactory factory) { assertSameFind("\\p{Lm}", "\u02B0", factory); }       // modifier letter
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeLt(EngineFactory factory) { assertSameFind("\\p{Lt}", "\u01C5", factory); }       // titlecase letter (DZ)
+    void unicodeLt(RegexEngineFactory factory) { assertSameFind("\\p{Lt}", "\u01C5", factory); }       // titlecase letter (DZ)
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodePs(EngineFactory factory) { assertSameFind("\\p{Ps}", "(", factory); }            // open punctuation
+    void unicodePs(RegexEngineFactory factory) { assertSameFind("\\p{Ps}", "(", factory); }            // open punctuation
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodePe(EngineFactory factory) { assertSameFind("\\p{Pe}", ")", factory); }            // close punctuation
+    void unicodePe(RegexEngineFactory factory) { assertSameFind("\\p{Pe}", ")", factory); }            // close punctuation
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodePi(EngineFactory factory) { assertSameFind("\\p{Pi}", "\u201C", factory); }      // initial quote "
+    void unicodePi(RegexEngineFactory factory) { assertSameFind("\\p{Pi}", "\u201C", factory); }      // initial quote "
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodePf(EngineFactory factory) { assertSameFind("\\p{Pf}", "\u201D", factory); }      // final quote "
+    void unicodePf(RegexEngineFactory factory) { assertSameFind("\\p{Pf}", "\u201D", factory); }      // final quote "
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodePo(EngineFactory factory) { assertSameFind("\\p{Po}", ".", factory); }            // other punctuation
+    void unicodePo(RegexEngineFactory factory) { assertSameFind("\\p{Po}", ".", factory); }            // other punctuation
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeMc(EngineFactory factory) { assertSameFind("\\p{Mc}", "\u0903", factory); }      // spacing combining mark
+    void unicodeMc(RegexEngineFactory factory) { assertSameFind("\\p{Mc}", "\u0903", factory); }      // spacing combining mark
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeMe(EngineFactory factory) { assertSameFind("\\p{Me}", "\u0488", factory); }      // enclosing mark
+    void unicodeMe(RegexEngineFactory factory) { assertSameFind("\\p{Me}", "\u0488", factory); }      // enclosing mark
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeSo(EngineFactory factory) { assertSameFind("\\p{So}", "\u263A", factory); }      // other symbol ☺
+    void unicodeSo(RegexEngineFactory factory) { assertSameFind("\\p{So}", "\u263A", factory); }      // other symbol ☺
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeZl(EngineFactory factory) { assertSameFind("\\p{Zl}", "\u2028", factory); }      // line separator
+    void unicodeZl(RegexEngineFactory factory) { assertSameFind("\\p{Zl}", "\u2028", factory); }      // line separator
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeZp(EngineFactory factory) { assertSameFind("\\p{Zp}", "\u2029", factory); }      // paragraph separator
+    void unicodeZp(RegexEngineFactory factory) { assertSameFind("\\p{Zp}", "\u2029", factory); }      // paragraph separator
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeCo(EngineFactory factory) { assertSameFind("\\p{Co}", "\uE000", factory); }      // private use
+    void unicodeCo(RegexEngineFactory factory) { assertSameFind("\\p{Co}", "\uE000", factory); }      // private use
 
     // ---- [\b] rejection (re2j rejects too) ----
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void backspaceInClassRejects(EngineFactory factory) { assertSameCompileReject("[\\b]", factory); }
+    void backspaceInClassRejects(RegexEngineFactory factory) { assertSameCompileReject("[\\b]", factory); }
 
     // ---- \N{...} rejection (re2j rejects) ----
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void namedEscapeRejects(EngineFactory factory) { assertSameCompileReject("\\N{LATIN SMALL LETTER A}", factory); }
+    void namedEscapeRejects(RegexEngineFactory factory) { assertSameCompileReject("\\N{LATIN SMALL LETTER A}", factory); }
 
     // ---- \777 overflow: re2j accepts (wraps to 0xFF) ----
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void octalOverflow(EngineFactory factory) { assertSameFind("\\777", "\u00FF", factory); }
+    void octalOverflow(RegexEngineFactory factory) { assertSameFind("\\777", "\u00FF", factory); }
 
     // ---- \x{D800} lone surrogate: re2j accepts ----
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void hexSurrogate(EngineFactory factory) { assertSameCompileSuccess("\\x{D800}", factory); }
+    void hexSurrogate(RegexEngineFactory factory) { assertSameCompileSuccess("\\x{D800}", factory); }
 
     // ---- Long input ----
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void longInputFind(EngineFactory factory) {
+    void longInputFind(RegexEngineFactory factory) {
         String in = "a".repeat(10000) + "b";
         assertSameFind("a+b", in, factory);
     }

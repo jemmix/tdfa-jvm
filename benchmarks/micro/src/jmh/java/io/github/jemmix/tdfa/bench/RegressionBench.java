@@ -1,7 +1,9 @@
 package io.github.jemmix.tdfa.bench;
 
-import io.github.jemmix.tdfa.EngineFactory;
-import io.github.jemmix.tdfa.Regex;
+import io.github.jemmix.tdfa.core.RegexEngine;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.Pattern;
 import io.github.jemmix.tdfa.core.MatchResult;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
@@ -36,22 +38,22 @@ import java.util.concurrent.TimeUnit;
 public class RegressionBench {
 
     // ===== patterns =====
-    static final Regex VM_TWO = Regex.compile("(\\w+)\\s+(\\w+)", EngineFactory.VM);
-    static final Regex ASM_TWO = Regex.compile("(\\w+)\\s+(\\w+)", EngineFactory.ASM);
+    static final Pattern VM_TWO = Pattern.compile("(\\w+)\\s+(\\w+)", 0, TdfaRunner::new);
+    static final Pattern ASM_TWO = Pattern.compile("(\\w+)\\s+(\\w+)");
     static final String IN_TWO = "hello brave new world 42";
 
-    static final Regex VM_IP = Regex.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", EngineFactory.VM);
-    static final Regex ASM_IP = Regex.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", EngineFactory.ASM);
+    static final Pattern VM_IP = Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", 0, TdfaRunner::new);
+    static final Pattern ASM_IP = Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)");
     static final String IN_IP = "ip=192.168.1.77 rest";
 
-    static final Regex VM_SCAN = Regex.compile("[a-z]+qrst", EngineFactory.VM);
-    static final Regex ASM_SCAN = Regex.compile("[a-z]+qrst", EngineFactory.ASM);
+    static final Pattern VM_SCAN = Pattern.compile("[a-z]+qrst", 0, TdfaRunner::new);
+    static final Pattern ASM_SCAN = Pattern.compile("[a-z]+qrst");
 
-    static final Regex VM_DENSE = Regex.compile("[a-z]+ing", EngineFactory.VM);
-    static final Regex ASM_DENSE = Regex.compile("[a-z]+ing", EngineFactory.ASM);
+    static final Pattern VM_DENSE = Pattern.compile("[a-z]+ing", 0, TdfaRunner::new);
+    static final Pattern ASM_DENSE = Pattern.compile("[a-z]+ing");
 
-    static final Regex VM_SPARSE = Regex.compile("z[0-9]{3}q", EngineFactory.VM);
-    static final Regex ASM_SPARSE = Regex.compile("z[0-9]{3}q", EngineFactory.ASM);
+    static final Pattern VM_SPARSE = Pattern.compile("z[0-9]{3}q", 0, TdfaRunner::new);
+    static final Pattern ASM_SPARSE = Pattern.compile("z[0-9]{3}q");
 
     // ===== haystacks (built statically; each ~64 KB) =====
     static final String NO_MATCH_64K = buildNoMatch(1 << 16);
@@ -85,12 +87,12 @@ public class RegressionBench {
     @Benchmark public boolean asmAnchored() { return ASM_TWO.matches(IN_TWO); }
 
     // ===== short-input extraction =====
-    @Benchmark public MatchResult vmExtract() { return VM_IP.find(IN_IP, 0); }
-    @Benchmark public MatchResult asmExtract() { return ASM_IP.find(IN_IP, 0); }
+    @Benchmark public boolean vmExtract() { return VM_IP.matcher(IN_IP).find(); }
+    @Benchmark public boolean asmExtract() { return ASM_IP.matcher(IN_IP).find(); }
 
     // ===== long-scan, no match (multi-state sim + ASCII table per-char cost) =====
-    @Benchmark public boolean vmScanNoMatch() { return VM_SCAN.find(NO_MATCH_64K); }
-    @Benchmark public boolean asmScanNoMatch() { return ASM_SCAN.find(NO_MATCH_64K); }
+    @Benchmark public boolean vmScanNoMatch() { return VM_SCAN.matcher(NO_MATCH_64K).find(); }
+    @Benchmark public boolean asmScanNoMatch() { return ASM_SCAN.matcher(NO_MATCH_64K).find(); }
 
     // ===== findAll: dense matches — the extract-restart shape (P1 target) =====
     @Benchmark public int vmFindAllDense() { return findAll(VM_DENSE, DENSE_64K); }
@@ -100,23 +102,18 @@ public class RegressionBench {
     @Benchmark public int vmFindAllSparse() { return findAll(VM_SPARSE, SPARSE_64K); }
     @Benchmark public int asmFindAllSparse() { return findAll(ASM_SPARSE, SPARSE_64K); }
 
-    static int findAll(Regex r, String in) {
+    static int findAll(Pattern r, String in) {
         int n = 0;
-        int from = 0;
-        MatchResult m;
-        while ((m = r.find(in, from)) != null) {
-            n++;
-            from = m.end(0) > m.start(0) ? m.end(0) : m.end(0) + 1;
-        }
+        for (io.github.jemmix.tdfa.core.Matcher m = r.matcher(in); m.find(); ) n++;
         return n;
     }
 
     // ===== compile-time (P6 target) =====
     static final String COMPILE_RE = "(\\w+)@(\\w+)\\.(com|org|net)|#([0-9a-f]{6})|\\bword\\b";
-    @Benchmark public Regex vmCompile() {
-        return Regex.compile(COMPILE_RE, EngineFactory.VM);
+    @Benchmark public Pattern vmCompile() {
+        return Pattern.compile(COMPILE_RE, 0, TdfaRunner::new);
     }
-    @Benchmark public Regex asmCompile() {
-        return Regex.compile(COMPILE_RE, EngineFactory.ASM);
+    @Benchmark public Pattern asmCompile() {
+        return Pattern.compile(COMPILE_RE);
     }
 }

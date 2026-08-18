@@ -18,7 +18,7 @@ package io.github.jemmix.tdfa.tdfa;
  * preferred); {@code l > 0} means {@code c2} wins; {@code l == 0} means
  * equivalent.
  */
-final class PosixCompare {
+final class GtopCompare {
 
     /** "Infinity" for heights: no divergence found. Lower 30 bits, signed. */
     static final int MAX_RHO = 0x1FFFFFFF;

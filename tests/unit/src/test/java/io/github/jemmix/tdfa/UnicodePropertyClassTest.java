@@ -1,7 +1,8 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.tdfa.Disambiguation;
-import io.github.jemmix.tdfa.core.MatchResult;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.Matcher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -29,40 +30,45 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  */
 class UnicodePropertyClassTest {
 
-    private static Stream<EngineFactory> factories() {
-        return Stream.of(EngineFactory.ASM, EngineFactory.VM);
+    private static Stream<RegexEngineFactory> factories() {
+        return Stream.<RegexEngineFactory>of(null, TdfaRunner::new);
+    }
+
+    private static Matcher match(Pattern p, String input) {
+        Matcher m = p.matcher(input);
+        return m.find() ? m : null;
     }
 
     // ===== stateBase overflow =====
 
     @ParameterizedTest @MethodSource("factories")
-    void letterClassRepeat25Compiles(EngineFactory f) {
-        assertThatCode(() -> Regex.compile("\\p{L}{25}", f, Disambiguation.PERL))
+    void letterClassRepeat25Compiles(RegexEngineFactory f) {
+        assertThatCode(() -> Pattern.compile("\\p{L}{25}", 0, f))
                 .as("\\p{L}{25} should compile without stateBase overflow")
                 .doesNotThrowAnyException();
     }
 
     @ParameterizedTest @MethodSource("factories")
-    void letterClassRepeat25Matches(EngineFactory f) {
-        Regex r = Regex.compile("\\p{L}{25}", f, Disambiguation.PERL);
-        MatchResult m = r.find("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 0);
+    void letterClassRepeat25Matches(RegexEngineFactory f) {
+        Pattern r = Pattern.compile("\\p{L}{25}", 0, f);
+        Matcher m = match(r, "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
         assertThat(m).isNotNull();
         assertThat(m.start(0)).isEqualTo(0);
         assertThat(m.end(0)).isEqualTo(25);
     }
 
     @ParameterizedTest @MethodSource("factories")
-    void letterClassRepeat25NoMatch(EngineFactory f) {
-        Regex r = Regex.compile("\\p{L}{25}", f, Disambiguation.PERL);
-        assertThat(r.find("1234567890123456789012345", 0)).isNull();
+    void letterClassRepeat25NoMatch(RegexEngineFactory f) {
+        Pattern r = Pattern.compile("\\p{L}{25}", 0, f);
+        assertThat(match(r, "1234567890123456789012345")).isNull();
     }
 
     @ParameterizedTest @MethodSource("factories")
-    void letterClassRepeat50(EngineFactory f) {
-        Regex r = Regex.compile("\\p{L}{50}", f, Disambiguation.PERL);
+    void letterClassRepeat50(RegexEngineFactory f) {
+        Pattern r = Pattern.compile("\\p{L}{50}", 0, f);
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < 50; i++) sb.append('a');
-        MatchResult m = r.find(sb.toString(), 0);
+        Matcher m = match(r, sb.toString());
         assertThat(m).isNotNull();
         assertThat(m.end(0)).isEqualTo(50);
     }
@@ -71,15 +77,15 @@ class UnicodePropertyClassTest {
 
     @Test
     void asmDelegateModeCompilesWideDfa() {
-        assertThatCode(() -> Regex.compile("\\p{L}+", EngineFactory.ASM, Disambiguation.PERL))
+        assertThatCode(() -> Pattern.compile("\\p{L}+", 0, null))
                 .as("\\p{L}+ should compile on ASM (DELEGATE dispatch)")
                 .doesNotThrowAnyException();
     }
 
     @Test
     void asmDelegateModeMatchesCorrectly() {
-        Regex r = Regex.compile("\\p{L}+", EngineFactory.ASM, Disambiguation.PERL);
-        MatchResult m = r.find("hello world", 0);
+        Pattern r = Pattern.compile("\\p{L}+", 0, null);
+        Matcher m = match(r, "hello world");
         assertThat(m).isNotNull();
         assertThat(m.start(0)).isEqualTo(0);
         assertThat(m.end(0)).isEqualTo(5);
@@ -94,8 +100,8 @@ class UnicodePropertyClassTest {
                 "(duck)", "(goose)", "(horse)", "(mouse)", "(rabbit)"
         };
         String regex = String.join("|", branches);
-        Regex r = Regex.compile(regex, EngineFactory.ASM, Disambiguation.PERL);
-        MatchResult m = r.find("have a tiger here", 0);
+        Pattern r = Pattern.compile(regex, 0, null);
+        Matcher m = match(r, "have a tiger here");
         assertThat(m).isNotNull();
         assertThat(m.groupCount()).isEqualTo(20);
         assertThat(m.start(0)).isEqualTo(7);

@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.tdfa.Disambiguation;
+import io.github.jemmix.tdfa.core.CompileOptions;
+import io.github.jemmix.tdfa.core.CompiledRegex;
 import io.github.jemmix.tdfa.core.MatchResult;
 import org.junit.jupiter.api.Test;
 
@@ -14,8 +15,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class FixedTagsTest {
 
-    private static int[] groups(Regex r, String input) {
-        MatchResult m = r.find(input, 0);
+    private static int[] groups(CompiledRegex r, String input) {
+        MatchResult m = r.match(input, 0);
         assertThat(m).as("match expected").isNotNull();
         return m.groups();
     }
@@ -23,7 +24,7 @@ class FixedTagsTest {
     /** Fixed-length group: close tag is fixed-on open tag (offset = body length).
      *  Open tag remains the base. Reconstruction: close = open + len. */
     @Test void fixedLengthGroupCloseReconstructs() {
-        Regex r = Regex.compile("(abc)");
+        CompiledRegex r = CompiledRegex.compile("(abc)");
         int[] g = groups(r, "abc");
         assertThat(g[2]).isEqualTo(0);   // g1 open
         assertThat(g[3]).isEqualTo(3);   // g1 close = open + 3
@@ -31,7 +32,7 @@ class FixedTagsTest {
 
     /** Multiple fixed-length groups: each close fixes on its own open. */
     @Test void multipleFixedLengthGroups() {
-        Regex r = Regex.compile("(ab)(cd)");
+        CompiledRegex r = CompiledRegex.compile("(ab)(cd)");
         int[] g = groups(r, "abcd");
         assertThat(g[2]).isEqualTo(0); assertThat(g[3]).isEqualTo(2);   // g1
         assertThat(g[4]).isEqualTo(2); assertThat(g[5]).isEqualTo(4);   // g2
@@ -39,7 +40,7 @@ class FixedTagsTest {
 
     /** Groups separated by fixed text: open of g2 fixes on close of g1 (offset 1). */
     @Test void groupsSeparatedByFixedText() {
-        Regex r = Regex.compile("(a)x(b)");
+        CompiledRegex r = CompiledRegex.compile("(a)x(b)");
         int[] g = groups(r, "axb");
         assertThat(g[2]).isEqualTo(0); assertThat(g[3]).isEqualTo(1);   // g1 = "a"
         assertThat(g[4]).isEqualTo(2); assertThat(g[5]).isEqualTo(3);   // g2 = "b"
@@ -47,7 +48,7 @@ class FixedTagsTest {
 
     /** Nested groups of fixed length: outer close fixes on inner close (or vice versa). */
     @Test void nestedFixedLengthGroups() {
-        Regex r = Regex.compile("((ab))");
+        CompiledRegex r = CompiledRegex.compile("((ab))");
         int[] g = groups(r, "ab");
         assertThat(g[2]).isEqualTo(0); assertThat(g[3]).isEqualTo(2);   // g1
         assertThat(g[4]).isEqualTo(0); assertThat(g[5]).isEqualTo(2);   // g2
@@ -55,7 +56,7 @@ class FixedTagsTest {
 
     /** Bounded fixed-count repeat: tags inside fix on each other within one iteration. */
     @Test void boundedFixedCountRepeat() {
-        Regex r = Regex.compile("(a){3}");
+        CompiledRegex r = CompiledRegex.compile("(a){3}");
         int[] g = groups(r, "aaa");
         // last iteration captures positions 2..3
         assertThat(g[2]).isEqualTo(2); assertThat(g[3]).isEqualTo(3);
@@ -63,7 +64,7 @@ class FixedTagsTest {
 
     /** Adjacent fixed-length groups after a fixed-text prefix. */
     @Test void fixedPrefixThenGroups() {
-        Regex r = Regex.compile("x(ab)y(cd)");
+        CompiledRegex r = CompiledRegex.compile("x(ab)y(cd)");
         int[] g = groups(r, "xabycd");
         assertThat(g[2]).isEqualTo(1); assertThat(g[3]).isEqualTo(3);
         assertThat(g[4]).isEqualTo(4); assertThat(g[5]).isEqualTo(6);
@@ -72,21 +73,21 @@ class FixedTagsTest {
     /** Variable-length body: tags should NOT fix on each other. */
     @Test void variableLengthGroupNoFalseFix() {
         // (a+) is variable length; open and close must NOT fix on each other.
-        Regex r = Regex.compile("(a+)");
+        CompiledRegex r = CompiledRegex.compile("(a+)");
         int[] g = groups(r, "aaaa");
         assertThat(g[2]).isEqualTo(0); assertThat(g[3]).isEqualTo(4);
     }
 
     /** Alternation with same-length branches: tags before+after fix across the alt. */
     @Test void altSameLengthBranches() {
-        Regex r = Regex.compile("(a|b)c");
+        CompiledRegex r = CompiledRegex.compile("(a|b)c");
         int[] g = groups(r, "bc");
         assertThat(g[2]).isEqualTo(0); assertThat(g[3]).isEqualTo(1);
     }
 
     /** Alternation with different-length branches: tags after do NOT fix across. */
     @Test void altDiffLengthBranches() {
-        Regex r = Regex.compile("(a|bb)c");
+        CompiledRegex r = CompiledRegex.compile("(a|bb)c");
         // g1 is variable-length; c is at variable distance from g1 open.
         int[] g1 = groups(r, "ac");
         assertThat(g1[2]).isEqualTo(0); assertThat(g1[3]).isEqualTo(1);
@@ -96,7 +97,7 @@ class FixedTagsTest {
 
     /** Realistic IP pattern: every group+separator is fixed-length-relative. */
     @Test void ipPattern() {
-        Regex r = Regex.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)");
+        CompiledRegex r = CompiledRegex.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)");
         int[] g = groups(r, "192.168.1.1");
         assertThat(g[2]).isEqualTo(0); assertThat(g[3]).isEqualTo(3);
         assertThat(g[4]).isEqualTo(4); assertThat(g[5]).isEqualTo(7);
@@ -106,7 +107,7 @@ class FixedTagsTest {
 
     /** ASM backend path: reconstruction must run in emitted bytecode too. */
     @Test void asmBackendReconstruction() {
-        Regex r = Regex.compile("(abc)", EngineFactory.ASM, Disambiguation.POSIX);
+        CompiledRegex r = CompiledRegex.compile("(abc)", CompileOptions.of().longestMatch());
         int[] g = groups(r, "abc");
         assertThat(g[2]).isEqualTo(0); assertThat(g[3]).isEqualTo(3);
     }
@@ -114,15 +115,15 @@ class FixedTagsTest {
     /** Non-participating group: the base tag is NIL, so fixed tags must be NIL too. */
     @Test void nonParticipatingGroupPropagatesNil() {
         // (a)|(b) — only one group matches. The other must report NIL (-1).
-        Regex r = Regex.compile("(a)|(b)");
-        MatchResult m1 = r.find("a", 0);
+        CompiledRegex r = CompiledRegex.compile("(a)|(b)");
+        MatchResult m1 = r.match("a", 0);
         assertThat(m1).isNotNull();
         assertThat(m1.start(1)).isEqualTo(0);
         assertThat(m1.end(1)).isEqualTo(1);
         assertThat(m1.start(2)).isEqualTo(-1);
         assertThat(m1.end(2)).isEqualTo(-1);
 
-        MatchResult m2 = r.find("b", 0);
+        MatchResult m2 = r.match("b", 0);
         assertThat(m2).isNotNull();
         assertThat(m2.start(1)).isEqualTo(-1);
         assertThat(m2.end(1)).isEqualTo(-1);
