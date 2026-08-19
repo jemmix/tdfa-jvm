@@ -59,6 +59,7 @@ upstream_url_for() {
     case "$1" in
         re2j)  echo "https://github.com/google/re2j.git" ;;
         rebar) echo "https://github.com/BurntSushi/rebar.git" ;;
+        testregex) echo "https://github.com/gburd/testregex.git" ;;
         *)     return 1 ;;
     esac
 }
@@ -127,7 +128,22 @@ MAP
             ;;
         rebar)
             # Filled in when rebar integration lands.
-            :
+            # (The rebar benchmarks tree is read directly from the pristine
+            #  extraction by :tests:parity:rebar — no generated-sources copy.)
+            ;;
+        testregex)
+            # Glenn Fowler's regex(3) test corpus (preserved mirror). The .dat
+            # files are the corpus; LICENSE carried for attribution.
+            cat <<'MAP'
+testregex/basic.dat resources testregex/basic.dat
+testregex/categorize.dat resources testregex/categorize.dat
+testregex/forcedassoc.dat resources testregex/forcedassoc.dat
+testregex/leftassoc.dat resources testregex/leftassoc.dat
+testregex/nullsubexpr.dat resources testregex/nullsubexpr.dat
+testregex/repetition.dat resources testregex/repetition.dat
+testregex/rightassoc.dat resources testregex/rightassoc.dat
+testregex/LICENSE resources testregex/LICENSE
+MAP
             ;;
         *)
             echo "warning: no copy map defined for $dep (skipping file copy)" >&2
