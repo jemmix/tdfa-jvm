@@ -35,12 +35,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       (~1.4 K ranges/state; guards the W1a/W1b range work).</li>
  * </ul>
  *
- * <p>NOT covered (still budget-skipped in the scenario suite):
- * {@code curated/10-bounded-repeat/context} — {@code [\s\S]{0,100}} × 2 whose
- * counter cross-product is an intrinsically huge DFA (measured
- * already-minimal: 60 604 → 60 603 states on the simplified analog; the real
- * regex compiles in ~49 s / 12 GB heap — see TODO.md "huge-DFA bounded
- * repeats").
+ * <p>NOT covered (rejected by the engine's determinization budget — re2c's
+ * own design, see {@code CompileBudgetTest}): {@code curated/10-bounded-repeat/
+ * context} — {@code [\s\S]{0,100}} × 2 whose counter cross-product is an
+ * intrinsically huge DFA (measured already-minimal: 60 604 → 60 603 states on
+ * the simplified analog; the real regex aborts at the default 100 K-state cap
+ * in ~10 s with a clean "pattern too large" error — the uncapped compile
+ * needs 12 GB and ~49 s).
  *
  * <p>Budget: 5 s per compile (generous CI headroom over the ~3 s worst
  * measured on a laptop; the point is catching superlinear regressions, not

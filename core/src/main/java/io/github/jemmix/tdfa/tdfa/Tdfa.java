@@ -359,6 +359,25 @@ public final class Tdfa {
         /** Global register allocator counter; bumped monotonically across all states. */
         int nextReg;
 
+        /**
+         * Determinization budget — re2c's design verbatim (its src/dfa/determinization.cc:
+         * "Abort if TDFA grows too fast (either in the number of states, or in the total
+         * size of all state kernels which may have many TNFA substates)"; constants.h:
+         * {@code MAX_DFA_STATES = 100*1000}, {@code MAX_DFA_SIZE = 50*1000*1000}). A
+         * pattern whose DFA exceeds the budget fails compilation with a clean
+         * "pattern too large" error instead of burning unbounded time/heap (the
+         * reference implementation rejects e.g. two-site {@code [^]{0,16}x[^]{0,16}}
+         * outright; ours determinizes that family compactly but still caps the
+         * intrinsically-huge cross-products like rebar's
+         * {@code [\s\S]{0,100}Result[\s\S]{0,100}} — a 200 K+-state minimal DFA).
+         * Read per-compile (not cached) so tests can override; defaults leave the
+         * largest legit in-corpus pattern (dictionary, 19.6 K pre-min states) 5x headroom.
+         */
+        final int maxStates = Integer.getInteger("tdfa.max.states", 100_000);
+        final int maxKernelsTotal = Integer.getInteger("tdfa.max.kernels", 50_000_000);
+        /** Running sum of closure (kernel) sizes — re2c's kernels_total. */
+        long kernelsTotal = 0;
+
         Compiler(Tnfa nfa) { this(nfa, false); }
 
         Compiler(Tnfa nfa, boolean longestMatch) {
@@ -1513,6 +1532,13 @@ public final class Tdfa {
             builders.add(new DfaStateBuilder(id));
             for (Config c : configs) {
                 if (c.state == nfa.accept) { accept.set(id); break; }
+            }
+            kernelsTotal += configs.size();
+            if (states.size() > maxStates || kernelsTotal > maxKernelsTotal) {
+                throw new IllegalStateException("pattern too large: TDFA determinization budget exceeded ("
+                        + states.size() + " states, kernel total " + kernelsTotal
+                        + "; caps " + maxStates + " states / " + maxKernelsTotal
+                        + " — raise -Dtdfa.max.states / -Dtdfa.max.kernels)");
             }
             return new AddResult(id, ops);
         }

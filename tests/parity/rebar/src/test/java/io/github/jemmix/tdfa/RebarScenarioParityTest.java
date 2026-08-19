@@ -1,8 +1,5 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.ast.Ast;
-import io.github.jemmix.tdfa.ast.CharClass;
-import io.github.jemmix.tdfa.parser.Parser;
 import io.github.jemmix.tdfa.core.Matcher;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import io.github.jemmix.tdfa.Pattern;
@@ -155,18 +152,19 @@ class RebarScenarioParityTest {
         // (bespoke embedded-regex harness, ~1–2 scenarios — see PARITY-PLAN §4.3).
         Set<String> supportedModels = Set.of("count", "count-spans", "count-captures",
                 "grep", "compile", "grep-captures");
-        // Budgets: radically relaxed (24×/60× the prior 5 s/10 s ceilings) so the
-        // suite surfaces real bugs instead of timing out on legitimate-but-slow
-        // compiles/runs. The 80 MB haystack cap covers every in-scope haystack
-        // (largest is 39 MB); the 2 MB regex cap covers the longest in-scope
-        // dictionary alternation (~57 KB). The end-of-suite summary prints the
-        // slowest tests so we can see what actually needed the headroom.
-        // COMPILE_TIMEOUT is 4 min: covers dictionary/single (~150 s compile
-        // under parallel contention) with headroom; the 4 known bombs that
-        // would exceed it are AST-skipped before this timeout fires (see
-        // exceedsCompileBudget).
-        final long COMPILE_TIMEOUT_MS = 240_000;      // regex compilation wall-clock (4 min)
-        final long RUN_TIMEOUT_MS    = 600_000;       // match execution wall-clock (10 min)
+        // Budgets: watchdogs against future superlinear regressions, sized from
+        // measured data (2026-08-19): slowest test in the whole suite incl.
+        // compile+run is 3.4 s (lh3lh3-reb/uri-or-email); compile-latency guard
+        // pins every formerly-bomb compile < 5 s (CompileLatencyGuardTest); the
+        // engine's own determinization budget (re2c-identical caps, see below)
+        // rejects intrinsically-huge DFAs in ~10 s. 60 s / 120 s give >10x
+        // headroom over all of those while keeping a real hang a FAIL, not a
+        // multi-minute CI stall. The 80 MB haystack cap covers every in-scope
+        // haystack (largest is 39 MB); the 2 MB regex cap covers the longest
+        // in-scope dictionary alternation (~57 KB). The end-of-suite summary
+        // prints the slowest tests so we can see what actually needed it.
+        final long COMPILE_TIMEOUT_MS = 60_000;       // regex compilation wall-clock (60 s watchdog)
+        final long RUN_TIMEOUT_MS    = 120_000;       // match execution wall-clock (120 s watchdog)
         final int  MAX_HAYSTACK_BYTES = 80_000_000;   // covers all in-scope haystacks (largest 39 MB)
         final int  MAX_REGEX_LEN = 2_000_000;         // covers all in-scope regex specs (largest ~57 KB)
 
@@ -228,31 +226,20 @@ class RebarScenarioParityTest {
         //     VM-retry path: each parameter value runs its own backend
         //     independently, and a divergence shows up as a real test failure.
 
-        // --- AST-level fast-fail: pre-scan for known bomb shapes that would
-        //     otherwise burn the full COMPILE_TIMEOUT wall budget. Only ONE such
-        //     shape remains (2026-08-18): two-or-more-site wide-class bounded
-        //     repeats like curated/10-bounded-repeat/context
-        //     ([\s\S]{0,100} × 2) whose counter cross-product is an
-        //     intrinsically huge DFA — measured on the simplified analog
-        //     [A-Z]{10}\s+[\s\S]{0,100}Z[\s\S]{0,100}\s+[A-Z]{10}: 60 604
-        //     states, 60 603 after register-aware Moore minimization, i.e.
-        //     already minimal; the real scenario regex is far larger (OOMs a
-        //     default heap during determinization). The former rules for
-        //     aws-keys/full ((\n^.*?){0,4}) and date (6.3 KB alternation) were
-        //     RETIRED: both now compile through the facade in < 3 s after the
-        //     determinize fast-path (stateIndex multimap + per-active-set
-        //     result cache + primitive closure sets). The detector must still
-        //     NOT trip on legitimately slow-but-finishing compiles like
-        //     curated/12-dictionary/single or leipzig prefix rows.
-        //     See docs/REBAR-SPEEDUP-PLAN.md §Tier-1 #2.
-        if (exceedsCompileBudget(s.regex())) {
-            countSkip("compile-budget:ast-bomb");
-            skipCount.incrementAndGet();
-            timings.add(new Timing(s.fullName(), 0, 0, "SKIP:compile-budget"));
-            assumeTrue(false, "compile-budget: AST-level bomb detected (would exceed "
-                    + COMPILE_TIMEOUT_MS + "ms wall budget)");
-            return;
-        }
+        // --- Engine determinization budget (2026-08-19): Tdfa now enforces
+        //     re2c-identical caps during determinization (100 K states /
+        //     50 M total kernel size — re2c src/dfa/determinization.cc +
+        //     constants.h: "Abort if TDFA grows too fast ..."). A pattern
+        //     exceeding them fails compilation with a clean "pattern too
+        //     large" PatternSyntaxException in ~10 s (measured on
+        //     10-bounded-repeat/context, the one in-corpus shape whose
+        //     minimal DFA is a 200 K+-state counter cross-product). The
+        //     former AST-level bomb pre-scan is RETIRED — the engine rejects
+        //     faster and more honestly than the heuristic ever could, and
+        //     users get the same protection the reference implementation
+        //     ships (re2c itself refuses two-site [^]{0,16}x[^]{0,16}
+        //     outright; ours determinizes that family fine and caps only
+        //     the intrinsically-huge ones).
 
         int flags = 0;
         if (s.caseInsensitive()) flags |= Pattern.CASE_INSENSITIVE;
@@ -274,6 +261,19 @@ class RebarScenarioParityTest {
             assumeTrue(false, "COMPILE_TIMEOUT " + COMPILE_TIMEOUT_MS + "ms (" + labelFor(factory) + ")");
             return;
         } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : "";
+            if (msg.contains("pattern too large")) {
+                // The engine's determinization budget — re2c's own behavior
+                // ("DFA has too many states"), not a test-side mask.
+                countSkip("compile-budget:engine");
+                skipCount.incrementAndGet();
+                timings.add(new Timing(s.fullName(),
+                        (System.nanoTime() - compileStart) / 1_000_000, 0,
+                        "SKIP:compile-budget:engine"));
+                assumeTrue(false, "engine determinization budget exceeded ("
+                        + labelFor(factory) + "): " + msg);
+                return;
+            }
             countSkip("compile-failed:" + labelFor(factory) + ":" + e.getClass().getSimpleName());
             skipCount.incrementAndGet();
             timings.add(new Timing(s.fullName(),
@@ -409,122 +409,6 @@ class RebarScenarioParityTest {
      */
     private static boolean enginesIncludeJava(Scenario s) {
         return s.engines().stream().anyMatch(e -> e.startsWith("java/"));
-    }
-
-    /**
-     * Heuristic AST-level bomb detector used to fast-fail regexes that would
-     * otherwise burn the full {@code COMPILE_TIMEOUT_MS} wall budget on
-     * DFA state explosion. Catches the 4 known COMPILE_TIMEOUT scenarios:
-     * <ul>
-     *   <li>{@code curated/09-aws-keys/full} — {@code (\n^.*?){0,4}} nested
-     *       inside an outer {@code (...)+}: bounded repeat containing a
-     *       wide unbounded repeat</li>
-     *   <li>{@code curated/03-date/ascii} + {@code unicode} — 391-branch
-     *       alternation with non-literal branches (each branch contains
-     *       {@code \d}, {@code [0-3]} etc.)</li>
-     *   <li>{@code curated/10-bounded-repeat/context} — {@code [\s\S]{0,100}}
-     *       × 2: very-high bounded repeat over a single wide class</li>
-     * </ul>
-     *
-     * <p>Conservative by design — must NOT trip on legitimately-slow-but-
-     * finishing compiles like {@code curated/12-dictionary/single} (73 s,
-     * 2663 literal-only branches), {@code \p{L}{8,13}} (passes, narrow body
-     * in single CharClass), {@code Tom.{10,25}river|...} (passes, mid-range
-     * repeat count), or {@code (?:[A-Z][a-z]+\s*){10,100}} (5 s compile,
-     * bounded-repeat containing unbounded-repeat over narrow class).
-     *
-     * <p>Three detector rules:
-     * <ol>
-     *   <li><b>Bounded repeat of wide-unbounded repeat</b>: a {@code Repeat}
-     *       (max &lt; ∞) whose body transitively contains another
-     *       {@code Repeat(max=∞)} whose body transitively contains a wide
-     *       {@link CharClass} (width &gt; 10 000). This is the aws-keys
-     *       {@code (\n^.*?){0,4}} shape.</li>
-     *   <li><b>Very-high bounded repeat over wide class</b>: a {@code Repeat}
-     *       with at least 50 reps whose body is (or contains) a single wide
-     *       {@link CharClass}. This is the {@code [\s\S]{0,100}} shape.
-     *       Threshold of 50 reps distinguishes from {@code \p{L}{8,13}}
-     *       (6 reps) and {@code .{10,25}} (16 reps).</li>
-     *   <li><b>Massive non-literal alternation</b>: an {@code Alt} with
-     *       &gt; 300 branches where any branch contains a non-literal node.
-     *       Threshold of 300 catches the 391-branch datefinder regex;
-     *       dictionary (2663 branches, all plain literals) passes through.</li>
-     * </ol>
-     *
-     * <p>Returns {@code false} if the regex fails to parse — we let the
-     * downstream {@link Pattern#compile} produce the canonical error.
-     */
-    private static boolean exceedsCompileBudget(String regex) {
-        Ast ast;
-        try {
-            ast = Parser.parse(regex);
-        } catch (RuntimeException e) {
-            return false;
-        }
-        return scanForBomb(ast, regex.length());
-    }
-
-    /** Recursive walker; returns true if any subtree matches the bomb shape. */
-    private static boolean scanForBomb(Ast ast, int regexLen) {
-        if (ast instanceof Ast.Repeat r) {
-            boolean variable = r.max != Integer.MAX_VALUE && r.max > r.min;
-            if (variable) {
-                int reps = r.max - r.min + 1;
-                // The one remaining bomb shape: very-high variable bounded repeat
-                // over a wide class (context: [\s\S]{0,100} × 2). Two such sites
-                // multiply: the DFA tracks both counters through every character,
-                // so the minimal DFA is ~(max1+1)×(max2+1) states — measured
-                // already-minimal on the simplified analog (60 604 → 60 603 by
-                // register-aware Moore). Not fixable by minimization or encoding;
-                // needs either much faster determinization or lazy determinization
-                // (rejected: multi-pass §7 is a different architecture, out of the
-                // single-algorithm design goal).
-                if (reps >= 50 && containsWideClass(r.body)) return true;
-            }
-            return scanForBomb(r.body, regexLen);
-        }
-        if (ast instanceof Ast.Alt a) {
-            for (Ast child : a.children) {
-                if (scanForBomb(child, regexLen)) return true;
-            }
-            return false;
-        }
-        if (ast instanceof Ast.Concat c) {
-            for (Ast child : c.children) {
-                if (scanForBomb(child, regexLen)) return true;
-            }
-            return false;
-        }
-        return false;
-    }
-
-    /** Does {@code ast} contain any {@link CharClass} of width &gt; 10 000? */
-    private static boolean containsWideClass(Ast ast) {
-        if (ast instanceof CharClass cc) return classWidth(cc) > 10_000;
-        if (ast instanceof Ast.Repeat r) return containsWideClass(r.body);
-        if (ast instanceof Ast.Concat c) {
-            for (Ast child : c.children) {
-                if (containsWideClass(child)) return true;
-            }
-            return false;
-        }
-        if (ast instanceof Ast.Alt a) {
-            for (Ast child : a.children) {
-                if (containsWideClass(child)) return true;
-            }
-            return false;
-        }
-        return false;
-    }
-
-    /** Total codepoint width of a CharClass (sum of inclusive range sizes). */
-    private static long classWidth(CharClass cc) {
-        long w = 0;
-        for (int i = 0; i + 1 < cc.ranges.length; i += 2) {
-            w += (long) cc.ranges[i + 1] - cc.ranges[i] + 1;
-            if (w > 100_000) return 100_001; // cap
-        }
-        return w;
     }
 
     /**

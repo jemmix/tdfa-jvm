@@ -225,21 +225,27 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
       COMPILE_TIMEOUT skips" was doubly wrong: the bombs explode during
       DETERMINIZATION (before the minimizer runs, above its cap), and their
       DFAs are essentially minimal anyway (see next item).
-- [ ] **Huge-DFA bounded-repeat patterns** — e.g. rebar `curated/10-bounded-repeat/context`:
+- [x] **Huge-DFA bounded-repeat patterns** — e.g. rebar `curated/10-bounded-repeat/context`:
       `[\s\S]{0,100}` × 2 makes the DFA track both counters through every char,
       so the MINIMAL DFA is the counter cross-product. Measured: simplified
       analog `[A-Z]{10}\s+[\s\S]{0,100}Z[\s\S]{0,100}\s+[A-Z]{10}` = 60 604
       states, 60 603 after Moore (already minimal); the real regex = 200 K+
-      states, 48.6 s + 12 GB heap after the determinize fast-path (was >2 min
-      kill + OOM). Remaining levers, in the single-algorithm AOT design:
-      constant-factor determinize speedups (2.6× so far: per-active-set result
-      cache, primitive closure sets, counting-sort keys) and Config memory
-      compaction. REJECTED: a Pike-VM/NFA fallback engine for over-budget
-      patterns (2026-08-18) — that is multi-engine dispatch, an explicit
-      non-goal. Lazy/multi-pass determinization (paper §7) is likewise a
-      different architecture. The scenario stays budget-skipped; every other
-      formerly-bomb pattern is under a 5 s latency guard
-      (`CompileLatencyGuardTest`).
+      states (48.6 s + 12 GB heap to compile uncapped).
+      RESOLVED 2026-08-19 by adopting re2c's design verbatim (verified against
+      re2c 4.5.1, the paper's reference implementation: its determinization
+      aborts with "DFA has too many states" — `MAX_DFA_STATES = 100 K` states /
+      `MAX_DFA_SIZE = 50 M` kernel-total, src/dfa/determinization.cc): the
+      engine now enforces the same caps during determinization and fails
+      compilation with a clean "pattern too large" `PatternSyntaxException`
+      (~10 s / default heap on the context bomb, was 12 GB OOM). Notably our
+      construction strictly dominates the reference on this axis — re2c
+      refuses two-site `[^]{0,16}x[^]{0,16}` outright, while ours determinizes
+      that family compactly ({0,100} = 10 K states) and caps only the
+      intrinsically-huge ones. `CompileBudgetTest` guards fail-fast + override
+      + legit-under-budget; the rebar scenario skips on the engine error
+      (test-side AST heuristic deleted). REJECTED alternatives unchanged:
+      Pike-VM/NFA fallback and lazy §7 determinization are multi-engine/
+      different-architecture (non-goals).
 - [x] **M2 regopt interference-analysis bug** — Fixed in commit `6b335e2`. `Optimize.interferenceAnalysis` walked ops FORWARD and cloned `L[b]` (end-of-block liveness) for EACH op, missing the fact that COPY sources become live BEFORE the op and conflict with registers written by LATER ops in the same block. Rewrote to walk ops in REVERSE with a running live set (BT22 Fig. 7), keeping a forward pre-pass for the value-tracking `V[]` snapshots. All 61500 veryl matches now report exactly 1 participating group, matching `java.util.regex`.
 - [x] **`\b` in alternation causes dead-end DFA paths** — Fixed in commit `d133d20`. Modified `Tdfa.Compiler.compile()` to include subset-mask group configs in the step input, ensuring `\b`-guarded transitions include identifier continuations. Group's own configs added first to preserve priority in ε-closure dedup. The veryl scenario now reports the expected 124800 captures.
 - [x] **Unicode case-fold `s ↔ ſ` for literal chars under `(?i)`** — Fixed in commit `74ab652`. Added `CaseFoldTable` (unicode/CaseFoldTable.java) with a reverse fold table mapping `toUpperCase(toLowerCase(cp))` to all BMP codepoints sharing it. Parser uses it when `unicodeShorthand && caseInsensitive`.
@@ -253,7 +259,7 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
 - [x] Vendor Glenn Fowler's testregex corpus — `vendor/testregex-<sha>.tar.gz` (preserved mirror of the AT&T original, ISC-style license); `TestregexFowlerTest` hard-gates re2j-longest parity over the 5 ERE spec files (578 params; Fowler's own POSIX expectations soft-reported — see the class javadoc).
 - [x] Tracer-bullet parity test against rebar scenarios — `:tests:parity:rebar:RebarScenarioParityTest`. With the radical timeout/cap relaxation (`COMPILE_TIMEOUT_MS` 5 s → 2 min, `RUN_TIMEOUT_MS` 10 s → 10 min, `MAX_HAYSTACK_BYTES` 16 MB → 80 MB, `MAX_REGEX_LEN` 32 KB → 2 MB), `utf8-lossy` loader support, the scope restricted to scenarios rebar actually tests against Java (`java/hotspot` in engines list — see `docs/PARITY-PLAN.md`), and `compile` / `grep-captures` models implemented: **108 of 114 in-scope scenarios pass** (94.7 %), 2 surface known engine bugs (see "Correctness" below), 4 skip on `COMPILE_TIMEOUT` (bounded-repeat state explosion — see Performance below), 245 skip on the Java-scope filter (out of scope per the locked 2025-08 rule). End-of-suite `@AfterAll` summary prints skip-reason histogram + top-20 slowest tests + wall-time totals — see `docs/REBAR-PARITY-PLAN.md`.
 - [x] Expand rebar parity — Phase 6.3 of `REBAR-PARITY-PLAN.md`: utf8-lossy loader fix, radical timeout/cap bumps. Surfaced the O(n²) extract bug (Phase 6.1) and the 4 bounded-repeat compile bombs (Phase 6.2). +34 scenarios passing (74 → 108).
-- [x] Remaining rebar parity — **All in-scope scenarios now pass** (718/718 parameterized cases, 0 failures). The 3 engine correctness bugs (§A regopt interference, §B `\b` dead-end, §C Unicode case-fold) are fixed. 2026-08-18: the date/aws compile bombs were un-skipped after the determinize fast-path (date counts verified equal to live `java.util.regex` — JDK-26 tables drift patched in `vendor/patches/rebar/05-*.patch`); `CompileLatencyGuardTest` pins <5 s facade compiles. Remaining skips: 490 scope (no `java/hotspot` engine) + 2 budget (`10-bounded-repeat/context`, the intrinsically-huge-DFA shape — see Performance).
+- [x] Remaining rebar parity — **All in-scope scenarios now pass** (718/718 parameterized cases, 0 failures). The 3 engine correctness bugs (§A regopt interference, §B `\b` dead-end, §C Unicode case-fold) are fixed. 2026-08-18: the date/aws compile bombs were un-skipped after the determinize fast-path (date counts verified equal to live `java.util.regex` — JDK-26 tables drift patched in `vendor/patches/rebar/05-*.patch`); `CompileLatencyGuardTest` pins <5 s facade compiles. 2026-08-19: the test-side AST bomb heuristic was deleted — the engine's own determinization budget (re2c-identical caps) now rejects the one remaining shape, and the compile/run watchdogs were tightened to data-backed 60 s/120 s (slowest test in the suite: 3.4 s). Remaining skips: 490 scope (no `java/hotspot` engine) + 2 engine-budget (`10-bounded-repeat/context` — see Performance).
 - [ ] Hyperscan corpus / Snort rule set
 - [ ] Long-input scan across diverse patterns (not just `\w+\d+\w+`)
 - [ ] CI performance regression tracking (JMH + comparison thresholds; NOTE `scripts/bench-regression.sh` needed a classpath fix post-module-restructure — re-captured the quick baseline 2026-08-18)
