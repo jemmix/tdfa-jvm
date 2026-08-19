@@ -278,6 +278,35 @@ public final class Tnfa {
             }
         }
 
+        /**
+         * Whether {@code e} can match the empty string (the syntactic analogue
+         * of re2j's {@code Frag.nullable}, which drives its
+         * {@code x* → (x+)?} star compilation for nullable bodies). Anchors and
+         * word boundaries are zero-width, hence nullable; symbol-bearing nodes
+         * are not.
+         */
+        private static boolean isNullable(Ast e) {
+            if (e instanceof Ast.Symbol) return false;
+            if (e instanceof CharClass) return false;
+            if (e instanceof Ast.Repeat) {
+                Ast.Repeat r = (Ast.Repeat) e;
+                return r.min == 0 || isNullable(r.body);
+            }
+            if (e instanceof Ast.Concat) {
+                for (Ast c : ((Ast.Concat) e).children) {
+                    if (!isNullable(c)) return false;
+                }
+                return true;
+            }
+            if (e instanceof Ast.Alt) {
+                for (Ast c : ((Ast.Alt) e).children) {
+                    if (isNullable(c)) return true;
+                }
+                return false;
+            }
+            return true;  // Empty, Tag, anchors, word boundaries
+        }
+
         private int buildRepeat(Ast.Repeat r, int entryTo) {
             int min = r.min, max = r.max;
             Ast body = r.body;
@@ -305,12 +334,56 @@ public final class Tnfa {
             }
             if (min == 0 && max == Integer.MAX_VALUE) {
                 // e* : loop. ntags only on the INITIAL skip (0 iterations); subsequent
-                // exits from loopBack do NOT re-emit ntags because the group already
+                // exits from the loop hub do NOT re-emit ntags because the group already
                 // matched in a prior iteration (BT19 §7.3 — ntag represents no-match).
-                int s = fresh();
-                int loopBack = fresh();
-                int bodyStart = build(body, loopBack);
-                eps(s, bodyStart, bodyPri);                       // prefer to enter body (greedy) / skip (lazy)
+                //
+                // Topology mirrors re2j's Compiler.star(), which has two shapes:
+                //
+                // (a) NON-nullable body — one shared hub that both the body's exit
+                //     and the initial entry pass through, deciding iterate-vs-exit
+                //     (re2j Prog loop()). With the former split entry/loop nodes, an
+                //     OUTER repeat's re-entry path (which crosses the group's
+                //     open-tag edge and arrives at this star's ENTRY node) found it
+                //     unvisited and stole the ε-closure slot, so the surviving
+                //     continuation carried a RE-OPENED group tag — reporting the
+                //     last iteration's span for shapes like (a*?)*? on "aaa"
+                //     (g1=[2,3) where re2j reports [0,3)). With the shared hub, the
+                //     outer re-entry dies at the already-visited entry/hub nodes —
+                //     re2j's observable priority — and the plain continuation wins.
+                //
+                // (b) NULLABLE body — (f+)? (re2j: "When f1 can match an empty
+                //     string, f1* must be implemented as (f1+)? to get the priority
+                //     match order correct"): a quest whose body-side enters the
+                //     plus's body DIRECTLY, with the iterate/exit hub only at the
+                //     body's exit. This keeps the enter-body-ε-through-exit accept
+                //     at the TOP of the priority order with the group's close tag
+                //     traversed (re2j (a*?)* on "aaa" = [0,0) g1=[0,0)), which a
+                //     plain hub loop cannot: the ε-pass collapses into the hub
+                //     dedup and the surviving accept loses to the body's rune.
+                if (isNullable(body)) {
+                    int hub = fresh();          // plus loop hub (at body exit)
+                    int bodyStart = build(body, hub);
+                    eps(hub, bodyStart, bodyPri);               // iterate (no ntag; group already matched)
+                    eps(hub, entryTo, skipPri);                 // or exit (no ntag)
+                    int s0 = fresh();          // quest: skip vs enter the plus
+                    eps(s0, bodyStart, bodyPri);
+                    int skipFromStart = entryTo;
+                    {
+                        java.util.BitSet bodyGroups = new java.util.BitSet();
+                        collectGroups(body, bodyGroups);
+                        for (int g = bodyGroups.length(); (g = bodyGroups.previousSetBit(g - 1)) >= 0; ) {
+                            int ntagState = fresh();
+                            taggedEps(ntagState, skipFromStart, 1, -(2 * g));
+                            skipFromStart = ntagState;
+                        }
+                    }
+                    eps(s0, skipFromStart, skipPri);
+                    return s0;
+                }
+                int s0 = fresh();      // pre-loop decision: initial skip vs enter
+                int hub = fresh();     // loop hub: iterate vs exit
+                int bodyStart = build(body, hub);
+                eps(s0, hub, bodyPri);                             // enter the loop (greedy) / skip (lazy)
                 // Initial skip path: prepend ntags for body groups (0 iterations ⇒ no match).
                 int skipFromStart = entryTo;
                 {
@@ -322,10 +395,10 @@ public final class Tnfa {
                         skipFromStart = ntagState;
                     }
                 }
-                eps(s, skipFromStart, skipPri);
-                eps(loopBack, bodyStart, bodyPri);                // loop back (no ntag; group already matched)
-                eps(loopBack, entryTo, skipPri);                 // or exit (no ntag)
-                return s;
+                eps(s0, skipFromStart, skipPri);
+                eps(hub, bodyStart, bodyPri);                      // iterate (no ntag; group already matched)
+                eps(hub, entryTo, skipPri);                        // or exit (no ntag)
+                return s0;
             }
             if (min == 1 && max == Integer.MAX_VALUE) {
                 // e+ : body followed by e* (the e* uses the lazy/greedy preference)

@@ -229,18 +229,14 @@ class TestregexFowlerTest {
      * Known our-vs-re2j divergences, gated behind {@code -Dtdfa.pending=true}
      * (TODO.md convention). Cleared as each is fixed.
      *
-     * <ul>
-     *   <li>{@code nullsubexpr.dat:51} — {@code (a*?)*?} on "aaa" (longest):
-     *       re2j whole=[0,3) g1=[0,3); ours whole=[0,3) g1=[2,3). The nested
-     *       same-greediness quantifier family: which loop iteration owns the
-     *       group span. Also diverges in default mode ({@code (a*?)*?b} on
-     *       "aaab": re2j g1=[0,3) vs ours g1=[2,3) — where java.util.regex
-     *       agrees with OURS; engines genuinely disagree on this family,
-     *       see Fowler's own categorize.dat ASSOCIATIVITY rows).</li>
-     * </ul>
+     * <p>EMPTY since the TNFA star-topology fix (2026-08-18): the nested
+     * same-greediness quantifier family ((a*?)*? on "aaa": re2j g1=[0,3) vs
+     * former ours g1=[2,3)) was root-caused to re2j's Prog star compilation —
+     * shared-hub loop for non-nullable bodies, (f+)? for nullable ones — and
+     * mirrored in {@code Tnfa.buildRepeat}. Kept as the extension point for
+     * future finds.
      */
-    static final java.util.Set<String> KNOWN_DIVERGENT = java.util.Set.of(
-            "testregex/nullsubexpr.dat:51");
+    static final java.util.Set<String> KNOWN_DIVERGENT = java.util.Set.of();
 
     static boolean pendingEnabled() {
         return Boolean.getBoolean("tdfa.pending");

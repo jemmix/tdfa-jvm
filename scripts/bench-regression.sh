@@ -27,7 +27,10 @@ if [[ $QUICK == 1 ]]; then
     RESULTS="benchmarks/micro/build/reports/jmh/quick.json"
     ASM_JAR="$(find ~/.gradle/caches/modules-2 -name 'asm-9.9.1.jar' | head -1)"
     ./gradlew :benchmarks:micro:compileJmhJava -q
-    java -cp "benchmarks/micro/build/classes/java/jmh:build/classes/java/main:$ASM_JAR" \
+    # Module-restructure layout: QuickBench exercises the facade (root) plus the
+    # core interpreter and the ASM backend's generated-code path — all three
+    # class dirs must be on the runtime classpath.
+    java -cp "benchmarks/micro/build/classes/java/jmh:build/classes/java/main:core/build/classes/java/main:asm/build/classes/java/main:$ASM_JAR" \
         io.github.jemmix.tdfa.bench.QuickBench "$RESULTS" 1>&2
     THRESHOLD=0.15   # quick harness: min-of-3 keeps noise low, but allow a bit more than JMH
 else

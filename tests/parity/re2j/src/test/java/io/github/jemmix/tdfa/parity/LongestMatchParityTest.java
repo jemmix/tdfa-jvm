@@ -154,18 +154,24 @@ class LongestMatchParityTest {
         }
     }
 
-    /** Small random pattern over {a,b,c} with alternations, groups, quantifiers. */
+    /** Small random pattern over {a,b,c} with alternations, groups, quantifiers —
+     *  INCLUDING nested quantifiers ((x*)*, the Fowler nullsubexpr family). */
     static String randomPattern(RandomGenerator rnd) {
         StringBuilder sb = new StringBuilder();
         int parts = 1 + rnd.nextInt(3);
         for (int p = 0; p < parts; p++) {
-            switch (rnd.nextInt(6)) {
+            switch (rnd.nextInt(8)) {
                 case 0 -> sb.append(atom(rnd));
                 case 1 -> sb.append('(').append(atom(rnd)).append('|').append(atom(rnd)).append(')');
                 case 2 -> sb.append('(').append(atom(rnd)).append(')').append(quant(rnd));
                 case 3 -> sb.append('(').append(atom(rnd)).append('|').append(atom(rnd)).append(')').append(quant(rnd));
                 case 4 -> sb.append(atom(rnd)).append(quant(rnd));
                 case 5 -> sb.append('(').append(atom(rnd)).append(quant(rnd)).append(')');
+                // nested quantifiers: quantified group whose body is itself quantified —
+                // nullable-body stars, the (a*?)*? submatch-disambiguation family
+                case 6 -> sb.append('(').append(atom(rnd)).append(quant(rnd)).append(')').append(quant(rnd));
+                case 7 -> sb.append("((").append(atom(rnd)).append(quant(rnd)).append(")|(")
+                        .append(atom(rnd)).append(quant(rnd)).append("))").append(quant(rnd));
             }
         }
         return sb.toString();
