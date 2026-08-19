@@ -11,6 +11,10 @@
 > reads via accessors), CompileObserver/CompilationReport, pinned-Unicode
 > modules tdfa-unicode-6.0/17.0 (vendored UCD + deterministic generator),
 > Automatic-Module-Names on all artifacts, dead-code sweep.
+> 2026-08-18 correctness round: determinize fast-path (bombs: date/aws
+> compile <3 s, latency guard <5 s), TNFA star topology mirrored to re2j's
+> Prog (nested-quantifier submatch parity), Fowler testregex corpus
+> vendored + longest-match capture parity suites (0 known divergences).
 > Still pending (freeze-phase): japicmp baselines ×4, module-info for core,
 > TdfaRunner static trace → per-engine (test instrument only), license
 > headers, first Maven publish.
@@ -158,7 +162,20 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
       {1}..{5}, {2,4}, lazy {2,4}?, Gothic matches `\p{Lo}{3}`, and all
       negatives hold — 12/12 with the JDK provider and pinned tables alike.
       Guardian test: `SupplementaryCodepointClassTest`.
-- [ ] Full POSIX leftmost-longest — activate BT22 §7 `closure_gtop` winner selection
+- [x] ~~Full POSIX leftmost-longest — activate BT22 §7 `closure_gtop` winner selection~~
+      — RESOLVED AS NOT-NEEDED for the API contract (2026-08-18, evidence-based):
+      our contract is re2j drop-in parity, and re2j's own longest-mode submatch
+      rule is "the match a backtracking search would have found first" (re2j
+      RE2.java javadoc) — NOT POSIX greedy-left-to-right. Longest-mode capture
+      parity now holds via 66 curated + 3K randomized in-suite cases
+      (`LongestMatchParityTest`), 578 Fowler specs (`TestregexFowlerTest`), and
+      a 200K-case both-modes soak: 0 disagreements, `closure_gtop` dormant
+      throughout. The one real divergence found (nested same-greediness
+      quantifiers, `(a*?)*?` — which iteration owns the group span) was a
+      TNFA-topology issue, fixed by mirroring re2j's Prog star shapes
+      (commit `0a88758`), not a disambiguation-rule gap. True POSIX submatch
+      maximization remains tracked under the wishlist item
+      "POSIX longest-leftmost capture groups".
 - [x] Unicode case folding for literal chars — CaseFoldTable handles all BMP simple case folds (28 groups with >2 members including s↔ſ, k↔K, Ω↔ω). Class-range folding full-Unicode under `(?u)` (`5f22aee`).
 - [x] `\b` / `\B` Unicode word boundary semantics for supplementary codepoints (`ba60194`)
 
@@ -233,12 +250,13 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
 ## Benchmark coverage
 
 - [x] Vendor [rebar](https://github.com/BurntSushi/rebar) scenario corpus — `vendor/rebar-<sha>.tar.gz`; parsed by `:testlib:rebar`.
+- [x] Vendor Glenn Fowler's testregex corpus — `vendor/testregex-<sha>.tar.gz` (preserved mirror of the AT&T original, ISC-style license); `TestregexFowlerTest` hard-gates re2j-longest parity over the 5 ERE spec files (578 params; Fowler's own POSIX expectations soft-reported — see the class javadoc).
 - [x] Tracer-bullet parity test against rebar scenarios — `:tests:parity:rebar:RebarScenarioParityTest`. With the radical timeout/cap relaxation (`COMPILE_TIMEOUT_MS` 5 s → 2 min, `RUN_TIMEOUT_MS` 10 s → 10 min, `MAX_HAYSTACK_BYTES` 16 MB → 80 MB, `MAX_REGEX_LEN` 32 KB → 2 MB), `utf8-lossy` loader support, the scope restricted to scenarios rebar actually tests against Java (`java/hotspot` in engines list — see `docs/PARITY-PLAN.md`), and `compile` / `grep-captures` models implemented: **108 of 114 in-scope scenarios pass** (94.7 %), 2 surface known engine bugs (see "Correctness" below), 4 skip on `COMPILE_TIMEOUT` (bounded-repeat state explosion — see Performance below), 245 skip on the Java-scope filter (out of scope per the locked 2025-08 rule). End-of-suite `@AfterAll` summary prints skip-reason histogram + top-20 slowest tests + wall-time totals — see `docs/REBAR-PARITY-PLAN.md`.
 - [x] Expand rebar parity — Phase 6.3 of `REBAR-PARITY-PLAN.md`: utf8-lossy loader fix, radical timeout/cap bumps. Surfaced the O(n²) extract bug (Phase 6.1) and the 4 bounded-repeat compile bombs (Phase 6.2). +34 scenarios passing (74 → 108).
 - [x] Remaining rebar parity — **All in-scope scenarios now pass** (718/718 parameterized cases, 0 failures). The 3 engine correctness bugs (§A regopt interference, §B `\b` dead-end, §C Unicode case-fold) are fixed. 2026-08-18: the date/aws compile bombs were un-skipped after the determinize fast-path (date counts verified equal to live `java.util.regex` — JDK-26 tables drift patched in `vendor/patches/rebar/05-*.patch`); `CompileLatencyGuardTest` pins <5 s facade compiles. Remaining skips: 490 scope (no `java/hotspot` engine) + 2 budget (`10-bounded-repeat/context`, the intrinsically-huge-DFA shape — see Performance).
 - [ ] Hyperscan corpus / Snort rule set
 - [ ] Long-input scan across diverse patterns (not just `\w+\d+\w+`)
-- [ ] CI performance regression tracking (JMH + comparison thresholds)
+- [ ] CI performance regression tracking (JMH + comparison thresholds; NOTE `scripts/bench-regression.sh` needed a classpath fix post-module-restructure — re-captured the quick baseline 2026-08-18)
 
 ## Engineering — "SQLite levels"
 

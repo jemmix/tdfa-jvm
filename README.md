@@ -82,11 +82,15 @@ compile-once-match-many model; multi-pass is solving a different problem.
 **Correctness**
 - **5,716,884** differential cases from RE2's exhaustive test suite — 0 failures
   (each suite runs on both backends)
-- 427 unit tests — including a **strategy-conformance sweep**: both backends
+- 440 unit tests — including a **strategy-conformance sweep**: both backends
   must pick *identical search strategies* (literal / candidate-scan /
   simulation / walk) across a shape × boundary-length catalog, not just
   identical results — the guard against silently running different algorithms
-- 890 re2j-parity tests with the re2j engine as a live oracle
+- 1,534 re2j-parity tests with the re2j engine as a live oracle — including
+  **leftmost-longest capture parity** (curated + 3 K randomized differential,
+  both backends) and **Glenn Fowler's testregex corpus** (578 ERE specs;
+  hard gate = re2j `LONGEST_MATCH` parity, Fowler's stricter POSIX
+  expectations reported for insight)
 - 220 in-scope rebar scenarios × both backends (compile + grep-captures models)
 - Full `re2j` API surface (Pattern, Matcher); leftmost-first (default) and
   leftmost-longest (`LONGEST_MATCH`) semantics tested independently; zero-width
