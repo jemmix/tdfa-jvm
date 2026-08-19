@@ -235,17 +235,36 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
       re2c 4.5.1, the paper's reference implementation: its determinization
       aborts with "DFA has too many states" — `MAX_DFA_STATES = 100 K` states /
       `MAX_DFA_SIZE = 50 M` kernel-total, src/dfa/determinization.cc): the
-      engine now enforces the same caps during determinization and fails
+      engine enforces the same caps during determinization and fails
       compilation with a clean "pattern too large" `PatternSyntaxException`
-      (~10 s / default heap on the context bomb, was 12 GB OOM). Notably our
-      construction strictly dominates the reference on this axis — re2c
-      refuses two-site `[^]{0,16}x[^]{0,16}` outright, while ours determinizes
-      that family compactly ({0,100} = 10 K states) and caps only the
-      intrinsically-huge ones. `CompileBudgetTest` guards fail-fast + override
-      + legit-under-budget; the rebar scenario skips on the engine error
-      (test-side AST heuristic deleted). REJECTED alternatives unchanged:
-      Pike-VM/NFA fallback and lazy §7 determinization are multi-engine/
-      different-architecture (non-goals).
+      (override: `-Dtdfa.max.states` / `-Dtdfa.max.kernels`). Our construction
+      strictly dominates the reference on this axis — re2c refuses two-site
+      `[^]{0,16}x[^]{0,16}` outright, while ours determinizes that family
+      compactly ({0,100} = 10 K states) and caps only the intrinsically-huge
+      ones. `CompileBudgetTest` guards fail-fast + override +
+      legit-under-budget.
+      FULL CORPUS VERIFICATION (2026-08-19): the rebar suite retries
+      budget-rejected in-scope scenarios once at a raised ceiling
+      (400 K states / 150 M kernels) and VERIFIES them — no scenario skip.
+      All 718 in-scope params pass; the one shape needing it (the context
+      scenario): 234 369 states, kernel total ~44 M (default kernel cap
+      non-binding — the state cap is the only one), ~29-42 s solo compile,
+      ~5-6 GB TRANSIENT working set (min heap between 4.5 and 5 GB; retained
+      DFA post-compile: 378 MB), run 45-48 s over the 7 MB haystack, count=53
+      both backends. In-suite: 12 GB module heap required (8 GB OOMed the
+      transient burst even with a pre-retry full GC), ~110 s per param.
+      DEFAULT-CAP DECISION: stays at re2c's 100 K. Raising it to ~250 K so
+      this class compiles out-of-the-box would make every over-cap pattern
+      (adversarial ones included) burn ~40 s and ~5 GB transient BEFORE the
+      clean rejection — on default JVM heaps (¼ RAM) that converts clean
+      errors into OOM crashes, strictly worse; and exactly one legit in-scope
+      pattern needs the raise (opt-in via the documented flag). CANOR COST,
+      stated: re2j and java.util.regex ACCEPT the context pattern in ~10 ms
+      (lazy NFA / backtracker — no eager determinization price); at the
+      default cap we reject it. This is the honest cost of the single-
+      algorithm AOT design, documented in README. REJECTED alternatives
+      unchanged: Pike-VM/NFA fallback and lazy §7 determinization are
+      multi-engine / different-architecture (non-goals).
 - [x] **M2 regopt interference-analysis bug** — Fixed in commit `6b335e2`. `Optimize.interferenceAnalysis` walked ops FORWARD and cloned `L[b]` (end-of-block liveness) for EACH op, missing the fact that COPY sources become live BEFORE the op and conflict with registers written by LATER ops in the same block. Rewrote to walk ops in REVERSE with a running live set (BT22 Fig. 7), keeping a forward pre-pass for the value-tracking `V[]` snapshots. All 61500 veryl matches now report exactly 1 participating group, matching `java.util.regex`.
 - [x] **`\b` in alternation causes dead-end DFA paths** — Fixed in commit `d133d20`. Modified `Tdfa.Compiler.compile()` to include subset-mask group configs in the step input, ensuring `\b`-guarded transitions include identifier continuations. Group's own configs added first to preserve priority in ε-closure dedup. The veryl scenario now reports the expected 124800 captures.
 - [x] **Unicode case-fold `s ↔ ſ` for literal chars under `(?i)`** — Fixed in commit `74ab652`. Added `CaseFoldTable` (unicode/CaseFoldTable.java) with a reverse fold table mapping `toUpperCase(toLowerCase(cp))` to all BMP codepoints sharing it. Parser uses it when `unicodeShorthand && caseInsensitive`.

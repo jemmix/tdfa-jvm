@@ -31,13 +31,13 @@ tasks.named('test') {
     // Each (scenario, backend) pair runs as its own parameterized test case
     // — EngineFactory.ASM and EngineFactory.VM both compile and run every
     // in-scope regex. See RebarScenarioParityTest#scenariosProvider.
-    // 8 GB heap: the largest in-scope haystack is 39 MB, which materializes
-    // as a ~80 MB UTF-16 String; the matcher wraps without copying but the
-    // DFA compilation of large alternations can also be allocation-heavy.
-    // 8 GB leaves comfortable headroom for the radical timeout/cap bumps
-    // (MAX_HAYSTACK_BYTES = 80 MB, COMPILE_TIMEOUT = 2 min) — see
-    // RebarScenarioParityTest for the budget rationale.
-    jvmArgs '-Xmx8g'
+    // 12 GB heap: the largest in-scope haystack is 39 MB (~80 MB UTF-16);
+    // the driver is the budget-retry verification of curated/10-bounded-repeat/
+    // context — its 234 K-state determinization has a ~5-6 GB transient working
+    // set that OOMed an 8 GB heap in-suite even after a full GC (live set at
+    // retry: only 120-250 MB; 12 GB passes, params ~110 s each). See
+    // RebarScenarioParityTest#compileWithBudgetRetry.
+    jvmArgs '-Xmx12g'
     // Historical note: once ran with ignoreFailures=true masking failing
     // rebar scenarios; all in-scope scenarios now pass (718/718 as of the
     // 2026-08 restructure) and this is a hard gate.

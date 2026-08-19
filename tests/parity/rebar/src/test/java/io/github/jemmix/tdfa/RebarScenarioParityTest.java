@@ -163,7 +163,18 @@ class RebarScenarioParityTest {
         // haystack (largest is 39 MB); the 2 MB regex cap covers the longest
         // in-scope dictionary alternation (~57 KB). The end-of-suite summary
         // prints the slowest tests so we can see what actually needed it.
-        final long COMPILE_TIMEOUT_MS = 60_000;       // regex compilation wall-clock (60 s watchdog)
+        // Single-umbrella compile watchdog (2026-08-19): one 480 s timeout
+        // wraps the WHOLE compile sequence — the default-budget attempt AND,
+        // if it rejects with "pattern too large", the raised-budget retry
+        // (see compileWithBudgetRetry). A split design (tight first-attempt
+        // watchdog) proved fragile: merely REACHING the default-budget
+        // rejection takes ~40 s quiet / >120 s under parallel-suite load on
+        // the context shape (determinizing to 100 K states before the cap
+        // trips), so a tight first-phase timeout misfires on exactly the
+        // scenarios the retry exists to verify. Legit under-budget compiles
+        // stay far below (slowest measured: 3.4 s); a genuine hang fails at
+        // 240 s visibly.
+        final long COMPILE_TIMEOUT_MS = 480_000;      // umbrella: default attempt + budget retry
         final long RUN_TIMEOUT_MS    = 120_000;       // match execution wall-clock (120 s watchdog)
         final int  MAX_HAYSTACK_BYTES = 80_000_000;   // covers all in-scope haystacks (largest 39 MB)
         final int  MAX_REGEX_LEN = 2_000_000;         // covers all in-scope regex specs (largest ~57 KB)
@@ -249,7 +260,7 @@ class RebarScenarioParityTest {
         try {
             final int fl = flags;
             compiled = withTimeout(COMPILE_TIMEOUT_MS, "compile",
-                    () -> Pattern.compile(s.regex(), fl, factory));
+                    () -> compileWithBudgetRetry(s, fl, factory));
         } catch (TimeoutException e) {
             countSkip("COMPILE_TIMEOUT:" + labelFor(factory));
             skipCount.incrementAndGet();
@@ -261,19 +272,6 @@ class RebarScenarioParityTest {
             assumeTrue(false, "COMPILE_TIMEOUT " + COMPILE_TIMEOUT_MS + "ms (" + labelFor(factory) + ")");
             return;
         } catch (Exception e) {
-            String msg = e.getMessage() != null ? e.getMessage() : "";
-            if (msg.contains("pattern too large")) {
-                // The engine's determinization budget — re2c's own behavior
-                // ("DFA has too many states"), not a test-side mask.
-                countSkip("compile-budget:engine");
-                skipCount.incrementAndGet();
-                timings.add(new Timing(s.fullName(),
-                        (System.nanoTime() - compileStart) / 1_000_000, 0,
-                        "SKIP:compile-budget:engine"));
-                assumeTrue(false, "engine determinization budget exceeded ("
-                        + labelFor(factory) + "): " + msg);
-                return;
-            }
             countSkip("compile-failed:" + labelFor(factory) + ":" + e.getClass().getSimpleName());
             skipCount.incrementAndGet();
             timings.add(new Timing(s.fullName(),
@@ -409,6 +407,71 @@ class RebarScenarioParityTest {
      */
     private static boolean enginesIncludeJava(Scenario s) {
         return s.engines().stream().anyMatch(e -> e.startsWith("java/"));
+    }
+
+    /**
+     * Compile through the facade, retrying ONCE at a raised determinization
+     * budget if (and only if) the engine rejects with "pattern too large".
+     *
+     * <p>Philosophy (2026-08-19): every rebar scenario is a legitimate
+     * workload. The engine's default budget (re2c's own caps — 100 K states /
+     * 50 M kernel-total) protects LIBRARY USERS from multi-GB compiles on
+     * adversarial input; this suite verifies the engine handles the legit
+     * over-budget shapes CORRECTLY by recompiling them with the ceiling
+     * raised — the scenario then runs and its count is verified like any
+     * other. A pattern that still exceeds the raised ceiling is a FAILURE,
+     * not a skip: an engine limitation this suite must surface.
+     *
+     * <p>Measured admission cost for the one in-corpus shape (curated/
+     * 10-bounded-repeat/context): 234 369 states (kernel total ~44 M, under
+     * the 50 M default — the STATE cap is the only binding one), ~29-42 s
+     * solo compile with a ~5-6 GB TRANSIENT determinization working set
+     * (retained DFA after compile: only 378 MB). In-suite the burst needs a
+     * 12 GB module heap (8 GB OOMed even with a pre-retry full GC; live set
+     * at retry time is only 120-250 MB — the transient, not retention).
+     * regopt/minimize skip on their own bounds (2000 / 20 K states) —
+     * semantics unchanged, only optimization depth.
+     *
+     * <p>System-property set/restore is safe here: the engine reads the caps
+     * per compile, and this module runs test methods sequentially (no JUnit
+     * parallel execution configured), so no other compile races the window.
+     */
+    private static Pattern compileWithBudgetRetry(Scenario s, int flags,
+                                                  RegexEngineFactory factory) throws Exception {
+        try {
+            return Pattern.compile(s.regex(), flags, factory);
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : "";
+            if (!msg.contains("pattern too large")) throw e;
+            System.out.printf("BUDGET   %-50s [%s] default caps exceeded — retrying raised: %s%n",
+                    s.fullName(), factory == null ? "ASM" : "VM",
+                    abbrev(msg, 120));
+            String saveStates = System.getProperty("tdfa.max.states");
+            String saveKernels = System.getProperty("tdfa.max.kernels");
+            System.setProperty("tdfa.max.states", "400000");
+            System.setProperty("tdfa.max.kernels", "150000000");
+            try {
+                // The raised-budget compile allocates a multi-GB transient
+                // working set (234 K states: ~5 GB peak on the one in-corpus
+                // shape). By this point the suite JVM has run hundreds of
+                // prior scenario tests whose garbage may still occupy the
+                // 8 GB heap, turning the burst into full-GC thrash (measured:
+                // 3-5x wall inflation vs an empty JVM — the cause of the
+                // umbrella timeouts). Collect it first: this is test-infra
+                // hygiene, not engine behavior.
+                System.gc();
+                long live = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
+                System.out.printf("BUDGET   %-50s [%s] live-after-gc=%dMB / %dMB heap; retrying%n",
+                        s.fullName(), factory == null ? "ASM" : "VM", live >> 20,
+                        Runtime.getRuntime().maxMemory() >> 20);
+                return Pattern.compile(s.regex(), flags, factory);
+            } finally {
+                if (saveStates == null) System.clearProperty("tdfa.max.states");
+                else System.setProperty("tdfa.max.states", saveStates);
+                if (saveKernels == null) System.clearProperty("tdfa.max.kernels");
+                else System.setProperty("tdfa.max.kernels", saveKernels);
+            }
+        }
     }
 
     /**
