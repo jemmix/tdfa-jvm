@@ -7,12 +7,15 @@ self-contained commits make it possible to tell which change moved the needle
 and to roll back the ones that didn't. One phase item per commit (or finer);
 never accumulate a phase's worth of work into a single drop.
 
-Suite runs in **~35 s wall** for 718 parameterized cases (216 pass, 4
-fail, 506 skip — see breakdown below). Was 29 s / 359 cases before the
-ASM+VM parameterization (commit `358a61e`) doubled the test count; the
-per-scenario wall is unchanged. The end-of-suite `@AfterAll` summary
-prints the slowest tests so the perf bombs are visible — see Phase 6.1
-for the fix path.
+Suite runs in **~30 s wall** for 228 parameterized cases (226 pass, 2
+skip — see breakdown below). 2026-08-20 restructure: out-of-scope
+scenarios (no `java/.*` engine) are filtered at PARAMETER-BUILD time, so
+they no longer appear as skipped cases; the one over-budget bomb skips by
+name (opt-in via `-Dtdfa.test.rebar.skipBombs=false`); the numeric
+time/size gates and the raised-budget retry machinery were removed — the
+engine's own determinization budget is the only watchdog, and a budget
+rejection on any non-listed scenario is a FAILURE. Previously 718 cases /
+490 scope skips.
 
 ## Scope (locked 2025-08)
 

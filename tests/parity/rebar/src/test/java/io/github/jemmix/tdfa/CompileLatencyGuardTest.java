@@ -35,12 +35,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       (~1.4 K ranges/state; guards the W1a/W1b range work).</li>
  * </ul>
  *
- * <p>NOT covered (rejected by the engine's DEFAULT budget, verified separately
- * by the suite's budget-retry path — see {@code RebarScenarioParityTest#
- * compileWithBudgetRetry}): {@code curated/10-bounded-repeat/context} —
+ * <p>NOT covered (rejected by the engine's DEFAULT budget; skipped by name in
+ * the suite unless opted in — see {@code RebarScenarioParityTest#
+ * BOMB_SCENARIOS}, verified by dedicated probes and documented in TODO.md):
+ * {@code curated/10-bounded-repeat/context} —
  * {@code [\s\S]{0,100}} × 2 whose counter cross-product is an intrinsically
  * huge DFA (measured already-minimal on the simplified analog: 60 604 →
- * 60 603 states). At the raised ceiling it compiles to 234 369 states in
+ * 60 603 states). At a raised ceiling it compiles to 234 369 states in
  * ~29-42 s with a ~5-6 GB transient working set and passes count verification
  * on both backends — far outside this guard's 5 s scope by design.
  *

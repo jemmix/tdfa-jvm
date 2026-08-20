@@ -30,14 +30,15 @@ tasks.named('test') {
     systemProperty 'rebar.benchmarks.dir', rebarBenchmarksDir.absolutePath
     // Each (scenario, backend) pair runs as its own parameterized test case
     // — EngineFactory.ASM and EngineFactory.VM both compile and run every
-    // in-scope regex. See RebarScenarioParityTest#scenariosProvider.
-    // 12 GB heap: the largest in-scope haystack is 39 MB (~80 MB UTF-16);
-    // the driver is the budget-retry verification of curated/10-bounded-repeat/
-    // context — its 234 K-state determinization has a ~5-6 GB transient working
-    // set that OOMed an 8 GB heap in-suite even after a full GC (live set at
-    // retry: only 120-250 MB; 12 GB passes, params ~110 s each). See
-    // RebarScenarioParityTest#compileWithBudgetRetry.
-    jvmArgs '-Xmx12g'
+    // in-scope regex (out-of-scope scenarios are filtered at param-build
+    // time; the one over-budget bomb skips by name unless opted in — see
+    // RebarScenarioParityTest#BOMB_SCENARIOS). 2 GB heap: the largest
+    // in-scope haystack is 39 MB (~80 MB UTF-16) and the largest under-
+    // budget compile (dictionary, 19.6 K pre-min states) needs only
+    // hundreds of MB transient. The multi-GB budget-retry machinery was
+    // removed with the numeric gates (2026-08-20); the bomb's raised-
+    // ceiling resource requirements are documented in TODO.md.
+    jvmArgs '-Xmx2g'
     // Historical note: once ran with ignoreFailures=true masking failing
     // rebar scenarios; all in-scope scenarios now pass (718/718 as of the
     // 2026-08 restructure) and this is a hard gate.

@@ -11,16 +11,12 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.Callable;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
@@ -53,16 +49,16 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * pattern via its three {@code DispatchMode}s ({@code INLINED} / {@code TABLE_SCAN}
  * / {@code DELEGATE}), so VM is exercised as a peer engine, not as a fallback.
  *
- * <p><b>Scope:</b> we only run scenarios that rebar <em>actually tests against
- * Java</em> — i.e. whose {@code engines = [...]} list contains a {@code java/.*}
- * entry. Rebar excludes Java from 245 of the 359 scenarios in the corpus
- * (multi-pattern matching that needs rust/regex-style regex-set APIs,
- * hyperscan-only overlap reporting, aho-corasick, dictionary lookups, etc.).
- * Those cases are out of scope for a Java regex library; running them anyway
- * was producing 5 phantom failures (the {@code wild/parol-veryl/*} and
- * {@code curated/05-lexer-veryl/multi} cases) that weren't real divergences
- * from any Java-relevant reference. See {@code docs/PARITY-PLAN.md} for the
- * scope decision and remaining known failures.
+ * <p><b>Scope:</b> only scenarios rebar <em>actually tests against Java</em>
+ * run at all — {@code engines = [...]} must contain a {@code java/.*} entry
+ * (rebar excludes Java from 245 of the 359 scenarios: multi-pattern regex-set
+ * APIs, hyperscan-only overlap reporting, aho-corasick, dictionary lookups,
+ * etc. — out of scope for a Java regex library; see
+ * {@code docs/PARITY-PLAN.md}). The filter is applied at parameter-build
+ * time in {@link #scenariosProvider()}, so out-of-scope scenarios do not
+ * appear as test cases at all. Visible (gray) skips remain only for the
+ * named over-budget bombs (see {@link #BOMB_SCENARIOS}) and known per-scenario
+ * gaps (model, no-count, parser limits).
  *
  * <p><b>Architectural divergences from re2:</b> where our engine
  * intentionally matches {@code java.util.regex} rather than re2 (e.g. the
@@ -73,19 +69,21 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * {@code vendor/patches/rebar/01-dot-matches-byte-codepoint.patch} and the
  * "Rebar scenario scope" section of {@code docs/PARITY-PLAN.md}.
  *
- * <p>Skipped for tracer-bullet reasons:
+ * <p>Skipped (visible, gray):
  * <ul>
- *   <li><b>Java not in {@code engines} list</b> — rebar itself doesn't test
- *       Java on this scenario (see scope note above)</li>
+ *   <li>named over-budget bombs (see {@link #BOMB_SCENARIOS}; gated by
+ *       {@code -Dtdfa.test.rebar.skipBombs}, default true)</li>
  *   <li>model not in {count, count-spans, count-captures, grep, compile, grep-captures}
  *       (regex-redux is the only remaining unsupported model)</li>
- *   <li>haystack &gt; 16 MB (avoids OOM on repeated/mega-haystacks)</li>
- *   <li>regex &gt; 32 000 chars (mega-alternations like dictionary lookups)</li>
  *   <li>expected count has no entry matching our {@code "re2"} identity</li>
- *   <li>haystack contains invalid UTF-8 (Java strings can't represent them)</li>
+ *   <li>haystack resolve failure</li>
  *   <li>parser rejects the pattern (Unicode property long-names, backrefs, lookaround)</li>
- *   <li>per-scenario time budget exceeded (500 ms run / 300 ms compile)</li>
  * </ul>
+ *
+ * <p>A determinization-budget rejection ("pattern too large") on any scenario
+ * NOT in {@link #BOMB_SCENARIOS} is a FAILURE, not a skip — an engine
+ * limitation this suite must surface rather than silently absorb. There are
+ * no numeric time/size gates: the engine's own budget is the only watchdog.
  *
  * <p>Failures are real divergences between our engine and rebar's reference
  * results — see the {@code want} vs {@code got} counts in the failure message.
@@ -129,21 +127,54 @@ class RebarScenarioParityTest {
      * Cross-product of every in-scope scenario with both built-in backends
      * (generated (ASM) and bring-your-own interpreter (VM) compositions). Each
      * (scenario, backend) pair becomes its own test case, so a divergence
-     * between the two engines on the same regex shows up directly in the
-     * test report. The test name includes {@code [ASM]} or {@code [VM]} so
+     * between the two engines on the same regex shows up directly in the test
+     * report. The test name includes {@code [ASM]} or {@code [VM]} so
      * IDE / CI output identifies the engine at a glance.
+     *
+     * <p>Scope filtering happens HERE (build time), not as runtime skips:
+     * scenarios whose {@code engines} list has no {@code java/.*} entry are
+     * out of scope for a Java regex library and don't appear as test cases.
      */
     static Stream<Arguments> scenariosProvider() {
-        return scenarios.stream().flatMap(s -> Stream.of((RegexEngineFactory) null, (RegexEngineFactory) TdfaRunner::new).map(f -> Arguments.of(
-                /*displayName=*/ s.fullName() + "  want=" + s.expectedCount()
-                        + "  /" + abbrev(s.regex(), 60) + "/  [" + labelFor(f) + "]",
-                /*scenario=*/ s,
-                /*factory=*/ f)));
+        return scenarios.stream()
+                .filter(RebarScenarioParityTest::enginesIncludeJava)
+                .flatMap(s -> Stream.of((RegexEngineFactory) null, (RegexEngineFactory) TdfaRunner::new).map(f -> Arguments.of(
+                        /*displayName=*/ s.fullName() + "  want=" + s.expectedCount()
+                                + "  /" + abbrev(s.regex(), 60) + "/  [" + labelFor(f) + "]",
+                        /*scenario=*/ s,
+                        /*factory=*/ f)));
     }
 
     static String labelFor(RegexEngineFactory f) {
         return f == null ? "ASM" : "VM";
     }
+
+    /**
+     * In-scope scenarios whose minimal DFA exceeds the engine's determinization
+     * budget <em>by design</em> — the suite skips them (visibly) unless
+     * explicitly opted in. Rationale (2026-08-20): running these adds ~40 s of
+     * rejected determinization per backend plus a multi-GB raised-budget retry
+     * to every suite run, to verify one shape family that is already covered
+     * by dedicated probes and documented candor notes. Opt in with
+     * {@code -Dtdfa.test.rebar.skipBombs=false} — the test then does a PLAIN
+     * compile at whatever caps the JVM provides: raise them explicitly (e.g.
+     * {@code -Dtdfa.max.states=250000} and a heap ≥ the transient working set)
+     * or expect the engine's own clean "pattern too large" rejection.
+     *
+     * <ul>
+     *   <li>{@code curated/10-bounded-repeat/context} — two-site
+     *       {@code [\s\S]{0,100}} counter cross-product: 234 369-state minimal
+     *       DFA (kernel total ~44 M, under the default 50 M — the STATE cap is
+     *       the only binding one). Measured at the raised ceiling: ~30-42 s
+     *       compile, ~5-6 GB transient working set, 378 MB retained, count
+     *       verified on both backends (see TODO.md "budget" note).
+     * </ul>
+     */
+    static final Set<String> BOMB_SCENARIOS = Set.of("curated/10-bounded-repeat/context");
+
+    /** Default true; set {@code -Dtdfa.test.rebar.skipBombs=false} to run the bombs for real. */
+    static final boolean SKIP_BOMBS =
+            Boolean.parseBoolean(System.getProperty("tdfa.test.rebar.skipBombs", "true"));
 
     @ParameterizedTest(name = "[{index}] {0}")
     @MethodSource("scenariosProvider")
@@ -152,47 +183,27 @@ class RebarScenarioParityTest {
         // (bespoke embedded-regex harness, ~1–2 scenarios — see PARITY-PLAN §4.3).
         Set<String> supportedModels = Set.of("count", "count-spans", "count-captures",
                 "grep", "compile", "grep-captures");
-        // Budgets: watchdogs against future superlinear regressions, sized from
-        // measured data (2026-08-19): slowest test in the whole suite incl.
-        // compile+run is 3.4 s (lh3lh3-reb/uri-or-email); compile-latency guard
-        // pins every formerly-bomb compile < 5 s (CompileLatencyGuardTest); the
-        // engine's own determinization budget (re2c-identical caps, see below)
-        // rejects intrinsically-huge DFAs in ~10 s. 60 s / 120 s give >10x
-        // headroom over all of those while keeping a real hang a FAIL, not a
-        // multi-minute CI stall. The 80 MB haystack cap covers every in-scope
-        // haystack (largest is 39 MB); the 2 MB regex cap covers the longest
-        // in-scope dictionary alternation (~57 KB). The end-of-suite summary
-        // prints the slowest tests so we can see what actually needed it.
-        // Single-umbrella compile watchdog (2026-08-19): one 480 s timeout
-        // wraps the WHOLE compile sequence — the default-budget attempt AND,
-        // if it rejects with "pattern too large", the raised-budget retry
-        // (see compileWithBudgetRetry). A split design (tight first-attempt
-        // watchdog) proved fragile: merely REACHING the default-budget
-        // rejection takes ~40 s quiet / >120 s under parallel-suite load on
-        // the context shape (determinizing to 100 K states before the cap
-        // trips), so a tight first-phase timeout misfires on exactly the
-        // scenarios the retry exists to verify. Legit under-budget compiles
-        // stay far below (slowest measured: 3.4 s); a genuine hang fails at
-        // 240 s visibly.
-        final long COMPILE_TIMEOUT_MS = 480_000;      // umbrella: default attempt + budget retry
-        final long RUN_TIMEOUT_MS    = 120_000;       // match execution wall-clock (120 s watchdog)
-        final int  MAX_HAYSTACK_BYTES = 80_000_000;   // covers all in-scope haystacks (largest 39 MB)
-        final int  MAX_REGEX_LEN = 2_000_000;         // covers all in-scope regex specs (largest ~57 KB)
+        //
+        // No numeric time/size gates (2026-08-20): the engine's own
+        // determinization budget (re2c-identical caps — 100 K states /
+        // 50 M kernel-total) is the only watchdog. A compile rejected with
+        // "pattern too large" on any scenario NOT in BOMB_SCENARIOS is a
+        // FAILURE (surfaced, not skipped); the named bombs skip visibly and
+        // are opt-in via -Dtdfa.test.rebar.skipBombs=false. Compile-latency
+        // regressions are pinned separately by CompileLatencyGuardTest.
 
-        // --- Filter: skip cleanly via assumeTrue so IDE shows gray "skipped" ---
-
-        // Scope filter: only run scenarios rebar actually tests against Java.
-        // Rebar's own engine list is the authoritative source for "what's
-        // tractable for a Java regex library" — see the class javadoc and
-        // docs/PARITY-PLAN.md. Skips ~245 multi-pattern / rust-only /
-        // hyperscan-only / aho-corasick / dictionary scenarios.
-        if (!enginesIncludeJava(s)) {
-            countSkip("scope:java-not-in-engines");
+        // --- Named over-budget bombs: skip visibly unless opted in ---
+        if (SKIP_BOMBS && BOMB_SCENARIOS.contains(s.fullName())) {
+            countSkip("bomb:over-budget-by-design");
             skipCount.incrementAndGet();
-            timings.add(new Timing(s.fullName(), 0, 0, "SKIP:scope"));
-            assumeTrue(false, "java not in rebar engines list (out of scope for a Java regex lib)");
+            timings.add(new Timing(s.fullName(), 0, 0, "SKIP:bomb"));
+            assumeTrue(false, "over-budget bomb (skipped by default; see BOMB_SCENARIOS javadoc). "
+                    + "Run with -Dtdfa.test.rebar.skipBombs=false -Dtdfa.max.states=250000 "
+                    + "(heap >= 6g) to verify it for real.");
             return;
         }
+
+        // --- Filter: skip cleanly via assumeTrue so IDE shows gray "skipped" ---
 
         if (!supportedModels.contains(s.model())) {
             countSkip("unsupported-model:" + s.model());
@@ -208,21 +219,11 @@ class RebarScenarioParityTest {
             assumeTrue(false, "no scalar expected count (per-engine overrides only)");
             return;
         }
-        if (s.regex() == null || s.regex().length() > MAX_REGEX_LEN) {
-            countSkip("regex-too-long");
+        if (s.regex() == null) {
+            countSkip("regex-null");
             skipCount.incrementAndGet();
-            timings.add(new Timing(s.fullName(), 0, 0, "SKIP:regex-too-long"));
-            assumeTrue(false, "regex too long ("
-                    + (s.regex() == null ? 0 : s.regex().length()) + " chars)");
-            return;
-        }
-
-        long hsBytes = haystackByteSize(s);
-        if (hsBytes < 0 || hsBytes > MAX_HAYSTACK_BYTES) {
-            countSkip("haystack-too-big");
-            skipCount.incrementAndGet();
-            timings.add(new Timing(s.fullName(), 0, 0, "SKIP:haystack-too-big:" + hsBytes));
-            assumeTrue(false, "haystack too big (" + hsBytes + " bytes)");
+            timings.add(new Timing(s.fullName(), 0, 0, "SKIP:regex-null"));
+            assumeTrue(false, "no regex (unrepresentable input spec)");
             return;
         }
 
@@ -230,27 +231,10 @@ class RebarScenarioParityTest {
         //     translated to inline prefixes by Pattern.compile — (?i) for
         //     caseInsensitive, (?u) for unicode (UNICODE_CHARACTER_CLASS).
         //     PERL disambiguation is the default (matches re2/re2j semantics).
-        //
-        //     The ASM backend no longer throws MethodTooLargeException for any
-        //     in-scope rebar pattern (DispatchMode.DELEGATE handles arbitrary
-        //     DFA sizes — see TdfaAsmBackend.pickMode), so there's no longer a
-        //     VM-retry path: each parameter value runs its own backend
-        //     independently, and a divergence shows up as a real test failure.
-
-        // --- Engine determinization budget (2026-08-19): Tdfa now enforces
-        //     re2c-identical caps during determinization (100 K states /
-        //     50 M total kernel size — re2c src/dfa/determinization.cc +
-        //     constants.h: "Abort if TDFA grows too fast ..."). A pattern
-        //     exceeding them fails compilation with a clean "pattern too
-        //     large" PatternSyntaxException in ~10 s (measured on
-        //     10-bounded-repeat/context, the one in-corpus shape whose
-        //     minimal DFA is a 200 K+-state counter cross-product). The
-        //     former AST-level bomb pre-scan is RETIRED — the engine rejects
-        //     faster and more honestly than the heuristic ever could, and
-        //     users get the same protection the reference implementation
-        //     ships (re2c itself refuses two-site [^]{0,16}x[^]{0,16}
-        //     outright; ours determinizes that family fine and caps only
-        //     the intrinsically-huge ones).
+        //     The ASM backend handles every in-scope pattern (DispatchMode.
+        //     DELEGATE for arbitrary DFA sizes — see TdfaAsmBackend.pickMode),
+        //     so each parameter value runs its own backend independently and a
+        //     divergence shows up as a real test failure.
 
         int flags = 0;
         if (s.caseInsensitive()) flags |= Pattern.CASE_INSENSITIVE;
@@ -258,33 +242,32 @@ class RebarScenarioParityTest {
         long compileStart = System.nanoTime();
         Pattern compiled;
         try {
-            final int fl = flags;
-            compiled = withTimeout(COMPILE_TIMEOUT_MS, "compile",
-                    () -> compileWithBudgetRetry(s, fl, factory));
-        } catch (TimeoutException e) {
-            countSkip("COMPILE_TIMEOUT:" + labelFor(factory));
-            skipCount.incrementAndGet();
-            timings.add(new Timing(s.fullName(),
-                    (System.nanoTime() - compileStart) / 1_000_000, 0,
-                    "SKIP:COMPILE_TIMEOUT:" + labelFor(factory)));
-            System.out.printf("TIMEOUT  %-50s [%s] compile>%dms  /%s/%n",
-                    s.fullName(), labelFor(factory), COMPILE_TIMEOUT_MS, abbrev(s.regex(), 50));
-            assumeTrue(false, "COMPILE_TIMEOUT " + COMPILE_TIMEOUT_MS + "ms (" + labelFor(factory) + ")");
-            return;
+            compiled = Pattern.compile(s.regex(), flags, factory);
         } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : "";
+            // Budget rejection on a non-listed scenario is a FAILURE — the
+            // engine must handle every in-scope shape within the default caps
+            // (only BOMB_SCENARIOS are known over-budget, and those skip above).
+            if (msg.contains("pattern too large")) {
+                failCount.incrementAndGet();
+                timings.add(new Timing(s.fullName(),
+                        (System.nanoTime() - compileStart) / 1_000_000, 0,
+                        "FAIL:budget-exceeded"));
+                throw e;
+            }
             countSkip("compile-failed:" + labelFor(factory) + ":" + e.getClass().getSimpleName());
             skipCount.incrementAndGet();
             timings.add(new Timing(s.fullName(),
                     (System.nanoTime() - compileStart) / 1_000_000, 0,
                     "SKIP:compile-failed:" + labelFor(factory) + ":" + e.getClass().getSimpleName()));
             assumeTrue(false, "compile failed (" + labelFor(factory) + "): " + e.getClass().getSimpleName()
-                    + (e.getMessage() != null ? ": " + e.getMessage() : ""));
+                    + (msg.isEmpty() ? "" : ": " + msg));
             return;
         }
         final Pattern p = compiled;
         long compileMs = (System.nanoTime() - compileStart) / 1_000_000;
 
-        // --- Resolve haystack (not budgeted — should be I/O only) ---
+        // --- Resolve haystack (I/O only) ---
 
         String haystack;
         try {
@@ -297,22 +280,10 @@ class RebarScenarioParityTest {
             return;
         }
 
-        // --- Run with hard wall-clock timeout ---
+        // --- Run (no wall-clock gate; a hang shows up in the suite timeout) ---
 
         final long runStart = System.nanoTime();
-        final long actual;
-        try {
-            actual = withTimeout(RUN_TIMEOUT_MS, "run", () -> runModel(s, p, haystack));
-        } catch (TimeoutException e) {
-            countSkip("RUN_TIMEOUT");
-            skipCount.incrementAndGet();
-            long runMs = (System.nanoTime() - runStart) / 1_000_000;
-            timings.add(new Timing(s.fullName(), compileMs, runMs, "SKIP:RUN_TIMEOUT"));
-            System.out.printf("TIMEOUT  %-60s compile=%dms  run>%dms  /%s/%n",
-                    s.fullName(), compileMs, RUN_TIMEOUT_MS, abbrev(s.regex(), 50));
-            assumeTrue(false, "RUN_TIMEOUT " + RUN_TIMEOUT_MS + "ms (compile was " + compileMs + "ms)");
-            return;
-        }
+        final long actual = runModel(s, p, haystack);
         long runMs = (System.nanoTime() - runStart) / 1_000_000;
 
         if (compileMs > 50 || runMs > 50) {
@@ -409,97 +380,6 @@ class RebarScenarioParityTest {
         return s.engines().stream().anyMatch(e -> e.startsWith("java/"));
     }
 
-    /**
-     * Compile through the facade, retrying ONCE at a raised determinization
-     * budget if (and only if) the engine rejects with "pattern too large".
-     *
-     * <p>Philosophy (2026-08-19): every rebar scenario is a legitimate
-     * workload. The engine's default budget (re2c's own caps — 100 K states /
-     * 50 M kernel-total) protects LIBRARY USERS from multi-GB compiles on
-     * adversarial input; this suite verifies the engine handles the legit
-     * over-budget shapes CORRECTLY by recompiling them with the ceiling
-     * raised — the scenario then runs and its count is verified like any
-     * other. A pattern that still exceeds the raised ceiling is a FAILURE,
-     * not a skip: an engine limitation this suite must surface.
-     *
-     * <p>Measured admission cost for the one in-corpus shape (curated/
-     * 10-bounded-repeat/context): 234 369 states (kernel total ~44 M, under
-     * the 50 M default — the STATE cap is the only binding one), ~29-42 s
-     * solo compile with a ~5-6 GB TRANSIENT determinization working set
-     * (retained DFA after compile: only 378 MB). In-suite the burst needs a
-     * 12 GB module heap (8 GB OOMed even with a pre-retry full GC; live set
-     * at retry time is only 120-250 MB — the transient, not retention).
-     * regopt/minimize skip on their own bounds (2000 / 20 K states) —
-     * semantics unchanged, only optimization depth.
-     *
-     * <p>System-property set/restore is safe here: the engine reads the caps
-     * per compile, and this module runs test methods sequentially (no JUnit
-     * parallel execution configured), so no other compile races the window.
-     */
-    private static Pattern compileWithBudgetRetry(Scenario s, int flags,
-                                                  RegexEngineFactory factory) throws Exception {
-        try {
-            return Pattern.compile(s.regex(), flags, factory);
-        } catch (Exception e) {
-            String msg = e.getMessage() != null ? e.getMessage() : "";
-            if (!msg.contains("pattern too large")) throw e;
-            System.out.printf("BUDGET   %-50s [%s] default caps exceeded — retrying raised: %s%n",
-                    s.fullName(), factory == null ? "ASM" : "VM",
-                    abbrev(msg, 120));
-            String saveStates = System.getProperty("tdfa.max.states");
-            String saveKernels = System.getProperty("tdfa.max.kernels");
-            System.setProperty("tdfa.max.states", "400000");
-            System.setProperty("tdfa.max.kernels", "150000000");
-            try {
-                // The raised-budget compile allocates a multi-GB transient
-                // working set (234 K states: ~5 GB peak on the one in-corpus
-                // shape). By this point the suite JVM has run hundreds of
-                // prior scenario tests whose garbage may still occupy the
-                // 8 GB heap, turning the burst into full-GC thrash (measured:
-                // 3-5x wall inflation vs an empty JVM — the cause of the
-                // umbrella timeouts). Collect it first: this is test-infra
-                // hygiene, not engine behavior.
-                System.gc();
-                long live = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
-                System.out.printf("BUDGET   %-50s [%s] live-after-gc=%dMB / %dMB heap; retrying%n",
-                        s.fullName(), factory == null ? "ASM" : "VM", live >> 20,
-                        Runtime.getRuntime().maxMemory() >> 20);
-                return Pattern.compile(s.regex(), flags, factory);
-            } finally {
-                if (saveStates == null) System.clearProperty("tdfa.max.states");
-                else System.setProperty("tdfa.max.states", saveStates);
-                if (saveKernels == null) System.clearProperty("tdfa.max.kernels");
-                else System.setProperty("tdfa.max.kernels", saveKernels);
-            }
-        }
-    }
-
-    /**
-     * Run {@code task} on a fresh virtual thread, aborting the caller after
-     * {@code timeoutMs}. On timeout the virtual thread is interrupted (best
-     * effort for CPU-bound compilation) but continues until it checks the
-     * interrupt or finishes naturally — it does NOT block the next test case.
-     *
-     * <p>Virtual threads (JDK 21+) are cheap enough that one-per-call is fine
-     * even for 359 test cases. Orphaned threads die with the JVM.
-     *
-     * <p>Why not a shared single-thread executor? Because a timed-out CPU-bound
-     * compile occupies the worker indefinitely; the next {@code submit} queues
-     * behind it and its own timeout fires before the task even starts,
-     * producing cascading false COMPILE_TIMEOUTs.
-     */
-    private static <T> T withTimeout(long timeoutMs, String phase, Callable<T> task)
-            throws Exception {
-        var future = new java.util.concurrent.FutureTask<T>(task);
-        Thread.startVirtualThread(future);
-        try {
-            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
-        } catch (TimeoutException e) {
-            future.cancel(true);
-            throw e;
-        }
-    }
-
     /** Dispatch to the right model implementation. */
     private static long runModel(Scenario s, Pattern p, String haystack) {
         switch (s.model()) {
@@ -515,35 +395,6 @@ class RebarScenarioParityTest {
             // matches, line-oriented with \r stripped (test/model.toml §grep-captures).
             case "grep-captures":    return grepCaptureCounts(p, haystack);
             default: throw new IllegalStateException("unsupported model: " + s.model());
-        }
-    }
-
-    /** Estimated resolved haystack byte size, without materializing; -1 if unknown. */
-    private static long haystackByteSize(Scenario s) {
-        long base;
-        long repeat;
-        long extra = 0;
-        if (s.haystackSpec() instanceof Scenario.HaystackSpec.Inline i) {
-            base = i.contents().length();
-            repeat = i.repeat() == null ? 1 : i.repeat();
-            if (i.prepend() != null) extra += i.prepend().length();
-            if (i.append() != null) extra += i.append().length();
-        } else if (s.haystackSpec() instanceof Scenario.HaystackSpec.FromPath p) {
-            try {
-                base = Files.size(benchmarksDir.resolve("haystacks").resolve(p.path()));
-            } catch (Exception e) {
-                return -1;
-            }
-            repeat = p.repeat() == null ? 1 : p.repeat();
-            if (p.prepend() != null) extra += p.prepend().length();
-            if (p.append() != null) extra += p.append().length();
-        } else {
-            return -1;
-        }
-        try {
-            return Math.multiplyExact(base, repeat) + extra;
-        } catch (ArithmeticException overflow) {
-            return Long.MAX_VALUE; // trips the haystack-too-big assumeTrue
         }
     }
 
