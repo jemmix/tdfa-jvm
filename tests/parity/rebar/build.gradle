@@ -34,10 +34,8 @@ tasks.named('test') {
     // time; the one over-budget bomb skips by name unless opted in — see
     // RebarScenarioParityTest#BOMB_SCENARIOS). 2 GB heap: the largest
     // in-scope haystack is 39 MB (~80 MB UTF-16) and the largest under-
-    // budget compile (dictionary, 19.6 K pre-min states) needs only
-    // hundreds of MB transient. The multi-GB budget-retry machinery was
-    // removed with the numeric gates (2026-08-20); the bomb's raised-
-    // ceiling resource requirements are documented in TODO.md.
+    // budget compile fits comfortably; even the skipped bomb (opt-in) now
+    // fits 1 GB after the 2026-08-20 memory work — see TODO.md.
     jvmArgs '-Xmx2g'
     // Historical note: once ran with ignoreFailures=true masking failing
     // rebar scenarios; all in-scope scenarios now pass (718/718 as of the

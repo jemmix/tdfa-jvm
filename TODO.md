@@ -246,19 +246,22 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
       FULL CORPUS VERIFICATION (2026-08-19): the rebar suite retries
       budget-rejected in-scope scenarios once at a raised ceiling
       (400 K states / 150 M kernels) and VERIFIES them — no scenario skip.
-      All 718 in-scope params pass; the one shape needing it (the context
+      All in-scope params pass. The one shape needing it (the context
       scenario): 234 369 states, kernel total ~44 M (default kernel cap
-      non-binding — the state cap is the only one), ~29-42 s solo compile,
-      ~5-6 GB TRANSIENT working set (min heap between 4.5 and 5 GB; retained
-      DFA post-compile: 378 MB), run 45-48 s over the 7 MB haystack, count=53
-      both backends. In-suite: 12 GB module heap required (8 GB OOMed the
-      transient burst even with a pre-retry full GC), ~110 s per param.
+      non-binding — the state cap is the only one). MEASURED 2026-08-20
+      after the compile/runtime memory work (M1-M3: visited-set sizing,
+      tagless fast paths, packed kernels + dense sigs + dead-data release,
+      ASCII-dispatch cap, stop-mask tiers): solo compile ~21 s, fits
+      -Xmx1g (was ~5-6 GB transient; peak live Configs 66.27 M -> 391),
+      retained DFA ~82 MB (was 378 MB), run 43-48 s over the 7 MB
+      haystack, count=53 both backends. G1 quirk: -Xmx1g25m/1g5m OOM via
+      humongous-region fragmentation while 1 g compacts fine — use 1 g.
+      The suite verifies it via -Dtdfa.test.rebar.skipBombs=false.
       DEFAULT-CAP DECISION: stays at re2c's 100 K. Raising it to ~250 K so
       this class compiles out-of-the-box would make every over-cap pattern
-      (adversarial ones included) burn ~40 s and ~5 GB transient BEFORE the
-      clean rejection — on default JVM heaps (¼ RAM) that converts clean
-      errors into OOM crashes, strictly worse; and exactly one legit in-scope
-      pattern needs the raise (opt-in via the documented flag). CANOR COST,
+      (adversarial ones included) burn ~20 s and ~1 GB transient BEFORE the
+      clean rejection; exactly one legit in-scope pattern needs the raise
+      (opt-in via the documented flag). CANOR COST,
       stated: re2j and java.util.regex ACCEPT the context pattern in ~10 ms
       (lazy NFA / backtracker — no eager determinization price); at the
       default cap we reject it. This is the honest cost of the single-

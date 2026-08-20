@@ -42,8 +42,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code [\s\S]{0,100}} × 2 whose counter cross-product is an intrinsically
  * huge DFA (measured already-minimal on the simplified analog: 60 604 →
  * 60 603 states). At a raised ceiling it compiles to 234 369 states in
- * ~29-42 s with a ~5-6 GB transient working set and passes count verification
- * on both backends — far outside this guard's 5 s scope by design.
+ * ~21 s fitting -Xmx1g (2026-08-20 memory work; was ~5-6 GB) and passes
+ * count verification on both backends — far outside this guard's 5 s
+ * scope by design.
  *
  * <p>Budget: 5 s per compile (generous CI headroom over the ~3 s worst
  * measured on a laptop; the point is catching superlinear regressions, not

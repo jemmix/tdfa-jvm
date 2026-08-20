@@ -158,16 +158,16 @@ class RebarScenarioParityTest {
      * by dedicated probes and documented candor notes. Opt in with
      * {@code -Dtdfa.test.rebar.skipBombs=false} — the test then does a PLAIN
      * compile at whatever caps the JVM provides: raise them explicitly (e.g.
-     * {@code -Dtdfa.max.states=250000} and a heap ≥ the transient working set)
-     * or expect the engine's own clean "pattern too large" rejection.
+     * {@code -Dtdfa.max.states=250000} and ≥1 GB heap) or expect the engine's
+     * own clean "pattern too large" rejection.
      *
      * <ul>
      *   <li>{@code curated/10-bounded-repeat/context} — two-site
      *       {@code [\s\S]{0,100}} counter cross-product: 234 369-state minimal
      *       DFA (kernel total ~44 M, under the default 50 M — the STATE cap is
-     *       the only binding one). Measured at the raised ceiling: ~30-42 s
-     *       compile, ~5-6 GB transient working set, 378 MB retained, count
-     *       verified on both backends (see TODO.md "budget" note).
+     *       the only binding one). Measured at the raised ceiling after the
+     *       2026-08-20 memory work: ~21 s compile, fits -Xmx1g, ~82 MB
+     *       retained, count=53 verified on both backends (TODO.md "budget").
      * </ul>
      */
     static final Set<String> BOMB_SCENARIOS = Set.of("curated/10-bounded-repeat/context");
@@ -199,7 +199,7 @@ class RebarScenarioParityTest {
             timings.add(new Timing(s.fullName(), 0, 0, "SKIP:bomb"));
             assumeTrue(false, "over-budget bomb (skipped by default; see BOMB_SCENARIOS javadoc). "
                     + "Run with -Dtdfa.test.rebar.skipBombs=false -Dtdfa.max.states=250000 "
-                    + "(heap >= 6g) to verify it for real.");
+                    + "(heap >= 1g) to verify it for real.");
             return;
         }
 
