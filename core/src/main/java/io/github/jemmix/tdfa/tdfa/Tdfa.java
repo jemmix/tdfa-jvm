@@ -107,10 +107,46 @@ public final class Tdfa {
      * outranks the skip-exit MATCH (extend); at pos 1 (EOF), {@code $} holds and
      * the {@code $}-loop-back MATCH outranks {@code .} (stop).
      * Unused in POSIX mode (all cells stay {@link #NEVER_STOP}).
+     *
+     * <p><b>Storage tiers</b> (2026-08-20): patterns without zero-width
+     * assertions — the overwhelming majority, incl. every count-model giant —
+     * have all 64 cells of every state IDENTICAL, so the 2D table (256 B/state;
+     * 60 MB on the 234 K-state bounded-repeat DFA) is stored instead as the
+     * 1 B/state {@link #stopMaskUniform}. POSIX mode stores neither (readers
+     * gate on Perl mode). {@link #stopOnAcceptMask()} materializes the full 2D
+     * form on demand for external consumers (the ASM backend's STOP_MASK).
      */
     final int[] stopOnAcceptMask;
+    /**
+     * Uniform tier of the stop table: {@code stopMaskUniform[state] != 0} means
+     * don't-stop (same encoding as {@link #NEVER_STOP} cells); 0 means stop.
+     * Non-null iff Perl mode and every state's 64 posFlags cells are identical;
+     * mutually exclusive with {@link #stopOnAcceptMask}.
+     */
+    final byte[] stopMaskUniform;
+    /** Lazily-materialized 2D expansion of {@link #stopMaskUniform} (benign race). */
+    private int[] stopMaskTableCache;
     /** Sentinel for "don't stop on accept" — distinct from 0 (= stop). */
     public static final int NEVER_STOP = 0x40;  // sentinel bit above all real assertion bits (1|2|4|8|16|32)
+
+    /**
+     * Full 2D stop table for external consumers. Materializes (once) from the
+     * uniform tier if needed; returns null in POSIX mode (no reader may call).
+     */
+    public int[] stopOnAcceptMask() {
+        if (stopOnAcceptMask != null) return stopOnAcceptMask;
+        byte[] u = stopMaskUniform;
+        if (u == null) return null;
+        int[] cache = stopMaskTableCache;
+        if (cache == null) {
+            cache = new int[u.length * 64];
+            for (int s = 0; s < u.length; s++) {
+                java.util.Arrays.fill(cache, s * 64, s * 64 + 64, u[s] != 0 ? NEVER_STOP : 0);
+            }
+            stopMaskTableCache = cache;
+        }
+        return cache;
+    }
 
     // === Flat packed arrays (4 arrays total; per-match regs adds a 5th at runtime) ===
     /**
@@ -150,7 +186,7 @@ public final class Tdfa {
     private Tdfa(int tagCount, int groupCount, java.util.Map<String, Integer> namedGroups, int registerCount, int finalRegBase, int startState, int stateCount,
                  int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] ranges, int[] ops,
                  int[] entryHiPrefix,
-                 int[] stateEntryMask, int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, boolean multiline,
+                 int[] stateEntryMask, int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
                  boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset,
                  boolean[] stateIsFallback, int[] stateFallbackOpsOff) {
         this.tagCount = tagCount; this.groupCount = groupCount;
@@ -170,6 +206,7 @@ public final class Tdfa {
         this.startStateEntryMask = stateEntryMask[startState];
         this.longestMatch = longestMatch;
         this.stopOnAcceptMask = stopOnAcceptMask;
+        this.stopMaskUniform = stopMaskUniform;
         this.multiline = multiline;
         this.unicodeWordBoundary = unicodeWordBoundary;
         this.wordRanges = wordRanges;
@@ -247,7 +284,6 @@ public final class Tdfa {
     public boolean longestMatch() { return longestMatch; }
 
     /** Leftmost-first stop-on-accept decision table ([state*64 + posFlags]), longest-match mode only. */
-    public int[] stopOnAcceptMask() { return stopOnAcceptMask; }
 
     /** {@code (?m)} — {@code ^}/{@code $} at line boundaries. */
     public boolean multiline() { return multiline; }
@@ -936,11 +972,11 @@ public final class Tdfa {
             // Materialization facts for memory attribution (observable via a
             // CompileObserver "tables" note). Byte sizes are the flat-array
             // payloads actually retained by the Tdfa (4 B per int slot).
+            boolean perStateUniform = true;   // all 64 posFlags cells identical within each state
+            boolean globalUniform = true;     // ... and identical across states
             {
                 int acceptCnt = 0;
                 for (int s = 0; s < stateCount; s++) if ((minMeta[s] & 1) != 0) acceptCnt++;
-                boolean perStateUniform = true;   // all 64 posFlags cells identical within each state
-                boolean globalUniform = true;     // ... and identical across states
                 int globalVal = minStopMask.length > 0 ? minStopMask[0] : 0;
                 for (int s = 0; s < stateCount && perStateUniform; s++) {
                     int v0 = minStopMask[s * 64];
@@ -949,10 +985,23 @@ public final class Tdfa {
                     }
                     if (v0 != globalVal) globalUniform = false;
                 }
+                // Storage tier: POSIX -> neither (readers gate on Perl mode);
+                // Perl + per-state-uniform -> byte[n]; general Perl -> int[n*64].
+                byte[] uniformStop = null;
+                int[] finalStop = null;
+                if (!longest) {
+                    if (perStateUniform) {
+                        uniformStop = new byte[stateCount];
+                        for (int s = 0; s < stateCount; s++) uniformStop[s] = minStopMask[s * 64] != 0 ? (byte) 1 : 0;
+                    } else {
+                        finalStop = minStopMask;
+                    }
+                }
                 obs.note("tables", "states=" + stateCount + " ranges=" + (minRanges.length / 5)
                         + " accept=" + acceptCnt
                         + " bytes{ranges=" + (minRanges.length * 4L)
-                        + ",stopMask=" + (minStopMask.length * 4L)
+                        + ",stopMask=" + (uniformStop != null ? uniformStop.length
+                        : finalStop != null ? finalStop.length * 4L : 0)
                         + ",entryMask=" + (minEntryMask.length * 4L)
                         + ",acceptMask=" + (minAcceptMask.length * 4L)
                         + ",ops=" + (flatOps.length * 4L)
@@ -960,14 +1009,14 @@ public final class Tdfa {
                         + ",scalars=" + ((minMeta.length + minBase.length + minFinalOpsOff.length
                         + stateIsFallback.length + stateFallbackOpsOff.length) * 4L + stateCount) + "}"
                         + " stopMaskUniform=" + (perStateUniform ? (globalUniform ? "global" : "perState") : "no"));
+                return new Tdfa(tags, nfa.groupCount, nfa.namedGroups, globalMaxReg, finalRegBase, 0, stateCount,
+                        minMeta, minBase, minFinalOpsOff, minRanges, flatOps, minHiPrefix,
+                        minEntryMask, minAcceptMask, longest, finalStop, uniformStop, nfa.multiline,
+                        nfa.unicodeWordBoundary, nfa.wordRanges,
+                        hasFixed(nfa.fixedBase) ? nfa.fixedBase : null,
+                        hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null,
+                        stateIsFallback, stateFallbackOpsOff);
             }
-            return new Tdfa(tags, nfa.groupCount, nfa.namedGroups, globalMaxReg, finalRegBase, 0, stateCount,
-                    minMeta, minBase, minFinalOpsOff, minRanges, flatOps, minHiPrefix,
-                    minEntryMask, minAcceptMask, longest, minStopMask, nfa.multiline,
-                    nfa.unicodeWordBoundary, nfa.wordRanges,
-                    hasFixed(nfa.fixedBase) ? nfa.fixedBase : null,
-                    hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null,
-                    stateIsFallback, stateFallbackOpsOff);
         }
 
         private static boolean hasFixed(int[] fixedBase) {

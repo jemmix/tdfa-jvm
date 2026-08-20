@@ -42,6 +42,8 @@ public final class TdfaRunner implements RegexEngine {
     private final boolean longestMatch;
     private final boolean multiline;
     private final int[] stopOnAcceptMask;
+    /** Uniform tier of the stop table (1 B/state) — see Tdfa.stopMaskUniform; exclusive with the above. */
+    private final byte[] stopMaskUniform;
     private final boolean[] stateIsFallback;
     private final int[] stateFallbackOpsOff;
     private final boolean rangesDisjoint;
@@ -159,6 +161,7 @@ public final class TdfaRunner implements RegexEngine {
         this.longestMatch = tdfa.longestMatch;
         this.multiline = tdfa.multiline;
         this.stopOnAcceptMask = tdfa.stopOnAcceptMask;
+        this.stopMaskUniform = tdfa.stopMaskUniform;
         this.stateIsFallback = tdfa.stateIsFallback;
         this.stateFallbackOpsOff = tdfa.stateFallbackOpsOff;
         this.stateCount = tdfa.stateCount;
@@ -468,15 +471,13 @@ public final class TdfaRunner implements RegexEngine {
                     lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
                     if (!longestMatch) {
                         if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                        int stopMask = stopOnAcceptMask[state * 64 + posFlags];
-                        if (stopOnAccept(stopMask, posFlags)) break loop;
+                        if (stopNow(state, posFlags)) break loop;
                     }
                 } else {
                     if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                     if ((posFlags & acceptMask) == acceptMask) {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                        int stopMask = stopOnAcceptMask[state * 64 + posFlags];
-                        if (!longestMatch && stopOnAccept(stopMask, posFlags)) break loop;
+                        if (!longestMatch && stopNow(state, posFlags)) break loop;
                     }
                 }
             }
@@ -778,6 +779,7 @@ public final class TdfaRunner implements RegexEngine {
         for (int m : tdfa.stateAcceptMask) if ((m & WM) != 0) return true;
         for (int i = 4; i < tdfa.ranges.length; i += 5) if ((tdfa.ranges[i] & WM) != 0) return true;
         int[] soa = tdfa.stopOnAcceptMask;
+        if (soa == null) return false;   // uniform/POSIX tier: stop cells cannot differ across word variants
         for (int s = 0; s < tdfa.stateCount; s++) {
             int row = s * 64;
             for (int base = 0; base < 16; base++) {
@@ -1539,7 +1541,6 @@ public final class TdfaRunner implements RegexEngine {
         // longest-match mode so the inner loop can short-circuit on first
         // accepting state (matching the slow path). See docs/REBAR-SPEEDUP-PLAN.md §Tier-2 #3.
         final boolean pm = !this.longestMatch;
-        final int[] soa = this.stopOnAcceptMask;
         // Pooled regs (per-thread scratch): no allocation on the (frequent)
         // failed-walk path. On success the array is cloned into the MatchHolder
         // before returning, so the pool is never handed out. NOTE: the
@@ -1568,8 +1569,7 @@ public final class TdfaRunner implements RegexEngine {
                 haveAccept = true; lastAcceptPos = pos; lastAcceptState = state;
                 if (pm) {
                     posFlags = positionFlags(input, pos, to);
-                    int stopMask = soa[state * 64 + posFlags];
-                    if (stopOnAccept(stopMask, posFlags)) break;
+                    if (stopNow(state, posFlags)) break;
                 }
             }
             if (pos == to) break;
@@ -1754,15 +1754,13 @@ public final class TdfaRunner implements RegexEngine {
                     haveAccept = true; lastAcceptPos = pos;
                     if (!longestMatch) {
                         if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                        int stopMask = stopOnAcceptMask[state * 64 + posFlags];
-                        if (stopOnAccept(stopMask, posFlags)) break;
+                        if (stopNow(state, posFlags)) break;
                     }
                 } else {
                     if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                     if ((posFlags & acceptMask) == acceptMask) {
                         haveAccept = true; lastAcceptPos = pos;
-                        int stopMask = stopOnAcceptMask[state * 64 + posFlags];
-                        if (!longestMatch && stopOnAccept(stopMask, posFlags)) break;
+                        if (!longestMatch && stopNow(state, posFlags)) break;
                     }
                 }
             }
@@ -1903,15 +1901,13 @@ public final class TdfaRunner implements RegexEngine {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
                         if (!longestMatch) {
                             if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
-                            int stopMask = stopOnAcceptMask[state * 64 + posFlags];
-                            if (stopOnAccept(stopMask, posFlags)) break loop;
+                            if (stopNow(state, posFlags)) break loop;
                         }
                     } else {
                         if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
                         if ((posFlags & acceptMask) == acceptMask) {
                             lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                            int stopMask = stopOnAcceptMask[state * 64 + posFlags];
-                            if (!longestMatch && stopOnAccept(stopMask, posFlags)) break loop;
+                            if (!longestMatch && stopNow(state, posFlags)) break loop;
                         }
                     }
                 }
@@ -2007,8 +2003,12 @@ public final class TdfaRunner implements RegexEngine {
      * The {@code posFlags} argument is unused beyond the array index computed
      * by the caller; kept for signature parity.
      */
-    private static boolean stopOnAccept(int stopMask, int posFlags) {
-        return stopMask != Tdfa.NEVER_STOP;
+    /** Tiered stop lookup: true = report the match now (cell says stop).
+     *  Uniform tier (assertion-free patterns): 1 B/state, posFlags irrelevant. */
+    private boolean stopNow(int state, int posFlags) {
+        byte[] u = stopMaskUniform;
+        if (u != null) return u[state] == 0;
+        return stopOnAcceptMask[state * 64 + posFlags] != Tdfa.NEVER_STOP;
     }
 
     /** Compute the position-flags for `pos` in a String. */
