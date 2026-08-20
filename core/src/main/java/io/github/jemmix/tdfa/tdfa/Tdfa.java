@@ -933,6 +933,34 @@ public final class Tdfa {
                     minHiPrefix[b + i] = maxHi;
                 }
             }
+            // Materialization facts for memory attribution (observable via a
+            // CompileObserver "tables" note). Byte sizes are the flat-array
+            // payloads actually retained by the Tdfa (4 B per int slot).
+            {
+                int acceptCnt = 0;
+                for (int s = 0; s < stateCount; s++) if ((minMeta[s] & 1) != 0) acceptCnt++;
+                boolean perStateUniform = true;   // all 64 posFlags cells identical within each state
+                boolean globalUniform = true;     // ... and identical across states
+                int globalVal = minStopMask.length > 0 ? minStopMask[0] : 0;
+                for (int s = 0; s < stateCount && perStateUniform; s++) {
+                    int v0 = minStopMask[s * 64];
+                    for (int m = 1; m < 64; m++) {
+                        if (minStopMask[s * 64 + m] != v0) { perStateUniform = false; globalUniform = false; break; }
+                    }
+                    if (v0 != globalVal) globalUniform = false;
+                }
+                obs.note("tables", "states=" + stateCount + " ranges=" + (minRanges.length / 5)
+                        + " accept=" + acceptCnt
+                        + " bytes{ranges=" + (minRanges.length * 4L)
+                        + ",stopMask=" + (minStopMask.length * 4L)
+                        + ",entryMask=" + (minEntryMask.length * 4L)
+                        + ",acceptMask=" + (minAcceptMask.length * 4L)
+                        + ",ops=" + (flatOps.length * 4L)
+                        + ",hiPrefix=" + (minHiPrefix.length * 4L)
+                        + ",scalars=" + ((minMeta.length + minBase.length + minFinalOpsOff.length
+                        + stateIsFallback.length + stateFallbackOpsOff.length) * 4L + stateCount) + "}"
+                        + " stopMaskUniform=" + (perStateUniform ? (globalUniform ? "global" : "perState") : "no"));
+            }
             return new Tdfa(tags, nfa.groupCount, nfa.namedGroups, globalMaxReg, finalRegBase, 0, stateCount,
                     minMeta, minBase, minFinalOpsOff, minRanges, flatOps, minHiPrefix,
                     minEntryMask, minAcceptMask, longest, minStopMask, nfa.multiline,
