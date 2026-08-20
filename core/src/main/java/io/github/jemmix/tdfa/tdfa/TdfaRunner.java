@@ -112,6 +112,20 @@ public final class TdfaRunner implements RegexEngine {
     /** DFAs at or below this state count get 256-entry (Latin-1) lookup tables; larger stay 128. */
     private static final int LATIN1_MAX_STATES = 8192;
 
+    /**
+     * DFAs above this state count skip the EAGER per-state x latinLimit ASCII
+     * dispatch tables (asciiTarget + asciiRangeFlat ≈ 1 KB/state at the 128-wide
+     * tier) and use the lazy walk blocks / binary search instead. A 234 K-state
+     * DFA would otherwise retain ~228 MB of dispatch tables — more than ALL of
+     * its Tdfa tables combined (measured 2026-08-20, see TODO "tables" note);
+     * every normal post-minimize DFA (e.g. dictionary: 6.8 K states) stays far
+     * below the cap and keeps the direct-dispatch fast paths.
+     */
+    private static final int ASCII_TABLE_MAX_STATES = 16_384;
+
+    /** Eager ASCII dispatch tables present (rangesDisjoint ∧ small enough). */
+    private final boolean asciiTables;
+
     public TdfaRunner(Tnfa nfa) {
         this(Tdfa.compile(nfa));
     }
@@ -131,7 +145,8 @@ public final class TdfaRunner implements RegexEngine {
         this.rangesDisjoint = checkRangesDisjoint(tdfa);
         this.rhp = tdfa.entryHiPrefix;
         this.latinLimit = tdfa.stateCount <= LATIN1_MAX_STATES ? 256 : 128;
-        if (rangesDisjoint) {
+        this.asciiTables = rangesDisjoint && tdfa.stateCount <= ASCII_TABLE_MAX_STATES;
+        if (asciiTables) {
             this.asciiRangeFlat = buildAsciiRangeFlat(tdfa, latinLimit);
             this.latinTarget = buildAsciiTarget(tdfa, latinLimit);
             this.asciiTarget = latinLimit == 128 ? latinTarget : buildAsciiTarget(tdfa, 128);
@@ -478,9 +493,11 @@ public final class TdfaRunner implements RegexEngine {
                 // Disjoint ranges: at most one entry contains c, so entry
                 // priority is moot and the flat table is exact.
                 ri = arf[state * limit + c];
-            } else if (arf != null && c < 0x10000) {
-                // Beyond the flat table: lazy walk block (one array load) or,
-                // past the block cap, the binary search below.
+            } else if (rangesDisjoint && c < 0x10000) {
+                // Beyond the flat table (or tableless giant DFA — dispatch
+                // tables skipped above ASCII_TABLE_MAX_STATES): lazy walk
+                // block (one array load) or, past the block cap, the binary
+                // search below.
                 ri = walkRangeIndex(state, c);
                 if (ri == -2) ri = Integer.MIN_VALUE;
             } else {
@@ -1615,7 +1632,7 @@ public final class TdfaRunner implements RegexEngine {
             int base = stateBase[state];
             int count = (meta >>> 1) & 0xFFFF;
             boolean matched = false;
-            if (rangesDisjoint) {
+            if (asciiTables) {
                 // ASCII fast path: direct table lookup
                 int ri = c < latinLimit ? asciiRangeFlat[state * latinLimit + c] : -2;
                 if (ri >= 0) {
@@ -1760,7 +1777,8 @@ public final class TdfaRunner implements RegexEngine {
             int riFlat;
             if (arf != null && c < limit) {
                 riFlat = arf[state * limit + c];
-            } else if (arf != null && c < 0x10000) {
+            } else if (rangesDisjoint && c < 0x10000) {
+                // tableless giant DFA (see ASCII_TABLE_MAX_STATES): walk blocks
                 riFlat = walkRangeIndex(state, c);
                 if (riFlat == -2) riFlat = Integer.MIN_VALUE;   // block cap: binary search
             } else {
@@ -2130,7 +2148,10 @@ public final class TdfaRunner implements RegexEngine {
 
     /** True if the DFA qualifies for the no-masks fast path. */
     private boolean computeFastPath(Tdfa tdfa) {
-        if (!rangesDisjoint || multiline) return false;
+        // fastPath methods (tryStartFast/matchFromFast/runStringAnchoredFast)
+        // dereference the eager ASCII dispatch tables unconditionally — they
+        // require asciiTables (disjoint ∧ ≤ ASCII_TABLE_MAX_STATES).
+        if (!asciiTables || multiline) return false;
         for (int mask : tdfa.stateEntryMask) if (mask != 0) return false;
         for (int mask : tdfa.stateAcceptMask) if (mask != 0) return false;
         for (int i = 4; i < tdfa.ranges.length; i += 5) if (tdfa.ranges[i] != 0) return false;
