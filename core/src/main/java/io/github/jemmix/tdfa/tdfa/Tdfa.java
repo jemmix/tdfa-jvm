@@ -1119,11 +1119,14 @@ public final class Tdfa {
             List<Config> out = new ArrayList<>(seed.size() * 2);
             // For deterministic exploration we visit (state, mask) pairs — same NFA state
             // can appear with different assertion masks (e.g. loop entered 0 vs 1 times).
-            // The visited set keyed only on state would wrongly suppress the second path.
+            // A visited set keyed only on state would wrongly suppress the second path.
             // Open-addressing primitive (state<<32|mask) set: the boxed HashSet<Long> this
             // replaces allocated a Long per visited config per closure call — the #1
-            // allocation hotspot on wide-class determinization.
-            long[] visitedSM = new long[Math.max(16, Integer.highestOneBit(seed.size() * 8 - 1) << 1)];
+            // allocation hotspot on wide-class determinization. Initial size seed*2 (not
+            // seed*8): closures grow it geometrically on demand, and the smaller initial
+            // table saves ~2/3 of the per-call fill cost on the 1.4 M closure calls of
+            // large determinizations.
+            long[] visitedSM = new long[Math.max(16, Integer.highestOneBit(seed.size() * 2 - 1) << 1)];
             int visitedMask = visitedSM.length - 1;
             int visitedCount = 0;
             ArrayDeque<Config> stack = new ArrayDeque<>();
@@ -1439,6 +1442,10 @@ public final class Tdfa {
          * {@code nextReg} is bumped globally so registers are unique across states.
          */
         int[] transitionRegops(List<Config> configs, int sourceStateId) {
+            // Tagless patterns (count-model usage, the giant bounded-repeat DFAs):
+            // no registers exist, so transitions carry no ops. Skipping the
+            // vmap/emitted allocations here removes millions of empty HashMaps
+            // and HashSets on large determinizations.
             Map<Long, Integer> vmap = sourceVmaps.computeIfAbsent(sourceStateId, k -> new HashMap<>());
             List<int[]> opList = new ArrayList<>();
             // Track ops already emitted in THIS call (per-transition dedup, paper "if op not in O").
@@ -1473,6 +1480,7 @@ public final class Tdfa {
         final Map<Integer, Map<Long, Integer>> sourceVmaps = new HashMap<>();
 
         int[] finalRegops(List<Config> configs) {
+            if (tags == 0) return EMPTY;
             List<int[]> opList = new ArrayList<>();
             for (Config c : configs) {
                 if (c.state != nfa.accept) continue;
@@ -1503,16 +1511,37 @@ public final class Tdfa {
 
         static final class AddResult { final int targetId; final int[] ops; AddResult(int t, int[] o) { targetId=t; ops=o; } }
 
-        /** Scratch buffers for canonical key building, reused across addState calls. */
-        private int[] keyCounts;
-        private Config[] keyBuf;
-
         /**
          * Build the canonical (state-sorted, stable) key signature on this compiler's
          * scratch buffers. Counting sort by NFA state — O(n + stateCount) — replaces
          * the former ArrayList copy + TimSort, a per-call hotspot on large closures.
          */
-        private DfaStateKey buildKey(List<Config> configs) {
+        private Config[] keyBuf;
+        private int[] keyCounts;
+        /** Reusable lookup key for {@link #stateIndex}: sig/hash reassigned per probe.
+         *  Used ONLY for {@code get()} against the immutable stored {@link DfaStateKey}s —
+         *  never inserted — so single-threaded reassignment is safe. Saves the
+         *  ~2 KB sig-array + key allocation on every HIT (the dominant case on
+         *  large determinizations: ~1.4 M lookups on the 234 K-state bomb). */
+        private final ProbeKey probe = new ProbeKey();
+        /** Scratch sig storage behind {@link #probe}; grown as needed, reused across calls. */
+        private int[] probeSig = new int[64];
+
+        /** Mutable lookup twin of {@link DfaStateKey}; equals() accepts stored keys. */
+        private static final class ProbeKey {
+            int[] sig;
+            int len;
+            int hash;
+            @Override public boolean equals(Object o) {
+                if (!(o instanceof DfaStateKey)) return false;
+                DfaStateKey k = (DfaStateKey) o;
+                return k.sig.length == len && Arrays.equals(sig, 0, len, k.sig, 0, len);
+            }
+            @Override public int hashCode() { return hash; }
+        }
+
+        /** Sort configs by state (counting sort, stable) into {@link #keyBuf}; return count. */
+        private int sortConfigs(List<Config> configs) {
             int n = configs.size();
             int maxState = 0;
             for (Config c : configs) maxState = Math.max(maxState, c.state);
@@ -1524,24 +1553,34 @@ public final class Tdfa {
             if (keyBuf == null || keyBuf.length < n) keyBuf = new Config[Math.max(n, 32)];
             // iterate forward for stable placement (equal states keep arrival order)
             for (int i = 0; i < n; i++) keyBuf[keyCounts[configs.get(i).state]++] = configs.get(i);
+            return n;
+        }
+
+        /** Fill the reusable probe key with the canonical signature of {@code configs}. */
+        private void fillKeySig(List<Config> configs) {
+            int n = sortConfigs(configs);
             int total = 0;
             for (int i = 0; i < n; i++) total += 3 + keyBuf[i].l.length + (longest ? 1 : 0);
-            int[] arr = new int[total];
+            if (probeSig.length < total) probeSig = new int[Math.max(total, probeSig.length * 2)];
             int j = 0;
             for (int i = 0; i < n; i++) {
                 Config c = keyBuf[i];
-                arr[j++] = c.state;
-                arr[j++] = c.l.length;
-                for (int v : c.l) arr[j++] = v;
-                arr[j++] = c.emptyMask;
-                if (longest) arr[j++] = c.pri;
+                probeSig[j++] = c.state;
+                probeSig[j++] = c.l.length;
+                for (int v : c.l) probeSig[j++] = v;
+                probeSig[j++] = c.emptyMask;
+                if (longest) probeSig[j++] = c.pri;
             }
-            return new DfaStateKey(arr);
+            probe.sig = probeSig;
+            probe.len = total;
+            int h = 1;
+            for (int i = 0; i < total; i++) h = 31 * h + probeSig[i];
+            probe.hash = h;
         }
 
         AddResult addState(List<Config> configs, int[] ops, List<Config> seed) {
-            DfaStateKey key = buildKey(configs);
-            int[] candidates = stateIndex.get(key);
+            fillKeySig(configs);
+            int[] candidates = stateIndex.get(probe);
             if (candidates != null) {
                 // Identity on (states, lookahead). Registers may differ — translate via tryMap.
                 for (int cand : candidates) {
@@ -1553,14 +1592,21 @@ public final class Tdfa {
             }
             int id = states.size();
             states.add(configs);
-            stateSeeds.add(seed);
-            stateIndex.put(key, candidates == null
+            // Seeds are consumed ONLY by the Perl-mode stopOnAccept computation,
+            // and only for ACCEPTING states (compile() line ~663 gates on
+            // anyAccept). Retaining them for all states cost ~22 M extra Config
+            // objects on the 234 K-state bounded-repeat determinization — a
+            // third of all live Configs — for zero readers. Null for the rest.
+            boolean isAccept = false;
+            for (Config c : configs) {
+                if (c.state == nfa.accept) { isAccept = true; break; }
+            }
+            stateSeeds.add(!longest && isAccept ? seed : null);
+            stateIndex.put(new DfaStateKey(Arrays.copyOf(probe.sig, probe.len)), candidates == null
                     ? new int[]{id}
                     : appendInt(candidates, id));
             builders.add(new DfaStateBuilder(id));
-            for (Config c : configs) {
-                if (c.state == nfa.accept) { accept.set(id); break; }
-            }
+            if (isAccept) accept.set(id);
             kernelsTotal += configs.size();
             if (states.size() > maxStates || kernelsTotal > maxKernelsTotal) {
                 throw new IllegalStateException("pattern too large: TDFA determinization budget exceeded ("
@@ -1585,6 +1631,19 @@ public final class Tdfa {
          */
         int[] tryMap(List<Config> newConfigs, List<Config> oldConfigs, int[] ops) {
             if (newConfigs.size() != oldConfigs.size()) return null;
+            // Tagless patterns: no registers exist, so the (empty) bijection is
+            // the identity and ops rewrite is a no-op — but the element-wise
+            // ORDER check below is still semantically load-bearing: two closures
+            // with the same shape-key (canonical state-sorted multiset) can have
+            // DIFFERENT DFS arrival orders, and in Perl mode arrival order IS
+            // priority (stepOnSymbol suppression). Refusing to merge those is
+            // what the pre-fast-path code did; keep it.
+            if (tags == 0) {
+                for (int i = 0; i < newConfigs.size(); i++) {
+                    if (newConfigs.get(i).state != oldConfigs.get(i).state) return null;
+                }
+                return ops;
+            }
             // Same NFA states + lookahead tags? (already checked via the shape key but double-check)
             for (int i = 0; i < newConfigs.size(); i++) {
                 if (newConfigs.get(i).state != oldConfigs.get(i).state) return null;
