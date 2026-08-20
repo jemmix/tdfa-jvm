@@ -354,8 +354,8 @@ public final class Tdfa {
     private static final class Compiler {
         final Tnfa nfa;
         final int tags;
-        final int[][] epsOut;
-        final int[][] symOut;
+        int[][] epsOut;
+        int[][] symOut;
         final int[] initialRegisters;
         final int[] finalRegisters;
         /** Equivalence-class breakpoints across the BMP. */
@@ -384,14 +384,30 @@ public final class Tdfa {
          * 227 M times (every call, never matching) and dominated compile
          * wall time (~13 s of ~14 s).
          */
-        final Map<DfaStateKey, int[]> stateIndex = new HashMap<>();
-        final List<List<Config>> states = new ArrayList<>();
-        /** Seed configs (pre-closure) for each DFA state, used to compute per-state DFS order. */
-        final List<List<Config>> stateSeeds = new ArrayList<>();
-        final BitSet accept = new BitSet();
-        final BitSet processed = new BitSet();
-        final List<DfaStateBuilder> builders = new ArrayList<>();
-        final Deque<Integer> work = new ArrayDeque<>();
+        Map<DfaStateKey, int[]> stateIndex = new HashMap<>();
+        List<List<Config>> states = new ArrayList<>();
+        /**
+         * Tagless compiles only: after a state is processed, its closure is
+         * packed here as arrival-ordered (state, emptyMask) pairs (2 ints per
+         * config) and the boxed {@link #states} slot is nulled. The retained
+         * boxed form cost ~48 B × configs (3.18 GB on the 234 K-state bomb);
+         * the packed form is 8 B/config. Consumers that read a state's closure
+         * after processing (tryMap order check, entry/accept masks,
+         * stopOnAccept) branch on which form is present. Tagged compiles never
+         * pack — regopt/fallback/POSIX machinery consumes the boxed closures.
+         */
+        List<int[]> packedKernels = new ArrayList<>();
+            /**
+         * Seed configs (pre-closure) for each DFA state, used to compute per-state
+         * DFS order (stopOnAccept). Stored ONLY for accepting Perl-mode states:
+         * as {@code int[]} of states (arrival order) on tagless compiles, as
+         * {@code List<Config>} otherwise. Null for the rest.
+         */
+        List<Object> stateSeeds = new ArrayList<>();
+        BitSet accept = new BitSet();
+        BitSet processed = new BitSet();
+        List<DfaStateBuilder> builders = new ArrayList<>();
+        Deque<Integer> work = new ArrayDeque<>();
         /** Global register allocator counter; bumped monotonically across all states. */
         int nextReg;
 
@@ -473,11 +489,11 @@ public final class Tdfa {
         /** Number of breakpoint cells (cells = equivalence classes between adjacent breakpoints). */
         final int cellCount;
         /** Per breakpoint cell: bitset of active symbol-edge ids (edges whose class matches the cell's representative). */
-        final long[][] rangeActiveEdges;
+        long[][] rangeActiveEdges;
         /** rangeSameEdges[bi] == true iff cell bi's active edge set equals cell bi-1's. */
         final boolean[] rangeSameEdges;
         /** Interned id of cell bi's active edge set (equal sets share the id). */
-        final int[] activeSetId;
+        int[] activeSetId;
         /** Number of distinct active edge sets. */
         final int activeSetCount;
 
@@ -647,6 +663,19 @@ public final class Tdfa {
                         perSet[setId] = ar;
                     }
                 }
+                // Tagless compiles: release the boxed closure of the just-processed
+                // state — everything downstream reads the packed form (see tryMap and
+                // the materialization pass). This is where the GBs go home.
+                if (tags == 0) {
+                    int[] packed = new int[cur.size() * 2];
+                    for (int i = 0; i < cur.size(); i++) {
+                        Config c = cur.get(i);
+                        packed[i * 2] = c.state;
+                        packed[i * 2 + 1] = c.emptyMask;
+                    }
+                    packedKernels.set(sid, packed);
+                    states.set(sid, null);
+                }
             }
             if (debug) System.err.println("[tdfa] total states=" + states.size() + " accept=" + accept.cardinality());
 
@@ -665,15 +694,17 @@ public final class Tdfa {
                     | Tnfa.ABS_BEGIN | Tnfa.ABS_END;
             for (int s = 0; s < n; s++) {
                 List<Config> cfgs = states.get(s);
+                int[] pk = tags == 0 ? packedKernels.get(s) : null;   // packed form (tagless: cfgs == null)
+                int cnt = pk != null ? pk.length >> 1 : cfgs.size();
                 int entryIntersect = ALL_BITS;
-                for (Config c : cfgs) entryIntersect &= c.emptyMask;
+                for (int i = 0; i < cnt; i++) entryIntersect &= pk != null ? pk[i * 2 + 1] : cfgs.get(i).emptyMask;
                 stateEntryMask[s] = entryIntersect;
                 int acceptIntersect = ALL_BITS;
                 boolean anyAccept = false;
-                for (int i = 0; i < cfgs.size(); i++) {
-                    Config c = cfgs.get(i);
-                    if (c.state == nfa.accept) {
-                        acceptIntersect &= c.emptyMask;
+                for (int i = 0; i < cnt; i++) {
+                    int st = pk != null ? pk[i * 2] : cfgs.get(i).state;
+                    if (st == nfa.accept) {
+                        acceptIntersect &= pk != null ? pk[i * 2 + 1] : cfgs.get(i).emptyMask;
                         anyAccept = true;
                     }
                 }
@@ -696,9 +727,10 @@ public final class Tdfa {
                 // else 0 (stop). Accept-unreachable-under-M also gets NEVER_STOP
                 // (no accept to stop on; runner's sam check filters anyway).
                 if (!longest && anyAccept) {
-                    List<Config> seed = stateSeeds.get(s);
+                    Object seed = stateSeeds.get(s);
                     for (int M = 0; M < 64; M++) {
-                        int[] perStateOrder = computePerStateOrder(seed, M);
+                        int[] perStateOrder = seed instanceof int[] ss
+                                ? computePerStateOrder(ss, M) : computePerStateOrder((List<Config>) seed, M);
                         int acceptOrder = perStateOrder[nfa.accept];
                         if (acceptOrder == -1) {
                             // Accept unreachable under M; sam check will fail too.
@@ -706,11 +738,11 @@ public final class Tdfa {
                             continue;
                         }
                         boolean higherPriSym = false;
-                        for (int i = 0; i < cfgs.size(); i++) {
-                            Config c = cfgs.get(i);
-                            if (c.state == nfa.accept) continue;
-                            if (symOut[c.state].length == 0) continue;
-                            int o = perStateOrder[c.state];
+                        for (int i = 0; i < cnt; i++) {
+                            int st = pk != null ? pk[i * 2] : cfgs.get(i).state;
+                            if (st == nfa.accept) continue;
+                            if (symOut[st].length == 0) continue;
+                            int o = perStateOrder[st];
                             if (o != -1 && o < acceptOrder) {
                                 higherPriSym = true;
                                 break;
@@ -727,6 +759,14 @@ public final class Tdfa {
                     builders.get(s).finalOpsArr = finalRegops(states.get(s));
                 }
             }
+            // Determinize-lifetime data is dead from here: the stateIndex sigs,
+            // (packed) kernels, seeds, eps/sym adjacency and scratch are all
+            // downstream-unused, but as Compiler fields they would stay live
+            // through materialization/minimization — the heap peak on giant
+            // DFAs. Release ~0.8 GB (bomb) before the flat-array phase.
+            stateIndex = null; states = null; packedKernels = null; stateSeeds = null;
+            work = null; epsOut = null; symOut = null; sourceVmaps = null;
+            rangeActiveEdges = null; activeSetId = null; processed = null;
 
             obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.DETERMINIZE,
                     System.nanoTime() - tDet, n);
@@ -832,6 +872,10 @@ public final class Tdfa {
                 stateMeta[s] = ((k & 0xFFFF) << 1) | (isAccept ? 1 : 0);
                 stateFinalOpsOff[s] = finalOpsOff;
             }
+            // Builders (3.2 M Range objects on the bomb) are dead once the flat
+            // arrays are populated; minimize/fallback only read the flat forms.
+            builders = null; accept = null;
+
             // === Minimize via register-aware Moore's algorithm (paper §6.2.2 Minimization) ===
             // Treat transitions on the same symbol but with different register ops as different
             // transitions. Op sequences are interned to unique numeric IDs for O(1) comparison
@@ -1370,7 +1414,15 @@ public final class Tdfa {
         private boolean[] psoVisited;
         private int[] psoStack;
 
+        int[] computePerStateOrder(int[] seedStates, int posMask) { return computePerStateOrderDfs(seedStates, posMask); }
+
         int[] computePerStateOrder(List<Config> seed, int posMask) {
+            int[] seedStates = new int[seed.size()];
+            for (int i = 0; i < seed.size(); i++) seedStates[i] = seed.get(i).state;
+            return computePerStateOrderDfs(seedStates, posMask);
+        }
+
+        private int[] computePerStateOrderDfs(int[] seedStates, int posMask) {
             if (psoOrder == null || psoOrder.length < nfa.stateCount) {
                 psoOrder = new int[nfa.stateCount];
                 psoVisited = new boolean[nfa.stateCount];
@@ -1382,8 +1434,8 @@ public final class Tdfa {
             java.util.Arrays.fill(order, 0, nfa.stateCount, -1);
             java.util.Arrays.fill(visited, 0, nfa.stateCount, false);
             int sp = 0;
-            for (int i = seed.size() - 1; i >= 0; i--) {
-                int s = seed.get(i).state;
+            for (int i = seedStates.length - 1; i >= 0; i--) {
+                int s = seedStates[i];
                 if (!visited[s]) stackArr[sp++] = s;
             }
             int counter = 0;
@@ -1526,7 +1578,7 @@ public final class Tdfa {
             return flatten(opList);
         }
 
-        final Map<Integer, Map<Long, Integer>> sourceVmaps = new HashMap<>();
+        Map<Integer, Map<Long, Integer>> sourceVmaps = new HashMap<>();
 
         int[] finalRegops(List<Config> configs) {
             if (tags == 0) return EMPTY;
@@ -1609,14 +1661,21 @@ public final class Tdfa {
         private void fillKeySig(List<Config> configs) {
             int n = sortConfigs(configs);
             int total = 0;
-            for (int i = 0; i < n; i++) total += 3 + keyBuf[i].l.length + (longest ? 1 : 0);
+            if (tags == 0) {
+                // dense tagless sig: (state, emptyMask[, pri]) — l is always empty
+                for (int i = 0; i < n; i++) total += 2 + (longest ? 1 : 0);
+            } else {
+                for (int i = 0; i < n; i++) total += 3 + keyBuf[i].l.length + (longest ? 1 : 0);
+            }
             if (probeSig.length < total) probeSig = new int[Math.max(total, probeSig.length * 2)];
             int j = 0;
             for (int i = 0; i < n; i++) {
                 Config c = keyBuf[i];
                 probeSig[j++] = c.state;
-                probeSig[j++] = c.l.length;
-                for (int v : c.l) probeSig[j++] = v;
+                if (tags != 0) {
+                    probeSig[j++] = c.l.length;
+                    for (int v : c.l) probeSig[j++] = v;
+                }
                 probeSig[j++] = c.emptyMask;
                 if (longest) probeSig[j++] = c.pri;
             }
@@ -1633,7 +1692,7 @@ public final class Tdfa {
             if (candidates != null) {
                 // Identity on (states, lookahead). Registers may differ — translate via tryMap.
                 for (int cand : candidates) {
-                    int[] mapped = tryMap(configs, states.get(cand), ops);
+                    int[] mapped = tryMap(configs, states.get(cand), packedKernels.get(cand), ops);
                     if (mapped != null) return new AddResult(cand, mapped);
                 }
                 // All same-shape states failed the register bijection: this shape
@@ -1641,6 +1700,7 @@ public final class Tdfa {
             }
             int id = states.size();
             states.add(configs);
+            packedKernels.add(null);
             // Seeds are consumed ONLY by the Perl-mode stopOnAccept computation,
             // and only for ACCEPTING states (compile() line ~663 gates on
             // anyAccept). Retaining them for all states cost ~22 M extra Config
@@ -1650,7 +1710,18 @@ public final class Tdfa {
             for (Config c : configs) {
                 if (c.state == nfa.accept) { isAccept = true; break; }
             }
-            stateSeeds.add(!longest && isAccept ? seed : null);
+            if (!longest && isAccept) {
+                if (tags == 0) {
+                    // tagless: consumers only read the seed STATES — pack them
+                    int[] seedStates = new int[seed.size()];
+                    for (int i = 0; i < seed.size(); i++) seedStates[i] = seed.get(i).state;
+                    stateSeeds.add(seedStates);
+                } else {
+                    stateSeeds.add(seed);
+                }
+            } else {
+                stateSeeds.add(null);
+            }
             stateIndex.put(new DfaStateKey(Arrays.copyOf(probe.sig, probe.len)), candidates == null
                     ? new int[]{id}
                     : appendInt(candidates, id));
@@ -1678,8 +1749,9 @@ public final class Tdfa {
          * a bijection on their register vectors. Returns rewritten ops if mapping succeeds,
          * null otherwise. Implements paper §3 {@code map} function.
          */
-        int[] tryMap(List<Config> newConfigs, List<Config> oldConfigs, int[] ops) {
-            if (newConfigs.size() != oldConfigs.size()) return null;
+        int[] tryMap(List<Config> newConfigs, List<Config> oldConfigs, int[] oldPacked, int[] ops) {
+            int size = newConfigs.size();
+            if (oldPacked != null ? oldPacked.length != size * 2 : oldConfigs.size() != size) return null;
             // Tagless patterns: no registers exist, so the (empty) bijection is
             // the identity and ops rewrite is a no-op — but the element-wise
             // ORDER check below is still semantically load-bearing: two closures
@@ -1688,8 +1760,9 @@ public final class Tdfa {
             // priority (stepOnSymbol suppression). Refusing to merge those is
             // what the pre-fast-path code did; keep it.
             if (tags == 0) {
-                for (int i = 0; i < newConfigs.size(); i++) {
-                    if (newConfigs.get(i).state != oldConfigs.get(i).state) return null;
+                for (int i = 0; i < size; i++) {
+                    int oldState = oldPacked != null ? oldPacked[i * 2] : oldConfigs.get(i).state;
+                    if (newConfigs.get(i).state != oldState) return null;
                 }
                 return ops;
             }
