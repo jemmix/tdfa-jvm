@@ -36,7 +36,8 @@ dependencies {
 test {
     useJUnitPlatform()
     jvmArgs '-Xmx512m', '-XX:+HeapDumpOnOutOfMemoryError'
-    // Forward -Dtdfa.pending=true so JdkRegressionCorpusTest known-bug families enforce.
+    // -Dtdfa.pending=true opts IN known-failing tests committed in interim
+    // state (TODO.md convention). No currently-known failures: default off.
     systemProperty 'tdfa.pending', System.getProperty('tdfa.pending', 'false')
     testLogging {
         events 'failed', 'standardOut', 'standardError'

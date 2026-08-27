@@ -225,31 +225,9 @@ class TestregexFowlerTest {
     static final Map<String, Integer> DAT_DIVERGENCE = new ConcurrentHashMap<>();
     static volatile boolean reported = false;
 
-    /**
-     * Known our-vs-re2j divergences, gated behind {@code -Dtdfa.pending=true}
-     * (TODO.md convention). Cleared as each is fixed.
-     *
-     * <p>EMPTY since the TNFA star-topology fix (2026-08-18): the nested
-     * same-greediness quantifier family ((a*?)*? on "aaa": re2j g1=[0,3) vs
-     * former ours g1=[2,3)) was root-caused to re2j's Prog star compilation —
-     * shared-hub loop for non-nullable bodies, (f+)? for nullable ones — and
-     * mirrored in {@code Tnfa.buildRepeat}. Kept as the extension point for
-     * future finds.
-     */
-    static final java.util.Set<String> KNOWN_DIVERGENT = java.util.Set.of();
-
-    static boolean pendingEnabled() {
-        return Boolean.getBoolean("tdfa.pending");
-    }
-
     @ParameterizedTest(name = "{0}:{1}")
     @MethodSource("specsProvider")
     void fowlerSpec(String file, int lineNo, RegexEngineFactory factory, Spec spec) {
-        if (KNOWN_DIVERGENT.contains(file + ":" + lineNo)) {
-            org.junit.jupiter.api.Assumptions.assumeTrue(pendingEnabled(),
-                    "PENDING: known our-vs-re2j divergence (see KNOWN_DIVERGENT javadoc); "
-                            + "run with -Dtdfa.pending=true to include");
-        }
         boolean icase = spec.flags().contains("i");
         String regex = spec.regex();
         String subject = spec.subject().equals("NULL") ? "" : spec.subject();

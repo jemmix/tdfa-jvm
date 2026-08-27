@@ -56,13 +56,12 @@ class JdkRegressionCorpusTest {
 
     private static final List<String> JurOnlySyntax = new ArrayList<>();
     private static final List<String> RecordedDrift = new ArrayList<>();
-    private static final List<String> KnownBugs = new ArrayList<>();
     private static int compared;
     private static int bothReject;
     private static int byDesign;
 
     /**
-     * Former known-bug families, all FIXED (2026-08-27 structural round):
+     * All former known-bug families are FIXED (2026-08-27 structural round):
      * <ul>
      *   <li><b>supp-tagged-literal</b> — the parser now reads codepoints
      *       (shared {@code Alphabet.decode}); a supplementary literal is one
@@ -77,10 +76,9 @@ class JdkRegressionCorpusTest {
      *   <li><b>(?x) silent no-op</b> — unknown inline flags now reject, as
      *       re2j does ({@code (?U)} ungreedy is supported, as re2j does)</li>
      * </ul>
-     * The gate is still soft by default; {@code -Dtdfa.pending=true} enforces
-     * (currently: 0 failures).
+     * Every divergence is a hard failure; the {@code tdfa.pending} property
+     * is no longer consulted here.
      */
-    private static final boolean PENDING = Boolean.getBoolean("tdfa.pending");
 
     /** Documented by-design divergence: the {@code (?u)} inline flag (unicode
      *  shorthand opt-in) is a tdfa extension; re2j has no u flag and rejects. */
@@ -281,11 +279,9 @@ class JdkRegressionCorpusTest {
                     + "` recorded=`" + c.expected() + "` live=`" + oracle + "`");
     }
 
-    /** Known-bug families are soft by default; {@code -Dtdfa.pending=true} enforces. */
+    /** Divergence from the contract oracle: always a hard failure. */
     private static void record(Case c, String what, String extra) {
-        String entry = c + " " + what + (extra == null ? "" : " — " + extra);
-        if (PENDING) throw new AssertionError(entry);
-        KnownBugs.add(entry);
+        throw new AssertionError(c + " " + what + (extra == null ? "" : " — " + extra));
     }
 
     private static String detail(Case c, String oracle, String actual) {
@@ -298,9 +294,6 @@ class JdkRegressionCorpusTest {
         System.out.println("---- JDK regression corpus summary ----");
         System.out.println("compared (re2j+tdfa compiled): " + compared
                 + ", both reject: " + bothReject + ", by-design (?u): " + byDesign);
-        System.out.println("KNOWN BUGS (soft; enforce with -Dtdfa.pending=true): " + KnownBugs.size());
-        KnownBugs.stream().limit(40).forEach(s -> System.out.println("  BUG " + s.replace("\n", " | ")));
-        if (KnownBugs.size() > 40) System.out.println("  ... +" + (KnownBugs.size() - 40) + " more");
         System.out.println("jur-only syntax divergences (informational): " + JurOnlySyntax.size());
         System.out.println("recorded-expectation drift vs live engines: " + RecordedDrift.size());
         RecordedDrift.stream().limit(20).forEach(s -> System.out.println("  DRIFT " + s));
