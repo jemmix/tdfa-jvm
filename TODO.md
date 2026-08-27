@@ -242,7 +242,38 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
       (2026-08-27): `(\u03A9(\be.z|\W.+(.{1,2}))(?s:\u3042??)){1,6}h` compiles unboundedly; the compile
       budget does not trip for this shape. Repro: any seed in `build/fuzz/failures.ndjson` with
       `"kind":"HANG_ENGINE"`, via `-Dfuzz.one=<caseSeed>`. The fuzz watchdog survives it; users would not.
-      Budget needs a tryMap/steps cap that covers nested star-of-bounded families.
+      Budget needs a tryMap/steps cap that covers nested star-of-bounded families. Second soak
+      (2026-08-27 evening): same family also hangs in `Tdfa$Compiler.epsilonClosure` and
+      `Optimize.livenessAnalysis` — the budget gap is determinization-wide, not tryMap-specific.
+      (That soak's `hangsEngine=33` was misclassification — see harness round below.)
+- [ ] **Non-participating group under a quantifier reports `""` instead of `null`** — FOUND by the fuzzer
+      (2026-08-27, 2 of the soak's 3 contract failures; seeds `-7645183372330529930` `((?s:\b))?`,
+      `-4431982515513205820` `(.\z)*`). Minimal: `((?s:\b))?` on `\udc00\ud800\r` → jdk/re2j g1=null,
+      both our engines g1=`''`. Scope: skipped groups with zero/variable-width content —
+      `(a)?b` and `(a\z)*` are correct, so tags written during a partially-matched iteration leak
+      into the final registers; unset-vs-[0,0) is ambiguous in the readout. Core tag layer (both engines).
+- [ ] **`.+\b.` undershoots when the last boundary precedes a supplementary pair** — FOUND by the fuzzer
+      (2026-08-27; seed `7713360668071298679`). Minimal: `.+\b.` on `\u03a99\ud800\udfff` →
+      jdk AND re2j match `\u03a99\ud800\udfff` (boundary after 9, `.` eats the pair); both our engines
+      stop at `\u03a99` (earlier accept at boundary Ω|9). Single-boundary input `9\ud800\udfff` is
+      correct — needs two candidate boundaries. Not the documented codepoint-vs-unit divergence:
+      our own codepoint semantics say the answer includes the pair. Core walk (position flags ×
+      pair step × accept priority), both engines.
+- [ ] **`(?:.*?9{0,}\b){1,}` prefers a non-empty first iteration** — FOUND by the fuzzer (2026-08-27;
+      seed `516468605110627597`). Minimal: on `Z\t` → jdk/re2j match `[]@0` (lazy `.*?` stays empty,
+      `\b` holds at input start before word `Z`); both our engines match `[Z]@0`. Components alone
+      (`.*?\b`, `(?:.*?\b){1,}`, `9{0,}\b`) are all correct — the nesting is the trigger.
+      Zero-width-iteration priority in the core, both engines.
+- [x] **Fuzz harness round 2 (leak containment + honest hang accounting)** — first soak (2026-08-27
+      evening) degraded to 74 % of wall time waiting on watchdog timeouts, throughput 11k→7.5k cases/min
+      and falling: 44 of ~50 hangs were re2j's own `(?i)` wide-range class-fold expansion (oracle-side),
+      each leaking a still-running daemon thread. Fixes: (a) generator avoids wide `(?i)` class ranges
+      (ASCII-narrow only, counted as ciWideRangeAvoided) — 6000-case probe: 0 hangs; (b) hang classifier
+      checks engine frames excluding harness wrappers (was `indexOf("io.github.jemmix")`, which matches
+      every stack — 33 oracle hangs were tagged HANG_ENGINE); (c) `scripts/fuzz-soak.sh`: 480×1-min
+      chunked JVMs sharing one out dir via `-Pfuzz.append` — leaked threads die with their chunk;
+      (d) `-Pfuzz.one` forwarded by the fuzz task (turnkey repro). Overnight relaunch:
+      `scripts/fuzz-soak.sh`.
 - [x] **Literal-needle path ignored surrogate pairing** — FOUND by the fuzzer, FIXED (2026-08-27): raw
       `indexOf` matched needle unit sequences that start mid-pair or end on the high half of a pair
       (`a\uD800` matched inside `a\uD800\uDFFF`). `TdfaRunner.literalIndexOf` (shared by find/extract/

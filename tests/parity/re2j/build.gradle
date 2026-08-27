@@ -51,8 +51,11 @@ test {
 // Overnight differential soak: tdfa (both engines) vs re2j oracle.
 //   ./gradlew :tests:parity:re2j:fuzz                      # 8h, logs to build/fuzz
 //   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.minutes=60 -Pfuzz.seed=42 -Pfuzz.out=/tmp/soak
-// Reproduce a failures.ndjson line: -Dfuzz.one=<caseSeed> (run the main class
-// with the test runtime classpath). Exits nonzero if any divergence found.
+// Chunked soak (hang-leak containment, shared out dir via append):
+//   scripts/fuzz-soak.sh [iters=480] [minutes=1] [out=build/fuzz] [seedBase]
+// Reproduce a failures.ndjson line turnkey:
+//   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.one=<caseSeed>
+// Exits nonzero if any divergence found.
 tasks.register('fuzz', JavaExec) {
     group = 'verification'
     description = 'Differential fuzz soak vs re2j (minutes/seed/out via -Pfuzz.*)'
@@ -64,4 +67,6 @@ tasks.register('fuzz', JavaExec) {
             ?: rootProject.layout.buildDirectory.dir('fuzz').get().asFile.absolutePath
     systemProperty 'fuzz.seed', project.findProperty('fuzz.seed') ?: String.valueOf(System.currentTimeMillis())
     systemProperty 'fuzz.cases', project.findProperty('fuzz.cases') ?: '0'
+    systemProperty 'fuzz.one', project.findProperty('fuzz.one') ?: '0'
+    systemProperty 'fuzz.append', project.findProperty('fuzz.append') ?: 'false'
 }

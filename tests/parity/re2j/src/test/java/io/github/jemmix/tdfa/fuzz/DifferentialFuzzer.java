@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.SplittableRandom;
@@ -28,16 +29,24 @@ import java.util.SplittableRandom;
  *   <li>{@code failures.ndjson} — one line per recorded divergence: caseSeed,
  *       escaped pattern/input, oracle and both engines' results, kind. Every
  *       line is independently reproducible via {@code -Dfuzz.one=<caseSeed>}.</li>
- *   <li>{@code summary.txt} — counts, rate, deduped failure signatures.
- *       Rewritten periodically and at exit: killing the run keeps the data.</li>
- *   <li>{@code progress.log} — heartbeat every 15 s.</li>
- * </ul>
- *
- * <p>Known, documented divergences are avoided by construction rather than
- * filtered after the fact: case-insensitive + supplementary/lone-surrogate
- * combinations are not generated (tdfa has no supplementary simple-fold
- * table yet; re2j folds fully — TODO.md tracks the gap). Everything else
- * must agree with re2j or it is a finding.
+     *   <li>{@code summary.txt} — counts, rate, deduped failure signatures.
+     *       Rewritten periodically and at exit: killing the run keeps the data.</li>
+     *   <li>{@code progress.log} — heartbeat every 15 s.</li>
+     * </ul>
+     *
+     * <p>{@code -Dfuzz.append=true} (Gradle: {@code -Pfuzz.append=true}) appends
+     * {@code failures.ndjson}/{@code progress.log} instead of truncating, so a
+     * chunked soak ({@code scripts/fuzz-soak.sh}: many short JVMs, so threads
+     * leaked by hang watchdogs die with their process) shares one out dir.
+     *
+     * <p>Known, documented divergences are avoided by construction rather than
+     * filtered after the fact: case-insensitive + supplementary/lone-surrogate
+     * combinations are not generated (tdfa has no supplementary simple-fold
+     * table yet; re2j folds fully — TODO.md tracks the gap), and {@code (?i)}
+     * class ranges are generated ASCII-narrow only (re2j's own parser expands
+     * case folds over every codepoint in a range — wide {@code (?i)} ranges
+     * hung the ORACLE in 44 of the first ~50 soak hangs). Everything else
+     * must agree with re2j or it is a finding.
  */
 public final class DifferentialFuzzer {
 
@@ -199,11 +208,13 @@ public final class DifferentialFuzzer {
     static final int[] POOL_LONE = {0xD800, 0xDBFF, 0xDC00, 0xDC21, 0xDFFF};
 
     static final int MAX_DEPTH = 4;
-    private static int ciSuppAvoided;   // informational; generation-side counter
+    private static int ciSuppAvoided;   // informational; generation-side counters
+    private static int ciRangeAvoided;  // (known-gap / oracle-hang constructs not generated)
 
     static Case generate(long caseSeed) {
         SplittableRandom rnd = new SplittableRandom(caseSeed);
         ciSuppAvoided = 0;
+        ciRangeAvoided = 0;
         String pattern = expr(rnd, 0, false);
         int inLen = rnd.nextInt(0, 25);
         StringBuilder in = new StringBuilder(inLen * 2);
@@ -293,7 +304,19 @@ public final class DifferentialFuzzer {
         for (int i = 0; i < members; i++) {
             int roll = rnd.nextInt(10);
             if (roll < 3) {
-                int lo = pickClassCp(rnd, ci), hi = pickClassCp(rnd, ci);
+                int lo, hi;
+                if (ci) {
+                    // (?i) ranges: ASCII-narrow only. re2j's parser folds every
+                    // cp in the range; wide ranges are an ORACLE hang (44 of the
+                    // first ~50 soak hangs), and the folded behavior beyond
+                    // ASCII is a documented divergence anyway.
+                    ciRangeAvoided++;
+                    lo = POOL_ASCII[rnd.nextInt(POOL_ASCII.length)];
+                    hi = POOL_ASCII[rnd.nextInt(POOL_ASCII.length)];
+                } else {
+                    lo = pickClassCp(rnd, ci);
+                    hi = pickClassCp(rnd, ci);
+                }
                 if (hi < lo) { int t = lo; lo = hi; hi = t; }   // keep ranges legal (re2j rejects inverted)
                 sb.append(classMember(lo)).append('-').append(classMember(hi));
             } else if (roll < 5) {
@@ -368,7 +391,7 @@ public final class DifferentialFuzzer {
 
     static final class Results {
         final long masterSeed;
-        long cases, failures, bothReject, ciSuppAvoidedTotal, knownDivergence;
+        long cases, failures, bothReject, ciSuppAvoidedTotal, ciRangeAvoidedTotal, knownDivergence;
         long hangs, hangsOurs, hangsOracle;
         double casesPerMinute;
         final Map<String, Sig> signatures = new LinkedHashMap<>();
@@ -376,6 +399,7 @@ public final class DifferentialFuzzer {
 
         void record(long caseSeed, Outcome o, Logs logs) {
             ciSuppAvoidedTotal += ciSuppAvoided;
+            ciRangeAvoidedTotal += ciRangeAvoided;
             if (o.failed()) {
                 String known = knownDivergence(o);
                 if (known != null) {
@@ -474,8 +498,14 @@ public final class DifferentialFuzzer {
 
         Logs(Path dir) throws IOException {
             this.dir = dir;
-            failures = new PrintWriter(Files.newBufferedWriter(dir.resolve("failures.ndjson")), false);
-            progress = new PrintWriter(Files.newBufferedWriter(dir.resolve("progress.log")), true);
+            // fuzz.append: keep failures.ndjson/progress.log across chunked
+            // soak runs (scripts/fuzz-soak.sh); summary.txt always reflects
+            // the latest chunk.
+            StandardOpenOption[] opts = Boolean.getBoolean("fuzz.append")
+                    ? new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.APPEND}
+                    : new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING};
+            failures = new PrintWriter(Files.newBufferedWriter(dir.resolve("failures.ndjson"), opts), false);
+            progress = new PrintWriter(Files.newBufferedWriter(dir.resolve("progress.log"), opts), true);
         }
 
         void failure(long caseSeed, Outcome o, String kind) {
@@ -491,19 +521,31 @@ public final class DifferentialFuzzer {
 
         /** A case whose worker never returned within the watchdog: pattern,
          *  input and the worker's live stack, for post-mortem. Classified:
-         *  a stack inside io.github.jemmix is an ENGINE hang (a finding);
+         *  a stack inside our engine packages is an ENGINE hang (a finding);
          *  anything else is oracle/system slowness (e.g. re2j's (?i) class
-         *  fold expansion over wide ranges). */
+         *  fold expansion over wide ranges). NOTE: the harness frames
+         *  ({@code io.github.jemmix.tdfa.fuzz.*}) wrap EVERY worker stack —
+         *  oracle hangs included — so they must not count as "ours" (the
+         *  first soak misattributed 33 re2j-parser hangs to the engine). */
         void hang(long caseSeed, Case c, Results r) {
             Thread w = findWorker();
             StringBuilder st = new StringBuilder();
             if (w != null) for (StackTraceElement e : w.getStackTrace()) st.append(e).append(" | ");
-            boolean ours = st.indexOf("io.github.jemmix") >= 0;
+            boolean ours = isEngineStack(st);
             if (ours) r.hangsOurs++; else r.hangsOracle++;
             failures.println("{\"caseSeed\":" + caseSeed + ",\"kind\":\"HANG_" + (ours ? "ENGINE" : "ORACLE")
                     + "\",\"pattern\":\"" + escape(c.pattern()) + "\",\"input\":\"" + escape(c.input())
                     + "\",\"stack\":\"" + escape(st.toString()) + "\"}");
             failures.flush();
+        }
+
+        /** Engine-side verdict: any frame in our own packages, excluding the
+         *  fuzz harness frames that always sit below the hung code. Oracle
+         *  hangs show com.google.re2j frames there instead. */
+        static boolean isEngineStack(CharSequence st) {
+            for (String f : st.toString().split(" \\| "))
+                if (f.startsWith("io.github.jemmix.tdfa.") && !f.contains(".fuzz.")) return true;
+            return false;
         }
 
         private static Thread findWorker() {
@@ -517,7 +559,8 @@ public final class DifferentialFuzzer {
                         + "  knownDivergence: " + r.knownDivergence + "  hangsEngine: " + r.hangsOurs
                         + "  hangsOracle: " + r.hangsOracle);
                 w.printf("rate: %.1f cases/min%n", r.casesPerMinute);
-                w.println("ciSuppAvoided (known-gap constructs not generated): " + r.ciSuppAvoidedTotal);
+                w.println("ciSuppAvoided (known-gap constructs not generated): " + r.ciSuppAvoidedTotal
+                        + "  ciWideRangeAvoided (oracle-hang guard): " + r.ciRangeAvoidedTotal);
                 w.println();
                 w.println("failure signatures (deduped):");
                 r.signatures.forEach((sig, s) -> w.printf("  %6d  %s%n", s.total, sig));
