@@ -214,6 +214,70 @@ public final class Tdfa {
         this.fixedOffset = fixedOffset;
         this.stateIsFallback = stateIsFallback;
         this.stateFallbackOpsOff = stateFallbackOpsOff;
+        // Well-formedness gate: every consumer (VM runner, search-DFA memo,
+        // ASM emitter, minimizer) trusts these arrays. Violations must surface
+        // here, at construction — not as a wrong match 2,000 lines away.
+        validate(stateCount, stateMeta, stateBase, stateFinalOpsOff, ranges, entryHiPrefix, ops,
+                stateEntryMask, stateAcceptMask, registerCount, finalRegBase, tagCount);
+    }
+
+    /**
+     * Construction-time invariants of the packed flat arrays. O(states +
+     * entries + ops) once per compile; never on the match path.
+     *
+     * <ul>
+     *   <li>per-state range entries: in bounds, codepoint domain, lo ascending
+     *       (the runners' binary search depends on it), prefix-max consistent</li>
+     *   <li>transition targets within the state space; ops offsets within ops</li>
+     *   <li>assertion masks limited to the six defined bits; accept ⊆ entry</li>
+     *   <li>final-register block {@code [finalRegBase, finalRegBase+tagCount)}
+     *       fits the register file (dedicated final slots — coalescing finals
+     *       with working registers corrupts the MatchResult readout)</li>
+     * </ul>
+     */
+    private static void validate(int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
+                                 int[] ranges, int[] entryHiPrefix, int[] ops,
+                                 int[] stateEntryMask, int[] stateAcceptMask,
+                                 int registerCount, int finalRegBase, int tagCount) {
+        int entries = ranges.length / 5;
+        for (int s = 0; s < stateCount; s++) {
+            int meta = stateMeta[s];
+            int cnt = rangeCount(meta);
+            int base = stateBase[s];
+            if (base < 0 || base + cnt > entries)
+                throw new IllegalStateException("tdfa: state " + s + " range base/count out of bounds"
+                        + " (base=" + base + ", cnt=" + cnt + ", entries=" + entries + ")");
+            int prevLo = -1;
+            int prefixHi = -1;
+            for (int i = 0; i < cnt; i++) {
+                int o = (base + i) * 5;
+                int lo = ranges[o], hi = ranges[o + 1], target = ranges[o + 2], opsOff = ranges[o + 3], mask = ranges[o + 4];
+                if (lo < 0 || hi > 0x10FFFF || lo > hi)
+                    throw new IllegalStateException("tdfa: state " + s + " entry " + i
+                            + " outside codepoint domain [" + lo + "," + hi + "]");
+                if (lo < prevLo)
+                    throw new IllegalStateException("tdfa: state " + s + " entries not lo-ascending at " + i);
+                prevLo = lo;
+                if (target >= stateCount)
+                    throw new IllegalStateException("tdfa: state " + s + " entry " + i
+                            + " target " + target + " beyond state count " + stateCount);
+                if (opsOff != 0 && (opsOff < 0 || opsOff >= ops.length))
+                    throw new IllegalStateException("tdfa: state " + s + " entry " + i + " ops offset out of bounds");
+                if ((mask & ~0x3F) != 0)
+                    throw new IllegalStateException("tdfa: state " + s + " entry " + i + " unknown assertion-mask bits");
+                prefixHi = Math.max(prefixHi, hi);
+                if (entryHiPrefix[base + i] != prefixHi)
+                    throw new IllegalStateException("tdfa: state " + s + " entry " + i + " prefix-max invariant broken");
+            }
+            if ((stateEntryMask[s] & ~0x3F) != 0)
+                throw new IllegalStateException("tdfa: state " + s + " entry mask has unknown bits");
+            int fops = stateFinalOpsOff[s];
+            if (fops != 0 && (fops < 0 || fops >= ops.length))
+                throw new IllegalStateException("tdfa: state " + s + " final-ops offset out of bounds");
+        }
+        if (tagCount > 0 && (finalRegBase < 0 || finalRegBase + tagCount > registerCount))
+            throw new IllegalStateException("tdfa: final-register block [" + finalRegBase
+                    + "," + (finalRegBase + tagCount) + ") exceeds register file of " + registerCount);
     }
 
     public boolean isAccept(int state) { return (stateMeta[state] & 1) != 0; }

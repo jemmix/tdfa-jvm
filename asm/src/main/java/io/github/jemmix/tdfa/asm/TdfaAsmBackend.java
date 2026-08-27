@@ -24,6 +24,10 @@ public final class TdfaAsmBackend {
     private static final String CS_D = "Ljava/lang/CharSequence;";
     private static final String ARRAYS = "java/util/Arrays";
     private static final String RUNNER = "io/github/jemmix/tdfa/tdfa/TdfaRunner";
+    /** Shared alphabet: the emitted ladder guards restarts with the same one
+     *  definition the interpreter uses (pair-interior positions are not
+     *  codepoint boundaries and cannot start a match). */
+    private static final String ALPHABET = "io/github/jemmix/tdfa/ast/Alphabet";
     private static final String RUNNER_D = "L" + RUNNER + ";";
     private static final String TDFA = "io/github/jemmix/tdfa/tdfa/Tdfa";
     private static final String TDFA_D = "L" + TDFA + ";";
@@ -429,9 +433,27 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, 2);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "indexOf", "(Ljava/lang/String;I)I", false);
         mv.visitVarInsn(Opcodes.ISTORE, 6);
+        // A needle with lone surrogate units can hit mid-pair; such a hit is
+        // not a codepoint boundary and cannot start a match (runner-identical).
+        Label litRetry = new Label();
+        mv.visitLabel(litRetry);
         Label litMiss = new Label();
         mv.visitVarInsn(Opcodes.ILOAD, 6);
         mv.visitJumpInsn(Opcodes.IFLT, litMiss);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, ALPHABET, "pairInterior", "(" + CS_D + "I)Z", false);
+        Label litHit = new Label();
+        mv.visitJumpInsn(Opcodes.IFEQ, litHit);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitVarInsn(Opcodes.ALOAD, 11);
+        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "indexOf", "(Ljava/lang/String;I)I", false);
+        mv.visitVarInsn(Opcodes.ISTORE, 6);
+        mv.visitJumpInsn(Opcodes.GOTO, litRetry);
+        mv.visitLabel(litHit);
         // hit: toResult(new MatchHolder(idx, idx + needle.length(), new int[0]))
         mv.visitTypeInsn(Opcodes.NEW, HOLDER);
         mv.visitInsn(Opcodes.DUP);
@@ -501,6 +523,15 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.LCONST_0);
         mv.visitInsn(Opcodes.LCMP);
         mv.visitJumpInsn(Opcodes.IFEQ, candNext);
+        // never start a match mid-pair (runner-identical guard; the pre-test
+        // makes it one compare on the ASCII fast path)
+        mv.visitVarInsn(Opcodes.ILOAD, 9);
+        mv.visitIntInsn(Opcodes.SIPUSH, 0xDC00);
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, candWalk);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitVarInsn(Opcodes.ILOAD, 7);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, ALPHABET, "pairInterior", "(" + CS_D + "I)Z", false);
+        mv.visitJumpInsn(Opcodes.IFNE, candNext);
         // adaptive boolean pre-filter after 3 failed extract walks
         mv.visitVarInsn(Opcodes.ILOAD, 8);
         mv.visitInsn(Opcodes.ICONST_3);
@@ -571,13 +602,19 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.ICONST_1);
         mv.visitInsn(Opcodes.IADD);
         mv.visitVarInsn(Opcodes.ISTORE, 7);
-        Label rstLoop = new Label(), rstDone = new Label();
+        Label rstLoop = new Label(), rstDone = new Label(), rstNext = new Label();
         mv.visitLabel(rstLoop);
         mv.visitVarInsn(Opcodes.ILOAD, 7);
         mv.visitVarInsn(Opcodes.ILOAD, 4);
         mv.visitJumpInsn(Opcodes.IF_ICMPGT, rstDone);
+        // never start a match mid-pair (runner-identical guard)
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitVarInsn(Opcodes.ILOAD, 7);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, ALPHABET, "pairInterior", "(" + CS_D + "I)Z", false);
+        mv.visitJumpInsn(Opcodes.IFNE, rstNext);
         emitExtractOne(mv, owner, 3, 7, 4, 5);
         emitReturnToResult(mv, owner, 5);
+        mv.visitLabel(rstNext);
         mv.visitIincInsn(7, 1);
         mv.visitJumpInsn(Opcodes.GOTO, rstLoop);
         mv.visitLabel(rstDone);

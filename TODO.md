@@ -206,6 +206,32 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
   `(?u)` opt-in. Corrected `docs/PARITY-PLAN.md` accordingly.
 - [x] **`\p{L}{N}` returns 0 matches for N ≥ 25** — root cause was the `stateMeta` packing: the range-base field used only 15 bits (bits 17-31, max 32767), but `\p{L}` has ~1369 Unicode ranges per state, so `base` overflowed at state 24 (24×1369=32856). Fixed by splitting `base` into a separate `stateBase[]` array (full 32-bit range), removing the artificial limit. `\p{L}{256}` now compiles and matches correctly on both VM and ASM backends.
 - [ ] **`.` on non-BMP codepoints undercounts vs re2** — `.` on `💩` (U+1F4A9) gives 1 match in our engine (one codepoint); re2 gives 4 (UTF-8 bytes). Our engine is codepoint-oriented like `java.util.regex`, not byte-oriented like re2. **Resolved at the test level**: `vendor/patches/rebar/01-dot-matches-byte-codepoint.patch` rewrites the rebar scenario to record our actual count (1) under an explicit `{ engine = 're2', count = 1 }` entry — see the patch file for the rationale comment. Fundamental architecture choice, not a bug.
+- [x] **Supplementary literals under groups/quantifiers/alternation fail to match** — FIXED (2026-08-27,
+      structural). Root cause: the parser read patterns one UTF-16 unit at a time while the engine executes
+      one CODEPOINT per transition (every step loop decodes surrogate pairs). Two-unit literals were therefore
+      unrepresentable in the DFA alphabet; the shapes that "worked" were rescued by the literal-needle indexOf
+      path, which bypasses the automaton. Fix: one shared decoder (`ast/Alphabet.decode` — used by the parser's
+      atom/class readers AND all nine runner step loops AND `\Q..\E`), supplementary literal → single-codepoint
+      CharClass (same shape `\x{...}` always had). Both backends; corpus 216 mismatch cases green.
+- [x] **Supplementary class-range endpoints parsed at UTF-16-unit level** — FIXED same round: `parseClassChar`
+      reads codepoints (`[𐐁-𑰇]` = U+10401–U+11C07), octal no longer `(char)`-truncates. The 100 "inverted range"
+      corpus rejections green.
+- [x] **Identity escapes rejected** — FIXED: re2j's actual policy (probed) is reject only unknown
+      ASCII-alphanumeric escapes; non-ASCII identity escapes (`\䑄`, `\Ω`) are literals, inside and outside classes.
+- [x] **Fixed-tags counted every class as UTF-16 distance 1** — FOUND while fixing the above: `(\x{10421})`
+      reported g1=[1,2) (JDK [0,2)); `(.)([^a])xyz` on supplementary input was off by one. `CharClass.fixedUtf16Width()`
+      (1 BMP-only / 2 supplementary-only / poison mixed and negated) now feeds FixedTags distances.
+- [x] **Matches could start at the low half of a surrogate pair** — FOUND by the corpus's lone-surrogate lines:
+      `[\x{dc00}-\x{dfff}]` matched the second unit of `💩`. New alphabet rule (`Alphabet.pairInterior`): pair-interior
+      positions are not boundaries; guarded in the literal-needle hit, all candidate scans, both restart loops,
+      and the ASM-emitted ladder (which calls the same one definition).
+- [x] **Unknown inline flags were silent no-ops** — `(?x)` was accepted and ignored (neither re2j's rejection nor
+      JDK's comments mode: a silent misparse). Now: unknown flag letters reject like re2j; `(?U)` ungreedy implemented
+      (re2j has it); `(?-)` with no flag rejects. `(?x)` comments mode remains an extension candidate (re2j reject-space).
+- [x] **Tdfa construction now validates its packed program** (range bounds/order, target/op/mask domains,
+      prefix-max invariant, final-register block) — packing bugs die at construction, not as wrong matches.
+      Two of the initial checks were wrong about real invariants (equal-lo entries are legal; accept mask is not
+      a subset of entry) and were corrected after the suites objected — the checks document actual laws now.
 - [ ] Differential fuzzing vs `re2j` and `java.util.regex` (Jazzer or custom harness)
 - [ ] Deterministic compilation — same regex → identical TDFA across runs
 - [ ] `map` + topological sort: reject non-trivial cycles (BT22 §3.3)

@@ -66,7 +66,13 @@ public final class FixedTags {
             return new int[]{baseTag, add(dist, 1), add(levelDist, 1)};
         }
         if (e instanceof CharClass) {
-            return new int[]{baseTag, add(dist, 1), add(levelDist, 1)};
+            // Width in UTF-16 units: a supplementary-only class consumes two
+            // units per match, a mixed-width class (e.g. `.`) has no fixed
+            // width at all — both must poison rather than assume 1, or tag
+            // reconstruction lands one unit off on supplementary matches.
+            int w = ((CharClass) e).fixedUtf16Width();
+            int d = w < 0 ? NAN : w;
+            return new int[]{baseTag, add(dist, d), add(levelDist, d)};
         }
         if (e instanceof Ast.StartAnchor || e instanceof Ast.EndAnchor
                 || e instanceof Ast.WordBoundary || e instanceof Ast.NoWordBoundary) {

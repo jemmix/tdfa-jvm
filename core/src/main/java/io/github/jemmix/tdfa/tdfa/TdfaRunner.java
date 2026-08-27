@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa.tdfa;
 
+import io.github.jemmix.tdfa.ast.Alphabet;
 import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
@@ -283,12 +284,14 @@ public final class TdfaRunner implements RegexEngine {
             if (fastPath) {
                 for (int p = from; p < to; p++) {
                     char c = s.charAt(p);
-                    if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && matchFromFast(s, p, to)) return p;
+                    if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && (c < 0xDC00 || !Alphabet.pairInterior(s, p))
+                            && matchFromFast(s, p, to)) return p;
                 }
             } else {
                 for (int p = from; p < to; p++) {
                     char c = s.charAt(p);
-                    if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && runStringMatchFrom(s, p, to) >= 0) return p;
+                    if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && (c < 0xDC00 || !Alphabet.pairInterior(s, p))
+                            && runStringMatchFrom(s, p, to) >= 0) return p;
                 }
             }
             return -1;
@@ -337,7 +340,8 @@ public final class TdfaRunner implements RegexEngine {
                     final long[] sb = this.startBits;
                     for (int p = 1; p < len; p++) {
                         char c = s.charAt(p);
-                        if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && runStringMatchFrom(s, p, len) >= 0) return true;
+                        if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && (c < 0xDC00 || !Alphabet.pairInterior(s, p))
+                                && runStringMatchFrom(s, p, len) >= 0) return true;
                     }
                     return false;
                 }
@@ -345,6 +349,7 @@ public final class TdfaRunner implements RegexEngine {
                 if (w < 0) return false;
                 trace(Strategy.WALK_RESTART);
                 for (int from = Math.max(w, 1); from <= maxStart; from++) {
+                    if (Alphabet.pairInterior(s, from)) continue;
                     int res = runStringMatchFrom(s, from, len);
                     if (res >= 0) return true;
                 }
@@ -402,6 +407,7 @@ public final class TdfaRunner implements RegexEngine {
             for (int p = from + 1; p < to; p++) {
                 char c = input.charAt(p);
                 if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) continue;
+                if (c >= 0xDC00 && Alphabet.pairInterior(input, p)) continue;
                 if (fails >= 3 && runStringMatchFrom(input, p, to) < 0) continue;
                 MatchHolder h = extractFrom(input, p, to);
                 if (h != null) return h;
@@ -419,6 +425,7 @@ public final class TdfaRunner implements RegexEngine {
         }
         trace(Strategy.WALK_RESTART);
         for (int startSearch = from + 1; startSearch <= maxStart; startSearch++) {
+            if (Alphabet.pairInterior(input, startSearch)) continue;
             MatchHolder h = extractFrom(input, startSearch, to);
             if (h != null) return h;
         }
@@ -482,10 +489,7 @@ public final class TdfaRunner implements RegexEngine {
                 }
             }
             if (pos >= to) break;
-            char c0 = input.charAt(pos); int c = c0;
-            if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to
-                    && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF)
-                c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
+            int c = Alphabet.decode(input, pos, to);
             int base = stateBase[state];
             int count = (meta >>> 1) & 0xFFFF;
             int chosen = -1, chosenTarget = 0;
@@ -965,15 +969,8 @@ public final class TdfaRunner implements RegexEngine {
         int W = from;
         for (int pos = from; pos < to; ) {
             if (sd.accept(cur)) return W;
-            char c0 = input.charAt(pos);
-            int c = c0, adv = 1;
-            if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to) {
-                char c1 = input.charAt(pos + 1);
-                if (c1 >= 0xDC00 && c1 <= 0xDFFF) {
-                    c = ((c0 - 0xD800) << 10) + (c1 - 0xDC00) + 0x10000;
-                    adv = 2;
-                }
-            }
+            int c = Alphabet.decode(input, pos, to);
+            int adv = Alphabet.width(c);
             int v = c < 0x10000 ? sd.bmpTransition(cur, c) : sd.transition(cur, c);
             if (v == -1) {
                 // Cap: continue unmemoized from pos WITH the exact live set —
@@ -1011,15 +1008,8 @@ public final class TdfaRunner implements RegexEngine {
                 if ((live[w] & ab[w]) != 0) return W;
             }
             if (pos == to) break;
-            char c0 = input.charAt(pos);
-            int c = c0, adv = 1;
-            if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to) {
-                char c1 = input.charAt(pos + 1);
-                if (c1 >= 0xDC00 && c1 <= 0xDFFF) {
-                    c = ((c0 - 0xD800) << 10) + (c1 - 0xDC00) + 0x10000;
-                    adv = 2;
-                }
-            }
+            int c = Alphabet.decode(input, pos, to);
+            int adv = Alphabet.width(c);
             Arrays.fill(next, 0, nwords, 0);
             boolean empty = true;
             for (int w = 0; w < nwords; w++) {
@@ -1102,16 +1092,8 @@ public final class TdfaRunner implements RegexEngine {
             }
             if (pos == to) break;
 
-            char c0 = input.charAt(pos);
-            int c = c0;
-            int adv = 1;
-            if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to) {
-                char c1 = input.charAt(pos + 1);
-                if (c1 >= 0xDC00 && c1 <= 0xDFFF) {
-                    c = ((c0 - 0xD800) << 10) + (c1 - 0xDC00) + 0x10000;
-                    adv = 2;
-                }
-            }
+            int c = Alphabet.decode(input, pos, to);
+            int adv = Alphabet.width(c);
 
             Arrays.fill(next, 0);
             next[ss >>> 5] |= 1 << (ss & 31);
@@ -1295,16 +1277,8 @@ public final class TdfaRunner implements RegexEngine {
             }
             if (pos == to) break;
 
-            char c0 = input.charAt(pos);
-            int c = c0;
-            int adv = 1;
-            if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to) {
-                char c1 = input.charAt(pos + 1);
-                if (c1 >= 0xDC00 && c1 <= 0xDFFF) {
-                    c = ((c0 - 0xD800) << 10) + (c1 - 0xDC00) + 0x10000;
-                    adv = 2;
-                }
-            }
+            int c = Alphabet.decode(input, pos, to);
+            int adv = Alphabet.width(c);
 
             Arrays.fill(next, 0);
             if (at != null && c < 128) {
@@ -1399,7 +1373,8 @@ public final class TdfaRunner implements RegexEngine {
             final long[] sb = this.startBits;
             for (int p = 0; p < to; p++) {
                 char c = input.charAt(p);
-                if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && matchFromFast(input, p, to)) return true;
+                if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && (c < 0xDC00 || !Alphabet.pairInterior(input, p))
+                        && matchFromFast(input, p, to)) return true;
             }
             return false;
         }
@@ -1423,15 +1398,8 @@ public final class TdfaRunner implements RegexEngine {
         int state = startState;
         int pos = from;
         while (pos < to) {
-            char c0 = input.charAt(pos);
-            int c = c0, adv = 1;
-            if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to) {
-                char c1 = input.charAt(pos + 1);
-                if (c1 >= 0xDC00 && c1 <= 0xDFFF) {
-                    c = ((c0 - 0xD800) << 10) + (c1 - 0xDC00) + 0x10000;
-                    adv = 2;
-                }
-            }
+            int c = Alphabet.decode(input, pos, to);
+            int adv = Alphabet.width(c);
             int ri;
             if (c < limit) {
                 ri = arf[state * limit + c];
@@ -1469,6 +1437,10 @@ public final class TdfaRunner implements RegexEngine {
         if (literalNeedle != null) {
             trace(Strategy.LITERAL);
             int idx = input.indexOf(literalNeedle, from);
+            // A needle containing lone surrogate units can hit mid-pair; those
+            // positions are not codepoint boundaries and cannot start a match.
+            while (idx >= 0 && Alphabet.pairInterior(input, idx))
+                idx = input.indexOf(literalNeedle, idx + 1);
             return idx < 0 ? null : new MatchHolder(idx, idx + literalNeedle.length(), new int[0]);
         }
         // 1) Try ONE single-start walk from `from` — the common short-input case
@@ -1490,6 +1462,7 @@ public final class TdfaRunner implements RegexEngine {
             for (int p = from + 1; p < to; p++) {
                 char c = input.charAt(p);
                 if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) continue;
+                if (c >= 0xDC00 && Alphabet.pairInterior(input, p)) continue;
                 if (fails >= 3 && !matchFromFast(input, p, to)) continue;
                 h = tryStartFast(input, p, to, from);
                 if (h != null) return h;
@@ -1520,6 +1493,7 @@ public final class TdfaRunner implements RegexEngine {
         //    return a wrong null.
         trace(Strategy.WALK_RESTART);
         for (int s = leftmost + 1; s <= to; s++) {
+            if (Alphabet.pairInterior(input, s)) continue;
             h = tryStartFast(input, s, to, from);
             if (h != null) return h;
         }
@@ -1625,10 +1599,7 @@ public final class TdfaRunner implements RegexEngine {
                 }
             }
             if (pos == to) break;
-            char c0 = input.charAt(pos); int c = c0;
-            if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to
-                    && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF)
-                c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
+            int c = Alphabet.decode(input, pos, to);
             int base = stateBase[state];
             int count = (meta >>> 1) & 0xFFFF;
             boolean matched = false;
@@ -1765,10 +1736,7 @@ public final class TdfaRunner implements RegexEngine {
                 }
             }
             if (pos >= to) break;
-            char c0 = input.charAt(pos); int c = c0;
-            if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to
-                    && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF)
-                c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
+            int c = Alphabet.decode(input, pos, to);
             int base = stateBase[state];
             int count = (meta >>> 1) & 0xFFFF;
             boolean matched = false;
@@ -1911,12 +1879,9 @@ public final class TdfaRunner implements RegexEngine {
                         }
                     }
                 }
-                if (pos >= to) break;
-                char c0 = input.charAt(pos); int c = c0;
-                if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < to
-                        && input.charAt(pos + 1) >= 0xDC00 && input.charAt(pos + 1) <= 0xDFFF)
-                    c = ((c0 - 0xD800) << 10) + (input.charAt(pos + 1) - 0xDC00) + 0x10000;
-                int base = stateBase[state];
+            if (pos >= to) break;
+            int c = Alphabet.decode(input, pos, to);
+            int base = stateBase[state];
                 int count = (meta >>> 1) & 0xFFFF;
                 // Binary search + prefix-max walk (CharSequence variant).
                 int rlo = 0, rhi = count - 1, anchor = -1;

@@ -73,6 +73,20 @@ public final class CharClass extends Ast {
         return negated;
     }
 
+    /**
+     * Fixed UTF-16 width of every codepoint this class can match: 1 when all
+     * members are at or below the BMP, 2 when all are supplementary; -1 when
+     * members mix widths (or the class is empty). Fixed-tag distance
+     * arithmetic runs in UTF-16 units, so it must poison on -1.
+     */
+    public int fixedUtf16Width() {
+        if (ranges.length == 0) return -1;
+        if (negated) return -1;  // match set is the complement: spans BMP and supplementary
+        if (ranges[ranges.length - 1] <= 0xFFFF) return 1;
+        if (ranges[0] >= 0x10000) return 2;
+        return -1;
+    }
+
     @Override public String toString() {
         StringBuilder sb = new StringBuilder(negated ? "[^" : "[");
         for (int i = 0; i < ranges.length; i += 2) {

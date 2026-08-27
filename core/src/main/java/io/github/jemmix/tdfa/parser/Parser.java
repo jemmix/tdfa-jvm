@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa.parser;
 
+import io.github.jemmix.tdfa.ast.Alphabet;
 import io.github.jemmix.tdfa.ast.Ast;
 import io.github.jemmix.tdfa.ast.CharClass;
 import io.github.jemmix.tdfa.unicode.CaseFoldTable;
@@ -42,6 +43,8 @@ public final class Parser {
     boolean caseInsensitive = false;
     boolean dotall = false;
     boolean multiline = false;
+    /** re2j's U flag: quantifiers default to lazy, a trailing ? makes them greedy. */
+    boolean ungreedy = false;
     boolean disableUnicodeGroups = false;
     boolean unicodeShorthand = false;
     io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider;
@@ -121,8 +124,10 @@ public final class Parser {
             min = bounds[0]; max = bounds[1];
         } else return atom;
 
-        boolean greedy = true;
-        if (pos < src.length() && peek() == '?') { pos++; greedy = false; }
+        // Greedy by default; re2j's U flag inverts the default (a trailing ?
+        // then selects the OTHER mode, per RE2 ungreedy semantics).
+        boolean greedy = !ungreedy;
+        if (pos < src.length() && peek() == '?') { pos++; greedy = ungreedy; }
         else if (pos < src.length() && peek() == '+') {
             throw new UnsupportedOperationException("possessive quantifiers not supported (non-regular)");
         }
@@ -130,13 +135,17 @@ public final class Parser {
     }
 
     /**
-     * Expands a literal char under case-insensitive mode into a CharClass,
-     * or returns {@code null} if the char should remain a plain Symbol
+     * Expands a literal codepoint under case-insensitive mode into a CharClass,
+     * or returns {@code null} if the codepoint should remain a plain literal
      * (no case-fold equivalents). Uses full Unicode case folding
      * (e.g., {@code s ↔ ſ}) when {@code unicodeShorthand} is enabled,
-     * falling back to {@code toLowerCase}/{@code toUpperCase} otherwise.
+     * falling back to {@code toLowerCase}/{@code toUpperCase} for BMP
+     * codepoints otherwise. Supplementary codepoints have no simple-fold
+     * table yet and stay unexpanded.
      */
-    private Ast caseFoldChar(char c) {
+    private Ast caseFoldChar(int cp) {
+        if (cp > 0xFFFF) return null;
+        char c = (char) cp;
         if (unicodeShorthand) {
             int[] ranges = CaseFoldTable.foldRanges(c);
             if (ranges != null) return new CharClass(ranges, false);
@@ -146,6 +155,14 @@ public final class Parser {
         char hi = Character.toUpperCase(c);
         if (lo != hi) return new CharClass(new int[]{lo, lo, hi, hi}, false);
         return null;
+    }
+
+    /** Atom for one literal codepoint. BMP stays {@link Ast.Symbol}; a
+     *  supplementary codepoint becomes a single-codepoint {@link CharClass},
+     *  the same shape {@code \x{...}} produces, because the engine's alphabet
+     *  is codepoints — one transition consumes exactly one. */
+    private static Ast literalAtom(int cp) {
+        return cp <= 0xFFFF ? new Ast.Symbol((char) cp) : new CharClass(new int[]{cp, cp}, false);
     }
 
     /** atom := group | class | dot | anchor | escape | literal */
@@ -158,12 +175,13 @@ public final class Parser {
         if (c == '$') { pos++; return new Ast.EndAnchor(); }
         if (c == '\\') { pos++; return parseEscape(); }
         if (c == ')' || c == '|') throw fail(this, "unexpected '" + c + "'");
-        pos++;
+        int cp = Alphabet.decode(src, pos, src.length());
+        pos += Alphabet.width(cp);
         if (caseInsensitive) {
-            Ast folded = caseFoldChar(c);
+            Ast folded = caseFoldChar(cp);
             if (folded != null) return folded;
         }
-        return new Ast.Symbol(c);
+        return literalAtom(cp);
     }
 
     /** group := '(' ('?:')? alt ')' | '(' '?flags' ')' | '(' '?flags:' alt ')' | '(' '?<' name '>' alt ')' | '(' '?P<' name '>' alt ')' */
@@ -171,7 +189,7 @@ public final class Parser {
         expect('(');
         boolean capturing = true;
         boolean restoreFlags = false;
-        boolean savedCi = false, savedDs = false, savedMl = false, savedUs = false;
+        boolean savedCi = false, savedDs = false, savedMl = false, savedUs = false, savedUg = false;
         String groupName = null;
         if (pos + 1 < src.length() && src.charAt(pos) == '?' && src.charAt(pos + 1) == ':') {
             pos += 2; capturing = false;
@@ -192,22 +210,29 @@ public final class Parser {
                 pos += 2; // consume 'P<'
                 groupName = readGroupName();
             } else {
-                // Parse inline flags: (?i) (?s) (?m) (?-s) (?i:...) (?ism:...)
-                boolean ci = false, ds = false, ml = false, us = false;
-                boolean ciSet = false, dsSet = false, mlSet = false, usSet = false;
+                // Parse inline flags: (?i) (?s) (?m) (?U) (?u) (?-s) (?i:...) (?ism:...)
+                // Unknown flag letters are an error (re2j: "invalid or
+                // unsupported Perl syntax"), never a silent no-op.
+                boolean ci = false, ds = false, ml = false, us = false, ug = false;
+                boolean ciSet = false, dsSet = false, mlSet = false, usSet = false, ugSet = false;
                 boolean neg = false;
+                boolean pendingNeg = false;
                 while (pos < src.length() && peek() != ':' && peek() != ')') {
                     char f = peek();
-                    if (f == '-') { neg = true; pos++; continue; }
+                    if (f == '-') { neg = true; pendingNeg = true; pos++; continue; }
                     switch (f) {
                         case 'i': ci = !neg; ciSet = true; break;
                         case 's': ds = !neg; dsSet = true; break;
                         case 'm': ml = !neg; mlSet = true; break;
                         case 'u': us = !neg; usSet = true; break;
+                        case 'U': ug = !neg; ugSet = true; break;
+                        default: throw fail(this, "invalid or unsupported Perl syntax: (?+" + f);
                     }
                     neg = false;
+                    pendingNeg = false;
                     pos++;
                 }
+                if (pendingNeg) throw fail(this, "invalid or unsupported Perl syntax: (?-)");
                 if (peek() == ':') {
                     pos++; // consume ':'
                     capturing = false;
@@ -216,16 +241,19 @@ public final class Parser {
                     savedDs = this.dotall;
                     savedMl = this.multiline;
                     savedUs = this.unicodeShorthand;
+                    savedUg = this.ungreedy;
                     if (ciSet) this.caseInsensitive = ci;
                     if (dsSet) this.dotall = ds;
                     if (mlSet) this.multiline = ml;
                     if (usSet) this.unicodeShorthand = us;
+                    if (ugSet) this.ungreedy = ug;
                 } else {
                     expect(')');
                     if (ciSet) this.caseInsensitive = ci;
                     if (dsSet) this.dotall = ds;
                     if (mlSet) this.multiline = ml;
                     if (usSet) this.unicodeShorthand = us;
+                    if (ugSet) this.ungreedy = ug;
                     return new Ast.Empty(); // flag-only group, continue
                 }
             }
@@ -253,6 +281,7 @@ public final class Parser {
             this.dotall = savedDs;
             this.multiline = savedMl;
             this.unicodeShorthand = savedUs;
+            this.ungreedy = savedUg;
         }
         if (!capturing) return body;
         return new Ast.Concat(List.of(new Ast.Tag(open), body, new Ast.Tag(close)));
@@ -465,6 +494,11 @@ public final class Parser {
         };
     }
 
+    /** One class member or range endpoint, as a CODEPOINT (a raw supplementary
+     *  character reads as one codepoint, not two surrogate units — the engine's
+     *  alphabet is codepoints). Escaped members follow re2j: unknown
+     *  ASCII-alphanumeric escapes are errors; any other escaped char (including
+     *  non-ASCII letters like {@code \䑄}) is an identity escape. */
     private int parseClassChar() {
         char c = cur();
         if (c == '\\') {
@@ -484,7 +518,7 @@ public final class Parser {
                 } else if (e != '0') {
                     throw fail(this, "invalid escape sequence: \\" + e);
                 }
-                return (char) val;
+                return val;
             }
             return switch (e) {
                 case 'n' -> '\n';
@@ -496,15 +530,17 @@ public final class Parser {
                 case '\\' -> '\\';
                 case 'x' -> parseHexChar();
                 default -> {
-                    // re2j rejects unknown alphanumeric escapes in class context
-                    // (notably [\b] — backspace is unsupported; see re2j Parser.parseEscape).
-                    if (Character.isLetterOrDigit(e)) throw fail(this, "invalid escape sequence: \\" + e);
+                    // re2j rejects unknown ASCII alphanumeric escapes in class
+                    // context (notably [\b] — backspace is unsupported); a
+                    // non-ASCII letter or digit is an identity escape there.
+                    if (e < 128 && Character.isLetterOrDigit(e)) throw fail(this, "invalid escape sequence: \\" + e);
                     yield e;  // any other (non-alphanumeric) escaped char is literal
                 }
             };
         }
-        pos++;
-        return c;
+        int cp = Alphabet.decode(src, pos, src.length());
+        pos += Alphabet.width(cp);
+        return cp;
     }
 
     /** Like {@link #parseHexEscape()} but returns an int codepoint for class membership. */
@@ -583,9 +619,10 @@ public final class Parser {
             case 'P' -> parseUnicodeEscape(false);
             case 'Q' -> parseQuotedLiteral();
             default -> {
-                // re2j rejects unknown alphanumeric escapes (\E, \K, \R, \e, \N, ...).
-                // Non-alphanumeric escapes (\. \- \_ \: ...) are literals.
-                if (Character.isLetterOrDigit(c)) throw fail(this, "invalid escape sequence: \\" + c);
+                // re2j rejects unknown ASCII alphanumeric escapes (\E, \K, \R,
+                // \e, \N, ...). Non-ASCII letters/digits (\䑄, \Ω) and any
+                // non-alphanumeric escape (\. \- \_ ...) are identity escapes.
+                if (c < 128 && Character.isLetterOrDigit(c)) throw fail(this, "invalid escape sequence: \\" + c);
                 yield new Ast.Symbol(c);
             }
         };
@@ -620,13 +657,14 @@ public final class Parser {
             return new Ast.Symbol(ch);
         }
         List<Ast> parts = new ArrayList<>();
-        for (int i = 0; i < literal.length(); i++) {
-            char ch = literal.charAt(i);
+        for (int i = 0; i < literal.length(); ) {
+            int cp = Alphabet.decode(literal, i, literal.length());
+            i += Alphabet.width(cp);
             if (caseInsensitive) {
-                Ast folded = caseFoldChar(ch);
+                Ast folded = caseFoldChar(cp);
                 if (folded != null) { parts.add(folded); continue; }
             }
-            parts.add(new Ast.Symbol(ch));
+            parts.add(literalAtom(cp));
         }
         return new Ast.Concat(parts);
     }
