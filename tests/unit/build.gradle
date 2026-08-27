@@ -25,6 +25,28 @@ test {
     // state (TODO.md convention). No currently-known failures: default off.
     systemProperty 'tdfa.pending', System.getProperty('tdfa.pending', 'false')
     systemProperty 'tdfa.asm.dump', System.getProperty('tdfa.asm.dump', 'false')
+    // The JIT inlining guard is its own action (below), never the default gate.
+    filter { excludeTestsMatching '*InliningGuard*' }
+    testLogging {
+        events 'failed', 'standardOut', 'standardError'
+        exceptionFormat 'full'
+    }
+}
+
+// JIT devirtualization guard for the ASM tier: forks a PrintInlining JVM,
+// runs the emitted ladder hot, asserts every generated-class call site
+// inlines (no megamorphic dispatch). Separate action — NOT part of check —
+// because it depends on HotSpot diagnostic flags and compile timing.
+// Full logs: build/reports/inlining-guard/.
+tasks.register('inliningGuard', Test) {
+    group = 'verification'
+    description = 'JIT inlining/devirtualization guard for the generated tier'
+    useJUnitPlatform()
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    filter { includeTestsMatching '*InliningGuard*' }
+    maxHeapSize = '1g'
+    outputs.upToDateWhen { false }
     testLogging {
         events 'failed', 'standardOut', 'standardError'
         exceptionFormat 'full'

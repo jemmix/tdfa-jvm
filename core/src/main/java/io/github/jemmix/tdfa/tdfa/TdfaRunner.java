@@ -269,7 +269,7 @@ public final class TdfaRunner implements RegexEngine {
         int to = input.length();
         if (literalNeedle != null && input instanceof String) {
             trace(Strategy.LITERAL);
-            return ((String) input).indexOf(literalNeedle, from);
+            return literalIndexOf((String) input, literalNeedle, from);
         }
         // Short-input candidate scan: bit-test per char, exact walk per
         // candidate. Cheaper than the origin sim's per-live-state dispatch
@@ -281,18 +281,16 @@ public final class TdfaRunner implements RegexEngine {
             trace(Strategy.CAND_SCAN);
             String s = (String) input;
             final long[] sb = this.startBits;
-            if (fastPath) {
-                for (int p = from; p < to; p++) {
-                    char c = s.charAt(p);
-                    if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && (c < 0xDC00 || !Alphabet.pairInterior(s, p))
-                            && matchFromFast(s, p, to)) return p;
-                }
-            } else {
-                for (int p = from; p < to; p++) {
-                    char c = s.charAt(p);
-                    if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && (c < 0xDC00 || !Alphabet.pairInterior(s, p))
-                            && runStringMatchFrom(s, p, to) >= 0) return p;
-                }
+            // One loop, two walkers: fastPath DFAs take the no-regs/no-masks
+            // boolean walk, everything else the mask-exact one. The choice is
+            // invariant for a compiled pattern, so the JIT folds it — the
+            // former two hand-copies of this loop are the drift we merged.
+            final boolean fast = fastPath;
+            for (int p = from; p < to; p++) {
+                char c = s.charAt(p);
+                if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) continue;
+                if (c >= 0xDC00 && Alphabet.pairInterior(s, p)) continue;
+                if (fast ? matchFromFast(s, p, to) : runStringMatchFrom(s, p, to) >= 0) return p;
             }
             return -1;
         }
@@ -324,7 +322,7 @@ public final class TdfaRunner implements RegexEngine {
         if (input instanceof String) {
             String s = (String) input;
             int len = s.length();
-            if (literalNeedle != null) { trace(Strategy.LITERAL); return s.indexOf(literalNeedle, 0) >= 0; }
+            if (literalNeedle != null) { trace(Strategy.LITERAL); return literalIndexOf(s, literalNeedle, 0) >= 0; }
             if (fastPath) return runStringFindFast(s, len);
             int maxStart = (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) ? 0 : len;
             if (maxStart > 0) {
@@ -1173,7 +1171,47 @@ public final class TdfaRunner implements RegexEngine {
     // trace equality between backends. =====
 
     /** The exact-literal needle, or null (see detectLiteralNeedle). */
+
+    /** True when a needle hit ending at unit {@code idx + needleLen - 1}
+     *  swallows the high half of a surrogate pair: the last needle unit is a
+     *  high surrogate that pairs with the next input unit, so the raw-unit
+     *  indexOf hit is not a codepoint-sequence match. Public static: the
+     *  ASM-emitted literal path calls it for the same guard. */
+    public static boolean needleEndOverlapsPair(String s, int idx, int needleLen) {
+        int last = s.charAt(idx + needleLen - 1);
+        if (last < 0xD800 || last > 0xDBFF) return false;
+        int end = idx + needleLen;
+        return end < s.length()
+                && s.charAt(end) >= 0xDC00 && s.charAt(end) <= 0xDFFF;
+    }
+
+    /** indexOf for the literal needle that respects the alphabet: a hit is
+     *  real only if it starts at a codepoint boundary (not the low half of a
+     *  pair) and does not end on the high half of a pair. Raw indexOf sees
+     *  UTF-16 units and would otherwise accept unit sequences that overlap
+     *  pair halves — e.g. needle "a\uD800" on input "a\uD800\uDFFF". */
+    public static int literalIndexOf(String s, String needle, int from) {
+        int idx = s.indexOf(needle, from);
+        while (idx >= 0
+                && (Alphabet.pairInterior(s, idx) || needleEndOverlapsPair(s, idx, needle.length())))
+            idx = s.indexOf(needle, idx + 1);
+        return idx;
+    }
+
     public String literalNeedle() { return literalNeedle; }
+
+    /** Defensive restart walk (sim and walk disagreed on a fast-path DFA):
+     *  per-unit scan from {@code fromStart} with the pair-interior guard and
+     *  an exact extract at each position. Public: the ASM-emitted ladder
+     *  delegates here instead of emitting its own loop — one definition. */
+    public MatchHolder restartExtract(String input, int fromStart, int to, int from0) {
+        for (int s = fromStart; s <= to; s++) {
+            if (Alphabet.pairInterior(input, s)) continue;
+            MatchHolder h = tryStartFast(input, s, to, from0);
+            if (h != null) return h;
+        }
+        return null;
+    }
 
     /** First-char candidate bitset, or null when the start state accepts. */
     public long[] startBits() { return startBits; }
@@ -1198,8 +1236,7 @@ public final class TdfaRunner implements RegexEngine {
     }
 
     /** Boolean single-start walk (fastPath only): does a match start at from? */
-    public boolean booleanMatchFrom(String input, int from, int to) {
-        return matchFromFast(input, from, to);
+    public boolean booleanMatchFrom(String input, int from, int to) {        return matchFromFast(input, from, to);
     }
 
     private int multiStateLeftmostStart(CharSequence input, int from, int to) {
@@ -1436,11 +1473,7 @@ public final class TdfaRunner implements RegexEngine {
     private MatchHolder runStringExtractFast(String input, int from, int to) {
         if (literalNeedle != null) {
             trace(Strategy.LITERAL);
-            int idx = input.indexOf(literalNeedle, from);
-            // A needle containing lone surrogate units can hit mid-pair; those
-            // positions are not codepoint boundaries and cannot start a match.
-            while (idx >= 0 && Alphabet.pairInterior(input, idx))
-                idx = input.indexOf(literalNeedle, idx + 1);
+            int idx = literalIndexOf(input, literalNeedle, from);
             return idx < 0 ? null : new MatchHolder(idx, idx + literalNeedle.length(), new int[0]);
         }
         // 1) Try ONE single-start walk from `from` — the common short-input case
@@ -1492,12 +1525,7 @@ public final class TdfaRunner implements RegexEngine {
         //    they ever don't, fall back to the old restart shape rather than
         //    return a wrong null.
         trace(Strategy.WALK_RESTART);
-        for (int s = leftmost + 1; s <= to; s++) {
-            if (Alphabet.pairInterior(input, s)) continue;
-            h = tryStartFast(input, s, to, from);
-            if (h != null) return h;
-        }
-        return null;
+        return restartExtract(input, leftmost + 1, to, from);
     }
 
     /**

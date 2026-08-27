@@ -428,32 +428,17 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, 11);
         mv.visitJumpInsn(Opcodes.IFNULL, noNeedle);
         emitTrace(mv, "LITERAL");
+        // One shared definition: the runner's alphabet-aware indexOf rejects
+        // hits that start mid-pair or end on the high half of a pair.
         mv.visitVarInsn(Opcodes.ALOAD, 3);
         mv.visitVarInsn(Opcodes.ALOAD, 11);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "indexOf", "(Ljava/lang/String;I)I", false);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "literalIndexOf",
+                "(Ljava/lang/String;Ljava/lang/String;I)I", false);
         mv.visitVarInsn(Opcodes.ISTORE, 6);
-        // A needle with lone surrogate units can hit mid-pair; such a hit is
-        // not a codepoint boundary and cannot start a match (runner-identical).
-        Label litRetry = new Label();
-        mv.visitLabel(litRetry);
         Label litMiss = new Label();
         mv.visitVarInsn(Opcodes.ILOAD, 6);
         mv.visitJumpInsn(Opcodes.IFLT, litMiss);
-        mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitVarInsn(Opcodes.ILOAD, 6);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, ALPHABET, "pairInterior", "(" + CS_D + "I)Z", false);
-        Label litHit = new Label();
-        mv.visitJumpInsn(Opcodes.IFEQ, litHit);
-        mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitVarInsn(Opcodes.ALOAD, 11);
-        mv.visitVarInsn(Opcodes.ILOAD, 6);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitInsn(Opcodes.IADD);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "indexOf", "(Ljava/lang/String;I)I", false);
-        mv.visitVarInsn(Opcodes.ISTORE, 6);
-        mv.visitJumpInsn(Opcodes.GOTO, litRetry);
-        mv.visitLabel(litHit);
         // hit: toResult(new MatchHolder(idx, idx + needle.length(), new int[0]))
         mv.visitTypeInsn(Opcodes.NEW, HOLDER);
         mv.visitInsn(Opcodes.DUP);
@@ -596,28 +581,23 @@ public final class TdfaAsmBackend {
         // exact walk from leftmost
         emitExtractOne(mv, owner, 3, 6, 4, 5);
         emitReturnToResult(mv, owner, 5);
-        // --- 3) defensive restart ---
+        // --- 3) defensive restart: delegated to the runner (one definition;
+        //     cold path — the sim/walk agreement fallback) ---
         emitTrace(mv, "WALK_RESTART");
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
         mv.visitVarInsn(Opcodes.ILOAD, 6);
         mv.visitInsn(Opcodes.ICONST_1);
         mv.visitInsn(Opcodes.IADD);
-        mv.visitVarInsn(Opcodes.ISTORE, 7);
-        Label rstLoop = new Label(), rstDone = new Label(), rstNext = new Label();
-        mv.visitLabel(rstLoop);
-        mv.visitVarInsn(Opcodes.ILOAD, 7);
         mv.visitVarInsn(Opcodes.ILOAD, 4);
-        mv.visitJumpInsn(Opcodes.IF_ICMPGT, rstDone);
-        // never start a match mid-pair (runner-identical guard)
-        mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitVarInsn(Opcodes.ILOAD, 7);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, ALPHABET, "pairInterior", "(" + CS_D + "I)Z", false);
-        mv.visitJumpInsn(Opcodes.IFNE, rstNext);
-        emitExtractOne(mv, owner, 3, 7, 4, 5);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "restartExtract",
+                "(Ljava/lang/String;III)L" + HOLDER + ";", false);
+        mv.visitVarInsn(Opcodes.ASTORE, 5);
+        mv.visitVarInsn(Opcodes.ALOAD, 5);
+        mv.visitJumpInsn(Opcodes.IFNULL, noMatch1);
         emitReturnToResult(mv, owner, 5);
-        mv.visitLabel(rstNext);
-        mv.visitIincInsn(7, 1);
-        mv.visitJumpInsn(Opcodes.GOTO, rstLoop);
-        mv.visitLabel(rstDone);
         mv.visitLabel(noMatch1);
         mv.visitInsn(Opcodes.ACONST_NULL);
         mv.visitInsn(Opcodes.ARETURN);

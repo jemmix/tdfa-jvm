@@ -232,7 +232,34 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
       prefix-max invariant, final-register block) — packing bugs die at construction, not as wrong matches.
       Two of the initial checks were wrong about real invariants (equal-lo entries are legal; accept mask is not
       a subset of entry) and were corrected after the suites objected — the checks document actual laws now.
-- [ ] Differential fuzzing vs `re2j` and `java.util.regex` (Jazzer or custom harness)
+- [x] **Differential fuzzing vs re2j** — `tests/parity/re2j:fuzz` (custom harness, `DifferentialFuzzer`):
+      random grammar-biased patterns × inputs (supplementary + lone surrogates first-class), re2j oracle,
+      both engines, per-case watchdog (hangs recorded with stacks, soak continues), failures.ndjson with
+      reproducible per-case seeds. Overnight: `./gradlew :tests:parity:re2j:fuzz -Pfuzz.minutes=480`.
+      Fixed-seed 500-case slice is a hard default gate (`FuzzSmokeTest`). First 20k-case run (2026-08-27):
+      0 contract failures after fixes, 3 findings triaged below.
+- [ ] **Determinization hang in `Tdfa$Compiler.tryMap` on nested-quantifier bombs** — FOUND by the fuzzer
+      (2026-08-27): `(\u03A9(\be.z|\W.+(.{1,2}))(?s:\u3042??)){1,6}h` compiles unboundedly; the compile
+      budget does not trip for this shape. Repro: any seed in `build/fuzz/failures.ndjson` with
+      `"kind":"HANG_ENGINE"`, via `-Dfuzz.one=<caseSeed>`. The fuzz watchdog survives it; users would not.
+      Budget needs a tryMap/steps cap that covers nested star-of-bounded families.
+- [x] **Literal-needle path ignored surrogate pairing** — FOUND by the fuzzer, FIXED (2026-08-27): raw
+      `indexOf` matched needle unit sequences that start mid-pair or end on the high half of a pair
+      (`a\uD800` matched inside `a\uD800\uDFFF`). `TdfaRunner.literalIndexOf` (shared by find/extract/
+      candidate paths and the ASM-emitted ladder) enforces both boundary guards.
+- [ ] **re2j plain-`(?i)` folds class ranges with full Unicode simple folding** (`(?i)\w` matches ſ;
+      ſ/K/Ω fold groups) while we fold ASCII-only without `(?u)` — documented divergence in the fuzzer;
+      decide: adopt full-BMP simple folding as the default (re2j parity) or keep the two-tier design.
+- [ ] **re2j matches lone-LOW surrogate patterns at/into pair interiors** (literal `\uDC21` matches the low
+      half of a well-formed pair; its own CLASS form does not — corpus case 153; JDK agrees with us).
+      Documented divergence in the fuzzer; we keep codepoint-boundary semantics.
+- [x] **ASM-tier devirtualization is now machine-checked, two layers** (2026-08-27):
+      `EmittedBytecodePolicyTest` (default gate: no INVOKEINTERFACE/INVOKEDYNAMIC; every INVOKEVIRTUAL
+      receiver is a final class — checked reflectively on the dumped bytes) and
+      `:tests:unit:inliningGuard` (separate action, forks a `-XX:+PrintInlining` JVM, parses compilation
+      events + call sites, fails on megamorphic dispatch inside generated classes; full logs in
+      `build/reports/inlining-guard/`). Baseline: CLEAN — 0 morphic failures across 51 compiled
+      generated-class methods; size-related non-inlines are warnings.
 - [ ] Deterministic compilation — same regex → identical TDFA across runs
 - [ ] `map` + topological sort: reject non-trivial cycles (BT22 §3.3)
 - [ ] Fallback / backup operations (BT22 §3.2) — restore clobberable registers on dead-end
