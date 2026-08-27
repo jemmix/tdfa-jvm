@@ -43,7 +43,7 @@ Commands:
   prepare                 Extract all archives, copy files per the in-script maps,
                           apply patches. Idempotent — safe to re-run.
 
-Known deps: re2j, rebar
+Known deps: re2j, rebar, testregex, openjdk-regex
 EOF
 }
 
@@ -60,6 +60,7 @@ upstream_url_for() {
         re2j)  echo "https://github.com/google/re2j.git" ;;
         rebar) echo "https://github.com/BurntSushi/rebar.git" ;;
         testregex) echo "https://github.com/gburd/testregex.git" ;;
+        openjdk-regex) echo "https://github.com/openjdk/jdk.git" ;;
         *)     return 1 ;;
     esac
 }
@@ -143,6 +144,18 @@ testregex/nullsubexpr.dat resources testregex/nullsubexpr.dat
 testregex/repetition.dat resources testregex/repetition.dat
 testregex/rightassoc.dat resources testregex/rightassoc.dat
 testregex/LICENSE resources testregex/LICENSE
+MAP
+            ;;
+        openjdk-regex)
+            # OpenJDK java.util.regex regression corpus (GPLv2+CE, test-only).
+            # The 3-line pattern/input/expected files consumed by
+            # JdkRegressionCorpusTest. NOTE: `refresh` clones the full jdk repo
+            # (heavy); prefer a sparse/blobless clone of test/jdk/java/util/Regex
+            # and rebuild the tarball manually at the same layout.
+            cat <<'MAP'
+openjdk-regex/test/jdk/java/util/Regex/TestCases.txt resources openjdk-regex/TestCases.txt
+openjdk-regex/test/jdk/java/util/Regex/BMPTestCases.txt resources openjdk-regex/BMPTestCases.txt
+openjdk-regex/test/jdk/java/util/Regex/SupplementaryTestCases.txt resources openjdk-regex/SupplementaryTestCases.txt
 MAP
             ;;
         *)

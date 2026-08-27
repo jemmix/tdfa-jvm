@@ -78,4 +78,6 @@ Each archive contains the upstream `LICENSE`/`NOTICE` files verbatim — the
 full pristine tree is snapshotted. Consult the archive contents for
 attribution. Vendored code remains under its upstream license (re2j: BSD-3;
 rebar: MIT/Unlicense — TBD; testregex: AT&T ISC-style permissive — see
-`testregex/LICENSE` in the archive).
+`testregex/LICENSE` in the archive; openjdk-regex: GPLv2 + Classpath
+Exception, Oracle — corpus files used test-only, GPL headers preserved
+verbatim in the archived sources).

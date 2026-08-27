@@ -7,9 +7,11 @@ repositories {
 }
 
 // Glenn Fowler testregex corpus (vendored): .dat files as test resources.
+// OpenJDK java.util.regex regression corpus (vendored): 3-line case files.
 sourceSets {
     test {
         resources.srcDir rootProject.layout.buildDirectory.dir('generated/resources/testregex')
+        resources.srcDir rootProject.layout.buildDirectory.dir('generated/resources/openjdk-regex')
     }
 }
 
@@ -34,6 +36,8 @@ dependencies {
 test {
     useJUnitPlatform()
     jvmArgs '-Xmx512m', '-XX:+HeapDumpOnOutOfMemoryError'
+    // Forward -Dtdfa.pending=true so JdkRegressionCorpusTest known-bug families enforce.
+    systemProperty 'tdfa.pending', System.getProperty('tdfa.pending', 'false')
     testLogging {
         events 'failed', 'standardOut', 'standardError'
         exceptionFormat 'full'
