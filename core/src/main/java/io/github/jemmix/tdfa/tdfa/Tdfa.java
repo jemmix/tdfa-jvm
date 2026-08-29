@@ -126,6 +126,8 @@ public final class Tdfa {
     final byte[] stopMaskUniform;
     /** Lazily-materialized 2D expansion of {@link #stopMaskUniform} (benign race). */
     private int[] stopMaskTableCache;
+    /** Lazily-computed {@link #posFlagDeps()} (benign race; -1 = not computed). */
+    private int posFlagDepsCache = -1;
     /** Sentinel for "don't stop on accept" — distinct from 0 (= stop). */
     public static final int NEVER_STOP = 0x40;  // sentinel bit above all real assertion bits (1|2|4|8|16|32)
 
@@ -146,6 +148,55 @@ public final class Tdfa {
             stopMaskTableCache = cache;
         }
         return cache;
+    }
+
+    /**
+     * The position-flag bits the compiled DFA actually DISTINGUISHES — the
+     * single derived source of truth for what a tier's positionFlags() must
+     * compute. A bit is a dependency iff (a) it appears in some consumed mask
+     * (entry, accept, range-required), or (b) flipping it changes any cell of
+     * an M-indexed table (stop-on-accept, final-ops-by-mask). Uniform tiers
+     * contribute nothing by construction.
+     *
+     * <p>This replaces the former per-tier re-derivations — the VM's
+     * computeNeedsWordFlags scan and the ASM's pfNeeded model — which answered
+     * the same semantic question with three different hand-written models. A
+     * model that misses one table (or, as in the round-6 bug, one bit
+     * combination) silently selects wrong table cells: the trim question
+     * "does anything depend on bit b" is answered here GENERICALLY from the
+     * tables themselves, so a new M-indexed consumer is covered the moment it
+     * reads a table that distinguishes b — no model to keep in sync.
+     */
+    public int posFlagDeps() {
+        int deps = posFlagDepsCache;
+        if (deps >= 0) return deps;
+        deps = 0;
+        for (int m : stateEntryMask) deps |= m;
+        for (int m : stateAcceptMask) deps |= m;
+        for (int i = 4; i < ranges.length; i += 5) deps |= ranges[i];
+        deps |= tableDeps(stopOnAcceptMask());
+        deps |= tableDeps(stateFinalOpsByMask());
+        posFlagDepsCache = deps;
+        return deps;
+    }
+
+    /** Bits whose flip changes any cell of {@code t} ([state*64 + posFlags]); null-safe. */
+    private static int tableDeps(int[] t) {
+        if (t == null) return 0;
+        int deps = 0;
+        int n = t.length / 64;
+        for (int b = 1; b < 64; b <<= 1) {
+            if ((deps & b) != 0) continue;
+            for (int s = 0; s < n; s++) {
+                int row = s * 64;
+                for (int m = 0; m < 64; m++) {
+                    if ((m & b) != 0) continue;
+                    if (t[row + m] != t[row + (m | b)]) { deps |= b; break; }
+                }
+                if ((deps & b) != 0) break;
+            }
+        }
+        return deps;
     }
 
     // === Flat packed arrays (4 arrays total; per-match regs adds a 5th at runtime) ===

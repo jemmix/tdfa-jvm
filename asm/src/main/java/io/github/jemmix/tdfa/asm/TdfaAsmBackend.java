@@ -897,21 +897,11 @@ public final class TdfaAsmBackend {
 
         // Compile-time check: is positionFlags ever needed?
         // PF is needed if any accepting state has ACCEPT_MASK != 0,
-        // or any live transition range has reqMask != 0,
-        // or PERL mode has accepting states (STOP_MASK indexed by PF),
-        // or the position-aware final-ops table exists (indexed by PF).
+        // Derived, not inferred: Tdfa.posFlagDeps() is the single source of
+        // truth for which posFlag bits any mask or M-indexed table actually
+        // distinguishes (the ASM formerly carried its own — broader — model).
+        boolean pfNeeded = tdfa.posFlagDeps() != 0;
         final int[] byMask = tdfa.stateFinalOpsByMask();
-        boolean pfNeeded = byMask != null;
-        for (int s = 0; s < nStates && !pfNeeded; s++) {
-            if ((sm[s] & 1) != 0) {
-                if (perl || tdfa.stateAcceptMask()[s] != 0) pfNeeded = true;
-            }
-        }
-        if (!pfNeeded) {
-            for (int i = 0; i < rg.length; i += 5) {
-                if (rg[i + 2] >= 0 && rg[i + 4] != 0) { pfNeeded = true; break; }
-            }
-        }
 
         // Locals: 0=input(String), 1=from, 2=len; 4..9 search/accept state
         final int IN=0, FROM=1, LEN=2;

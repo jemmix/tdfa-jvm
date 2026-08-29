@@ -176,7 +176,10 @@ public final class TdfaRunner implements RegexEngine {
         this.literalNeedle = detectLiteralNeedle(tdfa);
         this.unicodeWordBoundary = tdfa.unicodeWordBoundary;
         this.wordRanges = tdfa.wordRanges;
-        this.needsWordFlags = computeNeedsWordFlags(tdfa);
+        // Derived, not inferred: the tables themselves declare which posFlag bits
+        // they distinguish (see Tdfa.posFlagDeps) — no per-consumer model to keep in sync.
+        this.needsWordFlags = (tdfa.posFlagDeps()
+                & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY)) != 0;
         this.wordBits = buildWordBits(tdfa.unicodeWordBoundary ? tdfa.wordRanges : null);
         this.startBits = (literalNeedle == null && (tdfa.stateMeta[tdfa.startState] & 1) == 0)
                 ? buildStartBits() : null;
@@ -814,44 +817,6 @@ public final class TdfaRunner implements RegexEngine {
      * (positionFlags only ever produces those three variants — both-set never
      * occurs — so cell equality across them makes the word bits irrelevant).
      */
-    private static boolean computeNeedsWordFlags(Tdfa tdfa) {
-        final int WM = Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY;
-        for (int m : tdfa.stateEntryMask) if ((m & WM) != 0) return true;
-        for (int m : tdfa.stateAcceptMask) if ((m & WM) != 0) return true;
-        for (int i = 4; i < tdfa.ranges.length; i += 5) if ((tdfa.ranges[i] & WM) != 0) return true;
-        // The position-aware tables select per posFlags: cells that differ
-        // across the word variants of the SAME non-word base need the word
-        // bits even when no mask, range, or stop cell does (e.g. (\b)? — the
-        // accept WINNER depends on \b holding; (\B)*\z — the winner flips
-        // between the one-iteration and zero-iteration accepts on NWB). The
-        // base ranges over the 16 combinations of the four NON-word bits
-        // {BEGIN_TEXT, END_TEXT, ABS_BEGIN, ABS_END}; comparing bases that
-        // themselves contain word bits would miss ABS-dependent differences.
-        int[] fm = tdfa.stateFinalOpsByMask();
-        if (fm != null) {
-            for (int s = 0; s < tdfa.stateCount(); s++) {
-                int row = s * 64;
-                for (int base = 0; base < 64; base++) {
-                    if ((base & WM) != 0) continue;
-                    int c0 = fm[row + base], c1 = fm[row + (base | Tnfa.WORD_BOUNDARY)],
-                            c2 = fm[row + (base | Tnfa.NO_WORD_BOUNDARY)];
-                    if (c0 != c1 || c0 != c2) return true;
-                }
-            }
-        }
-        int[] soa = tdfa.stopOnAcceptMask;
-        if (soa == null) return false;   // uniform/POSIX tier: stop cells cannot differ across word variants
-        for (int s = 0; s < tdfa.stateCount(); s++) {
-            int row = s * 64;
-            for (int base = 0; base < 64; base++) {
-                if ((base & WM) != 0) continue;
-                int c0 = soa[row + base], c1 = soa[row + (base | Tnfa.WORD_BOUNDARY)],
-                        c2 = soa[row + (base | Tnfa.NO_WORD_BOUNDARY)];
-                if (c0 != c1 || c0 != c2) return true;
-            }
-        }
-        return false;
-    }
 
     /** Static nested: shared per-Tdfa lifetime; references the runner's tables. */
     static final class SearchDfa {

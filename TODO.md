@@ -181,6 +181,60 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
 
 ## Correctness
 
+### Design review: bug taxonomy of fuzz rounds 3-6 and prevention (2026-08-29)
+
+Commits 72a95b4, 0236b6c, 12d9921, a58ea48 reviewed for CAUSAL patterns (not
+case-by-case). Four classes, each with the prevention now in place or proposed:
+
+1. **Deferred effects / collapsed runtime state** (eager φ, mask-before-ops,
+   byMask winners): ops applied at a different time than the state they read
+   was valid; per-position accept winners approximated by mask intersection.
+   Prevention: BT22 declaration semantics — the register file is a function of
+   the accepted path only — is now a stated invariant with hard gates
+   (FinalOpsParityTest). Rule: every deferral-for-speed carries its equivalence.
+2. **Approximation standing in for a semantic unit** (mask-groups approximating
+   live-sets; specificity sort approximating priority; global multiline
+   approximating per-edge flavor; scan-order conventions carrying semantics).
+   Prevention: round 4 replaced them with the semantic objects (context
+   live-sets, per-edge flavors, pike-cut, dead markers). House rule: an
+   approximation's comment must state the EQUIVALENCE it claims (e.g. the
+   subsumption cut's), not the local reason it was added — reviewers check the
+   claim. `(^|$)+` regressed because the first cut was justified by graph
+   shape, not semantics.
+3. **Unprobed oracle claims** (ASCII-only folding labeled "re2j semantics").
+   Prevention LANDED: `SemanticsContractTest` — curated (pattern, input)
+   matrices per semantic area (folding, anchors, loop discipline) pinned to
+   re2j. A wrong empirical claim about the oracle now fails a named test, not
+   a soak. Probe-first is already the working habit; this makes it permanent.
+4. **Hand-derived dependency models** (computeNeedsWordFlags vs ASM pfNeeded —
+   three models of "which posFlag bits matter", each incomplete differently;
+   the a58ea48 bug class recurs with every new M-indexed consumer).
+   Prevention LANDED: `Tdfa.posFlagDeps()` — derived, not inferred: bits
+   present in consumed masks ∪ bits whose flip changes any cell of any
+   M-indexed table. Both tiers read the one number; the VM's scan and the
+   ASM's model are deleted. A future M-indexed consumer is covered the moment
+   it reads a distinguishing table — no model to keep in sync. (Side effect:
+   the ASM's pfNeeded was over-broad — any Perl accepting state forced PF
+   emission even with uniform stop tables; emitted code shrinks for such
+   patterns.)
+
+Proposed, not yet built (ranked):
+
+- **Construction-time DFA audit** (highest value remaining): a test-only
+  exhaustive equivalence check of the materialized DFA against a direct NFA
+  simulation for small patterns (bounded states x alphabet x positions).
+  Would have caught the specificity sort, the dead-marker protocol, and the
+  context ordering at COMPILE time with precise localization — instead of an
+  end-to-end fuzz mismatch needing manual bisection. Natural host: the
+  ZeroWidthExhaustiveTest-style enumerators.
+- **Layered oracle**: an in-repo pike VM over OUR Tnfa (test-only) so parser/
+  NFA bugs separate from determinizer bugs — today both surface as identical
+  end-to-end mismatches vs re2j.
+
+What already worked and stays: exhaustive enumerators as acceptance gates,
+hard-gating every fixed family, replay corpora, probe-before-fix.
+
+
 - [x] **`(a*)(a*)` crashes at compile time** — FIXED. `ArrayIndexOutOfBoundsException` in `Optimize.findFinalRegBase` on both backends and both disambiguation modes; affected `(a+)(a*)`, `(a*)(a?)`, `(.*) (.*)`, `(a*)(a*)(a*)`. Root cause: register allocation coalesced FINAL registers — with each other via the same-value rule (two SET-pos finals), or with working registers via COPY coalescing. Finals must share nothing: the `MatchResult` readout protocol requires tag *t* at a dedicated `regs[finalRegBase + t - 1]` slot. When finals coalesced, the block either scattered (silently wrong captures) or `regCount` dropped below `tagCount` (negative base → crash). Fix: `Optimize.registerAllocation` runs coalescing over working registers only and assigns finals dedicated consecutive top slots in tag order (BT22's dedicated `R_f` layout). Tests: `CaptureGroupAllocationTest` (ungated).
 - [x] **`\b` mishandles supplementary codepoints** — FIXED. `isWordChar(char)` checked individual UTF-16 code units, so supplementary letters weren't word chars even under `(?u)`. Now `TdfaRunner.isWordBefore`/`isWordAt` decode surrogate pairs and search `wordRanges` by codepoint; the ASM backend emits equivalent `isWordBefore`/`isWordAt` helpers used by both `positionFlagsC` and the inline PF. Tests: `WordBoundaryTest` (ungated).
 - [x] **`(?iu)` char-class ranges don't include Unicode fold equivalents** — FIXED. `Parser.parseClass` now expands every member codepoint's `CaseFoldTable.foldRanges` when `unicodeShorthand && caseInsensitive` (`(?iu)[r-t]` matches `ſ`); ASCII-only fold retained without `(?u)` (re2j semantics).
