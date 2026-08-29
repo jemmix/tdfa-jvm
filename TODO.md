@@ -238,7 +238,8 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
       reproducible per-case seeds. Overnight: `./gradlew :tests:parity:re2j:fuzz -Pfuzz.minutes=480`.
       Fixed-seed 500-case slice is a hard default gate (`FuzzSmokeTest`). First 20k-case run (2026-08-27):
       0 contract failures after fixes, 3 findings triaged below.
-- [ ] **Determinization hang in `Tdfa$Compiler.tryMap` on nested-quantifier bombs** — FOUND by the fuzzer
+- [x] **Determinization hang on nested-quantifier bombs** — RESOLVED 2026-08-28 by the WorkMeter
+      (compile work budget; see that entry). Original finding, tryMap family:
       (2026-08-27): `(\u03A9(\be.z|\W.+(.{1,2}))(?s:\u3042??)){1,6}h` compiles unboundedly; the compile
       budget does not trip for this shape. Repro: any seed in `build/fuzz/failures.ndjson` with
       `"kind":"HANG_ENGINE"`, via `-Dfuzz.one=<caseSeed>`. The fuzz watchdog survives it; users would not.
@@ -246,7 +247,9 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
       (2026-08-27 evening): same family also hangs in `Tdfa$Compiler.epsilonClosure` and
       `Optimize.livenessAnalysis` — the budget gap is determinization-wide, not tryMap-specific.
       (That soak's `hangsEngine=33` was misclassification — see harness round below.)
-- [ ] **Non-participating group under a quantifier reports `""` instead of `null`** — FOUND by the fuzzer
+- [x] **Non-participating group under a quantifier reports `""` instead of `null`** — FIXED 2026-08-28
+      (fuzz round 3: eager φ + mask-before-ops + position-aware final table; see that entry).
+      FOUND by the fuzzer
       (2026-08-27, 2 of the soak's 3 contract failures; seeds `-7645183372330529930` `((?s:\b))?`,
       `-4431982515513205820` `(.\z)*`). Minimal: `((?s:\b))?` on `\udc00\ud800\r` → jdk/re2j g1=null,
       both our engines g1=`''`. Scope: skipped groups with zero/variable-width content —
@@ -281,9 +284,67 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
 - [ ] **re2j plain-`(?i)` folds class ranges with full Unicode simple folding** (`(?i)\w` matches ſ;
       ſ/K/Ω fold groups) while we fold ASCII-only without `(?u)` — documented divergence in the fuzzer;
       decide: adopt full-BMP simple folding as the default (re2j parity) or keep the two-tier design.
-- [ ] **re2j matches lone-LOW surrogate patterns at/into pair interiors** (literal `\uDC21` matches the low
-      half of a well-formed pair; its own CLASS form does not — corpus case 153; JDK agrees with us).
-      Documented divergence in the fuzzer; we keep codepoint-boundary semantics.
+- [ ] **re2j matches lone-LOW surrogate patterns at/into pair interiors** — SUSPECTED RE2J BUG,
+      fix on our fork: https://github.com/jemmix/re2j/tree/fix-surrogate-pair-interior-prefix
+      (commit `4facb96`, +test). Root cause there: the literal-prefix fast path jumps to raw
+      `String.indexOf` unit positions (UTF16Input.index), which can land on a pair's low half;
+      only patterns compiling to a singleton literal prefix are affected, so `\uDC21` matches
+      where `\uDC21|\uDC22` (a strict superset) and `[\uD800-\uDFFF]` do not — a monotonicity
+      violation (range/singletons without a single-rune prefix never enter interiors: stepping
+      is codepoint-aligned). JDK agrees with us on every row. Upstream issue creation is
+      restricted on google/re2j; PR from the fork pending. We keep codepoint-boundary semantics
+      regardless — the fuzzer classifies the family as KNOWN_DIVERGENCE, and
+      `-Pfuzz.patchedOracle=true` (vendor/re2j-jemmix/) fuzzes against the patched re2j to
+      shrink the divergence stream. NB: singleton CLASS `[\uDC21]` matches like the literal;
+      only the RANGE form avoids the fast path (earlier note here said "class form" — imprecise).
+- [x] **Fuzz round 3 engine fixes (2026-08-28) — final-ops correctness by construction.**
+      Three coordinated changes, all gates green (unit + re2j parity + corpus/Fowler + conformance):
+      (a) **Eager φ at accept-record time** (both tiers): final ops read the accept config's
+      working registers, which hold correct values only AT accept — the former lazy replay at
+      walk end read post-accept clobbered values, producing inverted group spans (the 13 fuzz
+      crashes, `Range [13, 8)`). The ψ/φ runtime selection became moot (pos == lastAcceptPos at
+      record time by construction). (b) **No ops from mask-failing transitions**: the target's
+      entry mask is a position predicate evaluated BEFORE the transition's ops run — tag writes
+      from dead paths no longer contaminate the register file (the "skipped group reports `''`
+      instead of null" family, 447+ findings). (c) **Position-aware final-ops table**
+      (`Tdfa.stateFinalOpsByMask`, per-(accepting-state, posFlags) accept-config winner,
+      threaded through regopt as sibling FINAL blocks and through the minimizer signature):
+      a state may merge accept configs whose assertions differ; when the runtime mask kills
+      the highest-priority one, priority falls to the next ALIVE config whose tag outcome
+      differs — and the table replaces the over-strict accept-mask-intersection gate for
+      variant-carrying states. computeNeedsWordFlags extends the R5 trim to the table (the
+      `\b`-dependent winner needs word flags even when masks/ranges/stop cells don't).
+      Construction-time invariants
+      added to Tdfa.validate: transition ops never write the final block; byMask cells bounded.
+      Tests: `FinalOpsParityTest` (hard gate: the fixed families, incl. >64-char inputs so the
+      ASM emitted ladder is exercised, not the delegation path); `ZeroWidthExhaustiveTest`
+      (~63k cases: {zero-width atoms} × {quantifiers} × {grouping} × {prefix/suffix} ×
+      boundary-rich inputs, both engines vs re2j) is `tdfa.pending`-gated until the remaining
+      stop-or-extend family lands; `CompileBudgetTest.workBudgetRejectsClosureSpinners` gates
+      the WorkMeter. Replaying 959 recorded overnight mismatch seeds: ~72% now pass; remainder
+      = stop/empty-iteration priority family (next item) + documented fold divergence.
+- [x] **Compile work budget (`WorkMeter`)** — every unbounded/fixpoint loop in the compile
+      pipeline (determinize worklist, ε-closure DFS, addState/history/sortConfigs/
+      transitionRegops, regopt liveness fixpoint, §3.2 fallback accumulation) ticks a meter;
+      exhaustion throws the same clean "pattern too large" error as the state cap
+      (`-Dtdfa.max.work`, default 1<<32). Verified on the true tryMap-family spinner (clean
+      reject in ~6 s at a 200 M budget; was an infinite loop). Note: many overnight
+      "HANG_ENGINE" records were borderline-slow compiles (9-12 s) under leaked-oracle-thread
+      CPU contention, not infinite loops — the meter classifies both honestly.
+- [ ] **Zero-width assertions are second-class automaton citizens (stop-or-extend family)** —
+      the dominant REMAINING fuzz divergence family (~29% of recorded seeds after round 3):
+      `\B`-adjacent extents (`\W+\B.`, `.{2,}\b.` variants), empty-iteration preference
+      (`(?:.*?9{0,}\b){1,}` prefers a non-empty first iteration; `(\A)??.+` keeps greedy capture
+      priority on zero-width groups instead of lazy-skip), multiline-anchor gates
+      (`(?m:\w$)` misses). The assertions live as position flags checked by the walk; their
+      interaction with accept priority is decided per-ladder-rung, not by determinization.
+      Design (agreed): promote the context into the alphabet — transition input becomes
+      (context-class, codepoint) so assertion edges are ordinary symbols and arbitration
+      happens once in the closure (RE2's design: context flags in the DFA state; re2c:
+      conditions). State multiplier only for patterns using assertions; the perf-critical
+      corpus pays zero and assertion patterns stop paying per-step flag evaluation. Needs the
+      veryl/lexer measurement before landing; `ZeroWidthExhaustiveTest` is the acceptance gate
+      (clear `tdfa.pending` when green).
 - [x] **ASM-tier devirtualization is now machine-checked, two layers** (2026-08-27):
       `EmittedBytecodePolicyTest` (default gate: no INVOKEINTERFACE/INVOKEDYNAMIC; every INVOKEVIRTUAL
       receiver is a final class — checked reflectively on the dumped bytes) and

@@ -96,11 +96,11 @@ final class FallbackOps {
      *                      {@link Result#registerCount} reflects the new total.
      */
     static Result add(int n, int[] stateMeta, int[] stateBase, int[] ranges, int[] flatOps,
-                      int[] stateFinalOpsOff, int registerCount) {
+                      int[] stateFinalOpsOff, int registerCount, WorkMeter meter) {
         // Phase 1: classify states.
         boolean[] isFinal = new boolean[n];
         for (int s = 0; s < n; s++) isFinal[s] = (stateMeta[s] & 1) != 0;
-        boolean[] canReachDefault = computeCanReachDefault(n, stateMeta, stateBase, ranges, isFinal);
+        boolean[] canReachDefault = computeCanReachDefault(n, stateMeta, stateBase, ranges, isFinal, meter);
         boolean[] stateIsFallback = new boolean[n];
         for (int s = 0; s < n; s++) stateIsFallback[s] = isFinal[s] && canReachDefault[s];
 
@@ -114,6 +114,7 @@ final class FallbackOps {
         int nextBackupSlot = registerCount;
 
         for (int s = 0; s < n; s++) {
+            meter.tick();
             if (!stateIsFallback[s]) continue;
             BitSet clobbered = accumulateClobbered(s, n, stateMeta, stateBase, ranges, flatOps, isFinal);
 
@@ -249,13 +250,15 @@ final class FallbackOps {
      * of {@code canReachDefault[s']}, iterated to fixpoint.
      */
     private static boolean[] computeCanReachDefault(int n, int[] stateMeta, int[] stateBase,
-                                                    int[] ranges, boolean[] isFinal) {
+                                                    int[] ranges, boolean[] isFinal, WorkMeter meter) {
         boolean[] canReachDefault = new boolean[n];
         for (int s = 0; s < n; s++) canReachDefault[s] = !isFinal[s];
         boolean changed = true;
         while (changed) {
+            meter.tick();
             changed = false;
             for (int s = 0; s < n; s++) {
+                meter.tick();
                 if (!isFinal[s] || canReachDefault[s]) continue;
                 int base = stateBase[s];
                 int cnt = Tdfa.rangeCount(stateMeta[s]);

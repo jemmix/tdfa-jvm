@@ -427,8 +427,16 @@ public final class DifferentialFuzzer {
          *   <li><b>lone-low interior starts</b> — re2j matches a lone-LOW
          *       surrogate pattern against the low half of a well-formed pair
          *       in the input (and thereby also finds EARLIER leftmost matches
-         *       than a boundary-respecting engine). JDK agrees with us; re2j's
-         *       own class form disagrees with its literal form (corpus 153).
+         *       than a boundary-respecting engine). JDK agrees with us. This
+         *       is a suspected re2j BUG (upstream issue drafted; fix on our
+         *       fork: https://github.com/jemmix/re2j/tree/fix-surrogate-pair-interior-prefix):
+         *       raw String.indexOf in the literal-prefix fast path lands on
+         *       pair interiors, so only patterns that compile to a singleton
+         *       literal prefix are affected — `\uDC21` matches where
+         *       `\uDC21|\uDC22` (a strict superset!) and `[\uD800-\uDFFF]`
+         *       do not, a monotonicity violation. The RANGE form avoids the
+         *       fast path entirely (no single-rune prefix). We keep
+         *       codepoint-boundary semantics either way.
          *       Applies when both our engines agree with each other and the
          *       pattern contains a lone low surrogate.</li>
          *   <li><b>plain (?i) full simple folding</b> — re2j folds class
@@ -446,13 +454,19 @@ public final class DifferentialFuzzer {
                 if (c >= 0xDC00 && c <= 0xDFFF && o.asm.equals(o.vm) && !o.asm.equals(o.oracle))
                     return "re2j matches lone-low pattern at/into pair interior; JDK agrees with us";
             }
-            if (p.contains("(?i") && !o.oracle.equals(o.asm)) {
-                String m = o.oracle.startsWith("true ") ? o.oracle.substring(5) : "";
-                for (int i = 0; i < m.length(); ) {
-                    int cp = m.codePointAt(i);
-                    if (cp > 0x7F && io.github.jemmix.tdfa.unicode.CaseFoldTable.foldRanges(cp) != null)
-                        return "re2j plain-?i applies full Unicode simple folding (ſ etc.); we fold ASCII-only without (?u)";
-                    i += Character.charCount(cp);
+            if (p.contains("(?i") && (!o.oracle.equals(o.asm) || !o.oracle.equals(o.vm))) {
+                // The fold cp may appear in EITHER side's match text: re2j
+                // folds full-Unicode under plain (?i) (match EXTENDS over ſ),
+                // we fold ASCII-only (ſ then belongs to \W, changing extents)
+                // — either direction is the documented divergence.
+                for (String side : new String[]{o.oracle, o.asm}) {
+                    String m = side.startsWith("true ") ? side.substring(5) : "";
+                    for (int i = 0; i < m.length(); ) {
+                        int cp = m.codePointAt(i);
+                        if (cp > 0x7F && io.github.jemmix.tdfa.unicode.CaseFoldTable.foldRanges(cp) != null)
+                            return "re2j plain-?i applies full Unicode simple folding (ſ etc.); we fold ASCII-only without (?u)";
+                        i += Character.charCount(cp);
+                    }
                 }
             }
             return null;

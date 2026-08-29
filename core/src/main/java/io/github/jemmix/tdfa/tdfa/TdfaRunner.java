@@ -35,6 +35,8 @@ public final class TdfaRunner implements RegexEngine {
     private final int[] stateFinalOpsOff;
     private final int[] stateEntryMask;
     private final int[] stateAcceptMask;
+    /** Position-aware final-ops table (null = uniform; see Tdfa.stateFinalOpsByMask). */
+    private final int[] finalOpsByMask;
     private final int[] ranges;
     private final int[] ops;
     private final int regSize;
@@ -138,6 +140,7 @@ public final class TdfaRunner implements RegexEngine {
         this.stateMeta = tdfa.stateMeta;
         this.stateBase = tdfa.stateBase;
         this.stateFinalOpsOff = tdfa.stateFinalOpsOff;
+        this.finalOpsByMask = tdfa.stateFinalOpsByMask();
         this.stateEntryMask = tdfa.stateEntryMask;
         this.stateAcceptMask = tdfa.stateAcceptMask;
         this.ranges = tdfa.ranges;
@@ -471,18 +474,34 @@ public final class TdfaRunner implements RegexEngine {
         for (; ; pos++) {
             int meta = sm[state];
             if ((meta & 1) != 0) {
-                int acceptMask = sam[state];
-                if (acceptMask == 0) {
-                    lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                    if (!longestMatch) {
-                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                        if (stopNow(state, posFlags)) break loop;
+                final int[] fm = this.finalOpsByMask;
+                if (fm != null) {
+                    // Position-aware table is authoritative: cell >= 0 = an
+                    // accept config is alive under these posFlags (the gate
+                    // the sam-intersection only approximated), cell = its φ.
+                    if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                    int cell = fm[state * 64 + posFlags];
+                    if (cell >= 0) {
+                        lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
+                        if (regs != null && cell != 0) applyOps(op, cell, regs, pos);
+                        if (!longestMatch && stopNow(state, posFlags)) break loop;
                     }
                 } else {
-                    if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                    if ((posFlags & acceptMask) == acceptMask) {
+                    int acceptMask = sam[state];
+                    if (acceptMask == 0) {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                        if (!longestMatch && stopNow(state, posFlags)) break loop;
+                        if (regs != null) applyFinalOps(state, regs, pos);
+                        if (!longestMatch) {
+                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                            if (stopNow(state, posFlags)) break loop;
+                        }
+                    } else {
+                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                        if ((posFlags & acceptMask) == acceptMask) {
+                            lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
+                            if (regs != null) applyFinalOps(state, regs, pos);
+                            if (!longestMatch && stopNow(state, posFlags)) break loop;
+                        }
                     }
                 }
             }
@@ -547,22 +566,30 @@ public final class TdfaRunner implements RegexEngine {
                 }
             }
             if (chosen < 0) break;
+            // Target entry mask is a position predicate, evaluated BEFORE the
+            // transition's ops run: a mask-failing transition is never taken,
+            // so its tag writes must not contaminate the register file (a
+            // later-recorded accept would read them — the fuzz-found "skipped
+            // group reports empty instead of null" family).
+            int width = c > 0xFFFF ? 2 : 1;
+            int entryReqNext = sem[chosenTarget];
+            if (entryReqNext != 0
+                    && (positionFlags(input, pos + width, to) & entryReqNext) != entryReqNext) break;
             if (regs != null) {
                 int opsOff = rg[chosen + 3];
                 if (opsOff != 0) applyOps(op, opsOff, regs, pos);
             }
             state = chosenTarget;
-            if (c > 0xFFFF) pos++;
-            int entryReq = sem[state];
-            if (entryReq != 0) {
-                if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) break loop;
-            }
+            if (width == 2) pos++;
             posFlags = -1;
         }
         if (!haveAccept) return null;
         int[] r = regs == null ? new int[0] : regs.clone();
-        int foff = pickFinalOpsOff(lastAcceptState, lastAcceptPos, pos);
-        if (foff != 0 && regs != null) applyOps(op, foff, r, lastAcceptPos);
+        // Final ops already applied eagerly at accept-record time (BT22's
+        // declaration semantics): they read the accept-time register values.
+        // A lazy replay here would read end-of-walk values — any transition
+        // taken between the accept and the break clobbers working registers
+        // and inverts group spans (the fuzz-found start>end crashes).
         return new MatchHolder(startSearch, lastAcceptPos, r);
     }
 
@@ -780,9 +807,24 @@ public final class TdfaRunner implements RegexEngine {
         for (int m : tdfa.stateEntryMask) if ((m & WM) != 0) return true;
         for (int m : tdfa.stateAcceptMask) if ((m & WM) != 0) return true;
         for (int i = 4; i < tdfa.ranges.length; i += 5) if ((tdfa.ranges[i] & WM) != 0) return true;
+        // The position-aware final-ops table selects per posFlags: cells that
+        // differ across word variants need the word bits even when no mask,
+        // range, or stop cell does (e.g. (\b)? — the accept WINNER depends
+        // on \b holding).
+        int[] fm = tdfa.stateFinalOpsByMask();
+        if (fm != null) {
+            for (int s = 0; s < tdfa.stateCount(); s++) {
+                int row = s * 64;
+                for (int base = 0; base < 16; base++) {
+                    int c0 = fm[row + base], c1 = fm[row + (base | Tnfa.WORD_BOUNDARY)],
+                            c2 = fm[row + (base | Tnfa.NO_WORD_BOUNDARY)];
+                    if (c0 != c1 || c0 != c2) return true;
+                }
+            }
+        }
         int[] soa = tdfa.stopOnAcceptMask;
         if (soa == null) return false;   // uniform/POSIX tier: stop cells cannot differ across word variants
-        for (int s = 0; s < tdfa.stateCount; s++) {
+        for (int s = 0; s < tdfa.stateCount(); s++) {
             int row = s * 64;
             for (int base = 0; base < 16; base++) {
                 int c0 = soa[row + base], c1 = soa[row + (base | Tnfa.WORD_BOUNDARY)],
@@ -1568,10 +1610,21 @@ public final class TdfaRunner implements RegexEngine {
         for (; pos <= to; pos++) {
             int meta = sm[state];
             if ((meta & 1) != 0) {
-                haveAccept = true; lastAcceptPos = pos; lastAcceptState = state;
-                if (pm) {
-                    posFlags = positionFlags(input, pos, to);
-                    if (stopNow(state, posFlags)) break;
+                final int[] fm = this.finalOpsByMask;
+                if (fm != null) {
+                    if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                    int cell = fm[state * 64 + posFlags];
+                    if (cell < 0) continue;
+                    haveAccept = true; lastAcceptPos = pos; lastAcceptState = state;
+                    if (regs != null && cell != 0) applyOps(op, cell, regs, pos);
+                    if (pm && stopNow(state, posFlags)) break;
+                } else {
+                    haveAccept = true; lastAcceptPos = pos; lastAcceptState = state;
+                    if (regs != null) applyFinalOps(state, regs, pos);
+                    if (pm) {
+                        posFlags = positionFlags(input, pos, to);
+                        if (stopNow(state, posFlags)) break;
+                    }
                 }
             }
             if (pos == to) break;
@@ -1589,10 +1642,8 @@ public final class TdfaRunner implements RegexEngine {
             state = target;
         }
         if (haveAccept) {
-            int[] r = regs == null ? new int[0] : regs.clone();
-            int foff = pickFinalOpsOff(lastAcceptState, lastAcceptPos, pos);
-            if (foff != 0 && regs != null) applyOps(op, foff, r, lastAcceptPos);
-            return new MatchHolder(start, lastAcceptPos, r);
+            // Eager finals at accept-record time (see extractFrom).
+            return new MatchHolder(start, lastAcceptPos, regs == null ? new int[0] : regs.clone());
         }
         return null;
     }
@@ -1892,18 +1943,31 @@ public final class TdfaRunner implements RegexEngine {
             for (; ; pos++) {
                 int meta = stateMeta[state];
                 if ((meta & 1) != 0) {
-                    int acceptMask = stateAcceptMask[state];
-                    if (acceptMask == 0) {
-                        lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                        if (!longestMatch) {
-                            if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
-                            if (stopNow(state, posFlags)) break loop;
+                    final int[] fm = this.finalOpsByMask;
+                    if (fm != null) {
+                        if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
+                        int cell = fm[state * 64 + posFlags];
+                        if (cell >= 0) {
+                            lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
+                            if (regs != null && cell != 0) applyOps(ops, cell, regs, pos);
+                            if (!longestMatch && stopNow(state, posFlags)) break loop;
                         }
                     } else {
-                        if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
-                        if ((posFlags & acceptMask) == acceptMask) {
+                        int acceptMask = stateAcceptMask[state];
+                        if (acceptMask == 0) {
                             lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
-                            if (!longestMatch && stopNow(state, posFlags)) break loop;
+                            if (regs != null) applyFinalOps(state, regs, pos);
+                            if (!longestMatch) {
+                                if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
+                                if (stopNow(state, posFlags)) break loop;
+                            }
+                        } else {
+                            if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
+                            if ((posFlags & acceptMask) == acceptMask) {
+                                lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
+                                if (regs != null) applyFinalOps(state, regs, pos);
+                                if (!longestMatch && stopNow(state, posFlags)) break loop;
+                            }
                         }
                     }
                 }
@@ -1933,24 +1997,23 @@ public final class TdfaRunner implements RegexEngine {
                     }
                 }
                 if (chosen < 0) break;
+                // Mask before ops — see extractFrom.
+                int width = c > 0xFFFF ? 2 : 1;
+                int entryReqNext = stateEntryMask[chosenTarget];
+                if (entryReqNext != 0
+                        && (positionFlagsCS(input, pos + width, to) & entryReqNext) != entryReqNext) break;
                 if (regs != null) {
                     int opsOff = ranges[chosen + 3];
                     if (opsOff != 0) applyOps(ops, opsOff, regs, pos);
                 }
                 state = chosenTarget;
-                if (c > 0xFFFF) pos++;
-                int entryReq = stateEntryMask[state];
-                if (entryReq != 0) {
-                    if ((positionFlagsCS(input, pos + 1, to) & entryReq) != entryReq) break loop;
-                }
+                if (width == 2) pos++;
                 posFlags = -1;
             }
             if (haveAccept) {
                 if (anchored && lastAcceptPos != to) return null;
-                int[] r = regs == null ? new int[0] : regs.clone();
-                int foff = pickFinalOpsOff(lastAcceptState, lastAcceptPos, pos);
-                if (foff != 0 && regs != null) applyOps(ops, foff, r, lastAcceptPos);
-                return new MatchHolder(startSearch, lastAcceptPos, r);
+                // Eager finals at accept-record time (see extractFrom).
+                return new MatchHolder(startSearch, lastAcceptPos, regs == null ? new int[0] : regs.clone());
             }
             if (anchored) return null;
             if (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) return null;
@@ -1983,6 +2046,22 @@ public final class TdfaRunner implements RegexEngine {
             return stateFallbackOpsOff[lastAcceptState];
         }
         return stateFinalOpsOff[lastAcceptState];
+    }
+
+    /**
+     * Apply an accepting state's φ final ops into {@code regs} at the moment
+     * the accept is recorded (BT22's match-declaration semantics). φ reads the
+     * accept config's WORKING registers, which hold the correct values only at
+     * accept time — any transition taken afterwards may clobber them. Later
+     * accepts overwrite earlier ones (last write wins), so the register file at
+     * walk end already carries the last accept's finals. Only the ASM-emitted
+     * ladder's lazy path still consults {@link #pickFinalOpsOff} (ψ for
+     * fallback states); with eager application {@code pos == lastAcceptPos}
+     * always holds and φ is the correct choice.
+     */
+    private void applyFinalOps(int state, int[] regs, int pos) {
+        int foff = stateFinalOpsOff[state];
+        if (foff != 0) applyOps(ops, foff, regs, pos);
     }
 
     // ===== Zero-width assertion position-flag computation =====

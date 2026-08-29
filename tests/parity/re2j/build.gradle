@@ -28,8 +28,14 @@ dependencies {
     testImplementation platform('org.junit:junit-bom:5.10.2'),
             'org.junit.jupiter:junit-jupiter',
             'org.assertj:assertj-core:3.25.3'
-    // re2j as live oracle for parity comparison
-    testImplementation 'com.google.re2j:re2j:1.8'
+    // re2j as live oracle for parity comparison. The fuzz task can swap in a
+    // patched build from our fork (-Pfuzz.patchedOracle=true) to fuzz against
+    // the surrogate-pair-interior fix — see vendor/re2j-jemmix/README.md.
+    if (project.hasProperty('fuzz.patchedOracle')) {
+        testImplementation files(rootProject.file('vendor/re2j-jemmix/re2j-1.8-jemmix-fix1.jar'))
+    } else {
+        testImplementation 'com.google.re2j:re2j:1.8'
+    }
     // bytecode policy check on the ASM-generated engine classes
     testImplementation 'org.ow2.asm:asm:9.9.1'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

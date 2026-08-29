@@ -10,7 +10,9 @@ import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class TdfaAsmBackend {
@@ -106,6 +108,8 @@ public final class TdfaAsmBackend {
             genExtractOne(cw, tdfa, owner);
             genToResult(cw, tdfa, owner);
             genEntryOkC(cw, owner);
+            if (tdfa.stateFinalOpsByMask() != null) genPhiMasked(cw, tdfa, owner);
+            if (tdfa.registerCount() > 0) genPhi(cw, tdfa, owner);
             genPositionFlagsC(cw, owner, tdfa.multiline(), tdfa.unicodeWordBoundary());
             if (tdfa.unicodeWordBoundary()) {
                 genIsUnicodeWordChar(cw, owner);
@@ -894,8 +898,10 @@ public final class TdfaAsmBackend {
         // Compile-time check: is positionFlags ever needed?
         // PF is needed if any accepting state has ACCEPT_MASK != 0,
         // or any live transition range has reqMask != 0,
-        // or PERL mode has accepting states (STOP_MASK indexed by PF).
-        boolean pfNeeded = false;
+        // or PERL mode has accepting states (STOP_MASK indexed by PF),
+        // or the position-aware final-ops table exists (indexed by PF).
+        final int[] byMask = tdfa.stateFinalOpsByMask();
+        boolean pfNeeded = byMask != null;
         for (int s = 0; s < nStates && !pfNeeded; s++) {
             if ((sm[s] & 1) != 0) {
                 if (perl || tdfa.stateAcceptMask()[s] != 0) pfNeeded = true;
@@ -994,22 +1000,45 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, STATE);
         mv.visitInsn(Opcodes.IALOAD);
         mv.visitJumpInsn(Opcodes.IFEQ, skipAccept);
-        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ACCEPT_MASK", "[I");
-        mv.visitVarInsn(Opcodes.ILOAD, STATE);
-        mv.visitInsn(Opcodes.IALOAD);
-        mv.visitVarInsn(Opcodes.ISTORE, T1);
-        mv.visitVarInsn(Opcodes.ILOAD, T1);
-        Label doAccept = new Label();
-        mv.visitJumpInsn(Opcodes.IFEQ, doAccept);
-        mv.visitVarInsn(Opcodes.ILOAD, PF);
-        mv.visitVarInsn(Opcodes.ILOAD, T1);
-        mv.visitInsn(Opcodes.IAND);
-        mv.visitVarInsn(Opcodes.ILOAD, T1);
-        mv.visitJumpInsn(Opcodes.IF_ICMPNE, skipAccept);
-        mv.visitLabel(doAccept);
+        if (byMask != null) {
+            // Position-aware table is authoritative (gate AND φ selection):
+            // phiMasked applies the per-(state, posFlags) winner's ops and
+            // reports whether any accept config is alive at all.
+            mv.visitVarInsn(Opcodes.ILOAD, STATE);
+            mv.visitVarInsn(Opcodes.ALOAD, REGS);
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitVarInsn(Opcodes.ILOAD, PF);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phiMasked", "(I[III)Z", false);
+            mv.visitJumpInsn(Opcodes.IFEQ, skipAccept);
+        } else {
+            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ACCEPT_MASK", "[I");
+            mv.visitVarInsn(Opcodes.ILOAD, STATE);
+            mv.visitInsn(Opcodes.IALOAD);
+            mv.visitVarInsn(Opcodes.ISTORE, T1);
+            mv.visitVarInsn(Opcodes.ILOAD, T1);
+            Label doAccept = new Label();
+            mv.visitJumpInsn(Opcodes.IFEQ, doAccept);
+            mv.visitVarInsn(Opcodes.ILOAD, PF);
+            mv.visitVarInsn(Opcodes.ILOAD, T1);
+            mv.visitInsn(Opcodes.IAND);
+            mv.visitVarInsn(Opcodes.ILOAD, T1);
+            mv.visitJumpInsn(Opcodes.IF_ICMPNE, skipAccept);
+            mv.visitLabel(doAccept);
+        }
         mv.visitInsn(Opcodes.ICONST_1); mv.visitVarInsn(Opcodes.ISTORE, HA);
         mv.visitVarInsn(Opcodes.ILOAD, POS); mv.visitVarInsn(Opcodes.ISTORE, LAP);
         mv.visitVarInsn(Opcodes.ILOAD, STATE); mv.visitVarInsn(Opcodes.ISTORE, LAS);
+        // Eager φ at accept-record time (BT22 declaration semantics): the
+        // final ops read accept-time working-register values into the final
+        // block. Later accepts overwrite earlier ones; the end-of-walk clone
+        // carries the last accept's finals. Parity with TdfaRunner. (Table
+        // mode: phiMasked above already applied the per-mask winner's ops.)
+        if (byMask == null && tdfa.registerCount() > 0) {
+            mv.visitVarInsn(Opcodes.ILOAD, STATE);
+            mv.visitVarInsn(Opcodes.ALOAD, REGS);
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phi", "(I[II)V", false);
+        }
         if (perl) {
             mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "STOP_MASK", "[I");
             mv.visitVarInsn(Opcodes.ILOAD, STATE);
@@ -1063,8 +1092,10 @@ public final class TdfaAsmBackend {
             }
             mv.visitVarInsn(Opcodes.ASTORE, R);
 
-            // final ops switch
-            emitFinalOps(mv, tdfa, owner, R, LAS, LAP, POS, op, sfo, sm);
+            // Final ops were applied eagerly at accept-record time into REGS;
+            // the clone above carries them. (The former lazy ψ/φ replay here
+            // read end-of-walk register values — any transition taken between
+            // the accept and the break clobbered them, inverting group spans.)
 
             // return new MatchHolder(start, lastAcceptPos, r)
             mv.visitTypeInsn(Opcodes.NEW, HOLDER);
@@ -1138,6 +1169,35 @@ public final class TdfaAsmBackend {
                     mv.visitJumpInsn(Opcodes.IF_ICMPNE, nextRange);
                 }
 
+                // Target entry mask BEFORE the transition's ops: a
+                // mask-failing transition is never taken, so its tag writes
+                // must not contaminate the register file (parity with
+                // TdfaRunner's walk; the fuzz-found skipped-group family).
+                // Checked at pos+width without mutating POS — ops still need
+                // the source position for SET_POS.
+                if (tdfa.stateEntryMask()[target] != 0) {
+                    ic(mv, target);
+                    mv.visitVarInsn(Opcodes.ILOAD, POS);
+                    mv.visitVarInsn(Opcodes.ILOAD, C_LV);
+                    mv.visitLdcInsn(0x10000);
+                    Label w1 = new Label(), wDone = new Label();
+                    mv.visitJumpInsn(Opcodes.IF_ICMPLT, w1);
+                    mv.visitInsn(Opcodes.ICONST_2);
+                    mv.visitJumpInsn(Opcodes.GOTO, wDone);
+                    mv.visitLabel(w1);
+                    mv.visitInsn(Opcodes.ICONST_1);
+                    mv.visitLabel(wDone);
+                    mv.visitInsn(Opcodes.IADD);
+                    mv.visitVarInsn(Opcodes.ILOAD, LEN);
+                    mv.visitVarInsn(Opcodes.ALOAD, IN);
+                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "entryOkC",
+                            "(IIILjava/lang/String;)Z", false);
+                    Label entryOk = new Label();
+                    mv.visitJumpInsn(Opcodes.IFNE, entryOk);
+                    mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
+                    mv.visitLabel(entryOk);
+                }
+
                 // register ops (extract only)
                 if (opsOff != 0)
                     emitOpsInline(mv, op, opsOff, REGS, POS);
@@ -1156,22 +1216,6 @@ public final class TdfaAsmBackend {
                     mv.visitLabel(noAdv);
                 }
 
-                // entry check for target at pos+1 — skip call if ENTRY_MASK[target] == 0
-                if (tdfa.stateEntryMask()[target] != 0) {
-                    mv.visitVarInsn(Opcodes.ILOAD, STATE);
-                    mv.visitVarInsn(Opcodes.ILOAD, POS);
-                    mv.visitInsn(Opcodes.ICONST_1);
-                    mv.visitInsn(Opcodes.IADD);
-                    mv.visitVarInsn(Opcodes.ILOAD, LEN);
-                    mv.visitVarInsn(Opcodes.ALOAD, IN);
-                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "entryOkC",
-                            "(IIILjava/lang/String;)Z", false);
-                    Label entryOk = new Label();
-                    mv.visitJumpInsn(Opcodes.IFNE, entryOk);
-                    mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
-                    mv.visitLabel(entryOk);
-                }
-
                 // pos++
                 mv.visitIincInsn(POS, 1);
                 mv.visitJumpInsn(Opcodes.GOTO, dfaLoop);
@@ -1185,48 +1229,99 @@ public final class TdfaAsmBackend {
         mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
     }
 
-    // ===== final ops (LOOKUPSWITCH) =====
+    // ===== phi — eager final ops at accept-record time =====
 
-    private static void emitFinalOps(MethodVisitor mv, Tdfa tdfa, String owner,
-                                     int R, int LAS, int LAP, int POS,
-                                     int[] op, int[] sfo, int[] sm) {
-        int n = tdfa.stateCount();
-        boolean[] isFallback = tdfa.stateIsFallback();
-        int[] fallbackOff = tdfa.stateFallbackOpsOff();
+    /**
+     * Emits {@code private static void phi(int state, int[] regs, int pos)}:
+     * LOOKUPSWITCH over accepting states applying the state's φ ops into
+     * {@code regs} at {@code pos}. Called at the moment an accept is recorded
+     * (BT22 match-declaration semantics) — the φ ops read accept-time working
+     * values, which any later transition may clobber. The former lazy replay
+     * (ψ/φ switch on lastAcceptState after the walk) was unsound for exactly
+     * that reason; with eager application {@code pos == lastAcceptPos} by
+     * construction and φ is always the right list.
+     */
+    private static void genPhi(ClassWriter cw, Tdfa tdfa, String owner) {
+        int[] op = tdfa.ops(), sfo = tdfa.stateFinalOpsOff(), sm = tdfa.stateMeta();
         List<int[]> finals = new ArrayList<>();
-        for (int s = 0; s < n; s++)
+        for (int s = 0; s < sm.length; s++)
             if ((sm[s] & 1) != 0 && sfo[s] != 0) finals.add(new int[]{s, sfo[s]});
-        if (finals.isEmpty()) return;
-        int nf = finals.size();
-        int[] keys = new int[nf];
-        Label[] fl = new Label[nf];
-        Label fDef = new Label(), fAfter = new Label();
-        for (int k = 0; k < nf; k++) { keys[k] = finals.get(k)[0]; fl[k] = new Label(); }
-        mv.visitVarInsn(Opcodes.ILOAD, LAS);
-        mv.visitLookupSwitchInsn(fDef, keys, fl);
-        for (int k = 0; k < nf; k++) {
-            mv.visitLabel(fl[k]);
-            int state = finals.get(k)[0];
-            int phiOff = finals.get(k)[1];
-            boolean hasPsi = isFallback != null && state < isFallback.length
-                    && isFallback[state] && fallbackOff[state] != 0;
-            if (hasPsi) {
-                // if (POS > LAP) applyOps(ψ); else applyOps(φ).
-                Label usePhi = new Label();
-                mv.visitVarInsn(Opcodes.ILOAD, POS);
-                mv.visitVarInsn(Opcodes.ILOAD, LAP);
-                mv.visitJumpInsn(Opcodes.IF_ICMPLE, usePhi);
-                emitOpsInlineFinal(mv, op, fallbackOff[state], R, LAP);
-                mv.visitJumpInsn(Opcodes.GOTO, fAfter);
-                mv.visitLabel(usePhi);
-                emitOpsInlineFinal(mv, op, phiOff, R, LAP);
-            } else {
-                emitOpsInlineFinal(mv, op, phiOff, R, LAP);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "phi", "(I[II)V", null, null);
+        mv.visitCode();
+        if (!finals.isEmpty()) {
+            int nf = finals.size();
+            int[] keys = new int[nf];
+            Label[] fl = new Label[nf];
+            Label fDef = new Label();
+            for (int k = 0; k < nf; k++) { keys[k] = finals.get(k)[0]; fl[k] = new Label(); }
+            // locals: 0=state, 1=regs, 2=pos
+            mv.visitVarInsn(Opcodes.ILOAD, 0);
+            mv.visitLookupSwitchInsn(fDef, keys, fl);
+            for (int k = 0; k < nf; k++) {
+                mv.visitLabel(fl[k]);
+                emitOpsInline(mv, op, finals.get(k)[1], 1, 2);
+                mv.visitInsn(Opcodes.RETURN);
             }
-            mv.visitJumpInsn(Opcodes.GOTO, fAfter);
+            mv.visitLabel(fDef);
         }
-        mv.visitLabel(fDef);
-        mv.visitLabel(fAfter);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    /**
+     * Emits {@code private static boolean phiMasked(int state, int[] regs, int pos, int pf)}:
+     * the position-aware accept gate + eager φ in one. LOOKUPSWITCH over
+     * accepting states; within a state, TABLESWITCH over the 64 posFlags
+     * values, deduplicated by cell: identical cells share one ops block
+     * ({@code return true}), {@code -1} cells fall through to
+     * {@code return false} (no accept config alive — the gate the
+     * accept-mask intersection only approximated).
+     */
+    private static void genPhiMasked(ClassWriter cw, Tdfa tdfa, String owner) {
+        int[] op = tdfa.ops(), sm = tdfa.stateMeta(), byMask = tdfa.stateFinalOpsByMask();
+        List<Integer> accStates = new ArrayList<>();
+        for (int s = 0; s < sm.length; s++) if ((sm[s] & 1) != 0) accStates.add(s);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "phiMasked", "(I[III)Z", null, null);
+        mv.visitCode();
+        if (!accStates.isEmpty()) {
+            int nf = accStates.size();
+            int[] keys = new int[nf];
+            Label[] fl = new Label[nf];
+            Label fDef = new Label();
+            for (int k = 0; k < nf; k++) { keys[k] = accStates.get(k); fl[k] = new Label(); }
+            // locals: 0=state, 1=regs, 2=pos, 3=pf
+            mv.visitVarInsn(Opcodes.ILOAD, 0);
+            mv.visitLookupSwitchInsn(fDef, keys, fl);
+            for (int k = 0; k < nf; k++) {
+                mv.visitLabel(fl[k]);
+                int s = accStates.get(k);
+                // Dedup cells → one block per distinct value.
+                Map<Integer, Label> cellLabels = new LinkedHashMap<>();
+                for (int M = 0; M < 64; M++) cellLabels.computeIfAbsent(byMask[s * 64 + M], x -> new Label());
+                Label[] ml = new Label[64];
+                for (int M = 0; M < 64; M++) ml[M] = cellLabels.get(byMask[s * 64 + M]);
+                Label defL = cellLabels.containsKey(-1)
+                        ? cellLabels.get(-1)
+                        : cellLabels.values().iterator().next();  // default unreachable
+                mv.visitVarInsn(Opcodes.ILOAD, 3);
+                mv.visitTableSwitchInsn(0, 63, defL, ml);
+                for (Map.Entry<Integer, Label> e : cellLabels.entrySet()) {
+                    mv.visitLabel(e.getValue());
+                    int cell = e.getKey();
+                    if (cell > 0) emitOpsInline(mv, op, cell, 1, 2);
+                    mv.visitInsn(cell < 0 ? Opcodes.ICONST_0 : Opcodes.ICONST_1);
+                    mv.visitInsn(Opcodes.IRETURN);
+                }
+            }
+            mv.visitLabel(fDef);
+        }
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 
     // ===== position flags (inline) =====
@@ -1720,25 +1815,7 @@ public final class TdfaAsmBackend {
     }
 
     // ===== register ops (inline, final — uses lastAcceptPos) =====
-
-    private static void emitOpsInlineFinal(MethodVisitor mv, int[] op, int off, int R, int LAP) {
-        int j = off;
-        while (op[j] != Tdfa.OP_END) {
-            int opc = op[j], dst = op[j + 1], src = op[j + 2];
-            if (opc == Tdfa.OP_SET_POS) {
-                mv.visitVarInsn(Opcodes.ALOAD, R); ic(mv, dst);
-                mv.visitVarInsn(Opcodes.ILOAD, LAP); mv.visitInsn(Opcodes.IASTORE);
-            } else if (opc == Tdfa.OP_SET_NIL) {
-                mv.visitVarInsn(Opcodes.ALOAD, R); ic(mv, dst);
-                mv.visitInsn(Opcodes.ICONST_M1); mv.visitInsn(Opcodes.IASTORE);
-            } else if (opc == Tdfa.OP_COPY) {
-                mv.visitVarInsn(Opcodes.ALOAD, R); ic(mv, dst);
-                mv.visitVarInsn(Opcodes.ALOAD, R); ic(mv, src);
-                mv.visitInsn(Opcodes.IALOAD); mv.visitInsn(Opcodes.IASTORE);
-            }
-            j += 3;
-        }
-    }
+    // (Retired: final ops are applied eagerly via genPhi; see there.)
 
     // ===== small helpers =====
 

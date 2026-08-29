@@ -165,6 +165,24 @@ public final class Tdfa {
     /** [state] -> finalOpsOff (offset into `ops`), 0 if none. Read only once per match. */
     final int[] stateFinalOpsOff;
     /**
+     * Position-aware final-ops selection: {@code [state * 64 + posFlags]} →
+     * φ ops offset into {@link #ops}, or {@code -1} when NO accept config is
+     * alive under that posFlags (accept suppressed). Null when every
+     * accepting state is mask-uniform ({@link #stateFinalOpsOff} alone is
+     * then authoritative — the overwhelmingly common case).
+     *
+     * <p>Why: a DFA state may merge several accept configs of different
+     * priority whose zero-width assertions differ. The highest-priority
+     * accept config is the tag-value winner only while its assertions hold;
+     * when the runtime position-flags kill it, priority falls to the next
+     * alive accept config, whose tag outcome may differ (e.g. the skipped
+     * branch of {@code (…)?} reports the group unset). A compile-time-static
+     * φ picks the wrong winner for some positions; this table selects per
+     * position, exactly as {@link #stopOnAcceptMask} does for the
+     * stop-or-extend decision.
+     */
+    final int[] stateFinalOpsByMask;
+    /**
      * Flat ranges: [lo0, hi0, target0, opsOff0, requiredMask0,
      *               lo1, hi1, target1, opsOff1, requiredMask1, ...].
      * {@code requiredMask} is the assertion mask that must hold at the source position
@@ -184,7 +202,7 @@ public final class Tdfa {
     public static final int OP_END     = 0;  // terminator for op blocks
 
     private Tdfa(int tagCount, int groupCount, java.util.Map<String, Integer> namedGroups, int registerCount, int finalRegBase, int startState, int stateCount,
-                 int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] ranges, int[] ops,
+                 int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] stateFinalOpsByMask, int[] ranges, int[] ops,
                  int[] entryHiPrefix,
                  int[] stateEntryMask, int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
                  boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset,
@@ -198,6 +216,7 @@ public final class Tdfa {
         this.stateMeta = stateMeta;
         this.stateBase = stateBase;
         this.stateFinalOpsOff = stateFinalOpsOff;
+        this.stateFinalOpsByMask = stateFinalOpsByMask;
         this.ranges = ranges;
         this.entryHiPrefix = entryHiPrefix;
         this.ops = ops;
@@ -217,7 +236,7 @@ public final class Tdfa {
         // Well-formedness gate: every consumer (VM runner, search-DFA memo,
         // ASM emitter, minimizer) trusts these arrays. Violations must surface
         // here, at construction — not as a wrong match 2,000 lines away.
-        validate(stateCount, stateMeta, stateBase, stateFinalOpsOff, ranges, entryHiPrefix, ops,
+        validate(stateCount, stateMeta, stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges, entryHiPrefix, ops,
                 stateEntryMask, stateAcceptMask, registerCount, finalRegBase, tagCount);
     }
 
@@ -236,6 +255,7 @@ public final class Tdfa {
      * </ul>
      */
     private static void validate(int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
+                                 int[] stateFinalOpsByMask,
                                  int[] ranges, int[] entryHiPrefix, int[] ops,
                                  int[] stateEntryMask, int[] stateAcceptMask,
                                  int registerCount, int finalRegBase, int tagCount) {
@@ -263,6 +283,18 @@ public final class Tdfa {
                             + " target " + target + " beyond state count " + stateCount);
                 if (opsOff != 0 && (opsOff < 0 || opsOff >= ops.length))
                     throw new IllegalStateException("tdfa: state " + s + " entry " + i + " ops offset out of bounds");
+                if (opsOff != 0 && tagCount > 0) {
+                    // Finals are final-ops-only: transition ops writing the
+                    // final block would let dead paths clobber accept-time
+                    // values (runners apply φ eagerly at accept-record).
+                    for (int j = opsOff; ops[j] != OP_END; j += 3) {
+                        int dst = ops[j + 1];
+                        if (dst >= finalRegBase && dst < finalRegBase + tagCount)
+                            throw new IllegalStateException("tdfa: state " + s + " entry " + i
+                                    + " transition op writes final register " + dst
+                                    + " — final block is final-ops-only");
+                    }
+                }
                 if ((mask & ~0x3F) != 0)
                     throw new IllegalStateException("tdfa: state " + s + " entry " + i + " unknown assertion-mask bits");
                 prefixHi = Math.max(prefixHi, hi);
@@ -275,6 +307,17 @@ public final class Tdfa {
             if (fops != 0 && (fops < 0 || fops >= ops.length))
                 throw new IllegalStateException("tdfa: state " + s + " final-ops offset out of bounds");
         }
+        if (stateFinalOpsByMask != null) {
+            if (stateFinalOpsByMask.length != stateCount * 64)
+                throw new IllegalStateException("tdfa: final-ops-by-mask table must be stateCount*64");
+            for (int i = 0; i < stateFinalOpsByMask.length; i++) {
+                int cell = stateFinalOpsByMask[i];
+                // -1 = no accept under that posFlags; otherwise an ops offset
+                // (0 = the reserved empty block: accept fires, no ops).
+                if (cell < -1 || cell >= ops.length)
+                    throw new IllegalStateException("tdfa: final-ops-by-mask cell out of bounds: " + cell);
+            }
+        }
         if (tagCount > 0 && (finalRegBase < 0 || finalRegBase + tagCount > registerCount))
             throw new IllegalStateException("tdfa: final-register block [" + finalRegBase
                     + "," + (finalRegBase + tagCount) + ") exceeds register file of " + registerCount);
@@ -282,6 +325,10 @@ public final class Tdfa {
 
     public boolean isAccept(int state) { return (stateMeta[state] & 1) != 0; }
     public int finalOpsOffset(int state) { return stateFinalOpsOff[state]; }
+
+    /** Position-aware final-ops table ({@code [state*64+posFlags]} → offset, -1 = accept
+     *  suppressed), or null when every accepting state is mask-uniform. */
+    public int[] stateFinalOpsByMask() { return stateFinalOpsByMask; }
     /** Range base index into {@link #ranges} for the given state. */
     public int rangeBase(int state) { return stateBase[state]; }
     /** Unpack range count from packed stateMeta. */
@@ -418,6 +465,10 @@ public final class Tdfa {
     private static final class Compiler {
         final Tnfa nfa;
         final int tags;
+        /** Compile work budget: every unbounded loop ticks it (fuzzer-found
+         *  nested-quantifier bombs churn fixpoints without growing output —
+         *  the state/kernel caps never trip). */
+        final WorkMeter meter = new WorkMeter(Long.getLong("tdfa.max.work", 1L << 32));
         int[][] epsOut;
         int[][] symOut;
         final int[] initialRegisters;
@@ -629,6 +680,7 @@ public final class Tdfa {
 
             int[] requiredMaskOut = new int[1];
             while (!work.isEmpty()) {
+                meter.tick();
                 int sid = work.pop();
                 if (processed.get(sid)) continue;
                 processed.set(sid);
@@ -821,6 +873,7 @@ public final class Tdfa {
             for (int s = 0; s < n; s++) {
                 if (accept.get(s)) {
                     builders.get(s).finalOpsArr = finalRegops(states.get(s));
+                    if (tags > 0) computeFinalVariants(builders.get(s), states.get(s));
                 }
             }
             // Determinize-lifetime data is dead from here: the stateIndex sigs,
@@ -840,7 +893,7 @@ public final class Tdfa {
             long tReg = System.nanoTime();
             if (REGOPT_ENABLED && tags > 0 && n > 1 && n <= REGOPT_MAX_STATES) {
                 io.github.jemmix.tdfa.regopt.Cfg cfg = buildCfg(builders, accept, states, tags, nfa.groupCount, nextReg);
-                io.github.jemmix.tdfa.regopt.Optimize.optimize(cfg);
+                io.github.jemmix.tdfa.regopt.Optimize.optimize(cfg, meter);
                 cfgWriteBack(cfg, builders);
                 finalRegBase = cfg.finalRegBase;
                 if (debug) System.err.println("[tdfa] regopt: regs " + cfg.initialRegCount + " -> " + cfg.regCount
@@ -875,10 +928,15 @@ public final class Tdfa {
                 if (accept.get(s)) {
                     int[] f = sb.finalOpsArr;  // populated in pre-pass above (possibly optimized by CFG)
                     if (f != null && f.length > 0) totalOpsSlots += f.length + 1;
+                    if (sb.finalOpsVariants != null)
+                        for (int[] v : sb.finalOpsVariants)
+                            if (v != null && v.length > 0) totalOpsSlots += v.length + 1;
                 }
             }
 
             // Second pass: allocate flat arrays and populate.
+            int[] stateFinalOpsByMask = null;
+            boolean[] finalVariantState = new boolean[n];
             int[] stateMeta = new int[n];
             int[] stateBase = new int[n];
             int[] stateFinalOpsOff = new int[n];
@@ -935,10 +993,48 @@ public final class Tdfa {
                 stateBase[s] = rangeBase;
                 stateMeta[s] = ((k & 0xFFFF) << 1) | (isAccept ? 1 : 0);
                 stateFinalOpsOff[s] = finalOpsOff;
+                if (sb.finalOpsVariants != null && isAccept) {
+                    finalVariantState[s] = true;
+                    if (stateFinalOpsByMask == null) stateFinalOpsByMask = new int[n * 64];
+                    int[] variantOff = new int[sb.finalOpsVariants.length];
+                    for (int v = 0; v < variantOff.length; v++) {
+                        int[] f = sb.finalOpsVariants[v];
+                        variantOff[v] = 0;  // empty ops: accept fires, no ops
+                        if (f != null && f.length > 0) {
+                            variantOff[v] = opsHead;
+                            for (int j = 0; j < f.length; j += 3) {
+                                flatOps[opsHead]     = f[j];
+                                flatOps[opsHead + 1] = f[j + 1];
+                                flatOps[opsHead + 2] = f[j + 2];
+                                globalMaxReg = Math.max(globalMaxReg, f[j + 1] + 1);
+                                if (f[j] == OP_COPY) globalMaxReg = Math.max(globalMaxReg, f[j + 2] + 1);
+                                opsHead += 3;
+                            }
+                            flatOps[opsHead++] = OP_END;
+                        }
+                    }
+                    for (int M = 0; M < 64; M++) {
+                        int v = sb.finalMaskVariant[M];
+                        stateFinalOpsByMask[s * 64 + M] = v < 0 ? -1 : variantOff[v];
+                    }
+                    if (stateFinalOpsOff[s] == 0 && variantOff.length > 0)
+                        stateFinalOpsOff[s] = variantOff[0];  // sane default for non-runtime consumers
+                }
             }
             // Builders (3.2 M Range objects on the bomb) are dead once the flat
             // arrays are populated; minimize/fallback only read the flat forms.
             builders = null; accept = null;
+            if (stateFinalOpsByMask != null) {
+                // The table is authoritative for every state when present:
+                // uniform accepting states point all 64 cells at their φ;
+                // non-accepting states stay all -1 (never read).
+                for (int s = 0; s < n; s++) {
+                    if (!finalVariantState[s]) {
+                        int off = (stateMeta[s] & 1) != 0 ? stateFinalOpsOff[s] : -1;
+                        java.util.Arrays.fill(stateFinalOpsByMask, s * 64, s * 64 + 64, off);
+                    }
+                }
+            }
 
             // === Minimize via register-aware Moore's algorithm (paper §6.2.2 Minimization) ===
             // Treat transitions on the same symbol but with different register ops as different
@@ -950,12 +1046,13 @@ public final class Tdfa {
             int stateCount = n;
             int[] minMeta = stateMeta, minBase = stateBase, minFinalOpsOff = stateFinalOpsOff,
                     minRanges = flatRanges, minEntryMask = stateEntryMask,
-                    minAcceptMask = stateAcceptMask, minStopMask = stateStopOnAcceptMask;
+                    minAcceptMask = stateAcceptMask, minStopMask = stateStopOnAcceptMask,
+                    minFinalOpsByMask = stateFinalOpsByMask;
             long tMin = System.nanoTime();
             if (MINIMIZE_ENABLED && n > 1 && n <= MINIMIZE_MAX_STATES) {
                 DfaMinimizer m = new DfaMinimizer(n, stateMeta, stateBase, stateFinalOpsOff,
                         flatRanges, flatOps, stateEntryMask, stateAcceptMask,
-                        stateStopOnAcceptMask, longest);
+                        stateStopOnAcceptMask, stateFinalOpsByMask, longest);
                 int[] partition = m.computePartition();
                 int newN = 0;
                 for (int p : partition) newN = Math.max(newN, p + 1);
@@ -985,6 +1082,7 @@ public final class Tdfa {
                     minAcceptMask = new int[newN];
                     minStopMask = new int[newN * 64];
                     minRanges = new int[newTotalRanges * 5];
+                    if (stateFinalOpsByMask != null) minFinalOpsByMask = new int[newN * 64];
                     if (longest) java.util.Arrays.fill(minStopMask, NEVER_STOP);
                     int minRangesHead = 0;
                     for (int g = 0; g < newN; g++) {
@@ -996,6 +1094,9 @@ public final class Tdfa {
                         minAcceptMask[g] = stateAcceptMask[r];
                         if (!longest) {
                             System.arraycopy(stateStopOnAcceptMask, r * 64, minStopMask, g * 64, 64);
+                        }
+                        if (minFinalOpsByMask != null) {
+                            System.arraycopy(stateFinalOpsByMask, r * 64, minFinalOpsByMask, g * 64, 64);
                         }
                         int base = stateBase[r];
                         int count = rangeCount(stateMeta[r]);
@@ -1029,7 +1130,7 @@ public final class Tdfa {
             int fallbackStates = 0;
             if (FALLBACK_ENABLED && tags > 0) {
                 FallbackOps.Result fr = FallbackOps.add(stateCount, minMeta, minBase, minRanges, flatOps,
-                        minFinalOpsOff, globalMaxReg);
+                        minFinalOpsOff, globalMaxReg, meter);
                 flatOps = fr.flatOps;
                 minRanges = fr.ranges;
                 stateIsFallback = fr.stateIsFallback;
@@ -1118,7 +1219,7 @@ public final class Tdfa {
                         + stateIsFallback.length + stateFallbackOpsOff.length) * 4L + stateCount) + "}"
                         + " stopMaskUniform=" + (perStateUniform ? (globalUniform ? "global" : "perState") : "no"));
                 return new Tdfa(tags, nfa.groupCount, nfa.namedGroups, globalMaxReg, finalRegBase, 0, stateCount,
-                        minMeta, minBase, minFinalOpsOff, minRanges, flatOps, minHiPrefix,
+                        minMeta, minBase, minFinalOpsOff, minFinalOpsByMask, minRanges, flatOps, minHiPrefix,
                         minEntryMask, minAcceptMask, longest, finalStop, uniformStop, nfa.multiline,
                         nfa.unicodeWordBoundary, nfa.wordRanges,
                         hasFixed(nfa.fixedBase) ? nfa.fixedBase : null,
@@ -1154,6 +1255,9 @@ public final class Tdfa {
             int[][] rangeBlockIds = new int[n][];
             List<Integer>[] basicLeaving = new List[n];
             int[] finalBlockAt = new int[n];
+            @SuppressWarnings("unchecked")
+            List<Integer>[] finalVariantBlocks = new List[n];
+            for (int s = 0; s < n; s++) finalVariantBlocks[s] = new ArrayList<>();
             java.util.Arrays.fill(finalBlockAt, -1);
             for (int s = 0; s < n; s++) basicLeaving[s] = new ArrayList<>();
             for (int s = 0; s < n; s++) {
@@ -1169,9 +1273,21 @@ public final class Tdfa {
                     basicLeaving[s].add(rangeBlockIds[s][r]);
                 }
                 if (accept.get(s)) {
-                    io.github.jemmix.tdfa.regopt.Cfg.Block fb = cfg.newBlock(io.github.jemmix.tdfa.regopt.Cfg.BLOCK_FINAL, s, -1);
-                    if (sb.finalOpsArr != null) decodeOps(sb.finalOpsArr, fb.ops);
-                    finalBlockAt[s] = cfg.blocks.size() - 1;
+                    if (sb.finalOpsVariants != null) {
+                        // Position-aware state: one FINAL block per φ variant
+                        // (rangeIndex = variant index). No default block — the
+                        // runtime selects per posFlags and never uses
+                        // stateFinalOpsOff for this state.
+                        for (int v = 0; v < sb.finalOpsVariants.length; v++) {
+                            io.github.jemmix.tdfa.regopt.Cfg.Block vb = cfg.newBlock(io.github.jemmix.tdfa.regopt.Cfg.BLOCK_FINAL, s, v);
+                            if (sb.finalOpsVariants[v] != null) decodeOps(sb.finalOpsVariants[v], vb.ops);
+                            finalVariantBlocks[s].add(cfg.blocks.size() - 1);
+                        }
+                    } else {
+                        io.github.jemmix.tdfa.regopt.Cfg.Block fb = cfg.newBlock(io.github.jemmix.tdfa.regopt.Cfg.BLOCK_FINAL, s, -1);
+                        if (sb.finalOpsArr != null) decodeOps(sb.finalOpsArr, fb.ops);
+                        finalBlockAt[s] = cfg.blocks.size() - 1;
+                    }
                 }
             }
             // Second pass: successor arcs. BASIC block at state s with range.target s' ->
@@ -1187,6 +1303,7 @@ public final class Tdfa {
                     int t = frontier.remove(frontier.size() - 1);
                     blk.successors.addAll(basicLeaving[t]);
                     if (finalBlockAt[t] != -1) blk.successors.add(finalBlockAt[t]);
+                    blk.successors.addAll(finalVariantBlocks[t]);
                     DfaStateBuilder tb = builders.get(t);
                     for (int r = 0; r < tb.ranges.size(); r++) {
                         Range tr = tb.ranges.get(r);
@@ -1223,7 +1340,8 @@ public final class Tdfa {
                 if (blk.kind == io.github.jemmix.tdfa.regopt.Cfg.BLOCK_BASIC) {
                     sb.ranges.get(blk.rangeIndex).ops = encoded;
                 } else if (blk.kind == io.github.jemmix.tdfa.regopt.Cfg.BLOCK_FINAL) {
-                    sb.finalOpsArr = encoded;
+                    if (blk.rangeIndex >= 0) sb.finalOpsVariants[blk.rangeIndex] = encoded;
+                    else sb.finalOpsArr = encoded;
                 }
             }
         }
@@ -1300,6 +1418,7 @@ public final class Tdfa {
                 stack.push(c);
             }
             while (!stack.isEmpty()) {
+                meter.tick();
                 Config c = stack.pop();
                 long key = (((long) c.state) << 32) | (c.emptyMask & 0xFFFFFFFFL);
                 int slot = (int) (mix(key) & visitedMask);
@@ -1607,6 +1726,7 @@ public final class Tdfa {
          * {@code nextReg} is bumped globally so registers are unique across states.
          */
         int[] transitionRegops(List<Config> configs, int sourceStateId) {
+            meter.tick();
             // Tagless patterns (count-model usage, the giant bounded-repeat DFAs):
             // no registers exist, so transitions carry no ops. Skipping the
             // vmap/emitted allocations here removes millions of empty HashMaps
@@ -1646,21 +1766,81 @@ public final class Tdfa {
 
         int[] finalRegops(List<Config> configs) {
             if (tags == 0) return EMPTY;
-            List<int[]> opList = new ArrayList<>();
             for (Config c : configs) {
-                if (c.state != nfa.accept) continue;
-                for (int t = 1; t <= tags; t++) {
-                    int[] hist = history(c.l, t);
-                    int dst = finalRegisters[t - 1];
-                    if (hist == null || hist.length == 0) {
-                        opList.add(new int[]{OP_COPY, dst, c.regs[t - 1]});
-                    } else {
-                        int last = hist[hist.length - 1];
-                        if (last == TAG_POS) opList.add(new int[]{OP_SET_POS, dst, 0});
-                        else opList.add(new int[]{OP_SET_NIL, dst, 0});
-                    }
+                if (c.state == nfa.accept) return finalRegopsOf(c);
+            }
+            return EMPTY;
+        }
+
+        /**
+         * Position-aware φ variants for one accepting state. A DFA state may
+         * merge several accept configs of different priority whose zero-width
+         * assertions differ; the tag-value winner is the highest-priority
+         * accept config ALIVE under the runtime posFlags. When the winner is
+         * the same config for all 64 masks the state is uniform (the common
+         * case — the first accept config is unconditional) and nothing is
+         * stored. Otherwise the per-mask winners' op lists (deduped) land in
+         * {@code finalOpsVariants} with {@code finalMaskVariant} as the
+         * [64] selector; materialization turns them into
+         * {@code stateFinalOpsByMask}.
+         */
+        void computeFinalVariants(DfaStateBuilder sb, List<Config> cfgs) {
+            int[] winner = new int[64];
+            boolean uniform = true;
+            for (int M = 0; M < 64; M++) {
+                int w = -1;
+                for (int i = 0; i < cfgs.size(); i++) {
+                    Config c = cfgs.get(i);
+                    if (c.state != nfa.accept) continue;
+                    if ((c.emptyMask & ~M) == 0) { w = i; break; }
                 }
-                break;
+                winner[M] = w;
+                if (M > 0 && w != winner[0]) uniform = false;
+            }
+            if (Boolean.getBoolean("tdfa.debug.finals")) {
+                for (int i = 0; i < cfgs.size(); i++) {
+                    Config c = cfgs.get(i);
+                    if (c.state != nfa.accept) continue;
+                    StringBuilder h = new StringBuilder("cfg[" + i + "] mask=" + c.emptyMask + " l:");
+                    for (int t = 1; t <= tags; t++) {
+                        int[] hist = history(c.l, t);
+                        h.append(" t").append(t).append(hist == null ? "Ø" : (hist[hist.length - 1] == TAG_POS ? "P" : "N"));
+                    }
+                    System.err.println("  [finals] " + h + "  winner(M63)=" + winner[63] + " winner(M0)=" + winner[0]);
+                }
+            }
+            if (uniform) return;
+            List<int[]> variants = new ArrayList<>();
+            int[] maskVariant = new int[64];
+            for (int M = 0; M < 64; M++) {
+                int w = winner[M];
+                if (w < 0) { maskVariant[M] = -1; continue; }
+                int[] opsArr = finalRegopsOf(cfgs.get(w));
+                int v = -1;
+                for (int k = 0; k < variants.size(); k++)
+                    if (Arrays.equals(variants.get(k), opsArr)) { v = k; break; }
+                if (v < 0) { variants.add(opsArr); v = variants.size() - 1; }
+                maskVariant[M] = v;
+            }
+            sb.finalOpsVariants = variants.toArray(new int[0][]);
+            sb.finalMaskVariant = maskVariant;
+        }
+
+        /** φ ops for ONE accept config: per tag, COPY its working register, or
+         *  SET_POS/SET_NIL from its tag history. */
+        int[] finalRegopsOf(Config c) {
+            if (tags == 0) return EMPTY;
+            List<int[]> opList = new ArrayList<>();
+            for (int t = 1; t <= tags; t++) {
+                int[] hist = history(c.l, t);
+                int dst = finalRegisters[t - 1];
+                if (hist == null || hist.length == 0) {
+                    opList.add(new int[]{OP_COPY, dst, c.regs[t - 1]});
+                } else {
+                    int last = hist[hist.length - 1];
+                    if (last == TAG_POS) opList.add(new int[]{OP_SET_POS, dst, 0});
+                    else opList.add(new int[]{OP_SET_NIL, dst, 0});
+                }
             }
             return flatten(opList);
         }
@@ -1707,6 +1887,7 @@ public final class Tdfa {
 
         /** Sort configs by state (counting sort, stable) into {@link #keyBuf}; return count. */
         private int sortConfigs(List<Config> configs) {
+            meter.tick();
             int n = configs.size();
             int maxState = 0;
             for (Config c : configs) maxState = Math.max(maxState, c.state);
@@ -1751,6 +1932,7 @@ public final class Tdfa {
         }
 
         AddResult addState(List<Config> configs, int[] ops, List<Config> seed) {
+            meter.tick();
             fillKeySig(configs);
             int[] candidates = stateIndex.get(probe);
             if (candidates != null) {
@@ -1902,6 +2084,7 @@ public final class Tdfa {
         }
 
         int[] history(int[] seq, int t) {
+            meter.tick();
             if (seq == null || seq.length == 0) return null;
             int count = 0;
             for (int v : seq) if (Math.abs(v) == t) count++;
@@ -2002,6 +2185,10 @@ public final class Tdfa {
         final int id;
         final List<Range> ranges = new ArrayList<>();
         int[] finalOpsArr;  // populated during materialization
+        /** Position-aware φ variants (deduped op lists); null = mask-uniform. */
+        int[][] finalOpsVariants;
+        /** [64] posFlags → variant index, or -1 (no accept config alive). */
+        int[] finalMaskVariant;
         DfaStateBuilder(int id) { this.id = id; }
         void addRange(int lo, int hi, int target, int[] ops, int requiredMask) {
             ranges.add(new Range(lo, hi, target, ops, requiredMask));
@@ -2077,6 +2264,7 @@ public final class Tdfa {
         final int n;
         final int[] stateMeta, stateBase, stateFinalOpsOff, ranges, ops;
         final int[] stateEntryMask, stateAcceptMask, stateStopOnAcceptMask;
+        final int[] stateFinalOpsByMask;
         final boolean longest;
         /** Op-sequence interning: maps the byte content of an OP_END-terminated block to a unique int id. */
         final Map<OpSeq, Integer> opSeqIds = new HashMap<>();
@@ -2092,7 +2280,7 @@ public final class Tdfa {
 
         DfaMinimizer(int n, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
                      int[] ranges, int[] ops, int[] stateEntryMask, int[] stateAcceptMask,
-                     int[] stateStopOnAcceptMask, boolean longest) {
+                     int[] stateStopOnAcceptMask, int[] stateFinalOpsByMask, boolean longest) {
             this.n = n;
             this.stateMeta = stateMeta;
             this.stateBase = stateBase;
@@ -2102,6 +2290,7 @@ public final class Tdfa {
             this.stateEntryMask = stateEntryMask;
             this.stateAcceptMask = stateAcceptMask;
             this.stateStopOnAcceptMask = stateStopOnAcceptMask;
+            this.stateFinalOpsByMask = stateFinalOpsByMask;
             this.longest = longest;
             this.opsIdAt = new int[ops.length];
             java.util.Arrays.fill(this.opsIdAt, -1);
@@ -2232,7 +2421,7 @@ public final class Tdfa {
 
         /** Per-state attribute signature: accept bit, final-ops id, masks. */
         SigKey attrSig(int s) {
-            int extra = !longest ? 1 : 0;
+            int extra = (!longest ? 1 : 0) + (stateFinalOpsByMask != null ? 1 : 0);
             int[] sig = new int[5 + extra];
             fillAttrs(sig, s, 0);
             return new SigKey(sig);
@@ -2251,12 +2440,20 @@ public final class Tdfa {
                 for (int j = 0; j < 64; j++) h = h * 31 + stateStopOnAcceptMask[baseSM + j];
                 sig[i++] = h;
             }
+            if (stateFinalOpsByMask != null) {
+                // Variant rows: states with different per-mask φ selections
+                // (or different accept suppression) must never merge.
+                int h = 0;
+                int baseFM = s * 64;
+                for (int j = 0; j < 64; j++) h = h * 31 + stateFinalOpsByMask[baseFM + j];
+                sig[i++] = h;
+            }
             return i;
         }
 
         /** Transition signature, normalized on global breakpoints when possible. */
         SigKey transSig(int s, int[] partition) {
-            int extra = !longest ? 1 : 0;
+            int extra = (!longest ? 1 : 0) + (stateFinalOpsByMask != null ? 1 : 0);
             int base = stateBase[s];
             int count = rangeCount(stateMeta[s]);
             int[] sig;

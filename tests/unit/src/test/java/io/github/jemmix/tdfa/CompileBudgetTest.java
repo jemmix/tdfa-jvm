@@ -46,6 +46,28 @@ class CompileBudgetTest {
         }
     }
 
+    /**
+     * The WORK budget (WorkMeter): nested-quantifier bombs whose closure
+     * churns fixpoints without materializing states never trip the state/kernel
+     * caps (fuzzer-found; e.g. the tryMap family). A tight budget must reject
+     * them with the same clean error shape.
+     */
+    @Test
+    void workBudgetRejectsClosureSpinners() {
+        String spinner = "(kq)(?U:(\\n*?n)mZ)(?<n0>(?U:( )q)(?:(?:\\W\\z)(\\#.+\\~|\\n{1,1}éu(?<n2>s\\#)\\.)*?){4,}\\t)";
+        System.setProperty("tdfa.max.work", "10000000");
+        try {
+            long t0 = System.nanoTime();
+            assertThatCode(() -> Pattern.compile(spinner))
+                    .isInstanceOf(PatternSyntaxException.class)
+                    .hasMessageContaining("pattern too large")
+                    .hasMessageContaining("tdfa.max.work");
+            assertThat((System.nanoTime() - t0) / 1_000_000).as("wall to work-budget rejection").isLessThan(30_000);
+        } finally {
+            System.clearProperty("tdfa.max.work");
+        }
+    }
+
     @Test
     void legitPatternsCompileUnderDefaultBudget() {
         // Largest legit in-corpus shapes: dictionary-style literal alternation

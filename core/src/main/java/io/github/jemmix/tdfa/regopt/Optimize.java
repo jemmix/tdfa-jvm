@@ -30,6 +30,11 @@ public final class Optimize {
 
     /** Run the full pipeline on {@code cfg} (in place). */
     public static void optimize(Cfg cfg) {
+        optimize(cfg, null);
+    }
+
+    /** Full pipeline with a compile work budget (see tdfa.WorkMeter). */
+    public static void optimize(Cfg cfg, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
         // Stage 1: compaction (renumber survivors into a contiguous range).
         int[] vmap = compaction(cfg);
         rename(cfg, vmap);
@@ -41,7 +46,7 @@ public final class Optimize {
         // coalescing opportunities revealed by the previous renaming.
         // Normalization runs INSIDE the loop (paper Figure 7: renaming; normalization).
         for (int iter = 0; iter < 2; iter++) {
-            boolean[][] L = livenessAnalysis(cfg);
+            boolean[][] L = livenessAnalysis(cfg, meter);
             deadCodeElimination(cfg, L);
             boolean[][] I = interferenceAnalysis(cfg, L);
             int[] V = registerAllocation(cfg, I);
@@ -153,7 +158,7 @@ public final class Optimize {
      * <p>Fallback-block handling (last 4 lines of the paper's pseudocode) is
      * deferred until M3 (we have no fallback blocks yet).
      */
-    static boolean[][] livenessAnalysis(Cfg cfg) {
+    static boolean[][] livenessAnalysis(Cfg cfg, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
         int nb = cfg.blocks.size();
         int nr = cfg.regCount;
         boolean[][] L = new boolean[nb][nr];
@@ -170,6 +175,7 @@ public final class Optimize {
         int[] postOrder = computePostOrder(cfg);
         // Fixpoint.
         while (true) {
+            if (meter != null) meter.tick();
             boolean fixed = true;
             for (int bi : postOrder) {
                 Cfg.Block b = cfg.blocks.get(bi);
