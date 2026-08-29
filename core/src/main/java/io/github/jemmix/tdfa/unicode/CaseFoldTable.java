@@ -54,7 +54,7 @@ public final class CaseFoldTable {
 
     private static Map<Integer, int[]> buildCache() {
         Map<Integer, ArrayList<Integer>> groups = new HashMap<>();
-        for (int cp = 0; cp <= 0xFFFF; cp++) {
+        for (int cp = 0; cp <= 0x10FFFF; cp++) {
             int fk = foldKey(cp);
             groups.computeIfAbsent(fk, k -> new ArrayList<>()).add(cp);
         }

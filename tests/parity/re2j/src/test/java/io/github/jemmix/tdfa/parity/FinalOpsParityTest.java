@@ -126,6 +126,54 @@ class FinalOpsParityTest {
         assertSameGroups(".+\\b\\D.", "\u03a99\ud800\udc00x", factory);
     }
 
+    // ---- empty-iteration cut (nullable loop bodies) ----
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void emptyIterationCut(RegexEngineFactory factory) {
+        // nullable body + assertions: the empty iteration wins [0,0) and the
+        // loop exits — later non-empty iterations must NOT outrank it
+        assertSameGroups("(?:.*?9{0,}\\b){1,}", "99x", factory);
+        assertSameGroups("(?:.*?9*\\b){1,}", "99x", factory);
+        // multi-branch nullable body: BOTH branch-mask variants of the loop
+        // junction survive the subsumption cut, the empty re-entry does not
+        assertSameGroups("(?:^|$)+$", "a", factory);
+        assertSameGroups("(?:(?:^)|(?:$))+$", "ab", factory);
+        assertSameGroups("(?:\\b)+$", "a b", factory);
+        assertSameGroups("(?:a{0,}){1,}b", "ab", factory);
+    }
+
+    // ---- full Unicode simple folding under plain (?i) (re2j semantics) ----
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void fullSimpleFoldingUnderPlainI(RegexEngineFactory factory) {
+        // literals: s ↔ S ↔ ſ (U+017F), k ↔ K (U+212A KELVIN SIGN)
+        assertSameGroups("(?i)s", "\u017f", factory);
+        assertSameGroups("(?i:S)", "a\u017fb", factory);
+        assertSameGroups("(?i:ſ)", "s", factory);
+        assertSameGroups("(?i)k", "\u212a", factory);
+        // explicit classes, incl. negated (fold joins before negation)
+        assertSameGroups("(?i)[s]", "\u017f", factory);
+        assertSameGroups("(?i)[a-z]", "\u017f", factory);
+        assertSameGroups("(?i)[a-z]", "\u212a", factory);
+        assertSameGroups("(?i)[^s]", "\u017f", factory);
+        assertSameGroups("(?i)[^S]", "\u017f", factory);
+        // word shorthands fold; \W complements the folded set; \b stays unfolded
+        assertSameGroups("(?i)\\w+", "a\u017fb", factory);
+        assertSameGroups("(?i)\\w", "\u212a", factory);
+        assertSameGroups("(?i)\\W", "\u017f", factory);
+        assertSameGroups("(?i:\\W+)", "a\u017fb", factory);
+        assertSameGroups("(?i)[\\W]", "\u017f", factory);
+        assertSameGroups("(?i)[^\\w]", "\u017f", factory);
+        assertSameGroups("(?i)s\\b", "a\u017f", factory);
+        // digits/spaces have no fold orbits — (?i) is a no-op there
+        assertSameGroups("(?i)\\d", "9", factory);
+        assertSameGroups("(?i)\\s", " ", factory);
+        // supplementary letters fold too (Deseret)
+        assertSameGroups("(?i)\ud801\udc21", "\ud801\udc01", factory);
+    }
+
     // ---- group-scoped (?m:...) anchor flavors ----
 
     @ParameterizedTest

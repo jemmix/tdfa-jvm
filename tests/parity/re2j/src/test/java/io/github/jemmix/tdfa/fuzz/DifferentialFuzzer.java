@@ -308,8 +308,8 @@ public final class DifferentialFuzzer {
                 if (ci) {
                     // (?i) ranges: ASCII-narrow only. re2j's parser folds every
                     // cp in the range; wide ranges are an ORACLE hang (44 of the
-                    // first ~50 soak hangs), and the folded behavior beyond
-                    // ASCII is a documented divergence anyway.
+                    // first ~50 soak hangs). We fold full-Unicode now too, but
+                    // the oracle-side limitation keeps this guard.
                     ciRangeAvoided++;
                     lo = POOL_ASCII[rnd.nextInt(POOL_ASCII.length)];
                     hi = POOL_ASCII[rnd.nextInt(POOL_ASCII.length)];
@@ -337,26 +337,22 @@ public final class DifferentialFuzzer {
     /** Class member/range endpoint. Under (?i): supplementary and lone
      *  surrogates avoided (tdfa lacks a supplementary fold table; re2j folds). */
     static int pickClassCp(SplittableRandom rnd, boolean ci) {
-        int roll = rnd.nextInt(8);
-        if (ci && (roll == 4 || roll == 5)) ciSuppAvoided++;
-        return switch (roll) {
+        return switch (rnd.nextInt(8)) {
             case 0, 1, 2 -> POOL_ASCII[rnd.nextInt(POOL_ASCII.length)];
             case 3 -> POOL_UNICODE[rnd.nextInt(POOL_UNICODE.length)];
-            case 4 -> ci ? 'a' : POOL_SUPP[rnd.nextInt(POOL_SUPP.length)];
-            case 5 -> ci ? 'b' : POOL_LONE[rnd.nextInt(POOL_LONE.length)];
+            case 4 -> POOL_SUPP[rnd.nextInt(POOL_SUPP.length)];
+            case 5 -> POOL_LONE[rnd.nextInt(POOL_LONE.length)];
             default -> 'a' + rnd.nextInt(26);
         };
     }
 
     /** Literal for pattern context, specials escaped. */
     static String patternLiteral(SplittableRandom rnd, boolean ci) {
-        int roll = rnd.nextInt(8);
-        if (ci && (roll == 5 || roll == 6)) ciSuppAvoided++;
-        int cp = switch (roll) {
+        int cp = switch (rnd.nextInt(8)) {
             case 0, 1, 2, 3 -> POOL_ASCII[rnd.nextInt(POOL_ASCII.length)];
             case 4 -> POOL_UNICODE[rnd.nextInt(POOL_UNICODE.length)];
-            case 5 -> ci ? 'c' : POOL_SUPP[rnd.nextInt(POOL_SUPP.length)];
-            case 6 -> ci ? 'e' : POOL_LONE[rnd.nextInt(POOL_LONE.length)];
+            case 5 -> POOL_SUPP[rnd.nextInt(POOL_SUPP.length)];
+            case 6 -> POOL_LONE[rnd.nextInt(POOL_LONE.length)];
             default -> 'a' + rnd.nextInt(26);
         };
         StringBuilder sb = new StringBuilder();
@@ -455,21 +451,10 @@ public final class DifferentialFuzzer {
                 if (c >= 0xDC00 && c <= 0xDFFF && o.asm.equals(o.vm) && !o.asm.equals(o.oracle))
                     return "re2j matches lone-low pattern at/into pair interior; JDK agrees with us";
             }
-            if (p.contains("(?i") && (!o.oracle.equals(o.asm) || !o.oracle.equals(o.vm))) {
-                // The fold cp may appear in EITHER side's match text: re2j
-                // folds full-Unicode under plain (?i) (match EXTENDS over ſ),
-                // we fold ASCII-only (ſ then belongs to \W, changing extents)
-                // — either direction is the documented divergence.
-                for (String side : new String[]{o.oracle, o.asm}) {
-                    String m = side.startsWith("true ") ? side.substring(5) : "";
-                    for (int i = 0; i < m.length(); ) {
-                        int cp = m.codePointAt(i);
-                        if (cp > 0x7F && io.github.jemmix.tdfa.unicode.CaseFoldTable.foldRanges(cp) != null)
-                            return "re2j plain-?i applies full Unicode simple folding (ſ etc.); we fold ASCII-only without (?u)";
-                        i += Character.charCount(cp);
-                    }
-                }
-            }
+            // NOTE: the former plain-(?i) full-folding entry is GONE — we now
+            // fold full Unicode simple folding under plain (?i) exactly like
+            // re2j (literals, explicit classes, and word shorthands; verified
+            // against re2j 1.8), so any fold divergence is a real bug.
             return null;
         }
 

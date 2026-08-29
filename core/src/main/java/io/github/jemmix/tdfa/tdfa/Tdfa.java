@@ -471,6 +471,10 @@ public final class Tdfa {
         final WorkMeter meter = new WorkMeter(Long.getLong("tdfa.max.work", 1L << 32));
         int[][] epsOut;
         int[][] symOut;
+        /** Per-state popped-mask bitsets for the closure's subsumption cut (see epsilonClosure). */
+        long[] maskBitset;
+        int[] maskEpoch;
+        int epochCtr;
         final int[] initialRegisters;
         final int[] finalRegisters;
         /** Equivalence-class breakpoints across the BMP. */
@@ -552,6 +556,8 @@ public final class Tdfa {
             this.tags = nfa.tagCount;
             this.epsOut = sortedOutgoing(nfa.epsFrom, nfa.epsPri);
             this.symOut = plainOutgoing(nfa.symFrom);
+            this.maskBitset = new long[nfa.stateCount];
+            this.maskEpoch = new int[nfa.stateCount];
             this.initialRegisters = new int[tags];
             this.finalRegisters = new int[tags];
             for (int t = 0; t < tags; t++) initialRegisters[t] = t;
@@ -1472,6 +1478,14 @@ public final class Tdfa {
          * higher-priority paths). This prevents the DFA from having transitions
          * that follow lower-priority alternatives past an accept.
          */
+        /** True iff {@code popped} (bitset of popped mask values, bit m = mask m) has any submask of {@code m} set. */
+        private static boolean submaskPopped(long popped, int m) {
+            for (int sub = m; sub != 0; sub = (sub - 1) & m) {
+                if ((popped & (1L << sub)) != 0) return true;
+            }
+            return (popped & 1L) != 0;   // the empty submask (mask 0) closes the loop
+        }
+
         List<Config> epsilonClosure(List<Config> seed) {
             List<Config> out = new ArrayList<>(seed.size() * 2);
             // For deterministic exploration we visit (state, mask) pairs — same NFA state
@@ -1499,6 +1513,8 @@ public final class Tdfa {
                 if (containsKey(visitedSM, visitedMask, key)) continue;
                 stack.push(c);
             }
+            if (epochCtr == Integer.MAX_VALUE) { java.util.Arrays.fill(maskEpoch, 0); epochCtr = 1; }
+            final int epoch = ++epochCtr;
             while (!stack.isEmpty()) {
                 meter.tick();
                 Config c = stack.pop();
@@ -1511,6 +1527,8 @@ public final class Tdfa {
                 if (slot < 0) continue;
                 visitedSM[slot] = key;
                 if (++visitedCount * 2 > visitedMask) { visitedSM = growVisited(visitedSM); visitedMask = visitedSM.length - 1; }
+                if (maskEpoch[c.state] != epoch) { maskEpoch[c.state] = epoch; maskBitset[c.state] = 0L; }
+                maskBitset[c.state] |= 1L << c.emptyMask;
                 out.add(c);
                 // Push children in REVERSE priority order. Same contract as the seeds:
                 // the pre-push check skips only already-POPPED keys; co-resident
@@ -1520,8 +1538,26 @@ public final class Tdfa {
                 for (int i = eps.length - 1; i >= 0; i--) {
                     int idx = eps[i];
                     int to = nfa.epsTo[idx];
+                    // Subsumption cut — the exact form of the empty-iteration cut.
+                    // A re-arrival (to, newMask) is SUBSUMED when an earlier,
+                    // higher-priority variant (to, m') with m' ⊆ newMask was already
+                    // popped: at every position where the re-arrival's path is alive
+                    // (newMask ⊆ posFlags), the earlier variant is alive too, and from
+                    // the same NFA state produces the same continuations — re2j's pike
+                    // VM realizes this by per-position pc dedup (its threads carry no
+                    // deferred masks, so the FIRST alive thread to reach a pc wins).
+                    // For nullable loop bodies the re-entry around the ε-cycle carries
+                    // the cycle's accumulated assertion bits — a superset of the entry
+                    // variant's — so empty iterations die here ((?:.*?9{0,}\\b){1,} on
+                    // "99x" matches [0,0) like the refs, not [0,3)). Incomparable-mask
+                    // re-arrivals survive ((?:^|$)+ needs both the BEGIN and END
+                    // junction variants); that is the difference from a blanket
+                    // state-only dedup, and it is what the position-aware tables
+                    // downstream rely on. Masks are 6 bits: exact submask check over a
+                    // per-state popped-mask bitset.
                     int edgeEmpty = nfa.epsEmptyMask[idx];
                     int newMask = c.emptyMask | edgeEmpty;
+                    if (maskEpoch[to] == epoch && submaskPopped(maskBitset[to], newMask)) continue;
                     long childKey = (((long) to) << 32) | (newMask & 0xFFFFFFFFL);
                     if (containsKey(visitedSM, visitedMask, childKey)) continue;
                     int tag = nfa.epsTag[idx];

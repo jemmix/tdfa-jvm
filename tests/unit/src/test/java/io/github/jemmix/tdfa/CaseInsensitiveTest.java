@@ -97,10 +97,11 @@ class CaseInsensitiveTest {
         assertThat(match("(?iu)\u03A9", "\u03C9", f)).as("(?iu)Ω → ω").isNotNull();
     }
 
-    /** Without (?u), folding is ASCII-only: (?i)s must NOT match ſ. */
+    /** Plain (?i) folds FULL Unicode simple folding (re2j parity — verified
+     *  against re2j 1.8: (?i)s matches ſ, (?i)k matches K). */
     @ParameterizedTest @MethodSource("factories")
-    void asciiFoldDoesNotMatchLongS(RegexEngineFactory f) {
-        assertThat(match("(?i)s", "\u017F", f)).isNull();
+    void plainIFoldMatchesLongS(RegexEngineFactory f) {
+        assertThat(match("(?i)s", "\u017F", f)).as("(?i)s → ſ").isNotNull();
     }
 
     @ParameterizedTest @MethodSource("factories")

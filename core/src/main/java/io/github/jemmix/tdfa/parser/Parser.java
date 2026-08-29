@@ -144,15 +144,12 @@ public final class Parser {
      * table yet and stay unexpanded.
      */
     private Ast caseFoldChar(int cp) {
-        if (cp > 0xFFFF) return null;
-        char c = (char) cp;
-        if (unicodeShorthand) {
-            int[] ranges = CaseFoldTable.foldRanges(c);
-            if (ranges != null) return new CharClass(ranges, false);
-            return null;
-        }
-        char lo = Character.toLowerCase(c);
-        char hi = Character.toUpperCase(c);
+        // re2j folds FULL Unicode simple folding under plain (?i) — no (?u)
+        // needed (verified against re2j 1.8: (?i)s matches ſ, (?i)k matches K).
+        int[] ranges = CaseFoldTable.foldRanges(cp);
+        if (ranges != null) return new CharClass(ranges, false);
+        int lo = Character.toLowerCase(cp);
+        int hi = Character.toUpperCase(cp);
         if (lo != hi) return new CharClass(new int[]{lo, lo, hi, hi}, false);
         return null;
     }
@@ -333,34 +330,40 @@ public final class Parser {
         expect(']');
         int[] arr = ranges.stream().mapToInt(Integer::intValue).toArray();
         if (caseInsensitive) {
-            // Add the case-folded counterparts of every member of every range.
-            // Under (?u) this is full Unicode simple folding via CaseFoldTable
-            // (s ↔ ſ, k ↔ K, Ω ↔ ω, ...; ASCII pairs a ↔ A come through the same
-            // table). Without (?u), folding is ASCII-only (re2j semantics): for
-            // any sub-range overlapping A-Z add the lowercase equivalent, and
-            // for any overlapping a-z add the uppercase equivalent. Fold members
-            // are added to the POSITIVE set before CharClass negation applies,
-            // so negated classes exclude fold equivalents automatically
-            // ((?iu)[^s] doesn't match ſ).
-            List<Integer> exp = new ArrayList<>();
-            for (int i = 0; i < arr.length; i += 2) {
-                int lo = arr[i], hi = arr[i + 1];
-                exp.add(lo); exp.add(hi);
-                if (unicodeShorthand) {
-                    for (int cp = Math.max(lo, 0); cp <= hi && cp <= 0xFFFF; cp++) {
-                        int[] fr = CaseFoldTable.foldRanges(cp);
-                        if (fr != null) for (int v : fr) exp.add(v);
-                    }
-                } else {
-                    int aStart = Math.max(lo, 'A'), aEnd = Math.min(hi, 'Z');
-                    if (aStart <= aEnd) { exp.add(aStart + 32); exp.add(aEnd + 32); }  // A-Z → a-z
-                    int laStart = Math.max(lo, 'a'), laEnd = Math.min(hi, 'z');
-                    if (laStart <= laEnd) { exp.add(laStart - 32); exp.add(laEnd - 32); }  // a-z → A-Z
-                }
-            }
-            arr = exp.stream().mapToInt(Integer::intValue).toArray();
+            // Add the case-folded counterparts of every member of every range:
+            // full Unicode simple folding under plain (?i) — re2j semantics
+            // (verified: (?i)[a-z] matches ſ and K; (?i)[^s] does NOT match ſ).
+            // Fold members join the POSITIVE set before CharClass negation, so
+            // negated classes exclude fold equivalents automatically. In-class
+            // shorthands (\w inside [...]) are ordinary ranges here and fold
+            // through the same path.
+            arr = foldExpandRanges(arr);
         }
         return new CharClass(arr, negated);
+    }
+
+    /** Union of {@code ranges} with every member's full simple-fold orbit (re2j's foldCase).
+     *  Output is sorted by lo with overlapping ranges merged — complementRanges
+     *  and downstream range walkers rely on that. */
+    private int[] foldExpandRanges(int[] arr) {
+        List<int[]> ivs = new ArrayList<>(arr.length);
+        for (int i = 0; i < arr.length; i += 2) {
+            int lo = arr[i], hi = arr[i + 1];
+            ivs.add(new int[]{lo, hi});
+            for (int cp = lo; cp <= hi; cp++) {
+                int[] fr = CaseFoldTable.foldRanges(cp);
+                if (fr != null) for (int v : fr) ivs.add(new int[]{v, v});
+            }
+        }
+        ivs.sort((a, b) -> Integer.compare(a[0], b[0]));
+        List<Integer> merged = new ArrayList<>(ivs.size() * 2);
+        int lo = ivs.get(0)[0], hi = ivs.get(0)[1];
+        for (int[] iv : ivs.subList(1, ivs.size())) {
+            if (iv[0] <= hi + 1) hi = Math.max(hi, iv[1]);
+            else { merged.add(lo); merged.add(hi); lo = iv[0]; hi = iv[1]; }
+        }
+        merged.add(lo); merged.add(hi);
+        return merged.stream().mapToInt(Integer::intValue).toArray();
     }
 
     /**
@@ -371,12 +374,16 @@ public final class Parser {
      * {@code java.util.regex} with {@code UNICODE_CHARACTER_CLASS}).
      */
     private int[] shorthandRanges(char c) {
+        // Under (?i), uppercase shorthands complement the FOLDED positive set
+        // (re2j folds before negation: (?i)[\W] does not match ſ). The positive
+        // lowercase forms fold later via the class-level foldExpandRanges.
+        boolean ci = caseInsensitive;
         if (!unicodeShorthand) {
             return switch (c) {
                 case 'd' -> R_DIGIT;
                 case 'D' -> R_NOT_DIGIT;
                 case 'w' -> R_WORD;
-                case 'W' -> R_NOT_WORD;
+                case 'W' -> ci ? complementRanges(foldExpandRanges(R_WORD)) : R_NOT_WORD;
                 case 's' -> R_SPACE;
                 case 'S' -> R_NOT_SPACE;
                 default -> null;
@@ -386,7 +393,7 @@ public final class Parser {
             case 'd' -> unicodeDigitRanges();
             case 'D' -> complementRanges(unicodeDigitRanges());
             case 'w' -> computeUnicodeWordRanges();
-            case 'W' -> complementRanges(computeUnicodeWordRanges());
+            case 'W' -> complementRanges(ci ? foldExpandRanges(computeUnicodeWordRanges()) : computeUnicodeWordRanges());
             case 's' -> R_UNICODE_SPACE;
             case 'S' -> complementRanges(R_UNICODE_SPACE);
             default -> null;
@@ -397,6 +404,13 @@ public final class Parser {
     private Ast shorthandEscape(char c) {
         boolean negated = Character.isUpperCase(c);
         char base = Character.toLowerCase(c);
+        // Under (?i) the word shorthands fold (re2j: (?i)\w matches ſ via the
+        // s-orbit of a-z); digits/spaces have no fold orbits and stay as-is.
+        // \W folds the POSITIVE set first, then complements.
+        if (caseInsensitive && base == 'w') {
+            int[] pos = unicodeShorthand ? foldExpandRanges(computeUnicodeWordRanges()) : foldExpandRanges(R_WORD);
+            return new CharClass(negated ? complementRanges(pos) : pos, false);
+        }
         if (!unicodeShorthand) {
             return switch (c) {
                 case 'd' -> DIGIT;

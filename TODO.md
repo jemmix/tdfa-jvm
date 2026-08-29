@@ -355,16 +355,30 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
       Also fixed en route: `(\A)??.+` lazy-skip capture priority (context-true kernel
       order), `.+\b.` before supplementary pairs, `(?:..{3,5}?\B)+\S`. Overnight seed
       replay 77% → 94% (remainder: ſ-folding oracle divergence + the corner below).
-- [ ] **Empty-loop-iteration cut** — the last stop-or-extend corner: when a `{n,}`/`*`/`+`
-      iteration matches EMPTY, JDK/re2j exit the loop entirely (no further iterations,
-      even non-empty ones, are explored from that state); our closure's (state,mask) dedup
-      only kills the identical re-entry, so a later non-empty iteration can still win.
-      Repro: `(?:.*?9{0,}\b){1,}` on "99x" — refs match [0,0), we match [0,3] (the
-      iteration-2 `.` thread outranks the empty-accept and overwrites it). Fix design:
-      nullability/progress tracking through loop-back ε-edges (closure key gains a
-      consumed-since-loop-entry dimension), or a parser-level simplify of nullable-body
-      `X{1,}` → `X` (RE2-style). Rare in practice (nested nullable quantifiers + anchor);
-      fuzz rate contribution: single digits per million.
+- [x] **Empty-loop-iteration cut** (2026-08-29, fuzz round 5). Landed as a
+      SUBSUMPTION CUT in epsilonClosure: a re-arrival (state, newMask) is dropped when
+      an earlier, higher-priority variant (state, m' ⊆ newMask) was already popped —
+      the earlier variant is alive at every position the re-arrival could serve and
+      produces the same continuations from the same NFA state (exactly re2j's
+      per-position pc dedup, which its threads carry no deferred masks to dodge).
+      Nullable loop bodies re-enter with the cycle's accumulated assertion bits — a
+      superset — so empty iterations die ((?:.*?9{0,}\b){1,} on "99x" now matches
+      [0,0) like the refs). Incomparable-mask re-arrivals survive ((?:^|$)+ needs both
+      junction variants — a blanket state-only dedup regresses it; verified).
+      Implementation: per-state popped-mask bitsets (masks are 6 bits) + exact submask
+      check, epoch-stamped, O(2^popcount) per edge, no O(V) clearing. Validated by the
+      RE2 exhaustive corpus + ZeroWidthExhaustiveTest + FinalOpsParityTest
+      .emptyIterationCut.
+- [ ] **Empty-iteration capture reporting under post-loop anchors** — the one remaining
+      fuzz corner (pre-existing; surfaced by round 5's un-skipped (?i) generator): with
+      `(\B)*\z` on "!", re2j/JDK report g1='' (the empty iteration's capture writes are
+      visible to the loop-exit path — re2j gets this from its shared cap-array
+      recursion: the body thread dies at the visited pc but its writes land in the array
+      the exit thread reads), we report g1=null. Spans are correct; only the group's
+      participation differs. Needs the accept-variant/final-ops machinery to model the
+      empty iteration's tag writes as part of the exit path's φ — roughly re2j's
+      shared-array semantics lifted into the tag layer. `(\B)*` without the \z is
+      already correct (FixedTags reconstruction covers it).
 - [x] **ASM-tier devirtualization is now machine-checked, two layers** (2026-08-27):
       `EmittedBytecodePolicyTest` (default gate: no INVOKEINTERFACE/INVOKEDYNAMIC; every INVOKEVIRTUAL
       receiver is a final class — checked reflectively on the dumped bytes) and
