@@ -61,8 +61,13 @@ public abstract class Ast {
      */
     public static final class StartAnchor extends Ast {
         public final boolean absolute;
-        public StartAnchor() { this(false); }
-        public StartAnchor(boolean absolute) { this.absolute = absolute; }
+        /** Parse-time (?m) flavor: line-begin (^ under m) vs text-begin. */
+        public final boolean multiline;
+        public StartAnchor() { this(false, false); }
+        public StartAnchor(boolean absolute) { this(absolute, false); }
+        public StartAnchor(boolean absolute, boolean multiline) {
+            this.absolute = absolute; this.multiline = multiline;
+        }
         @Override public String toString() { return absolute ? "\\A" : "^"; }
     }
 
@@ -72,8 +77,13 @@ public abstract class Ast {
      */
     public static final class EndAnchor extends Ast {
         public final boolean absolute;
-        public EndAnchor() { this(false); }
-        public EndAnchor(boolean absolute) { this.absolute = absolute; }
+        /** Parse-time (?m) flavor: line-end ($ under m) vs text-end. */
+        public final boolean multiline;
+        public EndAnchor() { this(false, false); }
+        public EndAnchor(boolean absolute) { this(absolute, false); }
+        public EndAnchor(boolean absolute, boolean multiline) {
+            this.absolute = absolute; this.multiline = multiline;
+        }
         @Override public String toString() { return absolute ? "\\z" : "$"; }
     }
 

@@ -65,6 +65,7 @@ public final class TdfaRunner implements RegexEngine {
      *  large enough that the doubled tables cost real memory (2 tables x
      *  limit ints per state; 21K-state dictionary DFAs would pay ~42 MB at 256). */
     private final int latinLimit;
+    private static final boolean WTRACE = Boolean.getBoolean("tdfa.trace");
     private final boolean fastPath;     // true = no masks + disjoint + not multiline
     private final int stateCount;
     private final int stateWords;       // # of 32-bit words in state bitsets
@@ -327,7 +328,7 @@ public final class TdfaRunner implements RegexEngine {
             int len = s.length();
             if (literalNeedle != null) { trace(Strategy.LITERAL); return literalIndexOf(s, literalNeedle, 0) >= 0; }
             if (fastPath) return runStringFindFast(s, len);
-            int maxStart = (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) ? 0 : len;
+            int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? 0 : len;
             if (maxStart > 0) {
                 // One exact walk from 0 first: for prefix-chain DFAs (e.g.
                 // \p{L}{256}) a match at/near 0 answers in O(len) while the
@@ -387,7 +388,7 @@ public final class TdfaRunner implements RegexEngine {
         final int[] sfo = this.stateFinalOpsOff;
         final int[] sem = this.stateEntryMask;
         final int[] sam = this.stateAcceptMask;
-        int maxStart = (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) ? 0 : to;
+        int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? 0 : to;
         // One exact walk from `from` first (match at/near from is the common
         // case and answers in O(len) — cheaper than any pre-check; see find()).
         {
@@ -427,6 +428,7 @@ public final class TdfaRunner implements RegexEngine {
         trace(Strategy.WALK_RESTART);
         for (int startSearch = from + 1; startSearch <= maxStart; startSearch++) {
             if (Alphabet.pairInterior(input, startSearch)) continue;
+            if (Boolean.getBoolean("tdfa.trace")) System.err.println("[walk] === start " + startSearch);
             MatchHolder h = extractFrom(input, startSearch, to);
             if (h != null) return h;
         }
@@ -473,6 +475,7 @@ public final class TdfaRunner implements RegexEngine {
         loop:
         for (; ; pos++) {
             int meta = sm[state];
+            if (WTRACE) System.err.println("[walk] pos=" + pos + " state=" + state + " accept=" + ((meta & 1) != 0));
             if ((meta & 1) != 0) {
                 final int[] fm = this.finalOpsByMask;
                 if (fm != null) {
@@ -481,6 +484,7 @@ public final class TdfaRunner implements RegexEngine {
                     // the sam-intersection only approximated), cell = its φ.
                     if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                     int cell = fm[state * 64 + posFlags];
+                    if (WTRACE) System.err.println("[walk]   fmCell=" + cell + " M=" + Integer.toBinaryString(posFlags));
                     if (cell >= 0) {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
                         if (regs != null && cell != 0) applyOps(op, cell, regs, pos);
@@ -498,6 +502,7 @@ public final class TdfaRunner implements RegexEngine {
                     } else {
                         if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                         if ((posFlags & acceptMask) == acceptMask) {
+                            if (WTRACE) System.err.println("[walk]   sam accept M=" + Integer.toBinaryString(posFlags) + " stop=" + stopNow(state, posFlags));
                             lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
                             if (regs != null) applyFinalOps(state, regs, pos);
                             if (!longestMatch && stopNow(state, posFlags)) break loop;
@@ -543,12 +548,19 @@ public final class TdfaRunner implements RegexEngine {
                     int o = (base + i) * 5;
                     if (c <= rg[o + 1]) {
                         int target = rg[o + 2];
-                        if (target < 0) continue;
                         int requiredMask = rg[o + 4];
                         if (requiredMask != 0) {
                             if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                             if ((posFlags & requiredMask) != requiredMask) continue;
                         }
+                        if (target < 0) {
+                            // Dead marker of the OWNING context: no continuation
+                            // exists under this posFlags — lower-specificity
+                            // ranges belong to contexts that are not alive here.
+                            if (WTRACE) System.err.println("[walk]   c=" + Integer.toHexString(c) + " DEAD idx " + i + " mask=" + Integer.toBinaryString(requiredMask) + " (M=" + Integer.toBinaryString(posFlags) + ")");
+                            break loop;
+                        }
+                        if (WTRACE) System.err.println("[walk]   c=" + Integer.toHexString(c) + " pick idx " + i + " lo=" + Integer.toHexString(rg[o]) + " mask=" + Integer.toBinaryString(requiredMask) + " -> " + target + " (M=" + Integer.toBinaryString(posFlags) + ")");
                         chosen = o; chosenTarget = target;
                     }
                 }
@@ -1931,7 +1943,7 @@ public final class TdfaRunner implements RegexEngine {
                 int entryReq = stateEntryMask[state];
                 if (entryReq != 0 && (positionFlagsCS(input, pos, to) & entryReq) != entryReq) {
                     if (anchored) return null;
-                    if (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) return null;
+                    if ((startStateEntryMask & Tnfa.ABS_BEGIN) != 0) return null;
                     startSearch++;
                     if (startSearch > to) return null;
                     continue;
@@ -2016,7 +2028,7 @@ public final class TdfaRunner implements RegexEngine {
                 return new MatchHolder(startSearch, lastAcceptPos, regs == null ? new int[0] : regs.clone());
             }
             if (anchored) return null;
-            if (!multiline && (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0) return null;
+            if ((startStateEntryMask & Tnfa.ABS_BEGIN) != 0) return null;
             startSearch++;
             if (startSearch > to) return null;
         }
@@ -2086,8 +2098,8 @@ public final class TdfaRunner implements RegexEngine {
     /** Compute the position-flags for `pos` in a String. */
     private int positionFlags(String s, int pos, int len) {
         int flags = 0;
-        if (pos == 0 || (multiline && pos > 0 && s.charAt(pos - 1) == '\n')) flags |= Tnfa.BEGIN_TEXT;
-        if (pos == len || (multiline && pos < len && s.charAt(pos) == '\n')) flags |= Tnfa.END_TEXT;
+        if (pos == 0 || (pos > 0 && s.charAt(pos - 1) == '\n')) flags |= Tnfa.BEGIN_TEXT;
+        if (pos == len || (pos < len && s.charAt(pos) == '\n')) flags |= Tnfa.END_TEXT;
         if (pos == 0) flags |= Tnfa.ABS_BEGIN;   // \A: absolute start, never affected by (?m)
         if (pos == len) flags |= Tnfa.ABS_END;    // \z: absolute end, never affected by (?m)
         if (needsWordFlags) {
@@ -2102,8 +2114,8 @@ public final class TdfaRunner implements RegexEngine {
     /** Same for a generic CharSequence. */
     private int positionFlagsCS(CharSequence s, int pos, int len) {
         int flags = 0;
-        if (pos == 0 || (multiline && pos > 0 && s.charAt(pos - 1) == '\n')) flags |= Tnfa.BEGIN_TEXT;
-        if (pos == len || (multiline && pos < len && s.charAt(pos) == '\n')) flags |= Tnfa.END_TEXT;
+        if (pos == 0 || (pos > 0 && s.charAt(pos - 1) == '\n')) flags |= Tnfa.BEGIN_TEXT;
+        if (pos == len || (pos < len && s.charAt(pos) == '\n')) flags |= Tnfa.END_TEXT;
         if (pos == 0) flags |= Tnfa.ABS_BEGIN;
         if (pos == len) flags |= Tnfa.ABS_END;
         if (needsWordFlags) {

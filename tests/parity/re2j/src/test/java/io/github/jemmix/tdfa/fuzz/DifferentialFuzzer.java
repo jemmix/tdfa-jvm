@@ -451,6 +451,7 @@ public final class DifferentialFuzzer {
             String p = o.c.pattern();
             for (int i = 0; i < p.length(); i++) {
                 char c = p.charAt(i);
+                if (c >= 0xD800 && c <= 0xDBFF) { i++; continue; }  // well-formed pair: interior low is not a lone low
                 if (c >= 0xDC00 && c <= 0xDFFF && o.asm.equals(o.vm) && !o.asm.equals(o.oracle))
                     return "re2j matches lone-low pattern at/into pair interior; JDK agrees with us";
             }

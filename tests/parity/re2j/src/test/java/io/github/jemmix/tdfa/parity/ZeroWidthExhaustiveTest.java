@@ -1,6 +1,5 @@
 package io.github.jemmix.tdfa.parity;
 
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -24,7 +23,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  * stop-or-extend priority family (e.g. {@code (\S*\B)*} extent shapes,
  * {@code (?:.*?9{0,}\b){1,}} empty-iteration preference — TODO.md "zero-width
  * assertions are second-class automaton citizens"). Run the full enumeration
- * with {@code -Dtdfa.pending=true}; clear the gate when that family lands.
  */
 class ZeroWidthExhaustiveTest {
 
@@ -79,7 +77,6 @@ class ZeroWidthExhaustiveTest {
 
     @ParameterizedTest
     @MethodSource("cases")
-    @EnabledIfSystemProperty(named = "tdfa.pending", matches = "true")
     void zeroWidthCornerMatchesRe2j(Case c, RegexEngineFactory factory) {
         String expected = re2jProtocol(c.pattern(), c.input());
         String actual = tdfaProtocol(c.pattern(), c.input(), factory);

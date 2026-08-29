@@ -51,9 +51,10 @@ public final class Tnfa {
     public final int[] fixedBase;
     public final int[] fixedOffset;
 
-    // Zero-width assertion bits. BEGIN_TEXT/END_TEXT (^/$) are multiline-sensitive
-    // (also hold after/before \n under (?m)); ABS_BEGIN/ABS_END (\A/\z) are absolute
-    // (position 0 / end-of-input, never affected by (?m)).
+    // Zero-width assertion bits. BEGIN_TEXT/END_TEXT are LINE boundaries
+    // (position 0 / end-of-input, plus after/before \n — unconditionally, the
+    // (?m) flavor lives in which bit each ^/$ edge requires); ABS_BEGIN/ABS_END
+    // are absolute (position 0 / end-of-input only).
     public static final int BEGIN_TEXT        = 1;
     public static final int END_TEXT          = 2;
     public static final int WORD_BOUNDARY     = 4;
@@ -197,15 +198,17 @@ public final class Tnfa {
             }
             if (e instanceof Ast.StartAnchor a) {      // ^ or \A
                 int s = fresh();
-                // \A requires ABS_BEGIN (pos0-only, immune to (?m)) AND BEGIN_TEXT
-                // (so intersection with ^-paths in merged DFA states keeps BEGIN_TEXT,
-                //  preserving the accept/entry mask semantics).
-                anchorEps(s, entryTo, 1, a.absolute ? (ABS_BEGIN | BEGIN_TEXT) : BEGIN_TEXT);
+                // Anchor flavor is per-edge (parse-time (?m), group-scoped flags
+                // included): m-^ needs BEGIN_TEXT (line begin, always \n-aware);
+                // plain ^ and \A are position-0 only (ABS_BEGIN).
+                anchorEps(s, entryTo, 1, a.absolute || !a.multiline ? ABS_BEGIN : BEGIN_TEXT);
                 return s;
             }
             if (e instanceof Ast.EndAnchor a) {        // $ or \z
                 int s = fresh();
-                anchorEps(s, entryTo, 1, a.absolute ? (ABS_END | END_TEXT) : END_TEXT);
+                // m-$ needs END_TEXT (line end, always \n-aware); plain $ and \z
+                // are end-of-input only (ABS_END).
+                anchorEps(s, entryTo, 1, a.absolute || !a.multiline ? ABS_END : END_TEXT);
                 return s;
             }
             if (e instanceof Ast.WordBoundary) {     // \b

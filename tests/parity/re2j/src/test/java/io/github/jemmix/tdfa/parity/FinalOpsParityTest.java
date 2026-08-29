@@ -103,8 +103,41 @@ class FinalOpsParityTest {
         assertSameGroups("(\\z)?", "ab", factory);
         assertSameGroups("(\\b)*", " ", factory);
         assertSameGroups("(\\b){0,1}", " ", factory);
-        // NOT gated (lazy-skip priority on zero-width groups — F2 open family):
-        // (\A)??.+ on "ab" — re2j g1=null (lazy skips), we report the branch.
+        assertSameGroups("(\\A)??.+", "ab", factory);
+    }
+
+    // ---- stop-or-extend: greedy/lazy exits through assertions ----
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void stopOrExtendThroughAssertions(RegexEngineFactory factory) {
+        // greedy class-continue must outrank a \b\W exit at a live boundary,
+        // then extend through the boundary (was: stopped at the first accept)
+        assertSameGroups("[^0\ud801\udc21\u3042]+\\b\\W", "\ud807\udc07\ud807\udc07Z\udc21z\ud800\udc00", factory);
+        assertSameGroups("[^0x]+\\b\\W", "abz c", factory);
+        // lazy +? exit through \s*\B: stop where the higher-priority greedy
+        // \s-consume dies (pike-cut + dead marker; was: extended one char too far)
+        assertSameGroups("\\D+?\\s*\\B", "a\u00df#", factory);
+        // lazy inner {3,5}? with \B iteration gates
+        assertSameGroups("(?:..{3,5}?\\B)+\\S", "ab\u00df#", factory);
+        // .+ \b . before supplementary pairs (two candidate boundaries)
+        assertSameGroups(".+\\b.", "\u03a99\ud800\udfff", factory);
+        assertSameGroups(".+\\b.", "9\ud800\udfff", factory);
+        assertSameGroups(".+\\b\\D.", "\u03a99\ud800\udc00x", factory);
+    }
+
+    // ---- group-scoped (?m:...) anchor flavors ----
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void groupScopedMultilineAnchors(RegexEngineFactory factory) {
+        assertSameGroups("(?m:\\S.$)", "ab\ncd", factory);
+        assertSameGroups("\\S(?m:$)", "ab\ncd", factory);
+        assertSameGroups("(?m:$)", "ab\ncd", factory);
+        assertSameGroups("\\D(?m:\\S.$)", "ab\ncd", factory);
+        assertSameGroups("(?m:^\\w)", "ab\ncd", factory);
+        // bare ^/$ stay absolute without (?m) — incl. inside a (?m:...) sibling
+        assertSameGroups("$x(?m:$)", "x\ny", factory);
     }
 
     // ---- long inputs: the ASM tier's emitted ladder (>64 chars, no

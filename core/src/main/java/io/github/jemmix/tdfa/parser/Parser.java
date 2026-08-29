@@ -171,8 +171,8 @@ public final class Parser {
         if (c == '(') return parseGroup();
         if (c == '[') { pos++; return parseClass(); }
         if (c == '.') { pos++; return dotall ? DOTALL : DOT; }
-        if (c == '^') { pos++; return new Ast.StartAnchor(); }
-        if (c == '$') { pos++; return new Ast.EndAnchor(); }
+        if (c == '^') { pos++; return new Ast.StartAnchor(false, this.multiline); }
+        if (c == '$') { pos++; return new Ast.EndAnchor(false, this.multiline); }
         if (c == '\\') { pos++; return parseEscape(); }
         if (c == ')' || c == '|') throw fail(this, "unexpected '" + c + "'");
         int cp = Alphabet.decode(src, pos, src.length());

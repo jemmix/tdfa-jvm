@@ -110,7 +110,7 @@ public final class TdfaAsmBackend {
             genEntryOkC(cw, owner);
             if (tdfa.stateFinalOpsByMask() != null) genPhiMasked(cw, tdfa, owner);
             if (tdfa.registerCount() > 0) genPhi(cw, tdfa, owner);
-            genPositionFlagsC(cw, owner, tdfa.multiline(), tdfa.unicodeWordBoundary());
+            genPositionFlagsC(cw, owner, true, tdfa.unicodeWordBoundary());
             if (tdfa.unicodeWordBoundary()) {
                 genIsUnicodeWordChar(cw, owner);
                 genIsWordBefore(cw, owner);
@@ -967,7 +967,7 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ILOAD, T1);
             Label initEntryOk = new Label();
             mv.visitJumpInsn(Opcodes.IFEQ, initEntryOk);
-            emitPFInline(mv, owner, IN, ST, LEN, PF2, T2, T3, T4, tdfa.multiline(), tdfa.unicodeWordBoundary());
+            emitPFInline(mv, owner, IN, ST, LEN, PF2, T2, T3, T4, true, tdfa.unicodeWordBoundary());
             mv.visitVarInsn(Opcodes.ILOAD, PF2);
             mv.visitVarInsn(Opcodes.ILOAD, T1);
             mv.visitInsn(Opcodes.IAND);
@@ -988,7 +988,7 @@ public final class TdfaAsmBackend {
 
         // pf = positionFlags(pos, len, input) — skip when never needed
         if (pfNeeded)
-            emitPFInline(mv, owner, IN, POS, LEN, PF, T1, T2, T3, tdfa.multiline(), tdfa.unicodeWordBoundary());
+            emitPFInline(mv, owner, IN, POS, LEN, PF, T1, T2, T3, true, tdfa.unicodeWordBoundary());
         else {
             mv.visitInsn(Opcodes.ICONST_0);
             mv.visitVarInsn(Opcodes.ISTORE, PF);

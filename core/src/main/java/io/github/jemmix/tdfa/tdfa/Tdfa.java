@@ -689,54 +689,106 @@ public final class Tdfa {
                     System.err.println("[tdfa] processing state " + sid + " configs:");
                     for (Config c : cur) System.err.println("    state=" + c.state + " l=" + Arrays.toString(c.l) + " regs=" + Arrays.toString(c.regs) + " mask=" + c.emptyMask);
                 }
-                // Group configs by emptyMask so that transitions from configs with different
-                // assertion masks don't get their masks intersected (which would silently drop
-                // assertion requirements). Each group produces separate transitions with the
-                // correct requiredMask. E.g. for a*(^a): a* loop (mask=0) and ^a path
-                // (mask=BEGIN_TEXT) step on 'a' — without grouping, intersection 0&1=0 loses ^.
+                // Assertion-context split (assertions into the alphabet, by
+                // construction). The runtime posFlags M decides which closure
+                // configs are alive (emptyMask ⊆ M). We step per DISTINCT
+                // live-set — the closure filtered to alive configs, kept in
+                // true closure-priority order — so every target state is both
+                // liveness-complete (no continuation silently dropped) and
+                // priority-correct (the kernel order feeds the stop-on-accept
+                // table and final-ops variants). The context's OR-mask rides
+                // its ranges; contexts are emitted most-specific first and the
+                // runner's lowest-index-first scan among mask-satisfied
+                // entries resolves overlaps.
                 //
-                // Subset inclusion: when processing mask group M, also step configs from
-                // groups whose mask ⊆ M. This ensures that \b-gated transitions include
-                // continuations from non-\b alternation branches. Without this, the DFA
-                // state after a \b-guarded step (e.g. into a keyword branch) dead-ends
-                // when the keyword doesn't match but an identifier continuation is viable.
-                // Example: (\bas\b)|([a-zA-Z_]...) on "a" — the \b path must include the
-                // identifier path's continuations so "a" matches as an identifier.
-                Map<Integer, List<Config>> maskGroups = new LinkedHashMap<>();
+                // This replaces the former own/subset mask-group split whose
+                // targets were lopsided: subset-appended configs landed AFTER
+                // the own group in the kernel (priority inversion — the greedy
+                // class-continue lost to a lower-priority \b\W exit and the
+                // stop table stopped early) while less-specific groups dropped
+                // gated continuations (the a*(^a) band-aid that the mask
+                // specificity sort papered over at runtime).
+                List<Integer> ctxMasks = null;   // distinct nonzero masks when >1 relevant
                 for (Config c : cur) {
-                    maskGroups.computeIfAbsent(c.emptyMask, k -> new ArrayList<>()).add(c);
+                    if (c.emptyMask != 0) {
+                        if (ctxMasks == null) ctxMasks = new ArrayList<>(4);
+                        boolean found = false;
+                        for (int m : ctxMasks) if (m == c.emptyMask) { found = true; break; }
+                        if (!found) ctxMasks.add(c.emptyMask);
+                    }
                 }
-                // Group-major, range-inner sweep with per-active-set result caching.
+                List<int[]> ctxList = new ArrayList<>(4);      // {orMask, coverage} per context
+                List<List<Config>> ctxInputs = new ArrayList<>(4);
+                if (ctxMasks == null || ctxMasks.isEmpty()
+                        || (ctxMasks.size() == 1 && ctxMasks.contains(0))) {
+                    ctxList.add(new int[]{0, 0});
+                    ctxInputs.add(cur);                        // uniform context: whole closure
+                } else {
+                    // Dedup live-sets by their alive-mask pattern over the 64 runtime
+                    // M values. Mask-0 configs are alive under every M (their bit is
+                    // folded into the pattern directly); a pattern with no configs at
+                    // all is unreachable and skipped.
+                    int k = ctxMasks.size();
+                    boolean anyZero = false;
+                    for (Config c : cur) if (c.emptyMask == 0) { anyZero = true; break; }
+                    java.util.HashMap<Integer, Integer> patIdx = new java.util.HashMap<>(8);
+                    for (int M = 0; M < 64; M++) {
+                        int pat = anyZero ? 1 : 0, r = 0;
+                        for (int i = 0; i < k; i++) {
+                            int mi = ctxMasks.get(i);
+                            if ((mi & ~M) == 0) { pat |= 2 << i; r |= mi; }
+                        }
+                        if (pat == 0 || patIdx.containsKey(pat)) continue;
+                        patIdx.put(pat, ctxInputs.size());
+                        List<Config> live = new ArrayList<>(cur.size());
+                        for (Config c : cur) {
+                            if (c.emptyMask == 0) { if (anyZero) live.add(c); continue; }
+                            for (int i = 0; i < k; i++) {
+                                if ((pat & (2 << i)) != 0 && c.emptyMask == ctxMasks.get(i)) { live.add(c); break; }
+                            }
+                        }
+                        ctxList.add(new int[]{r, Integer.bitCount(pat)});
+                        ctxInputs.add(live);
+                    }
+                    // Emit most coverage first (superset live-sets precede their
+                    // subsets; incomparable patterns have disjoint M sets).
+                    Integer[] order = new Integer[ctxList.size()];
+                    for (int i = 0; i < order.length; i++) order[i] = i;
+                    final List<int[]> cl = ctxList;
+                    java.util.Arrays.sort(order, (x, y) -> Integer.compare(cl.get(y)[1], cl.get(x)[1]));
+                    List<int[]> sortedCtx = new ArrayList<>(order.length);
+                    List<List<Config>> sortedIn = new ArrayList<>(order.length);
+                    for (int o : order) { sortedCtx.add(ctxList.get(o)); sortedIn.add(ctxInputs.get(o)); }
+                    ctxList = sortedCtx; ctxInputs = sortedIn;
+                }
+                // Context-major, range-inner sweep with per-active-set result caching.
                 // The stepped configs are a pure function of (stepInput, active edge
                 // set), and the active edge set is a pure function of the breakpoint
                 // cell — so cells sharing an interned active-set id (activeSetId[bi])
                 // yield identical stepped lists, ε-closures, shape keys and addState
                 // results. The expensive closure/key/addState pipeline runs at most
-                // once per distinct active set per mask group, and the builder's
+                // once per distinct active set per context, and the builder's
                 // coalesce() later merges the same-target ranges. On wide-class
                 // patterns ([\s\S]{0,100} etc.) this skips the large majority of
                 // per-cell work; on narrow patterns every cell is distinct and the
                 // cache degenerates to one entry per cell.
-                for (int groupMask : maskGroups.keySet()) {
-                    List<Config> stepInput;
-                    int ownCount;
-                    if (groupMask == 0) {
-                        stepInput = maskGroups.get(0);
-                        ownCount = stepInput.size();
-                    } else {
-                        // Own configs first (higher priority), then subset-mask
-                        // configs. This ensures that the group's configs survive the
-                        // ε-closure (state,mask) dedup — their tags and registers
-                        // take priority over subset configs at the same NFA state.
-                        stepInput = new ArrayList<>(maskGroups.get(groupMask));
-                        ownCount = stepInput.size();
-                        for (var e : maskGroups.entrySet()) {
-                            int otherMask = e.getKey();
-                            if (otherMask != groupMask && (otherMask & groupMask) == otherMask) {
-                                stepInput.addAll(e.getValue());
-                            }
-                        }
-                    }
+                // Context results per active set: res[ctx][set] = target state id,
+                // -1 = stepped empty, 0 = not yet computed. Contexts run most-
+                // specific first; live ranges emit immediately. A context that
+                // steps EMPTY emits a DEAD marker (target -1, its ctxMask) for
+                // cells where any LESS-specific context is live: at runtime M ⊇
+                // ctxMask that context OWNS the position — its lack of a
+                // transition means the walk dies there, and the marker blocks
+                // the less-specific (wrong-context) range from firing.
+                int nCtx2 = ctxInputs.size();
+                int[][] ctxSetRes = new int[nCtx2][];
+                for (int ci = 0; ci < nCtx2; ci++) {
+                    List<Config> stepInput = ctxInputs.get(ci);
+                    int ctxMask = ctxList.get(ci)[0];
+                    int ownCount = stepInput.size();   // true-order list: every config is a priority competitor
+                    int[] setRes = new int[activeSetCount];
+                    java.util.Arrays.fill(setRes, 0);
+                    ctxSetRes[ci] = setRes;
                     AddResult[] perSet = new AddResult[activeSetCount];
                     boolean[] perSetDone = new boolean[activeSetCount];
                     for (int bi = 0; bi < cellCount; bi++) {
@@ -746,13 +798,13 @@ public final class Tdfa {
                         if (perSetDone[setId]) {
                             AddResult ar = perSet[setId];
                             if (ar != null) {
-                                builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, groupMask);
+                                builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, ctxMask);
                             }
                             continue;
                         }
                         perSetDone[setId] = true;
-                        List<Config> stepped = stepOnSymbol(stepInput, rangeActiveEdges[bi], requiredMaskOut, ownCount);
-                        if (stepped.isEmpty()) { perSet[setId] = null; continue; }
+                        List<Config> stepped = stepOnSymbol(stepInput, rangeActiveEdges[bi], requiredMaskOut, ownCount, ctxMask);
+                        if (stepped.isEmpty()) { perSet[setId] = null; setRes[setId] = -1; continue; }
                         List<Config> closed;
                         int[] newPrectable;
                         if (!longest) {
@@ -773,10 +825,31 @@ public final class Tdfa {
                                 statePrectables.set(ar.targetId, newPrectable);
                             }
                         }
-                        if (debug) System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> " + ar.targetId + " ops.len=" + ar.ops.length + " mask=" + groupMask);
-                        builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, groupMask);
+                        if (debug) System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> " + ar.targetId + " ops.len=" + ops.length + " mask=" + ctxMask);
+                        builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, ctxMask);
                         if (!processed.get(ar.targetId)) work.push(ar.targetId);
                         perSet[setId] = ar;
+                        setRes[setId] = ar.targetId;
+                    }
+                }
+                // Dead markers: only when overlaps exist (nCtx2 > 1) — a single
+                // context owns every cell unambiguously.
+                if (nCtx2 > 1) {
+                    for (int bi = 0; bi < cellCount; bi++) {
+                        int rangeLo = breakpoints[bi];
+                        int rangeHi = breakpoints[bi + 1] - 1;
+                        int setId = activeSetId[bi];
+                        // for each EMPTY context: marker iff some LATER (less specific) context is live
+                        for (int ci = 0; ci < nCtx2; ci++) {
+                            if (ctxSetRes[ci][setId] != -1) continue;
+                            for (int cj = ci + 1; cj < nCtx2; cj++) {
+                                if (ctxSetRes[cj][setId] > 0) {
+                                    builders.get(sid).addRange(rangeLo, rangeHi, -1, null, ctxList.get(ci)[0]);
+                                    if (debug) System.err.println("[tdfa] state " + sid + " cell " + rangeLo + ".." + rangeHi + " DEAD marker mask=" + Integer.toBinaryString(ctxList.get(ci)[0]));
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
                 // Tagless compiles: release the boxed closure of the just-processed
@@ -844,6 +917,15 @@ public final class Tdfa {
                 // (no accept to stop on; runner's sam check filters anyway).
                 if (!longest && anyAccept) {
                     Object seed = stateSeeds.get(s);
+                    if (debug) {
+                        System.err.println("[stop] state " + s + " cnt=" + cnt);
+                        for (int i = 0; i < cnt; i++) {
+                            int st = pk != null ? pk[i * 2] : cfgs.get(i).state;
+                            int em = pk != null ? pk[i * 2 + 1] : cfgs.get(i).emptyMask;
+                            System.err.println("[stop]   cfg[" + i + "] nfa=" + st + (st == nfa.accept ? " ACCEPT" : "")
+                                    + " mask=" + Integer.toBinaryString(em) + " symEdges=" + symOut[st].length);
+                        }
+                    }
                     for (int M = 0; M < 64; M++) {
                         int[] perStateOrder = seed instanceof int[] ss
                                 ? computePerStateOrder(ss, M) : computePerStateOrder((List<Config>) seed, M);
@@ -1661,7 +1743,7 @@ public final class Tdfa {
          * check fails, and the lower-priority {@code y} branch survives to extend the match
          * ([0,1] instead of the correct [0,0] — the empty {@code x*} alternative accepts first).
          */
-        List<Config> stepOnSymbol(List<Config> configs, long[] activeEdges, int[] requiredMaskOut, int ownCount) {
+        List<Config> stepOnSymbol(List<Config> configs, long[] activeEdges, int[] requiredMaskOut, int ownCount, int ctxMask) {
             // Perl leftmost-first: the closure's configs are in priority-ordered DFS arrival order.
             // If any config has reached the accept state, find the FIRST (best-priority) such config
             // and consider suppressing transitions from configs added AFTER it.
@@ -1686,15 +1768,16 @@ public final class Tdfa {
                         break;
                     }
                 }
-                if (firstAcceptIdx >= 0) {
+                // Pike-cut (context-scoped): the config list is a live-set for ONE
+                // assertion context (ctxMask); when the accept config is alive in
+                // THIS context, every lower-priority config is cut exactly like a
+                // pike VM cuts threads below a match-recording thread — they can
+                // never produce the answer. Contexts where the accept is dead
+                // (acceptEmptyMask ⊄ ctxMask) keep the fallbacks: no accept fired
+                // there, so nothing was cut.
+                if (firstAcceptIdx >= 0 && (acceptEmptyMask & ~ctxMask) == 0) {
                     suppress = true;
-                    for (int i = firstAcceptIdx + 1; i < ownCount; i++) {
-                        Config c = configs.get(i);
-                        if ((c.emptyMask & acceptEmptyMask) != acceptEmptyMask) {
-                            suppress = false;
-                            break;
-                        }
-                    }
+                    if (debug) System.err.println("[step] PIKE-CUT accept@" + firstAcceptIdx + " mask=" + Integer.toBinaryString(acceptEmptyMask) + " ctx=" + Integer.toBinaryString(ctxMask));
                 }
             }
             List<Config> out = new ArrayList<>();
@@ -1702,9 +1785,9 @@ public final class Tdfa {
                     | Tnfa.ABS_BEGIN | Tnfa.ABS_END;
             boolean any = false;
             for (int ci = 0; ci < configs.size(); ci++) {
-                if (suppress && ci > firstAcceptIdx && ci < ownCount) {
-                    continue;  // suppress lower-priority OWN paths past the first accept (Perl mode);
-                               // appended subset configs still step (DFA liveness, d133d20)
+                if (suppress && ci > firstAcceptIdx) {
+                    continue;  // pike-cut: lower-priority paths past the first live accept
+                               // can never win once that accept fires in this context
                 }
                 Config c = configs.get(ci);
                 for (int idx : symOut[c.state]) {
@@ -2222,7 +2305,12 @@ public final class Tdfa {
             ranges.sort((a, b) -> {
                 int cmp = Integer.compare(a.lo, b.lo);
                 if (cmp != 0) return cmp;
-                return Integer.compare(Integer.bitCount(b.requiredMask), Integer.bitCount(a.requiredMask));
+                int bc = Integer.compare(Integer.bitCount(b.requiredMask), Integer.bitCount(a.requiredMask));
+                if (bc != 0) return bc;
+                // dead markers precede live ranges at equal specificity: a
+                // more-specific context's DEAD must block a less-specific
+                // context's live range for the same symbol cell.
+                return Integer.compare(a.target >= 0 ? 1 : 0, b.target >= 0 ? 1 : 0);
             });
         }
     }

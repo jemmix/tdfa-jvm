@@ -331,20 +331,40 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
       reject in ~6 s at a 200 M budget; was an infinite loop). Note: many overnight
       "HANG_ENGINE" records were borderline-slow compiles (9-12 s) under leaked-oracle-thread
       CPU contention, not infinite loops — the meter classifies both honestly.
-- [ ] **Zero-width assertions are second-class automaton citizens (stop-or-extend family)** —
-      the dominant REMAINING fuzz divergence family (~29% of recorded seeds after round 3):
-      `\B`-adjacent extents (`\W+\B.`, `.{2,}\b.` variants), empty-iteration preference
-      (`(?:.*?9{0,}\b){1,}` prefers a non-empty first iteration; `(\A)??.+` keeps greedy capture
-      priority on zero-width groups instead of lazy-skip), multiline-anchor gates
-      (`(?m:\w$)` misses). The assertions live as position flags checked by the walk; their
-      interaction with accept priority is decided per-ladder-rung, not by determinization.
-      Design (agreed): promote the context into the alphabet — transition input becomes
-      (context-class, codepoint) so assertion edges are ordinary symbols and arbitration
-      happens once in the closure (RE2's design: context flags in the DFA state; re2c:
-      conditions). State multiplier only for patterns using assertions; the perf-critical
-      corpus pays zero and assertion patterns stop paying per-step flag evaluation. Needs the
-      veryl/lexer measurement before landing; `ZeroWidthExhaustiveTest` is the acceptance gate
-      (clear `tdfa.pending` when green).
+- [x] **Zero-width assertions promoted into the alphabet (stop-or-extend family)**
+      (2026-08-29, fuzz round 4). Landed as four constructions, all validated by the
+      now-hard-gated `ZeroWidthExhaustiveTest` (63 000 enumerated cases) plus
+      `FinalOpsParityTest.stopOrExtendThroughAssertions`/`groupScopedMultilineAnchors`:
+      (a) **assertion-context split** — per distinct live-set of the closure (mask ⊆ M),
+      stepped in true closure-priority order, so every target is liveness-complete AND
+      priority-correct (replaces the own/subset mask-group split whose appended kernels
+      inverted priority — the `[^0..]+\b\W` greedy-exit undershoot);
+      (b) **per-edge anchor flavors** — BEGIN_TEXT/END_TEXT are now unconditionally
+      line-flavored posFlag bits; each `^`/`$` edge requires ABS_BEGIN/ABS_END (plain) or
+      BEGIN_TEXT/END_TEXT (under parse-time (?m)) — group-scoped `(?m:...)` anchors work
+      (were: global flag only; `\D(?m:\S.$)` and `(?m:$)` families fixed); `\A`/`\z` = the
+      ABS bits alone;
+      (c) **pike-cut stepping** — within a context where the first accept config is alive,
+      lower-priority configs are dropped from the step exactly like a pike VM cuts threads
+      below a match-recorder (the old mask-superset safety condition is subsumed by the
+      context split);
+      (d) **dead markers** — a more-specific context with no transition for a symbol cell
+      emits an explicit dead range (target −1) that terminally blocks less-specific
+      contexts' ranges for those M (`\D+?\s*\B` on "aß#": stop at the accept where the
+      greedy `\s`-consume dies, was: one char too far).
+      Also fixed en route: `(\A)??.+` lazy-skip capture priority (context-true kernel
+      order), `.+\b.` before supplementary pairs, `(?:..{3,5}?\B)+\S`. Overnight seed
+      replay 77% → 94% (remainder: ſ-folding oracle divergence + the corner below).
+- [ ] **Empty-loop-iteration cut** — the last stop-or-extend corner: when a `{n,}`/`*`/`+`
+      iteration matches EMPTY, JDK/re2j exit the loop entirely (no further iterations,
+      even non-empty ones, are explored from that state); our closure's (state,mask) dedup
+      only kills the identical re-entry, so a later non-empty iteration can still win.
+      Repro: `(?:.*?9{0,}\b){1,}` on "99x" — refs match [0,0), we match [0,3] (the
+      iteration-2 `.` thread outranks the empty-accept and overwrites it). Fix design:
+      nullability/progress tracking through loop-back ε-edges (closure key gains a
+      consumed-since-loop-entry dimension), or a parser-level simplify of nullable-body
+      `X{1,}` → `X` (RE2-style). Rare in practice (nested nullable quantifiers + anchor);
+      fuzz rate contribution: single digits per million.
 - [x] **ASM-tier devirtualization is now machine-checked, two layers** (2026-08-27):
       `EmittedBytecodePolicyTest` (default gate: no INVOKEINTERFACE/INVOKEDYNAMIC; every INVOKEVIRTUAL
       receiver is a final class — checked reflectively on the dumped bytes) and
