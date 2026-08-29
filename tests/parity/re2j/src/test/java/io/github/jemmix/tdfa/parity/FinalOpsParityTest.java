@@ -143,6 +143,35 @@ class FinalOpsParityTest {
         assertSameGroups("(?:a{0,}){1,}b", "ab", factory);
     }
 
+    // ---- empty-iteration capture reporting under post-loop anchors ----
+    // re2j reports the empty iteration's capture writes to the loop-exit
+    // accept (g1=''); JDK reports null here — documented divergence, we side
+    // with re2j. Needs word flags even though no mask/range/stop cell carries
+    // them: the byMask accept WINNER flips between the one-iteration and
+    // zero-iteration accepts on NWB at ABS_END — i.e. the word-flag trim must
+    // compare word variants across the NON-word bit combinations (incl. ABS
+    // bits), which is exactly what regressed here before.
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void emptyIterationCapturesUnderAnchors(RegexEngineFactory factory) {
+        assertSameGroups("(\\B)*\\z", "!", factory);
+        assertSameGroups("(\\B)*\\z", "a!", factory);
+        assertSameGroups("(\\b)*\\z", "a", factory);
+        assertSameGroups("(\\B)*$", "!", factory);
+        assertSameGroups("((\\B))*\\z", "!", factory);
+        assertSameGroups("()(\\B)*\\z", "!", factory);
+        assertSameGroups("(\\B)*(?:\\z|!)", "!", factory);
+        // lazy exit-first: no empty iteration explored before the accept
+        assertSameGroups("(\\B)*?\\z", "!", factory);
+        // mandatory first iteration flows its writes through the normal path
+        assertSameGroups("(\\B)(\\B)*\\z", "!", factory);
+        assertSameGroups("(\\B|)*\\z", "!", factory);
+        // sibling symbol paths see no cross-branch writes
+        assertSameGroups("(?:(\\B)x|y)\\z", "y", factory);
+        assertSameGroups("(?:(\\B)x|y)\\z", "yx", factory);
+    }
+
     // ---- full Unicode simple folding under plain (?i) (re2j semantics) ----
 
     @ParameterizedTest

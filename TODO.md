@@ -369,16 +369,21 @@ budgeted-sim/trigger regime (unchanged, regression-gated).
       check, epoch-stamped, O(2^popcount) per edge, no O(V) clearing. Validated by the
       RE2 exhaustive corpus + ZeroWidthExhaustiveTest + FinalOpsParityTest
       .emptyIterationCut.
-- [ ] **Empty-iteration capture reporting under post-loop anchors** — the one remaining
-      fuzz corner (pre-existing; surfaced by round 5's un-skipped (?i) generator): with
-      `(\B)*\z` on "!", re2j/JDK report g1='' (the empty iteration's capture writes are
-      visible to the loop-exit path — re2j gets this from its shared cap-array
-      recursion: the body thread dies at the visited pc but its writes land in the array
-      the exit thread reads), we report g1=null. Spans are correct; only the group's
-      participation differs. Needs the accept-variant/final-ops machinery to model the
-      empty iteration's tag writes as part of the exit path's φ — roughly re2j's
-      shared-array semantics lifted into the tag layer. `(\B)*` without the \z is
-      already correct (FixedTags reconstruction covers it).
+- [x] **Empty-iteration capture reporting under post-loop anchors** (2026-08-29,
+      fuzz round 6). `(\B)*\z` on "!" reporting g1=null (re2j: '' — the empty
+      iteration's capture writes reach the loop-exit accept) was NOT missing
+      machinery: the kernel already carried the one-iteration accept config
+      (NWB|ABS_END-gated, tag written) and the byMask winner table selected it
+      correctly. The defect was computeNeedsWordFlags' variant-equality check
+      iterating base 0..15 — a range that spans word bits and never covers the
+      ABS-bit combinations — so word flags were trimmed, runtime posFlags lacked
+      NWB, and the table fell back to the zero-iteration winner. The base now
+      ranges over the 16 combinations of the four NON-word bits (BEGIN/END_TEXT,
+      ABS_BEGIN/ABS_END) comparing fm/soa cells across the word variants of each
+      base. JDK reports null here (documented re2j-vs-JDK divergence, we side
+      with re2j — same family as `$` before a final newline). Validated by
+      FinalOpsParityTest.emptyIterationCapturesUnderAnchors (12 shapes incl.
+      lazy, mandatory-iteration, and sibling-symbol-path controls).
 - [x] **ASM-tier devirtualization is now machine-checked, two layers** (2026-08-27):
       `EmittedBytecodePolicyTest` (default gate: no INVOKEINTERFACE/INVOKEDYNAMIC; every INVOKEVIRTUAL
       receiver is a final class — checked reflectively on the dumped bytes) and

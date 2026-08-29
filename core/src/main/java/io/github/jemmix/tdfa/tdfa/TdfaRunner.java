@@ -819,15 +819,20 @@ public final class TdfaRunner implements RegexEngine {
         for (int m : tdfa.stateEntryMask) if ((m & WM) != 0) return true;
         for (int m : tdfa.stateAcceptMask) if ((m & WM) != 0) return true;
         for (int i = 4; i < tdfa.ranges.length; i += 5) if ((tdfa.ranges[i] & WM) != 0) return true;
-        // The position-aware final-ops table selects per posFlags: cells that
-        // differ across word variants need the word bits even when no mask,
-        // range, or stop cell does (e.g. (\b)? — the accept WINNER depends
-        // on \b holding).
+        // The position-aware tables select per posFlags: cells that differ
+        // across the word variants of the SAME non-word base need the word
+        // bits even when no mask, range, or stop cell does (e.g. (\b)? — the
+        // accept WINNER depends on \b holding; (\B)*\z — the winner flips
+        // between the one-iteration and zero-iteration accepts on NWB). The
+        // base ranges over the 16 combinations of the four NON-word bits
+        // {BEGIN_TEXT, END_TEXT, ABS_BEGIN, ABS_END}; comparing bases that
+        // themselves contain word bits would miss ABS-dependent differences.
         int[] fm = tdfa.stateFinalOpsByMask();
         if (fm != null) {
             for (int s = 0; s < tdfa.stateCount(); s++) {
                 int row = s * 64;
-                for (int base = 0; base < 16; base++) {
+                for (int base = 0; base < 64; base++) {
+                    if ((base & WM) != 0) continue;
                     int c0 = fm[row + base], c1 = fm[row + (base | Tnfa.WORD_BOUNDARY)],
                             c2 = fm[row + (base | Tnfa.NO_WORD_BOUNDARY)];
                     if (c0 != c1 || c0 != c2) return true;
@@ -838,7 +843,8 @@ public final class TdfaRunner implements RegexEngine {
         if (soa == null) return false;   // uniform/POSIX tier: stop cells cannot differ across word variants
         for (int s = 0; s < tdfa.stateCount(); s++) {
             int row = s * 64;
-            for (int base = 0; base < 16; base++) {
+            for (int base = 0; base < 64; base++) {
+                if ((base & WM) != 0) continue;
                 int c0 = soa[row + base], c1 = soa[row + (base | Tnfa.WORD_BOUNDARY)],
                         c2 = soa[row + (base | Tnfa.NO_WORD_BOUNDARY)];
                 if (c0 != c1 || c0 != c2) return true;
