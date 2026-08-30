@@ -15,9 +15,9 @@ repositories {
 }
 
 dependencies {
-    // The four columns: sim reference (:sim → :core), engine facade (→ :asm),
+    // The four columns: sim reference (:lib:pikesim → :core), engine facade (→ :asm),
     // and the external oracle re2j.
-    api project(':sim')
+    api project(':lib:pikesim')
     api project(':')
     implementation 'com.google.re2j:re2j:1.8'
 }

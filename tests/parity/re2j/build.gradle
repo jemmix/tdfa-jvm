@@ -25,7 +25,7 @@ tasks.named('processTestResources') {
 
 dependencies {
     testImplementation project(':')
-    testImplementation project(':sim')
+    testImplementation project(':lib:pikesim')
     testImplementation project(':testlib:parity')
     testImplementation platform('org.junit:junit-bom:5.10.2'),
             'org.junit.jupiter:junit-jupiter',

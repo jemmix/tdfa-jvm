@@ -220,7 +220,7 @@ case-by-case). Four classes, each with the prevention now in place or proposed:
 
 LANDED (2026-08-29, fuzz round 7) — the layered audit, as a component trio:
 
-- **`:sim` — PikeSim** (io.github.jemmix.tdfa.sim): a ~300-line reference pike
+- **`lib/pikesim` — PikeSim** (io.github.jemmix.tdfa.sim): a ~300-line reference pike
   VM running directly over the Tnfa — no determinization, nothing deferred;
   assertions checked at edge crossing against direct position truth; captures
   as copy-on-write path state (the engine's functional tag-history semantics,
