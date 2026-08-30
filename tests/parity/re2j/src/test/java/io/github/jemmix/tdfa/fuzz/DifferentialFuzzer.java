@@ -509,7 +509,13 @@ public final class DifferentialFuzzer {
                 var report = LAYERED.compare(o.c.pattern(), o.c.input());
                 layerCounts.merge(report.layer(), 1, Integer::sum);
                 String known = knownDivergence(o);
-                if (known != null) {
+                if (known != null && report.layer() == io.github.jemmix.tdfa.parity.LayeredComparator.Layer.PARSER) {
+                    // The known divergence is a PARSER-boundary semantics
+                    // difference (whole stack self-consistent, oracle alone
+                    // differs). Any other layer with a lone-surrogate pattern
+                    // is a REAL finding wearing the same coat — v3's first
+                    // soak proved it: a CONSTRUCTION-layer needle bug was
+                    // swallowed here as "known" for a whole night's run.
                     knownDivergence++;
                     logs.failure(caseSeed, o, "KNOWN_DIVERGENCE (" + known + ")", report.layer());
                     return;
@@ -560,8 +566,7 @@ public final class DifferentialFuzzer {
                 char c = p.charAt(i);
                 if (c >= 0xD800 && c <= 0xDBFF) { i++; continue; }  // well-formed pair: interior low is not a lone low
                 if (c >= 0xDC00 && c <= 0xDFFF && o.asm.equals(o.vm) && !o.asm.equals(o.oracle))
-                    return "re2j matches lone-low pattern at/into pair interior; JDK agrees with us";
-            }
+                    return "re2j matches lone-low pattern at/into pair interior; JDK agrees with us";            }
             // NOTE: the former plain-(?i) full-folding entry is GONE — we now
             // fold full Unicode simple folding under plain (?i) exactly like
             // re2j (literals, explicit classes, and word shorthands; verified

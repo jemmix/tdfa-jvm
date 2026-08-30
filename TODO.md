@@ -268,6 +268,35 @@ WorkMeter eventually kills them with a clean "pattern too large". Repros:
 fuzz.one=1287977190499177688 (transitionRegops… actually tryMap:2194),
 9048506536898982008, 13826009915174294200, 11179075327814499928.
 
+ROUND 8 (2026-08-30, first v3 soak triage): the 10-min user run (seed
+31765, 1.5M cases) reported "0 failures" — but its 3 KNOWN_DIVERGENCE
+records were wearing the wrong coat. The layer field said CONSTRUCTION,
+not PARSER: a real engine bug swallowed by the loose lone-surrogate
+heuristic. The layered audit did its job; the classifier didn't.
+
+- ENGINE (literal needle): pattern of two LONE surrogate symbols kept apart
+  by syntax — (?i:\uD800)\uDFFF — re-encodes its needle as adjacent units,
+  the same UTF-16 text as the pair codepoint they are not. Unit-wise
+  indexOf then matched a well-formed input pair (0..2) where re2j, JDK,
+  and PikeSim-over-our-own-Tnfa all said no. Key subtlety: the shape
+  [lone high][lone low] is UNSATISFIABLE by the alphabet contract (adjacent
+  high+low units always decode as a pair), so the needle was matching
+  where the pattern never could. detectLiteralNeedle now declines needles
+  containing adjacent high+low units; the DFA walk handles the (empty)
+  match set correctly. Covers both tiers (ASM asks at emit time).
+- SIM (PikeSim): find() read charAt(len) in the pair-interior skip when the
+  input ends in a lone high — StringIndexOutOfBoundsException poisoned the
+  sim column for the whole input class. The 41/41 historical corpus never
+  had a trailing lone high.
+- FUZZER: the KNOWN_DIVERGENCE swallow is now gated on the verdict being
+  PARSER — the known divergence IS a parser-boundary semantics difference;
+  any other layer with a lone-surrogate coat is a real finding (this one
+  was, for a whole night).
+- Pinned: SupplementaryCodepointClassTest.loneSurrogateNeedleAdjacency...,
+  LayeredComparatorTest.loneSurrogateNeedleAdjacencyIsPassAfterFix.
+  Replay seed of the original record: fuzz.one=8000609719577733824.
+  Re-run of seed 31765 post-fix: 1.57M cases, 0 failures, 0 known.
+
 LANDED (2026-08-29, fuzz round 7) — the layered audit, as a component trio:
 
 - **`lib/pikesim` — PikeSim** (io.github.jemmix.tdfa.sim): a ~300-line reference pike

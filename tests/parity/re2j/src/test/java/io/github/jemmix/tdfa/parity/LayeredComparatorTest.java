@@ -78,4 +78,19 @@ class LayeredComparatorTest {
         assertThat(r.vm()).isEqualTo("<reject>");
         assertThat(r.layer()).isEqualTo(LayeredComparator.Layer.PASS);
     }
+
+    @Test
+    void loneSurrogateNeedleAdjacencyIsPassAfterFix() {
+        // fuzz v3 first-soak finding (2026-08-30): the literal needle built
+        // from two LONE surrogate symbols re-encoded as adjacent units matched
+        // a well-formed input pair (CONSTRUCTION: vm+asm yes, sim/re2j no).
+        // detectLiteralNeedle now declines such needles; all four agree.
+        // This also pins the sim's own fix: find() on lone-high input used to
+        // throw StringIndexOutOfBoundsException (charAt(len) in the interior
+        // skip), which poisoned the sim column for the whole class of inputs.
+        String pair = "\ud800\udfff";                     // U+103FF
+        String loneHighInput = String.valueOf(new char[]{'\ud83f'});
+        assertThat(C.compare("(?i:\ud800)\udfff", pair).layer()).isEqualTo(LayeredComparator.Layer.PASS);
+        assertThat(C.compare("(?i:\ud800)", loneHighInput).layer()).isEqualTo(LayeredComparator.Layer.PASS);
+    }
 }

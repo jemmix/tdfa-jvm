@@ -136,7 +136,10 @@ public final class PikeSim {
 
         public boolean find() {
             for (int s = 0; s <= len; s++) {
-                if (s > 0 && isHigh(input.charAt(s - 1)) && isLow(input.charAt(s))) continue;  // pair interior
+                // pair interior: s is a low half preceded by a high half. The
+                // s == len case must not read charAt(len) — input ending in a
+                // lone high has no interior there (fuzz repro: lone-high input).
+                if (s > 0 && s < len && isHigh(input.charAt(s - 1)) && isLow(input.charAt(s))) continue;
                 if (runFrom(s)) { found = true; return true; }
             }
             found = false;

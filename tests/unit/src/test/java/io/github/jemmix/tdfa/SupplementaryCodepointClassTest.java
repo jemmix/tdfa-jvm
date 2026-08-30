@@ -81,4 +81,40 @@ class SupplementaryCodepointClassTest {
         assertThat(m.start(0)).isEqualTo(0);
         assertThat(m.end(0)).isEqualTo(4);   // 2 codepoints = 4 UTF-16 units
     }
+
+    /**
+     * Lone-symbol adjacency in the literal needle (fuzz v3, 2026-08-30): a
+     * pattern of two LONE surrogate symbols — high then low, kept apart by
+     * syntax so the parser's pattern-decode does not coalesce them —
+     * re-encodes into the same UTF-16 unit text as the pair codepoint they
+     * are not. The unit-wise literal-needle scan then matched a well-formed
+     * input pair against what the alphabet defines as two lone codepoints.
+     * Repro: the pattern below matched the whole pair 0..2 on every other
+     * engine's "no match" (re2j, JDK, and PikeSim over our own Tnfa).
+     * detectLiteralNeedle now declines needles containing adjacent high+low
+     * units; the DFA walk (which decodes) handles the shape correctly.
+     */
+    @Test void loneSurrogateNeedleAdjacencyDoesNotMatchPairs() {
+        String loneHighThenLow = cps(0xD800, 0xDFFF);        // two LONE symbols
+        String pair = cps(0x103FF);                          // ONE codepoint, same UTF-16 units
+        String pat = "(?i:" + loneHighThenLow.charAt(0) + ")" + loneHighThenLow.charAt(1);
+        assertThat(pat).isEqualTo("(?i:\uD800)\uDFFF");      // groups keep the symbols apart
+        // ASM tier (facade default — exercises detectLiteralNeedle) and the
+        // interpreter tier (the walk) must both decline to match the pair.
+        assertThat(io.github.jemmix.tdfa.Pattern.compile(pat).matcher(pair).find()).isFalse();
+        io.github.jemmix.tdfa.Pattern interp =
+                io.github.jemmix.tdfa.Pattern.compile(pat, 0, io.github.jemmix.tdfa.tdfa.TdfaRunner::new);
+        assertThat(interp.matcher(pair).find()).isFalse();
+        // The shape [lone high][lone low] is UNSATISFIABLE by the alphabet
+        // contract: adjacent high+low units always decode as a pair, a lone
+        // high is always followed by a non-low, a lone low always preceded by
+        // a non-high. That unsatisfiability is what made the needle bug
+        // subtle — the needle's unit text was matchable where the pattern
+        // never could be. With separation the pattern IS satisfiable:
+        String sep = "(?i:\uD800)q\uDFFF";   // lone high, 'q', lone low
+        String trueLone = "x\uD800q\uDFFFy";
+        assertThat(io.github.jemmix.tdfa.Pattern.compile(sep).matcher(trueLone).find()).isTrue();
+        // and the equivalent real pair pattern still matches the pair (both tiers)
+        assertThat(io.github.jemmix.tdfa.Pattern.compile(String.valueOf(cps(0x103FF))).matcher(pair).find()).isTrue();
+    }
 }

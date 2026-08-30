@@ -711,6 +711,19 @@ public final class TdfaRunner implements RegexEngine {
                     if (tdfa.ranges[(base + i) * 5 + 2] >= 0) return null;
                 }
             }
+            // Lone-surrogate adjacency: the needle is built from single BMP
+            // symbols, each appended as its raw unit. Two adjacent LONE
+            // symbols (high then low) re-encode as a well-formed surrogate
+            // PAIR — the same unit text as the pair codepoint they are not.
+            // Unit-wise indexOf then matches input pairs against what the
+            // alphabet defines as two lone codepoints (fuzz repro:
+            // (?i:\uD800)\uDFFF matched 𐏿 = \uD800\uDFFF whole). Rejected
+            // here, the DFA walk handles the shape correctly (it decodes).
+            for (int i = 0; i < sb.length() - 1; i++) {
+                char c0 = sb.charAt(i), c1 = sb.charAt(i + 1);
+                if (c0 >= 0xD800 && c0 <= 0xDBFF && c1 >= 0xDC00 && c1 <= 0xDFFF)
+                    return null;
+            }
             return sb.length() > 0 ? sb.toString() : null;
         } catch (RuntimeException e) {
             return null;   // any surprise shape: not a literal
