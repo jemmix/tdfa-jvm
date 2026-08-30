@@ -268,6 +268,32 @@ WorkMeter eventually kills them with a clean "pattern too large". Repros:
 fuzz.one=1287977190499177688 (transitionRegops… actually tryMap:2194),
 9048506536898982008, 13826009915174294200, 11179075327814499928.
 
+DECISION (2026-08-30, governance — option A): the lone-surrogate ×
+pair-interior divergence is an artifact in re2j, not a semantic to
+replicate. The oracle charter is re2j, and "we're in the majority with
+the JDK" is explicitly NOT a decision procedure — flip-flopping to re2j
+would flip the majority. Chosen on the merits:
+- RE2, the system re2j ports, operates on UTF-8 runes: codepoint-interior
+  match positions cannot exist in that model. Unit-interior matching is a
+  UTF-16 port artifact, not family semantics.
+- Preliminary evidence re2j is internally INCONSISTENT on this family:
+  our fork's literal-prefix fix (fix-surrogate-pair-interior-prefix,
+  4facb96) left residual interior matches via other paths (2 records in
+  562k patched-oracle cases). If re2j's own paths disagree, option B
+  ("replicate re2j") has no well-defined target and A is forced.
+- JDK + Unicode scalar semantics side with codepoint boundaries
+  (corroboration only).
+- B's price (~2-5 days: hybrid per-position input relation in the
+  determinizer, ~10 pairInterior guard sites across both tiers, PikeSim,
+  loss of JDK-parity corpus pins) buys replication of an accident.
+WORK ITEM: assemble the repro set (LayeredComparatorTest's (\uDC21) pin +
+fuzz.one seeds from r13's residual records); verify whether re2j's paths
+are actually inconsistent or uniformly unit-based; file google/re2j
+issue + PR from the fork branch. FALSIFIER: upstream rules the behavior
+intended and pinned (won't-fix) → revisit B. Until then the drop-in
+charter carries this one documented exception and the PARSER-gated fuzzer
+allowlist stays.
+
 ROUND 8 (2026-08-30, first v3 soak triage): the 10-min user run (seed
 31765, 1.5M cases) reported "0 failures" — but its 3 KNOWN_DIVERGENCE
 records were wearing the wrong coat. The layer field said CONSTRUCTION,
