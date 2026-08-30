@@ -1,0 +1,29 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'io.github.jemmix'
+version = '0.1.0-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // The four columns: sim reference (:sim → :core), engine facade (→ :asm),
+    // and the external oracle re2j.
+    api project(':sim')
+    api project(':')
+    implementation 'com.google.re2j:re2j:1.8'
+}
+
+jar {
+    manifest {
+        attributes 'Automatic-Module-Name': 'io.github.jemmix.tdfa.parity.testlib'
+    }
+}

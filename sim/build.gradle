@@ -1,0 +1,25 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'io.github.jemmix'
+version = '0.1.0-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    api project(':core')
+}
+
+jar {
+    manifest {
+        attributes 'Automatic-Module-Name': 'io.github.jemmix.tdfa.sim'
+    }
+}

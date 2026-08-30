@@ -218,18 +218,34 @@ case-by-case). Four classes, each with the prevention now in place or proposed:
    emission even with uniform stop tables; emitted code shrinks for such
    patterns.)
 
-Proposed, not yet built (ranked):
+LANDED (2026-08-29, fuzz round 7) — the layered audit, as a component trio:
 
-- **Construction-time DFA audit** (highest value remaining): a test-only
-  exhaustive equivalence check of the materialized DFA against a direct NFA
-  simulation for small patterns (bounded states x alphabet x positions).
-  Would have caught the specificity sort, the dead-marker protocol, and the
-  context ordering at COMPILE time with precise localization — instead of an
-  end-to-end fuzz mismatch needing manual bisection. Natural host: the
-  ZeroWidthExhaustiveTest-style enumerators.
-- **Layered oracle**: an in-repo pike VM over OUR Tnfa (test-only) so parser/
-  NFA bugs separate from determinizer bugs — today both surface as identical
-  end-to-end mismatches vs re2j.
+- **`:sim` — PikeSim** (io.github.jemmix.tdfa.sim): a ~300-line reference pike
+  VM running directly over the Tnfa — no determinization, nothing deferred;
+  assertions checked at edge crossing against direct position truth; captures
+  as copy-on-write path state (the engine's functional tag-history semantics,
+  and the exact equivalent of re2j's scoped write/restore GIVEN the shared
+  nullable-X* = quest(plus(X)) shape — verified against re2j's Machine.java
+  source from the fork). Public API + CLI for end-user debugging; validated
+  41/41 on the full historical bug corpus and as a hard fourth column of the
+  63k ZeroWidthExhaustiveTest (the column caught its first sim bug — group-0
+  indexing — during bring-up: the audit audits the auditor too).
+- **`:testlib:parity` — LayeredComparator**: the four-column vote (re2j /
+  sim / vm / asm) with a total classification — PASS, TIER (vm!=asm),
+  CONSTRUCTION (vm==asm!=sim; sim==re2j), PARSER (vm==asm==sim!=re2j),
+  SIM_SUSPECT (vm==re2j!=sim), CHAOS — plus a CLI probe. Compile rejections
+  normalize to one token (three exception classes would masquerade as
+  divergence). Own acceptance test = retrodiction: the synthetic verdict
+  table, the round-3..6 repro families (all PASS now), and the live
+  lone-surrogate case classified PARSER (our deliberate codepoint-boundary
+  semantics — the KNOWN_DIVERGENCE classifier composes on top).
+- **Threaded everywhere**: ZeroWidthExhaustiveTest hard-gates the sim column;
+  SemanticsContractTest/FinalOpsParityTest get failure-time attribution (zero
+  green-path cost — the verdict lands in the assertion message); the fuzzer
+  records a `layer` field per failure and groups the soak summary by layer.
+  Not built: an always-on per-case sim column in the soak (the failure-path
+  attribution covers localization; an always-on column would ~halve throughput
+  for no extra signal).
 
 What already worked and stays: exhaustive enumerators as acceptance gates,
 hard-gating every fixed family, replay corpora, probe-before-fix.

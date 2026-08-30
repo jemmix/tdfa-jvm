@@ -78,6 +78,10 @@ public final class DifferentialFuzzer {
     }
 
     static final long CASE_TIMEOUT_MS = Long.getLong("fuzz.caseTimeoutMs", 10_000);
+
+    /** Layered comparator (re2j/sim/vm/asm vote) for failure attribution. */
+    private static final io.github.jemmix.tdfa.parity.LayeredComparator LAYERED =
+            new io.github.jemmix.tdfa.parity.LayeredComparator(com.google.re2j.Re2jUnicodeProvider.INSTANCE);
     /** The worker of the case in flight (hang post-mortem must read THIS
      *  thread, not any previously-leaked hung worker). */
     private static volatile Thread currentWorker;
@@ -388,6 +392,7 @@ public final class DifferentialFuzzer {
     static final class Results {
         final long masterSeed;
         long cases, failures, bothReject, ciSuppAvoidedTotal, ciRangeAvoidedTotal, knownDivergence;
+        final java.util.Map<io.github.jemmix.tdfa.parity.LayeredComparator.Layer, Integer> layerCounts = new java.util.EnumMap<>(io.github.jemmix.tdfa.parity.LayeredComparator.Layer.class);
         long hangs, hangsOurs, hangsOracle;
         double casesPerMinute;
         final Map<String, Sig> signatures = new LinkedHashMap<>();
@@ -397,10 +402,14 @@ public final class DifferentialFuzzer {
             ciSuppAvoidedTotal += ciSuppAvoided;
             ciRangeAvoidedTotal += ciRangeAvoided;
             if (o.failed()) {
+                // Layer attribution (failure path only — zero soak cost):
+                // re2j/sim/vm/asm vote; the verdict names the failing layer.
+                var report = LAYERED.compare(o.c.pattern(), o.c.input());
+                layerCounts.merge(report.layer(), 1, Integer::sum);
                 String known = knownDivergence(o);
                 if (known != null) {
                     knownDivergence++;
-                    logs.failure(caseSeed, o, "KNOWN_DIVERGENCE (" + known + ")");
+                    logs.failure(caseSeed, o, "KNOWN_DIVERGENCE (" + known + ")", report.layer());
                     return;
                 }
                 failures++;
@@ -410,7 +419,7 @@ public final class DifferentialFuzzer {
                 s.total++;
                 if (s.recorded < 8) {
                     s.recorded++;
-                    logs.failure(caseSeed, o, kind);
+                    logs.failure(caseSeed, o, kind, report.layer());
                 }
             } else if (o.oracle.startsWith("<")) {
                 bothReject++;
@@ -508,9 +517,10 @@ public final class DifferentialFuzzer {
             progress = new PrintWriter(Files.newBufferedWriter(dir.resolve("progress.log"), opts), true);
         }
 
-        void failure(long caseSeed, Outcome o, String kind) {
+        void failure(long caseSeed, Outcome o, String kind, io.github.jemmix.tdfa.parity.LayeredComparator.Layer layer) {
             failures.println("{\"caseSeed\":" + caseSeed + ",\"kind\":\"" + kind.replace('"', '\'')
-                    + "\",\"pattern\":\"" + escape(o.c.pattern()) + "\",\"input\":\"" + escape(o.c.input())
+                    + "\",\"layer\":\"" + layer + "\""
+                    + ",\"pattern\":\"" + escape(o.c.pattern()) + "\",\"input\":\"" + escape(o.c.input())
                     + "\",\"oracle\":\"" + escape(o.oracle) + "\",\"asm\":\"" + escape(o.asm)
                     + "\",\"vm\":\"" + escape(o.vm) + "\""
                     + (o.exceptions.isEmpty() ? "" : ",\"ex\":" + o.exceptions.stream()
@@ -561,6 +571,11 @@ public final class DifferentialFuzzer {
                 w.printf("rate: %.1f cases/min%n", r.casesPerMinute);
                 w.println("ciSuppAvoided (known-gap constructs not generated): " + r.ciSuppAvoidedTotal
                         + "  ciWideRangeAvoided (oracle-hang guard): " + r.ciRangeAvoidedTotal);
+                if (!r.layerCounts.isEmpty()) {
+                    w.println();
+                    w.println("failure layers (attributed):");
+                    r.layerCounts.forEach((layer, n) -> w.printf("  %6d  %s%n", n, layer));
+                }
                 w.println();
                 w.println("failure signatures (deduped):");
                 r.signatures.forEach((sig, s) -> w.printf("  %6d  %s%n", s.total, sig));

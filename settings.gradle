@@ -5,11 +5,11 @@ pluginManagement {
     }
 }
 
-include ':core', ':asm',
+include ':core', ':asm', ':sim',
         ':unicode:v6_0', ':unicode:v17_0',
         ':tests:unit',
         ':tests:parity:re2j',
         ':tests:parity:re2j-suite',
         ':tests:parity:rebar',
         ':benchmarks:micro',
-        ':testlib:rebar'
+        ':testlib:rebar', ':testlib:parity'

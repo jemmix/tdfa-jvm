@@ -83,6 +83,26 @@ class ZeroWidthExhaustiveTest {
         assertThat(actual)
                 .as("pattern=\"%s\" input-encoded=\"%s\" [%s]", c.pattern(), escape(c.input()), factory)
                 .isEqualTo(expected);
+        // Layered audit: the PikeSim reference (over our Tnfa, no determinizer)
+        // must also agree — sim-vs-DFA disagreement on any enumerated case is a
+        // determinizer bug, pre-localized by construction.
+        assertThat(simProtocol(c.pattern(), c.input()))
+                .as("sim-vs-re2j pattern=\"%s\" input-encoded=\"%s\"", c.pattern(), escape(c.input()))
+                .isEqualTo(expected);
+    }
+
+    /** PikeSim reference in this test's protocol — the audit's fourth column. */
+    private static String simProtocol(String pattern, String input) {
+        var m = io.github.jemmix.tdfa.sim.PikeSim.compile(pattern, com.google.re2j.Re2jUnicodeProvider.INSTANCE).matcher(input);
+        StringBuilder sb = new StringBuilder();
+        boolean found = m.find();
+        sb.append(found ? "true " + m.group() : "false").append(' ').append(m.groupCount());
+        if (found)
+            for (int i = 1; i <= m.groupCount(); i++) {
+                String g = m.group(i);
+                if (g != null) sb.append(" <").append(g).append('>');
+            }
+        return sb.toString();
     }
 
     private static String re2jProtocol(String pattern, String input) {

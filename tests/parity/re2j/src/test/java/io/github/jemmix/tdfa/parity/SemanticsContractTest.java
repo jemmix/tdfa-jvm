@@ -40,9 +40,16 @@ class SemanticsContractTest {
     }
 
     private static void assertMatchesRe2j(String pattern, String input, RegexEngineFactory factory) {
-        assertThat(tdfaProtocol(pattern, input, factory))
-                .as("pattern=\"%s\" input-encoded=\"%s\" [%s]", pattern, escape(input), factory)
-                .isEqualTo(re2jProtocol(pattern, input));
+        try {
+            assertThat(tdfaProtocol(pattern, input, factory))
+                    .as("pattern=\"%s\" input-encoded=\"%s\" [%s]", pattern, escape(input), factory)
+                    .isEqualTo(re2jProtocol(pattern, input));
+        } catch (AssertionError e) {
+            // failure-time layer attribution (zero cost on the green path):
+            // re2j/sim/vm/asm vote, the verdict names the failing layer
+            throw new AssertionError(e.getMessage() + "\n  " + new io.github.jemmix.tdfa.parity.LayeredComparator(
+                    com.google.re2j.Re2jUnicodeProvider.INSTANCE).compare(pattern, input).attribution(), e);
+        }
     }
 
     private static String escape(String s) {
