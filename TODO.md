@@ -243,6 +243,31 @@ range-compare chains in emitted dispatch (vs VM's flat table) — candidate
 for a 128-entry ASCII switch arm; wide-class materialization (\p{L}{1,30}:
 31ms, 20.5k transitions, states stay tiny) — bounded, acceptable.
 
+FUZZ (2026-08-30, generator v3 — batched): one pattern per K=8 inputs.
+Compile+codegen is ~45% of per-case cost (measured: 8.5ms/case full, 3.8ms
+ours, 0.02ms re2j); amortizing it lifted sustained soak throughput from
+~15-20k to ~140k cases/min (7-10x). The bigger win is coverage: per-index
+deterministic boundary bias (trailing \n, space-padding, mid-string lone
+surrogate, pair+ASCII adjacency, near-empty, all-pools) — the historical
+bug families were input-position-sensitive and one random haystack per
+pattern missed exactly those axes. caseSeed = batch*8+idx is bijective
+(floorDiv/floorMod replay; fuzz.one unchanged); pre-v3 seeds are dead.
+Two self-inflicted attribution bugs found on the first soak: batch*8+i must
+not overflow Long (>>> 4 now — >>> 3 let batches ≥ 2^60 wrap negative; the
+wrap is bijective so those seeds replay, but a shifted batch — recovered
+this run by +2^61 arithmetic on the recorded value). v3's first findings:
+(1) regopt liveness — paper's round-robin fixpoint with boolean[] rows cost
+1.4s on an 11k-block CFG that converges in 3 rounds; rewritten as packed
+long[] rows + predecessor worklist seeded in post-order (REGOPT stage
+2.5s → 0.47s on the repro, total compile 4.5s → 0.85s). (2) OPEN,
+deferred: determinizer compile-perf cliffs — tryMap×history tick volume
+(Tdfa.java:2194 bijection loop; 4.3B-tick budget ≈ minutes at history()
+granularity, far past the 10s fuzz watchdog), topologicalSort O(n^4) guard
+(:2240), transitionRegops/fillKeySig volume. Not non-termination — the
+WorkMeter eventually kills them with a clean "pattern too large". Repros:
+fuzz.one=1287977190499177688 (transitionRegops… actually tryMap:2194),
+9048506536898982008, 13826009915174294200, 11179075327814499928.
+
 LANDED (2026-08-29, fuzz round 7) — the layered audit, as a component trio:
 
 - **`lib/pikesim` — PikeSim** (io.github.jemmix.tdfa.sim): a ~300-line reference pike

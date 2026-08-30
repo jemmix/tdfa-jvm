@@ -86,19 +86,26 @@ public final class DifferentialFuzzer {
      *  thread, not any previously-leaked hung worker). */
     private static volatile Thread currentWorker;
 
-    /** One case with a watchdog: a hang (compile or match loop that never
-     *  returns) is recorded and the soak CONTINUES — the worker thread is
-     *  sacrificed as a daemon. The fuzzer found a real hang on its first
-     *  20k-case run; overnight runs must survive their own discoveries.
-     *  Returns the Outcome, or null on timeout (worker left running). */
-    static Outcome runWatched(Case c) throws InterruptedException {
-        final Outcome[] out = new Outcome[1];
-        Thread worker = new Thread(() -> out[0] = runOne(c), "fuzz-case");
+    /** One batch with a watchdog: compile once, then K inputs, each guard-tracked
+     *  in {@code prog} (-1 = compiling, i = about to run input i). On timeout the
+     *  worker thread is sacrificed as before; outcomes already written (indices
+     *  < prog) are volatile-ordered before the prog store that revealed them, so
+     *  the main thread records them normally and attributes the hang to the exact
+     *  caseSeed (batch*K + prog). Returns false on timeout. */
+    static boolean runBatchWatched(String pattern, String[] inputs, Outcome[] os,
+                                   java.util.concurrent.atomic.AtomicInteger prog) throws InterruptedException {
+        Thread worker = new Thread(() -> {
+            Prepared pr = prepare(pattern);
+            for (int i = 0; i < inputs.length; i++) {
+                prog.set(i);
+                os[i] = matchCase(pr, new Case(pattern, inputs[i]));
+            }
+        }, "fuzz-case");
         worker.setDaemon(true);
         currentWorker = worker;
         worker.start();
         worker.join(CASE_TIMEOUT_MS);
-        return out[0];
+        return !worker.isAlive();
     }
 
     /** Core entry reusable from the smoke test. */
@@ -112,23 +119,37 @@ public final class DifferentialFuzzer {
             Results r = new Results(masterSeed);
             Runtime.getRuntime().addShutdownHook(new Thread(() -> { r.writeSummary(logs); logs.flush(); }));
             while ((maxCases <= 0 || r.cases < maxCases) && System.nanoTime() < deadline) {
-                long caseSeed = master.nextLong();
-                Case c = generate(caseSeed);
-                Outcome o;
+                // >>> 4 keeps batch*8+i < 2^63 (>>> 3 was wrong: batches ≥ 2^60
+                // wrapped negative — bijective and replayable, but confusing in logs).
+                long batch = master.nextLong() >>> 4;
+                String pattern = genPattern(batch);
+                // pattern-level generation guards fold once per batch
+                r.ciSuppAvoidedTotal += ciSuppAvoided;
+                r.ciRangeAvoidedTotal += ciRangeAvoided;
+                String[] inputs = new String[BATCH_K];
+                for (int i = 0; i < BATCH_K; i++) inputs[i] = genInput(batch, i);
+                Outcome[] os = new Outcome[BATCH_K];
+                java.util.concurrent.atomic.AtomicInteger prog = new java.util.concurrent.atomic.AtomicInteger(-1);
+                boolean done;
                 try {
-                    o = runWatched(c);
+                    done = runBatchWatched(pattern, inputs, os, prog);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
                 }
-                if (o == null) {
+                int k = done ? BATCH_K : prog.get();   // on hang: outcomes < k are real, k is the victim
+                for (int i = 0; i < k && (maxCases <= 0 || r.cases < maxCases); i++) {
+                    r.record(batch * BATCH_K + i, os[i], logs);
                     r.cases++;
-                    r.hangs++;
-                    logs.hang(caseSeed, c, r);
-                    continue;
                 }
-                r.record(caseSeed, o, logs);
-                r.cases++;
+                if (!done) {
+                    int victim = k < 0 ? 0 : k;   // -1 = compile hang: replay head case (fuzz.one recompiles)
+                    if (r.cases < maxCases || maxCases <= 0) {
+                        r.hangs++;
+                        logs.hang(batch * BATCH_K + victim, new Case(pattern, inputs[victim]), r);
+                        r.cases++;
+                    }
+                }
                 long now = System.nanoTime();
                 if (now - lastProgress > 15_000_000_000L) {
                     double mins = (now - start) / 60_000_000_000.0;
@@ -150,30 +171,77 @@ public final class DifferentialFuzzer {
 
     record Case(String pattern, String input) {}
 
-    static Outcome runOne(Case c) {
-        Outcome o = new Outcome(c);
+    /** Engines compiled once per batch. A non-null tag means the compile
+     *  path produced that protocol string for EVERY input (rejection, or a
+     *  compile-time runtime exception); exc carries the exception detail
+     *  lines to attach to each Outcome, matching the old per-case strings. */
+    static final class Prepared {
+        String pattern;
+        com.google.re2j.Pattern oracle;      String oracleTag;
+        io.github.jemmix.tdfa.Pattern asm;   String asmTag;   String asmExc;
+        io.github.jemmix.tdfa.Pattern vm;    String vmTag;    String vmExc;
+    }
+
+    static Prepared prepare(String pattern) {
+        Prepared p = new Prepared();
+        p.pattern = pattern;
         try {
-            com.google.re2j.Pattern p = com.google.re2j.Pattern.compile(c.pattern());
-            o.oracle = compute(p.matcher(c.input()));
+            p.oracle = com.google.re2j.Pattern.compile(pattern);
         } catch (RuntimeException e) {
-            o.oracle = "<reject>";
+            p.oracleTag = "<reject>";
         }
-        o.asm = engine(c, null, o);
-        o.vm = engine(c, io.github.jemmix.tdfa.tdfa.TdfaRunner::new, o);
+        try {
+            p.asm = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, null, Re2jUnicodeProvider.INSTANCE);
+        } catch (io.github.jemmix.tdfa.core.PatternSyntaxException e) {
+            p.asmTag = "<reject:" + firstLine(e.getMessage()) + ">";
+        } catch (RuntimeException e) {
+            p.asmTag = "<exception:" + e.getClass().getSimpleName() + ">";
+            p.asmExc = "asm " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage());
+        }
+        try {
+            p.vm = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, io.github.jemmix.tdfa.tdfa.TdfaRunner::new, Re2jUnicodeProvider.INSTANCE);
+        } catch (io.github.jemmix.tdfa.core.PatternSyntaxException e) {
+            p.vmTag = "<reject:" + firstLine(e.getMessage()) + ">";
+        } catch (RuntimeException e) {
+            p.vmTag = "<exception:" + e.getClass().getSimpleName() + ">";
+            p.vmExc = "vm " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage());
+        }
+        return p;
+    }
+
+    /** One (pattern, input) case against prepared engines. Protocol strings
+     *  identical to the former per-case compile path. */
+    static Outcome matchCase(Prepared pr, Case c) {
+        Outcome o = new Outcome(c);
+        if (pr.oracle != null) {
+            try {
+                o.oracle = compute(pr.oracle.matcher(c.input()));
+            } catch (RuntimeException e) {
+                o.oracle = "<reject>";
+            }
+        } else {
+            o.oracle = pr.oracleTag;
+        }
+        o.asm = runEngine(pr.asm, pr.asmTag, pr.asmExc, "asm", c, o);
+        o.vm = runEngine(pr.vm, pr.vmTag, pr.vmExc, "vm", c, o);
         return o;
     }
 
-    static String engine(Case c, io.github.jemmix.tdfa.core.RegexEngineFactory f, Outcome o) {
-        String tag = f == null ? "asm" : "vm";
+    static String runEngine(io.github.jemmix.tdfa.Pattern p, String tag, String exc, String engTag, Case c, Outcome o) {
+        if (tag != null) {
+            if (exc != null) o.exceptions.add(exc);
+            return tag;
+        }
         try {
-            var p = io.github.jemmix.tdfa.Pattern.compile(c.pattern(), 0, f, Re2jUnicodeProvider.INSTANCE);
             return compute(p.matcher(c.input()));
-        } catch (io.github.jemmix.tdfa.core.PatternSyntaxException e) {
-            return "<reject:" + firstLine(e.getMessage()) + ">";
         } catch (RuntimeException e) {
-            o.exceptions.add(tag + " " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
+            o.exceptions.add(engTag + " " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
             return "<exception:" + e.getClass().getSimpleName() + ">";
         }
+    }
+
+    static Outcome runOne(Case c) {
+        return matchCase(prepare(c.pattern()), c);
     }
 
     /** Corpus-test protocol: "true <group()> <groupCount> <g1> <g2>...". */
@@ -215,15 +283,50 @@ public final class DifferentialFuzzer {
     private static int ciSuppAvoided;   // informational; generation-side counters
     private static int ciRangeAvoided;  // (known-gap / oracle-hang constructs not generated)
 
+    /** Batched generation (generator v3): caseSeed → batch = floorDiv(s, K),
+     *  index = floorMod(s, K). The pattern is a pure function of the batch,
+     *  the input a pure function of (batch, index) with a deterministic
+     *  boundary bias per index — so every batch caseSeed is independently
+     *  replayable via {@code fuzz.one}. One compile per batch serves all K
+     *  inputs: compile+codegen is ~45% of per-case cost, matching is µs.
+     *  Generator version bump — pre-v3 caseSeeds are dead (as in rounds
+     *  5/6). */
+    static final int BATCH_K = 8;
+
     static Case generate(long caseSeed) {
-        SplittableRandom rnd = new SplittableRandom(caseSeed);
+        long batch = Math.floorDiv(caseSeed, BATCH_K);
+        int idx = (int) Math.floorMod(caseSeed, BATCH_K);
+        return new Case(genPattern(batch), genInput(batch, idx));
+    }
+
+    static String genPattern(long batch) {
         ciSuppAvoided = 0;
         ciRangeAvoided = 0;
-        String pattern = expr(rnd, 0, false);
+        return expr(new SplittableRandom(batch), 0, false);
+    }
+
+    /** Input = pure fn(batch, index). Base draw as before (pool mix), then a
+     *  deterministic per-index boundary transform: the historical bug
+     *  families were input-position-sensitive (word/anchor boundaries,
+     *  surrogate-pair interiors, $ vs \z), which one random haystack per
+     *  pattern systematically misses. */
+    static String genInput(long batch, int idx) {
+        SplittableRandom rnd = new SplittableRandom(batch * 0x9E3779B97F4A7C15L ^ (idx + 1) * 0xBF58476D1CE4E5B9L);
         int inLen = rnd.nextInt(0, 25);
         StringBuilder in = new StringBuilder(inLen * 2);
         for (int i = 0; i < inLen; i++) in.appendCodePoint(pickInputCp(rnd));
-        return new Case(pattern, in.toString());
+        switch (idx) {
+            case 1 -> in.append('\n');            // $ / (?m)$ / \z divergence axis
+            case 2 -> { in.insert(0, ' '); in.append(' '); }   // \b at both ends
+            case 3 -> in.insert(in.length() / 2, (char) POOL_LONE[rnd.nextInt(POOL_LONE.length)]);  // lone surrogate mid-string
+            case 4 -> in.appendCodePoint(POOL_SUPP[rnd.nextInt(POOL_SUPP.length)])
+                        .append((char) POOL_ASCII[rnd.nextInt(POOL_ASCII.length)]);   // pair adjacent to ASCII
+            case 5 -> in.setLength(rnd.nextInt(0, 4));            // near-empty (may split a pair — deliberate)
+            case 6 -> { for (int[] pool : new int[][]{POOL_ASCII, POOL_EDGE, POOL_UNICODE, POOL_SUPP, POOL_LONE})
+                            in.appendCodePoint(pool[rnd.nextInt(pool.length)]); }     // one of every pool
+            default -> {}                                          // idx 0, 7: plain random
+        }
+        return in.toString();
     }
 
     static int pickInputCp(SplittableRandom rnd) {
@@ -399,8 +502,7 @@ public final class DifferentialFuzzer {
         Results(long masterSeed) { this.masterSeed = masterSeed; }
 
         void record(long caseSeed, Outcome o, Logs logs) {
-            ciSuppAvoidedTotal += ciSuppAvoided;
-            ciRangeAvoidedTotal += ciRangeAvoided;
+            // (generation-guard counters fold once per batch in run(), not here)
             if (o.failed()) {
                 // Layer attribution (failure path only — zero soak cost):
                 // re2j/sim/vm/asm vote; the verdict names the failing layer.

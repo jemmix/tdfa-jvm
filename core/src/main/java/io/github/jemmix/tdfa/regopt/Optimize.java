@@ -148,12 +148,20 @@ public final class Optimize {
      * will be read by some downstream op before being overwritten, or it's a
      * final register consumed by {@link io.github.jemmix.tdfa.core.MatchResult}).
      *
-     * <p>Paper algorithm: Figure 7 ({@code liveness_analysis}).
+     * <p>Paper algorithm: Figure 7 ({@code liveness_analysis}). The paper's
+     * round-robin fixpoint over {@code boolean[reg]} rows is correct but
+     * quadratic-in-practice on real TDFA CFGs: the fuzzer's first v3 soak drew
+     * an 11k-block / 135-register CFG where every round cloned and OR-merged
+     * full rows for every block and every successor — 1.4 s in a stage that
+     * converges in 3 rounds. Representation fix: rows are packed {@code long[]}
+     * words (union = word OR, ~64x less traffic) and the fixpoint is a
+     * worklist seeded in post-order (successors first — the fast order for
+     * backward flow) that re-enqueues only the PREDECESSORS of blocks whose
+     * row changed. A block is reprocessed only when a successor actually
+     * changed something it reads.
      *
-     * <p>Seeds: all final registers are live at the end of every final block.
-     * Propagation: for each basic block, liveness-at-end = union over successors
-     * of (liveness propagated backward through the successor's ops to its entry).
-     * Fixpoint iteration until no row changes.
+     * <p>Seeds: all final registers are live at the end of every final block
+     * (FINAL rows are constant — never re-derived, never re-enqueued).
      *
      * <p>Fallback-block handling (last 4 lines of the paper's pseudocode) is
      * deferred until M3 (we have no fallback blocks yet).
@@ -161,65 +169,112 @@ public final class Optimize {
     static boolean[][] livenessAnalysis(Cfg cfg, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
         int nb = cfg.blocks.size();
         int nr = cfg.regCount;
-        boolean[][] L = new boolean[nb][nr];
+        int w = (nr + 63) >>> 6;
+        long[][] rows = new long[nb][];
+        for (int b = 0; b < nb; b++) rows[b] = new long[w];
         int fb = cfg.finalRegBase;
         int T = cfg.tagCount;
         // Seed: all final registers live at end of every final block.
         for (int b = 0; b < nb; b++) {
             if (cfg.blocks.get(b).kind != Cfg.BLOCK_FINAL) continue;
             for (int t = 0; t < T; t++) {
-                if (fb + t < nr) L[b][fb + t] = true;
+                int r = fb + t;
+                if (r < nr) rows[b][r >>> 6] |= 1L << r;
             }
         }
-        // Post-order traversal of basic blocks (children before parents) for fast convergence.
+        // Predecessor lists (BASIC blocks only — FINAL rows never change, so
+        // nothing needs to re-derive them).
+        int[] predCount = new int[nb];
+        for (Cfg.Block b : cfg.blocks)
+            for (int si : b.successors)
+                if (cfg.blocks.get(si).kind == Cfg.BLOCK_BASIC) predCount[si]++;
+        int[][] preds = new int[nb][];
+        for (int b = 0; b < nb; b++) preds[b] = new int[predCount[b]];
+        int[] fill = new int[nb];
+        for (int b = 0; b < nb; b++) {
+            if (cfg.blocks.get(b).kind != Cfg.BLOCK_BASIC) continue;
+            for (int si : cfg.blocks.get(b).successors)
+                if (cfg.blocks.get(si).kind == Cfg.BLOCK_BASIC) preds[si][fill[si]++] = b;
+        }
+        // Worklist seeded with all BASIC blocks in post-order (successors
+        // before predecessors: information flows backward, so that order
+        // converges in the fewest re-enqueues).
         int[] postOrder = computePostOrder(cfg);
-        // Fixpoint.
-        while (true) {
+        int[] queue = new int[nb + 1];
+        java.util.BitSet queued = new java.util.BitSet(nb);
+        int head = 0, tail = 0;
+        for (int bi : postOrder) {
+            if (cfg.blocks.get(bi).kind != Cfg.BLOCK_BASIC) continue;
+            queue[tail % queue.length] = bi;
+            tail++;
+            queued.set(bi);
+        }
+        long[] scratch = new long[w];
+        while (head != tail) {
             if (meter != null) meter.tick();
-            boolean fixed = true;
-            for (int bi : postOrder) {
-                Cfg.Block b = cfg.blocks.get(bi);
-                if (b.kind != Cfg.BLOCK_BASIC) continue;
-                boolean[] Lb = L[bi].clone();
-                for (int si : b.successors) {
-                    Cfg.Block s = cfg.blocks.get(si);
-                    boolean[] Ls = L[si].clone();
-                    propagateBackward(Ls, s.ops, nr);
-                    for (int i = 0; i < nr; i++) Lb[i] = Lb[i] || Ls[i];
-                }
-                if (!Arrays.equals(L[bi], Lb)) {
-                    L[bi] = Lb;
-                    fixed = false;
+            int bi = queue[head % queue.length];
+            head++;
+            queued.clear(bi);
+            Cfg.Block b = cfg.blocks.get(bi);
+            java.util.Arrays.fill(scratch, 0L);
+            boolean any = false;
+            for (int si : b.successors) {
+                Cfg.Block s = cfg.blocks.get(si);
+                long[] in = propagateBackwardW(rows[si], s.ops, nr);
+                for (int k = 0; k < w; k++) scratch[k] |= in[k];
+                any = true;
+            }
+            if (!any) continue;   // no successors: row stays (seed or empty)
+            if (!java.util.Arrays.equals(scratch, rows[bi])) {
+                rows[bi] = scratch.clone();
+                scratch = new long[w];
+                for (int p : preds[bi]) {
+                    if (!queued.get(p)) {
+                        queue[tail % queue.length] = p;
+                        tail++;
+                        queued.set(p);
+                    }
                 }
             }
-            if (fixed) break;
+        }
+        // Materialize the boolean[][] contract the callers (DCE, interference) use.
+        boolean[][] L = new boolean[nb][nr];
+        for (int b = 0; b < nb; b++) {
+            long[] row = rows[b];
+            for (int k = 0; k < w; k++) {
+                long bits = row[k];
+                while (bits != 0) {
+                    int r = (k << 6) + Long.numberOfTrailingZeros(bits);
+                    if (r < nr) L[b][r] = true;
+                    bits &= bits - 1;
+                }
+            }
         }
         return L;
     }
 
-    /**
-     * Walk {@code ops} in reverse, transforming {@code live} from "at end of block"
-     * to "at start of block". SET kills dst; COPY transfers liveness dst → src.
-     */
-    private static void propagateBackward(boolean[] live, List<Cfg.Op> ops, int nr) {
+    /** Word-packed variant of {@link #propagateBackward}: live-in of a block
+     *  from its live-out row. Does not mutate {@code live}. */
+    private static long[] propagateBackwardW(long[] liveOut, List<Cfg.Op> ops, int nr) {
+        long[] live = liveOut.clone();
         for (int oi = ops.size() - 1; oi >= 0; oi--) {
             Cfg.Op op = ops.get(oi);
-            if (op.dst >= nr) continue;  // out-of-range (shouldn't happen post-compaction)
+            if (op.dst >= nr) continue;
             switch (op.kind) {
                 case Cfg.KIND_SET:
-                    live[op.dst] = false;
+                    live[op.dst >>> 6] &= ~(1L << op.dst);
                     break;
                 case Cfg.KIND_COPY:
-                    if (live[op.dst]) {
-                        live[op.dst] = false;
-                        if (op.src < nr) live[op.src] = true;
+                    if ((live[op.dst >>> 6] & (1L << op.dst)) != 0) {
+                        live[op.dst >>> 6] &= ~(1L << op.dst);
+                        if (op.src < nr) live[op.src >>> 6] |= 1L << op.src;
                     }
                     break;
                 default:
-                    // KIND_APPEND: liveness transfers not modeled (multi-valued tags unsupported).
-                    break;
+                    break;   // KIND_APPEND: multi-valued tags unmodeled
             }
         }
+        return live;
     }
 
     /**
