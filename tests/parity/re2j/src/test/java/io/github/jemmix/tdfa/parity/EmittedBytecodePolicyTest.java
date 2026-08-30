@@ -56,7 +56,9 @@ class EmittedBytecodePolicyTest {
             this.owner = owner; this.name = name; this.desc = desc;
         }
         @Override public String toString() {
-            return file + "." + method + ": " + OPCODES[opcode] + " " + owner + "." + name + desc;
+            // OPCODES is indexed relative to INVOKEVIRTUAL (182): storing the
+            // names at absolute opcode indices would need a 187-slot array.
+            return file + "." + method + ": " + OPCODES[opcode - Opcodes.INVOKEVIRTUAL] + " " + owner + "." + name + desc;
         }
     }
 

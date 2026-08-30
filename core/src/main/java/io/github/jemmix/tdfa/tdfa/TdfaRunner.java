@@ -499,7 +499,10 @@ public final class TdfaRunner implements RegexEngine {
                         lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
                         if (regs != null) applyFinalOps(state, regs, pos);
                         if (!longestMatch) {
-                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                            // stopNow ignores posFlags when the stop table is
+                            // uniform (assertion-free) — skip the 2×charAt +
+                            // word lookups; other readers recompute lazily.
+                            if (posFlags < 0 && stopMaskUniform == null) posFlags = positionFlags(input, pos, to);
                             if (stopNow(state, posFlags)) break loop;
                         }
                     } else {
@@ -1118,7 +1121,7 @@ public final class TdfaRunner implements RegexEngine {
             int c = Alphabet.decode(input, pos, to);
             int adv = Alphabet.width(c);
 
-            Arrays.fill(next, 0);
+            Arrays.fill(next, 0, nwords, 0);   // grown Scratch: zero only our prefix
             next[ss >>> 5] |= 1 << (ss & 31);
 
             if (at != null && c < 128) {
@@ -1342,7 +1345,7 @@ public final class TdfaRunner implements RegexEngine {
             int c = Alphabet.decode(input, pos, to);
             int adv = Alphabet.width(c);
 
-            Arrays.fill(next, 0);
+            Arrays.fill(next, 0, nwords, 0);   // grown Scratch: zero only our prefix
             if (at != null && c < 128) {
                 for (int w = 0; w < nwords; w++) {
                     int bits = live[w];
@@ -1605,7 +1608,7 @@ public final class TdfaRunner implements RegexEngine {
                     haveAccept = true; lastAcceptPos = pos; lastAcceptState = state;
                     if (regs != null) applyFinalOps(state, regs, pos);
                     if (pm) {
-                        posFlags = positionFlags(input, pos, to);
+                        if (stopMaskUniform == null) posFlags = positionFlags(input, pos, to);
                         if (stopNow(state, posFlags)) break;
                     }
                 }
@@ -1786,7 +1789,7 @@ public final class TdfaRunner implements RegexEngine {
                 if (acceptMask == 0) {
                     haveAccept = true; lastAcceptPos = pos;
                     if (!longestMatch) {
-                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                        if (posFlags < 0 && stopMaskUniform == null) posFlags = positionFlags(input, pos, to);
                         if (stopNow(state, posFlags)) break;
                     }
                 } else {

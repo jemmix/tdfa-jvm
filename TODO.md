@@ -218,6 +218,31 @@ case-by-case). Four classes, each with the prevention now in place or proposed:
    emission even with uniform stop tables; emitted code shrinks for such
    patterns.)
 
+PERF (2026-08-30, post-audit tuning round): first full JMH baseline run
+(vs jur/re2j/reggie) confirmed the audit's ranked wins; landed the top three:
+
+- ASM regs pool: extractOne allocated a fresh int[regCount]+fill(-1) per
+  candidate probe — top allocation cost on capture-heavy patterns (asm was
+  SLOWER than our own interpreted VM on IPv4/\w+\s+\w+: 1301 vs 621ns).
+  New final-class RegPool (core) + per-class static REGS_POOL: one
+  monomorphic INVOKEVIRTUAL take(n) per probe, fill stays, success paths
+  clone before returning (pool never escapes). EmittedBytecodePolicyTest
+  enforced receiver finality — the first attempt (raw ThreadLocal in
+  bytecode) was correctly rejected as a non-final receiver, and flushed out
+  the test's own latent OPCODES[absolute-opcode] render bug.
+- VM: stopNow-positionFlags guard — accept paths computed positionFlags
+  (2 charAt + 2 word lookups) whose value the uniform stop table ignores
+  (assertion-free case). Guarded at the three walk sites.
+- VM sims: Arrays.fill(next) zeroed the whole grown Scratch buffer, not the
+  nwords prefix (rawScan already did it right).
+Result: asm capture-path ~8-9x faster (IPv4 1301→~150ns), vm scan/extract
+~15-30x on contended-machine runs (allocation/GC-sensitivity removed —
+post-fix numbers are tight across independent runs while pre-fix spread
+3x between runs). Known remaining (not acted on): per-state sequential
+range-compare chains in emitted dispatch (vs VM's flat table) — candidate
+for a 128-entry ASCII switch arm; wide-class materialization (\p{L}{1,30}:
+31ms, 20.5k transitions, states stay tiny) — bounded, acceptable.
+
 LANDED (2026-08-29, fuzz round 7) — the layered audit, as a component trio:
 
 - **`lib/pikesim` — PikeSim** (io.github.jemmix.tdfa.sim): a ~300-line reference pike
