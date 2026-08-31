@@ -58,6 +58,38 @@ class QuantifierParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void boundedRangeGreedy(RegexEngineFactory factory) { assertSameFind("a{2,4}a", "aaaaaa", factory); }
+
+    // ---- open counted repetition on a NULLABLE body: final-capture parity ----
+    // re2j's Simplify desugars x{n,} as x{n-1}x+ (not x{n}x*): a plus tail
+    // guarantees one real iteration and the nullable body's empty
+    // RE-iteration is cut by pike pc-dedup, so the last NON-EMPTY capture
+    // survives. Our former x* tail let the greedy empty iteration write an
+    // empty capture (g1=""), diverging on every (X?){n,} shape (fuzz round
+    // 9: 25 records). These pin the family across both engines.
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void openCountedNullableBodyLastCapture(RegexEngineFactory factory) {
+        assertSameFind("(a?){2,}", "aa", factory);          // g1="a", not ""
+        assertSameFind("(a?){2,}", "aab", factory);
+        assertSameFind("(.?){2,}", "xy", factory);          // g1="y"
+        assertSameFind("(.{0,2}){2,}", "abc", factory);     // g1="c"
+        assertSameFind("(a?){3,}", "aaaa", factory);
+        assertSameFind("((a)?){2,}", "aa", factory);        // nested group
+        assertSameFind("(a?){2,}b", "aab", factory);        // trailing context
+        assertSameFind("x(a?){2,}", "xaa", factory);        // leading context
+        assertSameFind("(a{0,}){2,}", "aa", factory);       // star body: g1="" in BOTH
+        assertSameFind("(a??){2,}", "aa", factory);
+        assertSameFind("(a?){2,}?", "aab", factory);        // lazy open counted
+        assertSameFind("(.{0,2}){2,}?", "abcd", factory);
+        assertSameFind("(\\W?){2,}", "!!", factory);        // class body: g1="!" (last non-empty)
+    }
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void openCountedNullableBodyNoInputMatch(RegexEngineFactory factory) {
+        assertSameFind("(a?){2,}", "b", factory);           // empty match, g1="" in both
+    }
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void boundedRangeLazy(RegexEngineFactory factory) { assertSameFind("a{2,4}?a", "aaaaaa", factory); }

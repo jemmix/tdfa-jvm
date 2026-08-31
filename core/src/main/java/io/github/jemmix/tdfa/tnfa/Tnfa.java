@@ -411,7 +411,7 @@ public final class Tnfa {
                 eps(loopBack, entryTo, skipPri);
                 return bodyStart;
             }
-            // Bounded repetitions {n}, {n,}, {n,m} — desugar via concatenation + optional tail.
+            // Bounded repetitions {n}, {n,}, {n,m} — desugar via concatenation + tail.
             // (We desugar rather than implementing the paper's bounded-rep construction literally;
             //  tags are duplicated, which is acceptable for our subset.)
             List<Ast> mandatory = new ArrayList<>();
@@ -420,8 +420,20 @@ public final class Tnfa {
                     (mandatory.size() == 1 ? mandatory.get(0) : new Ast.Concat(mandatory));
             Ast result = mandatoryAst;
             if (max == Integer.MAX_VALUE) {
-                // {n,} = mandatory followed by body*  (preserve lazy/greedy)
-                result = new Ast.Concat(List.of(mandatoryAst, new Ast.Repeat(body, 0, Integer.MAX_VALUE, r.greedy)));
+                // {n,} = (n-1) copies followed by body+  — NOT body*.
+                // re2j's Simplify general case ("x{4,} is xxxx+"): a PLUS tail
+                // guarantees one real iteration, and a nullable body's empty
+                // RE-iteration is cut by the pike pc-dedup (the plus entry pc
+                // is revisited), so the last NON-EMPTY capture survives —
+                // (a?){2,} on "aa" reports g1="a". A STAR tail instead lets
+                // the greedy first-iteration-empty write an empty capture
+                // (g1=""), diverging from re2j (fuzz round 9: 25 records).
+                // min >= 2 here ({0,} star and {1,} plus have their own cases).
+                List<Ast> copies = new ArrayList<>();
+                for (int i = 0; i < min - 1; i++) copies.add(body);
+                Ast copiesAst = copies.isEmpty() ? new Ast.Empty() :
+                        (copies.size() == 1 ? copies.get(0) : new Ast.Concat(copies));
+                result = new Ast.Concat(List.of(copiesAst, new Ast.Repeat(body, 1, Integer.MAX_VALUE, r.greedy)));
             } else if (max > min) {
                 // {n,m} = mandatory followed by m-n optional copies  (preserve lazy/greedy)
                 List<Ast> tail = new ArrayList<>();

@@ -268,6 +268,34 @@ WorkMeter eventually kills them with a clean "pattern too large". Repros:
 fuzz.one=1287977190499177688 (transitionRegops… actually tryMap:2194),
 9048506536898982008, 13826009915174294200, 11179075327814499928.
 
+ROUND 9 (2026-08-31, overnight-soak parser family): nullable body under
+open counted repetition reported the wrong final capture — (a?){2,} on
+"aa" gave g1="" where re2j gives "a" (25 records, 16 patterns; whole stack
+self-consistent = PARSER layer; star/plus/bounded {n,m} shapes were all
+correct, only {n,} diverged).
+
+ROOT CAUSE, by design not patch: our Tnfa desugared {n,} as x{n} followed
+by x* — the star tail's greedy first-iteration-empty legitimately wins
+priority and writes an empty capture. re2j's Simplify.java general case is
+x{n-1} followed by x+ ("x{4,} is xxxx+"): the plus guarantees one real
+iteration and the nullable body's empty RE-iteration is cut by the pike
+pc-dedup, so the last NON-EMPTY capture survives. Fixed by mirroring the
+expansion: (n-1) copies + Repeat(body,1,∞) — min>=2 only ({0,}=star and
+{1,}=plus had their own cases). Probe matrix: 19 shapes (nested, lazy,
+class bodies, leading/trailing context, star bodies) all agree with re2j
+post-fix; jdk diverges from BOTH engines on this family (documented
+oracle choice). Pinned: tests/unit CountedRepeatCaptureTest (literal
+oracle-verified values, both tiers) + QuantifierParityTest rows.
+All 8 recorded replay seeds: oracle==asm==vm.
+
+Also from the overnight soak (deferred, evidence updated): 678 hangs +
+576 budget-rejects in 123M cases — determinizer compile-perf cliffs,
+dominated by tryMap×addState (410) and FallbackOps.accumulateClobbered
+(91). Fresh minimal repro for the expansion side: the nested-counted bomb
+((z.{0,1}.{3,5}?|.){1,4}?s){3} under (?:...){0,} — desugaring multiplies
+bounded reps into budget rejection where re2j compiles fine. CONSTRUCTION
+family (39 records: anchors under lazy/counted loops) still open.
+
 DECISION (2026-08-30, governance — option A): the lone-surrogate ×
 pair-interior divergence is an artifact in re2j, not a semantic to
 replicate. The oracle charter is re2j, and "we're in the majority with
