@@ -296,6 +296,38 @@ dominated by tryMap×addState (410) and FallbackOps.accumulateClobbered
 bounded reps into budget rejection where re2j compiles fine. CONSTRUCTION
 family (39 records: anchors under lazy/counted loops) still open.
 
+ROUND 10 (2026-09-01, CONSTRUCTION family fixed + oracle fix2):
+- re2j fork fix2 (fa71014): Regexp.equals/hashCode now compare FoldCase
+  for LITERAL/CHAR_CLASS — the port dropped Go's Flags&FoldCase comparison,
+  so alternation factoring merged a folded literal with its case-sensitive
+  twin and DELETED the case-sensitive arm: (?i:Z)x|Z matched "z" (JDK and
+  we: no). The "residual lone-low interior" record was actually this leak
+  wearing the known-divergence coat — second mislabel by the shape
+  heuristic (the PARSER-layer gate caught the first). Vendored as
+  re2j-1.8-jemmix-fix2.jar; patched-oracle soak now shows 0 known
+  divergences. More upstream material.
+- CONSTRUCTION family (39 records / 15 patterns, all anchors-under-
+  optional constructs): minimizer built (delta-debug on pattern+input vs
+  sim/vm divergence); 15 crisp repros exposed THREE determinizer defects:
+  (1) dead-marker scan order — the transition scan broke the walk on any
+  satisfied dead marker before reaching lower-index satisfied LIVE
+  entries ((\b)?^[\d] on "0" died at the dead WB context, never saw the
+  live WB|BEGIN owner); the ladder scans had the dual flaw — SKIPPING
+  dead markers, falling through to dead contexts. Rule now uniform: the
+  lowest-index mask-satisfied entry owns the step, dead or live.
+  (2) tagless OR-of-assertion-gated accepts: Z(?:\A|\B) accepted at pos 1
+  where both arms fail — the conjunctive accept mask (intersection)
+  collapses a disjunction to 0 = unconditional; the byMask final-ops
+  table expresses per-M aliveness but was only built when tags>0; now
+  built for tagless kernels too (packed form; variants degenerate to
+  empty ops — the cell sign is the aliveness).
+  (3) literal-needle shortcut past position-dependent accepts: the same
+  pattern also matched via indexOf; detectLiteralNeedle now declines
+  final states with byMask rows.
+  All 15 repros + all original replay seeds agree with the oracle; gates
+  green (forced rerun); pinned in AnchorContextParityTest (11 dead-marker
+  shapes + 4 disjunctive-accept shapes, both engine factories).
+
 DECISION (2026-08-30, governance — option A): the lone-surrogate ×
 pair-interior divergence is an artifact in re2j, not a semantic to
 replicate. The oracle charter is re2j, and "we're in the majority with

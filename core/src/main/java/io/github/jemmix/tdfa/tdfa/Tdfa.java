@@ -1011,8 +1011,23 @@ public final class Tdfa {
             // CFG optimization (BT22 §6.3) can see them along with transition ops.
             for (int s = 0; s < n; s++) {
                 if (accept.get(s)) {
-                    builders.get(s).finalOpsArr = finalRegops(states.get(s));
-                    if (tags > 0) computeFinalVariants(builders.get(s), states.get(s));
+                    List<Config> cfgs = states.get(s);
+                    if (cfgs != null) {
+                        builders.get(s).finalOpsArr = finalRegops(cfgs);
+                        computeFinalVariants(builders.get(s), cfgs);
+                    } else {
+                        // Tagless accept state: boxed closure released, packed
+                        // kernel only. Still compute the per-M variants — an
+                        // accept state whose configs carry DIFFERENT emptyMasks
+                        // is an OR of assertion-gated accepts, which the
+                        // conjunctive stateAcceptMask (intersection) collapses
+                        // to "always alive" (fuzz round 10: Z(?:\A|\B) matched
+                        // at pos 1 where \A and \B both fail). finalRegopsOf
+                        // returns empty ops when tags==0, so variants only
+                        // encode aliveness — the byMask cell sign.
+                        builders.get(s).finalOpsArr = null;
+                        computeFinalVariantsPacked(builders.get(s), packedKernels.get(s));
+                    }
                 }
             }
             // Determinize-lifetime data is dead from here: the stateIndex sigs,
@@ -1955,22 +1970,39 @@ public final class Tdfa {
          * {@code stateFinalOpsByMask}.
          */
         void computeFinalVariants(DfaStateBuilder sb, List<Config> cfgs) {
+            int n = cfgs.size();
+            int[] st = new int[n], mk = new int[n];
+            for (int i = 0; i < n; i++) { st[i] = cfgs.get(i).state; mk[i] = cfgs.get(i).emptyMask; }
+            computeFinalVariants(sb, st, mk, cfgs::get);
+        }
+
+        /** Packed (tagless) form: boxed closures are released, only
+         *  (state, emptyMask) pairs remain — all the aliveness computation
+         *  needs (finalRegopsOf returns empty ops when tags==0). */
+        void computeFinalVariantsPacked(DfaStateBuilder sb, int[] pk) {
+            int n = pk.length >> 1;
+            int[] st = new int[n], mk = new int[n];
+            for (int i = 0; i < n; i++) { st[i] = pk[i * 2]; mk[i] = pk[i * 2 + 1]; }
+            computeFinalVariants(sb, st, mk, i -> null);
+        }
+
+        void computeFinalVariants(DfaStateBuilder sb, int[] st, int[] mk, java.util.function.IntFunction<Config> at) {
             int[] winner = new int[64];
             boolean uniform = true;
             for (int M = 0; M < 64; M++) {
                 int w = -1;
-                for (int i = 0; i < cfgs.size(); i++) {
-                    Config c = cfgs.get(i);
-                    if (c.state != nfa.accept) continue;
-                    if ((c.emptyMask & ~M) == 0) { w = i; break; }
+                for (int i = 0; i < st.length; i++) {
+                    if (st[i] != nfa.accept) continue;
+                    if ((mk[i] & ~M) == 0) { w = i; break; }
                 }
                 winner[M] = w;
                 if (M > 0 && w != winner[0]) uniform = false;
             }
-            if (Boolean.getBoolean("tdfa.debug.finals")) {
-                for (int i = 0; i < cfgs.size(); i++) {
-                    Config c = cfgs.get(i);
-                    if (c.state != nfa.accept) continue;
+            if (Boolean.getBoolean("tdfa.debug.finals") && tags > 0) {
+                for (int i = 0; i < st.length; i++) {
+                    if (st[i] != nfa.accept) continue;
+                    Config c = at.apply(i);
+                    if (c == null) continue;   // packed (tagless) kernel
                     StringBuilder h = new StringBuilder("cfg[" + i + "] mask=" + c.emptyMask + " l:");
                     for (int t = 1; t <= tags; t++) {
                         int[] hist = history(c.l, t);
@@ -1985,7 +2017,7 @@ public final class Tdfa {
             for (int M = 0; M < 64; M++) {
                 int w = winner[M];
                 if (w < 0) { maskVariant[M] = -1; continue; }
-                int[] opsArr = finalRegopsOf(cfgs.get(w));
+                int[] opsArr = finalRegopsOf(at.apply(w));
                 int v = -1;
                 for (int k = 0; k < variants.size(); k++)
                     if (Arrays.equals(variants.get(k), opsArr)) { v = k; break; }

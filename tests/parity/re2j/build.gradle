@@ -34,7 +34,7 @@ dependencies {
     // patched build from our fork (-Pfuzz.patchedOracle=true) to fuzz against
     // the surrogate-pair-interior fix — see vendor/re2j-jemmix/README.md.
     if (project.hasProperty('fuzz.patchedOracle')) {
-        testImplementation files(rootProject.file('vendor/re2j-jemmix/re2j-1.8-jemmix-fix1.jar'))
+        testImplementation files(rootProject.file('vendor/re2j-jemmix/re2j-1.8-jemmix-fix2.jar'))
     } else {
         testImplementation 'com.google.re2j:re2j:1.8'
     }

@@ -547,28 +547,40 @@ public final class TdfaRunner implements RegexEngine {
                     if (rg[(base + mid) * 5] <= c) { anchor = mid; rlo = mid + 1; }
                     else rhi = mid - 1;
                 }
-                // Walk back over containing entries, remembering the LOWEST-index
-                // mask-satisfied one (original linear-scan priority: alternation
-                // and mask-specificity order by entry index).
+                // Walk back over containing entries. The LOWEST-index
+                // mask-satisfied entry owns the step (original linear-scan
+                // priority: alternation and mask-specificity order by entry
+                // index) — live OR dead: a dead marker only kills the walk
+                // when it is itself the lowest satisfied entry (the owning
+                // context has no continuation). Breaking on a dead marker
+                // mid-scan discards a more-specific live entry at a lower
+                // index — fuzz round 10: (\b)?^[\d] on "0" died on the
+                // dead idx 1 (mask WB) and never reached the live idx 0
+                // (mask WB|BEGIN), which was satisfied and winning.
+                int best = -1;
                 for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
                     int o = (base + i) * 5;
                     if (c <= rg[o + 1]) {
-                        int target = rg[o + 2];
                         int requiredMask = rg[o + 4];
                         if (requiredMask != 0) {
                             if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                             if ((posFlags & requiredMask) != requiredMask) continue;
                         }
-                        if (target < 0) {
-                            // Dead marker of the OWNING context: no continuation
-                            // exists under this posFlags — lower-specificity
-                            // ranges belong to contexts that are not alive here.
-                            if (WTRACE) System.err.println("[walk]   c=" + Integer.toHexString(c) + " DEAD idx " + i + " mask=" + Integer.toBinaryString(requiredMask) + " (M=" + Integer.toBinaryString(posFlags) + ")");
-                            break loop;
-                        }
-                        if (WTRACE) System.err.println("[walk]   c=" + Integer.toHexString(c) + " pick idx " + i + " lo=" + Integer.toHexString(rg[o]) + " mask=" + Integer.toBinaryString(requiredMask) + " -> " + target + " (M=" + Integer.toBinaryString(posFlags) + ")");
-                        chosen = o; chosenTarget = target;
+                        best = i;   // keeps shrinking: ends at the lowest satisfied index
                     }
+                }
+                if (best >= 0) {
+                    int o = (base + best) * 5;
+                    int target = rg[o + 2];
+                    if (target < 0) {
+                        // Dead marker of the OWNING context (lowest satisfied):
+                        // no continuation exists under this posFlags — lower-
+                        // specificity ranges belong to contexts not alive here.
+                        if (WTRACE) System.err.println("[walk]   c=" + Integer.toHexString(c) + " DEAD idx " + best + " mask=" + Integer.toBinaryString(rg[o + 4]) + " (M=" + Integer.toBinaryString(posFlags) + ")");
+                        break loop;
+                    }
+                    if (WTRACE) System.err.println("[walk]   c=" + Integer.toHexString(c) + " pick idx " + best + " lo=" + Integer.toHexString(rg[o]) + " mask=" + Integer.toBinaryString(rg[o + 4]) + " -> " + target + " (M=" + Integer.toBinaryString(posFlags) + ")");
+                    chosen = o; chosenTarget = target;
                 }
             } else if (ri >= 0) {
                 int o = (base + ri) * 5;
@@ -702,6 +714,18 @@ public final class TdfaRunner implements RegexEngine {
             // find("a+","aaa") instead of [0,3)).
             if ((tdfa.stateMeta[s] & 1) == 0) return null;
             if (tdfa.stateAcceptMask[s] != 0) return null;
+            // Position-dependent accept (byMask variants): the accept fires
+            // only under some posFlags — the indexOf shortcut can't evaluate
+            // that (fuzz round 10: Z(?:\A|\B) matched "Z" via the needle,
+            // though \A and \B both fail at pos 1). Not a literal.
+            {
+                int[] fm = tdfa.stateFinalOpsByMask();
+                if (fm != null) {
+                    for (int M = 0; M < 64; M++) {
+                        if (fm[s * 64 + M] < 0) return null;
+                    }
+                }
+            }
             if (tdfa.stateFinalOpsOff[s] != 0) return null;
             if (tdfa.stateEntryMask[s] != 0) return null;
             {
@@ -1884,20 +1908,26 @@ public final class TdfaRunner implements RegexEngine {
                     else rhi = mid - 1;
                 }
                 int chosen = -1, chosenTarget = 0;
+                // Lowest-index mask-satisfied entry OWNS the step — dead or
+                // live. Skipping dead markers (the former `continue`) falls
+                // through to contexts not alive under this posFlags; breaking
+                // on them mid-scan discards more-specific live entries (see
+                // extractFrom's fix for the protocol).
                 for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
                     int o = (base + i) * 5;
                     if (c <= rg[o + 1]) {
-                        int target = rg[o + 2];
-                        if (target < 0) continue;
                         int requiredMask = rg[o + 4];
                         if (requiredMask != 0) {
                             if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                             if ((posFlags & requiredMask) != requiredMask) continue;
                         }
-                        chosen = o; chosenTarget = target;
+                        chosen = o; chosenTarget = rg[o + 2];
                     }
                 }
-                if (chosen >= 0) {
+                if (chosen < 0 || chosenTarget < 0) {
+                    return haveAccept ? lastAcceptPos : -1;   // owning context dead: no fallthrough
+                }
+                {
                     state = chosenTarget;
                     if (c > 0xFFFF) pos++;
                     int entryReq = sem[state];
@@ -1982,20 +2012,21 @@ public final class TdfaRunner implements RegexEngine {
                     else rhi = mid - 1;
                 }
                 int chosen = -1, chosenTarget = 0;
+                // Lowest-index mask-satisfied entry OWNS the step, dead or
+                // live — see extractFrom for the protocol (no fallthrough
+                // past a dead owning context; no premature break either).
                 for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
                     int o = (base + i) * 5;
                     if (c <= ranges[o + 1]) {
-                        int target = ranges[o + 2];
-                        if (target < 0) continue;
                         int requiredMask = ranges[o + 4];
                         if (requiredMask != 0) {
                             if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
                             if ((posFlags & requiredMask) != requiredMask) continue;
                         }
-                        chosen = o; chosenTarget = target;
+                        chosen = o; chosenTarget = ranges[o + 2];
                     }
                 }
-                if (chosen < 0) break;
+                if (chosen < 0 || chosenTarget < 0) break;
                 // Mask before ops — see extractFrom.
                 int width = c > 0xFFFF ? 2 : 1;
                 int entryReqNext = stateEntryMask[chosenTarget];
