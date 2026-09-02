@@ -296,6 +296,22 @@ dominated by tryMap×addState (410) and FallbackOps.accumulateClobbered
 bounded reps into budget rejection where re2j compiles fine. CONSTRUCTION
 family (39 records: anchors under lazy/counted loops) still open.
 
+ROUND 17 (2026-09-02): NFA pre-walk explored and measured — negative result.
+Built a pure subset-construction probe (long[] bitsets, global breakpoint
+classes, no tags/regs/histories, hash-deduped closures; PureProbe in the
+probe dir) to test "walk the NFA graph and predict the explosion
+allocation-free". Result: the hang bombs' NFA graphs are combinatorially
+SMALL — 357-1879 distinct pure closures (one 83k) while their real
+determinizations exceed 100k states; legit (a{1,100}){1,100} has 10001
+pure subsets and compiles fine, so no threshold separates them. For
+tag-simple shapes pure == real ((a{1,50}){1,50}: 2501 == 2501 — the
+determinizer merges optimally when histories don't vary). The bombs'
+explosion lives in the tag-history/register dimension (l-variants ×
+register assignments × assertion masks ~300x over a ~350-state skeleton),
+which only the full determinizer models — there is no cheap graph-side
+lower bound. Containment stays: metered ticks + state/kernel/closure caps
++ the fuzz-scoped work budget (round 16).
+
 ROUND 16 (2026-09-02): no more background spin — full work-meter coverage +
 fuzz-scoped budget (deterministic, throttle-immune).
 User request after a 5-min run with 6 engine hangs: make them not spin.
