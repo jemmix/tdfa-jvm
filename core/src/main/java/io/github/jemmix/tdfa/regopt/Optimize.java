@@ -49,7 +49,7 @@ public final class Optimize {
             boolean[][] L = livenessAnalysis(cfg, meter);
             deadCodeElimination(cfg, L);
             boolean[][] I = interferenceAnalysis(cfg, L);
-            int[] V = registerAllocation(cfg, I);
+            int[] V = registerAllocation(cfg, I, meter);
             rename(cfg, V);
             normalization(cfg);
             cfg.regCount = countUsed(V);
@@ -221,7 +221,10 @@ public final class Optimize {
             for (int si : b.successors) {
                 Cfg.Block s = cfg.blocks.get(si);
                 long[] in = propagateBackwardW(rows[si], s.ops, nr);
-                for (int k = 0; k < w; k++) scratch[k] |= in[k];
+                for (int k = 0; k < w; k++) {
+                    if (meter != null) meter.tick();   // per (successor, word): the fixpoint's real unit
+                    scratch[k] |= in[k];
+                }
                 any = true;
             }
             if (!any) continue;   // no successors: row stays (seed or empty)
@@ -469,7 +472,7 @@ public final class Optimize {
      *
      * @return V[old] = new register index (0-based)
      */
-    static int[] registerAllocation(Cfg cfg, boolean[][] I) {
+    static int[] registerAllocation(Cfg cfg, boolean[][] I, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
         int nr = cfg.regCount;
         int nw = cfg.finalRegBase;  // working registers: [0..nw); finals: [nw..nr)
         int[] B = new int[nr];
@@ -518,6 +521,7 @@ public final class Optimize {
         for (int i = 0; i < nw; i++) {
             if (B[i] != i) continue;
             for (int j = i + 1; j < nw; j++) {
+                if (meter != null) meter.tick();   // O(n²) pair scan — keep it budget-visible
                 if (B[j] != j) continue;
                 if (noInterfereCross(S.get(i), S.get(j), I)) {
                     for (int m = S.get(j).nextSetBit(0); m >= 0; m = S.get(j).nextSetBit(m + 1)) {

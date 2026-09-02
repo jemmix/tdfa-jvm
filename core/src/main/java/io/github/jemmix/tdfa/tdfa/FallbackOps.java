@@ -116,7 +116,7 @@ final class FallbackOps {
         for (int s = 0; s < n; s++) {
             meter.tick();
             if (!stateIsFallback[s]) continue;
-            BitSet clobbered = accumulateClobbered(s, n, stateMeta, stateBase, ranges, flatOps, isFinal);
+            BitSet clobbered = accumulateClobbered(s, n, stateMeta, stateBase, ranges, flatOps, isFinal, meter);
 
             int foff = stateFinalOpsOff[s];
             if (foff == 0) continue;  // no φ ops to back up
@@ -287,7 +287,7 @@ final class FallbackOps {
      * states (i.e., {@code start} is final but not actually a fallback).
      */
     private static BitSet accumulateClobbered(int start, int n, int[] stateMeta, int[] stateBase,
-                                              int[] ranges, int[] flatOps, boolean[] isFinal) {
+                                              int[] ranges, int[] flatOps, boolean[] isFinal, WorkMeter meter) {
         BitSet clobbered = new BitSet();
         BitSet visited = new BitSet();
         Deque<Integer> stack = new ArrayDeque<>();
@@ -299,6 +299,12 @@ final class FallbackOps {
             int ub = stateBase[u];
             int uc = Tdfa.rangeCount(stateMeta[u]);
             for (int i = 0; i < uc; i++) {
+                // Per-edge tick: this DFS is O(V+E) PER FALLBACK STATE and its
+                // inner work is the op-block scan — on 100 K-state fallback-
+                // heavy DFAs it burned minutes while a per-vertex tick
+                // undercounted the real work (fuzzer family: the last
+                // genuinely unbounded compile phase).
+                meter.tick();
                 int o = (ub + i) * 5;
                 int t = ranges[o + 2];
                 if (t < 0) continue;
@@ -309,6 +315,7 @@ final class FallbackOps {
                     for (int j = opsOff; ; j += 3) {
                         int op = flatOps[j];
                         if (op == Tdfa.OP_END) break;
+                        meter.tick();   // per op: ops-heavy edges undercounted at 1 tick/edge
                         clobbered.set(flatOps[j + 1]);
                     }
                 }

@@ -296,6 +296,38 @@ dominated by tryMap×addState (410) and FallbackOps.accumulateClobbered
 bounded reps into budget rejection where re2j compiles fine. CONSTRUCTION
 family (39 records: anchors under lazy/counted loops) still open.
 
+ROUND 16 (2026-09-02): no more background spin — full work-meter coverage +
+fuzz-scoped budget (deterministic, throttle-immune).
+User request after a 5-min run with 6 engine hangs: make them not spin.
+Watchdog cancellation was rejected (time-based = unpredictable under
+throttling). Deterministic route taken instead:
+- NFA-size pre-walk MEASURED AND REJECTED as discriminator: hang patterns
+  have 60-533-state NFAs while legit (a{1,100}){1,100} has 20k — the
+  blowup is in determinization dynamics, not NFA size.
+- Tick-density fixes (a tick must roughly match work density or the
+  budget trips long after the wall does): FallbackOps.accumulateClobbered
+  per-edge + per-op (was UNMETERED — the >150s family; now clean
+  work-budget reject at 2^32 in 117s, and in ~1-3s under the fuzz cap);
+  stepOnSymbol per (config,symbol); tryMap bijection per (config,tag);
+  ops-rewrite per op; topologicalSort per iteration; canonSignature per
+  (config,tag) + its boxed classIdMap replaced by epoch-stamped arrays
+  (boxing made ticks so expensive the watchdog beat the budget);
+  regopt registerAllocation gets the meter (phase-2 O(n^2) pair scan
+  ticked); livenessAnalysis per (successor, word).
+- Fuzz-scoped work budget: tdfa.max.work defaults to 8M ticks inside
+  DifferentialFuzzer.run (set/restored around the run; -Dfuzz.max.work=0
+  restores the library 2^32). Bombs reject in ~1-3s — under the 10s case
+  watchdog, so no sacrificed threads spinning until cap/chunk death.
+Result on the user's exact seed (41347903, 5 min): 6 hangs -> 0 hangs,
+0 oracle hangs, 0 known, 128 BUDGET_REJECT records (the documented
+nested-counted class, now visible as fast deterministic rejections
+instead of 10-30s spin). Library defaults unchanged (2^32; battery +
+(a{1,50}){1,50} still compile; gates green).
+Note: fuzz throughput reads lower (~240k/min on this run) — the rejected
+bombs now run to their 8M ticks before rejecting instead of being killed
+at 10s mid-flight; case count for the 5-min window also reflects machine
+load. The wall spent per bomb is bounded and small either way.
+
 ROUND 15 (2026-09-02): nested-counted bombs — clean rejection, memory-
 calibrated caps (the loop-based bounded-repetition rework stays deferred).
 The classic (a{1,100}){1,100} OOM-ed the boxed determinization phase

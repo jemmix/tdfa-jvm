@@ -25,7 +25,7 @@ public final class WorkMeter {
     public void tick() {
         if (++spent > budget) {
             throw new IllegalStateException("pattern too large: TDFA compile work budget exceeded ("
-                    + budget + " ticks — raise -Dtdfa.max.work)");
+                    + spent + "/" + budget + " ticks — raise -Dtdfa.max.work)");
         }
     }
 
@@ -33,7 +33,7 @@ public final class WorkMeter {
     public void tick(long n) {
         if ((spent += n) > budget) {
             throw new IllegalStateException("pattern too large: TDFA compile work budget exceeded ("
-                    + budget + " ticks — raise -Dtdfa.max.work)");
+                    + spent + "/" + budget + " ticks — raise -Dtdfa.max.work)");
         }
     }
 

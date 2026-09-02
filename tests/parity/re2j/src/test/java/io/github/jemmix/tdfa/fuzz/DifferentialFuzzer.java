@@ -122,9 +122,27 @@ public final class DifferentialFuzzer {
                             java.util.concurrent.atomic.AtomicInteger prog, Thread[] worker,
                             java.util.concurrent.Future<Boolean> done) {}
 
+    /** Fuzz-scoped compile work budget (ticks, wall-clock-free: the same
+     *  pattern rejects after the same tick count however the machine is
+     *  throttled). The generator's nested-counted bombs burn 36-100M ticks
+     *  walking into the state/kernel caps (10-30 s wall) and the
+     *  fallback-DFS family even more — far past the 10 s case watchdog, so
+     *  the worker thread got sacrificed and SPUN until it hit a cap. A 32M
+     *  tick budget rejects those compiles in ~1-3 s, under the watchdog:
+     *  no sacrificed threads, no background spin, and the divergence is
+     *  recorded as BUDGET_REJECT instead of a hang (same known class).
+     *  Legit fuzz patterns measure <<1M ticks, so the slice is unaffected.
+     *  Set -Dfuzz.max.work=0 to fuzz at the library default (2^32). */
+    static long fuzzWorkBudget() {
+        return Long.getLong("fuzz.max.work", 8L << 20);
+    }
+
     /** Core entry reusable from the smoke test. */
     public static Results run(long masterSeed, long minutes, long maxCases, Path outDir) throws IOException {
         Files.createDirectories(outDir);
+        long fuzzWork = fuzzWorkBudget();
+        String prevWork = fuzzWork > 0
+                ? System.setProperty("tdfa.max.work", Long.toString(fuzzWork)) : null;
         try (Logs logs = new Logs(outDir)) {
             SplittableRandom master = new SplittableRandom(masterSeed);
             long deadline = System.nanoTime() + minutes * 60_000_000_000L;
@@ -194,6 +212,9 @@ public final class DifferentialFuzzer {
             logs.progress(r, mins);
             r.writeSummary(logs);
             return r;
+        } finally {
+            if (prevWork != null) System.setProperty("tdfa.max.work", prevWork);
+            else if (fuzzWork > 0) System.clearProperty("tdfa.max.work");
         }
     }
 

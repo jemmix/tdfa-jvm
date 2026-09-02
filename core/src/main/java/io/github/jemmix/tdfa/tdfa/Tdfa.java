@@ -1046,7 +1046,8 @@ public final class Tdfa {
             // Determinize-lifetime data is dead from here: the stateIndex sigs,
             // (packed) kernels, seeds, eps/sym adjacency and scratch are all
             if (Boolean.getBoolean("tdfa.debug.closure")) {
-                System.err.println("[det] states=" + states.size() + " kernelsTotal=" + kernelsTotal);
+                System.err.println("[det] states=" + states.size() + " kernelsTotal=" + kernelsTotal
+                        + " ticks=" + meter.spent());
             }
             // downstream-unused, but as Compiler fields they would stay live
             // through materialization/minimization — the heap peak on giant
@@ -1957,6 +1958,7 @@ public final class Tdfa {
                 }
                 Config c = configs.get(ci);
                 for (int idx : symOut[c.state]) {
+                    meter.tick();   // per (config, symbol): step's cost is this loop
                     if ((activeEdges[idx >> 6] & (1L << (idx & 63))) != 0) {
                         // emptyMask resets on step — assertions are position-bound, gated via requiredMask.
                     out.add(new Config(nfa.symTo[idx], c.regs, c.l, HistTable.EMPTY_ID, 0, c.pri, c.path, ci));
@@ -1991,7 +1993,11 @@ public final class Tdfa {
         private long pendingClassHash;
         private int[] classScratch;
         private int pendingCanonLen;
-        private final HashMap<Integer, Integer> classIdMap = new HashMap<>();
+        /** Epoch-stamped register → class-id map for canonSignature (primitive:
+         *  the boxed HashMap made each work-meter tick so expensive the fuzz
+         *  watchdog fired before the budget could). */
+        private int[] canonKeyStamp, canonKeyClass;
+        private int canonEpoch;
 
         /** Grown-on-demand scratch for transitionRegops' per-tag last-sign. */
         int[] transitionRegops(List<Config> configs, int sourceStateId) {
@@ -2245,17 +2251,22 @@ public final class Tdfa {
             int n = configs.size();
             int max = n * tags;
             if (classScratch == null || classScratch.length < max) classScratch = new int[Math.max(max, 32)];
-            classIdMap.clear();
+            if (canonKeyStamp == null || canonKeyStamp.length < nextReg) {
+                canonKeyStamp = new int[nextReg];
+                canonKeyClass = new int[nextReg];
+                canonEpoch = 0;
+            }
+            int epoch = ++canonEpoch;
             int next = 0, k = 0;
             for (int i = 0; i < n; i++) {
                 Config c = configs.get(i);
                 long[] bits = hasHist[i];
                 for (int t = 0; t < tags; t++) {
+                    meter.tick();
                     if ((bits[t >>> 6] >>> (t & 63) & 1L) != 0) continue;
                     int r = c.regs[t];
-                    Integer cid = classIdMap.get(r);
-                    if (cid == null) { cid = next++; classIdMap.put(r, cid); }
-                    classScratch[k++] = cid;
+                    if (canonKeyStamp[r] != epoch) { canonKeyStamp[r] = epoch; canonKeyClass[r] = next++; }
+                    classScratch[k++] = canonKeyClass[r];
                 }
             }
             pendingCanonLen = k;
@@ -2371,7 +2382,7 @@ public final class Tdfa {
             kernelsTotal += configs.size();
             if (states.size() > maxStates || kernelsTotal > maxKernelsTotal) {
                 throw new IllegalStateException("pattern too large: TDFA determinization budget exceeded ("
-                        + states.size() + " states, kernel total " + kernelsTotal
+                        + states.size() + " states, kernel total " + kernelsTotal + ", ticks " + meter.spent()
                         + "; caps " + maxStates + " states / " + maxKernelsTotal
                         + " — raise -Dtdfa.max.states / -Dtdfa.max.kernels)");
             }
@@ -2449,10 +2460,10 @@ public final class Tdfa {
             // across all candidates of this attempt.
             long[][] hasHist = hasHistShared;
             for (int i = 0; i < size; i++) {
-                if (meter != null) meter.tick();
                 Config cn = newConfigs.get(i), co = oldConfigs.get(i);
                 long[] bits = hasHist[i];
                 for (int t = 0; t < tags; t++) {
+                    if (meter != null) meter.tick();   // per (config, tag): the bijection's real unit
                     if ((bits[t >>> 6] >>> (t & 63) & 1L) != 0) continue; // tag is set by transition op
                     int rn = cn.regs[t], ro = co.regs[t];
                     // A register may be new-side of one tag and old-side of
@@ -2472,6 +2483,7 @@ public final class Tdfa {
             // the same dst fails — bijection violations, as before.
             List<int[]> rewritten = new ArrayList<>();
             for (int i = 0; i < ops.length; i += 3) {
+                meter.tick();
                 int op = ops[i], dst = ops[i + 1], src = ops[i + 2];
                 if (eN[dst] != stamp) return null;
                 int mapped = m[dst];
@@ -2506,6 +2518,8 @@ public final class Tdfa {
             while (changed && guard++ < ops.size() * ops.size()) {
                 changed = false;
                 for (int i = 0; i < ops.size(); i++) {
+                    meter.tick();   // O(n²)-guarded: without ticks this is a
+                                    // work-budget blind spot (fuzz hang family)
                     int[] op = ops.get(i);
                     if (op[0] != OP_COPY) continue;
                     int src = op[2];
