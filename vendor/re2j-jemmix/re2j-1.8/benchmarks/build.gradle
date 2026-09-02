@@ -1,0 +1,26 @@
+// Copyright 2019 Google Inc. All Rights Reserved.
+
+plugins {
+  id 'java'
+  id 'application'
+}
+
+repositories {
+  mavenCentral()
+}
+
+dependencies {
+  implementation 'org.openjdk.jmh:jmh-core:1.21'
+  annotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.21'
+  implementation rootProject
+}
+
+mainClassName = 'org.openjdk.jmh.Main'
+
+// By default, run all the benchmarks, 1 fork, 5 warmup iterations, 1 second
+// per warmup, 5 measurement iterations, 1 second per measurement iteration.
+tasks.run.args 'Benchmarks*', '-f', '1', '-wi', '5', '-w', '1', '-r', '1', '-bm', 'avgt'
+tasks.run.doFirst {
+  println(String.format("Running JMH benchmarks with args [%s]", tasks.run.args.join(" ")))
+  println("For command line help, see ./gradlew :benchmarks:run -- --args='-h'")
+}

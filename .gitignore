@@ -27,3 +27,6 @@ replay_pid*
 # Materialized under build/ which is already ignored above; this entry is
 # belt-and-suspenders in case a sourceSet path ever points outside build/.
 /build/generated/
+
+# patched-oracle build scratch
+vendor/re2j-jemmix/.build/

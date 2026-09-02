@@ -1,0 +1,212 @@
+
+plugins {
+  id 'java-library'
+  id 'wrapper'
+  id 'maven'
+  id 'io.github.gradle-nexus.publish-plugin' version '1.1.0'
+  id 'com.github.sherter.google-java-format' version '0.3.2'
+  id 'net.ltgt.errorprone' version '2.0.2'
+  id 'idea'
+  id 'signing'
+
+  // code coverage support
+  id 'net.saliman.cobertura' version '2.5.4'
+
+  // Add license plugin. By default, this plugin only applies to the root
+  // project. Since we need license enforcement for benchmarks and the
+  // Unicode table generator, "apply false" specifies that the plugin should
+  // be downloaded and made available to Gradle, but not applied yet. See the
+  // allprojects section below for where this plugin is actually applied.
+  id 'com.github.hierynomus.license' version '0.15.0' apply false
+}
+
+cobertura.coverageFormats = ['html', 'xml']
+
+// The name of the release we're working on. See RELEASING.md for details.
+group = "com.google.re2j"
+archivesBaseName = "re2j"
+version = "1.8"
+
+wrapper {
+  gradleVersion '5.2'
+}
+
+sourceCompatibility = 1.6
+targetCompatibility = 1.6
+
+repositories {
+  mavenCentral()
+}
+
+sourceSets {
+  main {
+    java {
+      srcDir 'java'
+      exclude 'com/google/re2j/super/**'
+    }
+  }
+
+  gwt {
+    java {
+      srcDir 'java'
+      include 'com/google/re2j/super/**'
+    }
+    resources {
+      srcDir 'java'
+      include 'com/google/re2j/RE2J.gwt.xml'
+    }
+  }
+
+  test {
+    java {
+      srcDir 'javatests'
+    }
+    resources {
+      srcDir 'testdata'
+    }
+  }
+}
+
+idea {
+  module {
+    // Unfortunately, IntelliJ ignores the `exclude` directive in the sourceSet declaration
+    // above. Without this, it complains about duplicated classes that exist both in GWT and non-
+    // GWT sources.
+    excludeDirs += file('java/com/google/re2j/super')
+  }
+}
+
+test {
+  // Allow parallel test execution.
+  maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2) ?: 1
+}
+
+dependencies {
+  errorproneJavac 'com.google.errorprone:javac:9+181-r4173-1'
+  errorprone 'com.google.errorprone:error_prone_core:2.10.0'
+
+  testCompile 'junit:junit:4.12'
+  testCompile 'com.google.gwt:gwt-dev:2.9.0'
+  testCompile 'com.google.gwt:gwt-user:2.9.0'
+  testCompile 'com.google.truth:truth:0.36'
+
+  // Cobertura requires slf4j at runtime
+  testRuntime "org.slf4j:slf4j-api:1.7.10"
+}
+
+task javadocJar(type: Jar) {
+  classifier = 'javadoc'
+  from javadoc
+}
+
+task sourcesJar(type: Jar) {
+  classifier = 'sources'
+  from sourceSets.main.allSource
+}
+
+artifacts {
+  archives javadocJar, sourcesJar
+}
+
+uploadArchives {
+  repositories {
+    mavenDeployer {
+      beforeDeployment { MavenDeployment deployment -> signing.signPom(deployment) }
+
+      repository(url: "https://oss.sonatype.org/service/local/staging/deploy/maven2/") {
+        authentication(userName: findProperty('ossrhUsername') ?: '',
+          password: findProperty('ossrhPassword') ?: '')
+      }
+
+      snapshotRepository(url: "https://oss.sonatype.org/content/repositories/snapshots/") {
+        authentication(userName: findProperty('ossrhUsername') ?: '',
+          password: findProperty('ossrhPassword') ?: '')
+      }
+
+      pom.project {
+        name 'RE2/J'
+        packaging 'jar'
+        description 'Linear time regular expressions for Java'
+        url 'http://github.com/google/re2j'
+
+        scm {
+          url 'https://github.com/google/re2j.git'
+        }
+
+        licenses {
+          license {
+            name 'Go License'
+            url 'https://golang.org/LICENSE'
+            distribution 'repo'
+          }
+        }
+
+        developers {
+          developer {
+            id 'dev'
+            name 'The RE2/J Contributors'
+            email 're2j-discuss@googlegroups.com'
+          }
+        }
+      }
+    }
+  }
+}
+
+signing {
+  useGpgCmd()
+
+  sign configurations.archives
+}
+
+// If Java formatter checks fail, tell the user how to fix them.
+task printFormatHelperMessage {
+  doLast {
+    throw new GradleException('google-java-format is required.\n' +
+        'Use ./gradlew googleJavaFormat to reformat the broken files')
+  }
+}
+verifyGoogleJavaFormat.finalizedBy printFormatHelperMessage
+printFormatHelperMessage.onlyIf { verifyGoogleJavaFormat.state.failure != null }
+
+import com.hierynomus.gradle.license.tasks.LicenseCheck
+
+// By default, this plugin only applies to the root project. We apply it here
+// manually to all projects so that even the subprojects receive license
+// enforcement.
+allprojects {
+  apply plugin: "license"
+
+  license {
+    header rootProject.file('LICENSE.header')
+    ext.year = Calendar.getInstance().get(Calendar.YEAR)
+    strictCheck true
+    skipExistingHeaders true
+
+    mapping {
+      // Without this, the plugin adds javadoc-style comments to the top
+      // of each Java source file.
+      java = 'SLASHSTAR_STYLE'
+    }
+
+    include '**/*.gradle'
+    include '**/*.java'
+    include '**/*.xml'
+    include '**/*.pl'
+  }
+
+  // Each license check task gets a new "help message" task to tell the
+  // user how to fix license violations.
+  tasks.withType(LicenseCheck) { checkTask ->
+    def helpMessageTask = task "${checkTask.name}HelpMessage" {
+      doLast {
+        throw new GradleException(
+            'Some files lack an appropriate license header.\n' +
+            'Run ./gradlew licenseFormat to add one.')
+      }
+    }
+
+    checkTask.finalizedBy helpMessageTask
+    helpMessageTask.onlyIf { checkTask.state.failure != null }
+  }
+}
