@@ -68,6 +68,48 @@ class CompileBudgetTest {
         }
     }
 
+    /**
+     * Nested-counted repetition bombs (fuzzer family + the classic
+     * {@code (a{1,100}){1,100}}): the boxed determinization phase must
+     * clean-reject at the memory-calibrated kernel cap instead of OOM-ing.
+     * Calibration: 6.4 M kernels peaks < 1 GB, 18 M exceeds it — the 10 M
+     * default keeps every measured legit shape (e.g. (a{1,50}){1,50} below)
+     * and rejects the bombs on default heaps.
+     */
+    @Test
+    void nestedCountedBombCleanRejectsAtDefaultCaps() {
+        long t0 = System.nanoTime();
+        assertThatCode(() -> Pattern.compile("(a{1,100}){1,100}"))
+                .isInstanceOf(PatternSyntaxException.class)
+                .hasMessageContaining("pattern too large")
+                .hasMessageContaining("tdfa.max.kernels");
+        assertThat((System.nanoTime() - t0) / 1_000_000)
+                .as("wall to kernel-cap rejection").isLessThan(30_000);
+    }
+
+    /** The largest measured LEGIT nested-counted shape: 2501 states /
+     *  6.4 M kernels — must stay under the default caps. */
+    @Test
+    void largestLegitNestedCountedStillCompiles() {
+        io.github.jemmix.tdfa.Pattern p = Pattern.compile("(a{1,50}){1,50}");
+        assertThat(p.matcher("aaaa").find()).isTrue();
+    }
+
+    /** Per-kernel spike bound: kernelsTotal only counts after addState, so a
+     *  single closure can spike the heap on its own. */
+    @Test
+    void closureSpikeCapRejectsCleanly() {
+        System.setProperty("tdfa.max.closure", "1000");
+        try {
+            assertThatCode(() -> Pattern.compile("(a{1,50}){1,50}"))
+                    .isInstanceOf(PatternSyntaxException.class)
+                    .hasMessageContaining("pattern too large")
+                    .hasMessageContaining("tdfa.max.closure");
+        } finally {
+            System.clearProperty("tdfa.max.closure");
+        }
+    }
+
     @Test
     void legitPatternsCompileUnderDefaultBudget() {
         // Largest legit in-corpus shapes: dictionary-style literal alternation

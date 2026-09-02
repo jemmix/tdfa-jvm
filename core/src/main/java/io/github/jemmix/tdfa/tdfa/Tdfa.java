@@ -598,7 +598,17 @@ public final class Tdfa {
          * largest legit in-corpus pattern (dictionary, 19.6 K pre-min states) 5x headroom.
          */
         final int maxStates = Integer.getInteger("tdfa.max.states", 100_000);
-        final int maxKernelsTotal = Integer.getInteger("tdfa.max.kernels", 50_000_000);
+        /** Memory-bound: each kernel config is a live Config (~80 B boxed all-
+         *  in: lists, intern table, builders). Measured: 6.4 M kernels peaks
+         *  under 1 GB, 18 M exceeds it. 10 M keeps every measured legit shape
+         *  (e.g. (a{1,50}){1,50} at 6.4 M) and clean-rejects nested-counted
+         *  bombs on default heaps instead of OOM-ing. Raise via
+         *  -Dtdfa.max.kernels (with heap) for heavier legitimate use. */
+        final int maxKernelsTotal = Integer.getInteger("tdfa.max.kernels", 10_000_000);
+        /** Per-kernel spike bound — the totals cap only counts AFTER addState,
+         *  so one closure of a nested-counted bomb could exhaust the heap on
+         *  its own. Checked while the closure is built. */
+        final int maxClosure = Integer.getInteger("tdfa.max.closure", 100_000);
         /** Running sum of closure (kernel) sizes — re2c's kernels_total. */
         long kernelsTotal = 0;
 
@@ -1035,6 +1045,9 @@ public final class Tdfa {
             }
             // Determinize-lifetime data is dead from here: the stateIndex sigs,
             // (packed) kernels, seeds, eps/sym adjacency and scratch are all
+            if (Boolean.getBoolean("tdfa.debug.closure")) {
+                System.err.println("[det] states=" + states.size() + " kernelsTotal=" + kernelsTotal);
+            }
             // downstream-unused, but as Compiler fields they would stay live
             // through materialization/minimization — the heap peak on giant
             // DFAs. Release ~0.8 GB (bomb) before the flat-array phase.
@@ -1599,6 +1612,13 @@ public final class Tdfa {
                 if (maskEpoch[c.state] != epoch) { maskEpoch[c.state] = epoch; maskBitset[c.state] = 0L; }
                 maskBitset[c.state] |= 1L << c.emptyMask;
                 out.add(c);
+                // Per-kernel spike bound: kernelsTotal is only counted after
+                // addState, so a single closure of a nested-counted bomb could
+                // otherwise exhaust the heap on its own.
+                if (out.size() > maxClosure) {
+                    throw new IllegalStateException("pattern too large: TDFA ε-closure exceeds "
+                            + maxClosure + " configs (" + c.state + " reached; raise -Dtdfa.max.closure)");
+                }
                 // Push children in REVERSE priority order. Same contract as the seeds:
                 // the pre-push check skips only already-POPPED keys; co-resident
                 // duplicates are all pushed (each needs its own tag history — the

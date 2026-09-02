@@ -296,6 +296,26 @@ dominated by tryMap×addState (410) and FallbackOps.accumulateClobbered
 bounded reps into budget rejection where re2j compiles fine. CONSTRUCTION
 family (39 records: anchors under lazy/counted loops) still open.
 
+ROUND 15 (2026-09-02): nested-counted bombs — clean rejection, memory-
+calibrated caps (the loop-based bounded-repetition rework stays deferred).
+The classic (a{1,100}){1,100} OOM-ed the boxed determinization phase
+(OutOfMemoryError, not a clean reject): kernelsTotal only counts AFTER
+addState, and the 50M default assumed >2.5 GB heaps. Measured: 6.4M
+kernels peaks <1 GB ((a{1,50}){1,50}, 2501 states, 2.9 s), 18M exceeds it
+((a{1,65}){1,65}). New defaults: tdfa.max.kernels 50M -> 10M (clean
+reject on default heaps, raise for heavier legit use) and a per-kernel
+spike cap tdfa.max.closure=100k checked DURING closure construction (one
+closure could exhaust the heap before any total counts). Ladder at 1g
+heap: n=50 OK; n=65/80/100 all clean PatternSyntaxException in seconds.
+Battery: (a|a{50}){50}, ((a{0,2}){0,2}){0,50}, (a{1,50}){1,50},
+(?:ab{1,20}){1,20}, (a?{50}){50} all compile; only (a{1,100}){1,100}
+rejects. Pinned in CompileBudgetTest (clean reject, largest-legit-still-
+compiles, closure spike cap). Gates green; 1.59M-case fuzz slice 0
+failures (4 hangs = cliff family). re2j compiles (a{1,100}){1,100} where
+we reject — documented divergence class (eager full-DFA vs pike VM);
+loop-based bounded repetition remains the structural fix if it ever
+matters in practice.
+
 ROUND 14 (2026-09-02): history hash-consing (HistTable).
 Config.h/.l are now hash-consed IDS (HistTable, primitive-chained intern
 table): identical tag-history sequences share one id, one backing array,
