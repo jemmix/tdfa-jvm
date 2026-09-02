@@ -18,6 +18,12 @@
 # Fuzz against our patched re2j fork (surrogate-pair-interior fix,
 # vendor/re2j-jemmix/): append -Pfuzz.patchedOracle=true
 #   scripts/fuzz-soak.sh 480 1 build/fuzz '' -Pfuzz.patchedOracle=true
+#
+# The fuzzer is multi-threaded by default (-Dfuzz.threads, cores-1 capped
+# at 8; case order and ndjson records are thread-count-invariant). Run N
+# independent soaks ONLY if you want N separate out-dirs; one soak already
+# uses the machine. Chunking stays: hang-sacrificed threads spin CPU until
+# the chunk JVM dies.
 set -u
 cd "$(dirname "$0")/.."
 

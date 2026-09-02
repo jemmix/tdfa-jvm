@@ -296,6 +296,29 @@ dominated by tryMap×addState (410) and FallbackOps.accumulateClobbered
 bounded reps into budget rejection where re2j compiles fine. CONSTRUCTION
 family (39 records: anchors under lazy/counted loops) still open.
 
+ROUND 12 (2026-09-02 morning): the round-11 fix + perf groundwork + MT fuzzer.
+- LAZY-\b FIXED (fb64f09): pike post-match pruning determinized (live sets
+  truncated below the first ALIVE accept config — leftmost-first discards
+  anything below-ranked threads reach; kernel/stop-tables untouched) AND
+  entry ownership across overlapping contexts is now most-specific-
+  satisfied-mask (popcount, ties to index) at all three VM scan sites plus
+  the ASM dispatch chain (dead markers included, emitted most-specific
+  first). The lo-sorted-table shadowing (broad mask-0 range before the
+  specific dead marker) was the second half of the root — pruning alone
+  was inert. All 16 repros + round-10's 15 + gates green; pinned in
+  AnchorContextParityTest.
+- PERF (77166f6): tryMap/transitionRegops per-config history memoization
+  (bitset / last-sign, one pass over the history sequence). Cliff seeds
+  still exceed the watchdog — cost is tryMap CALL VOLUME + addState
+  interning (O(distinct²)); that restructure remains the open item.
+- FUZZER: multi-threaded out of the box (cores-1, cap 8; -Dfuzz.threads=1
+  restores sequential). Batches drawn/generated/RECORDED on main — case
+  order and ndjson byte-identical across thread counts (verified 1 vs 4);
+  hang post-mortem uses the batch's own worker (currentWorker static
+  removed — it raced). ~1.6x on this machine (495k vs 310k cases/min;
+  compile-bound). Chunked soaks still recommended: sacrificed hang
+  threads spin until chunk death.
+
 ROUND 11 (2026-09-02, overnight 2 triage — lazy-\b family DIAGNOSED, fix
 deferred): ~195M cases, 0 failures, 0 known divergences (fix2 oracle clean);
 46 RESULT_MISMATCH/CONSTRUCTION records → 16 distinct patterns → minimizer

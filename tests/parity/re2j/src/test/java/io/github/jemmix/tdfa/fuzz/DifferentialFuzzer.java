@@ -82,18 +82,16 @@ public final class DifferentialFuzzer {
     /** Layered comparator (re2j/sim/vm/asm vote) for failure attribution. */
     private static final io.github.jemmix.tdfa.parity.LayeredComparator LAYERED =
             new io.github.jemmix.tdfa.parity.LayeredComparator(com.google.re2j.Re2jUnicodeProvider.INSTANCE);
-    /** The worker of the case in flight (hang post-mortem must read THIS
-     *  thread, not any previously-leaked hung worker). */
-    private static volatile Thread currentWorker;
 
     /** One batch with a watchdog: compile once, then K inputs, each guard-tracked
      *  in {@code prog} (-1 = compiling, i = about to run input i). On timeout the
      *  worker thread is sacrificed as before; outcomes already written (indices
      *  < prog) are volatile-ordered before the prog store that revealed them, so
      *  the main thread records them normally and attributes the hang to the exact
-     *  caseSeed (batch*K + prog). Returns false on timeout. */
+     *  caseSeed (batch*K + prog). Returns false on timeout; the sacrificed worker
+     *  is handed back via {@code workerOut} for the post-mortem stack. */
     static boolean runBatchWatched(String pattern, String[] inputs, Outcome[] os,
-                                   java.util.concurrent.atomic.AtomicInteger prog) throws InterruptedException {
+                                   java.util.concurrent.atomic.AtomicInteger prog, Thread[] workerOut) throws InterruptedException {
         Thread worker = new Thread(() -> {
             Prepared pr = prepare(pattern);
             for (int i = 0; i < inputs.length; i++) {
@@ -102,11 +100,27 @@ public final class DifferentialFuzzer {
             }
         }, "fuzz-case");
         worker.setDaemon(true);
-        currentWorker = worker;
+        workerOut[0] = worker;
         worker.start();
         worker.join(CASE_TIMEOUT_MS);
         return !worker.isAlive();
     }
+
+    /** Worker threads for batch execution. Default: cores-1 (min 2, cap 8) —
+     *  compile is the dominant per-batch cost and parallelizes cleanly.
+     *  1 restores the sequential executor. Case-generation order and the
+     *  ndjson record order are thread-count-invariant: batches are drawn,
+     *  generated and RECORDED on the main thread; only prepare+match runs
+     *  on the pool. */
+    static int threads() {
+        long def = Math.max(2, Math.min(8, Runtime.getRuntime().availableProcessors() - 1));
+        return (int) Math.max(1, Long.getLong("fuzz.threads", def));
+    }
+
+    /** One in-flight batch. */
+    private record BatchJob(long batch, String pattern, String[] inputs, Outcome[] os,
+                            java.util.concurrent.atomic.AtomicInteger prog, Thread[] worker,
+                            java.util.concurrent.Future<Boolean> done) {}
 
     /** Core entry reusable from the smoke test. */
     public static Results run(long masterSeed, long minutes, long maxCases, Path outDir) throws IOException {
@@ -118,45 +132,61 @@ public final class DifferentialFuzzer {
             long lastProgress = start;
             Results r = new Results(masterSeed);
             Runtime.getRuntime().addShutdownHook(new Thread(() -> { r.writeSummary(logs); logs.flush(); }));
-            while ((maxCases <= 0 || r.cases < maxCases) && System.nanoTime() < deadline) {
-                // >>> 4 keeps batch*8+i < 2^63 (>>> 3 was wrong: batches ≥ 2^60
-                // wrapped negative — bijective and replayable, but confusing in logs).
-                long batch = master.nextLong() >>> 4;
-                String pattern = genPattern(batch);
-                // pattern-level generation guards fold once per batch
-                r.ciSuppAvoidedTotal += ciSuppAvoided;
-                r.ciRangeAvoidedTotal += ciRangeAvoided;
-                String[] inputs = new String[BATCH_K];
-                for (int i = 0; i < BATCH_K; i++) inputs[i] = genInput(batch, i);
-                Outcome[] os = new Outcome[BATCH_K];
-                java.util.concurrent.atomic.AtomicInteger prog = new java.util.concurrent.atomic.AtomicInteger(-1);
-                boolean done;
-                try {
-                    done = runBatchWatched(pattern, inputs, os, prog);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-                int k = done ? BATCH_K : prog.get();   // on hang: outcomes < k are real, k is the victim
-                for (int i = 0; i < k && (maxCases <= 0 || r.cases < maxCases); i++) {
-                    r.record(batch * BATCH_K + i, os[i], logs);
-                    r.cases++;
-                }
-                if (!done) {
-                    int victim = k < 0 ? 0 : k;   // -1 = compile hang: replay head case (fuzz.one recompiles)
-                    if (r.cases < maxCases || maxCases <= 0) {
-                        r.hangs++;
-                        logs.hang(batch * BATCH_K + victim, new Case(pattern, inputs[victim]), r);
-                        r.cases++;
+            int threads = threads();
+            java.util.concurrent.ExecutorService pool =
+                    threads > 1 ? java.util.concurrent.Executors.newFixedThreadPool(threads) : null;
+            java.util.ArrayDeque<BatchJob> inFlight = new java.util.ArrayDeque<>();
+            try {
+                while ((maxCases <= 0 || r.cases < maxCases) && System.nanoTime() < deadline) {
+                    // Fill the in-flight window (main-thread generation keeps
+                    // the case sequence deterministic regardless of threads).
+                    while (pool != null && inFlight.size() < threads * 2
+                            && (maxCases <= 0 || r.cases + countQueued(inFlight) < maxCases)
+                            && System.nanoTime() < deadline) {
+                        BatchJob job = submit(pool, master, r);
+                        if (job == null) break;
+                        inFlight.add(job);
+                    }
+                    BatchJob job;
+                    if (pool != null) {
+                        if (inFlight.isEmpty()) break;
+                        job = inFlight.poll();
+                        boolean done;
+                        try {
+                            done = job.done().get();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        } catch (java.util.concurrent.ExecutionException e) {
+                            throw new IllegalStateException("fuzz batch failed", e.getCause());
+                        }
+                        handleBatch(job, done, r, logs, maxCases);
+                    } else {
+                        job = submit(null, master, r);
+                        if (job == null) break;
+                        boolean done;
+                        try {
+                            done = runBatchWatched(job.pattern(), job.inputs(), job.os(), job.prog(), job.worker());
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                        handleBatch(job, done, r, logs, maxCases);
+                    }
+                    long now = System.nanoTime();
+                    if (now - lastProgress > 15_000_000_000L) {
+                        double mins = (now - start) / 60_000_000_000.0;
+                        r.casesPerMinute = mins > 0 ? r.cases / mins : 0;
+                        logs.progress(r, mins);
+                        r.writeSummary(logs);
+                        lastProgress = now;
                     }
                 }
-                long now = System.nanoTime();
-                if (now - lastProgress > 15_000_000_000L) {
-                    double mins = (now - start) / 60_000_000_000.0;
-                    r.casesPerMinute = mins > 0 ? r.cases / mins : 0;
-                    logs.progress(r, mins);
-                    r.writeSummary(logs);
-                    lastProgress = now;
+            } finally {
+                if (pool != null) {
+                    pool.shutdownNow();
+                    // Drained (possibly hung) workers are daemon threads: the
+                    // chunked-JVM soak discipline still bounds any sacrifice.
                 }
             }
             double mins = (System.nanoTime() - start) / 60_000_000_000.0;
@@ -164,6 +194,52 @@ public final class DifferentialFuzzer {
             logs.progress(r, mins);
             r.writeSummary(logs);
             return r;
+        }
+    }
+
+    private static long countQueued(java.util.ArrayDeque<BatchJob> q) {
+        return q.size() * BATCH_K;
+    }
+
+    /** Draw one batch from the master stream, generate on THIS thread, and
+     *  either submit to the pool or return the job for sequential execution. */
+    private static BatchJob submit(java.util.concurrent.ExecutorService pool, SplittableRandom master, Results r) {
+        // >>> 4 keeps batch*8+i < 2^63 (>>> 3 was wrong: batches ≥ 2^60
+        // wrapped negative — bijective and replayable, but confusing in logs).
+        long batch = master.nextLong() >>> 4;
+        String pattern = genPattern(batch);
+        // pattern-level generation guards fold once per batch
+        r.ciSuppAvoidedTotal += ciSuppAvoided;
+        r.ciRangeAvoidedTotal += ciRangeAvoided;
+        String[] inputs = new String[BATCH_K];
+        for (int i = 0; i < BATCH_K; i++) inputs[i] = genInput(batch, i);
+        Outcome[] os = new Outcome[BATCH_K];
+        java.util.concurrent.atomic.AtomicInteger prog = new java.util.concurrent.atomic.AtomicInteger(-1);
+        Thread[] worker = new Thread[1];
+        if (pool != null) {
+            java.util.concurrent.Future<Boolean> fut = pool.submit(
+                    () -> runBatchWatched(pattern, inputs, os, prog, worker));
+            return new BatchJob(batch, pattern, inputs, os, prog, worker, fut);
+        }
+        return new BatchJob(batch, pattern, inputs, os, prog, worker, null);
+    }
+
+    /** Record a finished (or hung) batch: prefix outcomes, hang attribution
+     *  via the batch's own worker thread (post-mortem stack), exact case cap. */
+    private static void handleBatch(BatchJob job, boolean done, Results r, Logs logs, long maxCases) {
+        long batch = job.batch();
+        int k = done ? BATCH_K : job.prog().get();   // on hang: outcomes < k are real, k is the victim
+        for (int i = 0; i < k && (maxCases <= 0 || r.cases < maxCases); i++) {
+            r.record(batch * BATCH_K + i, job.os()[i], logs);
+            r.cases++;
+        }
+        if (!done) {
+            int victim = k < 0 ? 0 : k;   // -1 = compile hang: replay head case (fuzz.one recompiles)
+            if (r.cases < maxCases || maxCases <= 0) {
+                r.hangs++;
+                logs.hang(batch * BATCH_K + victim, new Case(job.pattern(), job.inputs()[victim]), r, job.worker()[0]);
+                r.cases++;
+            }
         }
     }
 
@@ -644,8 +720,7 @@ public final class DifferentialFuzzer {
          *  ({@code io.github.jemmix.tdfa.fuzz.*}) wrap EVERY worker stack —
          *  oracle hangs included — so they must not count as "ours" (the
          *  first soak misattributed 33 re2j-parser hangs to the engine). */
-        void hang(long caseSeed, Case c, Results r) {
-            Thread w = findWorker();
+        void hang(long caseSeed, Case c, Results r, Thread w) {
             StringBuilder st = new StringBuilder();
             if (w != null) for (StackTraceElement e : w.getStackTrace()) st.append(e).append(" | ");
             boolean ours = isEngineStack(st);
@@ -665,9 +740,6 @@ public final class DifferentialFuzzer {
             return false;
         }
 
-        private static Thread findWorker() {
-            return currentWorker;
-        }
 
         void summary(Results r) {
             try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(dir.resolve("summary.txt")))) {
