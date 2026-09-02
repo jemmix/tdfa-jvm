@@ -1952,6 +1952,20 @@ public final class Tdfa {
          * to allow sharing registers across transitions out of the same state with identical RHS.
          * {@code nextReg} is bumped globally so registers are unique across states.
          */
+        /** Grown-on-demand scratch for tryMap's per-config history bitsets. */
+        private long[][] hasHistScratch;
+        private long[][] hasHistScratch(int size) {
+            int words = (tags + 63) >>> 6;
+            if (hasHistScratch == null || hasHistScratch.length < size
+                    || hasHistScratch[0].length < words) {
+                hasHistScratch = new long[Math.max(size, 16)][Math.max(words, 1)];
+            }
+            return hasHistScratch;
+        }
+
+        /** Grown-on-demand scratch for transitionRegops' per-tag last-sign. */
+        private int[] lastSignScratch;
+
         int[] transitionRegops(List<Config> configs, int sourceStateId) {
             meter.tick();
             // Tagless patterns (count-model usage, the giant bounded-repeat DFAs):
@@ -1962,24 +1976,30 @@ public final class Tdfa {
             List<int[]> opList = new ArrayList<>();
             // Track ops already emitted in THIS call (per-transition dedup, paper "if op not in O").
             Set<Long> emitted = new HashSet<>();
+            // Per-tag LAST history sign: one pass over each config's history
+            // sequence instead of tags × full-sequence history() rescans
+            // (same hot-spot shape as tryMap's bitsets).
+            if (lastSignScratch == null || lastSignScratch.length < tags) lastSignScratch = new int[Math.max(tags, 16)];
             for (int ci = 0; ci < configs.size(); ci++) {
                 Config c = configs.get(ci);
                 if (c.h == EMPTY || c.h.length == 0) continue;
+                int[] last = lastSignScratch;
+                java.util.Arrays.fill(last, 0, tags, 0);
+                for (int v : c.h) last[Math.abs(v) - 1] = v > 0 ? TAG_POS : TAG_NIL;
                 int[] newRegs = c.regs.clone();
                 for (int t = 1; t <= tags; t++) {
-                    int[] hist = history(c.h, t);
-                    if (hist == null || hist.length == 0) continue;
-                    int last = hist[hist.length - 1];
-                    long key = (((long) t) << 32) | (last & 0xFFFFFFFFL);
+                    int l = last[t - 1];
+                    if (l == 0) continue;   // tag has no history entry
+                    long key = (((long) t) << 32) | (l & 0xFFFFFFFFL);
                     Integer reg = vmap.get(key);
                     if (reg == null) {
                         reg = nextReg++;
                         vmap.put(key, reg);
                     }
-                    long opKey = (((long) reg) << 32) | (last & 0xFFFFFFFFL);
+                    long opKey = (((long) reg) << 32) | (l & 0xFFFFFFFFL);
                     if (!emitted.contains(opKey)) {
                         emitted.add(opKey);
-                        if (last == TAG_POS) opList.add(new int[]{OP_SET_POS, reg, 0});
+                        if (l == TAG_POS) opList.add(new int[]{OP_SET_POS, reg, 0});
                         else opList.add(new int[]{OP_SET_NIL, reg, 0});
                     }
                     newRegs[t - 1] = reg;
@@ -2263,11 +2283,30 @@ public final class Tdfa {
             }
             // Build register bijection M: newReg -> oldReg, M': oldReg -> newReg
             Map<Integer, Integer> m = new HashMap<>(), mprime = new HashMap<>();
+            // "Tag has transition-op history" bitsets: one pass over each
+            // config's history sequence replaces the former tags × full-
+            // sequence history() rescans per (config, tag) — the top
+            // compile-time hot spot (410 of 678 overnight hang records were
+            // this loop; the full history ARRAY was built to test only its
+            // existence).
+            long[][] hasHist = hasHistScratch(newConfigs.size());
+            for (int i = 0; i < newConfigs.size(); i++) {
+                if (meter != null) meter.tick();
+                long[] bits = hasHist[i];
+                java.util.Arrays.fill(bits, 0L);
+                int[] l = newConfigs.get(i).l;
+                if (l != null) {
+                    for (int v : l) {
+                        int t = Math.abs(v) - 1;
+                        bits[t >>> 6] |= 1L << t;
+                    }
+                }
+            }
             for (int i = 0; i < newConfigs.size(); i++) {
                 Config cn = newConfigs.get(i), co = oldConfigs.get(i);
+                long[] bits = hasHist[i];
                 for (int t = 0; t < tags; t++) {
-                    int[] hist = history(cn.l, t + 1);
-                    if (hist != null && hist.length > 0) continue; // tag is set by transition op
+                    if ((bits[t >>> 6] >>> (t & 63) & 1L) != 0) continue; // tag is set by transition op
                     int rn = cn.regs[t], ro = co.regs[t];
                     Integer mn = m.get(rn), mo = mprime.get(ro);
                     if (mn == null && mo == null) {
