@@ -296,6 +296,38 @@ dominated by tryMap×addState (410) and FallbackOps.accumulateClobbered
 bounded reps into budget rejection where re2j compiles fine. CONSTRUCTION
 family (39 records: anchors under lazy/counted loops) still open.
 
+ROUND 11 (2026-09-02, overnight 2 triage — lazy-\b family DIAGNOSED, fix
+deferred): ~195M cases, 0 failures, 0 known divergences (fix2 oracle clean);
+46 RESULT_MISMATCH/CONSTRUCTION records → 16 distinct patterns → minimizer
+collapses ALL to one shape: LAZY quantifier + \b/\B + optional tail
+(.+?\b[^\d]* on "ß9": re2j/sim/jdk match [0,1), we match [0,2]).
+Cliff census at scale: 292 tryMap + 97 accumulateClobbered + ~100 misc
+hangs, 304 budget-rejects (items 4-5 unchanged).
+
+DIAGNOSIS (instrumented, all layers ruled out in order):
+- runtime \b wordness is CORRECT (ASCII default; 9\bß on "9ß" agrees
+  with re2j in default mode — the engine computes WB=boundary at pos 1);
+- the byMask accept table is CORRECT (fmCell=0 ≥ 0 = accept alive at pos 1
+  under M=WB);
+- the stop-table NEVER_STOP under M=WB is CORRECT BY DESIGN: the
+  [^\d]*-entry config (order 4) genuinely outranks the direct accept
+  (order 5) — for input "ßx" the extension DOES win ([0,2), re2j agrees);
+- THE BUG: after recording the pos-1 accept, the walk takes a transition
+  from a config ranked BELOW the recorded accept (the lazy . body,
+  order 6, matches '9' where the outranking [^\d] cannot), re-accepts at
+  pos 2, and the runner OVERWRITES lastAccept unconditionally
+  (extractFrom: lastAcceptPos = pos). That implements leftmost-LONGEST
+  for the post-accept window; Perl leftmost-first requires the FIRST
+  (highest-priority) accept to survive lower-priority later accepts —
+  re2j records only the first Match. Narrow trigger: mask-gated accept
+  (\b/\B) + a lower-priority mask-0 body re-entering an accepting state.
+FIX DIRECTION (next determinizer round, ~half day + revalidation): carry
+per-range source-config rank (or per-(state,M) accept rank from the
+byMask winner) and prune continuations ranked below the last recorded
+accept — the DFA equivalent of pike's post-match thread pruning. Needs a
+rank field on range entries or an equivalent; the 16 minimized repros
+are the acceptance set (all in this TODO's ndjson).
+
 ROUND 10 (2026-09-01, CONSTRUCTION family fixed + oracle fix2):
 - re2j fork fix2 (fa71014): Regexp.equals/hashCode now compare FoldCase
   for LITERAL/CHAR_CLASS — the port dropped Go's Flags&FoldCase comparison,
