@@ -1148,11 +1148,22 @@ public final class TdfaAsmBackend {
             int meta = sm[s];
             int base = sb[s], cnt = (meta >>> 1) & 0xFFFF;
 
+            // All entries INCLUDING dead markers (target < 0), most-specific
+            // first: popcount(requiredMask) desc, original index asc. The
+            // sequential chain is first-satisfied-wins, so a specific entry
+            // (e.g. a dead marker under a word-boundary mask) must precede
+            // the broad mask-0 ranges it shadows — lo order alone let a
+            // lazy body's '.' entry fire where the owning context was dead
+            // (fuzz round 11; parity with TdfaRunner's scan rule).
             List<int[]> live = new ArrayList<>();
             for (int i = 0; i < cnt; i++) {
                 int o = (base + i) * 5;
-                if (rg[o + 2] >= 0) live.add(new int[]{rg[o], rg[o+1], rg[o+2], rg[o+3], rg[o+4]});
+                live.add(new int[]{rg[o], rg[o + 1], rg[o + 2], rg[o + 3], rg[o + 4], Integer.bitCount(rg[o + 4])});
             }
+            live.sort((x, y) -> {
+                int c = Integer.compare(y[5], x[5]);   // specificity desc
+                return c != 0 ? c : 0;                 // stable: original order within equal specificity
+            });
             Label stateDead = new Label();
             int nLive = live.size();
             for (int ri = 0; ri < nLive; ri++) {
@@ -1176,6 +1187,15 @@ public final class TdfaAsmBackend {
                     mv.visitInsn(Opcodes.IAND);
                     ic(mv, reqMask);
                     mv.visitJumpInsn(Opcodes.IF_ICMPNE, nextRange);
+                }
+
+                // Dead marker of the OWNING context (most-specific satisfied
+                // entry): no continuation under this posFlags — end the walk,
+                // keeping the recorded accept (parity with the VM's break).
+                if (target < 0) {
+                    mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
+                    if (!isLast) mv.visitLabel(nextRange);
+                    continue;
                 }
 
                 // Target entry mask BEFORE the transition's ops: a

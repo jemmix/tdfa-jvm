@@ -63,4 +63,37 @@ class AnchorContextParityTest {
         assertSameFind("(?m:\\A.|(^))\\S", "\u00e9", factory);
         assertSameFind("(?m:(\\A.|(^)))", " ", factory);       // alternation priority among zero-width arms
     }
+
+    /**
+     * Round 11 (2026-09-02): lazy quantifier + {@code \b}/{@code \B} + optional
+     * tail — the walk extended past a recorded accept via a kernel config
+     * ranked BELOW it (leftmost-longest window in a leftmost-first engine).
+     * Fixed by pike post-match thread pruning determinized: a live set that
+     * contains an ACCEPT config is truncated below the first alive accept
+     * (anything those threads reach is discarded by leftmost-first); the
+     * emptied contexts emit their dead markers; and overlap ownership across
+     * contexts is by MOST-SPECIFIC satisfied mask (popcount, then index) at
+     * every scan site — lo-sorted tables could place a broad mask-0 range
+     * before the specific dead marker that must shadow it.
+     */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void lazyQuantifierWordBoundaryStopsAtFirstAccept(RegexEngineFactory factory) {
+        assertSameFind(".+?\\b[^\\d]*", "\u00df9", factory);          // [0,1) not [0,2)
+        assertSameFind(".{0,}?\\B\\S?", " ", factory);
+        assertSameFind("\\D??(?:\\b)]?", "b", factory);
+        assertSameFind("\\S+?\\bW?", "\udc00_", factory);
+        assertSameFind("\\W??(\\B)[\udfff]*", "\ud800\udfff", factory);
+        assertSameFind("\\D*?\\B(?:\udfff)?", "\ud800\udc21", factory);
+        assertSameFind("\\s??\\B(.)?", "\\n", factory);
+        assertSameFind(".*?\\B]?", "\udc02", factory);
+        assertSameFind("(\\A(\udc21){0,}|.){1}", "\udca9", factory);
+        assertSameFind("((\\B|.))~*", "\udc07", factory);
+        assertSameFind(".+?\\B(9){0,}", "\\t~", factory);
+        assertSameFind("\\S{2,}?(\\B)~{0,}", "\udc07\udc21\udfff", factory);
+        assertSameFind("(.??)\\B(s)*", "\udfff", factory);
+        assertSameFind("[d-\ud835\udd04]??\\B\ud800?", "\udc21", factory);
+        assertSameFind("[0-\ud83d\udca9]{0,}?\\B\udc07*", "\udfff", factory);
+        assertSameFind("(.{1,}?\\b]{0,})", "\udc00b", factory);
+}
 }

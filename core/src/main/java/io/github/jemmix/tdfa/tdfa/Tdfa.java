@@ -779,7 +779,7 @@ public final class Tdfa {
                 if (ctxMasks == null || ctxMasks.isEmpty()
                         || (ctxMasks.size() == 1 && ctxMasks.contains(0))) {
                     ctxList.add(new int[]{0, 0});
-                    ctxInputs.add(cur);                        // uniform context: whole closure
+                    ctxInputs.add(pruneBelowAccept(cur));      // uniform context: whole closure (pike-pruned)
                 } else {
                     // Dedup live-sets by their alive-mask pattern over the 64 runtime
                     // M values. Mask-0 configs are alive under every M (their bit is
@@ -804,6 +804,7 @@ public final class Tdfa {
                                 if ((pat & (2 << i)) != 0 && c.emptyMask == ctxMasks.get(i)) { live.add(c); break; }
                             }
                         }
+                        pruneBelowAcceptInPlace(live);
                         ctxList.add(new int[]{r, Integer.bitCount(pat)});
                         ctxInputs.add(live);
                     }
@@ -1780,6 +1781,47 @@ public final class Tdfa {
         private int[] psoOrder;
         private boolean[] psoVisited;
         private int[] psoStack;
+
+        /**
+         * Pike post-match thread pruning, determinized (Perl mode only): the
+         * moment a live set contains an ACCEPT config, every config ranked
+         * BELOW the first (highest-priority) alive accept is dead — any match
+         * those threads reach is discarded by leftmost-first (re2j records
+         * only the first Match), and non-matching continuations of them are
+         * irrelevant. Without the prune, the walk extends past a recorded
+         * accept via a lower-priority body and the runner's unconditional
+         * lastAccept overwrite turns the result leftmost-LONGEST for that
+         * window — fuzz round 11: {@code .+?\b[^\d]*} on "ß9" reported
+         * [0,2) where re2j/sim/jdk report [0,1) (the lazy {@code .} body
+         * matched '9' although ranked below the \b-gated accept at pos 1).
+         *
+         * <p>Configs ranked ABOVE the accept are kept: their later match
+         * legitimately replaces the recorded one (the stop table's
+         * higherPriSym NEVER_STOP exists for exactly them). Greedy shapes
+         * are unaffected in practice — the body outranks the accept there.
+         * The KERNEL itself is not pruned (state identity and the stop/final
+         * tables see the full closure); only this live set's stepping input.
+         */
+        List<Config> pruneBelowAccept(List<Config> live) {
+            if (longest) return live;
+            int cut = -1;
+            for (int i = 0; i < live.size(); i++) {
+                if (live.get(i).state == nfa.accept) { cut = i; break; }
+            }
+            if (cut < 0 || cut == live.size() - 1) return live;   // nothing below the accept
+            List<Config> pruned = new ArrayList<>(live.subList(0, cut + 1));
+            return pruned;
+        }
+
+        /** In-place variant for freshly-built live lists. */
+        void pruneBelowAcceptInPlace(List<Config> live) {
+            if (longest) return;
+            int cut = -1;
+            for (int i = 0; i < live.size(); i++) {
+                if (live.get(i).state == nfa.accept) { cut = i; break; }
+            }
+            if (cut >= 0 && cut < live.size() - 1) live.subList(cut + 1, live.size()).clear();
+        }
 
         int[] computePerStateOrder(int[] seedStates, int posMask) { return computePerStateOrderDfs(seedStates, posMask); }
 

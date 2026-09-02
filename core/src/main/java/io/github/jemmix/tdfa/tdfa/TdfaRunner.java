@@ -547,17 +547,15 @@ public final class TdfaRunner implements RegexEngine {
                     if (rg[(base + mid) * 5] <= c) { anchor = mid; rlo = mid + 1; }
                     else rhi = mid - 1;
                 }
-                // Walk back over containing entries. The LOWEST-index
-                // mask-satisfied entry owns the step (original linear-scan
-                // priority: alternation and mask-specificity order by entry
-                // index) — live OR dead: a dead marker only kills the walk
-                // when it is itself the lowest satisfied entry (the owning
-                // context has no continuation). Breaking on a dead marker
-                // mid-scan discards a more-specific live entry at a lower
-                // index — fuzz round 10: (\b)?^[\d] on "0" died on the
-                // dead idx 1 (mask WB) and never reached the live idx 0
-                // (mask WB|BEGIN), which was satisfied and winning.
-                int best = -1;
+                // Walk back over containing entries. Ownership: the MOST
+                // SPECIFIC satisfied mask wins (popcount of requiredMask);
+                // ties fall to the lowest index (determinizer order). Pure
+                // "lowest index" was wrong once overlapping contexts' ranges
+                // differ in lo — a more-specific (e.g. dead-marker) entry at
+                // a HIGHER lo/index was shadowed by a broad mask-0 range
+                // (fuzz round 11: .+?\b[^\d]* extended past its \b-gated
+                // accept through the lazy body's '.' entry).
+                int best = -1, bestSpec = -1;
                 for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
                     int o = (base + i) * 5;
                     if (c <= rg[o + 1]) {
@@ -566,7 +564,8 @@ public final class TdfaRunner implements RegexEngine {
                             if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                             if ((posFlags & requiredMask) != requiredMask) continue;
                         }
-                        best = i;   // keeps shrinking: ends at the lowest satisfied index
+                        int spec = Integer.bitCount(requiredMask);
+                        if (spec >= bestSpec) { best = i; bestSpec = spec; }   // >= : lower index wins ties
                     }
                 }
                 if (best >= 0) {
@@ -1908,11 +1907,11 @@ public final class TdfaRunner implements RegexEngine {
                     else rhi = mid - 1;
                 }
                 int chosen = -1, chosenTarget = 0;
-                // Lowest-index mask-satisfied entry OWNS the step — dead or
-                // live. Skipping dead markers (the former `continue`) falls
-                // through to contexts not alive under this posFlags; breaking
-                // on them mid-scan discards more-specific live entries (see
-                // extractFrom's fix for the protocol).
+                // Most-specific satisfied mask owns the step (popcount, ties
+                // to lowest index) — see extractFrom for the protocol; no
+                // fallthrough past a dead owning context, no shadowing of
+                // specific entries by broad mask-0 ranges either.
+                int bestSpec = -1;
                 for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
                     int o = (base + i) * 5;
                     if (c <= rg[o + 1]) {
@@ -1921,7 +1920,8 @@ public final class TdfaRunner implements RegexEngine {
                             if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                             if ((posFlags & requiredMask) != requiredMask) continue;
                         }
-                        chosen = o; chosenTarget = rg[o + 2];
+                        int spec = Integer.bitCount(requiredMask);
+                        if (spec >= bestSpec) { chosen = o; chosenTarget = rg[o + 2]; bestSpec = spec; }
                     }
                 }
                 if (chosen < 0 || chosenTarget < 0) {
@@ -2012,9 +2012,9 @@ public final class TdfaRunner implements RegexEngine {
                     else rhi = mid - 1;
                 }
                 int chosen = -1, chosenTarget = 0;
-                // Lowest-index mask-satisfied entry OWNS the step, dead or
-                // live — see extractFrom for the protocol (no fallthrough
-                // past a dead owning context; no premature break either).
+                // Most-specific satisfied mask owns the step (popcount, ties
+                // to lowest index) — see extractFrom for the protocol.
+                int bestSpec = -1;
                 for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
                     int o = (base + i) * 5;
                     if (c <= ranges[o + 1]) {
@@ -2023,7 +2023,8 @@ public final class TdfaRunner implements RegexEngine {
                             if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
                             if ((posFlags & requiredMask) != requiredMask) continue;
                         }
-                        chosen = o; chosenTarget = ranges[o + 2];
+                        int spec = Integer.bitCount(requiredMask);
+                        if (spec >= bestSpec) { chosen = o; chosenTarget = ranges[o + 2]; bestSpec = spec; }
                     }
                 }
                 if (chosen < 0 || chosenTarget < 0) break;
