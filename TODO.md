@@ -296,6 +296,24 @@ dominated by tryMap×addState (410) and FallbackOps.accumulateClobbered
 bounded reps into budget rejection where re2j compiles fine. CONSTRUCTION
 family (39 records: anchors under lazy/counted loops) still open.
 
+ROUND 14 (2026-09-02): history hash-consing (HistTable).
+Config.h/.l are now hash-consed IDS (HistTable, primitive-chained intern
+table): identical tag-history sequences share one id, one backing array,
+and one cached derivation — the has-history bitset and per-tag last-sign
+table are computed once per sequence instead of rescanned per config per
+state. fillKeySig hashes one int per config (was O(sum|l|)); addState's
+hasHist fill became a cache fetch; transitionRegops/finalRegopsOf read
+the last-sign cache; vmap (tag,sign)->reg became a flat int[2*tags] per
+source state; the emitted-dedup HashSet became a bounded linear scan
+(opList <= 2*tags). Dead canonical DfaStateKey(List) ctors removed.
+Cliff seeds: tryMap-family 13.2->8.2s; others flat; the l-heavy family
+was the predicted winner. Memory: no measurable RSS change on the cliff
+seeds (their l's are short — heap is Config/regs dominated); the win
+applies to history-bloated shapes. Fuzz 1.85M-case slice: 0 result
+mismatches, 0 exceptions; 8 BUDGET_REJECTs = the pre-existing
+nested-counted bomb family (verified identical on HEAD via stash cycle),
+7 bounded hangs (cliff family).
+
 ROUND 13 (2026-09-02): compile-cliff root causes fixed — the interning was
 the quadratic, not the closure.
 Profiled the 4 overnight hang families (JFR): 70-80% of wall time was

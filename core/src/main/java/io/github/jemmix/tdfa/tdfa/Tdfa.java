@@ -514,6 +514,8 @@ public final class Tdfa {
     static final boolean DEBUG = Boolean.getBoolean("tdfa.debug");
 
     private static final class Compiler {
+        /** Hash-consed tag-history table backing Config.h/.l ids. */
+        final HistTable hist = new HistTable();
         final Tnfa nfa;
         final int tags;
         /** Compile work budget: every unbounded loop ticks it (fuzzer-found
@@ -721,7 +723,7 @@ public final class Tdfa {
             nextReg = 2 * tags;
             if (debug) System.err.println("[tdfa] tags=" + tags + " breakpoints=" + breakpoints.length);
             List<Config> initSeed = List.of(
-                    new Config(nfa.start, initialRegisters, EMPTY, EMPTY, 0));
+                    new Config(nfa.start, initialRegisters, HistTable.EMPTY_ID, HistTable.EMPTY_ID, 0));
             List<Config> initClosure = longest
                     ? closureGtop(initSeed, null, 0)
                     : epsilonClosure(initSeed);
@@ -744,7 +746,7 @@ public final class Tdfa {
                 List<Config> cur = states.get(sid);
                 if (debug) {
                     System.err.println("[tdfa] processing state " + sid + " configs:");
-                    for (Config c : cur) System.err.println("    state=" + c.state + " l=" + Arrays.toString(c.l) + " regs=" + Arrays.toString(c.regs) + " mask=" + c.emptyMask);
+                    for (Config c : cur) System.err.println("    state=" + c.state + " l=" + Arrays.toString(hist.content(c.l)) + " regs=" + Arrays.toString(c.regs) + " mask=" + c.emptyMask);
                 }
                 // Assertion-context split (assertions into the alphabet, by
                 // construction). The runtime posFlags M decides which closure
@@ -1037,7 +1039,7 @@ public final class Tdfa {
             // through materialization/minimization — the heap peak on giant
             // DFAs. Release ~0.8 GB (bomb) before the flat-array phase.
             stateIndex = null; states = null; packedKernels = null; stateSeeds = null;
-            work = null; epsOut = null; symOut = null; sourceVmaps = null;
+            work = null; epsOut = null; symOut = null;
             rangeActiveEdges = null; activeSetId = null; processed = null;
 
             obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.DETERMINIZE,
@@ -1628,11 +1630,11 @@ public final class Tdfa {
                     long childKey = (((long) to) << 32) | (newMask & 0xFFFFFFFFL);
                     if (containsKey(visitedSM, visitedMask, childKey)) continue;
                     int tag = nfa.epsTag[idx];
-                    int[] newL;
+                    int newL;
                     if (tag == Tnfa.NO_TAG || tag < 0) {
                         newL = c.l;
                     } else {
-                        newL = appendTag(c.l, tag);
+                        newL = hist.intern(appendTag(hist.content(c.l), tag));
                     }
                     // In longest-match mode, extend UTree path with ALL non-zero tags
                     // (incl. ntags) — consumed only by the (dormant) BT19 §7 compare,
@@ -1937,7 +1939,7 @@ public final class Tdfa {
                 for (int idx : symOut[c.state]) {
                     if ((activeEdges[idx >> 6] & (1L << (idx & 63))) != 0) {
                         // emptyMask resets on step — assertions are position-bound, gated via requiredMask.
-                    out.add(new Config(nfa.symTo[idx], c.regs, c.l, EMPTY, 0, c.pri, c.path, ci));
+                    out.add(new Config(nfa.symTo[idx], c.regs, c.l, HistTable.EMPTY_ID, 0, c.pri, c.path, ci));
                     intersection &= c.emptyMask;
                         any = true;
                     }
@@ -1972,41 +1974,42 @@ public final class Tdfa {
         private final HashMap<Integer, Integer> classIdMap = new HashMap<>();
 
         /** Grown-on-demand scratch for transitionRegops' per-tag last-sign. */
-        private int[] lastSignScratch;
-
         int[] transitionRegops(List<Config> configs, int sourceStateId) {
             meter.tick();
             // Tagless patterns (count-model usage, the giant bounded-repeat DFAs):
-            // no registers exist, so transitions carry no ops. Skipping the
-            // vmap/emitted allocations here removes millions of empty HashMaps
-            // and HashSets on large determinizations.
-            Map<Long, Integer> vmap = sourceVmaps.computeIfAbsent(sourceStateId, k -> new HashMap<>());
+            // no registers exist, so transitions carry no ops — nothing to do.
+            if (tags == 0) return EMPTY;
+            // vmap is keyed (tag, sign) — a flat int[2*tags] per source state,
+            // shared across that state's symbol transitions (register
+            // assignments are stable per source). The former boxed
+            // HashMap<Long,Integer> was a top profile entry after the
+            // interning rework.
+            while (sourceVmaps.size() <= sourceStateId) sourceVmaps.add(null);
+            int[] vmap = sourceVmaps.get(sourceStateId);
+            if (vmap == null) { vmap = new int[2 * tags]; sourceVmaps.set(sourceStateId, vmap); }
             List<int[]> opList = new ArrayList<>();
-            // Track ops already emitted in THIS call (per-transition dedup, paper "if op not in O").
-            Set<Long> emitted = new HashSet<>();
-            // Per-tag LAST history sign: one pass over each config's history
-            // sequence instead of tags × full-sequence history() rescans
-            // (same hot-spot shape as tryMap's bitsets).
-            if (lastSignScratch == null || lastSignScratch.length < tags) lastSignScratch = new int[Math.max(tags, 16)];
+            // Per-tag LAST history sign: cached per hash-consed history id
+            // (HistTable.lastSign) — formerly a rescan of each config's
+            // sequence content, the transition-regop hot spot.
             for (int ci = 0; ci < configs.size(); ci++) {
                 Config c = configs.get(ci);
-                if (c.h == EMPTY || c.h.length == 0) continue;
-                int[] last = lastSignScratch;
-                java.util.Arrays.fill(last, 0, tags, 0);
-                for (int v : c.h) last[Math.abs(v) - 1] = v > 0 ? TAG_POS : TAG_NIL;
+                if (c.h == HistTable.EMPTY_ID) continue;
+                int[] last = hist.lastSign(c.h, tags);
                 int[] newRegs = c.regs.clone();
                 for (int t = 1; t <= tags; t++) {
                     int l = last[t - 1];
                     if (l == 0) continue;   // tag has no history entry
-                    long key = (((long) t) << 32) | (l & 0xFFFFFFFFL);
-                    Integer reg = vmap.get(key);
-                    if (reg == null) {
-                        reg = nextReg++;
-                        vmap.put(key, reg);
+                    int slot = 2 * (t - 1) + (l == TAG_POS ? 0 : 1);
+                    int reg = vmap[slot];
+                    if (reg == 0) reg = vmap[slot] = nextReg++;
+                    // Per-transition dedup (paper "if op not in O"): opList is
+                    // bounded by 2*tags distinct (reg, sign) ops — linear scan
+                    // beats the former boxed HashSet.
+                    boolean dup = false;
+                    for (int[] o : opList) {
+                        if (o[1] == reg && o[0] == (l == TAG_POS ? OP_SET_POS : OP_SET_NIL)) { dup = true; break; }
                     }
-                    long opKey = (((long) reg) << 32) | (l & 0xFFFFFFFFL);
-                    if (!emitted.contains(opKey)) {
-                        emitted.add(opKey);
+                    if (!dup) {
                         if (l == TAG_POS) opList.add(new int[]{OP_SET_POS, reg, 0});
                         else opList.add(new int[]{OP_SET_NIL, reg, 0});
                     }
@@ -2017,7 +2020,8 @@ public final class Tdfa {
             return flatten(opList);
         }
 
-        Map<Integer, Map<Long, Integer>> sourceVmaps = new HashMap<>();
+        /** Per-source-state (tag, sign) → register, flat int[2*tags]; null until first use. */
+        final List<int[]> sourceVmaps = new ArrayList<>();
 
         int[] finalRegops(List<Config> configs) {
             if (tags == 0) return EMPTY;
@@ -2074,9 +2078,9 @@ public final class Tdfa {
                     Config c = at.apply(i);
                     if (c == null) continue;   // packed (tagless) kernel
                     StringBuilder h = new StringBuilder("cfg[" + i + "] mask=" + c.emptyMask + " l:");
+                    int[] last = hist.lastSign(c.l, tags);
                     for (int t = 1; t <= tags; t++) {
-                        int[] hist = history(c.l, t);
-                        h.append(" t").append(t).append(hist == null ? "Ø" : (hist[hist.length - 1] == TAG_POS ? "P" : "N"));
+                        h.append(" t").append(t).append(last[t - 1] == 0 ? "Ø" : (last[t - 1] == TAG_POS ? "P" : "N"));
                     }
                     System.err.println("  [finals] " + h + "  winner(M63)=" + winner[63] + " winner(M0)=" + winner[0]);
                 }
@@ -2103,13 +2107,13 @@ public final class Tdfa {
         int[] finalRegopsOf(Config c) {
             if (tags == 0) return EMPTY;
             List<int[]> opList = new ArrayList<>();
+            int[] lastSign = hist.lastSign(c.l, tags);
             for (int t = 1; t <= tags; t++) {
-                int[] hist = history(c.l, t);
                 int dst = finalRegisters[t - 1];
-                if (hist == null || hist.length == 0) {
+                if (lastSign[t - 1] == 0) {
                     opList.add(new int[]{OP_COPY, dst, c.regs[t - 1]});
                 } else {
-                    int last = hist[hist.length - 1];
+                    int last = lastSign[t - 1];
                     if (last == TAG_POS) opList.add(new int[]{OP_SET_POS, dst, 0});
                     else opList.add(new int[]{OP_SET_NIL, dst, 0});
                 }
@@ -2173,17 +2177,17 @@ public final class Tdfa {
                 // dense tagless sig: (state, emptyMask[, pri]) — l is always empty
                 for (int i = 0; i < n; i++) total += 2 + (longest ? 1 : 0);
             } else {
-                for (int i = 0; i < n; i++) total += 3 + configs.get(i).l.length + (longest ? 1 : 0);
+                // l enters the signature as its HASH-CONSED ID — one int per
+                // config instead of the full history content (interning makes
+                // id equality exact content equality).
+                for (int i = 0; i < n; i++) total += 3 + (longest ? 1 : 0);
             }
             if (probeSig.length < total) probeSig = new int[Math.max(total, probeSig.length * 2)];
             int j = 0;
             for (int i = 0; i < n; i++) {
                 Config c = configs.get(i);
                 probeSig[j++] = c.state;
-                if (tags != 0) {
-                    probeSig[j++] = c.l.length;
-                    for (int v : c.l) probeSig[j++] = v;
-                }
+                if (tags != 0) probeSig[j++] = c.l;
                 probeSig[j++] = c.emptyMask;
                 if (longest) probeSig[j++] = c.pri;
             }
@@ -2256,15 +2260,9 @@ public final class Tdfa {
                     hasHistShared = new long[Math.max(configs.size(), 16)][Math.max(words, 1)];
                 }
                 for (int i = 0; i < configs.size(); i++) {
-                    long[] bits = hasHistShared[i];
-                    java.util.Arrays.fill(bits, 0, words, 0L);
-                    int[] l = configs.get(i).l;
-                    if (l != null) {
-                        for (int v : l) {
-                            int t = Math.abs(v) - 1;
-                            bits[t >>> 6] |= 1L << t;
-                        }
-                    }
+                    // Per-history-id cached bitsets (HistTable.bits): no fill,
+                    // no content rescan.
+                    hasHistShared[i] = hist.bits(configs.get(i).l, words);
                 }
                 // Order-exact signature: candidates have the identical ordered
                 // (state, l) sequence; only their register assignment can differ.
@@ -2535,8 +2533,11 @@ public final class Tdfa {
     static final class Config {
         final int state;
         final int[] regs;
-        final int[] h;
-        final int[] l;
+        /** Hash-consed history ids (HistTable): h = parent closure's l,
+         *  carried across the symbol step; l = this closure's accumulated
+         *  ε-history. Id 0 = empty sequence. */
+        final int h;
+        final int l;
         /** Zero-width assertion mask accumulated during the ε-closure that produced this config.
          *  Reset to 0 by {@link Compiler#stepOnSymbol}. */
         int emptyMask;
@@ -2551,13 +2552,13 @@ public final class Tdfa {
          *  this config via stepOnSymbol. Used by compare() for cross-origin resolution.
          *  Unused in Perl mode. */
         int origin;
-        Config(int state, int[] regs, int[] h, int[] l, int emptyMask) {
+        Config(int state, int[] regs, int h, int l, int emptyMask) {
             this(state, regs, h, l, emptyMask, 0);
         }
-        Config(int state, int[] regs, int[] h, int[] l, int emptyMask, int pri) {
+        Config(int state, int[] regs, int h, int l, int emptyMask, int pri) {
             this(state, regs, h, l, emptyMask, pri, 0, 0);
         }
-        Config(int state, int[] regs, int[] h, int[] l, int emptyMask, int pri, int path, int origin) {
+        Config(int state, int[] regs, int h, int l, int emptyMask, int pri, int path, int origin) {
             this.state = state; this.regs = regs; this.h = h; this.l = l; this.emptyMask = emptyMask;
             this.pri = pri; this.path = path; this.origin = origin;
         }
@@ -2567,32 +2568,13 @@ public final class Tdfa {
      *  Two states with same key are candidates for {@code map} (register bijection).
      *  In Perl mode {@code includePri} adds per-config pri to the signature so that closures
      *  whose suppression behaviour would differ are not merged. */
-     static final class DfaStateKey {
-         final int[] sig;
-         final int hash;
-         DfaStateKey(int[] sig) { this.sig = sig; this.hash = Arrays.hashCode(sig); }
-         DfaStateKey(List<Config> configs) { this(configs, false); }
-         DfaStateKey(List<Config> configs, boolean includePri) {
-             // Sort by state for canonical comparison (configs may be in DFS order)
-             List<Config> sorted = new ArrayList<>(configs);
-             sorted.sort(Comparator.comparingInt(c -> c.state));
-             int total = 0;
-             for (Config c : sorted) total += 3 + c.l.length + (includePri ? 1 : 0);
-             int[] arr = new int[total];
-             int i = 0;
-             for (Config c : sorted) {
-                 arr[i++] = c.state;
-                 arr[i++] = c.l.length;
-                 for (int v : c.l) arr[i++] = v;
-                 arr[i++] = c.emptyMask;
-                 if (includePri) arr[i++] = c.pri;
+         static final class DfaStateKey {
+             final int[] sig;
+             final int hash;
+             DfaStateKey(int[] sig) { this.sig = sig; this.hash = Arrays.hashCode(sig); }
+             @Override public boolean equals(Object o) {
+                 return o instanceof DfaStateKey && Arrays.equals(sig, ((DfaStateKey) o).sig);
              }
-             this.sig = arr;
-             this.hash = Arrays.hashCode(arr);
-         }
-         @Override public boolean equals(Object o) {
-             return o instanceof DfaStateKey && Arrays.equals(sig, ((DfaStateKey) o).sig);
-         }
          @Override public int hashCode() { return hash; }
      }
 
