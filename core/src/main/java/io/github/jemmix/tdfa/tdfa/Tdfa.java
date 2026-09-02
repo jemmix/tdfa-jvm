@@ -554,7 +554,7 @@ public final class Tdfa {
          * 227 M times (every call, never matching) and dominated compile
          * wall time (~13 s of ~14 s).
          */
-        Map<DfaStateKey, int[]> stateIndex = new HashMap<>();
+        Map<DfaStateKey, StateBucket> stateIndex = new HashMap<>();
         List<List<Config>> states = new ArrayList<>();
         /**
          * Tagless compiles only: after a state is processed, its closure is
@@ -1952,16 +1952,24 @@ public final class Tdfa {
          * to allow sharing registers across transitions out of the same state with identical RHS.
          * {@code nextReg} is bumped globally so registers are unique across states.
          */
-        /** Grown-on-demand scratch for tryMap's per-config history bitsets. */
-        private long[][] hasHistScratch;
-        private long[][] hasHistScratch(int size) {
-            int words = (tags + 63) >>> 6;
-            if (hasHistScratch == null || hasHistScratch.length < size
-                    || hasHistScratch[0].length < words) {
-                hasHistScratch = new long[Math.max(size, 16)][Math.max(words, 1)];
-            }
-            return hasHistScratch;
-        }
+        /** Shared per-addState "tag has history" bitsets: computed once for
+         *  the incoming closure, reused across all tryMap candidates of that
+         *  attempt (the per-candidate recompute zeroed and refilled every
+         *  config's bits — 8% of cliff-compile time in JFR). */
+        private long[][] hasHistShared;
+        /** Primitive register bijection scratch for tryMap (replaces the boxed
+         *  HashMap pair): mappings stamped with per-attempt epochs. */
+        private int[] mapNewToOld, mapOldToNew, epochNew, epochOld;
+        private int[] stampedRegs;
+        private int stamp;
+        /** Per-state class signatures (null for tagless), parallel to states. */
+        private final List<int[]> stateClassIds = new ArrayList<>();
+        /** Class signature of the pending closure (shared scratch — copied on append). */
+        private int[] pendingClass;
+        private long pendingClassHash;
+        private int[] classScratch;
+        private int pendingCanonLen;
+        private final HashMap<Integer, Integer> classIdMap = new HashMap<>();
 
         /** Grown-on-demand scratch for transitionRegops' per-tag last-sign. */
         private int[] lastSignScratch;
@@ -2125,8 +2133,6 @@ public final class Tdfa {
          * scratch buffers. Counting sort by NFA state — O(n + stateCount) — replaces
          * the former ArrayList copy + TimSort, a per-call hotspot on large closures.
          */
-        private Config[] keyBuf;
-        private int[] keyCounts;
         /** Reusable lookup key for {@link #stateIndex}: sig/hash reassigned per probe.
          *  Used ONLY for {@code get()} against the immutable stored {@link DfaStateKey}s —
          *  never inserted — so single-threaded reassignment is safe. Saves the
@@ -2149,37 +2155,30 @@ public final class Tdfa {
             @Override public int hashCode() { return hash; }
         }
 
-        /** Sort configs by state (counting sort, stable) into {@link #keyBuf}; return count. */
-        private int sortConfigs(List<Config> configs) {
-            meter.tick();
-            int n = configs.size();
-            int maxState = 0;
-            for (Config c : configs) maxState = Math.max(maxState, c.state);
-            if (keyCounts == null || keyCounts.length < maxState + 2)
-                keyCounts = new int[Math.max(maxState + 2, 64)];
-            else java.util.Arrays.fill(keyCounts, 0, maxState + 2, 0);
-            for (Config c : configs) keyCounts[c.state + 1]++;
-            for (int s = 0; s <= maxState; s++) keyCounts[s + 1] += keyCounts[s];
-            if (keyBuf == null || keyBuf.length < n) keyBuf = new Config[Math.max(n, 32)];
-            // iterate forward for stable placement (equal states keep arrival order)
-            for (int i = 0; i < n; i++) keyBuf[keyCounts[configs.get(i).state]++] = configs.get(i);
-            return n;
-        }
-
-        /** Fill the reusable probe key with the canonical signature of {@code configs}. */
+        /** Fill the reusable probe key with the ORDER-EXACT signature of {@code configs}.
+         *  tryMap only ever merges closures with identical ordered (state, l)
+         *  sequences (its first phase compares element i to element i), so the
+         *  index key must discriminate by arrival order: the former canonical
+         *  (state-sorted) key admitted every permutation of the same multiset,
+         *  and tryMap linearly rejected them — the dominant compile cliff
+         *  (nested counted repetitions produce many arrival orders of one
+         *  multiset; buckets grew into the hundreds and every addState
+         *  rescanned them with Arrays.equals over each l). Order-exact keys
+         *  admit exactly the candidates that can pass tryMap's first phase;
+         *  buckets hold only genuine register-permutation variants. */
         private void fillKeySig(List<Config> configs) {
-            int n = sortConfigs(configs);
+            int n = configs.size();
             int total = 0;
             if (tags == 0) {
                 // dense tagless sig: (state, emptyMask[, pri]) — l is always empty
                 for (int i = 0; i < n; i++) total += 2 + (longest ? 1 : 0);
             } else {
-                for (int i = 0; i < n; i++) total += 3 + keyBuf[i].l.length + (longest ? 1 : 0);
+                for (int i = 0; i < n; i++) total += 3 + configs.get(i).l.length + (longest ? 1 : 0);
             }
             if (probeSig.length < total) probeSig = new int[Math.max(total, probeSig.length * 2)];
             int j = 0;
             for (int i = 0; i < n; i++) {
-                Config c = keyBuf[i];
+                Config c = configs.get(i);
                 probeSig[j++] = c.state;
                 if (tags != 0) {
                     probeSig[j++] = c.l.length;
@@ -2193,20 +2192,123 @@ public final class Tdfa {
             int h = 1;
             for (int i = 0; i < total; i++) h = 31 * h + probeSig[i];
             probe.hash = h;
+            // Work meter: sig fill/copy/hash is O(sum |l|) real work — the
+            // dominant cost on history-bloated compiles. Ticking per 64 ints
+            // keeps the tick rate proportional to that work so the work budget
+            // still bounds adversarial wall time (it was calibrated when the
+            // interning scans dominated; those are gone).
+            meter.tick(total >>> 6);
+        }
+
+        /** Same-sequence DFA states. Tagged buckets partition members by
+         *  register-slice class signature (see addState); tagless buckets keep
+         *  a flat list — every member is merge-equivalent. */
+        static final class StateBucket {
+            int[] members;                       // tagless
+            final HashMap<Long, int[]> byClass = new HashMap<>();  // tagged
+        }
+
+        /** Canonical flat signature: the register value at every history-free
+         *  (config, tag) position, renumbered by first appearance (config-major,
+         *  tag ascending). A bijection M with M(rn_p) = ro_p for all positions
+         *  exists IFF the two closures' equality patterns over positions match
+         *  (rn_p == rn_q ⟺ ro_p == ro_q) — which is exactly equality of these
+         *  canonical arrays. So hash-bucketing by this form is an EXACT
+         *  compatibility filter: no viable candidate is ever skipped, and any
+         *  hash-matched candidate passes tryMap's bijection phase by
+         *  construction (only its ops-rewrite can still fail). */
+        private int[] canonSignature(List<Config> configs, long[][] hasHist) {
+            int n = configs.size();
+            int max = n * tags;
+            if (classScratch == null || classScratch.length < max) classScratch = new int[Math.max(max, 32)];
+            classIdMap.clear();
+            int next = 0, k = 0;
+            for (int i = 0; i < n; i++) {
+                Config c = configs.get(i);
+                long[] bits = hasHist[i];
+                for (int t = 0; t < tags; t++) {
+                    if ((bits[t >>> 6] >>> (t & 63) & 1L) != 0) continue;
+                    int r = c.regs[t];
+                    Integer cid = classIdMap.get(r);
+                    if (cid == null) { cid = next++; classIdMap.put(r, cid); }
+                    classScratch[k++] = cid;
+                }
+            }
+            pendingCanonLen = k;
+            return classScratch;
+        }
+
+        private static long foldClass(int[] ids, int len) {
+            long h = 1;
+            for (int i = 0; i < len; i++) h = h * 0x100000001B3L + ids[i];
+            return h;
         }
 
         AddResult addState(List<Config> configs, int[] ops, List<Config> seed) {
             meter.tick();
             fillKeySig(configs);
-            int[] candidates = stateIndex.get(probe);
+            StateBucket candidates = stateIndex.get(probe);
             if (candidates != null) {
-                // Identity on (states, lookahead). Registers may differ — translate via tryMap.
-                for (int cand : candidates) {
-                    int[] mapped = tryMap(configs, states.get(cand), packedKernels.get(cand), ops);
-                    if (mapped != null) return new AddResult(cand, mapped);
+                // Compute the shared has-history bitsets once for this closure.
+                int words = (tags + 63) >>> 6;
+                if (hasHistShared == null || hasHistShared.length < configs.size()
+                        || hasHistShared[0].length < words) {
+                    hasHistShared = new long[Math.max(configs.size(), 16)][Math.max(words, 1)];
                 }
-                // All same-shape states failed the register bijection: this shape
-                // genuinely needs a new DFA state. Fall through.
+                for (int i = 0; i < configs.size(); i++) {
+                    long[] bits = hasHistShared[i];
+                    java.util.Arrays.fill(bits, 0, words, 0L);
+                    int[] l = configs.get(i).l;
+                    if (l != null) {
+                        for (int v : l) {
+                            int t = Math.abs(v) - 1;
+                            bits[t >>> 6] |= 1L << t;
+                        }
+                    }
+                }
+                // Order-exact signature: candidates have the identical ordered
+                // (state, l) sequence; only their register assignment can differ.
+                // Tagged buckets are further partitioned by CLASS SIGNATURE:
+                // each config's regs slice over history-free tags, canonically
+                // numbered by first appearance. A bijection can only exist when
+                // slice-equality aligns (slice_i == slice_j ⟺ oslice_i ==
+                // oslice_j for all i,j — otherwise the pair map is ill-defined
+                // or non-injective), so the attempt visits only class-compatible
+                // members instead of rescanning the whole bucket — that rescan
+                // was the dominant compile cliff on permutation-heavy patterns
+                // (78% of wall time in JFR).
+                StateBucket bucket = (StateBucket) candidates;
+                if (tags == 0) {
+                    for (int cand : bucket.members) {
+                        int[] mapped = tryMap(configs, states.get(cand), packedKernels.get(cand), ops);
+                        if (mapped != null) return new AddResult(cand, mapped);
+                    }
+                } else {
+                    int[] attemptCanon = canonSignature(configs, hasHistShared);
+                    int canonLen = pendingCanonLen;
+                    long ch = mix(foldClass(attemptCanon, canonLen));
+                    int[] compatibles = bucket.byClass.get(ch);
+                    if (compatibles != null && compatibles.length > 0) {
+                        // Canon-equal members are interchangeable: the bijection
+                        // succeeds by construction, and ops-rewrite coverage
+                        // depends only on the ATTEMPT's registers — so success
+                        // or failure (and the merged-into choice) is identical
+                        // for every member. One probe suffices; scanning all
+                        // canon-equal members was the residual quadratic.
+                        int cand = compatibles[0];
+                        int[] stored = stateClassIds.get(cand);
+                        if (stored.length == canonLen && Arrays.equals(attemptCanon, 0, canonLen, stored, 0, canonLen)) {
+                            int[] mapped = tryMap(configs, states.get(cand), packedKernels.get(cand), ops);
+                            if (mapped != null) return new AddResult(cand, mapped);
+                            // ops-rewrite failed: outcome is member-independent,
+                            // fall through to append a new state.
+                        }
+                    }
+                    pendingClass = Arrays.copyOf(attemptCanon, canonLen);
+                    pendingClassHash = ch;
+                }
+                // All same-sequence states failed the register bijection: this
+                // closure genuinely needs a new DFA state. Fall through.
             }
             int id = states.size();
             states.add(configs);
@@ -2232,9 +2334,20 @@ public final class Tdfa {
             } else {
                 stateSeeds.add(null);
             }
-            stateIndex.put(new DfaStateKey(Arrays.copyOf(probe.sig, probe.len)), candidates == null
-                    ? new int[]{id}
-                    : appendInt(candidates, id));
+            stateClassIds.add(pendingClass);
+            if (candidates == null) {
+                StateBucket fresh = new StateBucket();
+                if (tags == 0) fresh.members = new int[]{id};
+                else fresh.byClass.put(pendingClassHash, new int[]{id});
+                stateIndex.put(new DfaStateKey(Arrays.copyOf(probe.sig, probe.len)), fresh);
+            } else if (tags == 0) {
+                ((StateBucket) candidates).members = appendInt(((StateBucket) candidates).members, id);
+            } else {
+                StateBucket b = (StateBucket) candidates;
+                // Only the first member of a canon-equal class is ever probed
+                // (see above) — don't grow the list.
+                b.byClass.putIfAbsent(pendingClassHash, new int[]{id});
+            }
             builders.add(new DfaStateBuilder(id));
             if (isAccept) accept.set(id);
             kernelsTotal += configs.size();
@@ -2258,6 +2371,14 @@ public final class Tdfa {
          * Attempt to map a candidate closure to an existing state's closure by registering
          * a bijection on their register vectors. Returns rewritten ops if mapping succeeds,
          * null otherwise. Implements paper §3 {@code map} function.
+         *
+         * <p>Callers index closures by the ORDER-EXACT (state, l, emptyMask)
+         * signature, so every candidate here already has the identical ordered
+         * sequence — the former element-wise state/Arrays.equals(l) phase is
+         * implied by DfaStateKey.equals and has been deleted (it cost a full
+         * l-comparison sweep per candidate on permutation-heavy patterns).
+         * The tagless branch still checks element-wise states only because
+         * its callers may pass closures from unindexed paths.
          */
         int[] tryMap(List<Config> newConfigs, List<Config> oldConfigs, int[] oldPacked, int[] ops) {
             int size = newConfigs.size();
@@ -2276,61 +2397,81 @@ public final class Tdfa {
                 }
                 return ops;
             }
-            // Same NFA states + lookahead tags? (already checked via the shape key but double-check)
-            for (int i = 0; i < newConfigs.size(); i++) {
-                if (newConfigs.get(i).state != oldConfigs.get(i).state) return null;
-                if (!Arrays.equals(newConfigs.get(i).l, oldConfigs.get(i).l)) return null;
+            // Build register bijection M: newReg -> oldReg, M': oldReg -> newReg.
+            // Primitive arrays with epoch stamps replace the former boxed
+            // HashMaps — this loop was the dominant compile cost on
+            // permutation-heavy patterns (32% getNode + 7% putVal in JFR).
+            // Register values come from the GLOBAL register allocator (nextReg
+            // grows during compilation; configs' regs arrays only cover the
+            // tags they carry) — size scratch by the current universe.
+            int numRegs = nextReg;
+            if (mapNewToOld == null || mapNewToOld.length < numRegs) {
+                mapNewToOld = new int[numRegs];
+                mapOldToNew = new int[numRegs];
+                epochNew = new int[numRegs];
+                epochOld = new int[numRegs];
+                stamp = 0;
             }
-            // Build register bijection M: newReg -> oldReg, M': oldReg -> newReg
-            Map<Integer, Integer> m = new HashMap<>(), mprime = new HashMap<>();
+            stamp++;      // fresh epoch for this attempt
+            int[] m = mapNewToOld, mp = mapOldToNew;
+            int[] eN = epochNew, eO = epochOld;
+            // Stamped new-side registers, for the O(pairs) remaining-pairs scan
+            // below — the register universe is global and grows with the DFA
+            // (tens of thousands), so scanning it per attempt was a cliff.
+            // Each (config, tag) pair contributes at most one register.
+            int maxPairs = size * tags;
+            if (stampedRegs == null || stampedRegs.length < maxPairs) stampedRegs = new int[Math.max(maxPairs, 8)];
+            int stamped = 0;
             // "Tag has transition-op history" bitsets: one pass over each
             // config's history sequence replaces the former tags × full-
             // sequence history() rescans per (config, tag) — the top
             // compile-time hot spot (410 of 678 overnight hang records were
             // this loop; the full history ARRAY was built to test only its
-            // existence).
-            long[][] hasHist = hasHistScratch(newConfigs.size());
-            for (int i = 0; i < newConfigs.size(); i++) {
+            // existence). Computed by the CALLER once per addState — shared
+            // across all candidates of this attempt.
+            long[][] hasHist = hasHistShared;
+            for (int i = 0; i < size; i++) {
                 if (meter != null) meter.tick();
-                long[] bits = hasHist[i];
-                java.util.Arrays.fill(bits, 0L);
-                int[] l = newConfigs.get(i).l;
-                if (l != null) {
-                    for (int v : l) {
-                        int t = Math.abs(v) - 1;
-                        bits[t >>> 6] |= 1L << t;
-                    }
-                }
-            }
-            for (int i = 0; i < newConfigs.size(); i++) {
                 Config cn = newConfigs.get(i), co = oldConfigs.get(i);
                 long[] bits = hasHist[i];
                 for (int t = 0; t < tags; t++) {
                     if ((bits[t >>> 6] >>> (t & 63) & 1L) != 0) continue; // tag is set by transition op
                     int rn = cn.regs[t], ro = co.regs[t];
-                    Integer mn = m.get(rn), mo = mprime.get(ro);
-                    if (mn == null && mo == null) {
-                        m.put(rn, ro); mprime.put(ro, rn);
-                    } else if (mn == null || mo == null || mn != ro || mo != rn) {
+                    // A register may be new-side of one tag and old-side of
+                    // another, so the two sides carry separate epoch arrays.
+                    boolean mn = eN[rn] == stamp, mo = eO[ro] == stamp;
+                    if (!mn && !mo) {
+                        m[rn] = ro; eN[rn] = stamp;
+                        mp[ro] = rn; eO[ro] = stamp;
+                        stampedRegs[stamped++] = rn;
+                    } else if (!mn || !mo || m[rn] != ro || mp[ro] != rn) {
                         return null;
                     }
                 }
             }
-            // Rewrite ops: replace each op's dst with M[dst]
+            // Rewrite ops: replace each op's dst with M[dst]. Each consumed
+            // pair is unstamped (the HashMap remove), so a second op hitting
+            // the same dst fails — bijection violations, as before.
             List<int[]> rewritten = new ArrayList<>();
             for (int i = 0; i < ops.length; i += 3) {
                 int op = ops[i], dst = ops[i + 1], src = ops[i + 2];
-                Integer mapped = m.get(dst);
-                if (mapped == null) return null;
+                if (eN[dst] != stamp) return null;
+                int mapped = m[dst];
+                if (eO[mapped] != stamp || mp[mapped] != dst) return null;
                 rewritten.add(new int[]{op, mapped, src});
-                m.remove(dst);
-                mprime.remove(mapped);
+                eN[dst] = 0;
+                eO[mapped] = 0;
             }
-            // Prepend copy ops for remaining bijection pairs.
+            // Prepend copy ops for remaining bijection pairs (stamped order —
+            // first-stamp ascending; the pairs are mutually commutative, order
+            // only affects the emitted op sequence deterministically).
             // M maps newReg -> oldReg. Existing state expects tag values in its oldReg slots;
             // the new state's transition just wrote them into newReg slots. Copy oldReg <- newReg.
-            for (Map.Entry<Integer, Integer> e : m.entrySet()) {
-                int newReg = e.getKey(), oldReg = e.getValue();
+            for (int p = 0; p < stamped; p++) {
+                int newReg = stampedRegs[p];
+                if (eN[newReg] != stamp) continue;
+                int oldReg = m[newReg];
+                if (eO[oldReg] != stamp) continue;
                 if (newReg != oldReg) rewritten.add(0, new int[]{OP_COPY, oldReg, newReg});
             }
             // Topological sort: copy ops must come before any op that reads their src.

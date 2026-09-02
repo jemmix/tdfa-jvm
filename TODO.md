@@ -296,6 +296,47 @@ dominated by tryMap×addState (410) and FallbackOps.accumulateClobbered
 bounded reps into budget rejection where re2j compiles fine. CONSTRUCTION
 family (39 records: anchors under lazy/counted loops) still open.
 
+ROUND 13 (2026-09-02): compile-cliff root causes fixed — the interning was
+the quadratic, not the closure.
+Profiled the 4 overnight hang families (JFR): 70-80% of wall time was
+state INTERNING, in three stacked layers, all now fixed (clean-rebuild
+measured, one hang-family seed each):
+- CANONICAL key → ORDER-EXACT key (Tdfa.fillKeySig): the state index
+  hashed the state-SORTED multiset, but tryMap only merges exact-arrival-
+  order matches — the index admitted every permutation of a multiset and
+  tryMap linearly rejected them (nested counted reps produce many arrival
+  orders; buckets grew into the hundreds). Exact keys admit only viable
+  candidates. tryMap's phase-1 state/Arrays.equals(l) sweep became
+  redundant (key equality implies it) — deleted.
+- Bijection via boxed HashMap<Integer,Integer> → primitive epoch-stamped
+  arrays (registers are globally allocated: size by nextReg, NOT
+  regs.length — that crash was the giveaway). A register may be new-side
+  of one tag and old-side of another: two separate epoch arrays.
+- CANONICAL FORM prefilter: bijection-compatible ⟺ position-equality
+  patterns of the register vectors match (rn_p==rn_q ⟺ ro_p==ro_q),
+  exactly equality of first-appearance-canonical flat arrays. Bucket
+  members indexed by canon hash; and canon-equal members are
+  INTERCHANGEABLE (success/failure and merged-op values depend only on
+  the attempt) — probe members[0] only. The residual quadratic was
+  appendInt-growing canon lists nobody read beyond [0].
+- WorkMeter.tick(n) bulk form; fillKeySig ticks per 64 sig ints so the
+  work budget stays proportional to real work (was calibrated to the
+  deleted scan loops).
+Seeds (before → after, all clean -Xss16m single runs):
+  tryMap 35.7s→13.2s · addState 92.7s→10.0s · containsKey ≥34s→13.8s ·
+  equals 92.7s→60.1s (now determinizes to the 100k-state cap; before it
+  was work-budget-cut earlier). Legal heavy pattern
+  (x{2,4}?z|\D{1,6}?.+$|~|W(...)...){4,}: 15.0s→9.1s.
+Remaining cliff: O(sum|l|) per state (sig fill/copy + hasHist over long
+history sequences) — the honest next step is hash-consing l sequences
+(configs share them across states; also a memory win on legal bombs like
+the 234k-state bounded-repeat case). Nested-counted expansion bombs
+(loop-based bounded repetition) remain the structural item.
+Lesson recorded: German-locale javac errors ("Fehler") were invisible to
+'error:' greps — several intermediate builds silently failed and runs
+used stale classes; clean-rebuild numbers above are the ground truth.
+Gates green; 674k-case fresh fuzz slice 0 failures / 0 known.
+
 ROUND 12 (2026-09-02 morning): the round-11 fix + perf groundwork + MT fuzzer.
 - LAZY-\b FIXED (fb64f09): pike post-match pruning determinized (live sets
   truncated below the first ALIVE accept config — leftmost-first discards
