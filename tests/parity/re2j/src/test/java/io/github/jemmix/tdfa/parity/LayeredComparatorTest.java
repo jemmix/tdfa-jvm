@@ -59,12 +59,19 @@ class LayeredComparatorTest {
 
     @Test
     void loneSurrogateBoundariesClassifyAsParser() {
-        // deliberate semantic divergence: re2j's literal-prefix fast path
-        // matches a lone-low pattern into pair interiors; our NFA (and thus
-        // sim, vm, asm in agreement) keeps codepoint boundaries.
+        // Deliberate semantic divergence against RELEASED re2j: its
+        // literal-prefix fast path matches a lone-low pattern into pair
+        // interiors; our NFA (and thus sim, vm, asm in agreement) keeps
+        // codepoint boundaries. The patched oracle (vendor/re2j-jemmix
+        // patch 0001) removes the divergence — then the case legitimately
+        // classifies as PASS. Probe which oracle is on the classpath so
+        // the assertion holds under both.
         String loneLow = String.valueOf((char) 0xDC21);
+        boolean releasedOracle = com.google.re2j.Pattern.compile("(" + loneLow + ")")
+                .matcher("a\ud800\udc21zz").find();
         LayeredComparator.Report r = C.compare("(" + loneLow + ")", "a\ud800\udc21zz");
-        assertThat(r.layer()).isEqualTo(LayeredComparator.Layer.PARSER);
+        assertThat(r.layer()).isEqualTo(
+                releasedOracle ? LayeredComparator.Layer.PARSER : LayeredComparator.Layer.PASS);
         assertThat(r.sim()).isEqualTo(r.vm());
         assertThat(r.vm()).isEqualTo(r.asm());
     }

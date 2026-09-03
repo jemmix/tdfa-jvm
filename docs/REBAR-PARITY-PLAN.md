@@ -36,7 +36,7 @@ because we are a drop-in re2j replacement. The one scenario where that
 diverges from our actual output — `test/unicode/utf8/dot-matches-byte`
 (re2 = 4 bytes, ours = 1 codepoint) — is patched in the vendored corpus to
 record our count under an explicit `{ engine = 're2', count = 1 }` entry
-(`vendor/patches/rebar/01-dot-matches-byte-codepoint.patch`).
+(the live patched-re2j oracle (see below; the former hand-patched count was consolidated away)).
 
 ## Current breakdown: 718 cases (parameterized over ASM + VM, 2026-08)
 
@@ -391,7 +391,7 @@ Plus the engine-adjacent items that don't show up as test failures today:
 
 - `.` on non-BMP under-counts vs re2's byte semantics — fundamental
   architecture choice, not a bug. **Patched in the vendored rebar corpus**
-  (`vendor/patches/rebar/01-dot-matches-byte-codepoint.patch`) — records
+  (the live patched-re2j oracle (see below; the former hand-patched count was consolidated away)) — records
   our actual count under an explicit `{ engine = 're2', count = 1 }` entry.
 - ASM method-splitting for >200-state DFAs — would let ASM stop falling back
   to VM on the ~11 currently-flagged scenarios (no test-count change, but

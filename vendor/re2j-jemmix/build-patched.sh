@@ -1,24 +1,40 @@
 #!/usr/bin/env bash
-# Rebuild the patched re2j oracle jars from the vendored pristine source
-# (re2j-1.8/, upstream tag re2j-1.8 = 57278921a609461c14d9cdb057d7aa9511c8f7ac)
-# plus one patch per fix, applied in order from patches/.
+# Rebuild the patched re2j oracle jars from the single committed pristine
+# source (../archives/re2j-<sha>.tar.gz, upstream tag re2j-1.8 =
+# 57278921a609461c14d9cdb057d7aa9511c8f7ac) plus one patch per fix,
+# applied in order from patches/.
 #
-#   vendor/re2j-jemmix/build-patched.sh          # rebuild both jars in place
+#   vendor/re2j-jemmix/build-patched.sh          # fix1+fix2 (default)
 #   vendor/re2j-jemmix/build-patched.sh 1        # only fix1 (patch 0001)
-#   vendor/re2j-jemmix/build-patched.sh 2        # fix1+fix2 (default)
+#   vendor/re2j-jemmix/build-patched.sh 2        # fix1+fix2
 #
-# Compiles java/ only (javatests/ is not shipped). Pure javac+jar, no build
-# system needed. Overwrites re2j-1.8-jemmix-fix{1,2}.jar in this directory.
+# Compiles java/ only (javatests/ is not shipped). Pure tar+patch+javac+jar,
+# no build system needed. Writes re2j-1.8-jemmix-fix{1,2}.jar into this
+# directory — build outputs, gitignored (never committed).
 set -euo pipefail
 cd "$(dirname "$0")"
 
 level="${1:-2}"
 case "$level" in 1|2) ;; *) echo "usage: $0 [1|2]" >&2; exit 2 ;; esac
 
+archive="$(ls ../archives/re2j-*.tar.gz)"
+if [ "$(printf '%s\n' "$archive" | wc -l)" -ne 1 ]; then
+  echo "error: expected exactly one re2j archive in ../archives/" >&2; exit 1
+fi
+if [ -f "$archive.sha256" ]; then
+  if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$archive" | awk '{print $1}')
+  else actual=$(shasum -a 256 "$archive" | awk '{print $1}'); fi
+  expected=$(awk '{print $1}' "$archive.sha256")
+  if [ "$actual" != "$expected" ]; then
+    echo "error: checksum mismatch for $archive" >&2; exit 1
+  fi
+fi
+
 work=".build"
 rm -rf "$work"
 mkdir -p "$work/src" "$work/classes"
-cp -R re2j-1.8/. "$work/src/"
+# Tarball top-level dir is re2j/ — strip it.
+tar -xzf "$archive" -C "$work/src" --strip-components=1
 
 count=0
 for p in patches/*.patch; do

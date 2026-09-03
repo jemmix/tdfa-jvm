@@ -5,6 +5,8 @@ pluginManagement {
     }
 }
 
+rootProject.name = 'tdfa'
+
 include ':core', ':asm', ':lib:pikesim',
         ':unicode:v6_0', ':unicode:v17_0',
         ':tests:unit',

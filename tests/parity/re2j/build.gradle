@@ -33,8 +33,22 @@ dependencies {
     // re2j as live oracle for parity comparison. The fuzz task can swap in a
     // patched build from our fork (-Pfuzz.patchedOracle=true) to fuzz against
     // the surrogate-pair-interior fix — see vendor/re2j-jemmix/README.md.
+    // The patched jar is a build output (gitignored), built on demand from
+    // the single committed pristine archive + per-fix patches.
+    def patchedOracleJar = rootProject.file('vendor/re2j-jemmix/re2j-1.8-jemmix-fix2.jar')
+    tasks.register('buildPatchedOracle', Exec) {
+        group = 'build'
+        description = 'Rebuild the patched re2j oracle jar (fix2) from the vendored pristine archive + patches'
+        workingDir rootProject.projectDir
+        commandLine './vendor/re2j-jemmix/build-patched.sh', '2'
+        inputs.files fileTree(dir: rootProject.projectDir, include: [
+                'vendor/archives/re2j-*.tar.gz', 'vendor/archives/re2j-*.tar.gz.sha256',
+                'vendor/re2j-jemmix/patches/*.patch', 'vendor/re2j-jemmix/build-patched.sh'])
+        outputs.file patchedOracleJar
+    }
     if (project.hasProperty('fuzz.patchedOracle')) {
-        testImplementation files(rootProject.file('vendor/re2j-jemmix/re2j-1.8-jemmix-fix2.jar'))
+        tasks.named('compileTestJava') { dependsOn 'buildPatchedOracle' }
+        testImplementation files(patchedOracleJar)
     } else {
         testImplementation 'com.google.re2j:re2j:1.8'
     }
@@ -46,9 +60,6 @@ dependencies {
 test {
     useJUnitPlatform()
     jvmArgs '-Xmx512m', '-XX:+HeapDumpOnOutOfMemoryError'
-    // -Dtdfa.pending=true opts IN known-failing tests committed in interim
-    // state (TODO.md convention). No currently-known failures: default off.
-    systemProperty 'tdfa.pending', System.getProperty('tdfa.pending', 'false')
     systemProperty 'tdfa.asm.dump', System.getProperty('tdfa.asm.dump', 'false')
     testLogging {
         events 'failed', 'standardOut', 'standardError'

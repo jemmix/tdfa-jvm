@@ -139,7 +139,8 @@ class RebarScenarioParityTest {
         return scenarios.stream()
                 .filter(RebarScenarioParityTest::enginesIncludeJava)
                 .flatMap(s -> Stream.of((RegexEngineFactory) null, (RegexEngineFactory) TdfaRunner::new).map(f -> Arguments.of(
-                        /*displayName=*/ s.fullName() + "  want=" + s.expectedCount()
+                        /*displayName=*/ s.fullName() + "  corpus-want=" + s.expectedCount()
+                                + (s.unicode() ? " (unicode: corpus stands)" : " (non-unicode: live re2j)")
                                 + "  /" + abbrev(s.regex(), 60) + "/  [" + labelFor(f) + "]",
                         /*scenario=*/ s,
                         /*factory=*/ f)));
@@ -291,22 +292,50 @@ class RebarScenarioParityTest {
                     s.fullName(), labelFor(factory), compileMs, runMs, abbrev(s.regex(), 50));
         }
 
+        // --- Resolve expected count: live patched-re2j oracle by default ---
+        // The corpus's static per-engine counts were recorded by other
+        // engines at other times (JDK Unicode-DB drift, java/hotspot's
+        // ASCII-only (?i), UTF-8-vs-UTF-16 units) — every re2j-compat
+        // divergence needed a hand-patched count. We are a re2j drop-in:
+        // for scenarios whose flags re2j can represent (unicode=false —
+        // re2j has no UNICODE_CHARACTER_CLASS; \w\d\s are ASCII there),
+        // the vendored patched re2j (fix1/fix2) computes `want` LIVE with
+        // the same model loops. Falls back to the corpus when re2j rejects
+        // the regex (backrefs/lookaround: j.u.r runs them, re2j doesn't) or
+        // on any oracle-side exception. -Dtdfa.test.rebar.oracle=corpus
+        // restores the pure static resolution.
+        long want;
+        String wantSource;
+        if (!CORPUS_ORACLE && !s.unicode()) {
+            Long live = liveRe2jCount(s, haystack);
+            if (live != null) {
+                want = live;
+                wantSource = "re2j-live";
+            } else {
+                want = s.expectedCount();
+                wantSource = "corpus(re2j-unrunnable)";
+            }
+        } else {
+            want = s.expectedCount();
+            wantSource = s.unicode() ? "corpus(unicode=java-semantics)" : "corpus";
+        }
+
         // --- Assert ---
 
-        boolean passed = actual == s.expectedCount();
+        boolean passed = actual == want;
         if (passed) {
             passCount.incrementAndGet();
         } else {
             failCount.incrementAndGet();
         }
         timings.add(new Timing(s.fullName(), compileMs, runMs,
-                passed ? "PASS" : "FAIL:want=" + s.expectedCount() + ",got=" + actual));
+                passed ? "PASS" : "FAIL:want=" + want + ",got=" + actual));
         assertThat(actual)
-                .as("match count for /%s/ on %d-byte haystack (model=%s); compile=%dms run=%dms; hs contains regex? %s; first 40 chars: %s",
-                        s.regex(), haystack.length(), s.model(), compileMs, runMs,
+                .as("match count for /%s/ on %d-byte haystack (model=%s, want=%s:%d); compile=%dms run=%dms; hs contains regex? %s; first 40 chars: %s",
+                        s.regex(), haystack.length(), s.model(), wantSource, want, compileMs, runMs,
                         haystack.contains(s.regex().length() <= 100 ? s.regex() : s.regex().substring(0, 50)),
                         haystack.substring(0, Math.min(40, haystack.length())).replace("\n", "\\n").replace("\r", "\\r"))
-                .isEqualTo(s.expectedCount());
+                .isEqualTo(want);
     }
 
     /**
@@ -396,6 +425,102 @@ class RebarScenarioParityTest {
             case "grep-captures":    return grepCaptureCounts(p, haystack);
             default: throw new IllegalStateException("unsupported model: " + s.model());
         }
+    }
+
+    /** Live-oracle mode: patched re2j computes `want`. Null = fall back to
+     *  corpus (re2j can't compile the regex, or hiccupped). */
+    private static final boolean CORPUS_ORACLE =
+            "corpus".equals(System.getProperty("tdfa.test.rebar.oracle"));
+
+    private static Long liveRe2jCount(Scenario s, String haystack) {
+        try {
+            int rflags = 0;
+            if (s.caseInsensitive()) rflags |= com.google.re2j.Pattern.CASE_INSENSITIVE;
+            com.google.re2j.Pattern p = com.google.re2j.Pattern.compile(s.regex(), rflags);
+            switch (s.model()) {
+                case "count":
+                case "compile":
+                    return re2jCount(p, haystack);
+                case "count-spans":
+                    return re2jSpans(p, haystack);
+                case "count-captures":
+                    return re2jCaptures(p, haystack);
+                case "grep":
+                    return re2jGrep(p, haystack);
+                case "grep-captures":
+                    return re2jGrepCaptures(p, haystack);
+                default:
+                    return null;   // unsupported model: corpus value stands
+            }
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static long re2jCount(com.google.re2j.Pattern p, String hs) {
+        long n = 0;
+        for (com.google.re2j.Matcher m = p.matcher(hs); m.find(); ) n++;
+        return n;
+    }
+
+    private static long re2jSpans(com.google.re2j.Pattern p, String hs) {
+        long sum = 0;
+        com.google.re2j.Matcher m = p.matcher(hs);
+        while (m.find()) sum += m.end() - m.start();
+        return sum;
+    }
+
+    private static long re2jCaptures(com.google.re2j.Pattern p, String hs) {
+        long n = 0;
+        com.google.re2j.Matcher m = p.matcher(hs);
+        while (m.find()) {
+            for (int g = 0; g <= m.groupCount(); g++) {
+                if (m.start(g) >= 0) n++;
+            }
+        }
+        return n;
+    }
+
+    private static long re2jGrep(com.google.re2j.Pattern p, String hs) {
+        long matched = 0;
+        com.google.re2j.Matcher m = p.matcher("");
+        int lineStart = 0;
+        for (int i = 0; i <= hs.length(); i++) {
+            if (i == hs.length() || hs.charAt(i) == '\n') {
+                int lineEnd = i;
+                if (lineEnd > lineStart && hs.charAt(lineEnd - 1) == '\r') lineEnd--;
+                String line = hs.substring(lineStart, lineEnd);
+                m.reset(line);
+                try {
+                    if (m.find()) matched++;
+                } catch (Exception ignored) { }
+                lineStart = i + 1;
+            }
+        }
+        return matched;
+    }
+
+    private static long re2jGrepCaptures(com.google.re2j.Pattern p, String hs) {
+        long total = 0;
+        com.google.re2j.Matcher m = p.matcher("");
+        int lineStart = 0;
+        for (int i = 0; i <= hs.length(); i++) {
+            if (i == hs.length() || hs.charAt(i) == '\n') {
+                int lineEnd = i;
+                if (lineEnd > lineStart && hs.charAt(lineEnd - 1) == '\r') lineEnd--;
+                String line = hs.substring(lineStart, lineEnd);
+                m.reset(line);
+                try {
+                    while (m.find()) {
+                        for (int g = 0; g <= m.groupCount(); g++) {
+                            if (m.start(g) >= 0) total++;
+                        }
+                    }
+                } catch (Exception ignored) { }
+                lineStart = i + 1;
+            }
+        }
+        return total;
     }
 
     private static String abbrev(String s, int max) {

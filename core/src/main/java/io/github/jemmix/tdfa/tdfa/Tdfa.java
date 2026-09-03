@@ -535,9 +535,6 @@ public final class Tdfa {
         /** If true, leftmost-longest semantics (keep stepping past accepts); if false, Perl leftmost-first (suppress lower-priority paths past an accept). */
         final boolean longest;
 
-        /** Master switch for the dormant BT19 §7 prectable machinery (see compile()). */
-        private static final boolean COMPUTE_PRECTABLES = false;
-
         /**
          * Multimap from DFA-state shape key to the list of DFA-state IDs that
          * share that shape. The paper's {@code map}+{@code topological_sort}
@@ -627,12 +624,6 @@ public final class Tdfa {
             for (int t = 0; t < tags; t++) finalRegisters[t] = tags + t;
             this.breakpoints = computeBreakpoints();
             this.longest = longestMatch;
-            // Tag heights: group g → tags 2g-1, 2g → height g.
-            // Index 0 unused (tags are 1-based). ntags (-tag) use height of |tag|.
-            this.tagHeights = new int[tags + 1];
-            for (int t = 1; t <= tags; t++) {
-                tagHeights[t] = (t + 1) / 2;
-            }
             // Per-cell active symbol-edge sets (see rangeActiveEdges). Each class range
             // [lo, hi] covers a contiguous run of breakpoint cells: lo and hi+1 are
             // themselves breakpoints (they are boundaries of this very class), so the
@@ -734,17 +725,8 @@ public final class Tdfa {
             if (debug) System.err.println("[tdfa] tags=" + tags + " breakpoints=" + breakpoints.length);
             List<Config> initSeed = List.of(
                     new Config(nfa.start, initialRegisters, HistTable.EMPTY_ID, HistTable.EMPTY_ID, 0));
-            List<Config> initClosure = longest
-                    ? closureGtop(initSeed, null, 0)
-                    : epsilonClosure(initSeed);
+            List<Config> initClosure = epsilonClosure(initSeed);
             int startId = addState(initClosure, null, initSeed).targetId;
-            // Prectables are O(closure²) per state and currently UNUSED: closureGtop
-            // delegates to epsilonClosure (heuristic DFS order) and compareExisting
-            // is a TEMP no-op — the BT19 §7 closure_gtop activation (TODO "Feature
-            // parity") is what will consume them. Skipping saves real compile time on
-            // longest-match DFAs; flip COMPUTE_PRECTABLES on when activating.
-            if (longest && COMPUTE_PRECTABLES) statePrectables.add(computePrectable(initClosure, null, 0));
-            else statePrectables.add(null);
             work.push(startId);
 
             int[] requiredMaskOut = new int[1];
@@ -875,26 +857,10 @@ public final class Tdfa {
                         perSetDone[setId] = true;
                         List<Config> stepped = stepOnSymbol(stepInput, rangeActiveEdges[bi], requiredMaskOut, ownCount, ctxMask);
                         if (stepped.isEmpty()) { perSet[setId] = null; setRes[setId] = -1; continue; }
-                        List<Config> closed;
-                        int[] newPrectable;
-                        if (!longest) {
-                            closed = epsilonClosure(stepped);
-                            newPrectable = null;
-                        } else {
-                            int[] parentPrectable = COMPUTE_PRECTABLES ? statePrectables.get(sid) : null;
-                            closed = closureGtop(stepped, parentPrectable, cur.size());
-                            newPrectable = COMPUTE_PRECTABLES ? computePrectable(closed, parentPrectable, cur.size()) : null;
-                        }
+                        List<Config> closed = epsilonClosure(stepped);
                         if (debug && closed.size() > 100) System.err.println("[tdfa] state " + sid + " range " + rangeLo + ".." + rangeHi + " closure=" + closed.size());
                         int[] ops = transitionRegops(closed, sid);
                         AddResult ar = addState(closed, ops, stepped);
-                        if (longest) {
-                            // Ensure prectable slot exists for the target state.
-                            while (statePrectables.size() <= ar.targetId) statePrectables.add(null);
-                            if (statePrectables.get(ar.targetId) == null) {
-                                statePrectables.set(ar.targetId, newPrectable);
-                            }
-                        }
                         if (debug) System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> " + ar.targetId + " ops.len=" + ops.length + " mask=" + ctxMask);
                         builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, ctxMask);
                         if (!processed.get(ar.targetId)) work.push(ar.targetId);
@@ -1657,15 +1623,10 @@ public final class Tdfa {
                     } else {
                         newL = hist.intern(appendTag(hist.content(c.l), tag));
                     }
-                    // In longest-match mode, extend UTree path with ALL non-zero tags
-                    // (incl. ntags) — consumed only by the (dormant) BT19 §7 compare,
-                    // so gated behind COMPUTE_PRECTABLES to skip dead work.
-                    int newPath = c.path;
-                    if (longest && COMPUTE_PRECTABLES && tag != Tnfa.NO_TAG) {
-                        newPath = utree.extend(c.path, tag);
-                    }
+                    // In longest-match mode all NFA states of the closure survive
+                    // (no priority suppression); pri stays 0 there.
                     int childPri = !longest ? Math.max(c.pri, nfa.epsPri[idx]) : 0;
-                    stack.push(new Config(to, c.regs, c.h, newL, newMask, childPri, newPath, c.origin));
+                    stack.push(new Config(to, c.regs, c.h, newL, newMask, childPri));
                 }
             }
             return out;
@@ -1703,74 +1664,10 @@ public final class Tdfa {
         }
 
         // ---------------- BT19 §7 longest-match closure (closure_gtop) ----------------
-
-        /** Shared UTree across the entire DFA construction (BT19 §6). */
-        UTree utree = new UTree();
-        /** Tag heights: height[t] = nesting depth of tag t's group.
-         *  Group g → tags 2g-1, 2g → height g. */
-        final int[] tagHeights;
-        /** Per-DFA-state prectable (flat int[n*n], packed via GtopCompare.packCell). */
-        final List<int[]> statePrectables = new ArrayList<>();
-
-        /**
-         * BT19 POSIX ε-closure with compare()-based winner selection (§7 closure_gtop).
-         *
-         * <p>Uses a worklist: pop a config, explore its ε-edges. For each target
-         * (state, mask), if new, add it; if existing, compare paths — replace if
-         * the new path wins (and re-explore children).
-         *
-         * <p>Dual-path encoding: {@code l} (regular tags only, for regops/history)
-         * and {@code path} (UTree node, all tags including ntags, for compare()).
-         * ntags NEVER enter {@code l} — this prevents regops from generating
-         * spurious SET_NIL ops.
-         *
-         * @param seed              stepped configs from stepOnSymbol
-         * @param oldPrectable       parent DFA state's prectable (null for initial)
-         * @param parentClosureSize  size of parent closure (for indexing oldPrectable)
-         * @return the closure configs in priority order
-         */
-        List<Config> closureGtop(List<Config> seed, int[] oldPrectable, int parentClosureSize) {
-            return epsilonClosure(seed);
-        }
-
-        /**
-         * Compare an existing config (at index {@code existingIdx}) against a
-         * challenger. Returns {@code l} from GtopCompare: {@code <0} = existing
-         * wins, {@code >0} = challenger wins, {@code 0} = tie.
-         *
-         * When heights are equal (h1 == h2), returns 0 (defer to DFS order) —
-         * leftprec alone is insufficient for cross-alternative comparisons
-         * where ε-edge priority should decide.
-         */
-        int compareExisting(int existingIdx, Config challenger,
-                                 List<Integer> originList, List<Integer> pathList,
-                                 int[] oldPrectable, int parentClosureSize) {
-            // TEMP: never replace — same as epsilonClosure DFS order.
-            return 0;
-        }
-
-        /** Compute the prectable for this closure (O(n²) comparisons). */
-        int[] computePrectable(List<Config> closure, int[] oldPrectable, int parentClosureSize) {
-            int n = closure.size();
-            int[] tbl = new int[n * n];
-            for (int i = 0; i < n; i++) {
-                for (int j = 0; j < n; j++) {
-                    if (i == j) {
-                        tbl[i * n + j] = GtopCompare.packCell(GtopCompare.MAX_RHO, 0);
-                    } else {
-                        long cmp = GtopCompare.compare(
-                                closure.get(i).path, closure.get(j).path,
-                                closure.get(i).origin, closure.get(j).origin,
-                                utree, tagHeights, oldPrectable, parentClosureSize);
-                        int h1 = GtopCompare.h1(cmp);
-                        int h2 = GtopCompare.h2(cmp);
-                        int l = (h1 == h2) ? 0 : GtopCompare.l(cmp);
-                        tbl[i * n + j] = GtopCompare.packCell(GtopCompare.h1(cmp), l);
-                    }
-                }
-            }
-            return tbl;
-        }
+        // Removed 2026-09: the POSIX prectable winner-selection machinery
+        // (UTree/GtopCompare/prectables) was dormant scaffolding, resolved as
+        // NOT-NEEDED for the re2j-parity contract (TODO.md, 2026-08-18);
+        // design recoverable from git history and the BT19 paper.
 
         /**
          * Compute per-state DFS arrival order (re2j's densePcs semantics) for the
@@ -1961,7 +1858,7 @@ public final class Tdfa {
                     meter.tick();   // per (config, symbol): step's cost is this loop
                     if ((activeEdges[idx >> 6] & (1L << (idx & 63))) != 0) {
                         // emptyMask resets on step — assertions are position-bound, gated via requiredMask.
-                    out.add(new Config(nfa.symTo[idx], c.regs, c.l, HistTable.EMPTY_ID, 0, c.pri, c.path, ci));
+                    out.add(new Config(nfa.symTo[idx], c.regs, c.l, HistTable.EMPTY_ID, 0, c.pri));
                     intersection &= c.emptyMask;
                         any = true;
                     }
@@ -2041,7 +1938,7 @@ public final class Tdfa {
                     }
                     newRegs[t - 1] = reg;
                 }
-                configs.set(ci, new Config(c.state, newRegs, c.h, c.l, c.emptyMask, c.pri, c.path, c.origin));
+                configs.set(ci, new Config(c.state, newRegs, c.h, c.l, c.emptyMask, c.pri));
             }
             return flatten(opList);
         }
@@ -2579,22 +2476,12 @@ public final class Tdfa {
          *  Seed configs carry pri=0 (no edges taken). Always 0 in POSIX mode (unused).
          *  In Perl mode, used to suppress lower-priority paths past an accepting config. */
         final int pri;
-        /** UTree node index — the tag-path prefix for POSIX comparison (BT19 §6).
-         *  Carries ALL tags (including ntags) for compare(). Unused in Perl mode. */
-        int path;
-        /** Index of the parent config (in the parent DFA state's closure) that led to
-         *  this config via stepOnSymbol. Used by compare() for cross-origin resolution.
-         *  Unused in Perl mode. */
-        int origin;
         Config(int state, int[] regs, int h, int l, int emptyMask) {
             this(state, regs, h, l, emptyMask, 0);
         }
         Config(int state, int[] regs, int h, int l, int emptyMask, int pri) {
-            this(state, regs, h, l, emptyMask, pri, 0, 0);
-        }
-        Config(int state, int[] regs, int h, int l, int emptyMask, int pri, int path, int origin) {
             this.state = state; this.regs = regs; this.h = h; this.l = l; this.emptyMask = emptyMask;
-            this.pri = pri; this.path = path; this.origin = origin;
+            this.pri = pri;
         }
     }
 

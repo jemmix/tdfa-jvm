@@ -12,7 +12,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-HOST="$(uname -s)-$(uname -m)-$(scutil --get ComputerName 2>/dev/null || hostname | cut -d. -f1 | tr -d ' ')"
+# macOS ComputerName may contain spaces, em-dashes, and non-breaking spaces
+# (U+00A0) — strip everything except [A-Za-z0-9._-] for a shell-safe filename.
+HOST="$(uname -s)-$(uname -m)-$(scutil --get ComputerName 2>/dev/null || hostname | cut -d. -f1)"
+HOST="$(printf '%s' "$HOST" | LC_ALL=C tr -cd '[:alnum:]._-')"
 QUICK=1
 CAPTURE=0
 for a in "$@"; do

@@ -9,6 +9,9 @@ repositories {
 dependencies {
     testImplementation project(':')
     testImplementation project(':testlib:rebar')
+    // Vendored patched re2j (fix1: pair-interior literal prefix; fix2: FoldCase
+    // in equals/hashCode) — the live oracle for the re2j-compat scenario class.
+    testImplementation files(rootProject.file('vendor/re2j-jemmix/re2j-1.8-jemmix-fix2.jar'))
     testImplementation platform('org.junit:junit-bom:5.10.2'),
             'org.junit.jupiter:junit-jupiter',
             'org.assertj:assertj-core:3.25.3'

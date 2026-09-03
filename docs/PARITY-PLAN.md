@@ -86,10 +86,26 @@ byte-orientation gives count=4 and our codepoint-oriented engine (matching
 the vendored rebar corpus to record our actual count under an explicit
 `{ engine = 're2', count = 1 }` entry, with a comment in the TOML explaining
 the divergence. The patch lives at
-`vendor/patches/rebar/01-dot-matches-byte-codepoint.patch` and is applied
+the live patched-re2j oracle (see below; the former hand-patched count was consolidated away) and is applied
 automatically by `scripts/vendor.sh prepare` (which now tries each rebar
 patch against both the generated-sources dir and the pristine benchmarks
 extract — see the script for details).
+
+**Live patched-re2j oracle (current).** The suite now resolves `want` from
+the VENDORED PATCHED re2j (fix1/fix2) at run time for every non-`unicode`
+scenario whose regex re2j can compile: the same model loops run against
+`com.google.re2j.Pattern`, and our count must equal the drop-in target's —
+exactly the fuzzer's contract, on the curated rebar corpus. This replaced
+the per-divergence hand-patched counts (ASCII-only `(?i)` folding,
+line-terminator shapes, JDK/Unicode-DB drift): those divergences of the
+STATIC corpus from live re2j semantics simply vanish, including
+`test/unicode/case/ascii-only` (re2j folds U+017F under plain `(?i)`;
+java/hotspot does not — we follow re2j) and `dot-matches-byte` (re2j on a
+Java String is rune-oriented: count=1, matching us). `unicode = true`
+scenarios keep corpus resolution under the java/hotspot identity — re2j
+has no `UNICODE_CHARACTER_CLASS` — as do scenarios re2j cannot compile
+(backrefs/lookaround). `-Dtdfa.test.rebar.oracle=corpus` restores the
+pure static mode. Suite state: 226 pass / 0 fail / 2 bomb-skips.
 
 Net effect of the scope cut (compared to "run everything"):
 - runnable scenarios: 114 → 45 (70 fewer — the 245 non-Java scenarios drop

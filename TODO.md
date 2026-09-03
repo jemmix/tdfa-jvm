@@ -296,6 +296,28 @@ dominated by tryMap×addState (410) and FallbackOps.accumulateClobbered
 bounded reps into budget rejection where re2j compiles fine. CONSTRUCTION
 family (39 records: anchors under lazy/counted loops) still open.
 
+ROUND 19 (2026-09-03): rebar parity on the live patched-re2j oracle.
+Found the rebar suite RED (my gate set never included :tests:parity:rebar):
+test/unicode/case/ascii-only wanted 0 (java/hotspot corpus entry: ASCII-only
+(?i)) while we match re2j (full Unicode simple folding folds U+017F) -> 1.
+Root issue: the suite compared a re2j-semantics engine against STATIC corpus
+counts recorded by other engines at other times — every re2j-compat
+divergence needed a hand-patched count, and the patches had already rotted
+(docs referenced vendor/patches/rebar/01-dot-matches-byte-codepoint.patch
+which no longer exists — consolidated away at 6e3b63f).
+Fix: `want` now comes from the VENDORED PATCHED re2j (fix1/fix2 jar) LIVE,
+for every non-unicode scenario re2j can compile — same model loops against
+com.google.re2j.Pattern (count/spans/captures/grep/grep-captures twins).
+unicode=true scenarios keep corpus/java-hotspot resolution (re2j has no
+UNICODE_CHARACTER_CLASS); re2j-unrunnable regexes (backrefs/lookaround)
+fall back to corpus; -Dtdfa.test.rebar.oracle=corpus restores static mode.
+Suite: 226 pass / 0 fail / 2 bomb-skips — ascii-only and dot-matches-byte
+both pass via re2j-live. This is exactly the fuzzer's contract (differential
+vs patched re2j) applied to the curated corpus, and it retires the
+JDK/Unicode-DB-drift count patches (03/04/05 stay only for the corpus-
+fallback class). Docs updated (PARITY-PLAN live-oracle section; stale 01
+patch references de-staled). Gates now include :tests:parity:rebar.
+
 ROUND 18 (2026-09-03): overnight 645958308 triage — nested-lazy {n,m}
 priority + a 90x determinization collapse as a side effect.
 480x1min chunks, ~300M cases accumulated: 0 hangs, 0 known, 0 oracle

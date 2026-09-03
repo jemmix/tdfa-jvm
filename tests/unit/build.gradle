@@ -21,9 +21,6 @@ test {
     // 2g: RedosBatteryTest's kernel-cap bomb determinizes ~62K states before the
     // clean budget rejection; at 512m the OOM preempts the rejection.
     jvmArgs '-Xmx2g', '-XX:+HeapDumpOnOutOfMemoryError'
-    // -Dtdfa.pending=true opts IN known-failing tests committed in interim
-    // state (TODO.md convention). No currently-known failures: default off.
-    systemProperty 'tdfa.pending', System.getProperty('tdfa.pending', 'false')
     systemProperty 'tdfa.asm.dump', System.getProperty('tdfa.asm.dump', 'false')
     // The JIT inlining guard is its own action (below), never the default gate.
     filter { excludeTestsMatching '*InliningGuard*' }

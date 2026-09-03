@@ -11,13 +11,23 @@ vendor/
 ├── archives/
 │   ├── <dep>-<full-sha>.tar.gz          pristine upstream snapshot
 │   └── <dep>-<full-sha>.tar.gz.sha256   sha256 digest
-└── patches/
-    └── <dep>/
-        └── NN-name.patch                patches applied in lexical order
+├── patches/
+│   └── <dep>/
+│       └── NN-name.patch                patches applied in lexical order
+├── re2j-jemmix/                         patched re2j oracle builds
+│   ├── patches/NNNN-*.patch             one patch per fix (applied cumulatively)
+│   └── build-patched.sh                 builds oracle jars from the re2j archive
+│                                        (outputs gitignored — never committed)
+└── ucd/
+    ├── 6.0.0/                           UCD snapshots feeding :unicode:v6_0
+    └── 17.0.0/                          UCD snapshots feeding :unicode:v17_0
+                                        (regenerate via scripts/gen-unicode.py)
 ```
 
-One archive per dep. The current vendored SHA is the SHA embedded in the
-archive filename. Upgrades replace the old archive (one-for-one).
+One archive per dep — the archive IS the single committed source of truth;
+no vendored tree is checked out in place. The patched re2j oracle jars are
+built on demand from the same `re2j-*.tar.gz` archive (see
+`re2j-jemmix/README.md`).
 
 ## Operations
 
