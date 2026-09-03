@@ -270,7 +270,7 @@ public final class PikeSim {
                 int req = sim.nfa.epsEmptyMask[e];
                 if (req != 0 && !holds(req, pos)) continue;   // assertion: direct truth, at the crossing
                 int tag = sim.nfa.epsTag[e];
-                if (tag != 0) {
+                if (tag > 0) {
                     // capture = copy-on-write path state: each write forks the
                     // array for its downstream subtree, so sibling branches are
                     // isolated. This is the engine's functional l-history
@@ -280,8 +280,19 @@ public final class PikeSim {
                     // so the loop's exit continuation explores INSIDE the
                     // capture scopes and parks while the writes are live —
                     // which is why (\B)*\z reports g1="".
+                    //
+                    // NEGATIVE tags (ntags, the quest/alt skip markers) do NOT
+                    // touch cap: re2j's pike prog never writes empty captures
+                    // on skip edges — a group's value PERSISTS once set
+                    // (((a)?x){2} on "axax" keeps g2="a"; ((a)|b)+ on "ab"
+                    // keeps g2="a") and unmatched groups are null by absence.
+                    // Applying ntags here cleared captures of earlier
+                    // iterations (fuzz round 18: the sim reported g2=null
+                    // where re2j/vm/asm kept the last iteration's span).
+                    // POSIX-mode compare still sees ntags — via the utree
+                    // path in the determinizer, not through caps.
                     int[] c2 = cap.clone();
-                    if (tag > 0) c2[tag] = pos; else c2[-tag] = -1;
+                    c2[tag] = pos;
                     cap = c2;
                 }
                 add(queue, sim.nfa.epsTo[e], pos, cap, visited);

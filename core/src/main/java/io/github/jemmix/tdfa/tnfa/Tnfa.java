@@ -435,10 +435,19 @@ public final class Tnfa {
                         (copies.size() == 1 ? copies.get(0) : new Ast.Concat(copies));
                 result = new Ast.Concat(List.of(copiesAst, new Ast.Repeat(body, 1, Integer.MAX_VALUE, r.greedy)));
             } else if (max > min) {
-                // {n,m} = mandatory followed by m-n optional copies  (preserve lazy/greedy)
-                List<Ast> tail = new ArrayList<>();
-                for (int i = min; i < max; i++) tail.add(new Ast.Repeat(body, 0, 1, r.greedy));
-                result = new Ast.Concat(List.of(mandatoryAst, new Ast.Concat(tail)));
+                // {n,m} = mandatory + RIGHT-NESTED optional suffix (x(x(x)?)?)?,
+                // exactly re2j Simplify's shape ("x{2,5} = xx(x(x(x)?)?)?").
+                // The former FLAT tail (B?B?B?) is match-equivalent but resolves
+                // the priority tie "enter the next optional copy" vs "extend the
+                // current copy's inner lazy body" the OPPOSITE way: nested-lazy
+                // captures then report the extended span while re2j/JDK report
+                // the next copy's (fuzz round 18: ((a{1,2}?c?){0,5}?)d on "aad":
+                // re2j/JDK g2="a" — two outer iterations — flat tail g2="aa").
+                Ast suffix = new Ast.Repeat(body, 0, 1, r.greedy);
+                for (int i = min + 1; i < max; i++) {
+                    suffix = new Ast.Repeat(new Ast.Concat(List.of(body, suffix)), 0, 1, r.greedy);
+                }
+                result = new Ast.Concat(List.of(mandatoryAst, suffix));
             }
             // re-enter the builder with the desugared form, but DO NOT re-process via parser;
             // build it directly into entryTo.

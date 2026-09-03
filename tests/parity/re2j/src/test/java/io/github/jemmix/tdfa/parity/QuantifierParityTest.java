@@ -179,4 +179,33 @@ class QuantifierParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void invertedRangeRejects(RegexEngineFactory factory) { assertSameCompileReject("a{3,2}", factory); }
+
+    // ---- round 18: {n,m} right-nested suffix + capture persistence ----
+
+    /** Fuzz round 18 (overnight seed 645958308): the flat B?B?B? tail for
+     *  lazy {n,m} resolved "enter next optional copy" vs "extend current
+     *  copy's inner lazy body" opposite to re2j/JDK — group 2 reported the
+     *  extended span instead of the next copy's. Fixed by mirroring re2j
+     *  Simplify's right-nested (x(x(x)?)?)? suffix. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void nestedLazyCountedPrefersNextCopyOverExtension(RegexEngineFactory factory) {
+        assertSameFind("((a{1,2}?c?){0,5}?)d", "aad", factory);
+    }
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void nestedLazyCountedOriginalOvernightShape(RegexEngineFactory factory) {
+        assertSameFind("((.{1,5}?[ \n\ud807\udc07\\s]?){0,5}?)z", "\u6f22\u03a9z", factory);
+    }
+
+    /** re2j's pike prog never writes empty captures on skip edges: a group's
+     *  value persists once set across later iterations that skip it. The sim
+     *  applied ntags destructively and cleared earlier captures (same round). */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void capturePersistsAcrossSkippedIterations(RegexEngineFactory factory) {
+        assertSameFind("((a)?x){2}", "axax", factory);
+        assertSameFind("((a)|b)+", "ab", factory);
+    }
 }

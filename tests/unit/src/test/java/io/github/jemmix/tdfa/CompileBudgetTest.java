@@ -68,40 +68,51 @@ class CompileBudgetTest {
         }
     }
 
-    /**
-     * Nested-counted repetition bombs (fuzzer family + the classic
-     * {@code (a{1,100}){1,100}}): the boxed determinization phase must
-     * clean-reject at the memory-calibrated kernel cap instead of OOM-ing.
-     * Calibration: 6.4 M kernels peaks < 1 GB, 18 M exceeds it — the 10 M
-     * default keeps every measured legit shape (e.g. (a{1,50}){1,50} below)
-     * and rejects the bombs on default heaps.
-     */
+    /** Alternation-in-counted-repetition bomb (fuzzer family): the cross
+     *  product is genuinely huge — clean state-cap rejection. The former
+     *  plain nested-counted bombs ((a{1,100}){1,100} etc.) now COMPILE since
+     *  the {n,m} desugaring moved to re2j's right-nested suffix (round 18):
+     *  (a{1,100}){1,50} compiles in ~1 s at 10001 states where the flat tail
+     *  burned 19.6 M kernels — see nestedCountedNowCompiles below. */
     @Test
-    void nestedCountedBombCleanRejectsAtDefaultCaps() {
-        long t0 = System.nanoTime();
-        assertThatCode(() -> Pattern.compile("(a{1,100}){1,100}"))
-                .isInstanceOf(PatternSyntaxException.class)
-                .hasMessageContaining("pattern too large")
-                .hasMessageContaining("tdfa.max.kernels");
-        assertThat((System.nanoTime() - t0) / 1_000_000)
-                .as("wall to kernel-cap rejection").isLessThan(30_000);
+    void alternationCountedBombCleanRejects() {
+        System.setProperty("tdfa.max.states", "20000");
+        try {
+            long t0 = System.nanoTime();
+            assertThatCode(() -> Pattern.compile(
+                    "(x{2,4}?z|\\D{1,6}?.+$|~|W(?U:9(\\.b~))\\-){4,}"))
+                    .isInstanceOf(PatternSyntaxException.class)
+                    .hasMessageContaining("pattern too large")
+                    .hasMessageContaining("tdfa.max.states");
+            assertThat((System.nanoTime() - t0) / 1_000_000)
+                    .as("wall to state-cap rejection").isLessThan(30_000);
+        } finally {
+            System.clearProperty("tdfa.max.states");
+        }
     }
 
-    /** The largest measured LEGIT nested-counted shape: 2501 states /
-     *  6.4 M kernels — must stay under the default caps. */
+    /** The classic nested-counted shape now compiles under default caps —
+     *  the right-nested suffix collapsed the determinization ~90x in kernel
+     *  total ((a{1,100}){1,100}: 19.6 M kernels -> 148 K, 10001 states). */
     @Test
-    void largestLegitNestedCountedStillCompiles() {
-        io.github.jemmix.tdfa.Pattern p = Pattern.compile("(a{1,50}){1,50}");
-        assertThat(p.matcher("aaaa").find()).isTrue();
+    void nestedCountedNowCompiles() {
+        long t0 = System.nanoTime();
+        io.github.jemmix.tdfa.Pattern p = Pattern.compile("(a{1,100}){1,100}");
+        assertThat(p.matcher("a".repeat(120)).find()).isTrue();
+        assertThat((System.nanoTime() - t0) / 1_000_000)
+                .as("nested-counted compile wall").isLessThan(15_000);
     }
 
     /** Per-kernel spike bound: kernelsTotal only counts after addState, so a
-     *  single closure can spike the heap on its own. */
+     *  single closure can spike the heap on its own. The wide-alternation
+     *  bomb builds 4-figure closures. */
     @Test
     void closureSpikeCapRejectsCleanly() {
-        System.setProperty("tdfa.max.closure", "1000");
+        System.setProperty("tdfa.max.closure", "10");
         try {
-            assertThatCode(() -> Pattern.compile("(a{1,50}){1,50}"))
+            // 13-arm alternation: initial closure is ~16 configs wide
+            assertThatCode(() -> Pattern.compile(
+                    "(ab|cd|ef|gh|ij|kl|mn|op|qr|st|uv|wx|yz){2}"))
                     .isInstanceOf(PatternSyntaxException.class)
                     .hasMessageContaining("pattern too large")
                     .hasMessageContaining("tdfa.max.closure");
@@ -130,9 +141,10 @@ class CompileBudgetTest {
     void budgetOverrideRaisesTheCeiling() {
         // The caps are per-compile reads of the system properties, so a raised
         // budget admits patterns the default would reject. Uses the kernel-total
-        // cap (re2c's MAX_DFA_SIZE analogue): {0,60} × 2 totals ~220 K kernel
-        // entries across its ~3.7 K states — over a 100 K cap, under any heap.
-        System.setProperty("tdfa.max.kernels", "100000");
+        // cap (re2c's MAX_DFA_SIZE analogue): {0,60} × 2 totals ~28 K kernel
+        // entries across its states (the right-nested suffix shrank the flat
+        // tail's 220 K) — over a 20 K cap, under any heap.
+        System.setProperty("tdfa.max.kernels", "20000");
         try {
             assertThatCode(() -> Pattern.compile(
                     "[\\s\\S]{0,60}x[\\s\\S]{0,60}")).isInstanceOf(PatternSyntaxException.class);
