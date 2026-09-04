@@ -74,7 +74,9 @@ public final class QuickBench {
         }
         json.append("]");
         String out = args.length > 0 ? args[0] : "quickbench.json";
-        java.nio.file.Files.write(java.nio.file.Path.of(out), json.toString().getBytes());
+        java.nio.file.Path outPath = java.nio.file.Path.of(out);
+        if (outPath.getParent() != null) java.nio.file.Files.createDirectories(outPath.getParent());
+        java.nio.file.Files.write(outPath, json.toString().getBytes());
         System.err.println("written: " + out);
     }
 
