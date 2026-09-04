@@ -34,6 +34,8 @@ ANTLR=$(find ~/.gradle/caches/modules-2 -name 'antlr4-runtime-*.jar' ! -name '*s
 
 CP="benchmarks/micro/build/classes/java/jmh"
 CP+=":build/classes/java/main"
+CP+=":core/build/classes/java/main"
+CP+=":asm/build/classes/java/main"
 CP+=":testlib/rebar/build/classes/java/main"
 CP+=":$RE2J:$REGGIE:$TOMLJ:$ANTLR:$ASM:$ASMC:$ASMT:$ASMA:$ASMU"
 

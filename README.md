@@ -3,10 +3,10 @@
 A regex engine for the JVM that compiles every accepted pattern to a tagged
 deterministic finite automaton, then to JVM bytecode. **No backtracking — ever.**
 
-- vs [`java.util.regex`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/regex/package-summary.html): 2.8–20× faster on typical patterns, at parity-or-faster on search workloads — and the real difference is **ReDoS immunity**: patterns like `(a+)+b` that send `java.util.regex` into near-infinite backtracking run in linear time here (111× on the benchmark row).
-- vs [`re2j`](https://github.com/google/re2j): **19–58× faster on short matches, 2–6× faster on search workloads** (scan geomeans 0.18–0.50×, faster on the large majority of corpus rows) — while remaining a drop-in replacement with identical results on 5.7 M differential cases.
+- vs [`java.util.regex`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/regex/package-summary.html): **1.3× faster on short-input search** (ASM geomean 0.75×, per-call `find()`) — and the durable difference is **ReDoS immunity by construction**: no backtracking engine exists in this library, so pathological patterns cannot burn match-time budget anywhere (current JDKs have tamed many `java.util.regex` blowups, but the guarantee here is structural, not empirical).
+- vs [`re2j`](https://github.com/google/re2j): **2–6× faster on short-input search, 2–3× faster on anchored matches** (scan geomeans 0.17–0.51× across harnesses, faster on the large majority of corpus rows) — while remaining a drop-in replacement with identical results on 5.7 M differential cases + ~300 M fuzz cases.
 - vs [`reggie`](https://github.com/DataDog/java-reggie): a huge inspiration. They dispatch across multiple regex engines per pattern for peak performance; we use one algorithm for everything by design. Different tradeoffs.
-- **Cost, stated up front**: compile is ~52 µs (VM) / ~301 µs (ASM) per pattern vs ~4 µs for `java.util.regex` — eager AOT determinization is the price of the linear-time guarantee. Patterns whose TDFA would exceed the determinization budget (re2c's own design: 100 K states / 50 M kernel-total) fail compilation with a clean "pattern too large" error rather than exhausting time and memory; raise via `-Dtdfa.max.states` / `-Dtdfa.max.kernels` if you legitimately need bigger (e.g. two-site bounded wide-class repeats like `[\s\S]{0,100}x[\s\S]{0,100}` — a 234 K-state minimal DFA, ~21 s and a <1 GB transient to compile, where `re2j`/`java.util.regex` accept instantly: they pay at match time instead).
+- **Cost, stated up front**: compile is ~290 µs (VM) / ~1.3 ms (ASM) per pattern cold vs ~16 µs for `java.util.regex` (steady-state ~32 / ~38 µs once first-compiles amortize) — eager AOT determinization is the price of the linear-time guarantee. Patterns whose TDFA would exceed the determinization budget fail compilation with a clean "pattern too large" error rather than exhausting time and memory. Budget knobs (defaults): `-Dtdfa.max.states` (100 K DFA states), `-Dtdfa.max.kernels` (10 M kernel-total), `-Dtdfa.max.work` (2³² work-meter units), `-Dtdfa.max.closure` (100 K ε-closure configs) — raise them if you legitimately need bigger (e.g. two-site bounded wide-class repeats like `[\s\S]{0,100}x[\s\S]{0,100}` — a 234 K-state minimal DFA, ~21 s and a <1 GB transient to compile, where `re2j`/`java.util.regex` accept instantly: they pay at match time instead).
 
 An implementation of Borsotti–Trofimovich 2022
 (*A closer look at TDFA* — [paper](https://github.com/skvadrik/re2c/blob/master/doc/papers/2022_a_closer_look_at_tdfa/2022_borsotti_trofimovich_a_closer_look_at_tdfa.pdf)).
@@ -14,7 +14,8 @@ Apache 2.0.
 
 ## Headline benchmark
 
-JMH SingleShotTime, ns/op. JDK 26.0.2, 2026-08-15 (post-kernel refactor).
+JMH SingleShotTime, ns/op. JDK 26.0.2, 2026-09-03 (post module-restructure +
+Sept compile/perf rounds; pre-restructure-era tables in git history).
 Reproduce with `./gradlew :benchmarks:micro:jmh -Pjmh.include='ParameterizedShortInputBench'`.
 Full tables + committed artifacts in [`BENCHMARKS.md`](BENCHMARKS.md).
 
@@ -22,30 +23,34 @@ Anchored match, short inputs:
 
 | Engine | `(a\|b)*c` | `(\w+)\s+(\w+)` | IPv4 | `abc` | `(a+)+b` ReDoS¹ |
 |---|---:|---:|---:|---:|---:|
-| **tdfa-jvm ASM** | **5.8** | **14.1** | **14.2** | 4.3 | 15.0 |
-| tdfa-jvm VM | 5.8 | 14.2 | 14.5 | 4.6 | 15.3 |
-| java.util.regex | 112.9 | 40.0 | 55.8 | 34.6 | 1,670 |
-| re2j 1.8 | 220.7 | 437.4 | 381.4 | 83.0 | 875.4 |
-| reggie | 280.0 | 18.0 | 11.1 | 0.03² | **4.9** |
+| **tdfa-jvm ASM** | 140.9 | 289.9 | 264.4 | 57.0 | **435.7** |
+| tdfa-jvm VM | 111.9 | 293.2 | 395.9 | 69.0 | 487.3 |
+| java.util.regex | **76.0** | **217.5** | **217.5** | **37.3** | 332.2 |
+| re2j 1.8 | 394.6 | 664.3 | 526.6 | 112.9 | 1,184.0 |
+| reggie | 319.9 | 20.3 | 15.5 | 0.03² | 5.7 |
 
-¹ Input: 20 × `a` + `c` — `java.util.regex` goes exponential (111× slower than ASM).
+¹ 20 × `a` + `c` — `java.util.regex` on this JDK is no longer exponential
+here (332 ns); `re2j`, also linear-time, is 2.7× ASM. The structural
+no-backtracking guarantee is the point, not this row.
 ² Reggie special-cases literal patterns to `String.indexOf`, which the JVM vectorizes (SIMD). We do this too when the *whole pattern* is one literal — disclosed in the search-acceleration section below — but not per-alternative branch.
 
 Unanchored search (the harder regime for DFA engines; committed artifacts):
 
 | Benchmark | tdfa-jvm VM | tdfa-jvm ASM |
 |---|---|---|
-| Short-input `find()`, 10 shapes — geomean vs `java.util.regex` | 0.86× | **0.77×** |
-| Short-input `find()` — geomean vs re2j | **0.18×** | 0.19× |
-| rebar corpus, 110 scenarios — scan geomean vs re2j | **0.44×** (fast) / 0.50× (accurate) | 0.83× / 0.74× |
-| Log-field extraction, 200 k lines — geomean vs re2j | 2.3× faster | 2.3× faster |
-| Literal search (`"Twain"` in 16 MB corpus) | 0.22 ns/char | 0.22 ns/char (`String.indexOf` path) |
+| Short-input `find()`, 10 shapes — geomean vs `java.util.regex` | 0.94× | **0.75×** |
+| Short-input `find()` — geomean vs re2j | 0.22× | **0.17×** |
+| rebar corpus, 110 scenarios — scan geomean vs re2j | **0.37×** (accurate) / 0.35× (fast) | 0.51× / 0.47× |
+| rebar corpus — scan geomean vs `java.util.regex` | **0.75×** (accurate) | 1.08× |
+| Log-field extraction, 200 k lines — geomean vs re2j | ~2× faster | ~2× faster |
+| Literal search (`"Twain"` in 16 MB corpus) | ~0.5 ns/char | ~0.5 ns/char (`String.indexOf` path) |
 
 **Known gaps** (so the numbers above stay credible): `java.util.regex` wins
 literal-*prefixed* search on medium inputs (its Boyer-Moore-class filtering
-beats us ~4× on `ip=`-shaped log queries — tracked as the next work item);
-2.2× on unicode-class short-input rows; ASM compile costs ~300 µs/pattern
-and a per-pattern classload (cold start) — VM is the zero-codegen tier.
+beats us ~2× on `ip=`-shaped log queries — tracked as the next work item);
+~2× on unicode-class short-input rows and non-BMP `\p{L}` scans; ASM compile
+costs ~1.3 ms/pattern cold (~38 µs steady-state) and a per-pattern classload
+(cold start) — VM is the zero-codegen tier.
 
 ## Vision
 
@@ -82,19 +87,36 @@ compile-once-match-many model; multi-pass is solving a different problem.
 **Correctness**
 - **5,716,884** differential cases from RE2's exhaustive test suite — 0 failures
   (each suite runs on both backends)
-- 440 unit tests — including a **strategy-conformance sweep**: both backends
-  must pick *identical search strategies* (literal / candidate-scan /
-  simulation / walk) across a shape × boundary-length catalog, not just
-  identical results — the guard against silently running different algorithms
-- 1,534 re2j-parity tests with the re2j engine as a live oracle — including
-  **leftmost-longest capture parity** (curated + 3 K randomized differential,
-  both backends) and **Glenn Fowler's testregex corpus** (578 ERE specs;
-  hard gate = re2j `LONGEST_MATCH` parity, Fowler's stricter POSIX
-  expectations reported for insight)
-- 220 in-scope rebar scenarios × both backends (compile + grep-captures models)
+- 161 unit-test methods (88 plain + 73 parameterized, most invocation-heavy) —
+  including a **strategy-conformance sweep**: both backends must pick
+  *identical search strategies* (literal / candidate-scan / simulation /
+  walk) across a shape × boundary-length catalog, not just identical results —
+  the guard against silently running different algorithms
+- re2j-parity suites (494 parameterized methods, ~66 k invocations per run)
+  with the re2j engine as a live oracle — including **leftmost-longest
+  capture parity** (curated + 3 K randomized differential, both backends) and
+  **Glenn Fowler's testregex corpus** (578 ERE specs; hard gate = re2j
+  `LONGEST_MATCH` parity, Fowler's stricter POSIX expectations reported for
+  insight)
+- 228 in-scope rebar scenarios × both backends (compile + grep-captures models)
+- OpenJDK `java.util.regex` regression corpus (vendored, drift-monitored
+  against recorded expectations)
+- **Layered audit**: a PikeSim reference VM (`lib/pikesim`, an independent
+  Pike-VM implementation of the same contract) and a 4-column
+  `LayeredComparator` oracle (re2j / sim / VM / ASM) that localizes any
+  divergence to a layer (parser, construction, sim-suspect, tier)
 - Full `re2j` API surface (Pattern, Matcher); leftmost-first (default) and
   leftmost-longest (`LONGEST_MATCH`) semantics tested independently; zero-width
   assertions, Unicode, non-BMP, named groups, case folding
+
+**Fuzzing** — differential fuzzer vs re2j, multi-threaded with deterministic
+records (`:tests:parity:re2j:fuzz`, overnight soaks via
+`scripts/fuzz-soak.sh`): **~300 M accumulated cases, 0 engine divergences**
+(480 × 1-min chunks; 0 hangs, 0 known, 0 oracle). A fixed-seed 500-case slice
+(`FuzzSmokeTest`) runs as a hard gate in every default build. Any recorded
+failure replays turnkey via `-Pfuzz.one=<caseSeed>`. Fuzzing can also swap in
+a patched re2j oracle (`-Pfuzz.patchedOracle=true`) built on demand from the
+vendored pristine archive.
 
 **Performance** — all harnesses in-repo, results committed as artifacts
 (`benchmarks/results-*.txt`):
@@ -105,9 +127,6 @@ compile-once-match-many model; multi-pass is solving a different problem.
 - `LogExtractMacro`: log-pipeline field extraction (200 k lines, cold + warm)
 - `QuickBench` + per-machine baselines (`scripts/bench-regression.sh`):
   15 % regression gate on every landing
-
-**Not yet verified**
-- No differential fuzzing yet — see [`TODO.md`](TODO.md)
 
 ## What's implemented
 
@@ -127,13 +146,16 @@ are the same by construction. What differs is who executes the walk:
   classes: a per-pattern engine whose walk loop is emitted as bytecode
   (per-state switch dispatch, register ops inlined as straight-line stores),
   plus a generated Pattern/Matcher shell so the whole `find()` chain
-  devirtualizes and inlines end-to-end. **0.42–0.89× the VM's time on
-  capture-dense walks, never measurably slower warm.** Cost: ~300 µs compile
+  devirtualizes and inlines end-to-end. **0.3–0.7× the VM's time on
+  capture-dense walks** (measured 0.29–0.68× across the short-input shapes;
+  scan-dominated rows share the same delegate path and sit at ~1.1×). Cost:
+  ~1.3 ms compile cold (~38 µs steady-state)
   and a classload per pattern (per-pattern JIT warmup).
 - **VM** — table-walking interpreter, zero code generation. Equal on
-  scan-dominated workloads, ~1.1× behind ASM on capture-dense walks, ~52 µs
-  compile. The portability/reference tier. Select globally with
-  `-Dtdfa.engine=VM` (no code generation anywhere).
+  scan-dominated workloads (slightly ahead of ASM there — both take the same
+  delegate path), ~2–3× behind ASM on capture-dense walks, ~290 µs compile
+  cold (~32 µs steady-state). The portability/reference tier. Select globally
+  with `-Dtdfa.engine=VM` (no code generation anywhere).
 
 **Bring your own engine:** pass any `RegexEngineFactory`
 (`Pattern.compile(regex, flags, TdfaRunner::new)`) and the facade emits a
@@ -142,7 +164,6 @@ execution.
 
 **BT22 §5–6 TDFA pipeline** (full faithfulness):
 - §5 determinization with `map`+`topological_sort` dedup
-- §6.1 UTree tag-path prefix tree (BT19)
 - §6.2 fallback operations — backup/restore ops on fallback states for
   correct POSIX longest-match capture extraction
 - §6.2.2 register-aware Moore minimization
@@ -151,8 +172,8 @@ execution.
   N=2 iteration loop)
 - §6.4 fixed tags — drop tags reconstructible post-match from a sibling
 
-Toggle individually: `-Dtdfa.nofixedtags`, `-Dtdfa.noregopt`,
-`-Dtdfa.nofallback`, `-Dtdfa.nominimize`.
+Toggle individually: `-Dtdfa.noregopt`, `-Dtdfa.nofallback`,
+`-Dtdfa.nominimize`.
 
 **Search acceleration, disclosed** — unanchored `find()` does not walk the DFA
 character-by-character in three cases, in service of scan throughput (the
@@ -213,23 +234,31 @@ subprojects.
 tdfa-jvm/                             ← root = the facade artifact (io.github.jemmix:tdfa)
 ├── core/                             ← tdfa-core: pipeline + core API tier (interpreter-only)
 ├── asm/                              ← tdfa-asm: per-pattern engine + shell emission
+├── lib/
+│   └── pikesim/                      ← PikeSim reference VM (layered-audit oracle)
+├── unicode/
+│   ├── v6_0/                         ← pinned UCD 6.0.0 tables (re2j-parity tier)
+│   └── v17_0/                        ← pinned UCD 17.0.0 tables (modern tier)
 ├── tests/
 │   ├── unit/                         ← own correctness tests
 │   └── parity/
-│       ├── re2j/                     ← own parity tests (re2j engine as live oracle)
+│       ├── re2j/                     ← own parity tests + differential fuzzer (re2j as live oracle)
 │       ├── re2j-suite/               ← Google's patched ExecTest + corpus (vendored)
 │       └── rebar/                    ← own tests using rebar's scenario corpus
 ├── benchmarks/micro/                 ← own JMH micros
-├── testlib/rebar/                    ← shared parser lib for rebar's TOML scenarios
+├── testlib/
+│   ├── rebar/                        ← shared parser lib for rebar's TOML scenarios
+│   └── parity/                       ← LayeredComparator 4-column oracle
 └── vendor/                           ← pristine third-party archives + patches
 ```
 
 ```bash
 ./gradlew check                       # run everything: all test modules on both backends
 ./gradlew :tests:unit:test            # own unit tests only (fast)
-./gradlew :tests:parity:re2j:test     # re2j parity suites only
+./gradlew :tests:parity:re2j:test     # re2j parity suites + fuzz smoke gate
 ./gradlew :tests:parity:re2j-suite:check  # Google's ExecTest against ASM + VM
 ./gradlew :tests:parity:rebar:test    # rebar scenario parity (tracer-bullet)
+./gradlew :tests:parity:re2j:fuzz     # differential fuzz soak vs re2j (minutes/seed via -Pfuzz.*)
 ./gradlew :benchmarks:micro:jmh       # JMH microbenchmarks
 ```
 

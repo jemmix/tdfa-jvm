@@ -1,26 +1,18 @@
 # ShortFindBench — short-input find() across 5 engines (JMH SingleShotTime, ns/op)
-# Run: 2026-08-15, JDK 26.0.2, AFTER the kernel refactor (P0-P3: shared strategy
-# ladder + generated Regex/Pattern/Matcher under ASM; commits 858b2f6..adf176b).
-# Previous run (pre-kernel short-input round): geomean vm/jur 0.85x / asm/jur 0.93x.
+# Run: 2026-09-03, JDK 26.0.2, post module-restructure + Sept compile/perf rounds
+# (gradle jmh task defaults: 1 fork, 2 warmup + 2 measurement iterations).
+# Previous committed run (2026-08-15, pre-restructure era): geomean vm/jur 0.86x /
+# asm/jur 0.93x — absolute ns not comparable across the restructure boundary.
 
 slug              jur    re2j  reggie      vm     asm   vm/jur   asm/jur   asm/vm
-litFind            88.4  207.3   13.8   29.8   29.4    0.34x    0.33x    0.98x
-caseiLit           36.8  342.1   12.3   48.6   53.5    1.32x    1.45x    1.10x
-wordB             219.5  528.0   42.5   81.3   80.1    0.37x    0.37x    0.99x
-wordUnicodeCls     35.0  310.8   80.5   76.2   77.4    2.18x    2.21x    1.02x
-lettersRu          74.8  287.8    4.3  100.0   42.3    1.34x    0.57x    0.42x
-boundedSpan        51.6  523.9   31.0   84.8   74.1    1.65x    1.44x    0.87x
-ipExtract         171.3 1356.6  113.0  126.7   94.4    0.74x    0.55x    0.74x
-alternation       155.9  430.6  527.7   61.3   65.1    0.39x    0.42x    1.06x
-emailNoMatch      398.3 1637.0  237.7  728.1  728.2    1.83x    1.83x    1.00x
-litNoMatch         44.9   36.8   11.5   24.9   24.6    0.55x    0.55x    0.99x
-
-geomean: vm/jur 0.86x  asm/jur 0.77x  asm/vm 0.890x
-
-asm wins where predicted (walk/capture-dense): lettersRu 0.42x vm / 0.57x jur
-(generated TABLESWITCH walk vs flat-table+block loads), ipExtract 0.74x vm /
-0.55x jur (inlined ops), boundedSpan 0.87x vm. Delegate rows (litFind,
-litNoMatch, wordB, emailNoMatch) at 0.98-1.00x vm by construction.
-alternation 1.06x / caseiLit 1.10x asm-vs-vm are within this machine's
-documented single-shot noise (probe min-of-N disagrees: 56 vs 60).
-Machine drifts +-30% between runs; JMH single-shot rows move with it.
+litFind           81.7   215.6   17.2   36.3   39.2    0.44x    0.48x    1.08x
+caseiLit          34.7   365.6   15.6   53.2   65.7    1.53x    1.89x    1.23x
+wordB            196.1   586.0   53.9   97.0  109.4    0.49x    0.56x    1.13x
+wordUnicodeCls    42.0   345.3   95.0   79.7   88.8    1.90x    2.11x    1.11x
+lettersRu         78.6   327.0    5.3  121.5   35.2    1.55x    0.45x    0.29x
+boundedSpan       58.6   587.0   40.5   90.1   61.2    1.54x    1.04x    0.68x
+ipExtract        294.8  1429.4  148.4  161.4   86.8    0.55x    0.29x    0.54x
+alternation      148.4   519.6  836.8   82.3   36.7    0.55x    0.25x    0.45x
+emailNoMatch     457.3  1994.7  308.7  768.7  883.9    1.68x    1.93x    1.15x
+litNoMatch        45.3    45.2   13.1   31.1   35.3    0.69x    0.78x    1.14x
+geomean                                  0.94x jur / 0.22x re2j    0.75x jur / 0.17x re2j

@@ -1,39 +1,18 @@
 LogExtractMacro: 200000 lines, cold = first 10000 calls, warm = min-of-5 x 100000
 row            eng          cold           warm   ns/line(warm)
-ip             jur        10,4 ms         29,4 ms      294,0
-ip             re2j       30,5 ms        135,2 ms     1352,2
-ip             vm         54,9 ms        126,1 ms     1261,1
-ip             asm        22,2 ms        125,2 ms     1251,6
-user-status    jur        10,1 ms         23,7 ms      236,9
-user-status    re2j       59,3 ms        471,2 ms     4712,4
-user-status    vm         33,3 ms        129,4 ms     1293,7
-user-status    asm        41,1 ms        122,7 ms     1226,6
-path           jur        24,7 ms         19,7 ms      197,3
-path           re2j       27,7 ms        183,0 ms     1829,7
-path           vm          7,3 ms         72,3 ms      723,0
-path           asm        20,6 ms         72,4 ms      724,3
-no-match       jur        17,7 ms        124,3 ms     1243,0
-no-match       re2j       44,9 ms        312,1 ms     3120,8
-no-match       vm         38,9 ms        102,7 ms     1026,6
-no-match       asm        11,8 ms        102,7 ms     1026,8
-
-Compile latency (µs/pattern, min-of-5 x 500, re2j shim + peers):
-  vm 51.8   asm 301.0 (+250µs = emission+classload of 2-4 classes)   jur 4.5   re2j 2.4
-  (compile.asm QuickBench IMPROVED -27..-30% vs old baseline: the deleted
-   TABLE_SCAN/chars-cache emission shrinks the generated classes.)
-
-RebarBench fast geomeans (110 scenarios; pre-kernel -> now):
-  vm vs re2j 0.57x -> 0.44x   asm vs re2j 0.82x -> 0.83x
-  vm vs jur  0.94x -> 0.73x   asm vs jur  1.35x -> 1.39x
-  (asm-vs-jur fast geomean is dominated by the us-scale test/* rows' cold-JIT,
-  a documented artifact; the warm story is the JMH + macro numbers above.)
-
-Steady-state probes (min-of-N, isolated JVMs):
-  findAll dense 1MB [a-z]+ing: vm 5.1 ms, asm 4.4 ms (asm 0.86x vm)
-  core extract ip=...: vm 114 ns, asm 47 ns (asm 0.41x vm)
-
-Metaspace: 10k generated patterns, unpinned -> classes unload with their
-loader (nonheap residual 135 B/compile = code-cache noise). No leak.
-
-Strategy conformance: 12 shapes x 20 boundary lengths x {core, shim} -
-identical results AND identical strategy traces (CI test, 427 unit tests).
+ip             jur        28,2 ms         60,9 ms      608,7
+ip             re2j       73,2 ms        284,3 ms     2842,9
+ip             vm        115,1 ms        315,3 ms     3153,3
+ip             asm        58,8 ms        255,7 ms     2557,1
+user-status    jur        28,4 ms         50,7 ms      506,8
+user-status    re2j      130,8 ms        880,0 ms     8799,9
+user-status    vm         86,7 ms        232,5 ms     2325,2
+user-status    asm        64,9 ms        184,4 ms     1843,6
+path           jur        25,3 ms         35,9 ms      358,9
+path           re2j       54,7 ms        323,9 ms     3238,9
+path           vm         17,7 ms        131,2 ms     1312,4
+path           asm        49,8 ms        113,0 ms     1129,6
+no-match       jur        37,0 ms        198,9 ms     1989,3
+no-match       re2j       85,0 ms        579,0 ms     5790,2
+no-match       vm         90,2 ms        191,8 ms     1918,1
+no-match       asm        22,3 ms        192,0 ms     1919,8
