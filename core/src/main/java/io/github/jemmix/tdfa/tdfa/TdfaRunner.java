@@ -47,8 +47,6 @@ public final class TdfaRunner implements RegexEngine {
     private final int[] stopOnAcceptMask;
     /** Uniform tier of the stop table (1 B/state) — see Tdfa.stopMaskUniform; exclusive with the above. */
     private final byte[] stopMaskUniform;
-    private final boolean[] stateIsFallback;
-    private final int[] stateFallbackOpsOff;
     private final boolean rangesDisjoint;
     private final int[] rhp;             // tdfa.entryHiPrefix — prefix-max-hi per entry
     /** Tight 128-entry table for the SIMULATIONS: constant stride keeps the
@@ -88,12 +86,17 @@ public final class TdfaRunner implements RegexEngine {
     /** Lazy per-state 512-codepoint walk blocks for codepoints >= latinLimit:
      *  cell = the (unique, disjoint-only) containing range's index, or -1.
      *  turns wide-class walks (\p{L}{2,} on Cyrillic: ~600-range binary
-     *  searches per char) into one array load. Published via the volatile
-     *  {@link #walkBlocksArr} snapshot (copy-on-grow; build is synchronized
+     *  searches per char) into one array load. Published via a volatile
+     *  snapshot reference (copy-on-grow; build is synchronized
      *  and double-checked, so races only cost a redundant lock). */
     private volatile int[][] walkBlocksArr = EMPTY_BLOCKS;
     private int walkBlockCount;                       // guarded by this
-    private final int[][] walkBlockIdx;               // [state] -> int[128] block ids (lazy)
+    /** Lazy per-state block-id tables, one volatile cell per state (see
+     *  {@link #walkRangeIndex}): the cell write publishes the fully-built,
+     *  -1-filled id array, so a racing reader sees either null (builds its
+     *  own, benignly duplicated) or a fully-initialized array — never a
+     *  default-0 cell misread as block id 0. */
+    private final java.util.concurrent.atomic.AtomicReferenceArray<int[]> walkBlockIdx;
     private static final int[][] EMPTY_BLOCKS = {};
     /** Cap on walk blocks (512 ints each): past it, dispatch falls back to
      *  binary search (dictionary-scale DFAs must not grow unbounded memos). */
@@ -167,8 +170,6 @@ public final class TdfaRunner implements RegexEngine {
         this.multiline = tdfa.multiline;
         this.stopOnAcceptMask = tdfa.stopOnAcceptMask;
         this.stopMaskUniform = tdfa.stopMaskUniform;
-        this.stateIsFallback = tdfa.stateIsFallback;
-        this.stateFallbackOpsOff = tdfa.stateFallbackOpsOff;
         this.stateCount = tdfa.stateCount;
         this.stateWords = (tdfa.stateCount + 31) >>> 5;
         this.acceptBits = buildAcceptBits(tdfa);
@@ -183,7 +184,8 @@ public final class TdfaRunner implements RegexEngine {
         this.wordBits = buildWordBits(tdfa.unicodeWordBoundary ? tdfa.wordRanges : null);
         this.startBits = (literalNeedle == null && (tdfa.stateMeta[tdfa.startState] & 1) == 0)
                 ? buildStartBits() : null;
-        this.walkBlockIdx = rangesDisjoint ? new int[tdfa.stateCount][] : null;
+        this.walkBlockIdx = rangesDisjoint
+                ? new java.util.concurrent.atomic.AtomicReferenceArray<>(tdfa.stateCount) : null;
     }
 
     public Tdfa tdfa() { return tdfa; }
@@ -385,12 +387,6 @@ public final class TdfaRunner implements RegexEngine {
 
     /** String find with anchor enforcement and register extraction. */
     private MatchHolder runStringExtract(String input, int from, int to) {
-        final int[] sm = this.stateMeta;
-        final int[] rg = this.ranges;
-        final int[] op = this.ops;
-        final int[] sfo = this.stateFinalOpsOff;
-        final int[] sem = this.stateEntryMask;
-        final int[] sam = this.stateAcceptMask;
         int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? 0 : to;
         // One exact walk from `from` first (match at/near from is the common
         // case and answers in O(len) — cheaper than any pre-check; see find()).
@@ -464,7 +460,7 @@ public final class TdfaRunner implements RegexEngine {
             sc.regs = regs;
         }
         int state = startState;
-        int lastAcceptPos = -1, lastAcceptState = -1;
+        int lastAcceptPos = -1;
         boolean haveAccept = false;
         int pos = startSearch;
 
@@ -489,14 +485,14 @@ public final class TdfaRunner implements RegexEngine {
                     int cell = fm[state * 64 + posFlags];
                     if (WTRACE) System.err.println("[walk]   fmCell=" + cell + " M=" + Integer.toBinaryString(posFlags));
                     if (cell >= 0) {
-                        lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
+                        lastAcceptPos = pos; haveAccept = true;
                         if (regs != null && cell != 0) applyOps(op, cell, regs, pos);
                         if (!longestMatch && stopNow(state, posFlags)) break loop;
                     }
                 } else {
                     int acceptMask = sam[state];
                     if (acceptMask == 0) {
-                        lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
+                        lastAcceptPos = pos; haveAccept = true;
                         if (regs != null) applyFinalOps(state, regs, pos);
                         if (!longestMatch) {
                             // stopNow ignores posFlags when the stop table is
@@ -509,7 +505,7 @@ public final class TdfaRunner implements RegexEngine {
                         if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                         if ((posFlags & acceptMask) == acceptMask) {
                             if (WTRACE) System.err.println("[walk]   sam accept M=" + Integer.toBinaryString(posFlags) + " stop=" + stopNow(state, posFlags));
-                            lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
+                            lastAcceptPos = pos; haveAccept = true;
                             if (regs != null) applyFinalOps(state, regs, pos);
                             if (!longestMatch && stopNow(state, posFlags)) break loop;
                         }
@@ -644,7 +640,7 @@ public final class TdfaRunner implements RegexEngine {
      * and the caller may advance its match-window bound past this position"
      * (sound: nothing alive from an earlier start survives a kill).
      *
-     * <p>Caps ({@link #MAX_ROWS}/{@link #MAX_BLOCKS}) bound memory; past the
+     * <p>Caps ({@link #SDFA_MAX_ROWS}/{@link #SDFA_MAX_BLOCKS}) bound memory; past the
      * caps the scan falls back to the unmemoized simulation (still tracking
      * kill points, so the extract window stays bounded either way).
      *
@@ -658,8 +654,10 @@ public final class TdfaRunner implements RegexEngine {
     // Small re2-style lazy-DFA budgets: past the caps the scan degrades to the
     // unmemoized simulation (still kill-point aware). The bomb shape if these
     // are too high: live-set rows proliferate on .*-heavy patterns and each
-    // runner (one per compiled Regex) keeps its own ThreadLocal memo — dozens
-    // of live runners × MBs each OOMs the parity suites (seen: 27 live Tdfas).
+    // runner (one per compiled Regex) keeps its own memo — dozens of live
+    // runners × MBs each OOMs the parity suites (seen: 27 live Tdfas). The
+    // memo is shared across threads matching the same Pattern (safe: see
+    // SearchDfa — locked mutation, snapshot reads), NOT per-thread.
     private static final int SDFA_MAX_ROWS = 512;      // rows: ~512B each + blockIds
     private static final int SDFA_MAX_BLOCKS = 1024;   // 1024 * 512 * 4B = 2 MB cap
     private static final int SDFA_MIN_WINDOW = 2048;   // below: unmemoized raw scan
@@ -804,18 +802,16 @@ public final class TdfaRunner implements RegexEngine {
      * binary search). See {@link #walkBlocksArr} for the publication scheme.
      */
     private int walkRangeIndex(int state, int c) {
-        int[] idx = walkBlockIdx[state];
-        int b = c >>> 9;
-        int id;
+        int[] idx = walkBlockIdx.get(state);
         if (idx == null) {
             idx = new int[128];
             java.util.Arrays.fill(idx, -1);
-            walkBlockIdx[state] = idx;
-            id = -1;
-        } else {
-            id = idx[b];
+            walkBlockIdx.set(state, idx);      // volatile publish of the filled array
+            idx = walkBlockIdx.get(state);     // adopt the winner if we lost the race
         }
-        if (id == -1) id = buildWalkBlock(state, b, idx);
+        int b = c >>> 9;
+        int id = idx[b];
+        if (id == -1) id = buildWalkBlock(state, b);
         if (id < 0) return id;
         int[][] arr = walkBlocksArr;
         if (id < arr.length) {
@@ -826,11 +822,20 @@ public final class TdfaRunner implements RegexEngine {
     }
 
     /** Build one 512-cp block for `state` (lowest entry index per cell — for
-     *  disjoint DFAs the containing entry is unique). Synchronized + double-checked. */
-    private synchronized int buildWalkBlock(int state, int b, int[] idx) {
-        int id = idx[b];
-        if (id != -1) return id;
-        if (walkBlockCount >= WALK_MAX_BLOCKS) { idx[b] = -2; return -2; }
+     *  disjoint DFAs the containing entry is unique). Synchronized + double-checked
+     *  against the PUBLISHED id table (two threads racing a first-visit of the
+     *  same state may carry private idx copies; the block id itself must be
+     *  canonical). Cell values: -1 unbuilt, -2 capped, >=0 block id; cells only
+     *  ever transition from -1 under the lock, so a racing plain read observes
+     *  either -1 (re-checks here) or the final id — ints are atomically written. */
+    private synchronized int buildWalkBlock(int state, int b) {
+        int[] pub = walkBlockIdx.get(state);
+        int e = pub != null ? pub[b] : -1;
+        if (e != -1) return e;
+        if (walkBlockCount >= WALK_MAX_BLOCKS) {
+            if (pub != null) pub[b] = -2;
+            return -2;
+        }
         int[] cells = new int[512];
         java.util.Arrays.fill(cells, -1);
         int lo = b << 9, hi = lo + 511;
@@ -845,30 +850,48 @@ public final class TdfaRunner implements RegexEngine {
         int[][] next = java.util.Arrays.copyOf(walkBlocksArr, n + 1);
         next[n] = cells;
         walkBlocksArr = next;    // volatile publish: cells contents visible to readers
-        idx[b] = n;
+        if (pub != null) pub[b] = n;
         return n;
     }
 
-    /**
-     * Whether the word-boundary flags are observable anywhere: an entry /
-     * accept / required mask with a word bit, or a stop-table row whose cells
-     * differ between the WB / NWB / no-word variants of the same base flags
-     * (positionFlags only ever produces those three variants — both-set never
-     * occurs — so cell equality across them makes the word bits irrelevant).
-     */
-
-    /** Static nested: shared per-Tdfa lifetime; references the runner's tables. */
+    /** Static nested: shared per-Tdfa lifetime; references the runner's tables.
+     *
+     * Thread-safety (the RegexEngine contract requires concurrent-safe
+     * engines): the mutation path — internRow / transition / buildBlock — is
+     * confined under {@link #lock}. The per-codepoint READ path never touches
+     * the intern maps: it goes through immutable, volatile-published
+     * snapshots ({@link #rowWordsArr}, {@link #rowBlockIdsArr},
+     * {@link #blocksArr}) whose entries are fully built before publication;
+     * row-block cells only ever transition from -1 to their final value under
+     * the lock (plain int writes are atomic, so a racing reader sees either
+     * -1 — and re-checks under the lock — or the final value; a block id is
+     * written to a cell only AFTER the block is published in
+     * {@code blocksArr}, and readers length-check against the snapshot so a
+     * stale snapshot degrades to the locked path, never to a wrong lookup).
+     * Locking the read path itself would serialize concurrent scans of one
+     * Pattern and put a monitor enter/exit on every scanned char — that is
+     * why the snapshots exist. */
     static final class SearchDfa {
         final TdfaRunner r;
         final int nw;
+        final Object lock = new Object();
         SearchDfa(TdfaRunner r) { this.r = r; this.nw = r.stateWords; }
-        final HashMap<Wrapper, Integer> rowById = new HashMap<>();    // bitset -> row id
-        final ArrayList<int[]> rowWords = new ArrayList<>();          // row id -> bitset
-        final ArrayList<int[]> rowBlockIds = new ArrayList<>();       // row id -> int[128] (lazy)
-        final ArrayList<boolean[]> rowHasBlock = new ArrayList<>();   // row id -> which blocks materialized
-        final HashMap<Wrapper, Integer> blockById = new HashMap<>();  // content -> block id
-        final ArrayList<int[]> blocks = new ArrayList<>();            // block id -> int[512]
-        boolean capped;
+
+        // ---- writer-confined (all accesses under lock) ----
+        private final HashMap<Wrapper, Integer> rowById = new HashMap<>();    // bitset -> row id
+        private final HashMap<Wrapper, Integer> blockById = new HashMap<>();  // content -> block id
+
+        // ---- immutable snapshots; volatile-published on growth (copy-on-write) ----
+        /** row id -> live-set bitset; rows are interned (never mutated after publish). */
+        private volatile int[][] rowWordsArr = {};
+        /** row id -> int[128] block ids. Cell: -1 unbuilt, -2 capped/direct,
+         *  -3 all-kill, >=0 block id in {@link #blocksArr}. Rows are
+         *  copy-on-write (a new row replaces the old in a fresh snapshot on
+         *  every cell write — see setRowCell). */
+        private volatile int[][] rowBlockIdsArr = {};
+        /** block id -> int[512] encoded transitions. */
+        private volatile int[][] blocksArr = {};
+        volatile boolean capped;
 
         /** Immutable-ish int[] key wrapper with cached hash. */
         private static final class Wrapper {
@@ -880,23 +903,46 @@ public final class TdfaRunner implements RegexEngine {
             }
         }
 
-        int internRow(int[] words) {
+        /** Intern the pure-seed row as id 0. Idempotent and race-safe:
+         *  the first caller past the lock publishes it, later callers see
+         *  row 0 in the snapshot and return. */
+        void ensureSeed() {
+            if (rowWordsArr.length != 0) return;
+            synchronized (lock) {
+                if (rowWordsArr.length != 0) return;
+                int[] seed = new int[nw];
+                seed[r.startState >>> 5] |= 1 << (r.startState & 31);
+                internRowLocked(seed);
+            }
+        }
+
+        /** Must hold {@link #lock}. Interns {@code words}; -1 (and cap flag)
+         *  when the row budget is exhausted. */
+        private int internRowLocked(int[] words) {
             Wrapper probe = new Wrapper(words);
             Integer id = rowById.get(probe);
             if (id != null) return id;
-            if (rowWords.size() >= SDFA_MAX_ROWS || capped) { capped = true; return -1; }
+            if (rowWordsArr.length >= SDFA_MAX_ROWS || capped) { capped = true; return -1; }
             int[] key = words.clone();
-            int nid = rowWords.size();
+            int nid = rowWordsArr.length;
             rowById.put(new Wrapper(key), nid);
-            rowWords.add(key);
-            rowBlockIds.add(new int[128]);
-            java.util.Arrays.fill(rowBlockIds.get(nid), -1);
-            rowHasBlock.add(new boolean[128]);
+            int[][] rw = java.util.Arrays.copyOf(rowWordsArr, nid + 1);
+            rw[nid] = key;
+            rowWordsArr = rw;   // volatile publish
+            int[][] rb = java.util.Arrays.copyOf(rowBlockIdsArr, nid + 1);
+            int[] cells = new int[128];
+            java.util.Arrays.fill(cells, -1);
+            rb[nid] = cells;
+            rowBlockIdsArr = rb;   // volatile publish (cells still all -1)
             return nid;
         }
 
+        /** Live-set bitset of an interned row. Safe for lock-free readers:
+         *  row arrays are immutable after publication. */
+        int[] rowWordsOf(int rowId) { return rowWordsArr[rowId]; }
+
         boolean accept(int rowId) {
-            int[] w = rowWords.get(rowId);
+            int[] w = rowWordsArr[rowId];
             for (int i = 0; i < nw; i++) if ((w[i] & r.acceptBits[i]) != 0) return true;
             return false;
         }
@@ -931,43 +977,33 @@ public final class TdfaRunner implements RegexEngine {
             return next;
         }
 
-        /** Step with re-seed; returns the next bitset. */
-        private int[] step(int[] words, int c) {
-            int[] d = delta(words, c);
-            boolean empty = true;
-            for (int i = 0; i < nw; i++) if (d[i] != 0) { empty = false; break; }
-            if (empty) {
-                int[] seed = new int[nw];
-                seed[r.startState >>> 5] |= 1 << (r.startState & 31);
-                return seed;   // kill
-            }
-            d[r.startState >>> 5] |= 1 << (r.startState & 31);
-            return d;
-        }
-
-        /** Encoded transition for row on c: row id, SDFA_KILL, or -1 (uncached-cap). */
+        /** Encoded transition for row on c: row id, SDFA_KILL, or -1 (uncapped-cap).
+         *  Locked: it computes and interns (mutation); the memoized read path
+         *  is {@link #bmpTransition}, which only lands here on block misses. */
         int transition(int rowId, int c) {
-            int[] words = rowWords.get(rowId);
-            int[] d = delta(words, c);
-            boolean empty = true;
-            for (int i = 0; i < nw; i++) if (d[i] != 0) { empty = false; break; }
-            if (empty) return SDFA_KILL;   // next = pure row 0 + kill
-            d[r.startState >>> 5] |= 1 << (r.startState & 31);
-            return internRow(d);
+            synchronized (lock) {
+                int[] d = delta(rowWordsArr[rowId], c);
+                boolean empty = true;
+                for (int i = 0; i < nw; i++) if (d[i] != 0) { empty = false; break; }
+                if (empty) return SDFA_KILL;   // next = pure row 0 + kill
+                d[r.startState >>> 5] |= 1 << (r.startState & 31);
+                return internRowLocked(d);
+            }
         }
 
-        /** Materialize block {@code b} of {@code rowId}: 512 encoded transitions. */
-        private void buildBlock(int rowId, int b) {
+        /** Must hold {@link #lock}. Materialize block {@code b} of {@code rowId}:
+         *  512 encoded transitions; returns the cell value for (rowId, b):
+         *  block id, -3 (all-kill), or -2 (capped → caller computes directly). */
+        private int buildBlockLocked(int rowId, int b) {
             int[] cells = new int[512];
             int lo = b << 9;
             boolean allKill = true;
             for (int k = 0; k < 512; k++) {
-                int t = transition(rowId, lo + k);
+                int t = transitionLocked(rowId, lo + k);
                 if (t == -1) {
-                    // capped mid-block: mark whole block unusable (-1 cells handled by caller)
-                    rowBlockIds.get(rowId)[b] = -2;
-                    rowHasBlock.get(rowId)[b] = true;
-                    return;
+                    // capped mid-block: whole block unusable (-2 cells handled by caller)
+                    setRowCell(rowId, b, -2);
+                    return -2;
                 }
                 if (t != SDFA_KILL) allKill = false;
                 cells[k] = t;
@@ -980,28 +1016,68 @@ public final class TdfaRunner implements RegexEngine {
                 Integer cached = blockById.get(key);
                 if (cached != null) blockId = cached;
                 else {
-                    if (blocks.size() >= SDFA_MAX_BLOCKS) {
-                        rowBlockIds.get(rowId)[b] = -2;
-                        rowHasBlock.get(rowId)[b] = true;
-                        return;
+                    if (blocksArr.length >= SDFA_MAX_BLOCKS) {
+                        setRowCell(rowId, b, -2);
+                        return -2;
                     }
-                    blocks.add(cells);
-                    blockId = blocks.size() - 1;
+                    int n = blocksArr.length;
+                    int[][] nb = java.util.Arrays.copyOf(blocksArr, n + 1);
+                    nb[n] = cells;
+                    blocksArr = nb;   // volatile publish BEFORE the cell can point at it
+                    blockId = n;
                     blockById.put(key, blockId);
                 }
             }
-            rowBlockIds.get(rowId)[b] = blockId;
-            rowHasBlock.get(rowId)[b] = true;
+            setRowCell(rowId, b, blockId);
+            return blockId;
         }
 
-        /** Encoded transition via blocks; builds lazily. c must be < 0x10000. */
+        /** Must hold {@link #lock}. */
+        private int transitionLocked(int rowId, int c) {
+            int[] d = delta(rowWordsArr[rowId], c);
+            boolean empty = true;
+            for (int i = 0; i < nw; i++) if (d[i] != 0) { empty = false; break; }
+            if (empty) return SDFA_KILL;
+            d[r.startState >>> 5] |= 1 << (r.startState & 31);
+            return internRowLocked(d);
+        }
+
+        /** Must hold {@link #lock}. Publish the cell for (rowId, b): COW the
+         *  rowBlockIdsArr row so an immutable-snapshot reader either sees -1
+         *  or the final value — intermediate states are impossible because
+         *  the fresh row copy is filled before the snapshot swap. */
+        private void setRowCell(int rowId, int b, int value) {
+            int[] row = rowBlockIdsArr[rowId];
+            int[] fresh = java.util.Arrays.copyOf(row, 128);
+            fresh[b] = value;
+            int[][] rb = rowBlockIdsArr.clone();
+            rb[rowId] = fresh;
+            rowBlockIdsArr = rb;   // volatile publish
+        }
+
+        /** Encoded transition via blocks; builds lazily. c must be < 0x10000.
+         *  Lock-free on the memoized fast path (snapshot reads only); takes
+         *  the lock only on first visit of a (row, block) or on capped rows. */
         int bmpTransition(int rowId, int c) {
             int b = c >>> 9;
-            if (!rowHasBlock.get(rowId)[b]) buildBlock(rowId, b);
-            int blockId = rowBlockIds.get(rowId)[b];
-            if (blockId == -2) return transition(rowId, c);   // capped: compute directly
-            if (blockId == -3) return SDFA_KILL;              // all-kill block
-            return blocks.get(blockId)[c & 511];
+            int cell = rowBlockIdsArr[rowId][b];
+            if (cell == -1) {
+                synchronized (lock) {
+                    cell = rowBlockIdsArr[rowId][b];   // re-read under lock: may have been built
+                    if (cell == -1) cell = buildBlockLocked(rowId, b);
+                }
+            }
+            if (cell == -2) return transition(rowId, c);   // capped: compute directly
+            if (cell == -3) return SDFA_KILL;              // all-kill block
+            int[][] arr = blocksArr;
+            if (cell < arr.length) return arr[cell][c & 511];
+            // Stale snapshot vs a fresh id (no happens-before edge between the
+            // plain cell read and this volatile read): re-check under the lock.
+            synchronized (lock) {
+                cell = rowBlockIdsArr[rowId][b];
+                if (cell >= 0 && cell < blocksArr.length) return blocksArr[cell][c & 511];
+                return transitionLocked(rowId, c);
+            }
         }
     }
 
@@ -1022,12 +1098,8 @@ public final class TdfaRunner implements RegexEngine {
             return rawScan(input, from, to, from, null);
         }
         trace(Strategy.TRIGGER);
-        int cur = 0;   // pure-seed row: interned first by construction below
-        if (sd.rowWords.isEmpty()) {
-            int[] seed = new int[sd.nw];
-            seed[startState >>> 5] |= 1 << (startState & 31);
-            if (sd.internRow(seed) != 0) throw new IllegalStateException("first row must be id 0");
-        }
+        sd.ensureSeed();   // pure-seed row 0, interned once, race-safe
+        int cur = 0;
         int W = from;
         for (int pos = from; pos < to; ) {
             if (sd.accept(cur)) return W;
@@ -1039,7 +1111,7 @@ public final class TdfaRunner implements RegexEngine {
                 // restarting from a bare seed would drop configurations started
                 // in [W, pos) that are still alive (and may accept later),
                 // masking real matches (seen as skipped leipzig matches).
-                return rawScan(input, pos, to, W, sd.rowWords.get(cur)); }
+                return rawScan(input, pos, to, W, sd.rowWordsOf(cur)); }
             if (v == SDFA_KILL) { W = pos + adv; cur = 0; }
             else cur = v;
             pos += adv;
@@ -1208,23 +1280,6 @@ public final class TdfaRunner implements RegexEngine {
         return false;
     }
 
-    /**
-     * Multi-state simulation with per-state origin tracking; returns the
-     * leftmost start position of any match in {@code [from, to]}, or -1.
-     *
-     * <p>Only called when {@link #fastPath} holds (disjoint ranges, no entry/
-     * accept/required masks, not multiline) — otherwise the mask-free
-     * transition-following would over-approximate. {@link #stopOnAcceptMask}
-     * (Perl early-stop) only shortens matches, never removes them, so it is
-     * safely ignored here: accept-live at p with origin o implies a match
-     * starting at o exists.
-     *
-     * <p>{@code origin[s]} = smallest seed position from which s is live.
-     * The start state is re-seeded at every position (unanchored search), so
-     * its origin is always {@code from}; state bits and origins move in lockstep:
-     * {@code next} is zeroed each step, so "bit already set in next" exactly
-     * identifies re-reachable states (origin = min) vs first-arrival (origin = set).
-     */
     /** Budget-exceeded sentinel for {@link #multiStateLeftmostStart}. */
     public static final int LSS_BUDGET = -2;
 
@@ -1233,8 +1288,6 @@ public final class TdfaRunner implements RegexEngine {
     // inline wherever emitted. The generated ladder mirrors
     // runStringExtractFast exactly; the strategy-conformance test asserts
     // trace equality between backends. =====
-
-    /** The exact-literal needle, or null (see detectLiteralNeedle). */
 
     /** True when a needle hit ending at unit {@code idx + needleLen - 1}
      *  swallows the high half of a surrogate pair: the last needle unit is a
@@ -1271,7 +1324,7 @@ public final class TdfaRunner implements RegexEngine {
     public MatchHolder restartExtract(String input, int fromStart, int to, int from0) {
         for (int s = fromStart; s <= to; s++) {
             if (Alphabet.pairInterior(input, s)) continue;
-            MatchHolder h = tryStartFast(input, s, to, from0);
+            MatchHolder h = tryStartFast(input, s, to);
             if (h != null) return h;
         }
         return null;
@@ -1302,6 +1355,24 @@ public final class TdfaRunner implements RegexEngine {
     /** Boolean single-start walk (fastPath only): does a match start at from? */
     public boolean booleanMatchFrom(String input, int from, int to) {        return matchFromFast(input, from, to);
     }
+
+    /**
+     * Multi-state simulation with per-state origin tracking; returns the
+     * leftmost start position of any match in {@code [from, to]}, or -1.
+     *
+     * <p>Only called when {@link #fastPath} holds (disjoint ranges, no entry/
+     * accept/required masks, not multiline) — otherwise the mask-free
+     * transition-following would over-approximate. {@link #stopOnAcceptMask}
+     * (Perl early-stop) only shortens matches, never removes them, so it is
+     * safely ignored here: accept-live at p with origin o implies a match
+     * starting at o exists.
+     *
+     * <p>{@code origin[s]} = smallest seed position from which s is live.
+     * The start state is re-seeded at every position (unanchored search), so
+     * its origin is always {@code from}; state bits and origins move in lockstep:
+     * {@code next} is zeroed each step, so "bit already set in next" exactly
+     * identifies re-reachable states (origin = min) vs first-arrival (origin = set).
+     */
 
     private int multiStateLeftmostStart(CharSequence input, int from, int to) {
         return multiStateLeftmostStart(input, from, to, -1);
@@ -1453,7 +1524,6 @@ public final class TdfaRunner implements RegexEngine {
         final int to = input.length();
         final int[] sm = this.stateMeta;
         final int[] at = this.latinTarget;
-        final int tblLimit = this.latinLimit;
         int state = startState;
         final int limit = this.latinLimit;
         for (int pos = 0; pos < to; pos++) {
@@ -1543,7 +1613,7 @@ public final class TdfaRunner implements RegexEngine {
         // 1) Try ONE single-start walk from `from` — the common short-input case
         //    (match at/near the start) never needs the simulation at all.
         trace(Strategy.EXACT_FROM);
-        MatchHolder h = tryStartFast(input, from, to, from);
+        MatchHolder h = tryStartFast(input, from, to);
         if (h != null) return h;
         // 1b) Short inputs: first-char-set candidate scan. Coverage is exact
         //     (start state not accepting — else startBits is null — so every
@@ -1561,7 +1631,7 @@ public final class TdfaRunner implements RegexEngine {
                 if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) continue;
                 if (c >= 0xDC00 && Alphabet.pairInterior(input, p)) continue;
                 if (fails >= 3 && !matchFromFast(input, p, to)) continue;
-                h = tryStartFast(input, p, to, from);
+                h = tryStartFast(input, p, to);
                 if (h != null) return h;
                 fails++;
             }
@@ -1583,7 +1653,7 @@ public final class TdfaRunner implements RegexEngine {
             leftmost = multiStateLeftmostStart(input, w, to);
         }
         if (leftmost < 0) return null;
-        h = tryStartFast(input, leftmost, to, from);
+        h = tryStartFast(input, leftmost, to);
         if (h != null) return h;
         // 3) Defensive: the sim and the walk must agree on fast-path DFAs; if
         //    they ever don't, fall back to the old restart shape rather than
@@ -1598,7 +1668,7 @@ public final class TdfaRunner implements RegexEngine {
      * the generic exact walk from the SAME start (single-start semantics —
      * callers treat null as "no match here", not "no match anywhere").
      */
-    private MatchHolder tryStartFast(String input, int start, int to, int originFrom) {
+    private MatchHolder tryStartFast(String input, int start, int to) {
         final int[] sm = this.stateMeta;
         final int[] arf = this.asciiRangeFlat;
         final int[] rg = this.ranges;
@@ -1625,7 +1695,7 @@ public final class TdfaRunner implements RegexEngine {
             sc.regs = regs;
         }
         int state = startState;
-        int lastAcceptPos = -1, lastAcceptState = -1;
+        int lastAcceptPos = -1;
         boolean haveAccept = false;
         int posFlags = -1; // lazy: -1 means not yet computed for current pos
         int pos = start;
@@ -1637,11 +1707,11 @@ public final class TdfaRunner implements RegexEngine {
                     if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                     int cell = fm[state * 64 + posFlags];
                     if (cell < 0) continue;
-                    haveAccept = true; lastAcceptPos = pos; lastAcceptState = state;
+                    haveAccept = true; lastAcceptPos = pos;
                     if (regs != null && cell != 0) applyOps(op, cell, regs, pos);
                     if (pm && stopNow(state, posFlags)) break;
                 } else {
-                    haveAccept = true; lastAcceptPos = pos; lastAcceptState = state;
+                    haveAccept = true; lastAcceptPos = pos;
                     if (regs != null) applyFinalOps(state, regs, pos);
                     if (pm) {
                         if (stopMaskUniform == null) posFlags = positionFlags(input, pos, to);
@@ -1951,7 +2021,7 @@ public final class TdfaRunner implements RegexEngine {
             final int[] regs = regSize == 0 ? null : new int[regSize];
             if (regs != null) Arrays.fill(regs, -1);
             int state = startState;
-            int lastAcceptPos = -1, lastAcceptState = -1;
+            int lastAcceptPos = -1;
             boolean haveAccept = false;
             int pos = startSearch;
 
@@ -1977,14 +2047,14 @@ public final class TdfaRunner implements RegexEngine {
                         if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
                         int cell = fm[state * 64 + posFlags];
                         if (cell >= 0) {
-                            lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
+                            lastAcceptPos = pos; haveAccept = true;
                             if (regs != null && cell != 0) applyOps(ops, cell, regs, pos);
                             if (!longestMatch && stopNow(state, posFlags)) break loop;
                         }
                     } else {
                         int acceptMask = stateAcceptMask[state];
                         if (acceptMask == 0) {
-                            lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
+                            lastAcceptPos = pos; haveAccept = true;
                             if (regs != null) applyFinalOps(state, regs, pos);
                             if (!longestMatch) {
                                 if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
@@ -1993,7 +2063,7 @@ public final class TdfaRunner implements RegexEngine {
                         } else {
                             if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
                             if ((posFlags & acceptMask) == acceptMask) {
-                                lastAcceptPos = pos; lastAcceptState = state; haveAccept = true;
+                                lastAcceptPos = pos; haveAccept = true;
                                 if (regs != null) applyFinalOps(state, regs, pos);
                                 if (!longestMatch && stopNow(state, posFlags)) break loop;
                             }
@@ -2065,30 +2135,15 @@ public final class TdfaRunner implements RegexEngine {
     }
 
     /**
-     * Pick the right final-ops offset for {@code lastAcceptState}: if it's a
-     * fallback state AND the runner took at least one transition since the last
-     * accept ({@code pos > lastAcceptPos}), use the §6.2 ψ quasi-transition
-     * (whose clobbered COPYs were routed through backups on the way out).
-     * Otherwise use the regular {@code φ}.
-     */
-    private int pickFinalOpsOff(int lastAcceptState, int lastAcceptPos, int pos) {
-        if (stateIsFallback != null && stateIsFallback.length > lastAcceptState
-                && stateIsFallback[lastAcceptState] && pos > lastAcceptPos) {
-            return stateFallbackOpsOff[lastAcceptState];
-        }
-        return stateFinalOpsOff[lastAcceptState];
-    }
-
-    /**
      * Apply an accepting state's φ final ops into {@code regs} at the moment
      * the accept is recorded (BT22's match-declaration semantics). φ reads the
      * accept config's WORKING registers, which hold the correct values only at
      * accept time — any transition taken afterwards may clobber them. Later
      * accepts overwrite earlier ones (last write wins), so the register file at
-     * walk end already carries the last accept's finals. Only the ASM-emitted
-     * ladder's lazy path still consults {@link #pickFinalOpsOff} (ψ for
-     * fallback states); with eager application {@code pos == lastAcceptPos}
-     * always holds and φ is the correct choice.
+     * walk end already carries the last accept's finals. Both tiers apply φ
+     * eagerly; the former lazy ψ replay (pickFinalOpsOff) was unsound and is
+     * gone — with eager application {@code pos == lastAcceptPos} always holds
+     * and φ is the correct choice.
      */
     private void applyFinalOps(int state, int[] regs, int pos) {
         int foff = stateFinalOpsOff[state];
@@ -2106,8 +2161,7 @@ public final class TdfaRunner implements RegexEngine {
      * The {@code posFlags} argument is unused beyond the array index computed
      * by the caller; kept for signature parity.
      */
-    /** Tiered stop lookup: true = report the match now (cell says stop).
-     *  Uniform tier (assertion-free patterns): 1 B/state, posFlags irrelevant. */
+
     private boolean stopNow(int state, int posFlags) {
         byte[] u = stopMaskUniform;
         if (u != null) return u[state] == 0;

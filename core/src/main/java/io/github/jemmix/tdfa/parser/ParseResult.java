@@ -21,6 +21,8 @@ import java.util.Map;
  *                          is set, else {@code null}
  * @param namedGroups      unmodifiable name&rarr;group-index map
  */
+@SuppressWarnings("ArrayRecordComponent")  // int[] is the right shape for range tables;
+                                            // construction and reads both defensive-copy (see below)
 public record ParseResult(
         Ast ast,
         int tagCount,
@@ -32,5 +34,14 @@ public record ParseResult(
 
     public ParseResult {
         namedGroups = namedGroups != null ? Map.copyOf(namedGroups) : Map.of();
+        // Defensive copy: a record with an array component is otherwise only
+        // as immutable as the caller's discipline.
+        unicodeWordRanges = unicodeWordRanges != null ? unicodeWordRanges.clone() : null;
+    }
+
+    /** Defensive copy on read too — hands out a fresh array each call. */
+    @Override
+    public int[] unicodeWordRanges() {
+        return unicodeWordRanges != null ? unicodeWordRanges.clone() : null;
     }
 }

@@ -1,7 +1,6 @@
 package io.github.jemmix.tdfa.regopt;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 
@@ -82,7 +81,7 @@ public final class Optimize {
      *
      * <p>Final-register invariant: indices {@code [tagCount .. 2*tagCount-1]} are
      * always marked used, and they are renumbered as a contiguous block at the
-     * top of the new range so that {@link MatchResult}'s
+     * top of the new range so that MatchResult's
      * {@code regs[finalRegBase + t - 1]} offset can be communicated once and
      * benefit from all subsequent passes.
      *
@@ -256,8 +255,8 @@ public final class Optimize {
         return L;
     }
 
-    /** Word-packed variant of {@link #propagateBackward}: live-in of a block
-     *  from its live-out row. Does not mutate {@code live}. */
+    /** Word-packed variant of the scalar backward liveness propagation
+     *  (live-in of a block from its live-out row). Does not mutate {@code live}. */
     private static long[] propagateBackwardW(long[] liveOut, List<Cfg.Op> ops, int nr) {
         long[] live = liveOut.clone();
         for (int oi = ops.size() - 1; oi >= 0; oi--) {
@@ -378,8 +377,8 @@ public final class Optimize {
      * {@code F0}/{@code F1} — clobbering capture positions.
      *
      * <p>Value tracking ({@code V[i]}) records the abstract value each register
-     * holds at the current point (a source register id, or {@link #POS_VALUE}/
-     * {@link #NIL_VALUE} for SET ops). Registers sharing the same value don't
+     * holds at the current point (a source register id, or {@link Cfg#VAL_POS}/
+     * {@link Cfg#VAL_NIL} for SET ops). Registers sharing the same value don't
      * interfere and may share a slot. A forward pre-pass computes {@code V} at
      * each op position; the backward pass reads from the pre-computed snapshot.
      *

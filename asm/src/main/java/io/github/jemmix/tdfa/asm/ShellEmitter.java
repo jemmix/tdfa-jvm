@@ -31,13 +31,13 @@ import java.util.function.Supplier;
  *     public final GenNNN eng;              // concrete engine class (per-pattern), or
  *                                            // RegexEngine-typed for bring-your-own engines
  *     GenNNNPattern(String pattern, int flags, int ps, RegexEngine e, Supplier w, GenNNN eng) { ... }
- *     @Override public PatternMatcher matcher(CharSequence in) { return new GenNNNMatcher(this, in); }
+ *     {@literal @Override} public PatternMatcher matcher(CharSequence in) { return new GenNNNMatcher(this, in); }
  * }
  * final class GenNNNMatcher extends PatternMatcher {
  *     private final GenNNNPattern p;
- *     @Override public boolean find()      { ... p.eng.match(input, start) ... }
- *     @Override public boolean matches()   { ... p.wholeEngine().match(input, 0) ... }
- *     @Override public boolean lookingAt() { ... p.eng.match(input, 0) ... }
+ *     {@literal @Override} public boolean find()      { ... p.eng.match(input, start) ... }
+ *     {@literal @Override} public boolean matches()   { ... p.wholeEngine().match(input, 0) ... }
+ *     {@literal @Override} public boolean lookingAt() { ... p.eng.match(input, 0) ... }
  * }
  * </pre>
  */
@@ -53,12 +53,19 @@ public final class ShellEmitter {
     private static final String RESULT = "io/github/jemmix/tdfa/core/MatchResult";
     private static final String CS = "Ljava/lang/CharSequence;";
 
-    /** Shell emission spec. All core/reflection types — no facade linkage. */
+    /** Shell emission spec. All core/reflection types — no facade linkage.
+     *
+     * @param pattern           the regex source text (recompiled by the serialization proxy)
+     * @param flags             facade flag bits
+     * @param programSize       states in the compiled DFA (cost estimate)
+     * @param engine            the per-pattern engine instance
+     * @param wholeSupplier     lazily-compiled \A(?:...)\z-anchored engine for matches()
+     * @param engineInternalName slashed internal name of a per-pattern generated
+     *                          engine class for concrete-type wiring, or {@code null}
+     *                          to type the shell's engine field as {@link RegexEngine}
+     */
     public record Spec(String pattern, int flags, int programSize,
                        RegexEngine engine, Supplier<RegexEngine> wholeSupplier,
-                       /** Slashed internal name of a per-pattern generated engine
-                        *  class for concrete-type wiring, or {@code null} to type
-                        *  the shell's engine field as {@link RegexEngine}. */
                        String engineInternalName) { }
 
     /**
@@ -183,7 +190,7 @@ public final class ShellEmitter {
         mv.visitLabel(hasMatchSet);
         mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "hasMatch", "Z");
         mv.visitVarInsn(Opcodes.ALOAD, 1);
-        Label mNull2 = new Label(), tailDone = new Label();
+        Label mNull2 = new Label();
         mv.visitJumpInsn(Opcodes.IFNULL, mNull2);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
@@ -303,14 +310,7 @@ public final class ShellEmitter {
         mv.visitEnd();
         cw.visitEnd();
         byte[] patBytes = cw.toByteArray();
-        if (Boolean.getBoolean("tdfa.asm.dump")) {
-            try {
-                java.nio.file.Files.createDirectories(
-                        java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), "shells"));
-                java.nio.file.Files.write(java.nio.file.Paths.get("/tmp/shells/" + matOwner.substring(matOwner.lastIndexOf('/') + 1) + ".class"), matBytes);
-                java.nio.file.Files.write(java.nio.file.Paths.get("/tmp/shells/" + patOwner.substring(patOwner.lastIndexOf('/') + 1) + ".class"), patBytes);
-            } catch (Exception ignored) { }
-        }
+        if (Boolean.getBoolean("tdfa.asm.dump")) dumpShell(matOwner, matBytes, patOwner, patBytes);
 
         try {
             ClassLoader cl = engInstance.getClass().getClassLoader();
@@ -364,4 +364,16 @@ public final class ShellEmitter {
     }
 
     private ShellEmitter() { }
+    /** Best-effort debug dump of the emitted shell pair; a failed dump must
+     *  never fail compilation (tdfa.asm.dump is a diagnostic switch). */
+    @SuppressWarnings("EmptyCatch")
+    private static void dumpShell(String matOwner, byte[] matBytes, String patOwner, byte[] patBytes) {
+        try {
+            java.nio.file.Path dir = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), "shells");
+            java.nio.file.Files.createDirectories(dir);
+            java.nio.file.Files.write(dir.resolve(matOwner.substring(matOwner.lastIndexOf('/') + 1) + ".class"), matBytes);
+            java.nio.file.Files.write(dir.resolve(patOwner.substring(patOwner.lastIndexOf('/') + 1) + ".class"), patBytes);
+        } catch (Exception ignored) { }
+    }
+
 }

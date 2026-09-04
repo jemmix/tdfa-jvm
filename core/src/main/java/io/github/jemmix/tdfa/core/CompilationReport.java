@@ -52,7 +52,7 @@ public final class CompilationReport implements CompileObserver {
         for (CompileObserver.Stage s : CompileObserver.Stage.values()) {
             if (nanos.containsKey(s)) {
                 if (!first) sb.append(", ");
-                sb.append(s.name().toLowerCase()).append("=").append(nanos.get(s)).append("ns/")
+                sb.append(s.name().toLowerCase(java.util.Locale.ROOT)).append("=").append(nanos.get(s)).append("ns/")
                         .append(details.get(s));
                 first = false;
             }

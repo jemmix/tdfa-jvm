@@ -43,6 +43,10 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
     public int[] foldTableFor(String name) {
         int[] table = tableFor(name);
         if (table == null) return null;
+        // Per-map lock discipline: the map reference is volatile (safe
+        // publication); the map itself is only ever read/written under
+        // synchronized(ft) — a dedicated monitor, finer than the provider
+        // singleton. First-creation double-checks under synchronized(this).
         Map<String, int[]> ft = foldTables;
         if (ft == null) {
             synchronized (this) {
@@ -273,7 +277,7 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
 
     // ---- helpers ----
 
-    private static int[] flatten(ArrayList<int[]> ranges) {
+    private static int[] flatten(java.util.List<int[]> ranges) {
         // Merge adjacent / overlapping ranges, then flatten.
         ranges.sort((a, b) -> Integer.compare(a[0], b[0]));
         ArrayList<int[]> merged = new ArrayList<>();

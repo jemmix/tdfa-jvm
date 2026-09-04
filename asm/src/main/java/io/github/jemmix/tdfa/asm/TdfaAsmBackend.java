@@ -3,7 +3,6 @@ package io.github.jemmix.tdfa.asm;
 import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import io.github.jemmix.tdfa.core.MatchResult;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -21,7 +20,6 @@ public final class TdfaAsmBackend {
     private static final String ENGINE = "io/github/jemmix/tdfa/core/RegexEngine";
     private static final String HOLDER = "io/github/jemmix/tdfa/tdfa/TdfaRunner$MatchHolder";
     private static final String RESULT = "io/github/jemmix/tdfa/core/MatchResult";
-    private static final String CS = "java/lang/CharSequence";
     private static final String STR = "java/lang/String";
     private static final String CS_D = "Ljava/lang/CharSequence;";
     private static final String ARRAYS = "java/util/Arrays";
@@ -61,13 +59,11 @@ public final class TdfaAsmBackend {
             String cn = "io.github.jemmix.tdfa.gen.Gen" + id;
             String owner = cn.replace('.', '/');
             byte[] bc = generateBytes(tdfa, owner);
-            if (Boolean.getBoolean("tdfa.asm.dump")) {
-                String dp = System.getProperty("java.io.tmpdir") + "/" + owner.replace('/', '.') + ".class";
-                try { java.nio.file.Files.write(java.nio.file.Paths.get(dp), bc); } catch (Exception ignored) {}
-            }
+            if (Boolean.getBoolean("tdfa.asm.dump")) dumpClass(owner, bc);
             GenClassLoader cl = new GenClassLoader(TdfaAsmBackend.class.getClassLoader());
             cl.register(cn, bc);
-            RegexEngine engine = (RegexEngine) Class.forName(cn, true, cl)
+            RegexEngine engine = Class.forName(cn, true, cl)
+                    .asSubclass(RegexEngine.class)
                     .getDeclaredConstructor(Tdfa.class).newInstance(tdfa);
             return new Generated(engine, cl, owner, tdfa);
         } catch (Exception e) {
@@ -102,16 +98,16 @@ public final class TdfaAsmBackend {
             genDelegateMatch(cw, owner);
             genMetadataMethods(cw, owner);
         } else {
-            genClinit(cw, tdfa, owner, fastPath);
+            genClinit(cw, tdfa, fastPath);
             genInit(cw, owner, tdfa, fastPath);
-            genMatches(cw, owner, fastPath);
+            genMatches(cw, owner);
             genFind(cw, owner);
-            genMatch(cw, tdfa, owner);
+            genMatch(cw, owner);
             genExtractOne(cw, tdfa, owner);
             genToResult(cw, tdfa, owner);
             genEntryOkC(cw, owner);
-            if (tdfa.stateFinalOpsByMask() != null) genPhiMasked(cw, tdfa, owner);
-            if (tdfa.registerCount() > 0) genPhi(cw, tdfa, owner);
+            if (tdfa.stateFinalOpsByMask() != null) genPhiMasked(cw, tdfa);
+            if (tdfa.registerCount() > 0) genPhi(cw, tdfa);
             genPositionFlagsC(cw, owner, true, tdfa.unicodeWordBoundary());
             if (tdfa.unicodeWordBoundary()) {
                 genIsUnicodeWordChar(cw, owner);
@@ -124,9 +120,17 @@ public final class TdfaAsmBackend {
         return cw.toByteArray();
     }
 
+    /** Best-effort debug dump of an emitted class; a failed dump must never
+     *  fail compilation (tdfa.asm.dump is a diagnostic switch). */
+    @SuppressWarnings("EmptyCatch")
+    private static void dumpClass(String owner, byte[] bc) {
+        String dp = System.getProperty("java.io.tmpdir") + "/" + owner.replace('/', '.') + ".class";
+        try { java.nio.file.Files.write(java.nio.file.Paths.get(dp), bc); } catch (Exception ignored) {}
+    }
+
     // ===== <clinit> =====
 
-    private static void genClinit(ClassWriter cw, Tdfa tdfa, String owner, boolean fastPath) {
+    private static void genClinit(ClassWriter cw, Tdfa tdfa, boolean fastPath) {
         // Field declarations only; all data flows from the Tdfa arg through <init>.
         // (Prior design populated ENTRY_MASK/ACCEPT_MASK/IS_ACCEPT/STOP_MASK/ASCII_TARGET/
         // FIXED_* via per-element IASTORE in <clinit>, which exceeded the JVM 65 KB
@@ -373,7 +377,7 @@ public final class TdfaAsmBackend {
      * buys nothing — and the runner owns the ANCHORED_FAST/ANCHORED/GENERIC
      * strategy recording, keeping the traces trivially conformant.
      */
-    private static void genMatches(ClassWriter cw, String owner, boolean fastPath) {
+    private static void genMatches(ClassWriter cw, String owner) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matches", "(" + CS_D + ")Z", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -414,7 +418,7 @@ public final class TdfaAsmBackend {
      * fastPath: no masks, disjoint ranges) — non-fastPath shapes never see
      * this method because they compile to DELEGATE classes.
      */
-    private static void genMatch(ClassWriter cw, Tdfa tdfa, String owner) {
+    private static void genMatch(ClassWriter cw, String owner) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I)L" + RESULT + ";", null, null);
         mv.visitCode();
         // locals: 0=this, 1=input, 2=from, 3=s, 4=len, 5=holder, 6=leftmost/idx,
@@ -907,8 +911,7 @@ public final class TdfaAsmBackend {
 
     private static void emitRunCore(MethodVisitor mv, Tdfa tdfa, String owner) {
         final boolean perl = !tdfa.longestMatch();
-        final int nStates = tdfa.stateCount();
-        final int[] sm = tdfa.stateMeta(), rg = tdfa.ranges(), op = tdfa.ops(), sfo = tdfa.stateFinalOpsOff();
+        final int[] op = tdfa.ops();
 
         // Compile-time check: is positionFlags ever needed?
         // PF is needed if any accepting state has ACCEPT_MASK != 0,
@@ -922,7 +925,7 @@ public final class TdfaAsmBackend {
         final int IN=0, FROM=1, LEN=2;
         final int MS=4, ST=5, STATE=6, POS=7, HA=8, LAP=9;
         final int REGS = 10, LAS = 11, PF = 12, C_LV = 13;
-        final int T1 = 14, T2 = 15, PF2 = 16, T3 = 17, T4 = 18, R = 19;
+        final int T1 = 14, T2 = 15, PF2 = 16, T3 = 17, R = 18;
 
         // Single start: the emitted ladder in genMatch positions every call;
         // the walk itself never restarts (MS = ST = from).
@@ -976,7 +979,7 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ILOAD, T1);
             Label initEntryOk = new Label();
             mv.visitJumpInsn(Opcodes.IFEQ, initEntryOk);
-            emitPFInline(mv, owner, IN, ST, LEN, PF2, T2, T3, T4, true, tdfa.unicodeWordBoundary());
+            emitPFInline(mv, owner, IN, ST, LEN, PF2, T2, T3, true, tdfa.unicodeWordBoundary());
             mv.visitVarInsn(Opcodes.ILOAD, PF2);
             mv.visitVarInsn(Opcodes.ILOAD, T1);
             mv.visitInsn(Opcodes.IAND);
@@ -997,7 +1000,7 @@ public final class TdfaAsmBackend {
 
         // pf = positionFlags(pos, len, input) — skip when never needed
         if (pfNeeded)
-            emitPFInline(mv, owner, IN, POS, LEN, PF, T1, T2, T3, true, tdfa.unicodeWordBoundary());
+            emitPFInline(mv, owner, IN, POS, LEN, PF, T1, T2, true, tdfa.unicodeWordBoundary());
         else {
             mv.visitInsn(Opcodes.ICONST_0);
             mv.visitVarInsn(Opcodes.ISTORE, PF);
@@ -1078,7 +1081,7 @@ public final class TdfaAsmBackend {
 
         // ===== DFA DISPATCH (TABLESWITCH) =====
         emitDfaDispatch(mv, tdfa, owner,
-                IN, STATE, POS, LEN, PF, C_LV, REGS, T1, T2, PF2, T3, T4,
+                IN, STATE, POS, LEN, PF, C_LV, REGS,
                 dfaLoop, dfaEnd, op);
 
         mv.visitLabel(dfaEnd);
@@ -1132,8 +1135,7 @@ public final class TdfaAsmBackend {
 
     private static void emitDfaDispatch(MethodVisitor mv, Tdfa tdfa, String owner,
                                         int IN, int STATE, int POS, int LEN, int PF, int C_LV,
-                                        int REGS, int T1, int T2, int PF2, int T3, int T4,
-                                        Label dfaLoop, Label dfaEnd, int[] op) {
+                                        int REGS, Label dfaLoop, Label dfaEnd, int[] op) {
         int nStates = tdfa.stateCount();
         int[] sm = tdfa.stateMeta(), sb = tdfa.stateBase(), rg = tdfa.ranges();
 
@@ -1161,8 +1163,7 @@ public final class TdfaAsmBackend {
                 live.add(new int[]{rg[o], rg[o + 1], rg[o + 2], rg[o + 3], rg[o + 4], Integer.bitCount(rg[o + 4])});
             }
             live.sort((x, y) -> {
-                int c = Integer.compare(y[5], x[5]);   // specificity desc
-                return c != 0 ? c : 0;                 // stable: original order within equal specificity
+                return Integer.compare(y[5], x[5]);    // specificity desc; equal keeps list order (stable)
             });
             Label stateDead = new Label();
             int nLive = live.size();
@@ -1270,7 +1271,7 @@ public final class TdfaAsmBackend {
      * that reason; with eager application {@code pos == lastAcceptPos} by
      * construction and φ is always the right list.
      */
-    private static void genPhi(ClassWriter cw, Tdfa tdfa, String owner) {
+    private static void genPhi(ClassWriter cw, Tdfa tdfa) {
         int[] op = tdfa.ops(), sfo = tdfa.stateFinalOpsOff(), sm = tdfa.stateMeta();
         List<int[]> finals = new ArrayList<>();
         for (int s = 0; s < sm.length; s++)
@@ -1308,7 +1309,7 @@ public final class TdfaAsmBackend {
      * {@code return false} (no accept config alive — the gate the
      * accept-mask intersection only approximated).
      */
-    private static void genPhiMasked(ClassWriter cw, Tdfa tdfa, String owner) {
+    private static void genPhiMasked(ClassWriter cw, Tdfa tdfa) {
         int[] op = tdfa.ops(), sm = tdfa.stateMeta(), byMask = tdfa.stateFinalOpsByMask();
         List<Integer> accStates = new ArrayList<>();
         for (int s = 0; s < sm.length; s++) if ((sm[s] & 1) != 0) accStates.add(s);
@@ -1356,7 +1357,7 @@ public final class TdfaAsmBackend {
     // ===== position flags (inline) =====
 
     private static void emitPFInline(MethodVisitor mv, String owner,
-                                     int IN, int POS, int LEN, int RESULT, int T1, int T2, int T3,
+                                     int IN, int POS, int LEN, int RESULT, int T1, int T2,
                                      boolean multiline, boolean unicodeWord) {
         // pf = 0
         mv.visitInsn(Opcodes.ICONST_0);
@@ -1848,7 +1849,6 @@ public final class TdfaAsmBackend {
 
     // ===== small helpers =====
 
-    private static void newIntArr(MethodVisitor mv, int size) { ic(mv, size); mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT); }
 
     private static void ic(MethodVisitor mv, int v) {
         if (v >= -1 && v <= 5) mv.visitInsn(Opcodes.ICONST_0 + v);
@@ -1974,17 +1974,6 @@ public final class TdfaAsmBackend {
         return DispatchMode.DELEGATE;
     }
 
-    /** Bytecode cost of the inlined final-ops block alone (~7 B/op). */
-    private static int estimateFinalOpsBytes(Tdfa tdfa) {
-        int[] op = tdfa.ops(), sfo = tdfa.stateFinalOpsOff();
-        int total = 0;
-        for (int s = 0; s < tdfa.stateCount(); s++) {
-            if (sfo[s] == 0) continue;
-            int j = sfo[s];
-            while (j < op.length && op[j] != Tdfa.OP_END) { total += 7; j += 3; }
-        }
-        return total;
-    }
 
     /** Soft budget for {@code runExtract} bytecode under INLINED mode. 65 KB
      *  is the JVM hard cap; the per-range cost estimate (~25 B/range) is a
@@ -2030,20 +2019,6 @@ public final class TdfaAsmBackend {
         return total;
     }
 
-    /** Count total live (non-dead-target) ranges across all states. */
-    private static int estimateLiveRangeCount(Tdfa tdfa) {
-        int[] sm = tdfa.stateMeta(), sb = tdfa.stateBase(), rg = tdfa.ranges();
-        int total = 0;
-        for (int s = 0; s < tdfa.stateCount(); s++) {
-            int meta = sm[s];
-            int base = sb[s], cnt = (meta >>> 1) & 0xFFFF;
-            for (int i = 0; i < cnt; i++) {
-                int o = (base + i) * 5;
-                if (rg[o + 2] >= 0) total++;
-            }
-        }
-        return total;
-    }
 
     private static boolean computeFastPath(Tdfa tdfa) {
         if (tdfa.multiline()) return false;

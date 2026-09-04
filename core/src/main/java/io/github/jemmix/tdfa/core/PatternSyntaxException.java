@@ -12,6 +12,7 @@ package io.github.jemmix.tdfa.core;
  * is not accidentally caught by code expecting the JDK flavour).
  */
 public class PatternSyntaxException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
     private final String description;
     private final String pattern;
 

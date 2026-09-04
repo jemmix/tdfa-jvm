@@ -4,7 +4,6 @@ import io.github.jemmix.tdfa.ast.Alphabet;
 import io.github.jemmix.tdfa.ast.Ast;
 import io.github.jemmix.tdfa.ast.CharClass;
 import io.github.jemmix.tdfa.unicode.CaseFoldTable;
-import io.github.jemmix.tdfa.unicode.UnicodeProviders;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -40,6 +39,19 @@ public final class Parser {
     private int nextTag = 1;
     private int groupCount = 0;
     private final Map<String, Integer> groupNames = new LinkedHashMap<>();
+    /** Current group-nesting depth (recursion cap; see MAX_GROUP_DEPTH). */
+    private int depth = 0;
+    /** re2j's repeat-count cap: {n,m} with n or m over 1000 is "invalid
+     *  repeat count" (verified against re2j 1.8). Also the parse-time bound
+     *  on Tnfa's eager {n,m} desugaring — without it, a{500000000} OOMs the
+     *  Builder before any determinization budget can fire. */
+    private static final int MAX_REPEAT_COUNT = 1000;
+    /** Group-nesting cap: the recursive-descent cycle parseAlt→parseConcat→
+     *  parseRepeat→parseAtom→parseGroup costs JVM stack frames per level
+     *  (re2j's parser is iterative and needs none); past ~20k levels the
+     *  default JVM stack overflows with a raw StackOverflowError through
+     *  Pattern.compile. 1000 is comfortably both sides. */
+    private static final int MAX_GROUP_DEPTH = 1000;
     boolean caseInsensitive = false;
     boolean dotall = false;
     boolean multiline = false;
@@ -48,8 +60,6 @@ public final class Parser {
     boolean disableUnicodeGroups = false;
     boolean unicodeShorthand = false;
     io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider;
-
-    private Parser(String src) { this.src = src; this.provider = io.github.jemmix.tdfa.unicode.UnicodeProviders.get(); }
 
     private Parser(String src, boolean disableUnicodeGroups, io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
         this.src = src;
@@ -128,8 +138,19 @@ public final class Parser {
         // then selects the OTHER mode, per RE2 ungreedy semantics).
         boolean greedy = !ungreedy;
         if (pos < src.length() && peek() == '?') { pos++; greedy = ungreedy; }
-        else if (pos < src.length() && peek() == '+') {
-            throw new UnsupportedOperationException("possessive quantifiers not supported (non-regular)");
+
+        // A quantifier directly after a completed quantifier (greedy, lazy,
+        // possessive, or a second {n,m}) is "invalid nested repetition
+        // operator" in re2j — never a silent literal `{2}` append or a
+        // separate "possessive" error. `a??`/`a*?` stay legal: the lazy `?`
+        // was consumed above. Probing {..} must not consume on the error path
+        // (it throws), and an INVALID brace form (e.g. `a*{`) stays a literal.
+        if (pos < src.length()) {
+            char n = peek();
+            if (n == '*' || n == '+' || n == '?')
+                throw fail(this, "invalid nested repetition operator");
+            if (n == '{' && parseBraces() != null)
+                throw fail(this, "invalid nested repetition operator");
         }
         return new Ast.Repeat(atom, min, max, greedy);
     }
@@ -172,6 +193,14 @@ public final class Parser {
         if (c == '$') { pos++; return new Ast.EndAnchor(false, this.multiline); }
         if (c == '\\') { pos++; return parseEscape(); }
         if (c == ')' || c == '|') throw fail(this, "unexpected '" + c + "'");
+        // A quantifier at atom position (start of pattern, after '(' or '|')
+        // has nothing to repeat: re2j fails "missing argument to repetition
+        // operator". An INVALID brace form ({,2}) is still a literal '{'.
+        if (c == '*' || c == '+' || c == '?') throw fail(this, "missing argument to repetition operator");
+        if (c == '{') {
+            if (parseBraces() != null) throw fail(this, "missing argument to repetition operator");
+            // not a quantifier: fall through, '{' is a literal
+        }
         int cp = Alphabet.decode(src, pos, src.length());
         pos += Alphabet.width(cp);
         if (caseInsensitive) {
@@ -184,9 +213,43 @@ public final class Parser {
     /** group := '(' ('?:')? alt ')' | '(' '?flags' ')' | '(' '?flags:' alt ')' | '(' '?<' name '>' alt ')' | '(' '?P<' name '>' alt ')' */
     private Ast parseGroup() {
         expect('(');
+        // Flags are scoped to the enclosing group (re2j semantics, verified
+        // against re2j 1.8: `((?i)a)b` does NOT fold `b` — every ')' restores
+        // the flag state saved at its '('). Flag-ONLY groups `(?i)` are the
+        // exception: they apply until the end of the ENCLOSING group, so their
+        // exit must not restore (flagOnly below). unicodeShorthand restores
+        // too: \w/\d/\s class nodes materialize ranges at parse time
+        // (correctly scoped); the pattern-global runtime \b word table
+        // reflects the final top-level flag state.
+        boolean savedCi = caseInsensitive, savedDs = dotall, savedMl = multiline;
+        boolean savedUs = unicodeShorthand, savedUg = ungreedy;
+        boolean[] flagOnly = {false};
+        // Recursion depth cap: parseAlt→…→parseGroup is the only recursive
+        // cycle, and it is stack-frame-per-paren (re2j parses iteratively and
+        // needs no cap). 1000 is far beyond any sane pattern and well under
+        // the default-stack SOE threshold; deeper input is a clean parse
+        // error, never a StackOverflowError through Pattern.compile.
+        if (++depth > MAX_GROUP_DEPTH)
+            throw fail(this, "group nesting too deep (>" + MAX_GROUP_DEPTH + ")");
+        try {
+            return parseGroupBody(flagOnly);
+        } finally {
+            depth--;
+            if (!flagOnly[0]) {
+                caseInsensitive = savedCi;
+                dotall = savedDs;
+                multiline = savedMl;
+                unicodeShorthand = savedUs;
+                ungreedy = savedUg;
+            }
+        }
+    }
+
+    /** Group body after '(' — the caller saved flags, enforces the depth cap,
+     *  and restores flags unless the body is a flag-only group (which marks
+     *  {@code flagOnly[0]}; its flags must persist into the enclosing group). */
+    private Ast parseGroupBody(boolean[] flagOnly) {
         boolean capturing = true;
-        boolean restoreFlags = false;
-        boolean savedCi = false, savedDs = false, savedMl = false, savedUs = false, savedUg = false;
         String groupName = null;
         if (pos + 1 < src.length() && src.charAt(pos) == '?' && src.charAt(pos + 1) == ':') {
             pos += 2; capturing = false;
@@ -233,12 +296,6 @@ public final class Parser {
                 if (peek() == ':') {
                     pos++; // consume ':'
                     capturing = false;
-                    restoreFlags = true;
-                    savedCi = this.caseInsensitive;
-                    savedDs = this.dotall;
-                    savedMl = this.multiline;
-                    savedUs = this.unicodeShorthand;
-                    savedUg = this.ungreedy;
                     if (ciSet) this.caseInsensitive = ci;
                     if (dsSet) this.dotall = ds;
                     if (mlSet) this.multiline = ml;
@@ -251,6 +308,7 @@ public final class Parser {
                     if (mlSet) this.multiline = ml;
                     if (usSet) this.unicodeShorthand = us;
                     if (ugSet) this.ungreedy = ug;
+                    flagOnly[0] = true;   // flags persist into the enclosing group
                     return new Ast.Empty(); // flag-only group, continue
                 }
             }
@@ -273,13 +331,6 @@ public final class Parser {
         }
         Ast body = parseAlt();
         expect(')');
-        if (restoreFlags) {
-            this.caseInsensitive = savedCi;
-            this.dotall = savedDs;
-            this.multiline = savedMl;
-            this.unicodeShorthand = savedUs;
-            this.ungreedy = savedUg;
-        }
         if (!capturing) return body;
         return new Ast.Concat(List.of(new Ast.Tag(open), body, new Ast.Tag(close)));
     }
@@ -325,7 +376,7 @@ public final class Parser {
                 pos++; hi = parseClassChar();
                 if (hi < lo) throw fail(this, "inverted range in class");
             }
-            ranges.add((int) lo); ranges.add((int) hi);
+            ranges.add(lo); ranges.add(hi);
         }
         expect(']');
         int[] arr = ranges.stream().mapToInt(Integer::intValue).toArray();
@@ -460,11 +511,11 @@ public final class Parser {
     private int[] cachedUnicodeDigit;
 
     /**
-     * Parses a POSIX character class {@code [:name:]} or {@code [:^name:]} (called only
-     * when {@code peek()=='['} and {@code peekAhead()==':'). Returns the corresponding
-     * ASCII range table matching re2j's POSIX semantics (complemented within
-     * [0, 0x10FFFF] when the leading {@code ^} is present), or throws on malformed
-     * syntax or unknown names.
+     * Parses a POSIX character class ("[:name:]") or its negated form
+     * ("[:^name:]") — called only when peek()=='[' and peekAhead()==':'.
+     * Returns the corresponding ASCII range table matching re2j's POSIX
+     * semantics (complemented within [0, 0x10FFFF] when the leading caret is
+     * present), or throws on malformed syntax or unknown names.
      */
     private int[] parsePosixClass() {
         // Caller guarantees [: — consume both.
@@ -570,8 +621,8 @@ public final class Parser {
             String hex = src.substring(start, pos);
             pos++; // consume '}'
             if (hex.isEmpty()) throw fail(this, "invalid hex escape: empty \\x{}");
-            val = Integer.parseInt(hex, 16);
-            if (val > 0x10FFFF) throw fail(this, "codepoint too large: \\x{" + hex + "}");
+            val = parseHexValue(hex);
+            if (val > 0x10FFFF) throw fail(this, "invalid escape sequence");
         } else {
             if (pos + 1 >= src.length() || !isHex(src.charAt(pos)) || !isHex(src.charAt(pos + 1))) {
                 throw fail(this, "invalid hex escape: expected exactly 2 hex digits after \\x");
@@ -808,8 +859,8 @@ public final class Parser {
             String hex = src.substring(start, pos);
             pos++; // consume '}'
             if (hex.isEmpty()) throw fail(this, "invalid hex escape: empty \\x{}");
-            val = Integer.parseInt(hex, 16);
-            if (val > 0x10FFFF) throw fail(this, "codepoint too large: \\x{" + hex + "}");
+            val = parseHexValue(hex);
+            if (val > 0x10FFFF) throw fail(this, "invalid escape sequence");
             if (val > 0xFFFF) return new CharClass(new int[]{val, val}, false);
         } else {
             if (pos + 1 >= src.length() || !isHex(src.charAt(pos)) || !isHex(src.charAt(pos + 1))) {
@@ -825,30 +876,69 @@ public final class Parser {
         return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
     }
 
+    /** Hex value of a \x{...} body, overflow-safe: after skipping leading
+     *  zeros (RE2's own corpus uses zero-padded forms like \x{00000061}), 7+
+     *  significant digits cannot be a codepoint — "invalid escape sequence"
+     *  like re2j, never a raw NumberFormatException. */
+    private static int parseHexValue(String hex) {
+        int i = 0;
+        while (i < hex.length() - 1 && hex.charAt(i) == '0') i++;
+        String s = hex.substring(i);
+        if (s.length() > 6) return Integer.MAX_VALUE;   // > 0xFFFFFF, over any codepoint
+        try {
+            return Integer.parseInt(s, 16);
+        } catch (NumberFormatException e) {
+            return Integer.MAX_VALUE;
+        }
+    }
+
     private static int hexVal(char c) {
         if (c >= '0' && c <= '9') return c - '0';
         if (c >= 'a' && c <= 'f') return c - 'a' + 10;
         return c - 'A' + 10;
     }
 
+    /** Parse {@code {n}}, {@code {n,}}, {@code {n,m}}; null when the text is
+     *  not a quantifier (caller treats the '{' as a literal). re2j parity
+     *  (verified against re2j 1.8): ASCII digits only (a{٥} is a literal —
+     *  Character.isDigit would silently accept Arabic-Indic digits and
+     *  misparse), counts capped at 1000 with "invalid repeat count" (an
+     *  uncapped count is a Builder OOM / int-overflow before any compile
+     *  budget can fire), and overflow text gets the same message, never a
+     *  raw NumberFormatException. */
     private int[] parseBraces() {
         int save = pos;
         pos++; // consume '{'
         int start = pos;
-        while (pos < src.length() && Character.isDigit(src.charAt(pos))) pos++;
+        while (pos < src.length() && src.charAt(pos) >= '0' && src.charAt(pos) <= '9') pos++;
         if (pos == start) { pos = save; return null; } // not a quantifier; treat as literal '{'
-        int min = Integer.parseInt(src.substring(start, pos));
+        int min = parseRepeatCount(src, start, pos);
         int max = min;
         if (peek() == ',') {
             pos++;
             int mStart = pos;
-            while (pos < src.length() && Character.isDigit(src.charAt(pos))) pos++;
-            max = (mStart == pos) ? Integer.MAX_VALUE : Integer.parseInt(src.substring(mStart, pos));
+            while (pos < src.length() && src.charAt(pos) >= '0' && src.charAt(pos) <= '9') pos++;
+            max = (mStart == pos) ? Integer.MAX_VALUE : parseRepeatCount(src, mStart, pos);
         }
         if (peek() != '}') { pos = save; return null; }
         pos++; // consume '}'
         if (max < min) throw fail(this, "min > max in {" + min + "," + max + "}");
         return new int[]{min, max};
+    }
+
+    /** Bounded repeat count: ASCII digits in [start, end), ≤ MAX_REPEAT_COUNT
+     *  (re2j's cap), no overflow — anything longer/larger is "invalid repeat
+     *  count" like re2j, not a NumberFormatException. */
+    private static int parseRepeatCount(String s, int start, int end) {
+        int val = 0;
+        for (int i = start; i < end; i++) {
+            val = val * 10 + (s.charAt(i) - '0');
+            if (val > MAX_REPEAT_COUNT) break;   // further digits cannot help
+        }
+        if (val > MAX_REPEAT_COUNT)
+            throw new IllegalArgumentException("Parse error at index " + start
+                    + ": invalid repeat count (in \"" + s + "\")");
+        return val;
     }
 
     private char peek() { return pos < src.length() ? src.charAt(pos) : '\0'; }
@@ -870,14 +960,24 @@ public final class Parser {
     public int[] unicodeWordRanges() { return unicodeShorthand ? computeUnicodeWordRanges() : null; }
     public Map<String, Integer> namedGroups() { return groupNames; }
 
-    /** Read a group name between '<' and '>' (caller has consumed '<'). */
+    /** Read a group name between '<' and '>' (caller has consumed '<').
+     *  re2j validity: word characters only ([A-Za-z0-9_], digits-first allowed
+     *  — verified against re2j 1.8: (?<1a>x) compiles, (?<a b>)/(?<a-b>) are
+     *  "invalid named capture"). Group names are API-visible via
+     *  namedGroups(), so garbage must not slip through. */
     private String readGroupName() {
         int start = pos;
         while (pos < src.length() && peek() != '>') pos++;
         if (pos >= src.length()) throw fail(this, "unclosed group name");
         String name = src.substring(start, pos);
         pos++; // consume '>'
-        if (name.isEmpty()) throw fail(this, "empty group name");
+        if (name.isEmpty()) throw fail(this, "invalid named capture");
+        for (int i = 0; i < name.length(); i++) {
+            char ch = name.charAt(i);
+            boolean word = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+                    || (ch >= '0' && ch <= '9') || ch == '_';
+            if (!word) throw fail(this, "invalid named capture");
+        }
         return name;
     }
 

@@ -267,7 +267,6 @@ public class Matcher {
                     if (g != null) sb.append(g);
                     last = i;
                     i--;
-                    continue;
                 } else if (c2 == '{') {
                     if (last < i) sb.append(replacement, last, i);
                     i += 2;
@@ -280,7 +279,6 @@ public class Matcher {
                     if (gVal != null) sb.append(gVal);
                     last = j + 1;
                     i = j;
-                    continue;
                 }
             }
         }

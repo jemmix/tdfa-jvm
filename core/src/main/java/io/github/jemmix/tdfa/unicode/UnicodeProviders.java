@@ -26,11 +26,16 @@ public final class UnicodeProviders {
     public static final String PROPERTY_NAME = "io.github.jemmix.tdfa.unicode.provider";
 
     private static volatile UnicodeDataProvider cached;
+    /** Failure memo: deliberately cached and re-thrown on every subsequent
+     *  get() (see class doc — no silent fallback). Caching the Throwable is
+     *  the point; it is never rethrown with a stale stack, it only wraps. */
+    @SuppressWarnings("StaticAssignmentOfThrowable")
     private static volatile Throwable failure;
 
     private UnicodeProviders() {}
 
     /** Returns the resolved provider, or throws if resolution failed. */
+    @SuppressWarnings("StaticAssignmentOfThrowable")
     public static UnicodeDataProvider get() {
         UnicodeDataProvider p = cached;
         if (p != null) return p;
@@ -88,6 +93,7 @@ public final class UnicodeProviders {
     }
 
     /** Test-only: clears the cached provider so the property can be re-read. */
+    @SuppressWarnings("StaticAssignmentOfThrowable")
     static void resetForTest() {
         synchronized (UnicodeProviders.class) {
             cached = null;

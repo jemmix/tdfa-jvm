@@ -311,6 +311,9 @@ public final class Tdfa {
                                  int[] stateEntryMask, int[] stateAcceptMask,
                                  int registerCount, int finalRegBase, int tagCount) {
         int entries = ranges.length / 5;
+        if (stateAcceptMask.length != stateCount)
+            throw new IllegalStateException("tdfa: stateAcceptMask length " + stateAcceptMask.length
+                    + " != stateCount " + stateCount);
         for (int s = 0; s < stateCount; s++) {
             int meta = stateMeta[s];
             int cnt = rangeCount(meta);
@@ -445,8 +448,6 @@ public final class Tdfa {
     /** True iff compiled for leftmost-longest (LONGEST_MATCH) semantics. */
     public boolean longestMatch() { return longestMatch; }
 
-    /** Leftmost-first stop-on-accept decision table ([state*64 + posFlags]), longest-match mode only. */
-
     /** {@code (?m)} — {@code ^}/{@code $} at line boundaries. */
     public boolean multiline() { return multiline; }
 
@@ -471,7 +472,8 @@ public final class Tdfa {
     /** Compile with Perl leftmost-first semantics (the ecosystem default). */
     public static Tdfa compile(Tnfa nfa) { return compile(nfa, false); }
 
-    /** @param longestMatch true for leftmost-longest, false for leftmost-first. */
+    /** Compiles a TNFA to a TDFA.
+     *  @param longestMatch true for leftmost-longest, false for leftmost-first. */
     public static Tdfa compile(Tnfa nfa, boolean longestMatch) {
         return new Compiler(nfa, longestMatch).compile();
     }
@@ -608,8 +610,6 @@ public final class Tdfa {
         final int maxClosure = Integer.getInteger("tdfa.max.closure", 100_000);
         /** Running sum of closure (kernel) sizes — re2c's kernels_total. */
         long kernelsTotal = 0;
-
-        Compiler(Tnfa nfa) { this(nfa, false); }
 
         Compiler(Tnfa nfa, boolean longestMatch) {
             this.nfa = nfa;
@@ -964,7 +964,9 @@ public final class Tdfa {
                     }
                     for (int M = 0; M < 64; M++) {
                         int[] perStateOrder = seed instanceof int[] ss
-                                ? computePerStateOrder(ss, M) : computePerStateOrder((List<Config>) seed, M);
+                                ? computePerStateOrder(ss, M)
+                                // seed's other variant is List<Config> by construction (see seed decl)
+                                : computePerStateOrder((List<Config>) seed, M);
                         int acceptOrder = perStateOrder[nfa.accept];
                         if (acceptOrder == -1) {
                             // Accept unreachable under M; sam check will fail too.
@@ -1390,6 +1392,7 @@ public final class Tdfa {
             int n = builders.size();
             // First pass: create blocks.
             int[][] rangeBlockIds = new int[n][];
+            @SuppressWarnings("unchecked")
             List<Integer>[] basicLeaving = new List[n];
             int[] finalBlockAt = new int[n];
             @SuppressWarnings("unchecked")
@@ -1433,11 +1436,11 @@ public final class Tdfa {
                 if (blk.kind != io.github.jemmix.tdfa.regopt.Cfg.BLOCK_BASIC) continue;
                 int target = builders.get(blk.stateId).ranges.get(blk.rangeIndex).target;
                 BitSet visited = new BitSet();
-                List<Integer> frontier = new ArrayList<>();
-                frontier.add(target);
+                java.util.ArrayDeque<Integer> frontier = new java.util.ArrayDeque<>();
+                frontier.push(target);
                 visited.set(target);
                 while (!frontier.isEmpty()) {
-                    int t = frontier.remove(frontier.size() - 1);
+                    int t = frontier.pop();
                     blk.successors.addAll(basicLeaving[t]);
                     if (finalBlockAt[t] != -1) blk.successors.add(finalBlockAt[t]);
                     blk.successors.addAll(finalVariantBlocks[t]);
@@ -1448,7 +1451,7 @@ public final class Tdfa {
                         if (tr.target < 0) continue;
                         if (!visited.get(tr.target)) {
                             visited.set(tr.target);
-                            frontier.add(tr.target);
+                            frontier.push(tr.target);
                         }
                     }
                 }
@@ -1507,13 +1510,15 @@ public final class Tdfa {
 
         static final boolean debug = Boolean.getBoolean("tdfa.debug");
 
-        int maxReg(List<Config> configs) {
-            int m = 2 * tags - 1;
-            for (Config c : configs) for (int r : c.regs) if (r > m) m = r;
-            return m;
-        }
-
         // ---------------- Algorithm 3 building blocks ----------------
+
+        /** True iff {@code popped} (bitset of popped mask values, bit m = mask m) has any submask of {@code m} set. */
+        private static boolean submaskPopped(long popped, int m) {
+            for (int sub = m; sub != 0; sub = (sub - 1) & m) {
+                if ((popped & (1L << sub)) != 0) return true;
+            }
+            return (popped & 1L) != 0;   // the empty submask (mask 0) closes the loop
+        }
 
         /**
          * ε-closure via DFS with priority-ordered exploration (paper Algorithm 3).
@@ -1527,13 +1532,6 @@ public final class Tdfa {
          * higher-priority paths). This prevents the DFA from having transitions
          * that follow lower-priority alternatives past an accept.
          */
-        /** True iff {@code popped} (bitset of popped mask values, bit m = mask m) has any submask of {@code m} set. */
-        private static boolean submaskPopped(long popped, int m) {
-            for (int sub = m; sub != 0; sub = (sub - 1) & m) {
-                if ((popped & (1L << sub)) != 0) return true;
-            }
-            return (popped & 1L) != 0;   // the empty submask (mask 0) closes the loop
-        }
 
         List<Config> epsilonClosure(List<Config> seed) {
             List<Config> out = new ArrayList<>(seed.size() * 2);
@@ -1669,34 +1667,6 @@ public final class Tdfa {
         // NOT-NEEDED for the re2j-parity contract (TODO.md, 2026-08-18);
         // design recoverable from git history and the BT19 paper.
 
-        /**
-         * Compute per-state DFS arrival order (re2j's densePcs semantics) for the
-         * closure rooted at {@code seed}, assuming the cursor's position-flags
-         * are exactly {@code posMask}. Assertion ε-edges whose required bits
-         * aren't subset of {@code posMask} are skipped — mirroring re2j's
-         * runtime closure, which kills threads failing EMPTY_WIDTH before they
-         * can claim a densePcs slot.
-         *
-         * <p>Unlike {@link #epsilonClosure} which tracks (state, mask) pairs to
-         * preserve assertion-mask info, this does strict per-state dedup: each
-         * NFA state is visited at most once, the first time any of its masks
-         * would be popped.
-         *
-         * <p>The resulting order matches re2j's recursive DFS — a state's entire
-         * subtree is fully explored before any of its lower-priority siblings.
-         * Without this, patterns like ((^|.)* ) get the wrong priority: alt (^|.)
-         * is re-visited with mask=BEGIN_TEXT via the loop-back, and dotState
-         * ends up "before" accept in (state,mask) arrival order even though
-         * re2j (which visits alt once) places it after.
-         *
-         * @param posMask runtime position-flags (subset of
-         *        {@code BEGIN_TEXT|END_TEXT|WORD_BOUNDARY|NO_WORD_BOUNDARY});
-         *        0xF ("all assertions hold") recovers the pre-position-aware
-         *        behavior.
-         * @return int[] indexed by NFA state; value = arrival index (0-based),
-         *         or -1 for unreachable states (incl. states only reachable via
-         *         assertion edges whose requirements aren't in posMask).
-         */
         /** Scratch for computePerStateOrder: reused across the 64-mask loop and states. */
         private int[] psoOrder;
         private boolean[] psoVisited;
@@ -1742,6 +1712,35 @@ public final class Tdfa {
             }
             if (cut >= 0 && cut < live.size() - 1) live.subList(cut + 1, live.size()).clear();
         }
+
+        /**
+         * Compute per-state DFS arrival order (re2j's densePcs semantics) for the
+         * closure rooted at {@code seed}, assuming the cursor's position-flags
+         * are exactly {@code posMask}. Assertion ε-edges whose required bits
+         * aren't subset of {@code posMask} are skipped — mirroring re2j's
+         * runtime closure, which kills threads failing EMPTY_WIDTH before they
+         * can claim a densePcs slot.
+         *
+         * <p>Unlike {@link #epsilonClosure} which tracks (state, mask) pairs to
+         * preserve assertion-mask info, this does strict per-state dedup: each
+         * NFA state is visited at most once, the first time any of its masks
+         * would be popped.
+         *
+         * <p>The resulting order matches re2j's recursive DFS — a state's entire
+         * subtree is fully explored before any of its lower-priority siblings.
+         * Without this, patterns like ((^|.)* ) get the wrong priority: alt (^|.)
+         * is re-visited with mask=BEGIN_TEXT via the loop-back, and dotState
+         * ends up "before" accept in (state,mask) arrival order even though
+         * re2j (which visits alt once) places it after.
+         *
+         * @param posMask runtime position-flags (subset of
+         *        {@code BEGIN_TEXT|END_TEXT|WORD_BOUNDARY|NO_WORD_BOUNDARY});
+         *        0xF ("all assertions hold") recovers the pre-position-aware
+         *        behavior.
+         * @return int[] indexed by NFA state; value = arrival index (0-based),
+         *         or -1 for unreachable states (incl. states only reachable via
+         *         assertion edges whose requirements aren't in posMask).
+         */
 
         int[] computePerStateOrder(int[] seedStates, int posMask) { return computePerStateOrderDfs(seedStates, posMask); }
 
@@ -1868,11 +1867,6 @@ public final class Tdfa {
             return out;
         }
 
-        /**
-         * Allocate registers and emit ops for the transition. {@code vmaps} is per-source-state
-         * to allow sharing registers across transitions out of the same state with identical RHS.
-         * {@code nextReg} is bumped globally so registers are unique across states.
-         */
         /** Shared per-addState "tag has history" bitsets: computed once for
          *  the incoming closure, reused across all tryMap candidates of that
          *  attempt (the per-candidate recompute zeroed and refilled every
@@ -1896,7 +1890,11 @@ public final class Tdfa {
         private int[] canonKeyStamp, canonKeyClass;
         private int canonEpoch;
 
-        /** Grown-on-demand scratch for transitionRegops' per-tag last-sign. */
+        /**
+         * Allocate registers and emit ops for the transition. {@code vmaps} is per-source-state
+         * to allow sharing registers across transitions out of the same state with identical RHS.
+         * {@code nextReg} is bumped globally so registers are unique across states.
+         */
         int[] transitionRegops(List<Config> configs, int sourceStateId) {
             meter.tick();
             // Tagless patterns (count-model usage, the giant bounded-repeat DFAs):
@@ -2055,12 +2053,7 @@ public final class Tdfa {
 
         static final class AddResult { final int targetId; final int[] ops; AddResult(int t, int[] o) { targetId=t; ops=o; } }
 
-        /**
-         * Build the canonical (state-sorted, stable) key signature on this compiler's
-         * scratch buffers. Counting sort by NFA state — O(n + stateCount) — replaces
-         * the former ArrayList copy + TimSort, a per-call hotspot on large closures.
-         */
-        /** Reusable lookup key for {@link #stateIndex}: sig/hash reassigned per probe.
+        /** Reusable lookup key for {@code stateIndex}: sig/hash reassigned per probe.
          *  Used ONLY for {@code get()} against the immutable stored {@link DfaStateKey}s —
          *  never inserted — so single-threaded reassignment is safe. Saves the
          *  ~2 KB sig-array + key allocation on every HIT (the dominant case on
@@ -2179,7 +2172,11 @@ public final class Tdfa {
         AddResult addState(List<Config> configs, int[] ops, List<Config> seed) {
             meter.tick();
             fillKeySig(configs);
-            StateBucket candidates = stateIndex.get(probe);
+             // ProbeKey vs DfaStateKey is the deliberate asymmetric probe
+             // pattern: get() invokes probe.equals(storedKey), which accepts
+             // stored keys; ProbeKey is never stored. See ProbeKey.
+             @SuppressWarnings("CollectionIncompatibleType")
+             StateBucket candidates = stateIndex.get(probe);
             if (candidates != null) {
                 // Compute the shared has-history bitsets once for this closure.
                 int words = (tags + 63) >>> 6;
@@ -2203,7 +2200,7 @@ public final class Tdfa {
                 // members instead of rescanning the whole bucket — that rescan
                 // was the dominant compile cliff on permutation-heavy patterns
                 // (78% of wall time in JFR).
-                StateBucket bucket = (StateBucket) candidates;
+                StateBucket bucket = candidates;
                 if (tags == 0) {
                     for (int cand : bucket.members) {
                         int[] mapped = tryMap(configs, states.get(cand), packedKernels.get(cand), ops);
@@ -2267,9 +2264,9 @@ public final class Tdfa {
                 else fresh.byClass.put(pendingClassHash, new int[]{id});
                 stateIndex.put(new DfaStateKey(Arrays.copyOf(probe.sig, probe.len)), fresh);
             } else if (tags == 0) {
-                ((StateBucket) candidates).members = appendInt(((StateBucket) candidates).members, id);
+                candidates.members = appendInt(candidates.members, id);
             } else {
-                StateBucket b = (StateBucket) candidates;
+                StateBucket b = candidates;
                 // Only the first member of a canon-equal class is ever probed
                 // (see above) — don't grow the list.
                 b.byClass.putIfAbsent(pendingClassHash, new int[]{id});
@@ -2436,19 +2433,11 @@ public final class Tdfa {
             }
         }
 
-        int[] history(int[] seq, int t) {
-            meter.tick();
-            if (seq == null || seq.length == 0) return null;
-            int count = 0;
-            for (int v : seq) if (Math.abs(v) == t) count++;
-            if (count == 0) return null;
-            int[] out = new int[count];
-            int j = 0;
-            for (int v : seq) if (Math.abs(v) == t) out[j++] = (v > 0) ? TAG_POS : TAG_NIL;
-            return out;
-        }
-
+        @SuppressWarnings("ReferenceEquality")
         int[] appendTag(int[] seq, int tag) {
+            // Reference compare against the shared EMPTY sentinel is the point
+            // (hash-consed histories share one array; value-equality would
+            // rescan every empty history).
             if (seq == EMPTY || seq.length == 0) return new int[]{tag};
             int[] out = new int[seq.length + 1];
             System.arraycopy(seq, 0, out, 0, seq.length);
@@ -2458,7 +2447,6 @@ public final class Tdfa {
 
         static final int[] EMPTY = new int[0];
         static final int TAG_POS = 1;
-        static final int TAG_NIL = -1;
     }
 
     static final class Config {
@@ -2751,41 +2739,45 @@ public final class Tdfa {
             return partition;
         }
 
-        /** Per-state attribute signature: accept bit, final-ops id, masks. */
-        SigKey attrSig(int s) {
-            int extra = (!longest ? 1 : 0) + (stateFinalOpsByMask != null ? 1 : 0);
-            int[] sig = new int[5 + extra];
-            fillAttrs(sig, s, 0);
-            return new SigKey(sig);
-        }
+    /** Per-state attribute signature: accept bit, final-ops id, masks. */
+    SigKey attrSig(int s) {
+        int[] sig = new int[5 + attrExtra()];
+        fillAttrs(sig, s, 0);
+        return new SigKey(sig);
+    }
 
-        /** Fill the per-state attribute prefix into sig starting at index i. Returns new index. */
-        int fillAttrs(int[] sig, int s, int i) {
-            sig[i++] = stateMeta[s] & 1;
-            sig[i++] = opSeqId(stateFinalOpsOff[s]);
-            sig[i++] = stateEntryMask[s];
-            sig[i++] = stateAcceptMask[s];
-            sig[i++] = (stateMeta[s] >>> 1) & 0xFFFF;  // range count (structural disambiguator)
-            if (!longest) {
-                int h = 0;
-                int baseSM = s * 64;
-                for (int j = 0; j < 64; j++) h = h * 31 + stateStopOnAcceptMask[baseSM + j];
-                sig[i++] = h;
-            }
-            if (stateFinalOpsByMask != null) {
-                // Variant rows: states with different per-mask φ selections
-                // (or different accept suppression) must never merge.
-                int h = 0;
-                int baseFM = s * 64;
-                for (int j = 0; j < 64; j++) h = h * 31 + stateFinalOpsByMask[baseFM + j];
-                sig[i++] = h;
-            }
-            return i;
-        }
+    /** Extra sig slots occupied by the full 64-cell rows (never a summary:
+     *  two states whose rows differ must never share a Moore group — an
+     *  earlier 32-bit rolling hash admitted birthday collisions (~2⁻³²/pair
+     *  over distinct rows) that silently merged semantically different
+     *  states. Exact cells close that hole by construction.) */
+    int attrExtra() {
+        return (!longest ? 64 : 0) + (stateFinalOpsByMask != null ? 64 : 0);
+    }
 
-        /** Transition signature, normalized on global breakpoints when possible. */
-        SigKey transSig(int s, int[] partition) {
-            int extra = (!longest ? 1 : 0) + (stateFinalOpsByMask != null ? 1 : 0);
+    /** Fill the per-state attribute prefix into sig starting at index i. Returns new index. */
+    int fillAttrs(int[] sig, int s, int i) {
+        sig[i++] = stateMeta[s] & 1;
+        sig[i++] = opSeqId(stateFinalOpsOff[s]);
+        sig[i++] = stateEntryMask[s];
+        sig[i++] = stateAcceptMask[s];
+        sig[i++] = (stateMeta[s] >>> 1) & 0xFFFF;  // range count (structural disambiguator)
+        if (!longest) {
+            int baseSM = s * 64;
+            for (int j = 0; j < 64; j++) sig[i++] = stateStopOnAcceptMask[baseSM + j];
+        }
+        if (stateFinalOpsByMask != null) {
+            // Variant rows: states with different per-mask φ selections
+            // (or different accept suppression) must never merge.
+            int baseFM = s * 64;
+            for (int j = 0; j < 64; j++) sig[i++] = stateFinalOpsByMask[baseFM + j];
+        }
+        return i;
+    }
+
+    /** Transition signature, normalized on global breakpoints when possible. */
+    SigKey transSig(int s, int[] partition) {
+        int extra = attrExtra();
             int base = stateBase[s];
             int count = rangeCount(stateMeta[s]);
             int[] sig;

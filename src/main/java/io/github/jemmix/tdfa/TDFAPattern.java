@@ -3,7 +3,6 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.core.RegexEngine;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;

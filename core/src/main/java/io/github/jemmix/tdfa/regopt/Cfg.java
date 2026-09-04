@@ -13,7 +13,7 @@ import java.util.List;
  *
  * <p>Each {@link Op} is one of:
  * <ul>
- *   <li>{@link #KIND_SET} with {@link #value} = {@link #VAL_POS} or {@link #VAL_NIL}
+ *   <li>{@link #KIND_SET} with {@link Op#value} = {@link #VAL_POS} or {@link #VAL_NIL}
  *       — modeled uniformly; both are "set dst to a value" for dataflow purposes;</li>
  *   <li>{@link #KIND_COPY} ({@code dst <- src});</li>
  *   <li>{@link #KIND_APPEND} ({@code dst <- dst · src}) — multi-valued tags, not yet

@@ -134,7 +134,7 @@ public final class Tnfa {
     }
 
     /** Collect {@link Ast.Tag#fixedOn} / {@link Ast.Tag#fixedOffset} annotations into
-     *  1-indexed arrays for forwarding to {@link Tdfa}. */
+     *  1-indexed arrays for forwarding to the TDFA compiler. */
     private static void collectFixedAnnotations(Ast e, int[] fixedBase, int[] fixedOffset) {
         if (e instanceof Ast.Tag) {
             Ast.Tag t = (Ast.Tag) e;
