@@ -647,14 +647,13 @@ public final class DifferentialFuzzer {
          *       do not, a monotonicity violation. The RANGE form avoids the
          *       fast path entirely (no single-rune prefix). We keep
          *       codepoint-boundary semantics either way.
-         *       Applies when both our engines agree with each other and the
-         *       pattern contains a lone low surrogate.</li>
-         *   <li><b>plain (?i) full simple folding</b> — re2j folds class
-         *       ranges with full Unicode simple folding even without a
-         *       unicode flag, so {@code (?i)\w} matches ſ. We fold ASCII-only
-         *       without {@code (?u)} by design; divergence appears when the
-         *       oracle's match text contains a multi-member fold-group
-         *       codepoint.</li>
+         *   <li><b>lone-low surrogate patterns</b> — re2j's literal-prefix
+         *       fast path lands on pair interiors; we keep
+         *       codepoint-boundary semantics either way. Applies when both
+         *       our engines agree with each other and the pattern contains
+         *       a lone low surrogate. (Plain {@code (?i)} folds full Unicode
+         *       simple folding exactly like re2j since 12d9921 — any fold
+         *       divergence is a real bug, not a known one.)</li>
          * </ul>
          */
         static String knownDivergence(Outcome o) {

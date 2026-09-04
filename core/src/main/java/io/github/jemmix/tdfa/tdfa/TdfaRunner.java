@@ -1605,7 +1605,7 @@ public final class TdfaRunner implements RegexEngine {
         final int[] op = this.ops;
         // Leftmost-first stopOnAccept: pre-load the mask table when not in
         // longest-match mode so the inner loop can short-circuit on first
-        // accepting state (matching the slow path). See docs/REBAR-SPEEDUP-PLAN.md §Tier-2 #3.
+        // accepting state (matching the slow path).
         final boolean pm = !this.longestMatch;
         // Pooled regs (per-thread scratch): no allocation on the (frequent)
         // failed-walk path. On success the array is cloned into the MatchHolder

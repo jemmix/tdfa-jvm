@@ -14,9 +14,11 @@ import java.util.Map;
  * can read re2j's package-private static state directly — this makes it bit-exact with re2j
  * by construction (no transcription of the ~4000-line {@code UnicodeTables.java}).
  *
- * <p>Test-scope only for now: it depends on {@code com.google.re2j} being on the classpath.
- * A forthcoming separately-versioned jar (matching re2j's Unicode version) will embed the
- * tables verbatim so the library can ship re2j-exact Unicode without depending on re2j.
+ * <p>Test-scope by design: it depends on {@code com.google.re2j} being on the
+ * classpath, which makes it bit-exact with the live oracle by construction.
+ * The shippable tiers are the pinned generated tables in the {@code :unicode}
+ * modules (UCD 6.0.0 = re2j-parity tier, UCD 17.0.0 = modern tier); this
+ * provider exists so parity tests exercise the oracle's own tables directly.
  *
  * <p>re2j stores each table as {@code int[][]} of {@code {lo, hi, stride}} triples (stride
  * may be > 1 for sparse entries); we expand to our flat {@code int[] {lo,hi,lo,hi,...}} pairs.

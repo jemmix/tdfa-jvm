@@ -53,8 +53,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * run at all — {@code engines = [...]} must contain a {@code java/.*} entry
  * (rebar excludes Java from 245 of the 359 scenarios: multi-pattern regex-set
  * APIs, hyperscan-only overlap reporting, aho-corasick, dictionary lookups,
- * etc. — out of scope for a Java regex library; see
- * {@code docs/PARITY-PLAN.md}). The filter is applied at parameter-build
+ * etc. — out of scope for a Java regex library). The filter is applied at
+ * parameter-build
  * time in {@link #scenariosProvider()}, so out-of-scope scenarios do not
  * appear as test cases at all. Visible (gray) skips remain only for the
  * named over-budget bombs (see {@link #BOMB_SCENARIOS}) and known per-scenario
@@ -65,9 +65,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * codepoint-oriented {@code .} vs re2's byte orientation on non-BMP input),
  * we patch the upstream rebar scenario corpus to record our actual count
  * under an explicit {@code { engine = 're2', count = N }} entry, with a
- * comment explaining the divergence. See
- * {@code vendor/patches/rebar/01-dot-matches-byte-codepoint.patch} and the
- * "Rebar scenario scope" section of {@code docs/PARITY-PLAN.md}.
+ * comment explaining the divergence — see the rebar patches under
+ * {@code vendor/patches/rebar/}.
  *
  * <p>Skipped (visible, gray):
  * <ul>
@@ -340,8 +339,7 @@ class RebarScenarioParityTest {
 
     /**
      * End-of-suite summary printed once all parameterized invocations finish.
-     * Surfaces the slowest tests and the skip-reason histogram so the triage
-     * in {@code docs/REBAR-PARITY-PLAN.md} can be kept in sync with reality.
+     * Surfaces the slowest tests and the skip-reason histogram for triage.
      */
     @AfterAll
     static void printSummary() {
