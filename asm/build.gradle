@@ -1,5 +1,7 @@
 plugins {
     id 'java-library'
+    id 'net.ltgt.errorprone'
+    id 'com.github.spotbugs'
 }
 
 group = 'io.github.jemmix'
@@ -17,8 +19,9 @@ repositories {
 dependencies {
     api project(':core')
     implementation 'org.ow2.asm:asm:9.9.1'
+    errorprone 'com.google.errorprone:error_prone_core:2.50.0'
+    spotbugs 'com.github.spotbugs:spotbugs:4.9.3'
 }
-
 
 jar {
     manifest {
@@ -29,4 +32,35 @@ jar {
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     options.debug = true
+    // Style-modernization checks disabled on a freeze-bound codebase: the
+    // mechanical rewrites (pattern-matching instanceof, arrow switches)
+    // churn verified-hot code paths for zero semantic gain. Re-enable only
+    // with a dedicated no-behavior-change round + full perf gate.
+    options.errorprone {
+        disable 'PatternMatchingInstanceof'
+        disable 'StatementSwitchToExpressionSwitch'
+    }
+}
+
+// SpotBugs: hard-fails on findings AND on analysis errors (never a false
+// green — a degraded analysis exits non-zero). CAVEAT (2026-09): SpotBugs
+// 4.9.x cannot scan JDK 26 runtime classes (class file major 70), so on
+// JDK >= 26 the tasks are skipped with a warning instead of failing the
+// build; on JDK <= 25 (or once upstream supports it) they enforce. Standalone
+// invocation for any JDK: scripts/lint-spotbugs.sh. Triage log:
+// docs/REVIEW-2026-09.md.
+tasks.withType(com.github.spotbugs.snom.SpotBugsTask).configureEach {
+    ignoreFailures = false
+    onlyIf {
+        if (org.gradle.api.JavaVersion.current().majorVersion.toInteger() >= 26) {
+            logger.lifecycle("spotbugs: skipped - SpotBugs 4.9.x cannot scan JDK 26 runtime classes; run scripts/lint-spotbugs.sh on JDK <= 25")
+            false
+        } else {
+            true
+        }
+    }
+    reports {
+        xml.required = true
+        html.required = true
+    }
 }

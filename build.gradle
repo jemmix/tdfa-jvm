@@ -1,5 +1,23 @@
 plugins {
     id 'java-library'
+    // Static analysis (2026-09 pre-freeze round), versions declared here and
+    // inherited by :core and :asm. Kept deliberately minimal and centralized:
+    // ErrorProne (compile-time semantic checks, also usable as a plain javac
+    // plugin — decade-stable invocation) and SpotBugs (bytecode analysis over
+    // the jar, also runnable standalone via `java -jar spotbugs.jar -textui`).
+    // Applied only to the three library modules (facade, core, asm) —
+    // tests/benchmarks stay lint-free.
+    id 'net.ltgt.errorprone' version '5.1.1'
+    id 'com.github.spotbugs' version '6.5.11'
+    id "org.jetbrains.qodana" version "2026.2.1"
+}
+
+qodana {
+    resultsPath = "build/qodana-result"
+}
+
+tasks.qodanaScan {
+    arguments = ["--print-problems", "--fail-threshold", "0"]
 }
 
 group = 'io.github.jemmix'
@@ -20,6 +38,8 @@ dependencies {
     // Per-pattern bytecode generation backend; the facade orchestrates it
     // directly (no engine SPI — the module graph is the strategy).
     api project(':asm')
+    errorprone 'com.google.errorprone:error_prone_core:2.50.0'
+    spotbugs 'com.github.spotbugs:spotbugs:4.9.3'
 }
 
 // Materialize vendored third-party sources/resources into build/generated/.
@@ -43,4 +63,35 @@ jar {
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     options.debug = true
+    // Style-modernization checks disabled on a freeze-bound codebase: the
+    // mechanical rewrites (pattern-matching instanceof, arrow switches)
+    // churn verified-hot code paths for zero semantic gain. Re-enable only
+    // with a dedicated no-behavior-change round + full perf gate.
+    options.errorprone {
+        disable 'PatternMatchingInstanceof'
+        disable 'StatementSwitchToExpressionSwitch'
+    }
+}
+
+// SpotBugs: hard-fails on findings AND on analysis errors (never a false
+// green — a degraded analysis exits non-zero). CAVEAT (2026-09): SpotBugs
+// 4.9.x cannot scan JDK 26 runtime classes (class file major 70), so on
+// JDK >= 26 the tasks are skipped with a warning instead of failing the
+// build; on JDK <= 25 (or once upstream supports it) they enforce. Standalone
+// invocation for any JDK: scripts/lint-spotbugs.sh. Triage log:
+// docs/REVIEW-2026-09.md.
+tasks.withType(com.github.spotbugs.snom.SpotBugsTask).configureEach {
+    ignoreFailures = false
+    onlyIf {
+        if (org.gradle.api.JavaVersion.current().majorVersion.toInteger() >= 26) {
+            logger.lifecycle("spotbugs: skipped - SpotBugs 4.9.x cannot scan JDK 26 runtime classes; run scripts/lint-spotbugs.sh on JDK <= 25")
+            false
+        } else {
+            true
+        }
+    }
+    reports {
+        xml.required = true
+        html.required = true
+    }
 }

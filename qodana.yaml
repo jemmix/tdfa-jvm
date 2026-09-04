@@ -1,0 +1,19 @@
+version: "1.0"
+linter: qodana-jvm-community
+profile:
+  name: qodana.recommended
+include:
+  - name: CheckDependencyRules
+  - name: ConstantConditions
+  - name: SuspiciousNameCombination
+exclude:
+  - name: ALL
+    paths:
+      - build
+      - benchmarks
+      - tests
+      - vendor
+      - unicode
+      - lib
+      - testlib
+withinDocker: false
