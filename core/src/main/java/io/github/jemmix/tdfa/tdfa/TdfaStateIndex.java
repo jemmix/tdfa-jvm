@@ -30,9 +30,7 @@ final class TdfaStateIndex {
         private int stamp;
         /** Per-state class signatures (null for tagless), parallel to states. */
         private final List<int[]> stateClassIds = new ArrayList<>();
-        /** Class signature of the pending closure (shared scratch — copied on append). */
-        private int[] pendingClass;
-        private long pendingClassHash;
+        /** Class signature scratch for the pending closure (copied on append). */
         private int[] classScratch;
         private int pendingCanonLen;
         /** Epoch-stamped register → class-id map for canonSignature (primitive:
@@ -167,8 +165,19 @@ final class TdfaStateIndex {
              // stored keys; ProbeKey is never stored. See ProbeKey.
              @SuppressWarnings("CollectionIncompatibleType")
              StateBucket candidates = stateIndex.get(probe);
-            if (candidates != null) {
-                // Compute the shared has-history bitsets once for this closure.
+
+            // Canonical class signature for TAGGED closures — computed for
+            // EVERY state, not just probe hits. The prior code filled
+            // pendingClass/pendingClassHash only when a same-shape candidate
+            // existed, so a first-of-shape state stored the PREVIOUS closure's
+            // class (or null/0L for the very first state): a later identical
+            // closure then missed the byClass probe entirely — permanent
+            // missed merges, state-count/cap pressure [review P1 #1].
+            int[] canon = null;
+            long canonHash = 0;
+            if (owner.tags > 0) {
+                // Shared has-history bitsets for this closure: consumed by
+                // canonSignature below AND by every tryMap of this attempt.
                 int words = (owner.tags + 63) >>> 6;
                 if (hasHistShared == null || hasHistShared.length < configs.size()
                         || hasHistShared[0].length < words) {
@@ -179,6 +188,13 @@ final class TdfaStateIndex {
                     // no content rescan.
                     hasHistShared[i] = owner.hist.bits(configs.get(i).l, words);
                 }
+                int[] scratch = canonSignature(configs, hasHistShared);
+                int canonLen = pendingCanonLen;
+                canon = Arrays.copyOf(scratch, canonLen);   // detach from scratch
+                canonHash = TdfaCompiler.mix(foldClass(canon, canonLen));
+            }
+
+            if (candidates != null) {
                 // Order-exact signature: candidates have the identical ordered
                 // (state, l) sequence; only their register assignment can differ.
                 // Tagged buckets are further partitioned by CLASS SIGNATURE:
@@ -190,17 +206,13 @@ final class TdfaStateIndex {
                 // members instead of rescanning the whole bucket — that rescan
                 // was the dominant compile cliff on permutation-heavy patterns
                 // (78% of wall time in JFR).
-                StateBucket bucket = candidates;
                 if (owner.tags == 0) {
-                    for (int cand : bucket.members) {
+                    for (int cand : candidates.members) {
                         int[] mapped = tryMap(configs, owner.states.get(cand), owner.packedKernels.get(cand), ops);
                         if (mapped != null) return new AddResult(cand, mapped);
                     }
                 } else {
-                    int[] attemptCanon = canonSignature(configs, hasHistShared);
-                    int canonLen = pendingCanonLen;
-                    long ch = TdfaCompiler.mix(foldClass(attemptCanon, canonLen));
-                    int[] compatibles = bucket.byClass.get(ch);
+                    int[] compatibles = candidates.byClass.get(canonHash);
                     if (compatibles != null && compatibles.length > 0) {
                         // Canon-equal members are interchangeable: the bijection
                         // succeeds by construction, and ops-rewrite coverage
@@ -210,15 +222,14 @@ final class TdfaStateIndex {
                         // canon-equal members was the residual quadratic.
                         int cand = compatibles[0];
                         int[] stored = stateClassIds.get(cand);
-                        if (stored.length == canonLen && rangeEquals(attemptCanon, 0, canonLen, stored, 0, canonLen)) {
+                        if (stored != null && stored.length == canon.length
+                                && rangeEquals(canon, 0, canon.length, stored, 0, stored.length)) {
                             int[] mapped = tryMap(configs, owner.states.get(cand), owner.packedKernels.get(cand), ops);
                             if (mapped != null) return new AddResult(cand, mapped);
                             // ops-rewrite failed: outcome is member-independent,
                             // fall through to append a new state.
                         }
                     }
-                    pendingClass = Arrays.copyOf(attemptCanon, canonLen);
-                    pendingClassHash = ch;
                 }
                 // All same-sequence states failed the register bijection: this
                 // closure genuinely needs a new DFA state. Fall through.
@@ -247,11 +258,12 @@ final class TdfaStateIndex {
             } else {
                 owner.stateSeeds.add(null);
             }
-            stateClassIds.add(pendingClass);
+            // Own class for tagged states, null for tagless (never read there).
+            stateClassIds.add(canon);
             if (candidates == null) {
                 StateBucket fresh = new StateBucket();
                 if (owner.tags == 0) fresh.members = new int[]{id};
-                else fresh.byClass.put(pendingClassHash, new int[]{id});
+                else fresh.byClass.put(canonHash, new int[]{id});
                 stateIndex.put(new DfaStateKey(Arrays.copyOf(probe.sig, probe.len)), fresh);
             } else if (owner.tags == 0) {
                 candidates.members = appendInt(candidates.members, id);
@@ -259,7 +271,7 @@ final class TdfaStateIndex {
                 StateBucket b = candidates;
                 // Only the first member of a canon-equal class is ever probed
                 // (see above) — don't grow the list.
-                b.byClass.putIfAbsent(pendingClassHash, new int[]{id});
+                b.byClass.putIfAbsent(canonHash, new int[]{id});
             }
             owner.builders.add(new DfaStateBuilder(id));
             if (isAccept) owner.accept.set(id);
