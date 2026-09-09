@@ -24,8 +24,8 @@ group = 'io.github.jemmix'
 version = '0.1.0-SNAPSHOT'
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
 }
 
 repositories {
@@ -39,7 +39,7 @@ dependencies {
     // directly (no engine SPI — the module graph is the strategy).
     api project(':asm')
     errorprone 'com.google.errorprone:error_prone_core:2.50.0'
-    spotbugs 'com.github.spotbugs:spotbugs:4.9.3'
+    spotbugs 'com.github.spotbugs:spotbugs:4.9.8'
 }
 
 // Materialize vendored third-party sources/resources into build/generated/.
@@ -62,11 +62,10 @@ jar {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
-    // Java 8 bytecode floor (2026-09, docs/REVIEW-2026-09.md §1b): the facade
-    // SHIPS, so --release 8 — language level AND API surface both enforced.
-    // (A major-52 floor on core/asm but a major-61 facade would strand
-    // Java 8 consumers.)
-    it.options.release = 8
+    // Floor policy (2026-09 r4, docs/REVIEW-2026-09.md §1d): the facade
+    // SHIPS as Java 25 bytecode (latest LTS); core and asm ship Java 8
+    // bytecode (see their build.gradle — real-javac-8 mode included).
+    it.options.release = 25
     options.debug = true
     // Style-modernization checks disabled on a freeze-bound codebase: the
     // mechanical rewrites (pattern-matching instanceof, arrow switches)
@@ -79,14 +78,14 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 // SpotBugs: hard-fails on findings AND on analysis errors (never a false
-// green — a degraded analysis exits non-zero). CAVEAT (2026-09): SpotBugs
-// 4.9.x cannot scan JDK 26 runtime classes (class file major 70), so on
-// JDK >= 26 the tasks are skipped with a warning instead of failing the
-// build; on JDK <= 25 (or once upstream supports it) they enforce. Standalone
-// invocation for any JDK: scripts/lint-spotbugs.sh. Triage log:
-// docs/REVIEW-2026-09.md.
+// green — a degraded analysis exits non-zero). Analyzer 4.9.8 (Java 25
+// classfile support). Exclusions are exclusively documented deferred review
+// items — see config/spotbugs/exclusions.xml. On JDK >= 26 the tasks
+// self-skip (SpotBugs cannot scan JDK 26 runtime classes); on <= 25 they
+// enforce. Standalone: scripts/lint-spotbugs.sh. Triage: docs/REVIEW-2026-09.md.
 tasks.withType(com.github.spotbugs.snom.SpotBugsTask).configureEach {
     ignoreFailures = false
+    excludeFilter = rootProject.file('config/spotbugs/exclusions.xml')
     onlyIf {
         if (org.gradle.api.JavaVersion.current().majorVersion.toInteger() >= 26) {
             logger.lifecycle("spotbugs: skipped - SpotBugs 4.9.x cannot scan JDK 26 runtime classes; run scripts/lint-spotbugs.sh on JDK <= 25")

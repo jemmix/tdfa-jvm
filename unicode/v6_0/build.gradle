@@ -7,8 +7,8 @@ group = 'io.github.jemmix'
 version = '0.1.0-SNAPSHOT'
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
 }
 
 repositories {
@@ -43,7 +43,7 @@ jar {
 }
 
 tasks.withType(JavaCompile).configureEach {
-    it.options.release = 8  // Java 8 floor: this module SHIPS (docs/REVIEW-2026-09.md)
+    it.options.release = 25  // Floor policy r4 (docs/REVIEW-2026-09.md §1d): ships as Java 25 (latest LTS)
     options.encoding = 'UTF-8'
     options.debug = true
 }

@@ -6,8 +6,8 @@ group = 'io.github.jemmix'
 version = '0.1.0-SNAPSHOT'
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
 }
 
 repositories {
@@ -24,9 +24,9 @@ jar {
     }
 }
 
-// Java 8 bytecode floor (2026-09, docs/REVIEW-2026-09.md §1b): this module
-// SHIPS, so it compiles with --release 8 — language level AND API surface are
-// both compiler-enforced.
+// Floor policy (2026-09 r4, docs/REVIEW-2026-09.md §1d): this module SHIPS
+// as Java 25 bytecode (latest LTS) — --release 25 enforces language level
+// AND API surface.
 tasks.withType(JavaCompile).configureEach {
-    it.options.release = 8
+    it.options.release = 25
 }

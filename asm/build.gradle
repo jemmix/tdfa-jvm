@@ -8,8 +8,8 @@ group = 'io.github.jemmix'
 version = '0.1.0-SNAPSHOT'
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
 }
 
 repositories {
@@ -20,7 +20,7 @@ dependencies {
     api project(':core')
     implementation 'org.ow2.asm:asm:9.9.1'
     errorprone 'com.google.errorprone:error_prone_core:2.50.0'
-    spotbugs 'com.github.spotbugs:spotbugs:4.9.3'
+    spotbugs 'com.github.spotbugs:spotbugs:4.9.8'
 }
 
 jar {
@@ -29,11 +29,24 @@ jar {
     }
 }
 
+// Java 8 floor, two enforcement modes (2026-09 r4, docs/REVIEW-2026-09.md §1d):
+//  - default: cross-compile with --release 8 (language level AND API surface
+//    via ct.sym; ErrorProne still hosted inside the compiler).
+//  - -PrealJdk8 (the CI jar pipeline): pin the compiler toolchain to a REAL
+//    JDK 8 javac — the strongest possible compat proof. javac 8 has no
+//    --release flag, and ErrorProne 2.x cannot host inside it (needs 17+),
+//    so both are dropped in that mode only.
+def realJdk8 = providers.gradleProperty('realJdk8').isPresent()
+if (realJdk8) {
+    java.toolchain.languageVersion = JavaLanguageVersion.of(8)
+}
+
 tasks.withType(JavaCompile).configureEach {
-    // Java 8 bytecode floor (2026-09, docs/REVIEW-2026-09.md §1b): this module
-    // SHIPS, so it compiles with --release 8 — language level AND API surface
-    // are both compiler-enforced. Tests/benchmarks stay on modern JDKs.
-    it.options.release = 8
+    if (realJdk8) {
+        options.errorprone.enabled = false
+    } else {
+        it.options.release = 8
+    }
     options.encoding = 'UTF-8'
     options.debug = true
     // Style-modernization checks disabled on a freeze-bound codebase: the
@@ -47,14 +60,14 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 // SpotBugs: hard-fails on findings AND on analysis errors (never a false
-// green — a degraded analysis exits non-zero). CAVEAT (2026-09): SpotBugs
-// 4.9.x cannot scan JDK 26 runtime classes (class file major 70), so on
-// JDK >= 26 the tasks are skipped with a warning instead of failing the
-// build; on JDK <= 25 (or once upstream supports it) they enforce. Standalone
-// invocation for any JDK: scripts/lint-spotbugs.sh. Triage log:
-// docs/REVIEW-2026-09.md.
+// green — a degraded analysis exits non-zero). Analyzer 4.9.8 (Java 25
+// classfile support). Exclusions are exclusively documented deferred review
+// items — see config/spotbugs/exclusions.xml. On JDK >= 26 the tasks
+// self-skip (SpotBugs cannot scan JDK 26 runtime classes); on <= 25 they
+// enforce. Standalone: scripts/lint-spotbugs.sh. Triage: docs/REVIEW-2026-09.md.
 tasks.withType(com.github.spotbugs.snom.SpotBugsTask).configureEach {
     ignoreFailures = false
+    excludeFilter = rootProject.file('config/spotbugs/exclusions.xml')
     onlyIf {
         if (org.gradle.api.JavaVersion.current().majorVersion.toInteger() >= 26) {
             logger.lifecycle("spotbugs: skipped - SpotBugs 4.9.x cannot scan JDK 26 runtime classes; run scripts/lint-spotbugs.sh on JDK <= 25")
