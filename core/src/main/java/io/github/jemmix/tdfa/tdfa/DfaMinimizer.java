@@ -42,6 +42,10 @@ import java.util.Map;
         final int[] stateEntryMask, stateAcceptMask, stateStopOnAcceptMask;
         final int[] stateFinalOpsByMask;
         final boolean longest;
+        /** Cap on n×K range-normalization cells (read per compile, like the
+         *  other determinization budgets). Default 32 M cells = 128 MiB of
+         *  compile-time scratch worst case. Override -Dtdfa.minimize.norm.cells. */
+        final long maxNormCells;
         /** Op-sequence interning: maps the byte content of an OP_END-terminated block to a unique int id. */
         final Map<OpSeq, Integer> opSeqIds = new HashMap<>();
         /** Cached op-sequence id per ops[] offset (lazily computed). -1 = not computed. */
@@ -68,6 +72,7 @@ import java.util.Map;
             this.stateStopOnAcceptMask = stateStopOnAcceptMask;
             this.stateFinalOpsByMask = stateFinalOpsByMask;
             this.longest = longest;
+            this.maxNormCells = Integer.getInteger("tdfa.minimize.norm.cells", 1 << 25);
             this.opsIdAt = new int[ops.length];
             java.util.Arrays.fill(this.opsIdAt, -1);
             detectOverlapsAndInit();
@@ -112,9 +117,21 @@ import java.util.Map;
             for (int b : bps) globalBps[i++] = b;
         }
 
-        /** Per state, per global bp, find the state-range index covering it. Linear merge scan. */
+        /** Per state, per global bp, find the state-range index covering it. Linear merge scan.
+         *  Dimension guard [review P1 #3]: n×K is bounded by a cell budget read
+         *  PER COMPILE (constructor stores it) — K is the union of every
+         *  state's breakpoints and no other cap covers it, so without this a
+         *  wide DFA under the 20 K-state minimize gate could overflow int
+         *  (NegativeArraySizeException) or request a multi-GB row table. Over
+         *  the budget, minimization degrades to the unnormalized (correct,
+         *  less-merging) path — same fallback as overlapping ranges. */
         private void computeStateRangeMapping() {
             int K = globalBps.length;
+            if ((long) n * (long) K > maxNormCells) {
+                useNormalized = false;
+                stateRangeAt = null;
+                return;
+            }
             stateRangeAt = new int[n * K];
             for (int s = 0; s < n; s++) {
                 int base = stateBase[s];
