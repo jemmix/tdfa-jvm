@@ -29,6 +29,16 @@ public interface RegexEngine {
     /**
      * Find the leftmost match starting at or after {@code from}, returning
      * its capture registers, or {@code null} if none.
+     *
+     * <p>Contract: {@code from} must lie in {@code [0, input.length()]} and
+     * {@code input} must be non-null — otherwise implementations throw
+     * {@link IndexOutOfBoundsException} / {@link NullPointerException}
+     * respectively. The interpreter enforces the bounds check; the facade's
+     * matchers validate before dispatching, and the code-generated tier
+     * inherits the guarantee through them (calling a generated engine's
+     * {@code match} directly with an out-of-range {@code from} surfaces the
+     * walk's own {@code IndexOutOfBoundsException} — same class, less
+     * polite message). The input must not be mutated during the call.
      */
     MatchResult match(CharSequence input, int from);
 

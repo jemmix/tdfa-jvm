@@ -361,6 +361,10 @@ public final class TdfaRunner implements RegexEngine {
     }
 
     @Override public MatchResult match(CharSequence input, int from) {
+        // Interface contract (see RegexEngine.match): clean bounds failure,
+        // never the walk's raw StringIndexOutOfBoundsException.
+        if (from < 0 || from > input.length())
+            throw new IndexOutOfBoundsException("from: " + from + ", length: " + input.length());
         MatchHolder h;
         if (input instanceof String) {
             String s = (String) input;

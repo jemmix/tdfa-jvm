@@ -72,13 +72,19 @@ public final class ShellEmitter {
         private final RegexEngine engine;
         private final Supplier<RegexEngine> wholeSupplier;
         private final String engineInternalName;
+        /** Pinned Unicode tables ({@code null} = process default) — threaded
+         *  into the shell's super-ctor so serialization round-trips keep the
+         *  provider identity. */
+        private final io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider;
 
         public Spec(String pattern, int flags, int programSize,
                     RegexEngine engine, Supplier<RegexEngine> wholeSupplier,
-                    String engineInternalName) {
+                    String engineInternalName,
+                    io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
             this.pattern = pattern; this.flags = flags; this.programSize = programSize;
             this.engine = engine; this.wholeSupplier = wholeSupplier;
             this.engineInternalName = engineInternalName;
+            this.provider = provider;
         }
         public String pattern() { return pattern; }
         public int flags() { return flags; }
@@ -86,6 +92,7 @@ public final class ShellEmitter {
         public RegexEngine engine() { return engine; }
         public Supplier<RegexEngine> wholeSupplier() { return wholeSupplier; }
         public String engineInternalName() { return engineInternalName; }
+        public io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider() { return provider; }
     }
 
     /**
@@ -288,8 +295,10 @@ public final class ShellEmitter {
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER,
                 patOwner, null, TDFAPATTERN, null);
         cw.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, "eng", engDesc, null, null).visitEnd();
+        // (String pattern, int flags, int ps, RegexEngine e, Supplier w, UnicodeDataProvider prov, Eng eng)
+        String provDesc = "Lio/github/jemmix/tdfa/unicode/UnicodeDataProvider;";
         mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>",
-                "(Ljava/lang/String;IIL" + ENGINE_ITF + ";Ljava/util/function/Supplier;" + engDesc + ")V", null, null);
+                "(Ljava/lang/String;IIL" + ENGINE_ITF + ";Ljava/util/function/Supplier;" + provDesc + engDesc + ")V", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
@@ -297,10 +306,11 @@ public final class ShellEmitter {
         mv.visitVarInsn(Opcodes.ILOAD, 3);
         mv.visitVarInsn(Opcodes.ALOAD, 4);
         mv.visitVarInsn(Opcodes.ALOAD, 5);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, TDFAPATTERN, "<init>",
-                "(Ljava/lang/String;IIL" + ENGINE_ITF + ";Ljava/util/function/Supplier;)V", false);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitVarInsn(Opcodes.ALOAD, 6);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, TDFAPATTERN, "<init>",
+                "(Ljava/lang/String;IIL" + ENGINE_ITF + ";Ljava/util/function/Supplier;" + provDesc + ")V", false);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ALOAD, 7);
         mv.visitFieldInsn(Opcodes.PUTFIELD, patOwner, "eng", engDesc);
         mv.visitInsn(Opcodes.RETURN);
         mv.visitMaxs(0, 0);
@@ -345,9 +355,10 @@ public final class ShellEmitter {
                     ? Class.forName(engOwner.replace('/', '.'), true, gcl)
                     : RegexEngine.class;
             return patCls.getDeclaredConstructor(
-                    String.class, int.class, int.class, RegexEngine.class, Supplier.class, engCls
+                    String.class, int.class, int.class, RegexEngine.class, Supplier.class,
+                    io.github.jemmix.tdfa.unicode.UnicodeDataProvider.class, engCls
             ).newInstance(spec.pattern(), spec.flags(), spec.programSize(),
-                    engInstance, spec.wholeSupplier(), engInstance);
+                    engInstance, spec.wholeSupplier(), spec.provider(), engInstance);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("shell emission failed", e);
         }

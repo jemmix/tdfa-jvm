@@ -1,9 +1,25 @@
 package io.github.jemmix.tdfa.core;
 
 /**
- * A successful match. Per-tag offsets are stored in the final-register block of the
- * runtime register file (R_f at indices [{@code tags .. 2*tags - 1}]). Whole-match
- * bounds are passed separately by the runner.
+ * A successful match: an immutable snapshot of the whole-match bounds and
+ * every capture tag's offsets. Per-tag offsets are stored in the
+ * final-register block of the runtime register file (R_f at indices
+ * {@code [tags .. 2*tags - 1]}); whole-match bounds are passed separately by
+ * the runner.
+ *
+ * <p><b>NIL convention:</b> a group (or tag) that did not participate in the
+ * match reports {@code -1} for both its start and end — there is no separate
+ * "matched" flag; {@code start(g) == -1} IS the test. Whole-match bounds are
+ * always {@code >= 0}.
+ *
+ * <p><b>Thread safety:</b> immutable; safe to share across threads.
+ *
+ * <p><b>Engine-surface members:</b> the constructor, {@link #reconstructFixed}
+ * and {@code raw()} are consumed by the engines — including ASM-GENERATED
+ * classes, which resolve them by name at runtime. They are public for that
+ * mechanical reason only and are NOT part of the user API; their signatures
+ * are frozen with the emitted-bytecode surface (rename = linkage error in
+ * generated code).
  */
 public final class MatchResult {
     private final int[] regs;
@@ -16,26 +32,39 @@ public final class MatchResult {
     private final int matchStart;
     private final int matchEnd;
 
+    /** Engine surface (see class doc): builds a snapshot over the runner's
+     *  register file. {@code regs} is retained, not copied — runners hand
+     *  over ownership of a per-match array. */
     public MatchResult(int[] regs, int finalRegBase, int groupCount, int matchStart, int matchEnd) {
         this.regs = regs;
         this.finalRegBase = finalRegBase;
         this.groupCount = groupCount;
-        this.matchStart = matchStart; this.matchEnd = matchEnd;
+        this.matchStart = matchStart;
+        this.matchEnd = matchEnd;
     }
 
+    /** Number of capturing groups, excluding group 0. */
     public int groupCount() { return groupCount; }
 
-    /** Tag t (1-indexed). Tag 2i-1 = open of group i, tag 2i = close of group i. */
+    /** Tag {@code t} (1-indexed; tag 2i-1 = open of group i, tag 2i = close of
+     *  group i). Valid range {@code [1, 2*groupCount()]}; {@code -1} = unset (NIL).
+     * @throws IndexOutOfBoundsException outside the valid range. */
     public int tag(int t) {
+        if (t < 1 || t > 2 * groupCount)
+            throw new IndexOutOfBoundsException("tag " + t + " (valid: 1.." + 2 * groupCount + ")");
         return regs[finalRegBase + (t - 1)];
     }
 
+    /** Start offset (inclusive) of {@code group} (0 = whole match); {@code -1} = unset (NIL).
+     * @throws IndexOutOfBoundsException outside {@code [0, groupCount()]}. */
     public int start(int group) {
         if (group < 0 || group > groupCount) throw new IndexOutOfBoundsException("group " + group);
         if (group == 0) return matchStart;
         return tag(2 * (group - 1) + 1);
     }
 
+    /** End offset (exclusive) of {@code group} (0 = whole match); {@code -1} = unset (NIL).
+     * @throws IndexOutOfBoundsException outside {@code [0, groupCount()]}. */
     public int end(int group) {
         if (group < 0 || group > groupCount) throw new IndexOutOfBoundsException("group " + group);
         if (group == 0) return matchEnd;
@@ -52,6 +81,7 @@ public final class MatchResult {
         return out;
     }
 
+    /** Engine surface (see class doc): the live register array backing this snapshot. */
     int[] raw() { return regs; }
 
     /**

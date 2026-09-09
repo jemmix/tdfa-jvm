@@ -62,7 +62,7 @@ final class PatternCompiler {
             if (vmSwitched()) {
                 obs.note("engine", "shared-interpreter (tdfa.engine=VM)");
                 return new TDFAPattern(regex, flags, ps,
-                        new TdfaRunner(tdfa), anchoredVm(fl, disableUnicodeGroups, longest, prov));
+                        new TdfaRunner(tdfa), anchoredVm(fl, disableUnicodeGroups, longest, prov), provider);
             }
 
             if (factory != null) {
@@ -75,13 +75,13 @@ final class PatternCompiler {
                 try {
                     Pattern p = (Pattern) io.github.jemmix.tdfa.asm.ShellEmitter.emit(
                             new io.github.jemmix.tdfa.asm.ShellEmitter.Spec(
-                                    regex, flags, ps, eng, whole, null));
+                                    regex, flags, ps, eng, whole, null, provider));
                     obs.note("engine", "byo-shell");
                     return p;
                 } catch (RuntimeException ex) {
                     if (Boolean.getBoolean("tdfa.gen.debug")) ex.printStackTrace();
                     obs.note("engine", "shared (byo-shell emission failed)");
-                    return new TDFAPattern(regex, flags, ps, eng, whole);
+                    return new TDFAPattern(regex, flags, ps, eng, whole, provider);
                 }
             }
 
@@ -99,7 +99,7 @@ final class PatternCompiler {
                 if (Boolean.getBoolean("tdfa.gen.debug")) genFailure.printStackTrace();
                 obs.note("engine", "shared-interpreter (engine emission failed)");
                 return new TDFAPattern(regex, flags, ps,
-                        new TdfaRunner(tdfa), anchoredVm(fl, disableUnicodeGroups, longest, prov));
+                        new TdfaRunner(tdfa), anchoredVm(fl, disableUnicodeGroups, longest, prov), provider);
             }
             obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.ENGINE,
                     System.nanoTime() - t1, 0);
@@ -108,14 +108,14 @@ final class PatternCompiler {
                         new io.github.jemmix.tdfa.asm.ShellEmitter.Spec(
                                 regex, flags, ps, gen.engine(),
                                 anchoredAsm(fl, disableUnicodeGroups, longest, prov),
-                                gen.owner()));
+                                gen.owner(), provider));
                 obs.note("engine", "generated");
                 return p;
             } catch (RuntimeException | LinkageError ex) {
                 if (Boolean.getBoolean("tdfa.gen.debug")) ex.printStackTrace();
                 obs.note("engine", "shared-interpreter (shell emission failed)");
                 return new TDFAPattern(regex, flags, ps,
-                        new TdfaRunner(tdfa), anchoredVm(fl, disableUnicodeGroups, longest, prov));
+                        new TdfaRunner(tdfa), anchoredVm(fl, disableUnicodeGroups, longest, prov), provider);
             }
         } catch (RuntimeException e) {
             throw io.github.jemmix.tdfa.core.CompiledRegex.translate(e, regex);

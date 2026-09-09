@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.RegexEngine;
+import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -17,6 +18,12 @@ import java.util.function.Supplier;
  *
  * <p>Public because generated shells are defined in a child classloader
  * (a different runtime package) and must subclass and call into it.
+ *
+ * <p><b>Thread safety:</b> instances are immutable after construction
+ * (except the lazily-published second engine, see {@link #wholeEngine()})
+ * and safe for concurrent use from multiple threads. The {@link
+ * PatternMatcher matchers} they produce are NOT thread-safe — one matcher
+ * per thread.
  */
 public class TDFAPattern implements Pattern {
 
@@ -36,18 +43,29 @@ public class TDFAPattern implements Pattern {
     // fail — deferring it can't move a compile error past Pattern.compile().
     private transient volatile RegexEngine wholeEngine;
     private transient Supplier<RegexEngine> wholeSupplier;
+    /** The Unicode tables this pattern was compiled against ({@code null} =
+     *  the process default). Retained only for serialization round-trips —
+     *  recompiles inside this process go through the engines. Transient:
+     *  providers need not be Serializable; the proxy carries the class name
+     *  and resolves per the UnicodeDataProvider serialization convention. */
+    private transient UnicodeDataProvider provider;
 
     public TDFAPattern(String pattern, int flags, int programSize,
-                       RegexEngine engine, Supplier<RegexEngine> wholeSupplier) {
+                       RegexEngine engine, Supplier<RegexEngine> wholeSupplier,
+                       UnicodeDataProvider provider) {
         this.pattern = pattern;
         this.flags = flags;
         this.programSize = programSize;
         this.engine = engine;
         this.wholeSupplier = wholeSupplier;
+        this.provider = provider;
     }
 
     /** The main (unanchored) engine. */
     public RegexEngine engine() { return engine; }
+
+    /** The pinned Unicode tables this pattern compiles against ({@code null} = process default). */
+    public UnicodeDataProvider unicodeProvider() { return provider; }
 
     /** Engine for {@code matches()}: anchored both ends, compiled lazily on first use. */
     public RegexEngine wholeEngine() {
@@ -126,22 +144,35 @@ public class TDFAPattern implements Pattern {
     @Override public void reset() { }
 
     /**
-     * Serialize as the {@link SerialProxy} (pattern+flags; recompiles on read) —
-     * generated subclasses' classes live in child loaders that won't exist in
-     * the reading process, so the state proxy is the only stable form.
+     * Serialize as the {@link SerialProxy} — pattern+flags+provider identity,
+     * recompiled on read. Generated subclasses' classes live in child loaders
+     * that won't exist in the reading process, so the state proxy is the only
+     * stable form. The pinned provider (if any) round-trips as its class
+     * name, resolved per the UnicodeDataProvider serialization convention; a
+     * pattern compiled against the process default serializes without a
+     * provider and recompiles against the READER's default.
      */
-    private Object writeReplace() {
-        return new SerialProxy(pattern, flags);
+    // PUBLIC, not private: Java serialization only inherits writeReplace
+    // across package boundaries when it is non-private — generated shells
+    // live in io.github.jemmix.tdfa.gen (child classloader) and rely on
+    // inheriting this exact method. With a private writeReplace the shells'
+    // raw fields (including the non-serializable engine) hit the wire and
+    // serialization throws NotSerializableException — a latent bug until the
+    // first round-trip test (PatternSerializationTest, 2026-09).
+    public Object writeReplace() {
+        return new SerialProxy(pattern, flags,
+                provider == null ? null : provider.getClass().getName());
     }
 
     /** Recompile the (transient) engines after deserialization, from {@code pattern}+{@code flags}. */
     private void readObject(java.io.ObjectInputStream in)
             throws java.io.IOException, ClassNotFoundException {
         in.defaultReadObject();
-        TDFAPattern tmp = (TDFAPattern) Pattern.compile(pattern, flags);
+        TDFAPattern tmp = (TDFAPattern) Pattern.compile(pattern, flags, null, provider);
         this.engine = tmp.engine;
         this.wholeEngine = null;
         this.wholeSupplier = tmp.wholeSupplier;
+        this.provider = tmp.provider;
     }
 
     @Override public int programSize() { return programSize; }

@@ -26,6 +26,16 @@ package io.github.jemmix.tdfa.unicode;
  * <h2>Thread-safety</h2>
  * Implementations must be safe for concurrent use after initialisation; the
  * framework caches a single instance once resolved.
+ *
+ * <h2>Serialization convention</h2>
+ * A provider pinned via {@code Pattern.compile(regex, flags, factory, provider)}
+ * travels across Java serialization as its CLASS NAME; on read it is resolved
+ * by, in order: (1) a {@code static UnicodeDataProvider provider()} method
+ * (the shape of the shipped pinned-table providers — singletons), or (2) a
+ * public no-arg constructor. Implementations intended for pinned,
+ * serializable patterns should expose one of the two; resolution failure
+ * throws {@link java.io.InvalidObjectException} rather than silently
+ * falling back to different Unicode tables.
  */
 public interface UnicodeDataProvider {
     /**

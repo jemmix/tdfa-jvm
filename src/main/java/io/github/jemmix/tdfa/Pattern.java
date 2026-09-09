@@ -22,6 +22,20 @@ import java.util.Map;
  * backend, alternative generator) — the facade then emits a shell around it,
  * preserving the monomorphic call chain. {@code -Dtdfa.engine=VM} forces the
  * shared interpreter implementation everywhere (no code generation at all).
+ *
+ * <p><b>Thread safety.</b> Patterns are immutable and safe for concurrent
+ * use from multiple threads; the {@link PatternMatcher matchers} they
+ * produce are NOT — create one per thread. The input {@link CharSequence}
+ * must not be mutated during matching: matchers cache {@code length()} and
+ * may re-read indices at any point during a call, so a concurrent mutation
+ * produces unspecified results (the String/byte[] overloads are immune).
+ *
+ * <p><b>Serialization.</b> Patterns serialize as pattern + flags + pinned
+ * provider identity and recompile on read (generated classes cannot cross
+ * processes). A pattern compiled against a pinned {@code UnicodeDataProvider}
+ * keeps it across serialization — see that interface's serialization
+ * convention; a pattern compiled against the process default recompiles
+ * against the READER's default tables.
  */
 public interface Pattern extends java.io.Serializable {
 

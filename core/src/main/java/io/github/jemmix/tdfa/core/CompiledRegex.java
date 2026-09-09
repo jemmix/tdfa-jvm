@@ -17,6 +17,13 @@ import java.util.Map;
  * ({@code Pattern.compile}) builds the same shape on top of generated or
  * custom engines; this class is the evergreen, zero-dependency variant.
  *
+ * <p><b>Thread safety:</b> safe for concurrent use — instances are
+ * immutable, and the lazily-built second engine publishes through a
+ * volatile with deterministic compilation (under a race both threads build
+ * equivalent instances; the single volatile write publishes one). The
+ * {@link Matcher matchers} are NOT thread-safe. The input CharSequence must
+ * not be mutated during matching (length is cached at matcher construction).
+ *
  * <pre>
  *   CompiledRegex r = CompiledRegex.compile("(\\w+)@(\\w+)");
  *   if (r.find("hello user@example.com")) {
