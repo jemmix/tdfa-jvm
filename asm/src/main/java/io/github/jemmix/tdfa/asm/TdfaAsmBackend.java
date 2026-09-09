@@ -436,7 +436,7 @@ public final class TdfaAsmBackend {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I)L" + RESULT + ";", null, null);
         mv.visitCode();
         // locals: 0=this, 1=input, 2=from, 3=s, 4=len, 5=holder, 6=leftmost/idx,
-        //         7=p, 8=fails, 9=c, 10=bits, 11=needle
+        //         7=p, 8=fails, 9=c, 10=bits
         Label isStr = new Label();
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitTypeInsn(Opcodes.INSTANCEOF, STR);
@@ -456,43 +456,11 @@ public final class TdfaAsmBackend {
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "length", "()I", false);
         mv.visitVarInsn(Opcodes.ISTORE, 4);
 
-        // --- literal needle: indexOf short-circuit (runner-identical) ---
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "literalNeedle", "()Ljava/lang/String;", false);
-        mv.visitVarInsn(Opcodes.ASTORE, 11);
-        Label noNeedle = new Label();
-        mv.visitVarInsn(Opcodes.ALOAD, 11);
-        mv.visitJumpInsn(Opcodes.IFNULL, noNeedle);
-        emitTrace(mv, "LITERAL");
-        // One shared definition: the runner's alphabet-aware indexOf rejects
-        // hits that start mid-pair or end on the high half of a pair.
-        mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitVarInsn(Opcodes.ALOAD, 11);
-        mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "literalIndexOf",
-                "(Ljava/lang/String;Ljava/lang/String;I)I", false);
-        mv.visitVarInsn(Opcodes.ISTORE, 6);
-        Label litMiss = new Label();
-        mv.visitVarInsn(Opcodes.ILOAD, 6);
-        mv.visitJumpInsn(Opcodes.IFLT, litMiss);
-        // hit: toResult(new MatchHolder(idx, idx + needle.length(), new int[0]))
-        mv.visitTypeInsn(Opcodes.NEW, HOLDER);
-        mv.visitInsn(Opcodes.DUP);
-        mv.visitVarInsn(Opcodes.ILOAD, 6);
-        mv.visitVarInsn(Opcodes.ILOAD, 6);
-        mv.visitVarInsn(Opcodes.ALOAD, 11);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "length", "()I", false);
-        mv.visitInsn(Opcodes.IADD);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, HOLDER, "<init>", "(II[I)V", false);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "toResult", "(L" + HOLDER + ";)L" + RESULT + ";", false);
-        mv.visitInsn(Opcodes.ARETURN);
-        mv.visitLabel(litMiss);
-        mv.visitInsn(Opcodes.ACONST_NULL);
-        mv.visitInsn(Opcodes.ARETURN);
-        mv.visitLabel(noNeedle);
+        // No literal-needle ladder here by construction: a DFA with a needle
+        // always compiles as DELEGATE (generateBytes), so in the INLINED
+        // classes that emit this method runner.literalNeedle() is provably
+        // null and the transcription of that ladder step was unreachable
+        // bytecode (it existed only as a divergence hazard).
 
         // --- 1) one exact walk from `from` ---
         emitTrace(mv, "EXACT_FROM");
