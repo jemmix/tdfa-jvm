@@ -120,4 +120,19 @@ class EmittedSurfaceConformanceTest {
         hookC(PatternMatcher.class, TDFAPattern.class, CharSequence.class);
         hookM(Class.forName("io.github.jemmix.tdfa.Pattern$Utf8"), "decode", byte[].class);
     }
+
+    @Test
+    void emittedInitCopiesTdfaTables() {
+        // Generated engine <init>s copy the Tdfa's flat tables through these
+        // accessors (one call per array per engine construction).
+        hookM(Tdfa.class, "stateMeta");
+        hookM(Tdfa.class, "stateBase");
+        hookM(Tdfa.class, "ranges");
+        hookM(Tdfa.class, "stateEntryMask");
+        hookM(Tdfa.class, "stateAcceptMask");
+        hookM(Tdfa.class, "wordRanges");
+        hookM(Tdfa.class, "fixedBase");
+        hookM(Tdfa.class, "fixedOffset");
+        hookM(Tdfa.class, "stopOnAcceptMask");
+    }
 }

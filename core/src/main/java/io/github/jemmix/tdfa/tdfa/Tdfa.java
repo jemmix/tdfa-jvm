@@ -123,9 +123,12 @@ public final class Tdfa {
     /**
      * Full 2D stop table for external consumers. Materializes (once) from the
      * uniform tier if needed; returns null in POSIX mode (no reader may call).
+     * Defensive copy: the materialized table is cached internally; callers
+     * get their own array (the cache stays pristine for the next caller).
      */
+    @io.github.jemmix.tdfa.core.EmittedSurface
     public int[] stopOnAcceptMask() {
-        if (stopOnAcceptMask != null) return stopOnAcceptMask;
+        if (stopOnAcceptMask != null) return stopOnAcceptMask.clone();
         byte[] u = stopMaskUniform;
         if (u == null) return null;
         int[] cache = stopMaskTableCache;
@@ -136,7 +139,7 @@ public final class Tdfa {
             }
             stopMaskTableCache = cache;
         }
-        return cache;
+        return cache.clone();
     }
 
     /**
@@ -367,8 +370,8 @@ public final class Tdfa {
     public int finalOpsOffset(int state) { return stateFinalOpsOff[state]; }
 
     /** Position-aware final-ops table ({@code [state*64+posFlags]} → offset, -1 = accept
-     *  suppressed), or null when every accepting state is mask-uniform. */
-    public int[] stateFinalOpsByMask() { return stateFinalOpsByMask; }
+     * suppressed), or null when every accepting state is mask-uniform. Defensive copy. */
+    public int[] stateFinalOpsByMask() { return stateFinalOpsByMask == null ? null : stateFinalOpsByMask.clone(); }
     /** Range base index into {@link #ranges} for the given state. */
     public int rangeBase(int state) { return stateBase[state]; }
     /** Unpack range count from packed stateMeta. */
@@ -382,6 +385,17 @@ public final class Tdfa {
 
     // ===== public read accessors (fields are package-private; asm generation
     // and external consumers read through these) =====
+    //
+    // Defensive-copy policy (immutability, 2026-09): every array accessor
+    // returns a CLONE. The artifact is shared across threads and its flat
+    // arrays are its entire semantics; a caller mutating a returned array
+    // would corrupt every engine built on this Tdfa. All in-package
+    // consumers (TdfaRunner, DfaMinimizer, the compiler) read the fields
+    // directly and are unaffected; external consumers pay one copy per
+    // accessor call — engine emission and construction are the only callers
+    // and each runs once per compile. The accessors marked
+    // {@code @EmittedSurface} are additionally invoked by name from
+    // generated engine <init>s (see EmittedSurfaceConformanceTest).
 
     /** Number of capture tags (2 per group, 1-indexed). */
     public int tagCount() { return tagCount; }
@@ -404,29 +418,34 @@ public final class Tdfa {
     /** Number of DFA states. */
     public int stateCount() { return stateCount; }
 
-    /** Per-state packed metadata: accept bit + range count (see {@link #accept}, {@link #rangeCount}). */
-    public int[] stateMeta() { return stateMeta; }
+    /** Per-state packed metadata: accept bit + range count (see {@link #accept}, {@link #rangeCount}). Defensive copy. */
+    @io.github.jemmix.tdfa.core.EmittedSurface
+    public int[] stateMeta() { return stateMeta.clone(); }
 
-    /** Per-state base index into {@link #ranges()}. */
-    public int[] stateBase() { return stateBase; }
+    /** Per-state base index into {@link #ranges()}. Defensive copy. */
+    @io.github.jemmix.tdfa.core.EmittedSurface
+    public int[] stateBase() { return stateBase.clone(); }
 
-    /** Per-state final-ops offset into {@link #ops()}, 0 if none. */
-    public int[] stateFinalOpsOff() { return stateFinalOpsOff; }
+    /** Per-state final-ops offset into {@link #ops()}, 0 if none. Defensive copy. */
+    public int[] stateFinalOpsOff() { return stateFinalOpsOff.clone(); }
 
-    /** Flat transition ranges: [lo, hi, target, opsOff, requiredMask] quintets. */
-    public int[] ranges() { return ranges; }
+    /** Flat transition ranges: [lo, hi, target, opsOff, requiredMask] quintets. Defensive copy. */
+    @io.github.jemmix.tdfa.core.EmittedSurface
+    public int[] ranges() { return ranges.clone(); }
 
-    /** Per-entry prefix-max of hi within each state, index-aligned with {@link #ranges()}. */
-    public int[] entryHiPrefix() { return entryHiPrefix; }
+    /** Per-entry prefix-max of hi within each state, index-aligned with {@link #ranges()}. Defensive copy. */
+    public int[] entryHiPrefix() { return entryHiPrefix.clone(); }
 
-    /** Flat register ops: [op, dst, src] triplets, blocks terminated by {@link #OP_END}. */
-    public int[] ops() { return ops; }
+    /** Flat register ops: [op, dst, src] triplets, blocks terminated by {@link #OP_END}. Defensive copy. */
+    public int[] ops() { return ops.clone(); }
 
-    /** Per-state entry assertion masks (BEGIN_TEXT/END_TEXT/WORD_BOUNDARY/...). */
-    public int[] stateEntryMask() { return stateEntryMask; }
+    /** Per-state entry assertion masks (BEGIN_TEXT/END_TEXT/WORD_BOUNDARY/...), or null. Defensive copy. */
+    @io.github.jemmix.tdfa.core.EmittedSurface
+    public int[] stateEntryMask() { return stateEntryMask == null ? null : stateEntryMask.clone(); }
 
-    /** Per-state accept assertion masks (subset of {@link #stateEntryMask()}). */
-    public int[] stateAcceptMask() { return stateAcceptMask; }
+    /** Per-state accept assertion masks (subset of {@link #stateEntryMask()}), or null. Defensive copy. */
+    @io.github.jemmix.tdfa.core.EmittedSurface
+    public int[] stateAcceptMask() { return stateAcceptMask == null ? null : stateAcceptMask.clone(); }
 
     /** Mask required to take the start state (limits find() start positions). */
     public int startStateEntryMask() { return startStateEntryMask; }
@@ -440,14 +459,17 @@ public final class Tdfa {
     /** Unicode-aware word boundary ({@code (?u)}). */
     public boolean unicodeWordBoundary() { return unicodeWordBoundary; }
 
-    /** Word-character ranges for Unicode-aware {@code \b}, or {@code null}. */
-    public int[] wordRanges() { return wordRanges; }
+    /** Word-character ranges for Unicode-aware {@code \b}, or {@code null}. Defensive copy. */
+    @io.github.jemmix.tdfa.core.EmittedSurface
+    public int[] wordRanges() { return wordRanges == null ? null : wordRanges.clone(); }
 
-    /** Fixed-tag base annotations (BT22 §6.4), or {@code null} when none fixed. */
-    public int[] fixedBase() { return fixedBase; }
+    /** Fixed-tag base annotations (BT22 §6.4), or {@code null} when none fixed. Defensive copy. */
+    @io.github.jemmix.tdfa.core.EmittedSurface
+    public int[] fixedBase() { return fixedBase == null ? null : fixedBase.clone(); }
 
-    /** Fixed-tag offset annotations (BT22 §6.4). */
-    public int[] fixedOffset() { return fixedOffset; }
+    /** Fixed-tag offset annotations (BT22 §6.4), or null. Defensive copy. */
+    @io.github.jemmix.tdfa.core.EmittedSurface
+    public int[] fixedOffset() { return fixedOffset == null ? null : fixedOffset.clone(); }
 
     /** Compile with Perl leftmost-first semantics (the ecosystem default). */
     public static Tdfa compile(Tnfa nfa) { return compile(nfa, false); }

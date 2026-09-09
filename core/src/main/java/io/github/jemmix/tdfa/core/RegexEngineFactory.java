@@ -24,6 +24,13 @@ public interface RegexEngineFactory {
      * Create an engine executing {@code tdfa}. Called at most a handful of
      * times per compiled pattern; the returned engine must be effectively
      * immutable and thread-safe.
+     *
+     * <p>Representation note: {@link Tdfa}'s array accessors return defensive
+     * copies — an engine built through them cannot be corrupted by a later
+     * caller, and the flat-array layout is an implementation detail that may
+     * change without this interface changing. In-package engines
+     * ({@code TdfaRunner}, the ASM tier) read the artifact's fields directly
+     * and share its (immutable) arrays.
      */
     RegexEngine create(Tdfa tdfa);
 }
