@@ -1824,12 +1824,12 @@ public final class TdfaRunner implements RegexEngine {
         for (int mask : tdfa.stateEntryMask) if (mask != 0) return false;
         for (int mask : tdfa.stateAcceptMask) if (mask != 0) return false;
         for (int i = 4; i < tdfa.ranges.length; i += 5) if (tdfa.ranges[i] != 0) return false;
-        // Per-mask final variants would make tryStartFast's accepting-state
-        // branch (fm[state*64+posFlags]) position-sensitive: its historical
-        // handling of suppressed accepts and posFlags lifetime diverged from
-        // extractFrom there. The divergences are fixed below, but the gate
-        // keeps such DFAs on the exact walks regardless [review P1 #8].
-        if (tdfa.stateFinalOpsByMask != null) return false;
+        // NOTE: per-mask final variants (stateFinalOpsByMask != null) do NOT
+        // disqualify — tryStartFast's fm branch handles them and now matches
+        // extractFrom exactly (suppressed-accept fall-through + posFlags
+        // reset, 2026-09). An earlier belt-and-braces exclusion here cost
+        // ~10x on anchored matches() for φ-variant patterns (quick-bench
+        // info.anchored.asm) and was reverted.
         return true;
     }
 
