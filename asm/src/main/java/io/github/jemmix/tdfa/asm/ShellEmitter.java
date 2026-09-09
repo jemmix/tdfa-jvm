@@ -122,7 +122,7 @@ public final class ShellEmitter {
         String patDesc = "L" + patOwner + ";";
 
         // ---- GenNNNMatcher extends PatternMatcher ----
-        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+        FrameClassWriter cw = new FrameClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER,
                 matOwner, null, PATMAT, null);
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "p", patDesc, null, null).visitEnd();
@@ -291,7 +291,7 @@ public final class ShellEmitter {
         byte[] matBytes = cw.toByteArray();
 
         // ---- GenNNNPattern extends TDFAPattern ----
-        cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+        cw = new FrameClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER,
                 patOwner, null, TDFAPATTERN, null);
         cw.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, "eng", engDesc, null, null).visitEnd();

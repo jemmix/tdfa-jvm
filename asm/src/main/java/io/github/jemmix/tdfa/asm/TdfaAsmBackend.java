@@ -101,7 +101,7 @@ public final class TdfaAsmBackend {
         boolean delegate = mode == DispatchMode.DELEGATE
                 || TdfaRunner.detectLiteralNeedle(tdfa) != null;
         boolean fastPath = mode == DispatchMode.INLINED;   // pickMode only INLINES fastPath-eligible DFAs
-        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+        FrameClassWriter cw = new FrameClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, owner, null, "java/lang/Object", new String[]{ENGINE});
         if (delegate) {
             // Minimal class: just an init storing the runner, and forwarding stubs
