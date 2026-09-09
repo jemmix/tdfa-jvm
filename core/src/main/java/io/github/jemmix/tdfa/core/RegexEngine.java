@@ -48,7 +48,7 @@ public interface RegexEngine {
      * {@link MatchResult} snapshot.
      */
     default Iterable<MatchResult> findAll(CharSequence input) {
-        return () -> new Iterator<>() {
+        return () -> new Iterator<MatchResult>() {
             private int from = 0;
             private MatchResult next = advance();
 

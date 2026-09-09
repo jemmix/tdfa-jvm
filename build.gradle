@@ -62,6 +62,11 @@ jar {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
+    // Java 8 bytecode floor (2026-09, docs/REVIEW-2026-09.md §1b): the facade
+    // SHIPS, so --release 8 — language level AND API surface both enforced.
+    // (A major-52 floor on core/asm but a major-61 facade would strand
+    // Java 8 consumers.)
+    it.options.release = 8
     options.debug = true
     // Style-modernization checks disabled on a freeze-bound codebase: the
     // mechanical rewrites (pattern-matching instanceof, arrow switches)

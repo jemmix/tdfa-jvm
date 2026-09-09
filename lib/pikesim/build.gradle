@@ -23,3 +23,10 @@ jar {
         attributes 'Automatic-Module-Name': 'io.github.jemmix.tdfa.sim'
     }
 }
+
+// Java 8 bytecode floor (2026-09, docs/REVIEW-2026-09.md §1b): this module
+// SHIPS, so it compiles with --release 8 — language level AND API surface are
+// both compiler-enforced.
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 8
+}

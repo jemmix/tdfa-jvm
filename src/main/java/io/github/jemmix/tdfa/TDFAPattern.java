@@ -160,7 +160,8 @@ public class TDFAPattern implements Pattern {
         // State-based equality across implementations (shared and generated):
         // re2j semantics — same pattern string + same flags.
         if (this == o) return true;
-        if (!(o instanceof Pattern p)) return false;
+        if (!(o instanceof Pattern)) return false;
+        Pattern p = (Pattern) o;
         return flags == p.flags() && pattern.equals(p.pattern());
     }
 

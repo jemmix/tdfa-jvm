@@ -196,19 +196,21 @@ public final class Tnfa {
                 }
                 return s;
             }
-            if (e instanceof Ast.StartAnchor a) {      // ^ or \A
+            Ast.StartAnchor sa;                         // ^ or \A
+            if (e instanceof Ast.StartAnchor && (sa = (Ast.StartAnchor) e) != null) {
                 int s = fresh();
                 // Anchor flavor is per-edge (parse-time (?m), group-scoped flags
                 // included): m-^ needs BEGIN_TEXT (line begin, always \n-aware);
                 // plain ^ and \A are position-0 only (ABS_BEGIN).
-                anchorEps(s, entryTo, 1, a.absolute || !a.multiline ? ABS_BEGIN : BEGIN_TEXT);
+                anchorEps(s, entryTo, 1, sa.absolute || !sa.multiline ? ABS_BEGIN : BEGIN_TEXT);
                 return s;
             }
-            if (e instanceof Ast.EndAnchor a) {        // $ or \z
+            Ast.EndAnchor ea;                           // $ or \z
+            if (e instanceof Ast.EndAnchor && (ea = (Ast.EndAnchor) e) != null) {
                 int s = fresh();
                 // m-$ needs END_TEXT (line end, always \n-aware); plain $ and \z
                 // are end-of-input only (ABS_END).
-                anchorEps(s, entryTo, 1, a.absolute || !a.multiline ? ABS_END : END_TEXT);
+                anchorEps(s, entryTo, 1, ea.absolute || !ea.multiline ? ABS_END : END_TEXT);
                 return s;
             }
             if (e instanceof Ast.WordBoundary) {     // \b
@@ -433,7 +435,7 @@ public final class Tnfa {
                 for (int i = 0; i < min - 1; i++) copies.add(body);
                 Ast copiesAst = copies.isEmpty() ? new Ast.Empty() :
                         (copies.size() == 1 ? copies.get(0) : new Ast.Concat(copies));
-                result = new Ast.Concat(List.of(copiesAst, new Ast.Repeat(body, 1, Integer.MAX_VALUE, r.greedy)));
+                result = new Ast.Concat(java.util.Collections.unmodifiableList(java.util.Arrays.asList(copiesAst, new Ast.Repeat(body, 1, Integer.MAX_VALUE, r.greedy))));
             } else if (max > min) {
                 // {n,m} = mandatory + RIGHT-NESTED optional suffix (x(x(x)?)?)?,
                 // exactly re2j Simplify's shape ("x{2,5} = xx(x(x(x)?)?)?").
@@ -445,9 +447,9 @@ public final class Tnfa {
                 // re2j/JDK g2="a" — two outer iterations — flat tail g2="aa").
                 Ast suffix = new Ast.Repeat(body, 0, 1, r.greedy);
                 for (int i = min + 1; i < max; i++) {
-                    suffix = new Ast.Repeat(new Ast.Concat(List.of(body, suffix)), 0, 1, r.greedy);
+                    suffix = new Ast.Repeat(new Ast.Concat(java.util.Collections.unmodifiableList(java.util.Arrays.asList(body, suffix))), 0, 1, r.greedy);
                 }
-                result = new Ast.Concat(List.of(mandatoryAst, suffix));
+                result = new Ast.Concat(java.util.Collections.unmodifiableList(java.util.Arrays.asList(mandatoryAst, suffix)));
             }
             // re-enter the builder with the desugared form, but DO NOT re-process via parser;
             // build it directly into entryTo.

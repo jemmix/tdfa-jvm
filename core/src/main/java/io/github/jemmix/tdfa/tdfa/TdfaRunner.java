@@ -30,25 +30,26 @@ import java.util.Map;
  */
 public final class TdfaRunner implements RegexEngine {
     private final Tdfa tdfa;
-    private final int[] stateMeta;
-    private final int[] stateBase;
+    final int[] stateMeta;
+    final int[] stateBase;
     private final int[] stateFinalOpsOff;
     private final int[] stateEntryMask;
     private final int[] stateAcceptMask;
     /** Position-aware final-ops table (null = uniform; see Tdfa.stateFinalOpsByMask). */
     private final int[] finalOpsByMask;
-    private final int[] ranges;
-    private final int[] ops;
+    final int[] ranges;
+    final int[] ops;
     private final int regSize;
-    private final int startState;
+    final int startState;
     private final int startStateEntryMask;
     private final boolean longestMatch;
     private final boolean multiline;
     private final int[] stopOnAcceptMask;
     /** Uniform tier of the stop table (1 B/state) — see Tdfa.stopMaskUniform; exclusive with the above. */
     private final byte[] stopMaskUniform;
-    private final boolean rangesDisjoint;
-    private final int[] rhp;             // tdfa.entryHiPrefix — prefix-max-hi per entry
+    private final WalkIndex walkIdx;
+    final boolean rangesDisjoint;
+    final int[] rhp;             // tdfa.entryHiPrefix — prefix-max-hi per entry
     /** Tight 128-entry table for the SIMULATIONS: constant stride keeps the
      *  hot loop's machine code identical to the pre-Latin-1 shape (a 256-stride
      *  table measurably slowed pure-ASCII scans ~15%); codepoints >= 128 take
@@ -65,9 +66,9 @@ public final class TdfaRunner implements RegexEngine {
     private final int latinLimit;
     private static final boolean WTRACE = Boolean.getBoolean("tdfa.trace");
     private final boolean fastPath;     // true = no masks + disjoint + not multiline
-    private final int stateCount;
-    private final int stateWords;       // # of 32-bit words in state bitsets
-    private final int[] acceptBits;     // bitset of accepting states (over-approximate)
+    final int stateCount;
+    final int stateWords;       // # of 32-bit words in state bitsets
+    final int[] acceptBits;     // bitset of accepting states (over-approximate)
     private final boolean unicodeWordBoundary;
     private final int[] wordRanges;     // Unicode \w ranges for \b when unicodeWordBoundary is true
     /** Whether any mask / stop-table cell actually consults the word-boundary
@@ -83,24 +84,6 @@ public final class TdfaRunner implements RegexEngine {
      *  start state is NOT accepting (an accepting start admits zero-length
      *  matches anywhere, which the candidate scan cannot see). */
     private final long[] startBits;
-    /** Lazy per-state 512-codepoint walk blocks for codepoints >= latinLimit:
-     *  cell = the (unique, disjoint-only) containing range's index, or -1.
-     *  turns wide-class walks (\p{L}{2,} on Cyrillic: ~600-range binary
-     *  searches per char) into one array load. Published via a volatile
-     *  snapshot reference (copy-on-grow; build is synchronized
-     *  and double-checked, so races only cost a redundant lock). */
-    private volatile int[][] walkBlocksArr = EMPTY_BLOCKS;
-    private int walkBlockCount;                       // guarded by this
-    /** Lazy per-state block-id tables, one volatile cell per state (see
-     *  {@link #walkRangeIndex}): the cell write publishes the fully-built,
-     *  -1-filled id array, so a racing reader sees either null (builds its
-     *  own, benignly duplicated) or a fully-initialized array — never a
-     *  default-0 cell misread as block id 0. */
-    private final java.util.concurrent.atomic.AtomicReferenceArray<int[]> walkBlockIdx;
-    private static final int[][] EMPTY_BLOCKS = {};
-    /** Cap on walk blocks (512 ints each): past it, dispatch falls back to
-     *  binary search (dictionary-scale DFAs must not grow unbounded memos). */
-    private static final int WALK_MAX_BLOCKS = 64;
 
     // ===== per-thread scratch (P2: hot-path allocation removal) =====
     //
@@ -152,14 +135,14 @@ public final class TdfaRunner implements RegexEngine {
         this.regSize = tdfa.registerCount;
         this.startState = tdfa.startState;
         this.startStateEntryMask = tdfa.startStateEntryMask;
-        this.rangesDisjoint = checkRangesDisjoint(tdfa);
+        this.rangesDisjoint = RunnerTables.checkRangesDisjoint(tdfa);
         this.rhp = tdfa.entryHiPrefix;
         this.latinLimit = tdfa.stateCount <= LATIN1_MAX_STATES ? 256 : 128;
         this.asciiTables = rangesDisjoint && tdfa.stateCount <= ASCII_TABLE_MAX_STATES;
         if (asciiTables) {
-            this.asciiRangeFlat = buildAsciiRangeFlat(tdfa, latinLimit);
-            this.latinTarget = buildAsciiTarget(tdfa, latinLimit);
-            this.asciiTarget = latinLimit == 128 ? latinTarget : buildAsciiTarget(tdfa, 128);
+            this.asciiRangeFlat = RunnerTables.buildAsciiRangeFlat(tdfa, latinLimit);
+            this.latinTarget = RunnerTables.buildAsciiTarget(tdfa, latinLimit);
+            this.asciiTarget = latinLimit == 128 ? latinTarget : RunnerTables.buildAsciiTarget(tdfa, 128);
         } else {
             this.asciiRangeFlat = null;
             this.asciiTarget = null;
@@ -172,23 +155,31 @@ public final class TdfaRunner implements RegexEngine {
         this.stopMaskUniform = tdfa.stopMaskUniform;
         this.stateCount = tdfa.stateCount;
         this.stateWords = (tdfa.stateCount + 31) >>> 5;
-        this.acceptBits = buildAcceptBits(tdfa);
+        this.acceptBits = RunnerTables.buildAcceptBits(tdfa);
         this.searchDfa = new SearchDfa(this);   // after all table fields are assigned
-        this.literalNeedle = detectLiteralNeedle(tdfa);
+        this.literalNeedle = RunnerTables.detectLiteralNeedle(tdfa);
         this.unicodeWordBoundary = tdfa.unicodeWordBoundary;
         this.wordRanges = tdfa.wordRanges;
         // Derived, not inferred: the tables themselves declare which posFlag bits
         // they distinguish (see Tdfa.posFlagDeps) — no per-consumer model to keep in sync.
         this.needsWordFlags = (tdfa.posFlagDeps()
                 & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY)) != 0;
-        this.wordBits = buildWordBits(tdfa.unicodeWordBoundary ? tdfa.wordRanges : null);
+        this.wordBits = RunnerTables.buildWordBits(tdfa.unicodeWordBoundary ? tdfa.wordRanges : null);
         this.startBits = (literalNeedle == null && (tdfa.stateMeta[tdfa.startState] & 1) == 0)
                 ? buildStartBits() : null;
-        this.walkBlockIdx = rangesDisjoint
-                ? new java.util.concurrent.atomic.AtomicReferenceArray<>(tdfa.stateCount) : null;
+        this.walkIdx = new WalkIndex(this);
     }
 
     public Tdfa tdfa() { return tdfa; }
+
+    /** Public stable hook for the ASM backend's delegate-mode decision
+     *  (implementation lives in RunnerTables since the 2026-09 split). */
+    public static String detectLiteralNeedle(Tdfa tdfa) { return RunnerTables.detectLiteralNeedle(tdfa); }
+
+    /** Public stable hook for GENERATED shells (the ASM tier emits
+     *  INVOKESTATIC TdfaRunner.literalIndexOf; implementation lives in
+     *  RunnerTables since the 2026-09 split). */
+    public static int literalIndexOf(String s, String needle, int from) { return RunnerTables.literalIndexOf(s, needle, from); }
 
     @Override public int groupCount() { return tdfa.groupCount; }
 
@@ -242,7 +233,7 @@ public final class TdfaRunner implements RegexEngine {
     /** Snapshot and clear this thread's recorded strategy sequence. */
     public static List<Strategy> traceSnapshot() {
         ArrayList<Strategy> buf = TRACE_BUF.get();
-        List<Strategy> out = List.copyOf(buf);
+        List<Strategy> out = java.util.Collections.unmodifiableList(new java.util.ArrayList<>(buf));
         buf.clear();
         return out;
     }
@@ -278,7 +269,7 @@ public final class TdfaRunner implements RegexEngine {
         int to = input.length();
         if (literalNeedle != null && input instanceof String) {
             trace(Strategy.LITERAL);
-            return literalIndexOf((String) input, literalNeedle, from);
+            return RunnerTables.literalIndexOf((String) input, literalNeedle, from);
         }
         // Short-input candidate scan: bit-test per char, exact walk per
         // candidate. Cheaper than the origin sim's per-live-state dispatch
@@ -331,7 +322,7 @@ public final class TdfaRunner implements RegexEngine {
         if (input instanceof String) {
             String s = (String) input;
             int len = s.length();
-            if (literalNeedle != null) { trace(Strategy.LITERAL); return literalIndexOf(s, literalNeedle, 0) >= 0; }
+            if (literalNeedle != null) { trace(Strategy.LITERAL); return RunnerTables.literalIndexOf(s, literalNeedle, 0) >= 0; }
             if (fastPath) return runStringFindFast(s, len);
             int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? 0 : len;
             if (maxStart > 0) {
@@ -527,7 +518,7 @@ public final class TdfaRunner implements RegexEngine {
                 // tables skipped above ASCII_TABLE_MAX_STATES): lazy walk
                 // block (one array load) or, past the block cap, the binary
                 // search below.
-                ri = walkRangeIndex(state, c);
+                ri = walkIdx.walkRangeIndex(state, c);
                 if (ri == -2) ri = Integer.MIN_VALUE;
             } else {
                 ri = Integer.MIN_VALUE;
@@ -618,12 +609,6 @@ public final class TdfaRunner implements RegexEngine {
         return new MatchHolder(startSearch, lastAcceptPos, r);
     }
 
-    public static final class MatchHolder {
-        public final int matchStart, matchEnd;
-        public final int[] regs;
-        public MatchHolder(int s, int e, int[] r) { matchStart = s; matchEnd = e; regs = r; }
-    }
-
     // ===== Lazy search-DFA (trigger scan with kill-point windows) =====
 
     /**
@@ -650,7 +635,7 @@ public final class TdfaRunner implements RegexEngine {
      * accept bit — so a trigger can fire without a real match (the exact
      * extract confirms or continues), but it can never miss one.
      */
-    private static final int SDFA_KILL = -2;
+    static final int SDFA_KILL = -2;
     // Small re2-style lazy-DFA budgets: past the caps the scan degrades to the
     // unmemoized simulation (still kill-point aware). The bomb shape if these
     // are too high: live-set rows proliferate on .*-heavy patterns and each
@@ -658,8 +643,8 @@ public final class TdfaRunner implements RegexEngine {
     // runners × MBs each OOMs the parity suites (seen: 27 live Tdfas). The
     // memo is shared across threads matching the same Pattern (safe: see
     // SearchDfa — locked mutation, snapshot reads), NOT per-thread.
-    private static final int SDFA_MAX_ROWS = 512;      // rows: ~512B each + blockIds
-    private static final int SDFA_MAX_BLOCKS = 1024;   // 1024 * 512 * 4B = 2 MB cap
+    static final int SDFA_MAX_ROWS = 512;      // rows: ~512B each + blockIds
+    static final int SDFA_MAX_BLOCKS = 1024;   // 1024 * 512 * 4B = 2 MB cap
     private static final int SDFA_MIN_WINDOW = 2048;   // below: unmemoized raw scan
     /** Origin-sim budget before falling back to the memoized trigger scan. */
     private static final int LSS_BUDGET_CHARS = 4096;
@@ -678,78 +663,6 @@ public final class TdfaRunner implements RegexEngine {
      * instead of DFA stepping. ~0.2 vs ~6.5 ns/char on ASCII haystacks.
      */
     private final String literalNeedle;
-
-    /** Detect the literal-chain shape; null otherwise. Public static: the
-     *  ASM backend asks at emit time so literal DFAs get the fully-delegated
-     *  generated class (its indexOf short-circuit beats the generated walk
-     *  at every input length). */
-    public static String detectLiteralNeedle(Tdfa tdfa) {
-        try {
-            if (tdfa.groupCount != 0 || tdfa.tagCount != 0) return null;
-            int n = tdfa.stateCount;
-            if (n < 2) return null;   // single-state: empty/anchor-only regex
-            StringBuilder sb = new StringBuilder(n - 1);
-            int s = tdfa.startState;
-            for (int step = 0; step < n - 1; step++) {
-                int meta = tdfa.stateMeta[s];
-                if ((meta & 1) != 0) return null;            // accepting mid-chain
-                int cnt = (meta >>> 1) & 0xFFFF;
-                if (cnt != 1) return null;                   // must be exactly one char
-                int o = tdfa.stateBase[s] * 5;
-                int lo = tdfa.ranges[o], hi = tdfa.ranges[o + 1];
-                if (lo != hi || lo > 0xFFFF) return null;    // single BMP codepoint
-                if (tdfa.ranges[o + 2] < 0) return null;     // dead
-                if (tdfa.ranges[o + 3] != 0) return null;    // transition ops
-                if (tdfa.ranges[o + 4] != 0) return null;    // required mask
-                if (tdfa.stateEntryMask[tdfa.ranges[o + 2]] != 0) return null;
-                sb.append((char) lo);
-                s = tdfa.ranges[o + 2];
-            }
-            // final state: accepting, no mask, no fallback, no final ops, and
-            // NO live outgoing transition (a live self-loop means the regex is
-            // unbounded — a+ misdetected as literal "a" returned [0,1) for
-            // find("a+","aaa") instead of [0,3)).
-            if ((tdfa.stateMeta[s] & 1) == 0) return null;
-            if (tdfa.stateAcceptMask[s] != 0) return null;
-            // Position-dependent accept (byMask variants): the accept fires
-            // only under some posFlags — the indexOf shortcut can't evaluate
-            // that (fuzz round 10: Z(?:\A|\B) matched "Z" via the needle,
-            // though \A and \B both fail at pos 1). Not a literal.
-            {
-                int[] fm = tdfa.stateFinalOpsByMask();
-                if (fm != null) {
-                    for (int M = 0; M < 64; M++) {
-                        if (fm[s * 64 + M] < 0) return null;
-                    }
-                }
-            }
-            if (tdfa.stateFinalOpsOff[s] != 0) return null;
-            if (tdfa.stateEntryMask[s] != 0) return null;
-            {
-                int meta = tdfa.stateMeta[s];
-                int base = tdfa.stateBase[s];
-                for (int i = 0; i < ((meta >>> 1) & 0xFFFF); i++) {
-                    if (tdfa.ranges[(base + i) * 5 + 2] >= 0) return null;
-                }
-            }
-            // Lone-surrogate adjacency: the needle is built from single BMP
-            // symbols, each appended as its raw unit. Two adjacent LONE
-            // symbols (high then low) re-encode as a well-formed surrogate
-            // PAIR — the same unit text as the pair codepoint they are not.
-            // Unit-wise indexOf then matches input pairs against what the
-            // alphabet defines as two lone codepoints (fuzz repro:
-            // (?i:\uD800)\uDFFF matched 𐏿 = \uD800\uDFFF whole). Rejected
-            // here, the DFA walk handles the shape correctly (it decodes).
-            for (int i = 0; i < sb.length() - 1; i++) {
-                char c0 = sb.charAt(i), c1 = sb.charAt(i + 1);
-                if (c0 >= 0xD800 && c0 <= 0xDBFF && c1 >= 0xDC00 && c1 <= 0xDFFF)
-                    return null;
-            }
-            return sb.length() > 0 ? sb.toString() : null;
-        } catch (RuntimeException e) {
-            return null;   // any surprise shape: not a literal
-        }
-    }
 
     /**
      * Build the first-char candidate bitset from the start state's outgoing
@@ -774,311 +687,6 @@ public final class TdfaRunner implements RegexEngine {
             any = true;
         }
         return any ? bits : null;
-    }
-
-    /** Word-class bitset over BMP UTF-16 units. ASCII mode (null ranges):
-     *  the 63-char [_0-9A-Za-z] set; unicode mode: wordRanges clipped to the BMP. */
-    private static long[] buildWordBits(int[] ranges) {
-        long[] bits = new long[1024];
-        if (ranges == null) {
-            setBit(bits, '_');
-            for (int c = '0'; c <= '9'; c++) setBit(bits, c);
-            for (int c = 'a'; c <= 'z'; c++) setBit(bits, c);
-            for (int c = 'A'; c <= 'Z'; c++) setBit(bits, c);
-            return bits;
-        }
-        for (int i = 0; i + 1 < ranges.length; i += 2) {
-            int lo = Math.max(ranges[i], 0), hi = Math.min(ranges[i + 1], 0xFFFF);
-            for (int c = lo; c <= hi; c++) bits[c >>> 6] |= 1L << (c & 63);
-        }
-        return bits;
-    }
-
-    private static void setBit(long[] bits, int c) { bits[c >>> 6] |= 1L << (c & 63); }
-
-    /**
-     * Range index for codepoint {@code c} (BMP, disjoint DFA) via lazy walk
-     * blocks: -1 = dead entry, -2 = block cap exceeded (caller falls back to
-     * binary search). See {@link #walkBlocksArr} for the publication scheme.
-     */
-    private int walkRangeIndex(int state, int c) {
-        int[] idx = walkBlockIdx.get(state);
-        if (idx == null) {
-            idx = new int[128];
-            java.util.Arrays.fill(idx, -1);
-            walkBlockIdx.set(state, idx);      // volatile publish of the filled array
-            idx = walkBlockIdx.get(state);     // adopt the winner if we lost the race
-        }
-        int b = c >>> 9;
-        int id = idx[b];
-        if (id == -1) id = buildWalkBlock(state, b);
-        if (id < 0) return id;
-        int[][] arr = walkBlocksArr;
-        if (id < arr.length) {
-            int ri = arr[id][c & 511];
-            return ri;   // -1 cell = dead entry
-        }
-        return -2;       // stale id vs a fresh snapshot: treat as capped (rare, safe)
-    }
-
-    /** Build one 512-cp block for `state` (lowest entry index per cell — for
-     *  disjoint DFAs the containing entry is unique). Synchronized + double-checked
-     *  against the PUBLISHED id table (two threads racing a first-visit of the
-     *  same state may carry private idx copies; the block id itself must be
-     *  canonical). Cell values: -1 unbuilt, -2 capped, >=0 block id; cells only
-     *  ever transition from -1 under the lock, so a racing plain read observes
-     *  either -1 (re-checks here) or the final id — ints are atomically written. */
-    private synchronized int buildWalkBlock(int state, int b) {
-        int[] pub = walkBlockIdx.get(state);
-        int e = pub != null ? pub[b] : -1;
-        if (e != -1) return e;
-        if (walkBlockCount >= WALK_MAX_BLOCKS) {
-            if (pub != null) pub[b] = -2;
-            return -2;
-        }
-        int[] cells = new int[512];
-        java.util.Arrays.fill(cells, -1);
-        int lo = b << 9, hi = lo + 511;
-        int base = stateBase[state], cnt = (stateMeta[state] >>> 1) & 0xFFFF;
-        final int[] rg = this.ranges;
-        for (int i = 0; i < cnt; i++) {
-            int o = (base + i) * 5;
-            int eLo = Math.max(rg[o], lo), eHi = Math.min(rg[o + 1], hi);
-            for (int cp = eLo; cp <= eHi; cp++) cells[cp - lo] = i;
-        }
-        int n = walkBlockCount++;
-        int[][] next = java.util.Arrays.copyOf(walkBlocksArr, n + 1);
-        next[n] = cells;
-        walkBlocksArr = next;    // volatile publish: cells contents visible to readers
-        if (pub != null) pub[b] = n;
-        return n;
-    }
-
-    /** Static nested: shared per-Tdfa lifetime; references the runner's tables.
-     *
-     * Thread-safety (the RegexEngine contract requires concurrent-safe
-     * engines): the mutation path — internRow / transition / buildBlock — is
-     * confined under {@link #lock}. The per-codepoint READ path never touches
-     * the intern maps: it goes through immutable, volatile-published
-     * snapshots ({@link #rowWordsArr}, {@link #rowBlockIdsArr},
-     * {@link #blocksArr}) whose entries are fully built before publication;
-     * row-block cells only ever transition from -1 to their final value under
-     * the lock (plain int writes are atomic, so a racing reader sees either
-     * -1 — and re-checks under the lock — or the final value; a block id is
-     * written to a cell only AFTER the block is published in
-     * {@code blocksArr}, and readers length-check against the snapshot so a
-     * stale snapshot degrades to the locked path, never to a wrong lookup).
-     * Locking the read path itself would serialize concurrent scans of one
-     * Pattern and put a monitor enter/exit on every scanned char — that is
-     * why the snapshots exist. */
-    static final class SearchDfa {
-        final TdfaRunner r;
-        final int nw;
-        final Object lock = new Object();
-        SearchDfa(TdfaRunner r) { this.r = r; this.nw = r.stateWords; }
-
-        // ---- writer-confined (all accesses under lock) ----
-        private final HashMap<Wrapper, Integer> rowById = new HashMap<>();    // bitset -> row id
-        private final HashMap<Wrapper, Integer> blockById = new HashMap<>();  // content -> block id
-
-        // ---- immutable snapshots; volatile-published on growth (copy-on-write) ----
-        /** row id -> live-set bitset; rows are interned (never mutated after publish). */
-        private volatile int[][] rowWordsArr = {};
-        /** row id -> int[128] block ids. Cell: -1 unbuilt, -2 capped/direct,
-         *  -3 all-kill, >=0 block id in {@link #blocksArr}. Rows are
-         *  copy-on-write (a new row replaces the old in a fresh snapshot on
-         *  every cell write — see setRowCell). */
-        private volatile int[][] rowBlockIdsArr = {};
-        /** block id -> int[512] encoded transitions. */
-        private volatile int[][] blocksArr = {};
-        volatile boolean capped;
-
-        /** Immutable-ish int[] key wrapper with cached hash. */
-        private static final class Wrapper {
-            final int[] a; final int hash;
-            Wrapper(int[] a) { this.a = a; hash = java.util.Arrays.hashCode(a); }
-            @Override public int hashCode() { return hash; }
-            @Override public boolean equals(Object o) {
-                return o instanceof Wrapper w && java.util.Arrays.equals(a, w.a);
-            }
-        }
-
-        /** Intern the pure-seed row as id 0. Idempotent and race-safe:
-         *  the first caller past the lock publishes it, later callers see
-         *  row 0 in the snapshot and return. */
-        void ensureSeed() {
-            if (rowWordsArr.length != 0) return;
-            synchronized (lock) {
-                if (rowWordsArr.length != 0) return;
-                int[] seed = new int[nw];
-                seed[r.startState >>> 5] |= 1 << (r.startState & 31);
-                internRowLocked(seed);
-            }
-        }
-
-        /** Must hold {@link #lock}. Interns {@code words}; -1 (and cap flag)
-         *  when the row budget is exhausted. */
-        private int internRowLocked(int[] words) {
-            Wrapper probe = new Wrapper(words);
-            Integer id = rowById.get(probe);
-            if (id != null) return id;
-            if (rowWordsArr.length >= SDFA_MAX_ROWS || capped) { capped = true; return -1; }
-            int[] key = words.clone();
-            int nid = rowWordsArr.length;
-            rowById.put(new Wrapper(key), nid);
-            int[][] rw = java.util.Arrays.copyOf(rowWordsArr, nid + 1);
-            rw[nid] = key;
-            rowWordsArr = rw;   // volatile publish
-            int[][] rb = java.util.Arrays.copyOf(rowBlockIdsArr, nid + 1);
-            int[] cells = new int[128];
-            java.util.Arrays.fill(cells, -1);
-            rb[nid] = cells;
-            rowBlockIdsArr = rb;   // volatile publish (cells still all -1)
-            return nid;
-        }
-
-        /** Live-set bitset of an interned row. Safe for lock-free readers:
-         *  row arrays are immutable after publication. */
-        int[] rowWordsOf(int rowId) { return rowWordsArr[rowId]; }
-
-        boolean accept(int rowId) {
-            int[] w = rowWordsArr[rowId];
-            for (int i = 0; i < nw; i++) if ((w[i] & r.acceptBits[i]) != 0) return true;
-            return false;
-        }
-
-        /** Pure step (no re-seed): all targets of live states on c, masks ignored. */
-        private int[] delta(int[] words, int c) {
-            int[] next = new int[nw];
-            for (int w = 0; w < nw; w++) {
-                int bits = words[w];
-                while (bits != 0) {
-                    int bit = Integer.numberOfTrailingZeros(bits);
-                    bits &= bits - 1;
-                    int s = (w << 5) + bit;
-                    int meta = r.stateMeta[s];
-                    int base = r.stateBase[s];
-                    int count = (meta >>> 1) & 0xFFFF;
-                    int rlo = 0, rhi = count - 1, anchor = -1;
-                    while (rlo <= rhi) {
-                        int mid = (rlo + rhi) >>> 1;
-                        if (r.ranges[(base + mid) * 5] <= c) { anchor = mid; rlo = mid + 1; }
-                        else rhi = mid - 1;
-                    }
-                    for (int i = anchor; i >= 0 && r.rhp[base + i] >= c; i--) {
-                        int mo = (base + i) * 5;
-                        if (c <= r.ranges[mo + 1]) {
-                            int t = r.ranges[mo + 2];
-                            if (t >= 0) next[t >>> 5] |= 1 << (t & 31);
-                        }
-                    }
-                }
-            }
-            return next;
-        }
-
-        /** Encoded transition for row on c: row id, SDFA_KILL, or -1 (uncapped-cap).
-         *  Locked: it computes and interns (mutation); the memoized read path
-         *  is {@link #bmpTransition}, which only lands here on block misses. */
-        int transition(int rowId, int c) {
-            synchronized (lock) {
-                int[] d = delta(rowWordsArr[rowId], c);
-                boolean empty = true;
-                for (int i = 0; i < nw; i++) if (d[i] != 0) { empty = false; break; }
-                if (empty) return SDFA_KILL;   // next = pure row 0 + kill
-                d[r.startState >>> 5] |= 1 << (r.startState & 31);
-                return internRowLocked(d);
-            }
-        }
-
-        /** Must hold {@link #lock}. Materialize block {@code b} of {@code rowId}:
-         *  512 encoded transitions; returns the cell value for (rowId, b):
-         *  block id, -3 (all-kill), or -2 (capped → caller computes directly). */
-        private int buildBlockLocked(int rowId, int b) {
-            int[] cells = new int[512];
-            int lo = b << 9;
-            boolean allKill = true;
-            for (int k = 0; k < 512; k++) {
-                int t = transitionLocked(rowId, lo + k);
-                if (t == -1) {
-                    // capped mid-block: whole block unusable (-2 cells handled by caller)
-                    setRowCell(rowId, b, -2);
-                    return -2;
-                }
-                if (t != SDFA_KILL) allKill = false;
-                cells[k] = t;
-            }
-            int blockId;
-            if (allKill) {
-                blockId = -3;   // shared all-kill block
-            } else {
-                Wrapper key = new Wrapper(cells);
-                Integer cached = blockById.get(key);
-                if (cached != null) blockId = cached;
-                else {
-                    if (blocksArr.length >= SDFA_MAX_BLOCKS) {
-                        setRowCell(rowId, b, -2);
-                        return -2;
-                    }
-                    int n = blocksArr.length;
-                    int[][] nb = java.util.Arrays.copyOf(blocksArr, n + 1);
-                    nb[n] = cells;
-                    blocksArr = nb;   // volatile publish BEFORE the cell can point at it
-                    blockId = n;
-                    blockById.put(key, blockId);
-                }
-            }
-            setRowCell(rowId, b, blockId);
-            return blockId;
-        }
-
-        /** Must hold {@link #lock}. */
-        private int transitionLocked(int rowId, int c) {
-            int[] d = delta(rowWordsArr[rowId], c);
-            boolean empty = true;
-            for (int i = 0; i < nw; i++) if (d[i] != 0) { empty = false; break; }
-            if (empty) return SDFA_KILL;
-            d[r.startState >>> 5] |= 1 << (r.startState & 31);
-            return internRowLocked(d);
-        }
-
-        /** Must hold {@link #lock}. Publish the cell for (rowId, b): COW the
-         *  rowBlockIdsArr row so an immutable-snapshot reader either sees -1
-         *  or the final value — intermediate states are impossible because
-         *  the fresh row copy is filled before the snapshot swap. */
-        private void setRowCell(int rowId, int b, int value) {
-            int[] row = rowBlockIdsArr[rowId];
-            int[] fresh = java.util.Arrays.copyOf(row, 128);
-            fresh[b] = value;
-            int[][] rb = rowBlockIdsArr.clone();
-            rb[rowId] = fresh;
-            rowBlockIdsArr = rb;   // volatile publish
-        }
-
-        /** Encoded transition via blocks; builds lazily. c must be < 0x10000.
-         *  Lock-free on the memoized fast path (snapshot reads only); takes
-         *  the lock only on first visit of a (row, block) or on capped rows. */
-        int bmpTransition(int rowId, int c) {
-            int b = c >>> 9;
-            int cell = rowBlockIdsArr[rowId][b];
-            if (cell == -1) {
-                synchronized (lock) {
-                    cell = rowBlockIdsArr[rowId][b];   // re-read under lock: may have been built
-                    if (cell == -1) cell = buildBlockLocked(rowId, b);
-                }
-            }
-            if (cell == -2) return transition(rowId, c);   // capped: compute directly
-            if (cell == -3) return SDFA_KILL;              // all-kill block
-            int[][] arr = blocksArr;
-            if (cell < arr.length) return arr[cell][c & 511];
-            // Stale snapshot vs a fresh id (no happens-before edge between the
-            // plain cell read and this volatile read): re-check under the lock.
-            synchronized (lock) {
-                cell = rowBlockIdsArr[rowId][b];
-                if (cell >= 0 && cell < blocksArr.length) return blocksArr[cell][c & 511];
-                return transitionLocked(rowId, c);
-            }
-        }
     }
 
     /**
@@ -1288,32 +896,6 @@ public final class TdfaRunner implements RegexEngine {
     // inline wherever emitted. The generated ladder mirrors
     // runStringExtractFast exactly; the strategy-conformance test asserts
     // trace equality between backends. =====
-
-    /** True when a needle hit ending at unit {@code idx + needleLen - 1}
-     *  swallows the high half of a surrogate pair: the last needle unit is a
-     *  high surrogate that pairs with the next input unit, so the raw-unit
-     *  indexOf hit is not a codepoint-sequence match. Public static: the
-     *  ASM-emitted literal path calls it for the same guard. */
-    public static boolean needleEndOverlapsPair(String s, int idx, int needleLen) {
-        int last = s.charAt(idx + needleLen - 1);
-        if (last < 0xD800 || last > 0xDBFF) return false;
-        int end = idx + needleLen;
-        return end < s.length()
-                && s.charAt(end) >= 0xDC00 && s.charAt(end) <= 0xDFFF;
-    }
-
-    /** indexOf for the literal needle that respects the alphabet: a hit is
-     *  real only if it starts at a codepoint boundary (not the low half of a
-     *  pair) and does not end on the high half of a pair. Raw indexOf sees
-     *  UTF-16 units and would otherwise accept unit sequences that overlap
-     *  pair halves — e.g. needle "a\uD800" on input "a\uD800\uDFFF". */
-    public static int literalIndexOf(String s, String needle, int from) {
-        int idx = s.indexOf(needle, from);
-        while (idx >= 0
-                && (Alphabet.pairInterior(s, idx) || needleEndOverlapsPair(s, idx, needle.length())))
-            idx = s.indexOf(needle, idx + 1);
-        return idx;
-    }
 
     public String literalNeedle() { return literalNeedle; }
 
@@ -1575,7 +1157,7 @@ public final class TdfaRunner implements RegexEngine {
             if (c < limit) {
                 ri = arf[state * limit + c];
             } else if (c < 0x10000) {
-                ri = walkRangeIndex(state, c);
+                ri = walkIdx.walkRangeIndex(state, c);
                 if (ri == -2) ri = Integer.MIN_VALUE;
             } else {
                 ri = Integer.MIN_VALUE;
@@ -1607,7 +1189,7 @@ public final class TdfaRunner implements RegexEngine {
     private MatchHolder runStringExtractFast(String input, int from, int to) {
         if (literalNeedle != null) {
             trace(Strategy.LITERAL);
-            int idx = literalIndexOf(input, literalNeedle, from);
+            int idx = RunnerTables.literalIndexOf(input, literalNeedle, from);
             return idx < 0 ? null : new MatchHolder(idx, idx + literalNeedle.length(), new int[0]);
         }
         // 1) Try ONE single-start walk from `from` — the common short-input case
@@ -1916,7 +1498,7 @@ public final class TdfaRunner implements RegexEngine {
                 riFlat = arf[state * limit + c];
             } else if (rangesDisjoint && c < 0x10000) {
                 // tableless giant DFA (see ASCII_TABLE_MAX_STATES): walk blocks
-                riFlat = walkRangeIndex(state, c);
+                riFlat = walkIdx.walkRangeIndex(state, c);
                 if (riFlat == -2) riFlat = Integer.MIN_VALUE;   // block cap: binary search
             } else {
                 riFlat = Integer.MIN_VALUE;
@@ -2198,109 +1780,6 @@ public final class TdfaRunner implements RegexEngine {
             else flags |= Tnfa.NO_WORD_BOUNDARY;
         }
         return flags;
-    }
-
-    /** Check if all states have pairwise-disjoint ranges (no overlapping ranges). */
-    private static boolean checkRangesDisjoint(Tdfa tdfa) {
-        int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
-        long[] sortBuf = null;
-        for (int s = 0; s < tdfa.stateCount; s++) {
-            int meta = sm[s];
-            int base = tdfa.stateBase[s], cnt = (meta >>> 1) & 0xFFFF;
-            if (cnt < 2) continue;
-            // Fast path: ranges are emitted sorted by lo at materialization
-            // (sortByMaskSpecificity is the only reorderer) — one O(cnt) scan.
-            boolean sortedByLo = true;
-            for (int i = 1; i < cnt; i++) {
-                if (rg[(base + i) * 5] < rg[(base + i - 1) * 5]) { sortedByLo = false; break; }
-            }
-            if (!sortedByLo) {
-                // Pack (lo << 32)|hi and sort — O(cnt log cnt) vs the old O(cnt²)
-                // pairwise check (significant for wide Unicode classes, ~1369 ranges).
-                if (sortBuf == null || sortBuf.length < cnt) sortBuf = new long[Math.max(cnt, 64)];
-                for (int i = 0; i < cnt; i++) {
-                    int o = (base + i) * 5;
-                    sortBuf[i] = ((long) rg[o] << 32) | (rg[o + 1] & 0xFFFFFFFFL);
-                }
-                java.util.Arrays.sort(sortBuf, 0, cnt);
-                int maxHi = (int) sortBuf[0];
-                for (int i = 1; i < cnt; i++) {
-                    int lo = (int) (sortBuf[i] >>> 32);
-                    if (lo <= maxHi) return false;  // overlaps the interval holding maxHi
-                    int hi = (int) sortBuf[i];
-                    if (hi > maxHi) maxHi = hi;
-                }
-                continue;
-            }
-            // Sorted by lo: adjacent scan with running max-hi (a long early range
-            // can overlap several later ones, so plain prev-pair checks aren't enough).
-            int maxHi = rg[base * 5 + 1];
-            for (int i = 1; i < cnt; i++) {
-                int o = (base + i) * 5;
-                if (rg[o] <= maxHi) return false;
-                if (rg[o + 1] > maxHi) maxHi = rg[o + 1];
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Bitset of states with accept capability (stateMeta bit 0 set). This is an
-     * over-approximation for the generic path — a state may be only conditionally
-     * accepting (non-zero acceptMask), but for the multi-state no-match pre-check
-     * we want to err on the side of "might accept" so we never skip a real match.
-     */
-    private static int[] buildAcceptBits(Tdfa tdfa) {
-        int words = (tdfa.stateCount + 31) >>> 5;
-        int[] bits = new int[words];
-        for (int s = 0; s < tdfa.stateCount; s++) {
-            if ((tdfa.stateMeta[s] & 1) != 0) {
-                bits[s >>> 5] |= 1 << (s & 31);
-            }
-        }
-        return bits;
-    }
-
-    /**
-     * Build flat per-state target lookup: {@code [state * limit + c] → target state}
-     * (-1 = dead). {@code limit} is 256 (Latin-1) for DFAs under
-     * {@link #LATIN1_MAX_STATES} states, else 128. Codepoints 128..255 are single
-     * UTF-16 units and never surrogate halves, so indexing them directly is exact.
-     */
-    private static int[] buildAsciiTarget(Tdfa tdfa, int limit) {
-        int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
-        int[] flat = new int[tdfa.stateCount * limit];
-        java.util.Arrays.fill(flat, -1);
-        for (int s = 0; s < tdfa.stateCount; s++) {
-            int meta = sm[s];
-            int base = tdfa.stateBase[s], cnt = (meta >>> 1) & 0xFFFF;
-            for (int i = 0; i < cnt; i++) {
-                int o = (base + i) * 5;
-                int lo = Math.max(rg[o], 0);
-                int hi = Math.min(rg[o + 1], limit - 1);
-                int target = rg[o + 2];
-                for (int c = lo; c <= hi; c++) flat[s * limit + c] = target;
-            }
-        }
-        return flat;
-    }
-
-    /** Build flat per-state range-index lookup: {@code [state * limit + c] → range index} (-1 = dead). */
-    private static int[] buildAsciiRangeFlat(Tdfa tdfa, int limit) {
-        int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
-        int[] flat = new int[tdfa.stateCount * limit];
-        java.util.Arrays.fill(flat, -1);
-        for (int s = 0; s < tdfa.stateCount; s++) {
-            int meta = sm[s];
-            int base = tdfa.stateBase[s], cnt = (meta >>> 1) & 0xFFFF;
-            for (int i = 0; i < cnt; i++) {
-                int o = (base + i) * 5;
-                int lo = Math.max(rg[o], 0);
-                int hi = Math.min(rg[o + 1], limit - 1);
-                for (int c = lo; c <= hi; c++) flat[s * limit + c] = i;
-            }
-        }
-        return flat;
     }
 
     /** True if the DFA qualifies for the no-masks fast path. */

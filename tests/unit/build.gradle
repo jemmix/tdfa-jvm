@@ -10,6 +10,9 @@ dependencies {
     testImplementation project(':')
     testImplementation project(':unicode:v6_0')
     testImplementation project(':unicode:v17_0')
+    // For BytecodeFloorTest: every shipped module must be on the test
+    // classpath so its compiled output can be pinned to major <= 52.
+    testImplementation project(':lib:pikesim')
     testImplementation platform('org.junit:junit-bom:5.10.2'),
             'org.junit.jupiter:junit-jupiter',
             'org.assertj:assertj-core:3.25.3'

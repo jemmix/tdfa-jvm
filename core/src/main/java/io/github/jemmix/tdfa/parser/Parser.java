@@ -101,7 +101,7 @@ public final class Parser {
      *  and the trailing anchor supplies context that prevents the Perl leftmost-first
      *  DFA from pruning a longer alternative's continuation. */
     private static Ast anchorBoth(Ast e) {
-        return new Ast.Concat(List.of(new Ast.StartAnchor(true), e, new Ast.EndAnchor(true)));
+        return new Ast.Concat(java.util.Collections.unmodifiableList(java.util.Arrays.asList(new Ast.StartAnchor(true), e, new Ast.EndAnchor(true))));
     }
 
     /** alt := concat ('|' concat)* */
@@ -332,7 +332,7 @@ public final class Parser {
         Ast body = parseAlt();
         expect(')');
         if (!capturing) return body;
-        return new Ast.Concat(List.of(new Ast.Tag(open), body, new Ast.Tag(close)));
+        return new Ast.Concat(java.util.Collections.unmodifiableList(java.util.Arrays.asList(new Ast.Tag(open), body, new Ast.Tag(close))));
     }
 
     /** class := '^'? class-item+ ']' */
@@ -430,25 +430,25 @@ public final class Parser {
         // lowercase forms fold later via the class-level foldExpandRanges.
         boolean ci = caseInsensitive;
         if (!unicodeShorthand) {
-            return switch (c) {
-                case 'd' -> R_DIGIT;
-                case 'D' -> R_NOT_DIGIT;
-                case 'w' -> R_WORD;
-                case 'W' -> ci ? complementRanges(foldExpandRanges(R_WORD)) : R_NOT_WORD;
-                case 's' -> R_SPACE;
-                case 'S' -> R_NOT_SPACE;
-                default -> null;
-            };
+            switch (c) {
+                case 'd': return R_DIGIT;
+                case 'D': return R_NOT_DIGIT;
+                case 'w': return R_WORD;
+                case 'W': return ci ? complementRanges(foldExpandRanges(R_WORD)) : R_NOT_WORD;
+                case 's': return R_SPACE;
+                case 'S': return R_NOT_SPACE;
+                default: return null;
+            }
         }
-        return switch (c) {
-            case 'd' -> unicodeDigitRanges();
-            case 'D' -> complementRanges(unicodeDigitRanges());
-            case 'w' -> computeUnicodeWordRanges();
-            case 'W' -> complementRanges(ci ? foldExpandRanges(computeUnicodeWordRanges()) : computeUnicodeWordRanges());
-            case 's' -> R_UNICODE_SPACE;
-            case 'S' -> complementRanges(R_UNICODE_SPACE);
-            default -> null;
-        };
+        switch (c) {
+            case 'd': return unicodeDigitRanges();
+            case 'D': return complementRanges(unicodeDigitRanges());
+            case 'w': return computeUnicodeWordRanges();
+            case 'W': return complementRanges(ci ? foldExpandRanges(computeUnicodeWordRanges()) : computeUnicodeWordRanges());
+            case 's': return R_UNICODE_SPACE;
+            case 'S': return complementRanges(R_UNICODE_SPACE);
+            default: return null;
+        }
     }
 
     /** Build a shorthand escape atom (called from {@link #parseEscape}). */
@@ -463,15 +463,15 @@ public final class Parser {
             return new CharClass(negated ? complementRanges(pos) : pos, false);
         }
         if (!unicodeShorthand) {
-            return switch (c) {
-                case 'd' -> DIGIT;
-                case 'D' -> NOT_DIGIT;
-                case 'w' -> WORD;
-                case 'W' -> NOT_WORD;
-                case 's' -> WHITESPACE;
-                case 'S' -> NOT_WHITESPACE;
-                default -> throw new IllegalStateException("not a shorthand: \\" + c);
-            };
+            switch (c) {
+                case 'd': return DIGIT;
+                case 'D': return NOT_DIGIT;
+                case 'w': return WORD;
+                case 'W': return NOT_WORD;
+                case 's': return WHITESPACE;
+                case 'S': return NOT_WHITESPACE;
+                default: throw new IllegalStateException("not a shorthand: \\" + c);
+            }
         }
         int[] ranges;
         if (base == 'w') ranges = computeUnicodeWordRanges();
@@ -540,23 +540,23 @@ public final class Parser {
 
     /** ASCII-only POSIX class ranges, matching re2j's CharClass tables. */
     private static int[] posixClassRanges(String name) {
-        return switch (name) {
-            case "alnum"  -> R_POSIX_ALNUM;
-            case "alpha"  -> R_POSIX_ALPHA;
-            case "ascii"  -> R_POSIX_ASCII;
-            case "blank"  -> R_POSIX_BLANK;
-            case "cntrl"  -> R_POSIX_CNTRL;
-            case "digit"  -> R_POSIX_DIGIT;
-            case "graph"  -> R_POSIX_GRAPH;
-            case "lower"  -> R_POSIX_LOWER;
-            case "print"  -> R_POSIX_PRINT;
-            case "punct"  -> R_POSIX_PUNCT;
-            case "space"  -> R_POSIX_SPACE;  // POSIX [:space:] INCLUDES \v (unlike Perl \s)
-            case "upper"  -> R_POSIX_UPPER;
-            case "word"   -> R_POSIX_WORD;
-            case "xdigit" -> R_POSIX_XDIGIT;
-            default -> null;
-        };
+        switch (name) {
+            case "alnum":  return R_POSIX_ALNUM;
+            case "alpha":  return R_POSIX_ALPHA;
+            case "ascii":  return R_POSIX_ASCII;
+            case "blank":  return R_POSIX_BLANK;
+            case "cntrl":  return R_POSIX_CNTRL;
+            case "digit":  return R_POSIX_DIGIT;
+            case "graph":  return R_POSIX_GRAPH;
+            case "lower":  return R_POSIX_LOWER;
+            case "print":  return R_POSIX_PRINT;
+            case "punct":  return R_POSIX_PUNCT;
+            case "space":  return R_POSIX_SPACE;  // POSIX [:space:] INCLUDES \v (unlike Perl \s)
+            case "upper":  return R_POSIX_UPPER;
+            case "word":   return R_POSIX_WORD;
+            case "xdigit": return R_POSIX_XDIGIT;
+            default: return null;
+        }
     }
 
     /** One class member or range endpoint, as a CODEPOINT (a raw supplementary
@@ -585,23 +585,22 @@ public final class Parser {
                 }
                 return val;
             }
-            return switch (e) {
-                case 'n' -> '\n';
-                case 't' -> '\t';
-                case 'r' -> '\r';
-                case 'f' -> '\f';
-                case 'a' -> (char) 7;
-                case 'v' -> (char) 11;
-                case '\\' -> '\\';
-                case 'x' -> parseHexChar();
-                default -> {
+            switch (e) {
+                case 'n': return '\n';
+                case 't': return '\t';
+                case 'r': return '\r';
+                case 'f': return '\f';
+                case 'a': return (char) 7;
+                case 'v': return (char) 11;
+                case '\\': return '\\';
+                case 'x': return parseHexChar();
+                default:
                     // re2j rejects unknown ASCII alphanumeric escapes in class
                     // context (notably [\b] — backspace is unsupported); a
                     // non-ASCII letter or digit is an identity escape there.
                     if (e < 128 && Character.isLetterOrDigit(e)) throw fail(this, "invalid escape sequence: \\" + e);
-                    yield e;  // any other (non-alphanumeric) escaped char is literal
-                }
-            };
+                    return e;  // any other (non-alphanumeric) escaped char is literal
+            }
         }
         int cp = Alphabet.decode(src, pos, src.length());
         pos += Alphabet.width(cp);
@@ -653,44 +652,44 @@ public final class Parser {
             }
             return new Ast.Symbol((char) val);
         }
-        return switch (c) {
-            case 'n' -> new Ast.Symbol('\n');
-            case 't' -> new Ast.Symbol('\t');
-            case 'r' -> new Ast.Symbol('\r');
-            case 'f' -> new Ast.Symbol('\f');
-            case 'a' -> new Ast.Symbol((char) 7);   // alarm/bell, like re2j
-            case 'v' -> new Ast.Symbol((char) 11);  // vertical tab, like re2j
-            case '\\' -> new Ast.Symbol('\\');
-            case 'x' -> parseHexEscape();
-            case 'd' -> shorthandEscape('d');
-            case 'D' -> shorthandEscape('D');
-            case 'w' -> shorthandEscape('w');
-            case 'W' -> shorthandEscape('W');
-            case 's' -> shorthandEscape('s');
-            case 'S' -> shorthandEscape('S');
+        switch (c) {
+            case 'n': return new Ast.Symbol('\n');
+            case 't': return new Ast.Symbol('\t');
+            case 'r': return new Ast.Symbol('\r');
+            case 'f': return new Ast.Symbol('\f');
+            case 'a': return new Ast.Symbol((char) 7);   // alarm/bell, like re2j
+            case 'v': return new Ast.Symbol((char) 11);  // vertical tab, like re2j
+            case '\\': return new Ast.Symbol('\\');
+            case 'x': return parseHexEscape();
+            case 'd': return shorthandEscape('d');
+            case 'D': return shorthandEscape('D');
+            case 'w': return shorthandEscape('w');
+            case 'W': return shorthandEscape('W');
+            case 's': return shorthandEscape('s');
+            case 'S': return shorthandEscape('S');
             // RE2 (and re2j) reject \C as "any byte" — see re2j Parser.java:913.
             // We don't support it either; reject at parse time so silent misparse
             // (treating \C as literal C) doesn't yield wrong matches.
-            case 'C' -> throw new IllegalArgumentException("invalid escape sequence: \\C");
+            case 'C': throw new IllegalArgumentException("invalid escape sequence: \\C");
             // Zero-width assertions — RE2/re2j implement these fully.
-            case 'A' -> new Ast.StartAnchor(true);    // \A = absolute start of text (immune to (?m))
-            case 'z' -> new Ast.EndAnchor(true);      // \z = absolute end of text (immune to (?m))
-            case 'b' -> new Ast.WordBoundary();         // \b = word boundary
-            case 'B' -> new Ast.NoWordBoundary();       // \B = not a word boundary
+            case 'A': return new Ast.StartAnchor(true);    // \A = absolute start of text (immune to (?m))
+            case 'z': return new Ast.EndAnchor(true);      // \z = absolute end of text (immune to (?m))
+            case 'b': return new Ast.WordBoundary();       // \b = word boundary
+            case 'B': return new Ast.NoWordBoundary();     // \B = not a word boundary
             // Unicode property classes \p{X} \pX \P{X} \PX \p{^X}.
             // Outside a char class, build a CharClass directly (the table's
             // own negation flag carries the \P sign; no complement materialisation).
-            case 'p' -> parseUnicodeEscape(true);
-            case 'P' -> parseUnicodeEscape(false);
-            case 'Q' -> parseQuotedLiteral();
-            default -> {
+            case 'p': return parseUnicodeEscape(true);
+            case 'P': return parseUnicodeEscape(false);
+            case 'Q': return parseQuotedLiteral();
+            default: {
                 // re2j rejects unknown ASCII alphanumeric escapes (\E, \K, \R,
                 // \e, \N, ...). Non-ASCII letters/digits (\䑄, \Ω) and any
                 // non-alphanumeric escape (\. \- \_ ...) are identity escapes.
                 if (c < 128 && Character.isLetterOrDigit(c)) throw fail(this, "invalid escape sequence: \\" + c);
-                yield new Ast.Symbol(c);
+                return new Ast.Symbol(c);
             }
-        };
+        }
     }
 
     /**

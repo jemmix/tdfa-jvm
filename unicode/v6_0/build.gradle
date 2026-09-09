@@ -43,6 +43,7 @@ jar {
 }
 
 tasks.withType(JavaCompile).configureEach {
+    it.options.release = 8  // Java 8 floor: this module SHIPS (docs/REVIEW-2026-09.md)
     options.encoding = 'UTF-8'
     options.debug = true
 }

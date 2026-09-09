@@ -64,9 +64,29 @@ public final class ShellEmitter {
      *                          engine class for concrete-type wiring, or {@code null}
      *                          to type the shell's engine field as {@link RegexEngine}
      */
-    public record Spec(String pattern, int flags, int programSize,
-                       RegexEngine engine, Supplier<RegexEngine> wholeSupplier,
-                       String engineInternalName) { }
+    // Java 8 floor: records are 16+; plain carrier class with record-shaped accessors.
+    public static final class Spec {
+        private final String pattern;
+        private final int flags;
+        private final int programSize;
+        private final RegexEngine engine;
+        private final Supplier<RegexEngine> wholeSupplier;
+        private final String engineInternalName;
+
+        public Spec(String pattern, int flags, int programSize,
+                    RegexEngine engine, Supplier<RegexEngine> wholeSupplier,
+                    String engineInternalName) {
+            this.pattern = pattern; this.flags = flags; this.programSize = programSize;
+            this.engine = engine; this.wholeSupplier = wholeSupplier;
+            this.engineInternalName = engineInternalName;
+        }
+        public String pattern() { return pattern; }
+        public int flags() { return flags; }
+        public int programSize() { return programSize; }
+        public RegexEngine engine() { return engine; }
+        public Supplier<RegexEngine> wholeSupplier() { return wholeSupplier; }
+        public String engineInternalName() { return engineInternalName; }
+    }
 
     /**
      * Emit and instantiate the shell. Returns the generated {@code Pattern}
@@ -315,7 +335,9 @@ public final class ShellEmitter {
         try {
             ClassLoader cl = engInstance.getClass().getClassLoader();
             TdfaAsmBackend.GenClassLoader gcl =
-                    cl instanceof TdfaAsmBackend.GenClassLoader g ? g : new TdfaAsmBackend.GenClassLoader(cl);
+                    cl instanceof TdfaAsmBackend.GenClassLoader
+                            ? (TdfaAsmBackend.GenClassLoader) cl
+                            : new TdfaAsmBackend.GenClassLoader(cl);
             gcl.register(patOwner.replace('/', '.'), patBytes);
             gcl.register(matOwner.replace('/', '.'), matBytes);
             Class<?> patCls = Class.forName(patOwner.replace('/', '.'), true, gcl);

@@ -30,6 +30,10 @@ jar {
 }
 
 tasks.withType(JavaCompile).configureEach {
+    // Java 8 bytecode floor (2026-09, docs/REVIEW-2026-09.md §1b): this module
+    // SHIPS, so it compiles with --release 8 — language level AND API surface
+    // are both compiler-enforced. Tests/benchmarks stay on modern JDKs.
+    it.options.release = 8
     options.encoding = 'UTF-8'
     options.debug = true
     // Style-modernization checks disabled on a freeze-bound codebase: the

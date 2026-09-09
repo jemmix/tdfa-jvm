@@ -18,7 +18,7 @@ public final class TdfaAsmBackend {
 
     private static final AtomicLong COUNTER = new AtomicLong();
     private static final String ENGINE = "io/github/jemmix/tdfa/core/RegexEngine";
-    private static final String HOLDER = "io/github/jemmix/tdfa/tdfa/TdfaRunner$MatchHolder";
+    private static final String HOLDER = "io/github/jemmix/tdfa/tdfa/MatchHolder";  // moved out of TdfaRunner (2026-09 split)
     private static final String RESULT = "io/github/jemmix/tdfa/core/MatchResult";
     private static final String STR = "java/lang/String";
     private static final String CS_D = "Ljava/lang/CharSequence;";
@@ -38,7 +38,21 @@ public final class TdfaAsmBackend {
      *  that defines its class (and any additionally generated per-pattern classes,
      *  e.g. the facade Pattern/Matcher shell tier) plus the Tdfa backing it. The loader
      *  is unreferenced once the pattern is garbage → all its classes unload together. */
-    public record Generated(RegexEngine engine, java.lang.ClassLoader loader, String owner, Tdfa tdfa) { }
+    // Java 8 floor: records are 16+; plain carrier class with record-shaped accessors.
+    public static final class Generated {
+        public final RegexEngine engine;
+        public final java.lang.ClassLoader loader;
+        public final String owner;
+        public final Tdfa tdfa;
+
+        public Generated(RegexEngine engine, java.lang.ClassLoader loader, String owner, Tdfa tdfa) {
+            this.engine = engine; this.loader = loader; this.owner = owner; this.tdfa = tdfa;
+        }
+        public RegexEngine engine() { return engine; }
+        public java.lang.ClassLoader loader() { return loader; }
+        public String owner() { return owner; }
+        public Tdfa tdfa() { return tdfa; }
+    }
 
     /** Child loader that can define any number of registered classes for one pattern. */
     public static final class GenClassLoader extends ClassLoader {

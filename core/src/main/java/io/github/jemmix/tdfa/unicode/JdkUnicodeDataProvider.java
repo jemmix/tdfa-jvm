@@ -204,13 +204,13 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
         }
         // Flatten per-category.
         Map<String, int[]> out = new HashMap<>();
-        for (var e : byType.entrySet()) {
+        for (Map.Entry<Byte, ArrayList<int[]>> e : byType.entrySet()) {
             String name = CATEGORY_NAMES[e.getKey()];
             if (name == null) continue; // unused type byte
             out.put(name, flatten(e.getValue()));
         }
         // Build containers by merging sub-category ranges.
-        for (var e : CONTAINERS.entrySet()) {
+        for (Map.Entry<String, String[]> e : CONTAINERS.entrySet()) {
             ArrayList<int[]> merged = new ArrayList<>();
             for (String sub : e.getValue()) {
                 int[] r = out.get(sub);
@@ -255,7 +255,7 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
             byScript.computeIfAbsent(prev, k -> new ArrayList<>()).add(new int[]{start, Character.MAX_CODE_POINT});
         }
         Map<String, int[]> out = new HashMap<>();
-        for (var e : byScript.entrySet()) {
+        for (Map.Entry<Character.UnicodeScript, ArrayList<int[]>> e : byScript.entrySet()) {
             // JDK enum: OLD_SOUTH_ARABIAN → re2j: Old_South_Arabian
             out.put(toScriptName(e.getKey().name()), flatten(e.getValue()));
         }

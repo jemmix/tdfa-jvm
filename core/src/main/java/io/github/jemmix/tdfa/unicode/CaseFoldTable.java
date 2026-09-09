@@ -59,7 +59,7 @@ public final class CaseFoldTable {
             groups.computeIfAbsent(fk, k -> new ArrayList<>()).add(cp);
         }
         Map<Integer, int[]> out = new HashMap<>();
-        for (var e : groups.entrySet()) {
+        for (Map.Entry<Integer, ArrayList<Integer>> e : groups.entrySet()) {
             ArrayList<Integer> cps = e.getValue();
             if (cps.size() <= 1) continue;
             cps.sort(Integer::compare);
