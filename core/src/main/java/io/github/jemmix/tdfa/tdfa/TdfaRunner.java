@@ -1288,10 +1288,15 @@ public final class TdfaRunner implements RegexEngine {
                 if (fm != null) {
                     if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                     int cell = fm[state * 64 + posFlags];
-                    if (cell < 0) continue;
-                    haveAccept = true; lastAcceptPos = pos;
-                    if (regs != null && cell != 0) applyOps(op, cell, regs, pos);
-                    if (pm && stopNow(state, posFlags)) break;
+                    // cell < 0 (position-suppressed accept): do NOT record and
+                    // do NOT stop — fall through to the transition, exactly
+                    // like extractFrom (the former `continue` skipped the
+                    // transition and froze the walk state while pos advanced).
+                    if (cell >= 0) {
+                        haveAccept = true; lastAcceptPos = pos;
+                        if (regs != null && cell != 0) applyOps(op, cell, regs, pos);
+                        if (pm && stopNow(state, posFlags)) break;
+                    }
                 } else {
                     haveAccept = true; lastAcceptPos = pos;
                     if (regs != null) applyFinalOps(state, regs, pos);
@@ -1314,6 +1319,11 @@ public final class TdfaRunner implements RegexEngine {
                 if (opsOff != 0) applyOps(op, opsOff, regs, pos);
             }
             state = target;
+            // posFlags belongs to the OLD position — invalidate (extractFrom /
+            // matchFrom / anchored / generic all reset here; the fast walk
+            // historically didn't, feeding stale flags to the next accept /
+            // stopNow probe).
+            posFlags = -1;
         }
         if (haveAccept) {
             // Eager finals at accept-record time (see extractFrom).
@@ -1810,6 +1820,12 @@ public final class TdfaRunner implements RegexEngine {
         for (int mask : tdfa.stateEntryMask) if (mask != 0) return false;
         for (int mask : tdfa.stateAcceptMask) if (mask != 0) return false;
         for (int i = 4; i < tdfa.ranges.length; i += 5) if (tdfa.ranges[i] != 0) return false;
+        // Per-mask final variants would make tryStartFast's accepting-state
+        // branch (fm[state*64+posFlags]) position-sensitive: its historical
+        // handling of suppressed accepts and posFlags lifetime diverged from
+        // extractFrom there. The divergences are fixed below, but the gate
+        // keeps such DFAs on the exact walks regardless [review P1 #8].
+        if (tdfa.stateFinalOpsByMask != null) return false;
         return true;
     }
 
