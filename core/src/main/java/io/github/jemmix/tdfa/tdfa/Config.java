@@ -10,7 +10,7 @@ package io.github.jemmix.tdfa.tdfa;
         final int h;
         final int l;
         /** Zero-width assertion mask accumulated during the ε-closure that produced this config.
-         *  Reset to 0 by {@link Compiler#stepOnSymbol}. */
+         *  Reset to 0 by {@link TdfaCompiler#stepOnSymbol}. */
         int emptyMask;
         /** Worst (highest) priority ε-edge taken to reach this config in the closure.
          *  Seed configs carry pri=0 (no edges taken). Always 0 in POSIX mode (unused).

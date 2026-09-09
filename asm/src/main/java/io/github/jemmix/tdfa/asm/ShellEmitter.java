@@ -55,14 +55,14 @@ public final class ShellEmitter {
 
     /** Shell emission spec. All core/reflection types — no facade linkage.
      *
-     * @param pattern           the regex source text (recompiled by the serialization proxy)
-     * @param flags             facade flag bits
-     * @param programSize       states in the compiled DFA (cost estimate)
-     * @param engine            the per-pattern engine instance
-     * @param wholeSupplier     lazily-compiled \A(?:...)\z-anchored engine for matches()
-     * @param engineInternalName slashed internal name of a per-pattern generated
-     *                          engine class for concrete-type wiring, or {@code null}
-     *                          to type the shell's engine field as {@link RegexEngine}
+     * <p>Components: {@code pattern} is the regex source text (recompiled by
+     * the serialization proxy); {@code flags} the facade flag bits;
+     * {@code programSize} the states in the compiled DFA (cost estimate);
+     * {@code engine} the per-pattern engine instance; {@code wholeSupplier}
+     * the lazily-compiled \A(?:...)\z-anchored engine for matches();
+     * {@code engineInternalName} the slashed internal name of a per-pattern
+     * generated engine class for concrete-type wiring, or {@code null} to
+     * type the shell's engine field as {@link RegexEngine}.
      */
     // Java 8 floor: records are 16+; plain carrier class with record-shaped accessors.
     public static final class Spec {

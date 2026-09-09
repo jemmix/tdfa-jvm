@@ -46,12 +46,13 @@ final class TdfaCompiler {
          * Multimap from DFA-state shape key to the list of DFA-state IDs that
          * share that shape. The paper's {@code map}+{@code topological_sort}
          * dedup collapses states with identical (NFA-state-set, lookahead-tag,
-         * emptyMask, pri) signature; register-renaming via {@link #tryMap}
+         * emptyMask, pri) signature; register-renaming via
+         * {@link TdfaStateIndex#tryMap}
          * handles the case where the same shape is reached with different
          * register assignments.
          *
          * <p>Storing ALL same-shape state IDs (not just the first one) keeps
-         * {@link #addState} expected-O(1) per call. With a single-entry map
+         * {@link TdfaStateIndex#addState} expected-O(1) per call. With a single-entry map
          * (the prior design) addState had to fall back to an O(n²) scan over
          * all known states whenever the hash-bucket primary candidate failed
          * tryMap — or, worse, whenever the shape was brand-new (hash-miss),

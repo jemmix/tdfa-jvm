@@ -12,14 +12,14 @@ import java.util.Map;
  * <p>Replaces the former {@code Parser.capture()} side-channel (a Parser
  * instance whose mutable counters were read after parsing).
  *
- * @param ast              parsed syntax tree (anchors injected if requested)
- * @param tagCount         number of capture tags (2 per group; 1-indexed)
- * @param groupCount       number of capturing groups (excluding group 0)
- * @param multiline        {@code (?m)} seen — {@code ^}/{@code $} at line boundaries
- * @param unicodeShorthand {@code (?u)} seen — Unicode-aware {@code \w \d \s \b}
- * @param unicodeWordRanges word-character ranges when {@code unicodeShorthand}
- *                          is set, else {@code null}
- * @param namedGroups      unmodifiable name&rarr;group-index map
+ * <p>Components: {@code ast} is the parsed syntax tree (anchors injected if
+ * requested); {@code tagCount} counts capture tags (2 per group; 1-indexed);
+ * {@code groupCount} counts capturing groups (excluding group 0);
+ * {@code multiline} mirrors {@code (?m)} ({@code ^}/{@code $} at line
+ * boundaries); {@code unicodeShorthand} mirrors {@code (?u)} (Unicode-aware
+ * {@code \w \d \s \b}); {@code unicodeWordRanges} carries the word-character
+ * ranges when {@code unicodeShorthand} is set (else {@code null});
+ * {@code namedGroups} is the unmodifiable name&rarr;group-index map.
  */
 // Not a record: the Java 8 bytecode floor forbids them; semantics
 // (defensive copies, value-based equals) are preserved by hand.

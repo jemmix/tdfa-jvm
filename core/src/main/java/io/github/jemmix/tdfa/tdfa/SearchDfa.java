@@ -9,24 +9,25 @@ import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_MAX_ROWS;
 /** Extracted verbatim from TdfaRunner (2026-09 god-file split); the
  *  {@code r} back-reference carries the shared runner tables. Docs moved
  *  with the code. Caps/sentinel stay on TdfaRunner (its scan paths use them
- *  too) and are static-imported here. */
-    /** Static nested: shared per-Tdfa lifetime; references the runner's tables.
-     *
-     * Thread-safety (the RegexEngine contract requires concurrent-safe
-     * engines): the mutation path — internRow / transition / buildBlock — is
-     * confined under {@link #lock}. The per-codepoint READ path never touches
-     * the intern maps: it goes through immutable, volatile-published
-     * snapshots ({@link #rowWordsArr}, {@link #rowBlockIdsArr},
-     * {@link #blocksArr}) whose entries are fully built before publication;
-     * row-block cells only ever transition from -1 to their final value under
-     * the lock (plain int writes are atomic, so a racing reader sees either
-     * -1 — and re-checks under the lock — or the final value; a block id is
-     * written to a cell only AFTER the block is published in
-     * {@code blocksArr}, and readers length-check against the snapshot so a
-     * stale snapshot degrades to the locked path, never to a wrong lookup).
-     * Locking the read path itself would serialize concurrent scans of one
-     * Pattern and put a monitor enter/exit on every scanned char — that is
-     * why the snapshots exist. */
+ *  too) and are static-imported here.
+ *
+ * Static nested: shared per-Tdfa lifetime; references the runner's tables.
+ *
+ * Thread-safety (the RegexEngine contract requires concurrent-safe
+ * engines): the mutation path — internRow / transition / buildBlock — is
+ * confined under {@link #lock}. The per-codepoint READ path never touches
+ * the intern maps: it goes through immutable, volatile-published
+ * snapshots ({@link #rowWordsArr}, {@link #rowBlockIdsArr},
+ * {@link #blocksArr}) whose entries are fully built before publication;
+ * row-block cells only ever transition from -1 to their final value under
+ * the lock (plain int writes are atomic, so a racing reader sees either
+ * -1 — and re-checks under the lock — or the final value; a block id is
+ * written to a cell only AFTER the block is published in
+ * {@code blocksArr}, and readers length-check against the snapshot so a
+ * stale snapshot degrades to the locked path, never to a wrong lookup).
+ * Locking the read path itself would serialize concurrent scans of one
+ * Pattern and put a monitor enter/exit on every scanned char — that is
+ * why the snapshots exist. */
     final class SearchDfa {
         final TdfaRunner r;
         final int nw;
