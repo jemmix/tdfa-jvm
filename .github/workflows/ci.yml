@@ -93,5 +93,6 @@ jobs:
             https://repo1.maven.org/maven2/org/ow2/asm/asm/9.9.1/asm-9.9.1.jar
           echo "6f3828a215c920059a5efa2fb55c233d6c54ec5cadca99ce1b1bdd10077c7ddd  /tmp/asm-9.9.1.jar" | shasum -a 256 -c -
           CP="core/build/libs/core-0.1.0-SNAPSHOT.jar:asm/build/libs/asm-0.1.0-SNAPSHOT.jar:/tmp/asm-9.9.1.jar"
+          rm -rf /tmp/smoke8 && mkdir -p /tmp/smoke8   # javac does not create -d dirs
           javac -cp "$CP" -d /tmp/smoke8 ci/Smoke8.java
           java -cp "/tmp/smoke8:$CP" Smoke8
