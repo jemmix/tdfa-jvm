@@ -48,10 +48,14 @@ public final class Parser {
     private static final int MAX_REPEAT_COUNT = 1000;
     /** Group-nesting cap: the recursive-descent cycle parseAlt→parseConcat→
      *  parseRepeat→parseAtom→parseGroup costs JVM stack frames per level
-     *  (re2j's parser is iterative and needs none); past ~20k levels the
-     *  default JVM stack overflows with a raw StackOverflowError through
-     *  Pattern.compile. 1000 is comfortably both sides. */
-    private static final int MAX_GROUP_DEPTH = 1000;
+     *  (re2j's parser is iterative and needs none). The cap must fire
+     *  DETERMINISTICALLY before any later AST walk (also recursive) risks
+     *  the JVM stack: the cycle plus downstream passes cost ~6-10 frames
+     *  per level, and interpreted frames can exceed 100 bytes — 256 levels
+     *  stays comfortably inside a 1 MB worker stack (the first CI run
+     *  overflowed at the old 1000-deep cap on 1 MB runners while passing
+     *  on 2 MB desktops). 256 is far beyond any sane pattern. */
+    private static final int MAX_GROUP_DEPTH = 256;
     boolean caseInsensitive = false;
     boolean dotall = false;
     boolean multiline = false;
@@ -226,9 +230,10 @@ public final class Parser {
         boolean[] flagOnly = {false};
         // Recursion depth cap: parseAlt→…→parseGroup is the only recursive
         // cycle, and it is stack-frame-per-paren (re2j parses iteratively and
-        // needs no cap). 1000 is far beyond any sane pattern and well under
-        // the default-stack SOE threshold; deeper input is a clean parse
-        // error, never a StackOverflowError through Pattern.compile.
+        // needs no cap). 256 is far beyond any sane pattern and small enough
+        // that the cap fires before ANY environment's default stack is at
+        // risk (see MAX_GROUP_DEPTH); deeper input is a clean parse error,
+        // never a StackOverflowError through Pattern.compile.
         if (++depth > MAX_GROUP_DEPTH)
             throw fail(this, "group nesting too deep (>" + MAX_GROUP_DEPTH + ")");
         try {

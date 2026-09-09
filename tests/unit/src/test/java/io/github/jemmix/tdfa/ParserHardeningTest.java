@@ -25,7 +25,9 @@ class ParserHardeningTest {
     }
 
     @Test void deepNestingAtLimitStillCompiles() {
-        int depth = 1000;
+        // keep in sync with Parser.MAX_GROUP_DEPTH — chosen so the cap fires
+        // before any default JVM stack (1 MB CI workers included) is at risk
+        int depth = 256;
         String re = "(".repeat(depth) + "a" + ")".repeat(depth);
         assertThatCode(() -> CompiledRegex.compile(re)).doesNotThrowAnyException();
     }
