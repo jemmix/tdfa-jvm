@@ -2,11 +2,12 @@ package io.github.jemmix.tdfa.tdfa;
 
 /**
  * Compile-pipeline work budget: a step counter threaded through every
- * unbounded/fixpoint loop in the pipeline (determinization closure, tryMap,
- * regopt liveness/propagation, §3.2 fallback accumulation). The state/kernel
- * caps bound the OUTPUT; this bounds the WORK — exponential closure churn
- * that never materializes states (nested-quantifier bombs found by the
- * fuzzer) loops forever under output-only caps.
+ * unbounded/fixpoint/quadratic loop in the pipeline — determinization closure,
+ * tryMap, regopt (CFG build, decode, liveness/propagation, DCE, interference,
+ * allocation, normalization/topo-sort), and the final-variant enumeration.
+ * The state/kernel caps bound the OUTPUT; this bounds the WORK — exponential
+ * closure churn that never materializes states (nested-quantifier bombs found
+ * by the fuzzer) loops forever under output-only caps.
  *
  * <p>Exhaustion fails compilation with the same clean "pattern too large"
  * {@link IllegalStateException} the state cap uses. Default budget is

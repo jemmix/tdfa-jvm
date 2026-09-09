@@ -47,10 +47,10 @@ public final class Optimize {
         for (int iter = 0; iter < 2; iter++) {
             boolean[][] L = livenessAnalysis(cfg, meter);
             deadCodeElimination(cfg, L);
-            boolean[][] I = interferenceAnalysis(cfg, L);
+            boolean[][] I = interferenceAnalysis(cfg, L, meter);
             int[] V = registerAllocation(cfg, I, meter);
             rename(cfg, V);
-            normalization(cfg);
+            normalization(cfg, meter);
             cfg.regCount = countUsed(V);
             cfg.finalRegBase = findFinalRegBase(V, cfg.tagCount);
         }
@@ -397,11 +397,16 @@ public final class Optimize {
      * {@link Cfg#VAL_NIL} for SET ops). Registers sharing the same value don't
      * interfere and may share a slot. A forward pre-pass computes {@code V} at
      * each op position; the backward pass reads from the pre-computed snapshot.
+     * <b>Conflation caveat:</b> the sentinels {@code POS_VALUE}/{@code NIL_VALUE}
+     * are per-<em>value</em>, not per-op — all SET-pos ops in a block are assumed
+     * to write the same position (see the invariant documented at
+     * {@link Cfg#VAL_POS}). Same for NIL, which is harmless since NIL is a
+     * unique constant.
      *
      * <p>APPEND-vs-non-APPEND cross-interference is skipped: we have no APPEND ops
      * (single-valued tags only).
      */
-    static boolean[][] interferenceAnalysis(Cfg cfg, boolean[][] L) {
+    static boolean[][] interferenceAnalysis(Cfg cfg, boolean[][] L, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
         int nr = cfg.regCount;
         boolean[][] I = new boolean[nr][nr];
         final int NO_VALUE = -1;
@@ -436,6 +441,7 @@ public final class Optimize {
                     }
                 }
                 V_after[oi] = V.clone();
+                if (meter != null) meter.tick(nr);   // the clone is the pass's real unit (nOps*nr)
             }
 
             // Backward pass: maintain running live set, mark interferences.
@@ -447,6 +453,7 @@ public final class Optimize {
                 int vDst = Voi[op.dst];
                 // op.dst interferes with everything live (except itself and same-value regs).
                 for (int k = 0; k < nr; k++) {
+                    if (meter != null) meter.tick();   // O(nOps*nr) marking scan
                     if (k != op.dst && live[k] && Voi[k] != vDst) {
                         I[op.dst][k] = true;
                         I[k][op.dst] = true;
@@ -498,6 +505,7 @@ public final class Optimize {
         // Phase 1: walk COPY ops; try to coalesce src+dst (working registers only).
         for (Cfg.Block b : cfg.blocks) {
             for (Cfg.Op op : b.ops) {
+                if (meter != null) meter.tick();   // per COPY op walked (+ class probes inside)
                 if (op.kind != Cfg.KIND_COPY && op.kind != Cfg.KIND_APPEND) continue;
                 if (op.dst == op.src) continue;
                 if (op.dst >= nw || op.src >= nw) continue;
@@ -554,6 +562,7 @@ public final class Optimize {
             if (B[i] != -1) continue;
             int assigned = -1;
             for (int j = 0; j < nw; j++) {
+                if (meter != null) meter.tick();   // O(nw²) worst-case placement scan
                 if (B[j] != j) continue;
                 if (noInterfere(S.get(j), i, I)) {
                     assigned = j;
@@ -617,7 +626,7 @@ public final class Optimize {
      * writes i or j). Duplicates after normalization indicate redundant work and can
      * be removed.
      */
-    static void normalization(Cfg cfg) {
+    static void normalization(Cfg cfg, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
         for (Cfg.Block b : cfg.blocks) {
             if (b.ops.isEmpty()) continue;
             List<Cfg.Op> normalized = new ArrayList<>(b.ops.size());
@@ -627,7 +636,7 @@ public final class Optimize {
                 int j = i;
                 while (j < b.ops.size() && b.ops.get(j).kind == kind) j++;
                 List<Cfg.Op> run = new ArrayList<>(b.ops.subList(i, j));
-                normalizeRun(run);
+                normalizeRun(run, meter);
                 normalized.addAll(run);
                 i = j;
             }
@@ -636,10 +645,11 @@ public final class Optimize {
         }
     }
 
-    private static void normalizeRun(List<Cfg.Op> run) {
+    private static void normalizeRun(List<Cfg.Op> run, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
         // Dedup.
         for (int a = run.size() - 1; a >= 0; a--) {
             for (int b2 = a - 1; b2 >= 0; b2--) {
+                if (meter != null) meter.tick();   // O(run²) pair dedup
                 if (opsEqual(run.get(a), run.get(b2))) { run.remove(a); break; }
             }
         }
@@ -647,7 +657,7 @@ public final class Optimize {
         if (kind == Cfg.KIND_SET) {
             run.sort((x, y) -> Integer.compare(x.dst, y.dst));
         } else if (kind == Cfg.KIND_COPY) {
-            topoSortCopy(run);
+            topoSortCopy(run, meter);
         }
     }
 
@@ -669,7 +679,7 @@ public final class Optimize {
      * {@code nontrivial_cycle} flag (true if any non-self cycle exists); we
      * don't currently surface it.
      */
-    private static void topoSortCopy(List<Cfg.Op> run) {
+    private static void topoSortCopy(List<Cfg.Op> run, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
         int n = run.size();
         if (n < 2) return;
         // Find max register id to size the I[] array.
@@ -685,6 +695,7 @@ public final class Optimize {
         while (remaining > 0) {
             boolean added = false;
             for (int i = 0; i < n; i++) {
+                if (meter != null) meter.tick();   // O(n²) re-scan per removal round
                 if (removed[i]) continue;
                 Cfg.Op op = run.get(i);
                 if (I[op.dst] == 0) {

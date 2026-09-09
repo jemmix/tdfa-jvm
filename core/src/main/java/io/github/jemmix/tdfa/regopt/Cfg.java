@@ -37,7 +37,19 @@ public final class Cfg {
     public static final int KIND_APPEND = 3;  // reserved for multi-valued tags (not yet supported)
 
     // ---- Set values (for KIND_SET only) ----
-    public static final int VAL_POS = 1;  // set to current cursor position
+    /**
+     * Set dst to the current cursor position. <b>Invariant (soundness-critical
+     * for {@link Optimize#interferenceAnalysis}):</b> within any single block,
+     * every SET-pos op observes the <em>same</em> cursor position. The
+     * interference analyzer conflates all SET-pos values into one sentinel
+     * ({@code POS_VALUE}) and lets same-value registers share a slot — that
+     * is only sound because a block's op list executes atomically at one DFA
+     * transition/final boundary, where the cursor cannot move. A future op
+     * source that mixes SET-pos ops at different positions inside one block
+     * MUST split them into separate blocks (or the conflation will alias
+     * registers holding different positions and silently corrupt captures).
+     */
+    public static final int VAL_POS = 1;
     public static final int VAL_NIL = 2;  // set to NIL (-1)
 
     // ---- Block kinds ----
