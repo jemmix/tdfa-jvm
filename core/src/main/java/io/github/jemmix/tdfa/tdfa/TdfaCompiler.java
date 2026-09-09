@@ -909,10 +909,12 @@ final class TdfaCompiler {
             java.util.Arrays.fill(finalBlockAt, -1);
             for (int s = 0; s < n; s++) basicLeaving[s] = new ArrayList<>();
             for (int s = 0; s < n; s++) {
+                meter.tick();
                 DfaStateBuilder sb = builders.get(s);
                 rangeBlockIds[s] = new int[sb.ranges.size()];
                 java.util.Arrays.fill(rangeBlockIds[s], -1);
                 for (int r = 0; r < sb.ranges.size(); r++) {
+                    meter.tick();   // per (state, range): pass 1 is real work, budget-visible
                     Range range = sb.ranges.get(r);
                     if (range.ops == null || range.ops.length == 0) continue;
                     io.github.jemmix.tdfa.regopt.Cfg.Block blk = cfg.newBlock(io.github.jemmix.tdfa.regopt.Cfg.BLOCK_BASIC, s, r);
@@ -948,6 +950,7 @@ final class TdfaCompiler {
                 frontier.push(target);
                 visited.set(target);
                 while (!frontier.isEmpty()) {
+                    meter.tick();   // per BFS node per block: the successor-arc pass
                     int t = frontier.pop();
                     blk.successors.addAll(basicLeaving[t]);
                     if (finalBlockAt[t] != -1) blk.successors.add(finalBlockAt[t]);
@@ -967,8 +970,9 @@ final class TdfaCompiler {
             return cfg;
         }
 
-        private static void decodeOps(int[] flat, List<io.github.jemmix.tdfa.regopt.Cfg.Op> out) {
+        private void decodeOps(int[] flat, List<io.github.jemmix.tdfa.regopt.Cfg.Op> out) {
             for (int i = 0; i < flat.length; i += 3) {
+                meter.tick();   // per op: decode allocates the op objects — the former unticked copyOf hotspot
                 int op = flat[i], dst = flat[i + 1], src = flat[i + 2];
                 if (op == OP_END) break;
                 switch (op) {

@@ -209,6 +209,8 @@ public final class Optimize {
             queued.set(bi);
         }
         long[] scratch = new long[w];
+        long[] spare = new long[w];   // next stored-row buffer; displaced rows recycle into it
+        long[] propBuf = new long[w]; // propagateBackwardW result buffer (consumed immediately)
         while (head != tail) {
             if (meter != null) meter.tick();
             int bi = queue[head % queue.length];
@@ -219,7 +221,7 @@ public final class Optimize {
             boolean any = false;
             for (int si : b.successors) {
                 Cfg.Block s = cfg.blocks.get(si);
-                long[] in = propagateBackwardW(rows[si], s.ops, nr);
+                long[] in = propagateBackwardW(rows[si], s.ops, nr, meter, propBuf);
                 for (int k = 0; k < w; k++) {
                     if (meter != null) meter.tick();   // per (successor, word): the fixpoint's real unit
                     scratch[k] |= in[k];
@@ -228,8 +230,13 @@ public final class Optimize {
             }
             if (!any) continue;   // no successors: row stays (seed or empty)
             if (!java.util.Arrays.equals(scratch, rows[bi])) {
-                rows[bi] = scratch.clone();
-                scratch = new long[w];
+                // Zero-allocation row store: write into the spare buffer and
+                // recycle the displaced row as the next spare (this churn was
+                // ~25% of wall on liveness-heavy compiles).
+                long[] displaced = rows[bi];
+                System.arraycopy(scratch, 0, spare, 0, w);
+                rows[bi] = spare;
+                spare = displaced;
                 for (int p : preds[bi]) {
                     if (!queued.get(p)) {
                         queue[tail % queue.length] = p;
@@ -256,10 +263,19 @@ public final class Optimize {
     }
 
     /** Word-packed variant of the scalar backward liveness propagation
-     *  (live-in of a block from its live-out row). Does not mutate {@code live}. */
-    private static long[] propagateBackwardW(long[] liveOut, List<Cfg.Op> ops, int nr) {
-        long[] live = liveOut.clone();
+     *  (live-in of a block from its live-out row). Does not mutate
+     *  {@code liveOut}; writes into the caller's {@code buf} (consumed
+     *  immediately — no clone per call). Per-op ticks: the walk is this
+     *  phase's real unit of work; with only the caller's per-(successor,
+     *  word) ticks, ops-heavy blocks inflated wall-per-tick ~40x and the
+     *  8M budget took 6+s to trip (fuzz round 20 hang: liveness on a
+     *  1389-state DFA burning 17s at library budget). */
+    private static long[] propagateBackwardW(long[] liveOut, List<Cfg.Op> ops, int nr,
+                                             io.github.jemmix.tdfa.tdfa.WorkMeter meter, long[] buf) {
+        System.arraycopy(liveOut, 0, buf, 0, buf.length);
+        long[] live = buf;
         for (int oi = ops.size() - 1; oi >= 0; oi--) {
+            if (meter != null) meter.tick();
             Cfg.Op op = ops.get(oi);
             if (op.dst >= nr) continue;
             switch (op.kind) {

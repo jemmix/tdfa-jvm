@@ -313,6 +313,42 @@ dominated by tryMap×addState (410) and FallbackOps.accumulateClobbered
 bounded reps into budget rejection where re2j compiles fine. CONSTRUCTION
 family (39 records: anchors under lazy/counted loops) still open.
 
+ROUND 20 (2026-09-09): overnight 858426163 hang triage — thresholds
+worked, calibration didn't; regopt/CFG phases now ticked.
+One HANG_ENGINE record (caseSeed 573664345500922672, pattern
+(?:(?:\A(?:z(?<n2>vt\w).*9.*?|\B\s{2}.)+)){2}, stack in regopt
+livenessAnalysis). Reproduced on the exact overnight tree (git worktree
+at dd3f3bc): find-compile 18.6s @2^32 — determinization is CHEAP (1389
+states, 3.65M ticks); the cost is post-det: buildCfg (unticked CFG
+construction, JFR 35%) + liveness fixpoint (~50 passes: successors lists
+are large — each block BFS-collects zero-op reachables) with per-op work
+unticked. Wall-per-tick in those phases was ~40x the det phase, so the
+8M fuzz budget took 6+s per engine to trip; a fuzz batch pays it TWICE
+(asm + vm) -> 12s+ > the 10s watchdog: hang recorded mid-flight,
+sacrificed threads ran to their thresholds. NOT a broken ticker — a
+calibration gap, same class as round 16.
+Fixes (current tree):
+- propagateBackwardW: per-op ticks + caller-provided result buffer (no
+  clone per call).
+- livenessAnalysis: zero-allocation row stores (displaced rows recycle
+  as the spare buffer) — the churn was ~25% of wall.
+- buildCfg: per-state, per-(state,range), and per-BFS-node ticks;
+  decodeOps per-op ticks (op-object allocation was the copyOf hotspot;
+  method became instance to reach the meter).
+Measured: 8M wall-to-threshold 6.6s -> 2.1s; both engines fit the 10s
+watchdog -> this family stops producing hang records. Library-budget
+compile stays ~15s (real work ~15M ticks; the successors explosion in
+buildCfg is the open perf item if it matters in practice). Replay of the
+recorded caseSeed clean on all tiers; 3-min slice on the overnight's
+master seed: 0 hangs, 0 known, 0 result mismatches. Gates green
+(incl. rebar 226/0/2).
+META lessons: (a) the pb probe dir had been wiped by temp cleanup and
+java -cp silently ClassNotFound-ed in 0.07s — two "fast" measurements
+were artifacts until cross-checked; probes now live in pb2 and outputs
+are validated for the expected marker line. (b) The other session's
+Sep-9 refactor (god-file split, b7267c1) shifted all line numbers — hang
+stacks must be mapped against the COMMIT THE RUN USED, not HEAD.
+
 ROUND 19 (2026-09-03): rebar parity on the live patched-re2j oracle.
 Found the rebar suite RED (my gate set never included :tests:parity:rebar):
 test/unicode/case/ascii-only wanted 0 (java/hotspot corpus entry: ASCII-only
