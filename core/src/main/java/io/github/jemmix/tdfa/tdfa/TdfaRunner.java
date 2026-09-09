@@ -1410,8 +1410,15 @@ public final class TdfaRunner implements RegexEngine {
                     }
                 }
             } else {
-                // Non-disjoint state: binary search + prefix-max walk, keeping the
-                // lowest-index mask-satisfied entry (original priority order).
+                // Non-disjoint state: binary search + prefix-max walk. Ownership
+                // protocol (same round-11 fix as extractFrom / runStringMatchFrom /
+                // runGeneric): the MOST SPECIFIC satisfied mask wins (popcount of
+                // requiredMask), ties to the lowest index; a dead marker of the
+                // OWNING entry kills the walk — no fallthrough to lower-specificity
+                // entries, whose contexts are not alive here. The former pure
+                // lowest-index + transparent-dead behavior could let matches()
+                // return true where match()/find() find nothing on
+                // overlapping-mask-context patterns [review P1 #7].
                 int rlo = 0, rhi = count - 1, anchor = -1;
                 while (rlo <= rhi) {
                     int mid = (rlo + rhi) >>> 1;
@@ -1419,18 +1426,30 @@ public final class TdfaRunner implements RegexEngine {
                     else rhi = mid - 1;
                 }
                 int chosen = -1, chosenTarget = 0;
+                int best = -1, bestSpec = -1;
                 for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
                     int o = (base + i) * 5;
                     if (c <= rg[o + 1]) {
-                        int target = rg[o + 2];
-                        if (target < 0) continue;
                         int requiredMask = rg[o + 4];
                         if (requiredMask != 0) {
                             if (posFlags < 0) posFlags = positionFlags(input, pos, to);
                             if ((posFlags & requiredMask) != requiredMask) continue;
                         }
-                        chosen = o; chosenTarget = target;
+                        int spec = Integer.bitCount(requiredMask);
+                        if (spec >= bestSpec) { best = i; bestSpec = spec; }   // >= : lower index wins ties
                     }
+                }
+                if (best >= 0) {
+                    int o = (base + best) * 5;
+                    int target = rg[o + 2];
+                    if (target >= 0) {
+                        chosen = o;
+                        chosenTarget = target;
+                    }
+                    // target < 0: dead marker of the owning context — leave
+                    // chosen < 0; the walk ends (matched=false) and the final
+                    // lastAcceptPos check decides, exactly like extractFrom's
+                    // loop break.
                 }
                 if (chosen >= 0) {
                     state = chosenTarget;
