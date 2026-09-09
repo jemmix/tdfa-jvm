@@ -6,16 +6,11 @@ import java.util.*;
 
 // Tdfa's opcode/flag constants, referenced unqualified throughout (the code
 // was moved verbatim out of Tdfa's nested Compiler class).
-import static io.github.jemmix.tdfa.tdfa.Tdfa.DEBUG;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.MINIMIZE_ENABLED;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.MINIMIZE_MAX_STATES;
 import static io.github.jemmix.tdfa.tdfa.Tdfa.NEVER_STOP;
 import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_COPY;
 import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_END;
 import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_SET_NIL;
 import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_SET_POS;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.REGOPT_ENABLED;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.REGOPT_MAX_STATES;
 import static io.github.jemmix.tdfa.tdfa.Tdfa.rangeCount;
 
 /** Subset-construction compiler: TNFA in, Tdfa out (paper §3; regopt + minimization passes). */
@@ -536,9 +531,12 @@ final class TdfaCompiler {
                     System.nanoTime() - tDet, n);
 
             // === BT22 §6.3 register optimizations ===
+            // Compile knobs, read once per compilation (policy: Tdfa javadoc).
+            final boolean regoptEnabled = !Boolean.getBoolean("tdfa.noregopt");
+            final int regoptMaxStates = Integer.getInteger("tdfa.regopt.max", 2000);
             int finalRegBase = tags;  // default: working [0..T-1], final [T..2T-1]
             long tReg = System.nanoTime();
-            if (REGOPT_ENABLED && tags > 0 && n > 1 && n <= REGOPT_MAX_STATES) {
+            if (regoptEnabled && tags > 0 && n > 1 && n <= regoptMaxStates) {
                 io.github.jemmix.tdfa.regopt.Cfg cfg = buildCfg(builders, accept, states, tags, nfa.groupCount, nextReg);
                 io.github.jemmix.tdfa.regopt.Optimize.optimize(cfg, meter);
                 cfgWriteBack(cfg, builders);
@@ -552,7 +550,7 @@ final class TdfaCompiler {
             } else {
                 obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.REGOPT,
                         System.nanoTime() - tReg, 2 * tags);
-                obs.note("regopt", REGOPT_ENABLED ? "skipped (bounds)" : "disabled");
+                obs.note("regopt", regoptEnabled ? "skipped (bounds)" : "disabled");
             }
 
             // First pass: coalesce + mask-specificity sort on every state's ranges,
@@ -695,8 +693,17 @@ final class TdfaCompiler {
                     minRanges = flatRanges, minEntryMask = stateEntryMask,
                     minAcceptMask = stateAcceptMask, minStopMask = stateStopOnAcceptMask,
                     minFinalOpsByMask = stateFinalOpsByMask;
+            // Toggle post-determinization minimization (Moore's algorithm):
+            // default on (-Dtdfa.nominimize disables); skipped above
+            // tdfa.minimize.max states (default 20000) — Moore is O(n²)
+            // worst-case and subset construction with map-dedup already
+            // tends to produce minimal DFAs (dictionary alternations:
+            // ~30s of pure overhead saved by skipping). Knob policy: Tdfa javadoc.
+            final boolean minimizeEnabled = !Boolean.getBoolean("tdfa.nominimize");
+            final int minimizeMaxStates = Integer.getInteger("tdfa.minimize.max", 20000);
+            final boolean debug = Boolean.getBoolean("tdfa.debug");
             long tMin = System.nanoTime();
-            if (MINIMIZE_ENABLED && n > 1 && n <= MINIMIZE_MAX_STATES) {
+            if (minimizeEnabled && n > 1 && n <= minimizeMaxStates) {
                 DfaMinimizer m = new DfaMinimizer(n, stateMeta, stateBase, stateFinalOpsOff,
                         flatRanges, flatOps, stateEntryMask, stateAcceptMask,
                         stateStopOnAcceptMask, stateFinalOpsByMask, longest);
@@ -759,7 +766,7 @@ final class TdfaCompiler {
                             minRangesHead++;
                         }
                     }
-                    if (Tdfa.DEBUG) System.err.println("[tdfa] minimized: " + n + " -> " + newN + " states");
+                    if (debug) System.err.println("[tdfa] minimized: " + n + " -> " + newN + " states");
                     stateCount = newN;
                 }
             }
@@ -1003,7 +1010,9 @@ final class TdfaCompiler {
             return flat;
         }
 
-        static final boolean debug = Boolean.getBoolean("tdfa.debug");
+        // Per-compile read (was class-init frozen — the tdfa.debug duplicate
+        // that produced partial debug output; see the knob policy in Tdfa).
+        final boolean debug = Boolean.getBoolean("tdfa.debug");
 
         // ---------------- Algorithm 3 building blocks ----------------
 

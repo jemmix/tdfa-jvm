@@ -66,6 +66,11 @@ public final class TdfaRunner implements RegexEngine {
      *  large enough that the doubled tables cost real memory (2 tables x
      *  limit ints per state; 21K-state dictionary DFAs would pay ~42 MB at 256). */
     private final int latinLimit;
+    /** Runtime walk tracing ({@code -Dtdfa.trace}). Frozen at class init
+     *  ON PURPOSE: it is read in the per-character walk loop, where a
+     *  volatile/property read would pollute the hot path — set it before
+     *  first use. (Compile knobs, by contrast, are read once per compile;
+     *  see the policy note in {@link Tdfa}.) */
     private static final boolean WTRACE = Boolean.getBoolean("tdfa.trace");
     private final boolean fastPath;     // true = no masks + disjoint + not multiline
     final int stateCount;

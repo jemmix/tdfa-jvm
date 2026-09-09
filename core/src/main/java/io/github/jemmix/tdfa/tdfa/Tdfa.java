@@ -464,29 +464,24 @@ public final class Tdfa {
         return new TdfaCompiler(nfa, longestMatch).compile(observer);
     }
 
-    /** Toggle post-determinization minimization (Moore's algorithm). Default on; disable with -Dtdfa.nominimize. */
-    static final boolean MINIMIZE_ENABLED = !Boolean.getBoolean("tdfa.nominimize");
-    /**
-     * Skip minimization for DFAs above this state count. Moore's algorithm is O(n²) worst-case
-     * and provides no benefit when the DFA is already minimal (which subset construction with
-     * construction-time {@code map} deduping tends to produce). For pathological cases like
-     * dictionary alternations, skipping saves ~30s of pure overhead. Override with -Dtdfa.minimize.max=N.
-     */
-    static final int MINIMIZE_MAX_STATES = Integer.getInteger("tdfa.minimize.max", 20000);
-    /**
-     * Toggle BT22 §6.3 register optimizations on the post-determinization CFG. Default on;
-     * disable with {@code -Dtdfa.noregopt=true}. Currently runs Stage 1 (compaction) only;
-     * Stages 2-4 (liveness, DCE, interference, allocation, normalization) land incrementally.
-     */
-    static final boolean REGOPT_ENABLED = !Boolean.getBoolean("tdfa.noregopt");
-    /**
-     * Skip CFG-based register optimizations for DFAs above this state count. The full
-     * §6.3 pipeline (compaction + 2× (liveness + DCE + interference + allocation +
-     * normalization)) has O(n² · ops-per-block) cost on the interference matrix and
-     * copy-coalescing passes. The benefit on huge DFAs is small (most have 0 tags
-     * anyway), so skip above the cap. Override with {@code -Dtdfa.regopt.max=N}.
-     */
-    static final int REGOPT_MAX_STATES = Integer.getInteger("tdfa.regopt.max", 2000);
-    static final boolean DEBUG = Boolean.getBoolean("tdfa.debug");
+    // ===== compile-knob policy =====
+    //
+    // Every tdfa.* knob that steers COMPILATION is read once per
+    // compilation (at the pipeline stage that consumes it), never frozen in
+    // a static initializer: setting a property takes effect on the next
+    // compile in the same JVM, and tests can vary knobs without forking.
+    // Knobs and their sites:
+    //   tdfa.nominimize, tdfa.minimize.max, tdfa.noregopt, tdfa.regopt.max,
+    //   tdfa.debug, tdfa.debug.closure, tdfa.debug.finals          (compile)
+    //   tdfa.max.states/kernels/closure/work                       (caps, TdfaCompiler)
+    //   tdfa.minimize.norm.cells                                    (DfaMinimizer)
+    //   tdfa.engine, tdfa.gen.debug                                 (facade, per compile)
+    // The only frozen reads left are RUNTIME diagnostics on hot loops
+    // (TdfaRunner.WTRACE) and the tdfa.asm.dump emission switch — see
+    // those sites. tdfa.debug previously had THREE readers at TWO
+    // different timings (frozen in Tdfa, frozen again in
+    // TdfaCompiler.Builder, fresh in Tnfa) — the split produced partial
+    // debug output whenever the property was set after class init; all
+    // three now read fresh, once per compile.
 
 }
