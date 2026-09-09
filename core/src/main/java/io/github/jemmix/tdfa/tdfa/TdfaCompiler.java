@@ -1069,7 +1069,7 @@ final class TdfaCompiler {
             // co-resident duplicates — see the child-loop comment below.
             for (int i = seed.size() - 1; i >= 0; i--) {
                 Config c = seed.get(i);
-                long key = (((long) c.state) << 32) | (c.emptyMask & 0xFFFFFFFFL);
+                long key = visitKey(c.state, c.emptyMask);
                 if (containsKey(visitedSM, visitedMask, key)) continue;
                 stack.push(c);
             }
@@ -1078,7 +1078,7 @@ final class TdfaCompiler {
             while (!stack.isEmpty()) {
                 meter.tick();
                 Config c = stack.pop();
-                long key = (((long) c.state) << 32) | (c.emptyMask & 0xFFFFFFFFL);
+                long key = visitKey(c.state, c.emptyMask);
                 int slot = (int) (mix(key) & visitedMask);
                 while (visitedSM[slot] != 0) {
                     if (visitedSM[slot] == key) { slot = -1; break; }
@@ -1125,7 +1125,7 @@ final class TdfaCompiler {
                     int edgeEmpty = nfa.epsEmptyMask[idx];
                     int newMask = c.emptyMask | edgeEmpty;
                     if (maskEpoch[to] == epoch && submaskPopped(maskBitset[to], newMask)) continue;
-                    long childKey = (((long) to) << 32) | (newMask & 0xFFFFFFFFL);
+                    long childKey = visitKey(to, newMask);
                     if (containsKey(visitedSM, visitedMask, childKey)) continue;
                     int tag = nfa.epsTag[idx];
                     int newL;
@@ -1151,6 +1151,17 @@ final class TdfaCompiler {
                 slot = (slot + 1) & mask;
             }
             return false;
+        }
+
+        /** Visited-set key for (state, mask). The +1 on the state word keeps
+         *  every legal key nonzero: state 0 is Tnfa's ACCEPT (the first
+         *  fresh() id), so the raw (state<<32)|mask encoding made the legal
+         *  key (accept, 0) collide with the table's 0-as-EMPTY sentinel —
+         *  (accept, 0) could never be marked visited, and two such configs
+         *  pushed in the same expansion wave both survived into the kernel
+         *  [review P1 #2]. */
+        private static long visitKey(int state, int emptyMask) {
+            return (((long) state + 1) << 32) | (emptyMask & 0xFFFFFFFFL);
         }
 
         /** Double an open-addressing long set, rehashing all live keys. */
