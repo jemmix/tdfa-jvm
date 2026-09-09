@@ -1952,7 +1952,8 @@ public final class TdfaAsmBackend {
         // INLINED only pays for fastPath DFAs (the emitted leaf + ladder are
         // fastPath-shaped); everything else delegates to the runner ladder.
         if (!computeFastPath(tdfa)) return DispatchMode.DELEGATE;
-        if (estimateInlinedBytes(tdfa) <= INLINE_BUDGET_BYTES) return DispatchMode.INLINED;
+        if (estimateInlinedBytes(tdfa) <= INLINE_BUDGET_BYTES
+                && estimatePhiMaskedBytes(tdfa) <= INLINE_BUDGET_BYTES) return DispatchMode.INLINED;
         return DispatchMode.DELEGATE;
     }
 
@@ -1996,6 +1997,44 @@ public final class TdfaAsmBackend {
             if (sfo[s] != 0) {
                 int j = sfo[s];
                 while (j < op.length && op[j] != Tdfa.OP_END) { total += 7; j += 3; }
+            }
+        }
+        return total;
+    }
+
+    /**
+     * Byte-cost estimate for the emitted {@code phiMasked} method under
+     * INLINED mode — the method the leaf-only estimate never covered. Each
+     * accepting state costs a LOOKUPSWITCH key plus a 64-entry TABLESWITCH,
+     * then one ops block per <em>distinct</em> cell (dedup parity with
+     * genPhiMasked). This is the silent perf cliff the review flagged: a
+     * DFA with many distinct per-mask final-ops cells can push phiMasked
+     * past the JVM's 65 KB method cap, MethodTooLargeException then kills
+     * the whole engine emission, and PatternCompiler degrades the pattern
+     * to the shared interpreter with only an observer note. Counting it
+     * here sends such DFAs to DELEGATE mode instead — correct bytecode,
+     * and the fastest tier that actually fits.
+     *
+     * <p>{@code phi} (the non-masked twin) re-emits each accept state's
+     * single final-ops list, so its size is bounded by the final-ops term
+     * already counted above — absorbed by the budget's 2x headroom.
+     */
+    private static int estimatePhiMaskedBytes(Tdfa tdfa) {
+        int[] byMask = tdfa.stateFinalOpsByMask();
+        if (byMask == null) return 0;
+        int[] sm = tdfa.stateMeta(), op = tdfa.ops();
+        java.util.Set<Integer> cells = new java.util.HashSet<>();
+        int total = 16;
+        for (int s = 0; s < sm.length; s++) {
+            if ((sm[s] & 1) == 0) continue;
+            cells.clear();
+            for (int m = 0; m < 64; m++) cells.add(byMask[s * 64 + m]);
+            total += 340;  // lookupswitch key + 64-case tableswitch + return glue
+            for (int c : cells) {
+                if (c <= 0) { total += 4; continue; }  // dead or ops-less cell
+                int j = c;
+                while (j < op.length && op[j] != Tdfa.OP_END) { total += 7; j += 3; }
+                total += 8;
             }
         }
         return total;
