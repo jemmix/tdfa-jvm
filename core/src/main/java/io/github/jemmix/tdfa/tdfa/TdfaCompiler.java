@@ -7,7 +7,6 @@ import java.util.*;
 // Tdfa's opcode/flag constants, referenced unqualified throughout (the code
 // was moved verbatim out of Tdfa's nested Compiler class).
 import static io.github.jemmix.tdfa.tdfa.Tdfa.DEBUG;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.FALLBACK_ENABLED;
 import static io.github.jemmix.tdfa.tdfa.Tdfa.MINIMIZE_ENABLED;
 import static io.github.jemmix.tdfa.tdfa.Tdfa.MINIMIZE_MAX_STATES;
 import static io.github.jemmix.tdfa.tdfa.Tdfa.NEVER_STOP;
@@ -772,27 +771,12 @@ final class TdfaCompiler {
             obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.MINIMIZE,
                     System.nanoTime() - tMin, stateCount);
 
-            boolean[] stateIsFallback = new boolean[stateCount];
-            int[] stateFallbackOpsOff = new int[stateCount];
-            long tFb = System.nanoTime();
-            int fallbackStates = 0;
-            if (FALLBACK_ENABLED && tags > 0) {
-                FallbackOps.Result fr = FallbackOps.add(stateCount, minMeta, minBase, minRanges, flatOps,
-                        minFinalOpsOff, globalMaxReg, meter);
-                flatOps = fr.flatOps;
-                minRanges = fr.ranges;
-                stateIsFallback = fr.stateIsFallback;
-                stateFallbackOpsOff = fr.stateFallbackOpsOff;
-                globalMaxReg = fr.registerCount;
-                fallbackStates = fr.fallbackStateCount;
-                if (debug && fr.fallbackStateCount > 0) {
-                    System.err.println("[tdfa] fallback: " + fr.fallbackStateCount + " states, "
-                            + fr.backupTransitionCount + " backup transitions, "
-                            + fr.backupSlotCount + " backup slots");
-                }
-            }
-            obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.FALLBACK,
-                    System.nanoTime() - tFb, fallbackStates);
+            // (BT22 §6.2 ψ/backup machinery deleted 2026-09, review Phase B:
+            // it was generated, executed, and metered here, but NOTHING read
+            // it at runtime — the lazy ψ replay in the runner was unsound and
+            // removed long before; the tables were dead weight that could
+            // push a pattern over the "too large" budget for no effect.)
+
             // Ensure per-state entries are sorted by lo (stable: equal-lo groups
             // keep their mask-specificity order). The builders emit sorted, but
             // the minimizer / regopt rewrite can reorder within a state; the
@@ -863,16 +847,14 @@ final class TdfaCompiler {
                         + ",acceptMask=" + (minAcceptMask.length * 4L)
                         + ",ops=" + (flatOps.length * 4L)
                         + ",hiPrefix=" + (minHiPrefix.length * 4L)
-                        + ",scalars=" + ((minMeta.length + minBase.length + minFinalOpsOff.length
-                        + stateIsFallback.length + stateFallbackOpsOff.length) * 4L + stateCount) + "}"
+                        + ",scalars=" + ((minMeta.length + minBase.length + minFinalOpsOff.length) * 4L + stateCount) + "}"
                         + " stopMaskUniform=" + (perStateUniform ? (globalUniform ? "global" : "perState") : "no"));
                 return new Tdfa(tags, nfa.groupCount, nfa.namedGroups, globalMaxReg, finalRegBase, 0, stateCount,
                         minMeta, minBase, minFinalOpsOff, minFinalOpsByMask, minRanges, flatOps, minHiPrefix,
                         minEntryMask, minAcceptMask, longest, finalStop, uniformStop, nfa.multiline,
                         nfa.unicodeWordBoundary, nfa.wordRanges,
                         hasFixed(nfa.fixedBase) ? nfa.fixedBase : null,
-                        hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null,
-                        stateIsFallback, stateFallbackOpsOff);
+                        hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null);
             }
         }
 

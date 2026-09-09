@@ -79,20 +79,9 @@ public final class Tdfa {
     final int[] fixedBase;
     final int[] fixedOffset;
     /**
-     * Per-state fallback annotation (BT22 §6.2). {@code true} iff state is
-     * final with at least one non-accepting path out of it AND its
-     * {@code φ(S)} contains a clobbered COPY that needed backup ops. Such
-     * states have a separate {@link #stateFallbackOpsOff} slot (ψ); the runner
-     * chooses ψ vs φ based on whether transitions were taken since the last
-     * accept. Length = {@link #stateCount}; all-false if M3 disabled or no
-     * fallback states needed processing.
-     */
-    final boolean[] stateIsFallback;
-    /** Per-state ψ (fallback quasi-transition) ops offset into {@link #ops}; 0 if none. */
-    final int[] stateFallbackOpsOff;
-    /**
      * Position-aware Perl-mode stop-on-accept decision table.
      * Indexed as {@code stopOnAcceptMask[state * 64 + posFlags]} where {@code posFlags}
+
      * is the runtime position-flags bitmask ({@code BEGIN_TEXT|END_TEXT|WORD_BOUNDARY|NO_WORD_BOUNDARY|ABS_BEGIN|ABS_END},
      * 6 bits, 64 possible values). Each cell encodes:
      * <ul>
@@ -256,8 +245,7 @@ public final class Tdfa {
                  int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] stateFinalOpsByMask, int[] ranges, int[] ops,
                  int[] entryHiPrefix,
                  int[] stateEntryMask, int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
-                 boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset,
-                 boolean[] stateIsFallback, int[] stateFallbackOpsOff) {
+                 boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset) {
         this.tagCount = tagCount; this.groupCount = groupCount;
         this.namedGroups = namedGroups != null ? java.util.Collections.unmodifiableMap(namedGroups) : java.util.Collections.emptyMap();
         this.registerCount = registerCount;
@@ -282,8 +270,6 @@ public final class Tdfa {
         this.wordRanges = wordRanges;
         this.fixedBase = fixedBase;
         this.fixedOffset = fixedOffset;
-        this.stateIsFallback = stateIsFallback;
-        this.stateFallbackOpsOff = stateFallbackOpsOff;
         // Well-formedness gate: every consumer (VM runner, search-DFA memo,
         // ASM emitter, minimizer) trusts these arrays. Violations must surface
         // here, at construction — not as a wrong match 2,000 lines away.
@@ -463,12 +449,6 @@ public final class Tdfa {
     /** Fixed-tag offset annotations (BT22 §6.4). */
     public int[] fixedOffset() { return fixedOffset; }
 
-    /** Per-state fallback classification (BT22 §6.2). */
-    public boolean[] stateIsFallback() { return stateIsFallback; }
-
-    /** Per-state fallback-ops offset into {@link #ops()}, 0 if none. */
-    public int[] stateFallbackOpsOff() { return stateFallbackOpsOff; }
-
     /** Compile with Perl leftmost-first semantics (the ecosystem default). */
     public static Tdfa compile(Tnfa nfa) { return compile(nfa, false); }
 
@@ -507,12 +487,6 @@ public final class Tdfa {
      * anyway), so skip above the cap. Override with {@code -Dtdfa.regopt.max=N}.
      */
     static final int REGOPT_MAX_STATES = Integer.getInteger("tdfa.regopt.max", 2000);
-    /**
-     * Toggle BT22 §6.2 fallback operations (backup COPYs on transitions out of
-     * fallback states, ψ quasi-transitions). Default on; disable with
-     * {@code -Dtdfa.nofallback=true}.
-     */
-    static final boolean FALLBACK_ENABLED = !Boolean.getBoolean("tdfa.nofallback");
     static final boolean DEBUG = Boolean.getBoolean("tdfa.debug");
 
 }

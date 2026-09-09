@@ -12,7 +12,6 @@ package io.github.jemmix.tdfa.core;
  *   <li>{@link Stage#DETERMINIZE} — detail: DFA state count;</li>
  *   <li>{@link Stage#MINIMIZE} — detail: DFA state count after minimization;</li>
  *   <li>{@link Stage#REGOPT} — detail: register count after optimization;</li>
- *   <li>{@link Stage#FALLBACK} — detail: fallback state count (BT22 §6.2);</li>
  *   <li>{@link Stage#ENGINE} — detail: 0 (engine instantiation; code-generated
  *       engines carry their emission time here).</li>
  * </ul>
@@ -31,7 +30,7 @@ package io.github.jemmix.tdfa.core;
 public interface CompileObserver {
 
     /** Pipeline stages, in firing order. */
-    enum Stage { PARSE, TNFA, DETERMINIZE, MINIMIZE, REGOPT, FALLBACK, ENGINE }
+    enum Stage { PARSE, TNFA, DETERMINIZE, MINIMIZE, REGOPT, ENGINE }
 
     /** A stage completed: {@code nanos} wall-clock, {@code detail} per-stage value (see class doc). */
     default void stage(Stage stage, long nanos, int detail) { }
