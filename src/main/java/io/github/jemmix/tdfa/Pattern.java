@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa;
 
+import io.github.jemmix.tdfa.core.EmittedSurface;
 import io.github.jemmix.tdfa.core.CompileOptions;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 
@@ -177,6 +178,7 @@ public interface Pattern extends java.io.Serializable {
     Map<String, Integer> namedGroups();
 
     /** UTF-8 decode shared by the byte[] overloads (re2j's {@code MatcherInput.utf8}). */
+    @EmittedSurface
     final class Utf8 {
         private Utf8() { }
         public static String decode(byte[] bytes) {

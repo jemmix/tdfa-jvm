@@ -1,5 +1,7 @@
 package io.github.jemmix.tdfa.tdfa;
 
+import io.github.jemmix.tdfa.core.EmittedSurface;
+
 /**
  * Per-thread register-array pool for the ASM-generated tier.
  *
@@ -16,6 +18,7 @@ package io.github.jemmix.tdfa.tdfa;
  * ({@code extractOne} clones into its result holder on success), and must
  * treat contents as undefined on take.
  */
+@EmittedSurface  // incl. the default ctor: generated <init> emits INVOKESTATIC NEW/INVOKESPECIAL on it
 public final class RegPool {
 
     private final ThreadLocal<int[]> slot = ThreadLocal.withInitial(() -> null);
@@ -26,6 +29,7 @@ public final class RegPool {
      * length — one pattern's engine per generated class, so resizes are
      * rare (first call, or shared pool across recompiles).
      */
+    @EmittedSurface
     public int[] take(int n) {
         int[] r = slot.get();
         if (r == null || r.length != n) {

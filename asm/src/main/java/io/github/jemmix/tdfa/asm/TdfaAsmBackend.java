@@ -522,9 +522,9 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, 7);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, ALPHABET, "pairInterior", "(" + CS_D + "I)Z", false);
         mv.visitJumpInsn(Opcodes.IFNE, candNext);
-        // adaptive boolean pre-filter after 3 failed extract walks
+        // adaptive boolean pre-filter: same threshold as the runner's loop
         mv.visitVarInsn(Opcodes.ILOAD, 8);
-        mv.visitInsn(Opcodes.ICONST_3);
+        ic(mv, TdfaRunner.ADAPTIVE_PREFILTER_AFTER);
         mv.visitJumpInsn(Opcodes.IF_ICMPLT, candWalk);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);

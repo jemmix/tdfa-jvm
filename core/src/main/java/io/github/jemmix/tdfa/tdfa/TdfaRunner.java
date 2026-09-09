@@ -1,5 +1,7 @@
 package io.github.jemmix.tdfa.tdfa;
 
+import io.github.jemmix.tdfa.core.EmittedSurface;
+
 import io.github.jemmix.tdfa.ast.Alphabet;
 import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.RegexEngine;
@@ -122,6 +124,7 @@ public final class TdfaRunner implements RegexEngine {
         this(Tdfa.compile(nfa));
     }
 
+    @EmittedSurface
     public TdfaRunner(Tdfa tdfa) {
         this.tdfa = tdfa;
         this.stateMeta = tdfa.stateMeta;
@@ -181,11 +184,11 @@ public final class TdfaRunner implements RegexEngine {
      *  RunnerTables since the 2026-09 split). */
     public static int literalIndexOf(String s, String needle, int from) { return RunnerTables.literalIndexOf(s, needle, from); }
 
-    @Override public int groupCount() { return tdfa.groupCount; }
+    @EmittedSurface @Override public int groupCount() { return tdfa.groupCount; }
 
-    @Override public Map<String, Integer> namedGroups() { return tdfa.namedGroups; }
+    @EmittedSurface @Override public Map<String, Integer> namedGroups() { return tdfa.namedGroups; }
 
-    @Override public int programSize() { return tdfa.stateCount; }
+    @EmittedSurface @Override public int programSize() { return tdfa.stateCount; }
 
     // ===== strategy trace (conformance instrument) =====
     //
@@ -223,6 +226,7 @@ public final class TdfaRunner implements RegexEngine {
 
     /** Record a strategy decision point (no-op unless tracing). Public: the
      *  ASM backend's emitted ladder calls it from generated classes. */
+    @EmittedSurface
     public static void trace(Strategy s) {
         if (TRACE) TRACE_BUF.get().add(s);
     }
@@ -307,7 +311,7 @@ public final class TdfaRunner implements RegexEngine {
         return triggerScan(input.toString(), from, to) >= 0 ? from : -1;
     }
 
-    @Override public boolean matches(CharSequence input) {
+    @EmittedSurface @Override public boolean matches(CharSequence input) {
         if (input instanceof String) {
             String s = (String) input;
             if (fastPath) { trace(Strategy.ANCHORED_FAST); return runStringAnchoredFast(s); }
@@ -318,7 +322,7 @@ public final class TdfaRunner implements RegexEngine {
         return runGeneric(input, 0, input.length(), true) != null;
     }
 
-    @Override public boolean find(CharSequence input) {
+    @EmittedSurface @Override public boolean find(CharSequence input) {
         if (input instanceof String) {
             String s = (String) input;
             int len = s.length();
@@ -360,7 +364,7 @@ public final class TdfaRunner implements RegexEngine {
         return runGeneric(input, 0, input.length(), false) != null;
     }
 
-    @Override public MatchResult match(CharSequence input, int from) {
+    @EmittedSurface @Override public MatchResult match(CharSequence input, int from) {
         // Interface contract (see RegexEngine.match): clean bounds failure,
         // never the walk's raw StringIndexOutOfBoundsException.
         if (from < 0 || from > input.length())
@@ -404,7 +408,7 @@ public final class TdfaRunner implements RegexEngine {
                 char c = input.charAt(p);
                 if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) continue;
                 if (c >= 0xDC00 && Alphabet.pairInterior(input, p)) continue;
-                if (fails >= 3 && runStringMatchFrom(input, p, to) < 0) continue;
+                if (fails >= ADAPTIVE_PREFILTER_AFTER && runStringMatchFrom(input, p, to) < 0) continue;
                 MatchHolder h = extractFrom(input, p, to);
                 if (h != null) return h;
                 fails++;
@@ -659,6 +663,16 @@ public final class TdfaRunner implements RegexEngine {
      *  sim stays the better shape for haystack-scale inputs. */
     private static final int CAND_SCAN_MAX = 64;
 
+    /**
+     * After this many failed extract walks the candidate loop switches to a
+     * boolean pre-filter per candidate (cheaper to reject, same answer).
+     * Single source of truth: the ASM-emitted candidate loop bakes the same
+     * value into its compare — read this constant at emit time
+     * ({@code TdfaAsmBackend}), never hard-code it.
+     */
+    @EmittedSurface
+    public static final int ADAPTIVE_PREFILTER_AFTER = 3;
+
     private final SearchDfa searchDfa;
     /**
      * Exact-literal needle when the whole regex is a plain literal string
@@ -901,12 +915,14 @@ public final class TdfaRunner implements RegexEngine {
     // runStringExtractFast exactly; the strategy-conformance test asserts
     // trace equality between backends. =====
 
+    @EmittedSurface
     public String literalNeedle() { return literalNeedle; }
 
     /** Defensive restart walk (sim and walk disagreed on a fast-path DFA):
      *  per-unit scan from {@code fromStart} with the pair-interior guard and
      *  an exact extract at each position. Public: the ASM-emitted ladder
      *  delegates here instead of emitting its own loop — one definition. */
+    @EmittedSurface
     public MatchHolder restartExtract(String input, int fromStart, int to, int from0) {
         for (int s = fromStart; s <= to; s++) {
             if (Alphabet.pairInterior(input, s)) continue;
@@ -917,28 +933,34 @@ public final class TdfaRunner implements RegexEngine {
     }
 
     /** First-char candidate bitset, or null when the start state accepts. */
+    @EmittedSurface
     public long[] startBits() { return startBits; }
 
     /** Max input length for the candidate scan. */
+    @EmittedSurface
     public int candScanMax() { return CAND_SCAN_MAX; }
 
     /** True = no masks + disjoint ranges: the fast extract ladder applies. */
     public boolean fastPath() { return fastPath; }
 
     /** Char budget for the origin sim before the trigger fallback. */
+    @EmittedSurface
     public int originSimBudget() { return LSS_BUDGET_CHARS; }
 
     /** Origin-sim leftmost start; {@link #LSS_BUDGET} = budget exhausted. */
+    @EmittedSurface
     public int originSimLeftmost(CharSequence input, int from, int to, int budget) {
         return multiStateLeftmostStart(input, from, to, budget);
     }
 
     /** Memoized search-DFA trigger scan: window start W, or -1 = no match. */
+    @EmittedSurface
     public int triggerScanTop(String input, int from, int to) {
         return triggerScan(input, from, to);
     }
 
     /** Boolean single-start walk (fastPath only): does a match start at from? */
+    @EmittedSurface
     public boolean booleanMatchFrom(String input, int from, int to) {        return matchFromFast(input, from, to);
     }
 
@@ -1216,7 +1238,7 @@ public final class TdfaRunner implements RegexEngine {
                 char c = input.charAt(p);
                 if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) continue;
                 if (c >= 0xDC00 && Alphabet.pairInterior(input, p)) continue;
-                if (fails >= 3 && !matchFromFast(input, p, to)) continue;
+                if (fails >= ADAPTIVE_PREFILTER_AFTER && !matchFromFast(input, p, to)) continue;
                 h = tryStartFast(input, p, to);
                 if (h != null) return h;
                 fails++;

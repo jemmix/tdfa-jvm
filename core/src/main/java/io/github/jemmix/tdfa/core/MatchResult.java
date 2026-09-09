@@ -35,6 +35,7 @@ public final class MatchResult {
     /** Engine surface (see class doc): builds a snapshot over the runner's
      *  register file. {@code regs} is retained, not copied — runners hand
      *  over ownership of a per-match array. */
+    @EmittedSurface
     public MatchResult(int[] regs, int finalRegBase, int groupCount, int matchStart, int matchEnd) {
         this.regs = regs;
         this.finalRegBase = finalRegBase;
@@ -57,6 +58,7 @@ public final class MatchResult {
 
     /** Start offset (inclusive) of {@code group} (0 = whole match); {@code -1} = unset (NIL).
      * @throws IndexOutOfBoundsException outside {@code [0, groupCount()]}. */
+    @EmittedSurface  // emitted shells link start/end by name (compiled callers cannot break silently)
     public int start(int group) {
         if (group < 0 || group > groupCount) throw new IndexOutOfBoundsException("group " + group);
         if (group == 0) return matchStart;
@@ -65,6 +67,7 @@ public final class MatchResult {
 
     /** End offset (exclusive) of {@code group} (0 = whole match); {@code -1} = unset (NIL).
      * @throws IndexOutOfBoundsException outside {@code [0, groupCount()]}. */
+    @EmittedSurface
     public int end(int group) {
         if (group < 0 || group > groupCount) throw new IndexOutOfBoundsException("group " + group);
         if (group == 0) return matchEnd;
@@ -96,6 +99,7 @@ public final class MatchResult {
      *                     (passed by runners as {@code tdfa.finalRegBase}, which may
      *                     differ from {@code tdfa.tagCount} after §6.3 register opts)
      */
+    @EmittedSurface
     public static void reconstructFixed(int[] regs, int finalRegBase, int[] fixedBase, int[] fixedOffset) {
         if (fixedBase == null) return;
         int tagCount = fixedBase.length - 1;

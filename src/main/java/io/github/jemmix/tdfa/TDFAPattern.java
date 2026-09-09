@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa;
 
+import io.github.jemmix.tdfa.core.EmittedSurface;
 import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
 
@@ -50,7 +51,8 @@ public class TDFAPattern implements Pattern {
      *  and resolves per the UnicodeDataProvider serialization convention. */
     private transient UnicodeDataProvider provider;
 
-    public TDFAPattern(String pattern, int flags, int programSize,
+    @EmittedSurface  // shells super-ctor call: signature feeds ShellEmitter descriptor
+public TDFAPattern(String pattern, int flags, int programSize,
                        RegexEngine engine, Supplier<RegexEngine> wholeSupplier,
                        UnicodeDataProvider provider) {
         this.pattern = pattern;
@@ -68,6 +70,7 @@ public class TDFAPattern implements Pattern {
     public UnicodeDataProvider unicodeProvider() { return provider; }
 
     /** Engine for {@code matches()}: anchored both ends, compiled lazily on first use. */
+    @EmittedSurface
     public RegexEngine wholeEngine() {
         RegexEngine w = wholeEngine;
         if (w == null) {

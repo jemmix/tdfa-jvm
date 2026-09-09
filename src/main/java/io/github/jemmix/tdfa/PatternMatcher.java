@@ -1,5 +1,7 @@
 package io.github.jemmix.tdfa;
 
+import io.github.jemmix.tdfa.core.EmittedSurface;
+
 /**
  * The stateful matcher a {@link Pattern} produces: find-iteration, groups,
  * replacement. Extends the core-tier {@link io.github.jemmix.tdfa.core.Matcher}
@@ -20,6 +22,7 @@ public class PatternMatcher extends io.github.jemmix.tdfa.core.Matcher {
 
     private final Pattern pattern;
 
+    @EmittedSurface  // emitted shells super-ctor call
     public PatternMatcher(TDFAPattern pattern, CharSequence input) {
         super(pattern.engine(), pattern::wholeEngine, input);
         this.pattern = pattern;

@@ -22,14 +22,21 @@ public class Matcher {
     private final RegexEngine engine;
     private final Supplier<RegexEngine> wholeEngine;
 
+    @EmittedSurface  // the 7 fields below are linked by name from generated shells
     protected CharSequence input;
+    @EmittedSurface
     protected int inputLength;
 
+    @EmittedSurface
     protected MatchResult match;
+    @EmittedSurface
     protected boolean hasMatch;
 
+    @EmittedSurface
     protected int lastMatchStart;
+    @EmittedSurface
     protected int lastMatchEnd;
+    @EmittedSurface
     protected int appendPos;
 
     public Matcher(RegexEngine engine, Supplier<RegexEngine> wholeEngine, CharSequence input) {
