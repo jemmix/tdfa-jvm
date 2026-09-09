@@ -52,8 +52,10 @@ dependencies {
     } else {
         testImplementation 'com.google.re2j:re2j:1.8'
     }
-    // bytecode policy check on the ASM-generated engine classes
+    // bytecode policy check + CheckClassAdapter verification on the
+    // ASM-generated engine classes (asm-util pulls asm-analysis)
     testImplementation 'org.ow2.asm:asm:9.9.1'
+    testImplementation 'org.ow2.asm:asm-util:9.9.1'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 

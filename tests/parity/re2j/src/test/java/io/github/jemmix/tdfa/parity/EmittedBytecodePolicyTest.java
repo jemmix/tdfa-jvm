@@ -5,7 +5,10 @@ import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.util.CheckClassAdapter;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.lang.reflect.Modifier;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -18,8 +21,9 @@ import com.google.re2j.Re2jUnicodeProvider;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Devirtualization policy of the ASM-generated engine classes, enforced on
- * the emitted bytes themselves (dumped via {@code -Dtdfa.asm.dump}).
+ * Devirtualization policy AND bytecode correctness of the ASM-generated
+ * engine classes, enforced on the emitted bytes themselves (dumped via
+ * {@code -Dtdfa.asm.dump}).
  *
  * <p>The generated tier is only fast because HotSpot can turn every call in
  * its hot methods into a direct/inlined one. That rests on a structural
@@ -34,6 +38,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * </ul>
  * {@code INVOKESPECIAL} (constructors, private, super) is always direct and
  * {@code INVOKESTATIC} needs no receiver; both are unconstrained.
+ *
+ * <p>{@link #emittedClassesPassBytecodeVerification()} additionally runs
+ * ASM's {@link CheckClassAdapter} (structural checks + SimpleVerifier
+ * dataflow) over every dumped class: emitter stack/local-slot/frameshape
+ * bugs become BUILD failures here instead of production
+ * {@code VerifyError}s at pattern-compile time [review Phase E].
  */
 class EmittedBytecodePolicyTest {
 
@@ -67,7 +77,7 @@ class EmittedBytecodePolicyTest {
 
     @Test
     void generatedEngineClassesAreDevirtualizable() throws Exception {
-        Path tmp = Path.of(System.getProperty("java.io.tmpdir"));
+        Path tmp = Files.createTempDirectory("tdfa-asm-policy");
         List<Path> dumped = compileAndDump(tmp);
         assertThat(dumped.size()).as("at least one Gen engine class dumped").isGreaterThan(0);
 
@@ -107,25 +117,67 @@ class EmittedBytecodePolicyTest {
                 .isEmpty();
     }
 
-    /** Compile the shapes with dumping enabled; return the dumped class files. */
-    private static List<Path> compileAndDump(Path tmp) throws Exception {
+    /**
+     * Every dumped engine class must pass ASM's structural + dataflow
+     * verification. Emitter bugs (bad stack shapes, wrong local slots,
+     * broken frames for V1_8 targets) surface here at build time —
+     * previously they only surfaced as production VerifyErrors at
+     * pattern-compile time. verify() throws on structural violations and
+     * prints analyzer diagnostics to the writer — both must be clean.
+     */
+    @Test
+    void emittedClassesPassBytecodeVerification() throws Exception {
+        Path tmp = Files.createTempDirectory("tdfa-asm-verify");
+        List<Path> dumped = compileAndDump(tmp);
+        assertThat(dumped.size()).as("at least one Gen engine class dumped").isGreaterThan(0);
+
+        List<String> problems = new ArrayList<>();
+        for (Path classFile : dumped) {
+            StringWriter sw = new StringWriter();
+            try {
+                CheckClassAdapter.verify(
+                        new ClassReader(Files.readAllBytes(classFile)),
+                        getClass().getClassLoader(), false, new PrintWriter(sw));
+            } catch (Exception e) {
+                problems.add(classFile.getFileName() + ": threw " + e);
+                continue;
+            }
+            if (!sw.toString().trim().isEmpty()) {
+                problems.add(classFile.getFileName() + ":\n" + sw.toString().trim());
+            }
+        }
+        assertThat(problems)
+                .as("ASM CheckClassAdapter verification of emitted classes")
+                .isEmpty();
+    }
+
+    /** Compile the shapes with dumping enabled; return the dumped class files.
+     *  Dumping is redirected into {@code dir} (the emitter resolves
+     *  java.io.tmpdir per dump, so redirecting the property isolates this
+     *  test from parallel dump consumers — the old shared-tmpdir
+     *  scan-and-delete protocol raced under parallel test execution). */
+    private static List<Path> compileAndDump(Path dir) throws Exception {
         String prefix = "io.github.jemmix.tdfa.gen.Gen";
-        List<Path> before = listGenClasses(tmp, prefix);
+        List<Path> before = listGenClasses(dir, prefix);
         for (Path p : before) Files.deleteIfExists(p);
 
-        String prev = System.getProperty("tdfa.asm.dump");
+        String prevDump = System.getProperty("tdfa.asm.dump");
+        String prevTmp = System.getProperty("java.io.tmpdir");
         System.setProperty("tdfa.asm.dump", "true");
+        System.setProperty("java.io.tmpdir", dir.toString());
         try {
             for (String re : PATTERNS)
                 io.github.jemmix.tdfa.Pattern.compile(re, 0,
                         (io.github.jemmix.tdfa.core.RegexEngineFactory) null, Re2jUnicodeProvider.INSTANCE);
         } finally {
-            if (prev == null) System.clearProperty("tdfa.asm.dump");
-            else System.setProperty("tdfa.asm.dump", prev);
+            if (prevDump == null) System.clearProperty("tdfa.asm.dump");
+            else System.setProperty("tdfa.asm.dump", prevDump);
+            if (prevTmp == null) System.clearProperty("java.io.tmpdir");
+            else System.setProperty("java.io.tmpdir", prevTmp);
         }
-        List<Path> after = listGenClasses(tmp, prefix);
-        // shells (Gen*Pattern/Gen*Matcher) are dumped to /tmp/shells with a
-        // different name shape; only engine classes land here.
+        List<Path> after = listGenClasses(dir, prefix);
+        // shells (Gen*Pattern/Gen*Matcher) land in the same dir under a
+        // different name shape; only engine classes match the prefix.
         return after;
     }
 
