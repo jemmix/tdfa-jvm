@@ -1119,7 +1119,9 @@ public final class TdfaAsmBackend {
                                         int IN, int STATE, int POS, int LEN, int PF, int C_LV,
                                         int REGS, Label dfaLoop, Label dfaEnd, int[] op) {
         int nStates = tdfa.stateCount();
-        int[] sm = tdfa.stateMeta(), sb = tdfa.stateBase(), rg = tdfa.ranges();
+        // Hoisted locals: accessors are defensive copies (Tdfa policy) —
+        // never call one inside the per-state/per-range emit loops below.
+        int[] sm = tdfa.stateMeta(), sb = tdfa.stateBase(), rg = tdfa.ranges(), sem = tdfa.stateEntryMask();
 
         Label[] sl = new Label[nStates];
         Label def = new Label();
@@ -1187,7 +1189,7 @@ public final class TdfaAsmBackend {
                 // TdfaRunner's walk; the fuzz-found skipped-group family).
                 // Checked at pos+width without mutating POS — ops still need
                 // the source position for SET_POS.
-                if (tdfa.stateEntryMask()[target] != 0) {
+                if (sem[target] != 0) {
                     ic(mv, target);
                     mv.visitVarInsn(Opcodes.ILOAD, POS);
                     mv.visitVarInsn(Opcodes.ILOAD, C_LV);
@@ -2046,7 +2048,9 @@ public final class TdfaAsmBackend {
         if (!checkRangesDisjoint(tdfa)) return false;
         for (int mask : tdfa.stateEntryMask()) if (mask != 0) return false;
         for (int mask : tdfa.stateAcceptMask()) if (mask != 0) return false;
-        for (int i = 4; i < tdfa.ranges().length; i += 5) if (tdfa.ranges()[i] != 0) return false;
+        // Hoisted: accessors clone — one call per array, never inside the loop.
+        int[] rgq = tdfa.ranges();
+        for (int i = 4; i < rgq.length; i += 5) if (rgq[i] != 0) return false;
         return true;
     }
 
