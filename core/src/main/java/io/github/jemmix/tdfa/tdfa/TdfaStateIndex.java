@@ -128,10 +128,16 @@ final class TdfaStateIndex {
         private int[] canonSignature(List<Config> configs, long[][] hasHist) {
             int n = configs.size();
             int max = n * owner.tags;
-            if (classScratch == null || classScratch.length < max) classScratch = new int[Math.max(max, 32)];
+            if (classScratch == null || classScratch.length < max) {
+                // Slack growth: closure sizes creep up one config at a time, so
+                // exact sizing reallocated on nearly every addState (18% of all
+                // fuzzer allocation). Doubling amortizes to O(log) per compile.
+                classScratch = new int[Math.max(max, (classScratch == null ? 32 : classScratch.length) * 2)];
+            }
             if (canonKeyStamp == null || canonKeyStamp.length < owner.nextReg) {
-                canonKeyStamp = new int[owner.nextReg];
-                canonKeyClass = new int[owner.nextReg];
+                int cap = Math.max(64, Integer.highestOneBit(Math.max(1, owner.nextReg) - 1) << 1);
+                canonKeyStamp = new int[cap];
+                canonKeyClass = new int[cap];
                 canonEpoch = 0;
             }
             int epoch = ++canonEpoch;
@@ -149,6 +155,24 @@ final class TdfaStateIndex {
             }
             pendingCanonLen = k;
             return classScratch;
+        }
+
+        /** Stored class-signatures, one per canon class (canonHash -> the
+         *  detached copy). Canon-equal states share the stored array — it is
+         *  strictly read-only downstream (compared via rangeEquals), and
+         *  merge-heavy patterns stop paying a detach copy per state. On a
+         *  64-bit fold collision (two distinct classes, same hash) the loser
+         *  just copies per state — correctness is unaffected. */
+        private final java.util.HashMap<Long, int[]> canonByClass = new java.util.HashMap<>();
+
+        int[] dedupeCanon(int[] scratch, int len, long hash) {
+            int[] stored = canonByClass.get(hash);
+            if (stored != null && stored.length == len && rangeEquals(scratch, 0, len, stored, 0, len)) {
+                return stored;
+            }
+            int[] copy = Arrays.copyOf(scratch, len);
+            canonByClass.put(hash, copy);
+            return copy;
         }
 
         private static long foldClass(int[] ids, int len) {
@@ -179,9 +203,12 @@ final class TdfaStateIndex {
                 // Shared has-history bitsets for this closure: consumed by
                 // canonSignature below AND by every tryMap of this attempt.
                 int words = (owner.tags + 63) >>> 6;
-                if (hasHistShared == null || hasHistShared.length < configs.size()
-                        || hasHistShared[0].length < words) {
-                    hasHistShared = new long[Math.max(configs.size(), 16)][Math.max(words, 1)];
+                if (hasHistShared == null || hasHistShared.length < configs.size()) {
+                    // Ragged: every row is replaced by a hist-cache ref right
+                    // below, so new long[rows][words] allocated words*rows junk
+                    // longs per growth. words is constant for this compile.
+                    hasHistShared = new long[Math.max(configs.size(),
+                            (hasHistShared == null ? 16 : hasHistShared.length) * 2)][];
                 }
                 for (int i = 0; i < configs.size(); i++) {
                     // Per-history-id cached bitsets (HistTable.bits): no fill,
@@ -190,8 +217,8 @@ final class TdfaStateIndex {
                 }
                 int[] scratch = canonSignature(configs, hasHistShared);
                 int canonLen = pendingCanonLen;
-                canon = Arrays.copyOf(scratch, canonLen);   // detach from scratch
-                canonHash = TdfaCompiler.mix(foldClass(canon, canonLen));
+                canonHash = TdfaCompiler.mix(foldClass(scratch, canonLen));
+                canon = dedupeCanon(scratch, canonLen, canonHash);
             }
 
             if (candidates != null) {
@@ -340,10 +367,11 @@ final class TdfaStateIndex {
             // tags they carry) — size scratch by the current universe.
             int numRegs = owner.nextReg;
             if (mapNewToOld == null || mapNewToOld.length < numRegs) {
-                mapNewToOld = new int[numRegs];
-                mapOldToNew = new int[numRegs];
-                epochNew = new int[numRegs];
-                epochOld = new int[numRegs];
+                int cap = Math.max(64, Integer.highestOneBit(Math.max(1, numRegs) - 1) << 1);
+                mapNewToOld = new int[cap];
+                mapOldToNew = new int[cap];
+                epochNew = new int[cap];
+                epochOld = new int[cap];
                 stamp = 0;
             }
             stamp++;      // fresh epoch for this attempt
@@ -354,7 +382,9 @@ final class TdfaStateIndex {
             // (tens of thousands), so scanning it per attempt was a cliff.
             // Each (config, tag) pair contributes at most one register.
             int maxPairs = size * owner.tags;
-            if (stampedRegs == null || stampedRegs.length < maxPairs) stampedRegs = new int[Math.max(maxPairs, 8)];
+            if (stampedRegs == null || stampedRegs.length < maxPairs) {
+                stampedRegs = new int[Math.max(maxPairs, (stampedRegs == null ? 8 : stampedRegs.length) * 2)];
+            }
             int stamped = 0;
             // "Tag has transition-op history" bitsets: one pass over each
             // config's history sequence replaces the former tags × full-

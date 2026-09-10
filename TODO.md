@@ -313,6 +313,41 @@ dominated by tryMap×addState (410) and FallbackOps.accumulateClobbered
 bounded reps into budget rejection where re2j compiles fine. CONSTRUCTION
 family (39 records: anchors under lazy/counted loops) still open.
 
+ROUND 22 (2026-09-10): allocation root-cause — exact-size scratch
+growth in TdfaStateIndex was 56% of all fuzzer GC pressure.
+JFR ObjectAllocationSample on a 3-min slice (seed 491362533,
+~102 GB sampled = ~34 GB/min): tryMap 37.9% + canonSignature 17.8%,
+ALL int[]. Cause: closure sizes and the global register count
+(nextReg) creep up ONE unit at a time during compilation, and the
+scratch arrays were grown to EXACT size on every crossing — the
+tryMap quartet (mapNewToOld/mapOldToNew/epochNew/epochOld), canon
+classScratch, canonKeyStamp/Class, stampedRegs, hasHistShared —
+O(N^2) bytes per compile, twice per case (asm + vm compiles).
+Fixes (TdfaStateIndex only, semantics-neutral):
+- all scratch growth now slack (doubling / next-pow2, floors 8-64);
+- hasHistShared allocated RAGGED (new long[rows][]) — the old
+  fully-zeroed long[rows][words] threw away every inner array
+  because each row is immediately replaced by a hist-cache ref;
+- canon class-signatures deduped per class (canonByClass map,
+  read-only shared stored copies) instead of a detach
+  Arrays.copyOf per addState.
+Measured after: total sampled 37.8 GB (-63%), tryMap/canon gone
+from the profile; residual leaders are legit per-compile work data
+(Optimize arrays, Configs stored in states, closure walk tables).
+3-min slice: 0 mismatches, 0 hangs, 256 BUDGET_REJECTs (known
+class, same rate), throughput unchanged ~367k cases/min (box is
+CPU-bound; the win is GC pressure headroom + the churn-cliff
+removal on big compiles, which the watchdog budget then sees
+earlier). Gates green incl. rebar 226/0/2.
+Next structural lever (not taken): the fuzzer compiles every
+pattern TWICE (asm + vm) through full Pattern.compile — one shared
+Tdfa with two runners would halve the remaining engine-side churn,
+but that is an engine-API design change, not a scratch fix.
+META: jfr print stack frames have NO "at " prefix (JDK 26) and
+fields carry leading spaces — two parser iterations died silently
+before the profile landed; verify parse output non-empty before
+believing "0 MB".
+
 ROUND 21 (2026-09-10): overnight 491362528 hang triage — no spinning
 regexes; GC-humongous stalls crossing the watchdog. Three-layer fix.
 9 HANG_ENGINE + 2 HANG_ORACLE records, all in the last ~5 min of
