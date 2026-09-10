@@ -313,6 +313,32 @@ dominated by tryMap×addState (410) and FallbackOps.accumulateClobbered
 bounded reps into budget rejection where re2j compiles fine. CONSTRUCTION
 family (39 records: anchors under lazy/counted loops) still open.
 
+ROUND 23 (2026-09-10): standing diagnostics — if the hang/GC-pressure
+class ever recurs, the artifacts now answer it without a re-run.
+- Every failure record (ndjson) carries ts + upMs: uptime lines up
+  with gc-<pid>.log [NNNs] prefixes and makes intra-chunk clustering
+  (the humongous-GC signature) visible directly from the records.
+- -PfuzzGcLog=true (fuzz-soak passes it always): -Xlog:gc=info,
+  safepoint=info into <outDir>/gc-<pid>.log, rotated 5x20m, per chunk
+  JVM. NOTE the -Xlog syntax gotcha: output OPTIONS need their own
+  segment after an EMPTY decorators segment
+  (:file=...::filecount=5,filesize=20m) — with one colon the JVM
+  parses them as decorators and refuses to start (caught live).
+- HANG records dump an in-process JFR recording (default settings,
+  64MB in-memory circular, ~1% overhead, -Dfuzz.jfr=false to
+  disable) to <outDir>/hang-<caseSeed>.jfr: the sacrificed thread's
+  method samples ship WITH the record. Smoke-tested with
+  -Dfuzz.caseTimeoutMs=5 -Dfuzz.cases=30: 5 hangs, 5 dumps, records
+  carry cpuMs/verdict/ts/upMs; dumps open with valid
+  ExecutionSample events.
+- verdict heuristic caveat: cpuMs >= CASE_TIMEOUT_MS/2 => "spin".
+  At the real 10s watchdog that threshold is 5s — fine. Forcing
+  tiny timeouts in smoke tests will label ~everything "spin";
+  expected, the field is a hint not a gate.
+Gates green incl. rebar 226/0/2.
+META: jdk.jfr Recording.setSettings takes Map in JDK 26 — use
+new Recording(Configuration.getConfiguration("default")).
+
 ROUND 22 (2026-09-10): allocation root-cause — exact-size scratch
 growth in TdfaStateIndex was 56% of all fuzzer GC pressure.
 JFR ObjectAllocationSample on a 3-min slice (seed 491362533,

@@ -707,9 +707,30 @@ public final class DifferentialFuzzer {
     static final class Logs implements AutoCloseable {
         private final Path dir;
         private final PrintWriter failures, progress;
+        /** Continuous low-overhead JFR ("default" settings, in-memory
+         *  circular, ~1%) dumped to out/hang-<caseSeed>.jfr when a hang is
+         *  recorded — the sacrificed thread's method-sample profile ships
+         *  WITH the record, no re-run needed. -Dfuzz.jfr=false opts out. */
+        private final jdk.jfr.Recording hangWatch;
+        private static final java.lang.management.RuntimeMXBean RUNTIME_MX =
+                java.lang.management.ManagementFactory.getRuntimeMXBean();
+        private static final java.time.format.DateTimeFormatter TS_FMT = java.time.format.DateTimeFormatter
+                .ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS").withZone(java.time.ZoneId.systemDefault());
 
         Logs(Path dir) throws IOException {
             this.dir = dir;
+            jdk.jfr.Recording watch = null;
+            if (Boolean.parseBoolean(System.getProperty("fuzz.jfr", "true"))) {
+                try {
+                    watch = new jdk.jfr.Recording(jdk.jfr.Configuration.getConfiguration("default"));
+                    watch.setName("fuzz-hang-watch");
+                    watch.setMaxSize(64L << 20);   // circular, in-memory
+                    watch.start();
+                } catch (Throwable t) {
+                    watch = null;   // never let diagnostics kill the soak
+                }
+            }
+            this.hangWatch = watch;
             // fuzz.append: keep failures.ndjson/progress.log across chunked
             // soak runs (scripts/fuzz-soak.sh); summary.txt always reflects
             // the latest chunk.
@@ -721,7 +742,13 @@ public final class DifferentialFuzzer {
         }
 
         void failure(long caseSeed, Outcome o, String kind, io.github.jemmix.tdfa.parity.LayeredComparator.Layer layer) {
-            failures.println("{\"caseSeed\":" + caseSeed + ",\"kind\":\"" + kind.replace('"', '\'')
+            // ts/upMs on every record: uptime correlates with gc-*.log
+            // ([574,404s] prefixes) and makes intra-chunk clustering (the
+            // humongous-GC hang signature) visible without progress.log
+            // cross-referencing.
+            failures.println("{\"caseSeed\":" + caseSeed + ",\"ts\":\"" + TS_FMT.format(java.time.Instant.now())
+                    + "\",\"upMs\":" + RUNTIME_MX.getUptime()
+                    + ",\"kind\":\"" + kind.replace('"', '\'')
                     + "\",\"layer\":\"" + layer + "\""
                     + ",\"pattern\":\"" + escape(o.c.pattern()) + "\",\"input\":\"" + escape(o.c.input())
                     + "\",\"oracle\":\"" + escape(o.oracle) + "\",\"asm\":\"" + escape(o.asm)
@@ -760,7 +787,14 @@ public final class DifferentialFuzzer {
             }
             String verdict = cpuMs < 0 ? "unknown"
                     : cpuMs >= CASE_TIMEOUT_MS / 2 ? "spin" : "stalled";
-            failures.println("{\"caseSeed\":" + caseSeed + ",\"kind\":\"HANG_" + (ours ? "ENGINE" : "ORACLE")
+            if (hangWatch != null) {
+                try {
+                    hangWatch.dump(dir.resolve("hang-" + caseSeed + ".jfr"));
+                } catch (Throwable ignore) { }
+            }
+            failures.println("{\"caseSeed\":" + caseSeed + ",\"ts\":\"" + TS_FMT.format(java.time.Instant.now())
+                    + "\",\"upMs\":" + RUNTIME_MX.getUptime()
+                    + ",\"kind\":\"HANG_" + (ours ? "ENGINE" : "ORACLE")
                     + "\",\"cpuMs\":" + cpuMs + ",\"verdict\":\"" + verdict + "\""
                     + ",\"pattern\":\"" + escape(c.pattern()) + "\",\"input\":\"" + escape(c.input())
                     + "\",\"stack\":\"" + escape(st.toString()) + "\"}");
@@ -804,7 +838,10 @@ public final class DifferentialFuzzer {
 
         void flush() { failures.flush(); progress.flush(); }
 
-        @Override public void close() { failures.close(); progress.close(); }
+        @Override public void close() {
+            failures.close(); progress.close();
+            if (hangWatch != null) { try { hangWatch.close(); } catch (Throwable ignore) { } }
+        }
     }
 
     static String firstLine(String s) {

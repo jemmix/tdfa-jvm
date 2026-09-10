@@ -19,6 +19,11 @@
 # vendor/re2j-jemmix/): append -Pfuzz.patchedOracle=true
 #   scripts/fuzz-soak.sh 480 1 build/fuzz '' -Pfuzz.patchedOracle=true
 #
+# Diagnostics land in $OUT automatically: gc-<pid>.log per chunk
+# (-PfuzzGcLog, passed below), ts/upMs on every failure record, and a
+# hang-<caseSeed>.jfr method-sample dump per HANG record (in-process
+# JFR watch, ~1% overhead; -Dfuzz.jfr=false to disable).
+#
 # The fuzzer is multi-threaded by default (-Dfuzz.threads, cores-1 capped
 # at 8; case order and ndjson records are thread-count-invariant). Run N
 # independent soaks ONLY if you want N separate out-dirs; one soak already
@@ -49,7 +54,7 @@ for i in $(seq 1 "$ITERS"); do
     [ "$i" -gt 1 ] && append="-Pfuzz.append=true"
     echo "$(date '+%F %T') iter $i/$ITERS seed $seed" >> "$LOG"
     if ./gradlew -q :tests:parity:re2j:fuzz -Pfuzz.minutes="$MINS" -Pfuzz.seed="$seed" \
-            -Pfuzz.out="$OUT" $append $EXTRA >> "$LOG" 2>&1; then
+            -Pfuzz.out="$OUT" -PfuzzGcLog=true $append $EXTRA >> "$LOG" 2>&1; then
         echo "$(date '+%F %T') iter $i/$ITERS ok" >> "$LOG"
     else
         echo "$(date '+%F %T') iter $i/$ITERS EXIT NONZERO — findings recorded (failures.ndjson)" >> "$LOG"

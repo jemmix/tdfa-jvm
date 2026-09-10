@@ -96,8 +96,17 @@ tasks.register('fuzz', JavaExec) {
     if (project.hasProperty('fuzz.maxWork')) {   // else the fuzzer scopes its own 8M default
         systemProperty 'fuzz.max.work', project.getProperty('fuzz.maxWork')
     }
-    systemProperty 'fuzz.out', project.findProperty('fuzz.out')
+    def fuzzOut = project.findProperty('fuzz.out')
             ?: rootProject.layout.buildDirectory.dir('fuzz').get().asFile.absolutePath
+    systemProperty 'fuzz.out', fuzzOut
+    // -PfuzzGcLog=true: unified GC logging into the fuzz out dir (one file per
+    // chunk JVM via %p, rotated). The soak passes it always — when a hang
+    // record appears, its upMs lines up with the pause timeline here and the
+    // spin/stall question is answered from artifacts alone.
+    if (project.hasProperty('fuzzGcLog')) {
+        jvmArgs "-Xlog:gc=info,safepoint=info:file=${fuzzOut}/gc-%p.log::filecount=5,filesize=20m"
+        doFirst { new File(fuzzOut).mkdirs() }   // -Xlog creates files, not dirs
+    }
     systemProperty 'fuzz.seed', project.findProperty('fuzz.seed') ?: String.valueOf(System.currentTimeMillis())
     systemProperty 'fuzz.cases', project.findProperty('fuzz.cases') ?: '0'
     systemProperty 'fuzz.one', project.findProperty('fuzz.one') ?: '0'
