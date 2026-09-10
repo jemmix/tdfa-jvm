@@ -313,6 +313,41 @@ dominated by tryMap×addState (410) and FallbackOps.accumulateClobbered
 bounded reps into budget rejection where re2j compiles fine. CONSTRUCTION
 family (39 records: anchors under lazy/counted loops) still open.
 
+ROUND 21 (2026-09-10): overnight 491362528 hang triage — no spinning
+regexes; GC-humongous stalls crossing the watchdog. Three-layer fix.
+9 HANG_ENGINE + 2 HANG_ORACLE records, all in the last ~5 min of
+30-min chunks. ALL 11 caseSeeds replay clean in milliseconds solo.
+Stacks spread over 9 unrelated engine phases (stepOnSymbol, addState,
+canonSignature x2, transitionRegops, buildCfg, epsilonClosure,
+growVisited, tryMap) — random parking, i.e. stalls not spins. Two
+records are ORACLE hangs (one inside re2j's own write()) — impossible
+to blame our engine. Local 30-min repro attempt (same config, GC log
+via jcmd VM.log): 0 hangs, but 4 Full GCs (0.7-0.9s) after t~24min,
+first at ~1GB used with ~1GB free and 68M in humongous regions —
+the bomb-family kernel/state arrays (0.4-1.2MB) are humongous at G1's
+default 1-2MB regions; fragmentation forces compaction exactly when
+the hangs cluster. Mechanism: a 4-6s bomb batch (two engine compiles
+tripping the 8M budget + anchored + oracle) overlaps a Full-GC pause
+plus compaction CPU steal -> >10s wall -> watchdog sacrifices the
+worker and records a hang.
+Fixes:
+- fuzz JVM: -Xmx4g -XX:G1HeapRegionSize=4m (state-sized arrays become
+  regular; 12-min same-seed validation: 0 Full GCs, 0 humongous vs
+  1 Full + 68M before; hangE=0).
+- HANG records now self-classify: cpuMs (sacrificed thread's CPU) and
+  verdict=spin|stalled|unknown — a stall burns little CPU, a real
+  spin burns ~wall. Triage no longer needs the replay to know.
+- fuzz-soak.sh: post-soak verification pass replays every recorded
+  HANG caseSeed solo (-Pfuzz.maxWork=8388608 mirrors the scoped
+  budget; fuzz.maxWork passthrough added to the gradle task) and
+  writes hang-replays.log verdicts.
+Also: fuzzWorkBudget comment said 32M while the code says 8M — fixed.
+META lessons: (a) GC-log pause times print with LOCALE DECIMAL COMMAS
+(719,033ms is 719ms, not 719 seconds — do not panic-read); (b) macOS
+/usr/bin/time has no -f (GNU-only) — a failing time -f silently runs
+nothing and greps print empty; use -p or verify exit; (c) jcmd VM.log
+reconfigures -Xlog on a LIVE JVM when you forget the flag at launch.
+
 ROUND 20 (2026-09-09): overnight 858426163 hang triage — thresholds
 worked, calibration didn't; regopt/CFG phases now ticked.
 One HANG_ENGINE record (caseSeed 573664345500922672, pattern

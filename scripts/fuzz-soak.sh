@@ -56,3 +56,26 @@ for i in $(seq 1 "$ITERS"); do
     fi
 done
 echo "$(date '+%F %T') soak done" >> "$LOG"
+
+# Post-soak hang verification: replay every recorded HANG caseSeed solo in a
+# fresh JVM. The overnight-491362528 lesson: GC-stalled batches (humongous
+# fragmentation -> Full GC pause + compaction steal late in a chunk) cross the
+# 10s watchdog and get recorded as hangs although they replay in milliseconds;
+# the new cpuMs/verdict fields in each record say so at recording time, this
+# pass confirms it end-to-end. VERDICT lines land in $OUT/hang-replays.log.
+if grep -q '"kind":"HANG_' "$OUT/failures.ndjson" 2>/dev/null; then
+    REP="$OUT/hang-replays.log"
+    : > "$REP"
+    for s in $(grep '"kind":"HANG_' "$OUT/failures.ndjson" | sed 's/.*"caseSeed":\([0-9]*\).*/\1/' | sort -u); do
+        [ -z "$s" ] && continue
+        t0=$(date +%s)
+        if timeout 120 ./gradlew -q :tests:parity:re2j:fuzz -Pfuzz.one="$s" \
+                -Pfuzz.maxWork=8388608 -Pfuzz.out="$OUT-replays" >> "$LOG" 2>&1; then
+            v="REPLAYS-CLEAN (environmental stall, not an engine spin)"
+        else
+            v="REPLAY NONZERO — triage by hand (see $OUT-replays + stack/cpuMs in the record)"
+        fi
+        echo "$(date '+%F %T') seed=$s wall=$(( $(date +%s) - t0 ))s $v" | tee -a "$REP"
+    done
+    echo "$(date '+%F %T') hang verification done: $(wc -l < "$REP" | tr -d ' ') record(s)" >> "$LOG"
+fi

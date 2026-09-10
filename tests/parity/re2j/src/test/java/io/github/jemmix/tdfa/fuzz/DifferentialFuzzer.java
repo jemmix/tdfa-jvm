@@ -127,7 +127,7 @@ public final class DifferentialFuzzer {
      *  throttled). The generator's nested-counted bombs burn 36-100M ticks
      *  walking into the state/kernel caps (10-30 s wall) and the
      *  fallback-DFS family even more — far past the 10 s case watchdog, so
-     *  the worker thread got sacrificed and SPUN until it hit a cap. A 32M
+     *  the worker thread got sacrificed and SPUN until it hit a cap. An 8M
      *  tick budget rejects those compiles in ~1-3 s, under the watchdog:
      *  no sacrificed threads, no background spin, and the divergence is
      *  recorded as BUDGET_REJECT instead of a hang (same known class).
@@ -745,8 +745,24 @@ public final class DifferentialFuzzer {
             if (w != null) for (StackTraceElement e : w.getStackTrace()) st.append(e).append(" | ");
             boolean ours = isEngineStack(st);
             if (ours) r.hangsOurs++; else r.hangsOracle++;
+            // Spin vs stall, recorded at the source: a worker that BURNED CPU
+            // for the whole watchdog window really hung (finding); one whose
+            // thread-CPU is far below wall was stalled — GC pause/compaction
+            // or scheduler starvation (overnight 491362528: every HANG record
+            // was this kind; the same seeds replay in milliseconds). Post-mortem
+            // triage reads cpuMs vs the 10 s watchdog, no re-run needed.
+            long cpuMs = -1;
+            if (w != null) {
+                try {
+                    cpuMs = java.lang.management.ManagementFactory.getThreadMXBean()
+                            .getThreadCpuTime(w.getId()) / 1_000_000;
+                } catch (Throwable ignore) { /* thread died already */ }
+            }
+            String verdict = cpuMs < 0 ? "unknown"
+                    : cpuMs >= CASE_TIMEOUT_MS / 2 ? "spin" : "stalled";
             failures.println("{\"caseSeed\":" + caseSeed + ",\"kind\":\"HANG_" + (ours ? "ENGINE" : "ORACLE")
-                    + "\",\"pattern\":\"" + escape(c.pattern()) + "\",\"input\":\"" + escape(c.input())
+                    + "\",\"cpuMs\":" + cpuMs + ",\"verdict\":\"" + verdict + "\""
+                    + ",\"pattern\":\"" + escape(c.pattern()) + "\",\"input\":\"" + escape(c.input())
                     + "\",\"stack\":\"" + escape(st.toString()) + "\"}");
             failures.flush();
         }

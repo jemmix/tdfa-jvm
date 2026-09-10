@@ -82,8 +82,20 @@ tasks.register('fuzz', JavaExec) {
     description = 'Differential fuzz soak vs re2j (minutes/seed/out via -Pfuzz.*)'
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'io.github.jemmix.tdfa.fuzz.DifferentialFuzzer'
-    jvmArgs '-Xmx2g'
+    // Heap/GC: bomb-family batches allocate state-sized arrays (hundreds of KB
+    // to ~1 MB). At G1's default 1-2 MB regions those are HUMONGOUS: they
+    // fragment the heap and by minute ~25 of a 30-min chunk force Full GCs
+    // (observed: 0.7-0.9 s pauses + compaction CPU steal with ~1 GB still
+    // free). A stalled 4-6 s bomb batch then crosses the 10 s watchdog and
+    // gets misrecorded as a hang (overnight 491362528: 11 such records, all
+    // replaying clean; stacks spread over 9 unrelated phases incl. re2j's
+    // own write()). 4 MB regions keep those arrays regular; 4 g heap gives
+    // G1 ~1024 regions to work with.
+    jvmArgs '-Xmx4g', '-XX:G1HeapRegionSize=4m'
     systemProperty 'fuzz.minutes', project.findProperty('fuzz.minutes') ?: '480'
+    if (project.hasProperty('fuzz.maxWork')) {   // else the fuzzer scopes its own 8M default
+        systemProperty 'fuzz.max.work', project.getProperty('fuzz.maxWork')
+    }
     systemProperty 'fuzz.out', project.findProperty('fuzz.out')
             ?: rootProject.layout.buildDirectory.dir('fuzz').get().asFile.absolutePath
     systemProperty 'fuzz.seed', project.findProperty('fuzz.seed') ?: String.valueOf(System.currentTimeMillis())
