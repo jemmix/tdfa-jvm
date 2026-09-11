@@ -17,7 +17,8 @@
 > vendored + longest-match capture parity suites (0 known divergences).
 > Still pending (freeze-phase): japicmp baselines ×4, module-info for core,
 > TdfaRunner static trace → per-engine (test instrument only), license
-> headers, first Maven publish.
+> headers, namespace move jemmix→tagmaton (gates the publish), budget-flag
+> organization, first Maven publish.
 >
 > 2026-09-03 cleanup run: BT19 §7 scaffolding REMOVED (closureGtop/GtopCompare/
 > utree/prectables — dormant since the 2026-08-18 NOT-NEEDED resolution; design
@@ -830,7 +831,13 @@ hard-gating every fixed family, replay corpora, probe-before-fix.
   scenario sets `unicode = true`) and passes. Unicode-`\w` remains available via
   `(?u)` opt-in. Corrected `docs/PARITY-PLAN.md` accordingly.
 - [x] **`\p{L}{N}` returns 0 matches for N ≥ 25** — root cause was the `stateMeta` packing: the range-base field used only 15 bits (bits 17-31, max 32767), but `\p{L}` has ~1369 Unicode ranges per state, so `base` overflowed at state 24 (24×1369=32856). Fixed by splitting `base` into a separate `stateBase[]` array (full 32-bit range), removing the artificial limit. `\p{L}{256}` now compiles and matches correctly on both VM and ASM backends.
-- [ ] **`.` on non-BMP codepoints undercounts vs re2** — `.` on `💩` (U+1F4A9) gives 1 match in our engine (one codepoint); re2 gives 4 (UTF-8 bytes). Our engine is codepoint-oriented like `java.util.regex`, not byte-oriented like re2. **Resolved at the test level**: `vendor/patches/rebar/01-dot-matches-byte-codepoint.patch` rewrites the rebar scenario to record our actual count (1) under an explicit `{ engine = 're2', count = 1 }` entry — see the patch file for the rationale comment. Fundamental architecture choice, not a bug.
+- [x] **`.` on non-BMP codepoints undercounts vs re2** — PERMANENT DOCUMENTED DIVERGENCE:
+      `.` on `💩` (U+1F4A9) gives 1 match in our engine (one codepoint); re2 gives 4
+      (UTF-8 bytes). Architecture choice (codepoint-oriented like `java.util.regex`,
+      not byte-oriented like re2), not a bug. Originally resolved at the test level via
+      `vendor/patches/rebar/01-dot-matches-byte-codepoint.patch`; that patch was
+      consolidated away at `6e3b63f` and the scenario now resolves through the live
+      patched-re2j oracle (round 19, dd3f3bc) — suite green 226/0/2.
 - [x] **Supplementary literals under groups/quantifiers/alternation fail to match** — FIXED (2026-08-27,
       structural). Root cause: the parser read patterns one UTF-16 unit at a time while the engine executes
       one CODEPOINT per transition (every step loop decodes surrogate pairs). Two-unit literals were therefore
@@ -1115,23 +1122,84 @@ hard-gating every fixed family, replay corpora, probe-before-fix.
 - [x] Remaining rebar parity — **All in-scope scenarios now pass** (718/718 parameterized cases, 0 failures). The 3 engine correctness bugs (§A regopt interference, §B `\b` dead-end, §C Unicode case-fold) are fixed. 2026-08-18: the date/aws compile bombs were un-skipped after the determinize fast-path (date counts verified equal to live `java.util.regex` — JDK-26 tables drift patched in `vendor/patches/rebar/05-*.patch`); `CompileLatencyGuardTest` pins <5 s facade compiles. 2026-08-19: the test-side AST bomb heuristic was deleted — the engine's own determinization budget (re2c-identical caps) now rejects the one remaining shape. 2026-08-20 suite restructure: scope filtering moved to parameter-build time (228 cases, out-of-scope scenarios no longer appear), the context bomb skips by name (`BOMB_SCENARIOS`, opt-in via `-Dtdfa.test.rebar.skipBombs=false` + `-Dtdfa.max.states=250000` + ≥6 GB heap), the numeric time/size gates and raised-budget retry were removed, a budget rejection on any non-listed scenario is a FAILURE, and the module heap dropped 12 g → 2 g. The bomb's solo measurements live in the Performance note below.
 - [ ] Hyperscan corpus / Snort rule set
 - [ ] Long-input scan across diverse patterns (not just `\w+\d+\w+`)
-- [ ] CI performance regression tracking (JMH + comparison thresholds; NOTE `scripts/bench-regression.sh` needed a classpath fix post-module-restructure — re-captured the quick baseline 2026-08-18)
+- [ ] CI performance regression tracking — the harness landed (P7: `RegressionBench`/
+      `QuickBench`, `scripts/bench-regression.sh [--quick|--jmh] [--capture]`,
+      `bench-compare.py`, per-machine baselines — quick threshold 15 %, JMH 10 %);
+      the CI wiring does not exist (ci.yml is correctness-only). Shared-runner
+      timing noise needs a threshold decision before wiring.
 
 ## Engineering — "SQLite levels"
 
-- [ ] SpotBugs / Error Prone / PMD — zero warnings
-- [ ] Checkstyle / Spotless — enforced code style
+- [ ] **Namespace move `io.github.jemmix.*` → `io.github.tagmaton.*`** — must land
+      before the first Maven publish (coordinates + Automatic-Module-Names are
+      user-visible forever; also the re2j-jemmix vendor dir and the
+      `github.com/jemmix/re2j` fork URL). Blast radius (145+ files): every java
+      package tree (all modules, tests, benchmarks), per-module
+      `Automatic-Module-Name`s, scripts (`bench-regression.sh`, `bench-rebar.sh`,
+      `fuzz-soak.sh`, `lint-spotbugs.sh`, `vendor.sh`, `gen-unicode.py`),
+      `config/spotbugs/exclusions.xml`, `ci/Smoke8.java`, README/docs, and the
+      patched-re2j oracle's package-rewrite patch (`vendor/patches/re2j/`).
+      JMH baselines record benchmark-class FQNs → re-capture
+      `benchmarks/baselines/*` after the rename (quick mode suffices). Mechanical
+      sed + full gate + jars pipeline + JDK 8 smoke.
+- [ ] **Review/organize budget & tuning flags** — the `-D` surface grew
+      accretion-style: compile caps `tdfa.max.{states,kernels,closure,work}`,
+      minimizer/regopt knobs `tdfa.minimize.max`, `tdfa.minimize.norm.cells`,
+      `tdfa.nominimize`, `tdfa.noregopt`, `tdfa.regopt.max`, runtime/engine
+      `tdfa.engine`, `tdfa.trace.strategy`, diagnostics `tdfa.debug*` /
+      `tdfa.asm.dump` / `tdfa.gen.debug`, plus the harness family `fuzz.*`
+      (incl. the `fuzz.maxWork` gradle → `fuzz.max.work` → `tdfa.max.work`
+      passthrough). Read-timing is already unified and pinned
+      (`CompileKnobTimingTest`, c838547; inventory comment at Tdfa.java:496).
+      Remaining: naming consistency (one `tdfa.max.*` family for the caps?),
+      user-facing vs test/diagnostic split, and ONE documented table with
+      defaults (README) — today the flags live only in javadoc, comments, and
+      error-message strings.
+- [x] SpotBugs / Error Prone / PMD — zero warnings — DONE (2026-09-04, REVIEW-2026-09 §1):
+      ErrorProne 2.50.0 on facade/core/asm (zero findings after ~40 driven fixes;
+      every suppression carries written rationale) + SpotBugs 4.9.8 hard-fail on
+      findings AND analysis errors with gated per-item exclusions
+      (`config/spotbugs/exclusions.xml`); CI-enforced (`spotbugs` job on JDK 25 —
+      4.9.x cannot scan JDK 26 runtime classes, tasks self-skip there) and
+      standalone-decoupled (`scripts/lint-spotbugs.sh`; EP as plain javac plugin).
+      PMD never adopted — EP+SpotBugs cover the chosen ground; Checkstyle/Qodana
+      one-offs run and declined with reasons (§1b).
+- [x] ~~Checkstyle / Spotless — enforced code style~~ — RESOLVED AS DECLINED
+      (2026-09-04, REVIEW-2026-09 §1b): Checkstyle 14.1 one-off over facade/core/asm —
+      curated semantic config: 55 findings / 8 real, all fixed; google_checks 99.7 %
+      formatting noise (8325 Indentation alone). Verdict: not worth wiring on a frozen
+      codebase (EP + SpotBugs cover the semantic ground); Spotless moot — no
+      formatter churn wanted on a freeze-bound tree.
 - [ ] JaCoCo coverage targets (line + branch)
 - [ ] JavaDoc for all public API surface
 - [ ] API stability guarantees (signatures locked at 1.0)
-- [ ] Multi-JDK CI matrix (11, 17, 21, 25)
+- [ ] Multi-JDK CI matrix — SUPERSEDED SHAPE; CI live since 2026-09-04
+      (REVIEW-2026-09 §1c/§1d): `.github/workflows/ci.yml` = `check`@JDK 26 (full
+      gate incl. EP), `spotbugs`@JDK 25 (where 4.9.x actually enforces),
+      `jars-and-tests` (core+asm by a real JDK 8 javac, unit tests vs packaged jars
+      on 25, JDK 8 runtime smoke; SHA-pinned actions, wrapper validation) — a
+      deliberate floor-proof trio, not an 11/17/21/25 runtime matrix. A broader
+      consumer-runtime matrix remains unadopted; reopen only with evidence of a
+      runtime we actually need to cover.
 - [ ] GraalVM native-image compatibility
 - [ ] Android API-level compatibility check
 - [ ] JPMS module info (`module-info.java`)
 - [ ] Reproducible builds (deterministic jar output)
-- [ ] Thread safety audit (`Matcher` reuse, `Pattern` sharing)
+- [x] Thread safety audit (`Matcher` reuse, `Pattern` sharing) — DONE (2026-09-04,
+      REVIEW-2026-09 §1 B4 + Phase C, 13912fd): SearchDfa mutation confined under a
+      lock with lock-free immutable-snapshot reads; walkBlockIdx tables published via
+      AtomicReferenceArray; the false "ThreadLocal" comment fixed. Thread-safety +
+      mutable-CharSequence contracts documented on Pattern/PatternMatcher/
+      CompiledRegex/MatchResult. Pinned by `ConcurrencyHammerTest` (8 threads,
+      bit-identical digests vs the single-threaded reference).
 - [ ] Memory leak testing (generated class GC under load)
-- [ ] Security review (untrusted regex DoS: compile-time blowup, state explosion)
+- [x] Security review (untrusted regex DoS: compile-time blowup, state explosion) —
+      DONE: every compile phase is work-metered with clean `PatternSyntaxException`
+      rejection (WorkMeter + re2c-parity state/kernel/closure caps, `CompileBudgetTest`;
+      minimizer cell budget P1 #3), parser resource caps close the pre-determinization
+      surface ({n,m} ≤ 1000, group depth ≤ 256 — REVIEW §1 B2), and the fuzz-scoped
+      budget demonstrates the bomb families rejecting in seconds. README documents
+      the honest eager-DFA cost vs lazy engines.
 
 ## Wishlist (maybe, someday, if motivated)
 
