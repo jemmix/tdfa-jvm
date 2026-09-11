@@ -55,14 +55,29 @@ public final class DifferentialFuzzer {
     public static void main(String[] argv) throws Exception {
         long one = Long.getLong("fuzz.one", 0);
         if (one != 0) {
-            Case c = generate(one);
-            System.out.println("pattern: " + escape(c.pattern()));
-            System.out.println("input:   " + escape(c.input()));
-            Outcome o = runOne(c);
-            System.out.println("oracle:  " + o.oracle);
-            System.out.println("asm:     " + o.asm);
-            System.out.println("vm:      " + o.vm);
-            if (!o.exceptions.isEmpty()) o.exceptions.forEach(System.out::println);
+            // Replay under the SAME scoped budget the soak uses — without
+            // this, a one-case replay runs at the library budget (2^32) and
+            // budget monsters replay in tens of seconds, misrepresenting
+            // their in-soak behavior (round 24: a 57 s replay got labeled
+            // "clean"). -Dfuzz.max.work=0 restores the library budget.
+            long fuzzWork = fuzzWorkBudget();
+            String prevWork = fuzzWork > 0
+                    ? System.setProperty("tdfa.max.work", Long.toString(fuzzWork)) : null;
+            try {
+                Case c = generate(one);
+                System.out.println("pattern: " + escape(c.pattern()));
+                System.out.println("input:   " + escape(c.input()));
+                Outcome o = runOne(c);
+                System.out.println("oracle:  " + o.oracle);
+                System.out.println("asm:     " + o.asm);
+                System.out.println("vm:      " + o.vm);
+                if (!o.exceptions.isEmpty()) o.exceptions.forEach(System.out::println);
+            } finally {
+                if (fuzzWork > 0) {
+                    if (prevWork != null) System.setProperty("tdfa.max.work", prevWork);
+                    else System.clearProperty("tdfa.max.work");
+                }
+            }
             return;
         }
         long masterSeed = Long.getLong("fuzz.seed", 0) != 0
@@ -101,8 +116,22 @@ public final class DifferentialFuzzer {
         }, "fuzz-case");
         worker.setDaemon(true);
         workerOut[0] = worker;
+        java.lang.management.ThreadMXBean tmx =
+                java.lang.management.ManagementFactory.getThreadMXBean();
         worker.start();
         worker.join(CASE_TIMEOUT_MS);
+        if (!worker.isAlive()) return true;
+        // Tiered watchdog (round 21/25): at 10 s, probe the worker's CPU.
+        // A SPIN (cpu ~ elapsed) is a finding — sacrifice and record now. A
+        // STALL (cpu far below wall — GC pause, scheduler starvation from a
+        // co-tenant build) gets grace to bound the false-hang class: the
+        // batch often completes normally and no record is written at all.
+        // fuzz.graceMs=0 restores the old single-shot behavior.
+        long grace = Long.getLong("fuzz.graceMs", 50_000);
+        if (grace <= 0) return false;
+        long cpu1 = tmx.getThreadCpuTime(worker.getId()) / 1_000_000;
+        if (cpu1 >= CASE_TIMEOUT_MS / 2) return false;   // burning CPU: real spin
+        worker.join(grace);
         return !worker.isAlive();
     }
 

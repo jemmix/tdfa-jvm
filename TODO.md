@@ -314,6 +314,30 @@ dominated by tryMap×addState (410) and FallbackOps.accumulateClobbered
 bounded reps into budget rejection where re2j compiles fine. CONSTRUCTION
 family (39 records: anchors under lazy/counted loops) still open.
 
+ROUND 25 (2026-09-11): pre-overnight hardening — tiered watchdog +
+faithful fuzz.one replays.
+Open-item sweep before the next soak; two fixed, rest deferred:
+- TIERED WATCHDOG (the round-21 proposal, now in): at 10 s probe the
+  worker's thread-CPU. Spin (cpu >= wall/2) -> sacrifice + record
+  immediately (real findings keep fast detection). Stall (cpu far
+  below wall: GC pause, co-tenant load) -> grace to 60 s total
+  (-Dfuzz.graceMs, 0 restores single-shot); the batch usually
+  completes and NO record is written. Forced-stall smoke (5 ms
+  timeout, 3 s grace, 40 cases): 2 records instead of ~5, verdicts
+  split spin/stalled correctly.
+- fuzz.one now applies the fuzz work budget (was: library 2^32 —
+  round 24's seed replayed in 57 s and was mislabeled "clean";
+  now 0.85 s with budget rejects). -Dfuzz.max.work=0 restores.
+Deferred (documented, not blocking a soak):
+- CFG successors deboxing (int[] vs List<Integer>, ~14% of the
+  round-24 spin profile) — perf polish; the edge cap defused the
+  pathological class, and the churn is freeze-bound risk.
+- Shared Tdfa for asm+vm (halves engine compile churn) — engine API
+  design change.
+- ZGC-vs-G1 A/B — curiosity; allocation is down 63% and 0 Full GCs
+  at 4 MB regions.
+Gates green incl. rebar 226/0/2.
+
 ROUND 24 (2026-09-11): first TRUE engine spin caught by the new
 diagnostics — CFG successor-arc explosion; capped + ticked.
 Overnight record caseSeed 727613823329836856: verdict=spin,
