@@ -100,7 +100,18 @@ public final class LayeredComparator {
      * engines throw three different exception CLASSES for the same "bad
      * pattern" (re2j PatternSyntaxException, the sim IllegalArgumentException),
      * and class-name differences would masquerade as engine divergence.
+     *
+     * <p>After the first match, two more probes (span-only, mirroring the
+     * fuzzer's I/R probes so a divergence the fuzzer sees is visible in the
+     * column vote): continuation iteration on the same matcher
+     * {@code I=[s..e ...]} (empty-match advance included; {@code $} = the
+     * 64-match cap), and a restart {@code R=s..e|no} via fresh-matcher
+     * {@code find(len/2)}. Without these, iteration-only divergences (e.g.
+     * the re2j pair-interior family on continuation) classified as PASS and
+     * escaped the fuzzer's known-divergence classifier.
      */
+    static final int ITER_CAP = 64;
+
     static String re2jProtocol(String p, String in) {
         com.google.re2j.Pattern pat;
         try {
@@ -111,9 +122,12 @@ public final class LayeredComparator {
         try {
             var m = pat.matcher(in);
             if (!m.find()) return "no";
-            return fmt(m.start(), m.end(), g -> {
+            StringBuilder sb = new StringBuilder(fmt(m.start(), m.end(), g -> {
                 try { return m.group(g); } catch (RuntimeException e) { return null; }
-            }, m.groupCount());
+            }, m.groupCount()));
+            iter(sb, m.start(), m.end(), m::find, () -> m.start() + ".." + m.end());
+            restart(sb, pat.matcher(in), mm -> mm.find(in.length() / 2), mm -> mm.start() + ".." + mm.end());
+            return sb.toString();
         } catch (Throwable t) {
             return "<exception:" + t.getClass().getSimpleName() + ">";
         }
@@ -129,7 +143,10 @@ public final class LayeredComparator {
         try {
             var m = sim.matcher(in);
             if (!m.find()) return "no";
-            return fmt(m.start(), m.end(), m::group, m.groupCount());
+            StringBuilder sb = new StringBuilder(fmt(m.start(), m.end(), m::group, m.groupCount()));
+            iter(sb, m.start(), m.end(), m::find, () -> m.start() + ".." + m.end());
+            restart(sb, sim.matcher(in), mm -> mm.find(in.length() / 2), mm -> mm.start() + ".." + mm.end());
+            return sb.toString();
         } catch (Throwable t) {
             return "<exception:" + t.getClass().getSimpleName() + ">";
         }
@@ -146,12 +163,34 @@ public final class LayeredComparator {
         try {
             var m = pat.matcher(in);
             if (!m.find()) return "no";
-            return fmt(m.start(), m.end(), g -> {
+            StringBuilder sb = new StringBuilder(fmt(m.start(), m.end(), g -> {
                 try { return m.group(g); } catch (RuntimeException e) { return null; }
-            }, m.groupCount());
+            }, m.groupCount()));
+            iter(sb, m.start(), m.end(), m::find, () -> m.start() + ".." + m.end());
+            restart(sb, pat.matcher(in), mm -> mm.find(in.length() / 2), mm -> mm.start() + ".." + mm.end());
+            return sb.toString();
         } catch (Throwable t) {
             return "<exception:" + t.getClass().getSimpleName() + ">";
         }
+    }
+
+    /** I probe: continue the SAME matcher (first span already known), spans only, capped. */
+    private static void iter(StringBuilder sb, int s0, int e0, java.util.function.BooleanSupplier next,
+                             java.util.function.Supplier<String> span) {
+        sb.append(" I=[").append(s0).append("..").append(e0);
+        int n = 1;
+        while (n < ITER_CAP && next.getAsBoolean()) {
+            sb.append(' ').append(span.get());
+            n++;
+        }
+        if (n == ITER_CAP) sb.append(" $");
+        sb.append(']');
+    }
+
+    /** R probe: fresh matcher, find(len/2). */
+    private static <M> void restart(StringBuilder sb, M m, java.util.function.Predicate<M> find,
+                                    java.util.function.Function<M, String> span) {
+        sb.append(" R=").append(find.test(m) ? span.apply(m) : "no");
     }
 
     private interface GroupFn { String get(int g); }

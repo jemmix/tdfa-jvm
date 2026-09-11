@@ -121,30 +121,55 @@ public final class PikeSim {
      * null-group vs empty-group distinction the engine protocols rely on.
      */
     public static final class PikeMatcher {
-        private final PikeSim sim;
-        private final CharSequence input;
-        private final int len;
-        private int matchStart = -1, matchEnd = -1;
-        private int[] matchCap;
-        private boolean found;
+         private final PikeSim sim;
+         private final CharSequence input;
+         private final int len;
+         private int matchStart = -1, matchEnd = -1;
+         private int[] matchCap;
+         private boolean found;
+         /** Next scan start: continuation state. {@code find()} iterates like
+          *  the real matchers (advance to match end; +1 UTF-16 unit on an
+          *  empty match, mirroring io.github.jemmix.tdfa.core.Matcher). */
+         private int from;
 
-        PikeMatcher(PikeSim sim, CharSequence input) {
-            this.sim = sim;
-            this.input = input;
-            this.len = input.length();
-        }
+         PikeMatcher(PikeSim sim, CharSequence input) {
+             this.sim = sim;
+             this.input = input;
+             this.len = input.length();
+         }
 
-        public boolean find() {
-            for (int s = 0; s <= len; s++) {
-                // pair interior: s is a low half preceded by a high half. The
-                // s == len case must not read charAt(len) — input ending in a
-                // lone high has no interior there (fuzz repro: lone-high input).
-                if (s > 0 && s < len && isHigh(input.charAt(s - 1)) && isLow(input.charAt(s))) continue;
-                if (runFrom(s)) { found = true; return true; }
-            }
-            found = false;
-            return false;
-        }
+         public PikeMatcher reset() {
+             from = 0;
+             found = false;
+             return this;
+         }
+
+         public boolean find() {
+             for (int s = from; s <= len; s++) {
+                 // pair interior: s is a low half preceded by a high half. The
+                 // s == len case must not read charAt(len) — input ending in a
+                 // lone high has no interior there (fuzz repro: lone-high input).
+                 if (s > 0 && s < len && isHigh(input.charAt(s - 1)) && isLow(input.charAt(s))) continue;
+                 if (runFrom(s)) {
+                     found = true;
+                     from = matchStart == matchEnd ? matchEnd + 1 : matchEnd;
+                     return true;
+                 }
+             }
+             found = false;
+             return false;
+         }
+
+         /** Reset and find from {@code start} (matcher-API parity with
+          *  tdfa/re2j: {@code find(int)} is the restart probe in the
+          *  LayeredComparator protocol). */
+         public boolean find(int start) {
+             if (start < 0 || start > len)
+                 throw new IndexOutOfBoundsException("start index out of bounds: " + start);
+             reset();
+             from = start;
+             return find();
+         }
 
         public int start() { require(); return matchStart; }
         public int end() { require(); return matchEnd; }
