@@ -34,24 +34,20 @@ public final class TdfaAsmBackend {
     private static final String TDFA = "io/github/jemmix/tdfa/tdfa/Tdfa";
     private static final String TDFA_D = "L" + TDFA + ";";
 
-    /** A per-pattern generation result: the engine instance plus the classloader
-     *  that defines its class (and any additionally generated per-pattern classes,
-     *  e.g. the facade Pattern/Matcher shell tier) plus the Tdfa backing it. The loader
-     *  is unreferenced once the pattern is garbage → all its classes unload together. */
+    /** A per-pattern generation result: the engine instance plus the internal
+     *  name of its generated class. The defining classloader stays reachable
+     *  through the engine's own Class, so all of a pattern's generated
+     *  classes unload together once the engine is garbage. */
     // Java 8 floor: records are 16+; plain carrier class with record-shaped accessors.
     public static final class Generated {
         public final RegexEngine engine;
-        public final java.lang.ClassLoader loader;
         public final String owner;
-        public final Tdfa tdfa;
 
-        public Generated(RegexEngine engine, java.lang.ClassLoader loader, String owner, Tdfa tdfa) {
-            this.engine = engine; this.loader = loader; this.owner = owner; this.tdfa = tdfa;
+        public Generated(RegexEngine engine, String owner) {
+            this.engine = engine; this.owner = owner;
         }
         public RegexEngine engine() { return engine; }
-        public java.lang.ClassLoader loader() { return loader; }
         public String owner() { return owner; }
-        public Tdfa tdfa() { return tdfa; }
     }
 
     /** Child loader that can define any number of registered classes for one pattern. */
@@ -79,7 +75,7 @@ public final class TdfaAsmBackend {
             RegexEngine engine = Class.forName(cn, true, cl)
                     .asSubclass(RegexEngine.class)
                     .getDeclaredConstructor(Tdfa.class).newInstance(tdfa);
-            return new Generated(engine, cl, owner, tdfa);
+            return new Generated(engine, owner);
         } catch (Exception e) {
             throw new IllegalStateException("ASM backend failed", e);
         }
@@ -458,9 +454,9 @@ public final class TdfaAsmBackend {
 
         // No literal-needle ladder here by construction: a DFA with a needle
         // always compiles as DELEGATE (generateBytes), so in the INLINED
-        // classes that emit this method runner.literalNeedle() is provably
-        // null and the transcription of that ladder step was unreachable
-        // bytecode (it existed only as a divergence hazard).
+        // classes that emit this method the runner's literal needle is
+        // provably null and the transcription of that ladder step was
+        // unreachable bytecode (it existed only as a divergence hazard).
 
         // --- 1) one exact walk from `from` ---
         emitTrace(mv, "EXACT_FROM");

@@ -86,15 +86,7 @@ public final class Tnfa {
     // ====== Builder / construction ======
 
     public static Tnfa compile(String pattern) {
-        return compile(pattern, false);
-    }
-
-    public static Tnfa compile(String pattern, boolean disableUnicodeGroups) {
-        return compile(pattern, disableUnicodeGroups, false);
-    }
-
-    public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth) {
-        return compile(pattern, disableUnicodeGroups, anchorBoth, io.github.jemmix.tdfa.unicode.UnicodeProviders.get());
+        return compile(pattern, false, false, io.github.jemmix.tdfa.unicode.UnicodeProviders.get());
     }
 
     public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,

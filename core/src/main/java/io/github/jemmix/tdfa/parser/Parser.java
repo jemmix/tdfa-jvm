@@ -72,20 +72,7 @@ public final class Parser {
     }
 
     public static Ast parse(String src) {
-        return parse(src, false);
-    }
-
-    public static Ast parse(String src, boolean disableUnicodeGroups) {
-        return parse(src, disableUnicodeGroups, false);
-    }
-
-    public static Ast parse(String src, boolean disableUnicodeGroups, boolean anchorBoth) {
-        return parse(src, disableUnicodeGroups, anchorBoth, io.github.jemmix.tdfa.unicode.UnicodeProviders.get());
-    }
-
-    public static Ast parse(String src, boolean disableUnicodeGroups, boolean anchorBoth,
-                            io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
-        return parseResult(src, disableUnicodeGroups, anchorBoth, provider).ast();
+        return parseResult(src, false, false, io.github.jemmix.tdfa.unicode.UnicodeProviders.get()).ast();
     }
 
     /** Parse and return the full result: AST plus tag/group counters, effective

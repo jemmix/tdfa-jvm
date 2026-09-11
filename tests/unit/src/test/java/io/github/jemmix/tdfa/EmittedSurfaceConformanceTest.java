@@ -80,7 +80,6 @@ class EmittedSurfaceConformanceTest {
         hookM(TdfaRunner.class, "match", CharSequence.class, int.class);
         hookM(TdfaRunner.class, "startBits");
         hookM(TdfaRunner.class, "candScanMax");
-        hookM(TdfaRunner.class, "literalNeedle");
         hookM(TdfaRunner.class, "restartExtract", String.class, int.class, int.class, int.class);
         hookM(TdfaRunner.class, "originSimBudget");
         hookM(TdfaRunner.class, "originSimLeftmost", CharSequence.class, int.class, int.class, int.class);
