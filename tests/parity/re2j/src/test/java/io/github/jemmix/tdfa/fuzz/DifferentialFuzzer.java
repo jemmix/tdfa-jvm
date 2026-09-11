@@ -524,12 +524,14 @@ public final class DifferentialFuzzer {
 
     /** Per-batch compile flags, drawn from a stream DECOUPLED from the
      *  pattern's ({@code SplittableRandom(batch)}): a given batch produces
-     *  the bit-identical pattern it always did, so historical caseSeeds keep
-     *  their patterns; only the flags (and, under MULTILINE, the inputs)
-     *  move. 40% of batches stay at flags=0 — regression continuity with the
-     *  ~300M-case flags=0 history — otherwise each of CI/DOTALL/MULTILINE/
-     *  LONGEST is drawn independently (p=½): every flag in ~30% of batches,
-     *  all-four in ~3.75%. */
+     *  the pattern it always did, EXCEPT that a CI batch routes pattern
+     *  generation through the ci guard (ASCII-narrow class ranges — see
+     *  {@link #genPattern}); non-CI patterns stay bit-identical, so most
+     *  historical caseSeeds keep their patterns. 40% of batches stay at
+     *  flags=0 — regression continuity with the ~300M-case flags=0
+     *  history — otherwise each of CI/DOTALL/MULTILINE/LONGEST is drawn
+     *  independently (p=½): every flag in ~30% of batches, all-four in
+     *  ~3.75%. */
     static int genFlags(long batch) {
         SplittableRandom rnd = new SplittableRandom(batch ^ 0x6D69786C6F6E676DL);
         if (rnd.nextInt(10) < 4) return 0;
@@ -561,7 +563,16 @@ public final class DifferentialFuzzer {
     static String genPattern(long batch) {
         ciSuppAvoided = 0;
         ciRangeAvoided = 0;
-        return expr(new SplittableRandom(batch), 0, false);
+        // Compile-level CASE_INSENSITIVE folds the WHOLE pattern in re2j's
+        // parser — including class ranges the ci=false generator emits with
+        // wide endpoints ([é-𐐡] etc.), whose per-codepoint appendFoldedRange
+        // expansion is the known ORACLE-spin pathology (rounds 26c–26e: 100%
+        // of oracle hangs were CI batches, all fold-expansion stacks). Root
+        // ci=true routes ranges through the existing ASCII-narrow guard.
+        // Pure function of the batch still (genFlags is), so replay holds;
+        // CI batches' patterns now differ from the pre-coupling corpus.
+        boolean ci = (genFlags(batch) & FLAG_CI) != 0;
+        return expr(new SplittableRandom(batch), 0, ci);
     }
 
     /** Input = pure fn(batch, index). Base draw as before (pool mix), then a
@@ -855,13 +866,20 @@ public final class DifferentialFuzzer {
         }
 
         static String kindOf(Outcome o) {
+            // Budget rejections wear two coats: PatternSyntaxException
+            // (→ "<reject:...budget...>", empty exceptions) or
+            // IllegalStateException from the determinizer (→
+            // "<exception:...>", message carried in exceptions). One known
+            // class — round 26f relabeled 1584 ISE-budget records as
+            // EXCEPTION; the exceptions-first check must yield to it.
+            for (String e : o.exceptions) if (e.contains("budget")) return "BUDGET_REJECT";
             if (!o.exceptions.isEmpty()) return "EXCEPTION";
             if (o.oracle.startsWith("<"))
                 return "COMPILE_PARITY (re2j rejects, tdfa accepts)";
             if (o.asm.startsWith("<exception") || o.vm.startsWith("<exception")) return "EXCEPTION";
+            if (o.asm.contains("budget") || o.vm.contains("budget")) return "BUDGET_REJECT";
             if (o.asm.startsWith("<reject") || o.vm.startsWith("<reject"))
-                return (o.asm.contains("budget") || o.vm.contains("budget"))
-                        ? "BUDGET_REJECT" : "COMPILE_PARITY (tdfa rejects)";
+                return "COMPILE_PARITY (tdfa rejects)";
             if (!o.asm.equals(o.oracle) && !o.vm.equals(o.oracle))
                 return "RESULT_MISMATCH (both engines, probe " + probeDiff(o.oracle, o.asm) + ")";
             if (!o.asm.equals(o.oracle))

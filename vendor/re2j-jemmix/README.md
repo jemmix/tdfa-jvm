@@ -44,8 +44,23 @@ both based on upstream master and passing re2j's format/license gates
 (`verifyGoogleJavaFormat` + `license`; the patch files here remain the
 canonical per-fix diffs against tag `re2j-1.8`):
 
-- `fix-surrogate-pair-interior-prefix` (`dfea17f`) — fix1
+- `fix-surrogate-pair-interior-prefix` (`dfea17f`) — fix1 **(stale: predates
+  patch 0003 — see below; do not upstream as-is)**
 - `fix-foldcase-in-regexp-equals` (`9a7eca4`) — fix2
+
+Upstreaming notes:
+
+- **fix1 + 0003 are one logical fix.** `dfea17f` skips interior `indexOf`
+  hits unconditionally — including a hit at the explicitly given search
+  start — which diverges from `java.util.regex` (and released re2j's own
+  non-prefix paths) on `Matcher.find(int)` with a pair-interior start.
+  Before opening the upstream PR, squash 0001+0003 into a single commit on
+  the branch (both `SurrogatePairTest` additions included). The bug itself
+  remains upstream-worthy: results depended on pattern shape
+  (`\uDC21` matched inside a pair while the wider `\uDC21|\uDC22` and
+  `[\uD800-\uDFFF]` did not — a monotonicity violation), and JDK 26's
+  java.util.regex also refuses interior starts on scan.
+- fix2 is upstream-ready as branched.
 
 To be upstreamed to google/re2j as two issue/PR pairs (TODO decision A;
 Google individual CLA is a merge prerequisite).
