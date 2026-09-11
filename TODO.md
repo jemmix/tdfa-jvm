@@ -17,7 +17,8 @@
 > vendored + longest-match capture parity suites (0 known divergences).
 > Still pending (freeze-phase): japicmp baselines ×4, module-info for core,
 > TdfaRunner static trace → per-engine (test instrument only), license
-> headers, first Maven publish.
+> headers, namespace move jemmix→tagmaton (gates the publish), budget-flag
+> organization, first Maven publish.
 >
 > 2026-09-03 cleanup run: BT19 §7 scaffolding REMOVED (closureGtop/GtopCompare/
 > utree/prectables — dormant since the 2026-08-18 NOT-NEEDED resolution; design
@@ -1129,6 +1130,18 @@ hard-gating every fixed family, replay corpora, probe-before-fix.
 
 ## Engineering — "SQLite levels"
 
+- [ ] **Namespace move `io.github.jemmix.*` → `io.github.tagmaton.*`** — must land
+      before the first Maven publish (coordinates + Automatic-Module-Names are
+      user-visible forever; also the re2j-jemmix vendor dir and the
+      `github.com/jemmix/re2j` fork URL). Blast radius (145+ files): every java
+      package tree (all modules, tests, benchmarks), per-module
+      `Automatic-Module-Name`s, scripts (`bench-regression.sh`, `bench-rebar.sh`,
+      `fuzz-soak.sh`, `lint-spotbugs.sh`, `vendor.sh`, `gen-unicode.py`),
+      `config/spotbugs/exclusions.xml`, `ci/Smoke8.java`, README/docs, and the
+      patched-re2j oracle's package-rewrite patch (`vendor/patches/re2j/`).
+      JMH baselines record benchmark-class FQNs → re-capture
+      `benchmarks/baselines/*` after the rename (quick mode suffices). Mechanical
+      sed + full gate + jars pipeline + JDK 8 smoke.
 - [x] SpotBugs / Error Prone / PMD — zero warnings — DONE (2026-09-04, REVIEW-2026-09 §1):
       ErrorProne 2.50.0 on facade/core/asm (zero findings after ~40 driven fixes;
       every suppression carries written rationale) + SpotBugs 4.9.8 hard-fail on
