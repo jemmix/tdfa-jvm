@@ -1,0 +1,36 @@
+--- a/java/com/google/re2j/MachineInput.java
++++ b/java/com/google/re2j/MachineInput.java
+@@ -209,7 +209,11 @@
+       // prefix and therefore never reach interior positions).  Skip interior
+       // hits and keep searching.
+       int i = indexOf(str, re2.prefix, pos);
+-      while (i >= 0 && isPairInterior(i)) {
++      // The explicitly given search start is honored as-is, even when it is
++      // itself a pair interior: Matcher.find(int) with such a start matches
++      // AT it (java.util.regex parity). Only hits strictly beyond the start
++      // are scan hits and must respect codepoint boundaries.
++      while (i >= 0 && i > pos && isPairInterior(i)) {
+         i = indexOf(str, re2.prefix, i + 1);
+       }
+       return i < 0 ? i : i - pos;
+--- a/javatests/com/google/re2j/SurrogatePairTest.java
++++ b/javatests/com/google/re2j/SurrogatePairTest.java
+@@ -81,6 +81,18 @@
+   }
+ 
+   @Test
++  public void explicitInteriorStartIsHonored() {
++    // JDK parity: find(int) handed a position that IS a pair's low half
++    // matches there. The interior skip governs scanning, not the explicitly
++    // given start (fix1 overcorrected here; found by the tdfa fuzzer's
++    // find(len/2) restart probe, round 26c).
++    Matcher m = matcher("\uDC21", PAIR_DC21);
++    assertTrue(m.find(2));
++    assertEquals(2, m.start());
++    assertEquals(3, m.end());
++  }
++
++  @Test
+   public void supplementaryMatchingIsUnchanged() {
+     Matcher m = matcher("\uD801\uDC21", PAIR_DC21);
+     assertTrue(m.find());

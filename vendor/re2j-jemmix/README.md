@@ -21,11 +21,19 @@ repo — no external fetches needed to rebuild.
     `(?i:Z)x|Z` matched lowercase "z" (Go's regexp/syntax compares
     Flags&FoldCase; the port dropped it). Was misread as a residual
     lone-surrogate oracle divergence (fuzz record 2026-08-30).
+  - `0003` — `0001` overcorrected: it skipped interior `indexOf` hits
+    unconditionally, including a hit AT the explicitly given search start.
+    `Matcher.find(int)` handed a pair-interior position must match there
+    (java.util.regex does; tdfa's engines do; released re2j does).
+    The skip now applies only to hits strictly beyond the start. Found by
+    the tdfa fuzzer's `find(len/2)` restart probe (round 26c, caseSeed
+    8997900790561762328): patched find(11) skipped to 16..18 while
+    JDK/tdfa/released-re2j all matched 11..14.
 - `build-patched.sh` — verifies the archive checksum, extracts into a
   gitignored `.build/` scratch dir, applies patches, compiles `java/` only
   (pure javac+jar, no build system needed):
-  `vendor/re2j-jemmix/build-patched.sh [1|2]` (default 2).
-- `re2j-1.8-jemmix-fix{1,2}.jar` — build outputs, **gitignored**. Built on
+  `vendor/re2j-jemmix/build-patched.sh [1|2|3]` (default 3).
+- `re2j-1.8-jemmix-fix{1,2,3}.jar` — build outputs, **gitignored**. Built on
   demand: `:tests:parity:re2j:buildPatchedOracle` runs the script when the
   patched oracle is requested.
 

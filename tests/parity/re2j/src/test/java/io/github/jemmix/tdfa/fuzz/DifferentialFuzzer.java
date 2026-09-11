@@ -105,6 +105,22 @@ public final class DifferentialFuzzer {
     private static final io.github.jemmix.tdfa.parity.LayeredComparator LAYERED =
             new io.github.jemmix.tdfa.parity.LayeredComparator(com.google.re2j.Re2jUnicodeProvider.INSTANCE);
 
+    /** Which re2j is on the classpath — released 1.8, or our patched fork
+     *  (vendor/re2j-jemmix, -Pfuzz.patchedOracle=true)? Probed, not declared:
+     *  the lone-low-interior behavior is the discriminator (same probe as
+     *  LayeredComparatorTest). Under the patched oracle the lone-surrogate
+     *  "known divergence" family is FIXED — any divergence there is a real
+     *  finding, so the known-divergence classifier runs only when released. */
+    static final boolean RELEASED_ORACLE = releasedOracle();
+
+    static boolean releasedOracle() {
+        try {
+            return com.google.re2j.Pattern.compile("\uDC21").matcher("a\uD801\uDC21zz").find();
+        } catch (RuntimeException e) {
+            return true;   // cannot happen for this constant; fail loud in the soak instead of silently
+        }
+    }
+
     /** One batch with a watchdog: compile once, then K inputs, each guard-tracked
      *  in {@code prog} (-1 = compiling, i = about to run input i). On timeout the
      *  worker thread is sacrificed as before; outcomes already written (indices
@@ -754,7 +770,13 @@ public final class DifferentialFuzzer {
             // (generation-guard counters fold once per batch in run(), not here)
             if (o.c.flags() != 0) flagged++;
             if (o.failed()) {
-                String known = knownDivergence(o);
+                // Known-divergence classification is RELEASED-oracle-only: the
+                // documented re2j lone-surrogate bugs are what it knows, and
+                // the patched fork exists precisely to make that family
+                // visible again (round 26c: the flags≠0 asm==vm shortcut
+                // swallowed a real fork-overcorrection finding for exactly
+                // this reason — it had no PARSER cross-check and is gone).
+                String known = RELEASED_ORACLE ? knownDivergence(o) : null;
                 // Layered attribution (failure path only — zero soak cost):
                 // re2j/sim/vm/asm vote; the verdict names the failing layer.
                 // Runs at flags=0 only: its four columns have no flag
@@ -778,13 +800,6 @@ public final class DifferentialFuzzer {
                         logs.failure(caseSeed, o, "KNOWN_DIVERGENCE (" + known + ")", layerStr);
                         return;
                     }
-                } else if (known != null && o.asm.equals(o.vm)) {
-                    // flags≠0 cross-check degrades to the core invariant
-                    // (both our engines agree, oracle alone differs) — the
-                    // flags don't change the lone-surrogate story.
-                    knownDivergence++;
-                    logs.failure(caseSeed, o, "KNOWN_DIVERGENCE (" + known + ")", layerStr);
-                    return;
                 }
                 failures++;
                 String kind = kindOf(o);
@@ -1001,6 +1016,7 @@ public final class DifferentialFuzzer {
         void summary(Results r) {
             try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(dir.resolve("summary.txt")))) {
                 w.println("masterSeed: " + r.masterSeed);
+                w.println("oracle: " + (RELEASED_ORACLE ? "re2j 1.8 released" : "re2j 1.8 patched fork (known-divergence classifier off)"));
                 w.println("cases: " + r.cases + "  failures: " + r.failures + "  bothReject: " + r.bothReject
                         + "  flagged: " + r.flagged + "  knownDivergence: " + r.knownDivergence
                         + "  hangsEngine: " + r.hangsOurs + "  hangsOracle: " + r.hangsOracle);

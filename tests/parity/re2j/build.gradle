@@ -32,15 +32,15 @@ dependencies {
             'org.assertj:assertj-core:3.25.3'
     // re2j as live oracle for parity comparison. The fuzz task can swap in a
     // patched build from our fork (-Pfuzz.patchedOracle=true) to fuzz against
-    // the surrogate-pair-interior fix — see vendor/re2j-jemmix/README.md.
-    // The patched jar is a build output (gitignored), built on demand from
-    // the single committed pristine archive + per-fix patches.
-    def patchedOracleJar = rootProject.file('vendor/re2j-jemmix/re2j-1.8-jemmix-fix2.jar')
+    // the surrogate-pair-interior fixes — see vendor/re2j-jemmix/README.md.
+    // The patched jar is a build output (gitignored), built on demand from the
+    // single committed pristine archive + per-fix patches.
+    def patchedOracleJar = rootProject.file('vendor/re2j-jemmix/re2j-1.8-jemmix-fix3.jar')
     tasks.register('buildPatchedOracle', Exec) {
         group = 'build'
-        description = 'Rebuild the patched re2j oracle jar (fix2) from the vendored pristine archive + patches'
+        description = 'Rebuild the patched re2j oracle jar (fix3) from the vendored pristine archive + patches'
         workingDir rootProject.projectDir
-        commandLine './vendor/re2j-jemmix/build-patched.sh', '2'
+        commandLine './vendor/re2j-jemmix/build-patched.sh', '3'
         inputs.files fileTree(dir: rootProject.projectDir, include: [
                 'vendor/archives/re2j-*.tar.gz', 'vendor/archives/re2j-*.tar.gz.sha256',
                 'vendor/re2j-jemmix/patches/*.patch', 'vendor/re2j-jemmix/build-patched.sh'])
