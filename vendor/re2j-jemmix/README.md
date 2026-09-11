@@ -31,11 +31,16 @@ repo — no external fetches needed to rebuild.
 
 ## Fork / upstreaming
 
-Same fixes live on https://github.com/jemmix/re2j branch
-`fix-surrogate-pair-interior-prefix` (commits `4facb96`, `fa71014` — the
-patches there carry unrelated workflow bumps from being cut off master;
-the patch files here are the canonical per-fix diffs against tag
-`re2j-1.8`). To be upstreamed to google/re2j (TODO decision A).
+Same fixes live on https://github.com/jemmix/re2j, one branch per fix,
+both based on upstream master and passing re2j's format/license gates
+(`verifyGoogleJavaFormat` + `license`; the patch files here remain the
+canonical per-fix diffs against tag `re2j-1.8`):
+
+- `fix-surrogate-pair-interior-prefix` (`dfea17f`) — fix1
+- `fix-foldcase-in-regexp-equals` (`9a7eca4`) — fix2
+
+To be upstreamed to google/re2j as two issue/PR pairs (TODO decision A;
+Google individual CLA is a merge prerequisite).
 
 ## Use as the fuzz oracle
 
