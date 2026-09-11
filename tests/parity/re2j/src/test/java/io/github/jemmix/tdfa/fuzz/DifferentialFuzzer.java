@@ -18,8 +18,8 @@ import java.util.SplittableRandom;
  * through the public facade — BOTH engines (ASM generated tier and VM
  * interpreter) per case, under a per-batch random compile-flag matrix
  * (CASE_INSENSITIVE / DOTALL / MULTILINE / LONGEST_MATCH — same bit values
- * in both libraries; 40% of batches stay at flags=0 for continuity with the
- * ~300M-case flags=0 history). The contract is re2j's observable behavior:
+ * in both libraries; 40% of batches stay at flags=0 so the unflagged regime
+ * keeps steady coverage). The contract is re2j's observable behavior:
  * compile-accept/reject parity plus a five-probe span protocol compared for
  * exact equality — first {@code find()} with overall and per-group spans
  * (spans strictly subsume group texts), full {@code find()} iteration on the
@@ -406,16 +406,14 @@ public final class DifferentialFuzzer {
     /** Five probes per case, one string, compared for exact equality:
      *  <ul>
      *   <li>{@code F} — first {@code find()} with overall and every group's
-     *       span. Spans strictly subsume the old text protocol: identical
-     *       spans on the same input ARE identical texts, and null-vs-empty
-     *       groups become {@code -} vs {@code s..s} (the old protocol
-     *       skipped nulls — indistinguishable). The old protocol also never
-     *       compared positions at all: same-text-different-span passed.</li>
+     *       span. Spans strictly subsume group texts: identical spans on
+     *       the same input ARE identical texts, and null-vs-empty groups
+     *       are distinguishable ({@code -} vs {@code s..s}).</li>
      *   <li>{@code I} — {@code find()} iteration to exhaustion on the SAME
      *       matcher: the continuation and empty-match-advance paths, spans
      *       per match. {@code ]$} = cap hit (spin-bound, never healthy).</li>
      *   <li>{@code M} — {@code matches()}: the separately-anchored
-     *       whole-input engine (zero prior fuzz coverage).</li>
+     *       whole-input engine.</li>
      *   <li>{@code L} — {@code lookingAt()}: prefix match.</li>
      *   <li>{@code R} — {@code find(len/2)} on a fresh matcher: the
      *       reset-and-restart path; deliberately can land inside a
@@ -523,13 +521,10 @@ public final class DifferentialFuzzer {
     static final int FLAG_LONGEST = io.github.jemmix.tdfa.Pattern.LONGEST_MATCH;
 
     /** Per-batch compile flags, drawn from a stream DECOUPLED from the
-     *  pattern's ({@code SplittableRandom(batch)}): a given batch produces
-     *  the pattern it always did, EXCEPT that a CI batch routes pattern
-     *  generation through the ci guard (ASCII-narrow class ranges — see
-     *  {@link #genPattern}); non-CI patterns stay bit-identical, so most
-     *  historical caseSeeds keep their patterns. 40% of batches stay at
-     *  flags=0 — regression continuity with the ~300M-case flags=0
-     *  history — otherwise each of CI/DOTALL/MULTILINE/LONGEST is drawn
+     *  pattern's ({@code SplittableRandom(batch)}); patterns depend on the
+     *  flags only through the ci guard in {@link #genPattern}. 40% of
+     *  batches stay at flags=0 — the unflagged regime keeps a steady share
+     *  of coverage — otherwise each of CI/DOTALL/MULTILINE/LONGEST is drawn
      *  independently (p=½): every flag in ~30% of batches, all-four in
      *  ~3.75%. */
     static int genFlags(long batch) {
@@ -564,13 +559,11 @@ public final class DifferentialFuzzer {
         ciSuppAvoided = 0;
         ciRangeAvoided = 0;
         // Compile-level CASE_INSENSITIVE folds the WHOLE pattern in re2j's
-        // parser — including class ranges the ci=false generator emits with
-        // wide endpoints ([é-𐐡] etc.), whose per-codepoint appendFoldedRange
-        // expansion is the known ORACLE-spin pathology (rounds 26c–26e: 100%
-        // of oracle hangs were CI batches, all fold-expansion stacks). Root
-        // ci=true routes ranges through the existing ASCII-narrow guard.
-        // Pure function of the batch still (genFlags is), so replay holds;
-        // CI batches' patterns now differ from the pre-coupling corpus.
+        // parser, and re2j folds class ranges codepoint by codepoint — a
+        // wide range is an oracle-side spin (the reason the ci guard
+        // exists). CI batches must therefore generate under the guard
+        // (ASCII-narrow ranges) like inline (?i:...) always has. Pure
+        // function of the batch still (genFlags is), so replay holds.
         boolean ci = (genFlags(batch) & FLAG_CI) != 0;
         return expr(new SplittableRandom(batch), 0, ci);
     }
@@ -781,12 +774,14 @@ public final class DifferentialFuzzer {
             // (generation-guard counters fold once per batch in run(), not here)
             if (o.c.flags() != 0) flagged++;
             if (o.failed()) {
-                // Known-divergence classification is RELEASED-oracle-only: the
-                // documented re2j lone-surrogate bugs are what it knows, and
-                // the patched fork exists precisely to make that family
-                // visible again (round 26c: the flags≠0 asm==vm shortcut
-                // swallowed a real fork-overcorrection finding for exactly
-                // this reason — it had no PARSER cross-check and is gone).
+                // Known-divergence classification is RELEASED-oracle-only: it
+                // documents the released re2j lone-surrogate bugs, and the
+                // patched fork exists to fix them — under it, every
+                // divergence is a finding. The layer==PARSER cross-check
+                // below is what keeps the classifier honest (whole stack
+                // self-consistent, oracle alone differs); classification
+                // without it would misattribute real findings whose pattern
+                // merely contains a lone surrogate.
                 String known = RELEASED_ORACLE ? knownDivergence(o) : null;
                 // Layered attribution (failure path only — zero soak cost):
                 // re2j/sim/vm/asm vote; the verdict names the failing layer.
@@ -866,18 +861,17 @@ public final class DifferentialFuzzer {
         }
 
         static String kindOf(Outcome o) {
-            // Budget rejections wear two coats: PatternSyntaxException
-            // (→ "<reject:...budget...>", empty exceptions) or
-            // IllegalStateException from the determinizer (→
-            // "<exception:...>", message carried in exceptions). One known
-            // class — round 26f relabeled 1584 ISE-budget records as
-            // EXCEPTION; the exceptions-first check must yield to it.
-            for (String e : o.exceptions) if (e.contains("budget")) return "BUDGET_REJECT";
+            // Budget rejections ("pattern too large: ...") are one class
+            // wherever they surface: at compile time ("<reject:...>") or
+            // deferred to the first matches() when only the lazily compiled
+            // anchored TDFA trips the budget ("<exception:...>"). Both are
+            // the documented fuzz-scoped budget contract, not divergences.
+            for (String e : o.exceptions) if (e.contains("pattern too large")) return "BUDGET_REJECT";
             if (!o.exceptions.isEmpty()) return "EXCEPTION";
             if (o.oracle.startsWith("<"))
                 return "COMPILE_PARITY (re2j rejects, tdfa accepts)";
             if (o.asm.startsWith("<exception") || o.vm.startsWith("<exception")) return "EXCEPTION";
-            if (o.asm.contains("budget") || o.vm.contains("budget")) return "BUDGET_REJECT";
+            if (o.asm.contains("pattern too large") || o.vm.contains("pattern too large")) return "BUDGET_REJECT";
             if (o.asm.startsWith("<reject") || o.vm.startsWith("<reject"))
                 return "COMPILE_PARITY (tdfa rejects)";
             if (!o.asm.equals(o.oracle) && !o.vm.equals(o.oracle))

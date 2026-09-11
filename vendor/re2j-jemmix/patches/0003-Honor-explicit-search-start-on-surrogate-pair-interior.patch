@@ -22,8 +22,8 @@
 +  public void explicitInteriorStartIsHonored() {
 +    // JDK parity: find(int) handed a position that IS a pair's low half
 +    // matches there. The interior skip governs scanning, not the explicitly
-+    // given start (fix1 overcorrected here; found by the tdfa fuzzer's
-+    // find(len/2) restart probe, round 26c).
++    // given start — refusing it would also diverge from this library's own
++    // non-prefix search paths, which honor the given start.
 +    Matcher m = matcher("\uDC21", PAIR_DC21);
 +    assertTrue(m.find(2));
 +    assertEquals(2, m.start());

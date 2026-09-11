@@ -106,10 +106,10 @@ public final class LayeredComparator {
      * column vote): continuation iteration on the same matcher
      * {@code I=[s..e ...]} (empty-match advance included; {@code $} = the
      * 64-match cap), and a restart {@code R=s..e|no} via fresh-matcher
-     * {@code find(len/2)}. The R probe runs even when the first find fails
-     * — the fuzzer always probes R, and round 26d's explicit-interior-start
-     * family diverged ONLY on R with F=false; a first-find-gated protocol
-     * voted PASS on those and the known-divergence cross-check misfired.
+     * {@code find(len/2)}. Both probes run even when the first find fails:
+     * a restart from a position the scan would skip (a pair interior) can
+     * match where the boundary-respecting first find cannot, so gating
+     * them on the first find would hide exactly that class.
      */
     static final int ITER_CAP = 64;
 

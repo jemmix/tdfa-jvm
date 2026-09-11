@@ -449,11 +449,11 @@ class MatcherApiParityTest {
     }
 
     /**
-     * Fuzz round 26d (patched-oracle run): the literal-needle search path
-     * refused a match at an explicitly given pair-interior start while the
-     * general walk honored it — bare {@code \uDC00} and {@code [\uDC00]}
-     * answered no where the equivalent {@code (\uDC00)} matched 1..2. JDK,
-     * re2j and PikeSim all honor the explicit start; the interior skip
+     * Explicit-start semantics on surrogate-pair interiors: a needle-shaped
+     * pattern ({@code \uDC00}, {@code [\uDC00]}, {@code (?U:\uDC00)}) must
+     * answer exactly like its non-needle equivalent ({@code (\uDC00)}) —
+     * JDK, re2j and the general walk all match AT a start the caller hands
+     * them, even when that start is a pair's low half; the interior skip
      * governs scanning only. Absolute spans asserted (JDK-blessed), so the
      * test holds under both oracle flavors.
      */

@@ -116,15 +116,13 @@ final class RunnerTables {
      *  pair halves — e.g. needle "a\uD800" on input "a\uD800\uDFFF".
      *
      *  <p>The explicitly given {@code from} is honored as-is even when it is
-     *  itself a pair interior — explicit-start semantics (JDK, re2j and the
-     *  general walk all match a lone-low needle AT a start the caller hands
-     *  them; the general walk decodes the lone low unit and matches). Fuzz
-     *  round 26d: bare {@code \uDC00} refused its own explicit-interior
-     *  start while the equivalent {@code (\uDC00)} honored it — same
-     *  language, different answer. End-overlap rejection still applies at
-     *  every hit including {@code from}: the walk decodes FORWARD, so a
-     *  needle ending on a high half paired with the next unit never matches
-     *  from any start. */
+     *  itself a pair interior: JDK, re2j and the general walk all match a
+     *  lone-low needle AT a start the caller hands them (the walk decodes
+     *  the lone low unit and matches), and a needle-shaped pattern must
+     *  answer exactly like its non-needle equivalent. End-overlap rejection
+     *  still applies at every hit including {@code from}: the walk decodes
+     *  FORWARD, so a needle ending on a high half paired with the next unit
+     *  never matches from any start. */
     static int literalIndexOf(String s, String needle, int from) {
         int idx = s.indexOf(needle, from);
         while (idx >= 0

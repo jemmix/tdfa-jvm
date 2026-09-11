@@ -150,9 +150,7 @@ public final class PikeSim {
                  // skipped while SCANNING forward, but the explicitly given
                  // start is honored as-is (engine parity: engine.match(input,
                  // from) matches AT from even when from is a pair interior —
-                 // fuzz round 26b caseSeed 2553805608849581226: find(15) on
-                 // U+10000's low half matches for re2j, JDK, vm and asm; only
-                 // the sim's scan-level skip refused, voting CHAOS). The
+                 // the skip governs scanning, not explicit starts). The
                  // s == len case must not read charAt(len) — input ending in
                  // a lone high has no interior there (fuzz repro: lone-high
                  // input).
