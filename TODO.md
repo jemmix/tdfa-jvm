@@ -314,6 +314,44 @@ dominated by tryMap×addState (410) and FallbackOps.accumulateClobbered
 bounded reps into budget rejection where re2j compiles fine. CONSTRUCTION
 family (39 records: anchors under lazy/counted loops) still open.
 
+ROUND 24 (2026-09-11): first TRUE engine spin caught by the new
+diagnostics — CFG successor-arc explosion; capped + ticked.
+Overnight record caseSeed 727613823329836856: verdict=spin,
+cpuMs=7161 (thread BURNED CPU, not stalled), upMs=295s (early
+chunk — not the GC class; that chunk's gc log: 0 Full GCs), stack
+in Optimize.livenessAnalysis. The shipped hang-*.jfr dump + solo
+replay profile: liveness 40%, ArrayList$Itr.next 14% (boxed
+successors), dfsPostOrder 10%, checkIndex 7%.
+Shape (via new -Dtdfa.debug [cfg] print, kept as standing
+diagnostics): 287-state DFA -> 22,637 CFG blocks (79/state:
+φ-variant finals) -> **157,176,487 successor arcs** (~6,940 per
+block). buildCfg materializes transitive zero-op reachability as
+direct edges; liveness then does succ×word work per pop (~49K
+ticks/pop -> the 8M scoped budget needs ~164 pops ≈ 7+s wall; at
+library budget the whole compile ran ~60 s/engine). This is round
+20's documented "successors explosion" open item — first real
+specimen.
+Fixes:
+- buildCfg: per-ARC meter ticks (was per-BFS-node — materializing
+  157M edges was nearly unticked) + absolute cap tdfa.max.cfg.edges
+  (default 4M; sane shapes are orders below) throwing the standard
+  "pattern too large ... budget exceeded" -> classified BUDGET_REJECT.
+  Scoped 8M: rejects 0.75 s; library: 0.73 s (cap); the true seed
+  replay: 0.69 s whole batch, both engines.
+- CompileBudgetTest.cfgEdgeExplosionCapRejectsCleanly pins the
+  shape (ASCII via \x{...} escapes, lone surrogates included).
+- fuzz-soak.sh replay verdict no longer trusts exit 0 alone (this
+  round's auto-replay said REPLAYS-CLEAN on a 57 s replay): wall
+  <10 s = clean, 10-120 s = SLOW-BUT-COMPLETES (budget monster),
+  else triage.
+Gates green incl. rebar 226/0/2.
+META: transcribing fuzz patterns by hand from \uXXXX JSON failed
+TWICE (\db misread for \b; dash escaping flipped) — always
+regenerate from the caseSeed (fuzz.one) or convert mechanically
+(ASCII verbatim so regex escapes stay operators, \x{hex} only for
+non-ASCII; escaping the introducers themselves silently changes
+the language: \x{5c}D is literal-backslash-D, not \D).
+
 ROUND 23 (2026-09-10): standing diagnostics — if the hang/GC-pressure
 class ever recurs, the artifacts now answer it without a re-run.
 - Every failure record (ndjson) carries ts + upMs: uptime lines up

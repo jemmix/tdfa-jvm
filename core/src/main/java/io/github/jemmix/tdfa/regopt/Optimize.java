@@ -34,6 +34,12 @@ public final class Optimize {
 
     /** Full pipeline with a compile work budget (see tdfa.WorkMeter). */
     public static void optimize(Cfg cfg, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
+        if (Boolean.getBoolean("tdfa.debug")) {
+            int edges = 0, ops = 0;
+            for (Cfg.Block b : cfg.blocks) { edges += b.successors.size(); ops += b.ops.size(); }
+            System.err.printf("[cfg] blocks=%d edges=%d ops=%d regs=%d tags=%d%n",
+                cfg.blocks.size(), edges, ops, cfg.initialRegCount, cfg.tagCount);
+        }
         // Stage 1: compaction (renumber survivors into a contiguous range).
         int[] vmap = compaction(cfg);
         rename(cfg, vmap);

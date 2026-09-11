@@ -111,6 +111,15 @@ final class TdfaCompiler {
          *  so one closure of a nested-counted bomb could exhaust the heap on
          *  its own. Checked while the closure is built. */
         final int maxClosure = Integer.getInteger("tdfa.max.closure", 100_000);
+        /** CFG successor-arc cap: buildCfg materializes TRANSITIVE zero-op
+         *  reachability as direct edges (liveness needs them), and φ-variant
+         *  finals can make that product explode — the round-24 specimen was a
+         *  287-state DFA whose CFG had 22,637 blocks and 157,176,487 edges
+         *  (≈6,940 successors/block): liveness then burned ~60 s at library
+         *  budget and >10 s past the fuzz watchdog per engine. Sane shapes
+         *  are orders of magnitude below the cap. */
+        final long maxCfgEdges = Long.getLong("tdfa.max.cfg.edges", 4_000_000L);
+        long cfgEdges;
         /** Running sum of closure (kernel) sizes — re2c's kernels_total. */
         long kernelsTotal = 0;
 
@@ -942,9 +951,20 @@ final class TdfaCompiler {
                 while (!frontier.isEmpty()) {
                     meter.tick();   // per BFS node per block: the successor-arc pass
                     int t = frontier.pop();
+                    int arcs = basicLeaving[t].size() + finalVariantBlocks[t].size();
+                    if (finalBlockAt[t] != -1) arcs++;
                     blk.successors.addAll(basicLeaving[t]);
                     if (finalBlockAt[t] != -1) blk.successors.add(finalBlockAt[t]);
                     blk.successors.addAll(finalVariantBlocks[t]);
+                    // Per ARC, not per node: materializing the dense lists is
+                    // the work (see maxCfgEdges above).
+                    meter.tick(arcs);
+                    cfgEdges += arcs;
+                    if (cfgEdges > maxCfgEdges) {
+                        throw new IllegalStateException("pattern too large: TDFA CFG edge budget exceeded ("
+                                + cfgEdges + " successor arcs at block " + cfg.blocks.size()
+                                + "; cap " + maxCfgEdges + " — raise -Dtdfa.max.cfg.edges if you need denser graphs)");
+                    }
                     DfaStateBuilder tb = builders.get(t);
                     for (int r = 0; r < tb.ranges.size(); r++) {
                         Range tr = tb.ranges.get(r);

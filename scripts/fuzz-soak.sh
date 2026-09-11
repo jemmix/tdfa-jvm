@@ -76,9 +76,15 @@ if grep -q '"kind":"HANG_' "$OUT/failures.ndjson" 2>/dev/null; then
         t0=$(date +%s)
         if timeout 120 ./gradlew -q :tests:parity:re2j:fuzz -Pfuzz.one="$s" \
                 -Pfuzz.maxWork=8388608 -Pfuzz.out="$OUT-replays" >> "$LOG" 2>&1; then
-            v="REPLAYS-CLEAN (environmental stall, not an engine spin)"
+            w=$(( $(date +%s) - t0 ))
+            # Exit 0 alone is NOT "clean" — round 24's replay completed in
+            # 57 s (a budget-monster compile) and was mislabeled. Wall is
+            # the discriminator: the watchdog is 10 s.
+            if [ "$w" -lt 10 ]; then v="REPLAYS-CLEAN (environmental stall, not an engine spin)"
+            else v="REPLAY SLOW-BUT-COMPLETES (${w}s) — read the record: spin+slow-replay = budget monster"
+            fi
         else
-            v="REPLAY NONZERO — triage by hand (see $OUT-replays + stack/cpuMs in the record)"
+            v="REPLAY NONZERO/HANG — triage by hand (see $OUT-replays + stack/cpuMs in the record)"
         fi
         echo "$(date '+%F %T') seed=$s wall=$(( $(date +%s) - t0 ))s $v" | tee -a "$REP"
     done

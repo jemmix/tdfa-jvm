@@ -103,9 +103,33 @@ class CompileBudgetTest {
                 .as("nested-counted compile wall").isLessThan(15_000);
     }
 
+    /** Fuzz round 24 (caseSeed 727613823329836856): a 287-state DFA whose
+     *  φ-variant finals made buildCfg materialize a 22,637-block /
+     *  157,176,487-edge CFG — liveness burned ~60 s at library budget and
+     *  >10 s past the fuzz watchdog per engine (cpuMs=7161, verdict=spin).
+     *  Pinned with \x{...} escapes so the source stays pure ASCII; lone
+     *  surrogates are exactly what the original carried. */
+    private static final String CFG_EDGE_BOMB =
+            "(?:(?s:\\-{3}\\x{3042}{0,4}v)(?s:s\\x{dbff}Y))(?U:(\\D)@|_(?:(?<n0>\\-[^.9q-\\x{d800}_]*?Y)\\-\\x{dc21})a"
+            + "(?:(?U:z)(?:wa?.{4,}^|$\\x{3a9}?\\Q @_\\E$)*(\\b.)))(?i:q\\x{10402}\\x{11c07})";
+
+    @Test
+    void cfgEdgeExplosionCapRejectsCleanly() {
+        long t0 = System.nanoTime();
+        assertThatCode(() -> Pattern.compile(CFG_EDGE_BOMB))
+                .isInstanceOf(PatternSyntaxException.class)
+                .hasMessageContaining("pattern too large")
+                .hasMessageContaining("CFG edge budget");
+        // ~0.7 s measured (cap trips during the successor-arc BFS); the point
+        // is fail-fast — uncapped, the compile took ~60 s per engine.
+        assertThat((System.nanoTime() - t0) / 1_000_000)
+                .as("wall to CFG-edge rejection").isLessThan(10_000);
+    }
+
     /** Per-kernel spike bound: kernelsTotal only counts after addState, so a
      *  single closure can spike the heap on its own. The wide-alternation
      *  bomb builds 4-figure closures. */
+
     @Test
     void closureSpikeCapRejectsCleanly() {
         System.setProperty("tdfa.max.closure", "10");
