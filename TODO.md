@@ -1142,6 +1142,19 @@ hard-gating every fixed family, replay corpora, probe-before-fix.
       JMH baselines record benchmark-class FQNs → re-capture
       `benchmarks/baselines/*` after the rename (quick mode suffices). Mechanical
       sed + full gate + jars pipeline + JDK 8 smoke.
+- [ ] **Review/organize budget & tuning flags** — the `-D` surface grew
+      accretion-style: compile caps `tdfa.max.{states,kernels,closure,work}`,
+      minimizer/regopt knobs `tdfa.minimize.max`, `tdfa.minimize.norm.cells`,
+      `tdfa.nominimize`, `tdfa.noregopt`, `tdfa.regopt.max`, runtime/engine
+      `tdfa.engine`, `tdfa.trace.strategy`, diagnostics `tdfa.debug*` /
+      `tdfa.asm.dump` / `tdfa.gen.debug`, plus the harness family `fuzz.*`
+      (incl. the `fuzz.maxWork` gradle → `fuzz.max.work` → `tdfa.max.work`
+      passthrough). Read-timing is already unified and pinned
+      (`CompileKnobTimingTest`, c838547; inventory comment at Tdfa.java:496).
+      Remaining: naming consistency (one `tdfa.max.*` family for the caps?),
+      user-facing vs test/diagnostic split, and ONE documented table with
+      defaults (README) — today the flags live only in javadoc, comments, and
+      error-message strings.
 - [x] SpotBugs / Error Prone / PMD — zero warnings — DONE (2026-09-04, REVIEW-2026-09 §1):
       ErrorProne 2.50.0 on facade/core/asm (zero findings after ~40 driven fixes;
       every suppression carries written rationale) + SpotBugs 4.9.8 hard-fail on
