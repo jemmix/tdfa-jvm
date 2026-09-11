@@ -113,11 +113,23 @@ final class RunnerTables {
      *  real only if it starts at a codepoint boundary (not the low half of a
      *  pair) and does not end on the high half of a pair. Raw indexOf sees
      *  UTF-16 units and would otherwise accept unit sequences that overlap
-     *  pair halves — e.g. needle "a\uD800" on input "a\uD800\uDFFF". */
+     *  pair halves — e.g. needle "a\uD800" on input "a\uD800\uDFFF".
+     *
+     *  <p>The explicitly given {@code from} is honored as-is even when it is
+     *  itself a pair interior — explicit-start semantics (JDK, re2j and the
+     *  general walk all match a lone-low needle AT a start the caller hands
+     *  them; the general walk decodes the lone low unit and matches). Fuzz
+     *  round 26d: bare {@code \uDC00} refused its own explicit-interior
+     *  start while the equivalent {@code (\uDC00)} honored it — same
+     *  language, different answer. End-overlap rejection still applies at
+     *  every hit including {@code from}: the walk decodes FORWARD, so a
+     *  needle ending on a high half paired with the next unit never matches
+     *  from any start. */
     static int literalIndexOf(String s, String needle, int from) {
         int idx = s.indexOf(needle, from);
         while (idx >= 0
-                && (io.github.jemmix.tdfa.ast.Alphabet.pairInterior(s, idx) || needleEndOverlapsPair(s, idx, needle.length())))
+                && (needleEndOverlapsPair(s, idx, needle.length())
+                    || (idx > from && io.github.jemmix.tdfa.ast.Alphabet.pairInterior(s, idx))))
             idx = s.indexOf(needle, idx + 1);
         return idx;
     }

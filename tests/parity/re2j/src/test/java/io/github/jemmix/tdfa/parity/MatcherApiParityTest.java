@@ -447,4 +447,35 @@ class MatcherApiParityTest {
         assertThatThrownBy(() -> { var m = re2jM("(a)", "a"); m.find(); m.group(-1); })
                 .isInstanceOf(IndexOutOfBoundsException.class);
     }
+
+    /**
+     * Fuzz round 26d (patched-oracle run): the literal-needle search path
+     * refused a match at an explicitly given pair-interior start while the
+     * general walk honored it — bare {@code \uDC00} and {@code [\uDC00]}
+     * answered no where the equivalent {@code (\uDC00)} matched 1..2. JDK,
+     * re2j and PikeSim all honor the explicit start; the interior skip
+     * governs scanning only. Absolute spans asserted (JDK-blessed), so the
+     * test holds under both oracle flavors.
+     */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void explicitPairInteriorStartIsHonored(RegexEngineFactory factory) {
+        String pair = "\uD800\uDC00";   // U+10000; unit 1 is the pair's low half
+        String[] shapes = {"\uDC00", "[\uDC00]", "(\uDC00)", "(?U:\uDC00)", "\uDC00|\uDC22"};
+        for (String p : shapes) {
+            Matcher m = tdfaM(p, pair, factory);
+            assertThat(m.find(1)).as("find(1) honors the explicit interior start: %s", p).isTrue();
+            assertThat(m.start()).as(p).isEqualTo(1);
+            assertThat(m.end()).as(p).isEqualTo(2);
+        }
+        // scanning from a boundary still skips the interior (codepoint semantics)
+        for (String p : shapes)
+            assertThat(tdfaM(p, pair, factory).find()).as("find() from 0: %s", p).isFalse();
+        // end-overlap is rejected at every start, explicit included — the
+        // walk decodes forward, so a needle ending on a high half paired with
+        // the next unit never matches (needle and general walk agree)
+        assertThat(tdfaM("a\uD800", "a\uD800\uDC00", factory).find(1)).isFalse();
+        assertThat(tdfaM("a\uD800", "a\uD800\uDC00", factory).find()).isFalse();
+        assertThat(tdfaM("(a\uD800)", "a\uD800\uDC00", factory).find()).isFalse();
+    }
 }

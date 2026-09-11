@@ -106,9 +106,10 @@ public final class LayeredComparator {
      * column vote): continuation iteration on the same matcher
      * {@code I=[s..e ...]} (empty-match advance included; {@code $} = the
      * 64-match cap), and a restart {@code R=s..e|no} via fresh-matcher
-     * {@code find(len/2)}. Without these, iteration-only divergences (e.g.
-     * the re2j pair-interior family on continuation) classified as PASS and
-     * escaped the fuzzer's known-divergence classifier.
+     * {@code find(len/2)}. The R probe runs even when the first find fails
+     * — the fuzzer always probes R, and round 26d's explicit-interior-start
+     * family diverged ONLY on R with F=false; a first-find-gated protocol
+     * voted PASS on those and the known-divergence cross-check misfired.
      */
     static final int ITER_CAP = 64;
 
@@ -120,12 +121,13 @@ public final class LayeredComparator {
             return "<reject>";
         }
         try {
+            StringBuilder sb = new StringBuilder();
             var m = pat.matcher(in);
-            if (!m.find()) return "no";
-            StringBuilder sb = new StringBuilder(fmt(m.start(), m.end(), g -> {
+            if (m.find()) fmt(sb, m.start(), m.end(), g -> {
                 try { return m.group(g); } catch (RuntimeException e) { return null; }
-            }, m.groupCount()));
-            iter(sb, m.start(), m.end(), m::find, () -> m.start() + ".." + m.end());
+            }, m.groupCount());
+            else sb.append("no");
+            iter(sb, m::find, () -> m.start() + ".." + m.end());
             restart(sb, pat.matcher(in), mm -> mm.find(in.length() / 2), mm -> mm.start() + ".." + mm.end());
             return sb.toString();
         } catch (Throwable t) {
@@ -141,10 +143,11 @@ public final class LayeredComparator {
             return "<reject>";
         }
         try {
+            StringBuilder sb = new StringBuilder();
             var m = sim.matcher(in);
-            if (!m.find()) return "no";
-            StringBuilder sb = new StringBuilder(fmt(m.start(), m.end(), m::group, m.groupCount()));
-            iter(sb, m.start(), m.end(), m::find, () -> m.start() + ".." + m.end());
+            if (m.find()) fmt(sb, m.start(), m.end(), m::group, m.groupCount());
+            else sb.append("no");
+            iter(sb, m::find, () -> m.start() + ".." + m.end());
             restart(sb, sim.matcher(in), mm -> mm.find(in.length() / 2), mm -> mm.start() + ".." + mm.end());
             return sb.toString();
         } catch (Throwable t) {
@@ -161,12 +164,13 @@ public final class LayeredComparator {
             return "<reject>";
         }
         try {
+            StringBuilder sb = new StringBuilder();
             var m = pat.matcher(in);
-            if (!m.find()) return "no";
-            StringBuilder sb = new StringBuilder(fmt(m.start(), m.end(), g -> {
+            if (m.find()) fmt(sb, m.start(), m.end(), g -> {
                 try { return m.group(g); } catch (RuntimeException e) { return null; }
-            }, m.groupCount()));
-            iter(sb, m.start(), m.end(), m::find, () -> m.start() + ".." + m.end());
+            }, m.groupCount());
+            else sb.append("no");
+            iter(sb, m::find, () -> m.start() + ".." + m.end());
             restart(sb, pat.matcher(in), mm -> mm.find(in.length() / 2), mm -> mm.start() + ".." + mm.end());
             return sb.toString();
         } catch (Throwable t) {
@@ -174,13 +178,26 @@ public final class LayeredComparator {
         }
     }
 
-    /** I probe: continue the SAME matcher (first span already known), spans only, capped. */
-    private static void iter(StringBuilder sb, int s0, int e0, java.util.function.BooleanSupplier next,
+    private interface GroupFn { String get(int g); }
+
+    private static void fmt(StringBuilder sb, int start, int end, GroupFn g, int groupCount) {
+        sb.append(start).append("..").append(end);
+        for (int i = 1; i <= groupCount; i++) {
+            String v = g.get(i);
+            sb.append(" g").append(i).append('=').append(v == null ? "null" : "'" + v + "'");
+        }
+    }
+
+    /** I probe: continue the matcher that already produced the first result
+     *  (or failed to); spans only, capped. Safe after a failed find — find()
+     *  stays false. */
+    private static void iter(StringBuilder sb, java.util.function.BooleanSupplier next,
                              java.util.function.Supplier<String> span) {
-        sb.append(" I=[").append(s0).append("..").append(e0);
-        int n = 1;
+        sb.append(" I=[");
+        int n = 0;
         while (n < ITER_CAP && next.getAsBoolean()) {
-            sb.append(' ').append(span.get());
+            if (n > 0) sb.append(' ');
+            sb.append(span.get());
             n++;
         }
         if (n == ITER_CAP) sb.append(" $");
@@ -191,17 +208,6 @@ public final class LayeredComparator {
     private static <M> void restart(StringBuilder sb, M m, java.util.function.Predicate<M> find,
                                     java.util.function.Function<M, String> span) {
         sb.append(" R=").append(find.test(m) ? span.apply(m) : "no");
-    }
-
-    private interface GroupFn { String get(int g); }
-
-    private static String fmt(int start, int end, GroupFn g, int groupCount) {
-        StringBuilder sb = new StringBuilder(start + ".." + end);
-        for (int i = 1; i <= groupCount; i++) {
-            String v = g.get(i);
-            sb.append(" g").append(i).append('=').append(v == null ? "null" : "'" + v + "'");
-        }
-        return sb.toString();
     }
 
     // -- per-instance protocol shorthands (provider-threaded) --
