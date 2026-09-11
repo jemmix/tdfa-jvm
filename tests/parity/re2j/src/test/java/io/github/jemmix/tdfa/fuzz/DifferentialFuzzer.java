@@ -20,8 +20,11 @@ import java.util.SplittableRandom;
  * (CASE_INSENSITIVE / DOTALL / MULTILINE / LONGEST_MATCH — same bit values
  * in both libraries; 40% of batches stay at flags=0 for continuity with the
  * ~300M-case flags=0 history). The contract is re2j's observable behavior:
- * compile-accept/reject parity plus identical first-match results (match
- * text, group count, every group's text).
+ * compile-accept/reject parity plus a five-probe span protocol compared for
+ * exact equality — first {@code find()} with overall and per-group spans
+ * (spans strictly subsume group texts), full {@code find()} iteration on the
+ * same matcher (continuation + empty-match advance), {@code matches()},
+ * {@code lookingAt()}, and {@code find(len/2)} restart.
  *
  * <p>A soak, not a unit test. Run via the {@code fuzz} Gradle task:
  * <pre>
@@ -348,7 +351,7 @@ public final class DifferentialFuzzer {
         Outcome o = new Outcome(c);
         if (pr.oracle != null) {
             try {
-                o.oracle = compute(pr.oracle.matcher(c.input()));
+                o.oracle = compute(pr.oracle, c.input());
             } catch (RuntimeException e) {
                 o.oracle = "<reject>";
             }
@@ -366,7 +369,7 @@ public final class DifferentialFuzzer {
             return tag;
         }
         try {
-            return compute(p.matcher(c.input()));
+            return compute(p, c.input());
         } catch (RuntimeException e) {
             o.exceptions.add(engTag + " " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
             return "<exception:" + e.getClass().getSimpleName() + ">";
@@ -377,29 +380,103 @@ public final class DifferentialFuzzer {
         return matchCase(prepare(c.pattern(), c.flags()), c);
     }
 
-    /** Corpus-test protocol: "true <group()> <groupCount> <g1> <g2>...". */
-    static String compute(io.github.jemmix.tdfa.core.Matcher m) {
-        StringBuilder sb = new StringBuilder();
+    // ---- match protocol ----
+
+    /** Iteration cap: bounds a broken empty-match advance (an engine that
+     *  never advances yields one span per call forever); 64 ≫ any match
+     *  count a ≤30-char input can produce, so a healthy case never clips. */
+    static final int MAX_MATCHES = 64;
+
+    /** Five probes per case, one string, compared for exact equality:
+     *  <ul>
+     *   <li>{@code F} — first {@code find()} with overall and every group's
+     *       span. Spans strictly subsume the old text protocol: identical
+     *       spans on the same input ARE identical texts, and null-vs-empty
+     *       groups become {@code -} vs {@code s..s} (the old protocol
+     *       skipped nulls — indistinguishable). The old protocol also never
+     *       compared positions at all: same-text-different-span passed.</li>
+     *   <li>{@code I} — {@code find()} iteration to exhaustion on the SAME
+     *       matcher: the continuation and empty-match-advance paths, spans
+     *       per match. {@code ]$} = cap hit (spin-bound, never healthy).</li>
+     *   <li>{@code M} — {@code matches()}: the separately-anchored
+     *       whole-input engine (zero prior fuzz coverage).</li>
+     *   <li>{@code L} — {@code lookingAt()}: prefix match.</li>
+     *   <li>{@code R} — {@code find(len/2)} on a fresh matcher: the
+     *       reset-and-restart path; deliberately can land inside a
+     *       surrogate pair.</li>
+     *  </ul>
+     *  Fresh matchers for M/L/R keep the probes independent (attribution
+     *  reads off the diverged probe tag). No free text in the format —
+     *  spans only — so probe tags are unambiguous in diff reporting. */
+    static String compute(io.github.jemmix.tdfa.Pattern p, CharSequence in) {
+        StringBuilder sb = new StringBuilder(96);
+        io.github.jemmix.tdfa.core.Matcher m = p.matcher(in);
         boolean found = m.find();
-        sb.append(found ? "true " + m.group() : "false").append(' ').append(m.groupCount());
-        if (found)
-            for (int i = 1; i <= m.groupCount(); i++) {
-                String g = m.group(i);
-                if (g != null) sb.append(' ').append(g);
-            }
+        if (found) spanTdfa(sb.append("F=true "), m); else sb.append("F=false");
+        sb.append(" I=[");
+        int n = 0;
+        if (found) {
+            spanTdfa(sb, m);
+            while (++n < MAX_MATCHES && m.find()) spanTdfa(sb, m);
+        }
+        sb.append(n == MAX_MATCHES ? "]+$" : "]");
+        io.github.jemmix.tdfa.core.Matcher mm = p.matcher(in);
+        if (mm.matches()) spanTdfa(sb.append(" M=true "), mm); else sb.append(" M=false");
+        io.github.jemmix.tdfa.core.Matcher ml = p.matcher(in);
+        if (ml.lookingAt()) spanTdfa(sb.append(" L=true "), ml); else sb.append(" L=false");
+        io.github.jemmix.tdfa.core.Matcher mr = p.matcher(in);
+        if (mr.find(in.length() / 2)) spanTdfa(sb.append(" R=true "), mr); else sb.append(" R=false");
         return sb.toString();
     }
 
-    static String compute(com.google.re2j.Matcher m) {
-        StringBuilder sb = new StringBuilder();
+    static String compute(com.google.re2j.Pattern p, CharSequence in) {
+        StringBuilder sb = new StringBuilder(96);
+        com.google.re2j.Matcher m = p.matcher(in);
         boolean found = m.find();
-        sb.append(found ? "true " + m.group() : "false").append(' ').append(m.groupCount());
-        if (found)
-            for (int i = 1; i <= m.groupCount(); i++) {
-                String g = m.group(i);
-                if (g != null) sb.append(' ').append(g);
-            }
+        if (found) spanRe2j(sb.append("F=true "), m); else sb.append("F=false");
+        sb.append(" I=[");
+        int n = 0;
+        if (found) {
+            spanRe2j(sb, m);
+            while (++n < MAX_MATCHES && m.find()) spanRe2j(sb, m);
+        }
+        sb.append(n == MAX_MATCHES ? "]+$" : "]");
+        com.google.re2j.Matcher mm = p.matcher(in);
+        if (mm.matches()) spanRe2j(sb.append(" M=true "), mm); else sb.append(" M=false");
+        com.google.re2j.Matcher ml = p.matcher(in);
+        if (ml.lookingAt()) spanRe2j(sb.append(" L=true "), ml); else sb.append(" L=false");
+        com.google.re2j.Matcher mr = p.matcher(in);
+        if (mr.find(in.length() / 2)) spanRe2j(sb.append(" R=true "), mr); else sb.append(" R=false");
         return sb.toString();
+    }
+
+    /** {@code s..e (g1s..g1e g2s..g2e ...)}; non-participating group = {@code -}. */
+    static void spanTdfa(StringBuilder sb, io.github.jemmix.tdfa.core.Matcher m) {
+        sb.append(m.start()).append("..").append(m.end());
+        int gc = m.groupCount();
+        if (gc > 0) {
+            sb.append(" (");
+            for (int i = 1; i <= gc; i++) {
+                if (i > 1) sb.append(' ');
+                int s = m.start(i);
+                sb.append(s < 0 ? "-" : s + ".." + m.end(i));
+            }
+            sb.append(')');
+        }
+    }
+
+    static void spanRe2j(StringBuilder sb, com.google.re2j.Matcher m) {
+        sb.append(m.start()).append("..").append(m.end());
+        int gc = m.groupCount();
+        if (gc > 0) {
+            sb.append(" (");
+            for (int i = 1; i <= gc; i++) {
+                if (i > 1) sb.append(' ');
+                int s = m.start(i);
+                sb.append(s < 0 ? "-" : s + ".." + m.end(i));
+            }
+            sb.append(')');
+        }
     }
 
     // ---- pattern generator ----
@@ -770,9 +847,25 @@ public final class DifferentialFuzzer {
             if (o.asm.startsWith("<reject") || o.vm.startsWith("<reject"))
                 return (o.asm.contains("budget") || o.vm.contains("budget"))
                         ? "BUDGET_REJECT" : "COMPILE_PARITY (tdfa rejects)";
-            if (!o.asm.equals(o.oracle) && !o.vm.equals(o.oracle)) return "RESULT_MISMATCH (both engines)";
-            if (!o.asm.equals(o.oracle)) return "RESULT_MISMATCH (asm only)";
-            return "RESULT_MISMATCH (vm only)";
+            if (!o.asm.equals(o.oracle) && !o.vm.equals(o.oracle))
+                return "RESULT_MISMATCH (both engines, probe " + probeDiff(o.oracle, o.asm) + ")";
+            if (!o.asm.equals(o.oracle))
+                return "RESULT_MISMATCH (asm only, probe " + probeDiff(o.oracle, o.asm) + ")";
+            return "RESULT_MISMATCH (vm only, probe " + probeDiff(o.oracle, o.vm) + ")";
+        }
+
+        /** Which probe diverged: walk to the first differing char, then back
+         *  to the nearest probe tag. Sound because the protocol carries no
+         *  free text (spans only) — an F/I/M/L/R char IS a tag. */
+        static char probeDiff(String a, String b) {
+            int min = Math.min(a.length(), b.length());
+            int i = 0;
+            while (i < min && a.charAt(i) == b.charAt(i)) i++;
+            for (int j = Math.min(i, a.length()) - 1; j >= 0; j--) {
+                char c = a.charAt(j);
+                if (c == 'F' || c == 'I' || c == 'M' || c == 'L' || c == 'R') return c;
+            }
+            return '?';
         }
 
         /** Coarse shape for signature dedup: structural chars only. */
