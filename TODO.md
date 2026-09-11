@@ -830,7 +830,13 @@ hard-gating every fixed family, replay corpora, probe-before-fix.
   scenario sets `unicode = true`) and passes. Unicode-`\w` remains available via
   `(?u)` opt-in. Corrected `docs/PARITY-PLAN.md` accordingly.
 - [x] **`\p{L}{N}` returns 0 matches for N ≥ 25** — root cause was the `stateMeta` packing: the range-base field used only 15 bits (bits 17-31, max 32767), but `\p{L}` has ~1369 Unicode ranges per state, so `base` overflowed at state 24 (24×1369=32856). Fixed by splitting `base` into a separate `stateBase[]` array (full 32-bit range), removing the artificial limit. `\p{L}{256}` now compiles and matches correctly on both VM and ASM backends.
-- [ ] **`.` on non-BMP codepoints undercounts vs re2** — `.` on `💩` (U+1F4A9) gives 1 match in our engine (one codepoint); re2 gives 4 (UTF-8 bytes). Our engine is codepoint-oriented like `java.util.regex`, not byte-oriented like re2. **Resolved at the test level**: `vendor/patches/rebar/01-dot-matches-byte-codepoint.patch` rewrites the rebar scenario to record our actual count (1) under an explicit `{ engine = 're2', count = 1 }` entry — see the patch file for the rationale comment. Fundamental architecture choice, not a bug.
+- [x] **`.` on non-BMP codepoints undercounts vs re2** — PERMANENT DOCUMENTED DIVERGENCE:
+      `.` on `💩` (U+1F4A9) gives 1 match in our engine (one codepoint); re2 gives 4
+      (UTF-8 bytes). Architecture choice (codepoint-oriented like `java.util.regex`,
+      not byte-oriented like re2), not a bug. Originally resolved at the test level via
+      `vendor/patches/rebar/01-dot-matches-byte-codepoint.patch`; that patch was
+      consolidated away at `6e3b63f` and the scenario now resolves through the live
+      patched-re2j oracle (round 19, dd3f3bc) — suite green 226/0/2.
 - [x] **Supplementary literals under groups/quantifiers/alternation fail to match** — FIXED (2026-08-27,
       structural). Root cause: the parser read patterns one UTF-16 unit at a time while the engine executes
       one CODEPOINT per transition (every step loop decodes surrogate pairs). Two-unit literals were therefore
