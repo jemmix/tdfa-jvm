@@ -21,8 +21,8 @@ import java.util.Map;
  * ranges when {@code unicodeShorthand} is set (else {@code null});
  * {@code namedGroups} is the unmodifiable name&rarr;group-index map.
  */
-// Not a record: the Java 8 bytecode floor forbids them; semantics
-// (defensive copies, value-based equals) are preserved by hand.
+// Not a record: the Java 8 bytecode floor forbids them; the defensive-copy
+// semantics are preserved by hand.
 public final class ParseResult {
     private final Ast ast;
     private final int tagCount;
@@ -61,28 +61,4 @@ public final class ParseResult {
     }
 
     public Map<String, Integer> namedGroups() { return namedGroups; }
-
-    @Override public boolean equals(Object o) {
-        if (this == o) return true;
-        if (!(o instanceof ParseResult)) return false;
-        ParseResult r = (ParseResult) o;
-        return tagCount == r.tagCount && groupCount == r.groupCount
-                && multiline == r.multiline && unicodeShorthand == r.unicodeShorthand
-                && java.util.Objects.equals(ast, r.ast)
-                && java.util.Arrays.equals(unicodeWordRanges, r.unicodeWordRanges)
-                && java.util.Objects.equals(namedGroups, r.namedGroups);
-    }
-
-    @Override public int hashCode() {
-        int h = 31 * (31 * (31 * tagCount + groupCount) + Boolean.hashCode(multiline))
-                + Boolean.hashCode(unicodeShorthand);
-        return 31 * h + java.util.Objects.hash(ast, java.util.Arrays.hashCode(unicodeWordRanges), namedGroups);
-    }
-
-    @Override public String toString() {
-        return "ParseResult[ast=" + ast + ", tagCount=" + tagCount + ", groupCount=" + groupCount
-                + ", multiline=" + multiline + ", unicodeShorthand=" + unicodeShorthand
-                + ", unicodeWordRanges=" + java.util.Arrays.toString(unicodeWordRanges)
-                + ", namedGroups=" + namedGroups + "]";
-    }
 }

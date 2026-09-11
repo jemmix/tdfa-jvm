@@ -125,10 +125,6 @@ public final class TdfaRunner implements RegexEngine {
     /** Eager ASCII dispatch tables present (rangesDisjoint ∧ small enough). */
     private final boolean asciiTables;
 
-    public TdfaRunner(Tnfa nfa) {
-        this(Tdfa.compile(nfa));
-    }
-
     @EmittedSurface
     public TdfaRunner(Tdfa tdfa) {
         this.tdfa = tdfa;
@@ -183,11 +179,6 @@ public final class TdfaRunner implements RegexEngine {
     /** Public stable hook for the ASM backend's delegate-mode decision
      *  (implementation lives in RunnerTables since the 2026-09 split). */
     public static String detectLiteralNeedle(Tdfa tdfa) { return RunnerTables.detectLiteralNeedle(tdfa); }
-
-    /** Public stable hook for GENERATED shells (the ASM tier emits
-     *  INVOKESTATIC TdfaRunner.literalIndexOf; implementation lives in
-     *  RunnerTables since the 2026-09 split). */
-    public static int literalIndexOf(String s, String needle, int from) { return RunnerTables.literalIndexOf(s, needle, from); }
 
     @EmittedSurface @Override public int groupCount() { return tdfa.groupCount; }
 
@@ -245,75 +236,6 @@ public final class TdfaRunner implements RegexEngine {
         List<Strategy> out = java.util.Collections.unmodifiableList(new java.util.ArrayList<>(buf));
         buf.clear();
         return out;
-    }
-
-    /**
-     * Fast no-match pre-check: returns {@code true} if the DFA could match
-     * starting at any position in {@code [from, input.length())}. Sound
-     * over-approximation (ignores masks). Used by the ASM backend to avoid its
-     * O(n²) outer-loop scan on non-matching haystacks — see {@link #multiStateAnyMatch}.
-     */
-    public final boolean anyMatch(CharSequence input, int from) {
-        return multiStateAnyMatch(input, from, input.length());
-    }
-
-    /**
-     * Leftmost position in {@code [from, input.length())} at which a match
-     * starts, or {@code -1} if there is no match anywhere.
-     *
-     * <p>For fast-path DFAs (disjoint ranges, no assertion masks — see
-     * {@link #computeFastPath}) this runs the multi-state simulation with
-     * per-state origin tracking: {@code origin[s]} is the smallest start
-     * position from which {@code s} is currently reachable. The first
-     * accept-live position yields the answer. Early-stops once the best
-     * origin can no longer be beaten ({@code best <= pos} and
-     * {@code best <= min live origin}): future seeds have origin {@code > pos}.
-     *
-     * <p>Otherwise (mask-bearing DFAs, where the sim over-approximates) it
-     * degrades to a boolean answer — {@code from} if any match might exist,
-     * {@code -1} if definitely none — so the caller's exact extract loop
-     * keeps its existing restart behavior.
-     */
-    public final int leftmostStart(CharSequence input, int from) {
-        int to = input.length();
-        if (literalNeedle != null && input instanceof String) {
-            trace(Strategy.LITERAL);
-            return RunnerTables.literalIndexOf((String) input, literalNeedle, from);
-        }
-        // Short-input candidate scan: bit-test per char, exact walk per
-        // candidate. Cheaper than the origin sim's per-live-state dispatch
-        // when the input is tiny; the walk verifies exactly, so the result
-        // is the true leftmost start (no sim/walk agreement caveat).
-        // Non-fastPath DFAs walk via runStringMatchFrom (mask-exact); the
-        // sim's mask-ignoring over-approximation is not involved at all.
-        if (input instanceof String && startBits != null && to - from <= CAND_SCAN_MAX) {
-            trace(Strategy.CAND_SCAN);
-            String s = (String) input;
-            final long[] sb = this.startBits;
-            // One loop, two walkers: fastPath DFAs take the no-regs/no-masks
-            // boolean walk, everything else the mask-exact one. The choice is
-            // invariant for a compiled pattern, so the JIT folds it — the
-            // former two hand-copies of this loop are the drift we merged.
-            final boolean fast = fastPath;
-            for (int p = from; p < to; p++) {
-                char c = s.charAt(p);
-                if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) continue;
-                if (c >= 0xDC00 && Alphabet.pairInterior(s, p)) continue;
-                if (fast ? matchFromFast(s, p, to) : runStringMatchFrom(s, p, to) >= 0) return p;
-            }
-            return -1;
-        }
-        if (fastPath) {
-            trace(Strategy.ORIGIN_SIM);
-            int l = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS);
-            if (l == LSS_BUDGET) {
-                int w = triggerScan(input.toString(), from, to);
-                if (w < 0) return -1;
-                l = multiStateLeftmostStart(input, w, to);
-            }
-            return l;
-        }
-        return triggerScan(input.toString(), from, to) >= 0 ? from : -1;
     }
 
     @EmittedSurface @Override public boolean matches(CharSequence input) {
@@ -642,11 +564,11 @@ public final class TdfaRunner implements RegexEngine {
      * caps the scan falls back to the unmemoized simulation (still tracking
      * kill points, so the extract window stays bounded either way).
      *
-     * <p><b>Soundness</b> — identical over-approximation to
-     * {@link #multiStateAnyMatch}: transition/entry masks are ignored (every
-     * matching target followed), and {@code accept} is any live state with the
-     * accept bit — so a trigger can fire without a real match (the exact
-     * extract confirms or continues), but it can never miss one.
+     * <p><b>Soundness</b> — the same over-approximation the origin sim uses
+     * ({@link #multiStateLeftmostStart}): transition/entry masks are ignored
+     * (every matching target followed), and {@code accept} is any live state
+     * with the accept bit — so a trigger can fire without a real match (the
+     * exact extract confirms or continues), but it can never miss one.
      */
     static final int SDFA_KILL = -2;
     // Small re2-style lazy-DFA budgets: past the caps the scan degrades to the
@@ -812,105 +734,6 @@ public final class TdfaRunner implements RegexEngine {
         return -1;
     }
 
-    // ===== Multi-state parallel simulation (unanchored search) =====
-
-    /**
-     * Multi-state parallel simulation for unanchored search. Maintains the set
-     * of all DFA states reachable from some start position in {@code [from, pos]},
-     * checking for any accepting state at each position. Returns {@code true} as
-     * soon as any accepting state enters the live set.
-     *
-     * <p>This is O(n × |states|) per call — a single forward pass — instead of
-     * the O(n²) outer-loop restart used by the single-state extract paths. It
-     * replaces the boolean {@code find()} path and serves as a fast no-match
-     * pre-check for the extract paths: if this returns {@code false}, the
-     * extract short-circuits to {@code null} without the O(n²) scan.
-     *
-     * <p>The implicit {@code .*?} prefix (unanchored search can start anywhere)
-     * is modelled by re-adding the start state to the live set at every position.
-     *
-     * <p>For the generic path (masks / non-disjoint ranges) this is a sound
-     * over-approximation: entry/accept/required masks are ignored and all
-     * matching range targets are followed. A {@code false} result is definitive;
-     * a {@code true} result means "might match" and the caller re-runs the exact
-     * single-state path for registers / PERL priority.
-     */
-    private boolean multiStateAnyMatch(CharSequence input, int from, int to) {
-        final int nwords = stateWords;
-        if (nwords == 0) return false;
-        final int[] sm = stateMeta;
-        final int[] rg = ranges;
-        final int[] at = asciiTarget;
-        final int[] ab = acceptBits;
-        final int ss = startState;
-
-        Scratch sc = SCRATCH.get();
-        int[] live = sc.live != null && sc.live.length >= nwords ? sc.live : new int[nwords];
-        int[] next = sc.next != null && sc.next.length >= nwords ? sc.next : new int[nwords];
-        sc.live = live; sc.next = next;
-        Arrays.fill(live, 0, nwords, 0);
-        live[ss >>> 5] |= 1 << (ss & 31);
-
-        for (int pos = from; pos <= to; pos++) {
-            for (int w = 0; w < nwords; w++) {
-                if ((live[w] & ab[w]) != 0) return true;
-            }
-            if (pos == to) break;
-
-            int c = Alphabet.decode(input, pos, to);
-            int adv = Alphabet.width(c);
-
-            Arrays.fill(next, 0, nwords, 0);   // grown Scratch: zero only our prefix
-            next[ss >>> 5] |= 1 << (ss & 31);
-
-            if (at != null && c < 128) {
-                for (int w = 0; w < nwords; w++) {
-                    int bits = live[w];
-                    while (bits != 0) {
-                        int bit = Integer.numberOfTrailingZeros(bits);
-                        bits &= bits - 1;
-                        int s = (w << 5) + bit;
-                        int target = at[s * 128 + c];
-                        if (target >= 0) {
-                            next[target >>> 5] |= 1 << (target & 31);
-                        }
-                    }
-                }
-            } else {
-                for (int w = 0; w < nwords; w++) {
-                    int bits = live[w];
-                    while (bits != 0) {
-                        int bit = Integer.numberOfTrailingZeros(bits);
-                        bits &= bits - 1;
-                        int s = (w << 5) + bit;
-                        int meta = sm[s];
-                        int base = stateBase[s];
-                        int count = (meta >>> 1) & 0xFFFF;
-                        // Binary search + prefix-max walk: all entries containing c
-                        // (over-approximation ignores masks, same as before).
-                        int rlo = 0, rhi = count - 1, anchor = -1;
-                        while (rlo <= rhi) {
-                            int mid = (rlo + rhi) >>> 1;
-                            if (rg[(base + mid) * 5] <= c) { anchor = mid; rlo = mid + 1; }
-                            else rhi = mid - 1;
-                        }
-                        for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
-                            int mo = (base + i) * 5;
-                            if (c <= rg[mo + 1]) {
-                                int target = rg[mo + 2];
-                                if (target >= 0) next[target >>> 5] |= 1 << (target & 31);
-                            }
-                        }
-                    }
-                }
-            }
-
-            int[] tmp = live; live = next; next = tmp;
-            if (adv == 2) pos++;
-        }
-        return false;
-    }
-
     /** Budget-exceeded sentinel for {@link #multiStateLeftmostStart}. */
     public static final int LSS_BUDGET = -2;
 
@@ -919,9 +742,6 @@ public final class TdfaRunner implements RegexEngine {
     // inline wherever emitted. The generated ladder mirrors
     // runStringExtractFast exactly; the strategy-conformance test asserts
     // trace equality between backends. =====
-
-    @EmittedSurface
-    public String literalNeedle() { return literalNeedle; }
 
     /** Defensive restart walk (sim and walk disagreed on a fast-path DFA):
      *  per-unit scan from {@code fromStart} with the pair-interior guard and
@@ -944,9 +764,6 @@ public final class TdfaRunner implements RegexEngine {
     /** Max input length for the candidate scan. */
     @EmittedSurface
     public int candScanMax() { return CAND_SCAN_MAX; }
-
-    /** True = no masks + disjoint ranges: the fast extract ladder applies. */
-    public boolean fastPath() { return fastPath; }
 
     /** Char budget for the origin sim before the trigger fallback. */
     @EmittedSurface

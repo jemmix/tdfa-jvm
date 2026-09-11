@@ -366,22 +366,11 @@ public final class Tdfa {
                     + "," + (finalRegBase + tagCount) + ") exceeds register file of " + registerCount);
     }
 
-    public boolean isAccept(int state) { return (stateMeta[state] & 1) != 0; }
-    public int finalOpsOffset(int state) { return stateFinalOpsOff[state]; }
-
     /** Position-aware final-ops table ({@code [state*64+posFlags]} → offset, -1 = accept
      * suppressed), or null when every accepting state is mask-uniform. Defensive copy. */
     public int[] stateFinalOpsByMask() { return stateFinalOpsByMask == null ? null : stateFinalOpsByMask.clone(); }
-    /** Range base index into {@link #ranges} for the given state. */
-    public int rangeBase(int state) { return stateBase[state]; }
     /** Unpack range count from packed stateMeta. */
     public static int rangeCount(int meta) { return (meta >>> 1) & 0xFFFF; }
-    /** Accept bit. */
-    public static boolean accept(int meta) { return (meta & 1) != 0; }
-
-    /** True if start state's entry mask requires {@link Tnfa#BEGIN_TEXT} (limits find() to pos 0). */
-    public boolean startRequiresBeginText() { return (startStateEntryMask & Tnfa.BEGIN_TEXT) != 0; }
-
 
     // ===== public read accessors (fields are package-private; asm generation
     // and external consumers read through these) =====
@@ -412,13 +401,10 @@ public final class Tdfa {
     /** Offset of the final-register block within the runtime register file. */
     public int finalRegBase() { return finalRegBase; }
 
-    /** Start state id. */
-    public int startState() { return startState; }
-
     /** Number of DFA states. */
     public int stateCount() { return stateCount; }
 
-    /** Per-state packed metadata: accept bit + range count (see {@link #accept}, {@link #rangeCount}). Defensive copy. */
+    /** Per-state packed metadata: accept bit + range count (see {@link #rangeCount}). Defensive copy. */
     @io.github.jemmix.tdfa.core.EmittedSurface
     public int[] stateMeta() { return stateMeta.clone(); }
 
@@ -433,9 +419,6 @@ public final class Tdfa {
     @io.github.jemmix.tdfa.core.EmittedSurface
     public int[] ranges() { return ranges.clone(); }
 
-    /** Per-entry prefix-max of hi within each state, index-aligned with {@link #ranges()}. Defensive copy. */
-    public int[] entryHiPrefix() { return entryHiPrefix.clone(); }
-
     /** Flat register ops: [op, dst, src] triplets, blocks terminated by {@link #OP_END}. Defensive copy. */
     public int[] ops() { return ops.clone(); }
 
@@ -446,9 +429,6 @@ public final class Tdfa {
     /** Per-state accept assertion masks (subset of {@link #stateEntryMask()}), or null. Defensive copy. */
     @io.github.jemmix.tdfa.core.EmittedSurface
     public int[] stateAcceptMask() { return stateAcceptMask == null ? null : stateAcceptMask.clone(); }
-
-    /** Mask required to take the start state (limits find() start positions). */
-    public int startStateEntryMask() { return startStateEntryMask; }
 
     /** True iff compiled for leftmost-longest (LONGEST_MATCH) semantics. */
     public boolean longestMatch() { return longestMatch; }

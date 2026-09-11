@@ -14,12 +14,12 @@ package io.github.jemmix.tdfa.core;
  *
  * <p><b>Thread safety:</b> immutable; safe to share across threads.
  *
- * <p><b>Engine-surface members:</b> the constructor, {@link #reconstructFixed}
- * and {@code raw()} are consumed by the engines — including ASM-GENERATED
- * classes, which resolve them by name at runtime. They are public for that
- * mechanical reason only and are NOT part of the user API; their signatures
- * are frozen with the emitted-bytecode surface (rename = linkage error in
- * generated code).
+ * <p><b>Engine-surface members:</b> the constructor and
+ * {@link #reconstructFixed} are consumed by the engines — including
+ * ASM-GENERATED classes, which resolve them by name at runtime. They are
+ * public for that mechanical reason only and are NOT part of the user API;
+ * their signatures are frozen with the emitted-bytecode surface (rename =
+ * linkage error in generated code).
  */
 public final class MatchResult {
     private final int[] regs;
@@ -83,9 +83,6 @@ public final class MatchResult {
         }
         return out;
     }
-
-    /** Engine surface (see class doc): the live register array backing this snapshot. */
-    int[] raw() { return regs; }
 
     /**
      * Apply BT22 §6.4 fixed-tag reconstruction in place on {@code regs}.
