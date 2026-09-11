@@ -1161,16 +1161,26 @@ hard-gating every fixed family, replay corpora, probe-before-fix.
 - [x] **M2 regopt interference-analysis bug** — Fixed in commit `6b335e2`. `Optimize.interferenceAnalysis` walked ops FORWARD and cloned `L[b]` (end-of-block liveness) for EACH op, missing the fact that COPY sources become live BEFORE the op and conflict with registers written by LATER ops in the same block. Rewrote to walk ops in REVERSE with a running live set (BT22 Fig. 7), keeping a forward pre-pass for the value-tracking `V[]` snapshots. All 61500 veryl matches now report exactly 1 participating group, matching `java.util.regex`.
 - [x] **`\b` in alternation causes dead-end DFA paths** — Fixed in commit `d133d20`. Modified `Tdfa.Compiler.compile()` to include subset-mask group configs in the step input, ensuring `\b`-guarded transitions include identifier continuations. Group's own configs added first to preserve priority in ε-closure dedup. The veryl scenario now reports the expected 124800 captures.
 - [x] **Unicode case-fold `s ↔ ſ` for literal chars under `(?i)`** — Fixed in commit `74ab652`. Added `CaseFoldTable` (core/.../unicode/CaseFoldTable.java) with a reverse fold table mapping `toUpperCase(toLowerCase(cp))` to all BMP codepoints sharing it. Parser uses it when `unicodeShorthand && caseInsensitive`.
-- [ ] **Facade `matches()` tight-loop floor** (observed 2026-09-03 re-bench):
-      `ParameterizedShortInputBench` (facade `Pattern.compile(...)::matches`
-      method-ref, OPI-50M tight loop) shows a ~70–110 ns/call floor in BOTH
-      our engines post-restructure vs sub-10 ns in pre-restructure
-      artifacts — while `ShortFindBench` per-call `find()` shows ASM at 0.75×
-      jur geomean in the same sessions and the quick gate shows no regression
-      vs the Aug-19 baseline. Suspect: facade→engine indirection that no
-      longer inlines in this loop shape (module boundary / method-ref).
-      Measure with `-XX:+PrintInlining` on the loop; if real, a direct
-      `matches()` fast path on the facade should recover it.
+- [x] **Facade `matches()` tight-loop floor** — RESOLVED (2026-09-11): does
+      NOT reproduce; retired as a session artifact. Re-ran the full 5×5
+      `ParameterizedShortInputBench` matrix (same harness as the recorded
+      table: gradle-jmh defaults, OPI 50 M) plus independent 3+5-iteration
+      CLI runs, and captured the loop's inlining with
+      `-Xlog:jit+inlining=debug`. The suspect (facade→engine indirection no
+      longer inlining) is disproven: the final C2 compile of the hot loop
+      devirtualizes and inlines END-TO-END — Function.apply → lambda →
+      TDFAPattern.matches → GenNPattern.matcher → GenNMatcher.<init> →
+      GenNMatcher.matches → TDFAPattern.wholeEngine → generated engine.match
+      → TdfaRunner.match → runStringExtract — all inline with 100 %
+      monomorphic type profiles; only the extractFrom walk leaf stays
+      out-of-line ("hot method too big", by design). Numbers: both tiers at
+      java.util.regex parity or better on 4/5 shapes (lit 30.7/28.4 vs jur
+      29.8; ip 158.9/152.1 vs 189.6 — FASTER; two 186.5/174.2 vs 189.7 —
+      faster; redos 308.7/293.2 vs 285.3), geomean ASM 1.02× / VM 0.90× jur.
+      The 2026-09-03 session's own jur rows also moved −10…−20 % between the
+      two dates (machine/JIT-state drift; rounds 6–7 code changes may share
+      credit), which is what a session artifact looks like. Tables refreshed
+      in BENCHMARKS.md §1 + README; no code change needed or made.
 - [ ] ASM register coalescing / scalar replacement (registers → JVM locals)
 - [ ] Revisit internals access: replace the strategy-trace hook (`-Dtdfa.trace.strategy`, `TdfaRunner.traceSnapshot`) with first-class observer/event API. Direction agreed 2026-08-15: expose the compilation pipeline (String regex → AST → TNFA → TDFA) to end-users for maximum reusability; the trace hook is a temporary conformance instrument, out of scope until the API-surface review.
 - [ ] Cache-friendly flat-array data layout for VM backend

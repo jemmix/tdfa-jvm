@@ -14,7 +14,7 @@ Apache 2.0.
 
 ## Headline benchmark
 
-JMH SingleShotTime, ns/op. JDK 26.0.2, 2026-09-03 (post module-restructure +
+JMH SingleShotTime, ns/op. JDK 26.0.2, 2026-09-11 (post module-restructure +
 Sept compile/perf rounds; pre-restructure-era tables in git history).
 Reproduce with `./gradlew :benchmarks:micro:jmh -Pjmh.include='ParameterizedShortInputBench'`.
 Full tables + committed artifacts in [`BENCHMARKS.md`](BENCHMARKS.md).
@@ -23,14 +23,14 @@ Anchored match, short inputs:
 
 | Engine | `(a\|b)*c` | `(\w+)\s+(\w+)` | IPv4 | `abc` | `(a+)+b` ReDoS¹ |
 |---|---:|---:|---:|---:|---:|
-| **tdfa-jvm ASM** | 140.9 | 289.9 | 264.4 | 57.0 | **435.7** |
-| tdfa-jvm VM | 111.9 | 293.2 | 395.9 | 69.0 | 487.3 |
-| java.util.regex | **76.0** | **217.5** | **217.5** | **37.3** | 332.2 |
-| re2j 1.8 | 394.6 | 664.3 | 526.6 | 112.9 | 1,184.0 |
-| reggie | 319.9 | 20.3 | 15.5 | 0.03² | 5.7 |
+| tdfa-jvm ASM | 97.0 | 186.5 | 158.9 | 30.7 | 308.7 |
+| tdfa-jvm VM | **68.2** | **174.2** | **152.1** | **28.4** | 293.2 |
+| java.util.regex | 81.2 | 189.7 | 189.6 | 29.8 | **285.3** |
+| re2j 1.8 | 259.9 | 482.3 | 415.2 | 93.5 | 1,101.0 |
+| reggie | 314.6 | 18.0 | 14.3 | 0.04² | 5.7 |
 
 ¹ 20 × `a` + `c` — `java.util.regex` on this JDK is no longer exponential
-here (332 ns); `re2j`, also linear-time, is 2.7× ASM. The structural
+here (285 ns); `re2j`, also linear-time, is 3.6× ASM. The structural
 no-backtracking guarantee is the point, not this row.
 ² Reggie special-cases literal patterns to `String.indexOf`, which the JVM vectorizes (SIMD). We do this too when the *whole pattern* is one literal — disclosed in the search-acceleration section below — but not per-alternative branch.
 

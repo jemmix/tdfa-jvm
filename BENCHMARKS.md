@@ -24,35 +24,39 @@ Reproduce:
 ```
 
 JMH runs use the Gradle jmh task defaults (1 fork, 2 warmup + 2 measurement
-iterations, OPI 50 M); §1 asmc/tdfa rows were spot-verified with the
-annotation-faithful 5+10 setting — same story, tighter error bars.
+iterations, OPI 50 M); §1 rows spot-verified with independent longer CLI runs
+(3+5 iterations) — same story.
 
 ## 1. Anchored short inputs — `ParameterizedShortInputBench` (JMH, ns/op)
 
 Tight loop over `matches()`, per-single-match time via OperationsPerInvocation.
+Table re-captured 2026-09-11 (JDK 26.0.2; the 2026-09-03 table is in git
+history).
 
 | Engine | `(a\|b)*c` | `(\w+)\s+(\w+)` | IPv4 | `abc` | `(a+)+b` ReDoS¹ |
 |---|---:|---:|---:|---:|---:|
-| tdfa-jvm ASM | 140.9 | 289.9 | 264.4 | 57.0 | 435.7 |
-| tdfa-jvm VM | 111.9 | 293.2 | 395.9 | 69.0 | 487.3 |
-| java.util.regex | **76.0** | **217.5** | **217.5** | **37.3** | **332.2** |
-| re2j 1.8 | 394.6 | 664.3 | 526.6 | 112.9 | 1,184.0 |
-| reggie | 319.9 | 20.3 | 15.5 | 0.0² | **5.7** |
+| tdfa-jvm ASM | 97.0 | 186.5 | 158.9 | 30.7 | 308.7 |
+| tdfa-jvm VM | **68.2** | **174.2** | **152.1** | **28.4** | 293.2 |
+| java.util.regex | 81.2 | 189.7 | 189.6 | 29.8 | **285.3** |
+| re2j 1.8 | 259.9 | 482.3 | 415.2 | 93.5 | 1,101.0 |
+| reggie | 314.6 | 18.0 | 14.3 | 0.04² | 5.7 |
 
 ¹ 20 × `a` + `c`. `java.util.regex` no longer blows up exponentially on this
-JDK (332 ns); `re2j` stays linear but 2.7× ASM.
+JDK (285 ns); `re2j` stays linear but 3.6× ASM.
 ² Reggie special-cases literal patterns to `String.indexOf` (SIMD). We do this
 too when the whole pattern is one literal (disclosed in README) — but not
 per-alternative branch; that is the single-algorithm tradeoff.
 
-**vs re2j: ASM is 1.9–3.9× faster on every anchored shape.**
-**vs java.util.regex: 1.2–1.9× slower on this tight-loop facade path** — both
-our tiers sit at a ~70–110 ns/call floor here that pre-restructure runs did
-not have (old artifacts: 5.8 ns). The same-period `ShortFindBench` (§2) shows ASM
-beating jur 0.75× geomean on per-call `find()`, and the quick gate shows no
-regression vs the Aug-19 baseline — the gap is specific to this harness's
-facade `matches()` loop shape. Tracked as an open item in TODO.md
-(Performance).
+**vs re2j: ASM is 2.6–3.6× faster on every anchored shape.**
+**vs java.util.regex: parity** — geomean ASM 1.02× / VM 0.90× jur; faster on
+`ip`/`two`/`lit`, ~1.1–1.2× on `alt` (ASM only) and `redos`. The 2026-09-03
+re-bench's ~70–110 ns tight-loop floor (both tiers 1.2–1.9× slower than jur)
+does **not** reproduce on the 2026-09-11 tree: `-Xlog:jit+inlining=debug`
+shows the facade chain inlining end-to-end in the final C2 compile
+(`Pattern.matches` → generated matcher ctor → `wholeEngine` → generated
+engine `match` → `TdfaRunner.match` → `runStringExtract`), with only the
+`extractFrom` walk leaf out-of-line by design. Retired as a session artifact
+(that session's jur rows also moved −10…−20%); TODO item closed.
 
 ## 2. Short-input search — `ShortFindBench` (JMH SingleShotTime, ns/op)
 
