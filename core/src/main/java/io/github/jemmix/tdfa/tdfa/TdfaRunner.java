@@ -311,6 +311,160 @@ public final class TdfaRunner implements RegexEngine {
         return new MatchResult(h.regs, tdfa.finalRegBase, tdfa.groupCount, h.matchStart, h.matchEnd);
     }
 
+    /**
+     * Whole-input match ({@link RegexEngine#matchWhole}): anchored at 0, runs
+     * to end-of-input, and succeeds iff an accept config is ALIVE exactly at
+     * EOF — mid-walk accepts (multiline {@code $}, unanchored prefixes) are
+     * stepped past, never recorded. Requires cut-free transitions (the
+     * compile-time pike cut would delete full-match continuations past an
+     * earlier higher-priority accept — {@code (a|ab)} on {@code "ab"}); the
+     * facade guarantees that via {@link Tdfa#compileUnpruned}.
+     *
+     * <p>Transition machinery is a verbatim transplant of {@link #extractFrom}'s
+     * (flat dispatch / walk blocks / most-specific-mask ownership with dead
+     * markers, entry masks checked before ops run); only the accept protocol
+     * differs: no stop table, one gate + φ application at EOF.
+     */
+    @EmittedSurface @Override public MatchResult matchWhole(CharSequence input) {
+        MatchHolder h;
+        if (input instanceof String) {
+            String s = (String) input;
+            trace(Strategy.ANCHORED);
+            h = wholeWalk(s, 0, s.length());
+        } else {
+            trace(Strategy.GENERIC);
+            h = runGeneric(input, 0, input.length(), true);
+        }
+        if (h == null) return null;
+        if (tdfa.fixedBase != null) {
+            MatchResult.reconstructFixed(h.regs, tdfa.finalRegBase, tdfa.fixedBase, tdfa.fixedOffset);
+        }
+        return new MatchResult(h.regs, tdfa.finalRegBase, tdfa.groupCount, h.matchStart, h.matchEnd);
+    }
+
+    /** String whole-walk; null = input is not a full match. See {@link #matchWhole}. */
+    private MatchHolder wholeWalk(String input, int from, int to) {
+        final int[] sm = this.stateMeta;
+        final int[] rg = this.ranges;
+        final int[] op = this.ops;
+        final int[] sem = this.stateEntryMask;
+        final int[] sam = this.stateAcceptMask;
+        final int[] arf = this.asciiRangeFlat;   // non-null iff rangesDisjoint
+        final int limit = this.latinLimit;
+        Scratch sc = SCRATCH.get();
+        final int[] regs;
+        if (regSize == 0) {
+            regs = null;
+        } else if (sc.regs != null && sc.regs.length >= regSize) {
+            regs = sc.regs;
+            Arrays.fill(regs, 0, regSize, -1);
+        } else {
+            regs = new int[regSize];
+            java.util.Arrays.fill(regs, -1);
+            sc.regs = regs;
+        }
+        int state = startState;
+        int pos = from;
+
+        // Entry check for start state — inline
+        {
+            int entryReq = sem[state];
+            if (entryReq != 0 && (positionFlags(input, pos, to) & entryReq) != entryReq) return null;
+        }
+
+        int posFlags = -1;
+        while (pos < to) {
+            int meta = sm[state];
+            int c = Alphabet.decode(input, pos, to);
+            int base = stateBase[state];
+            int count = (meta >>> 1) & 0xFFFF;
+            int chosen = -1, chosenTarget = 0;
+            int ri;
+            if (arf != null && c < limit) {
+                // Disjoint ranges: at most one entry contains c, so entry
+                // priority is moot and the flat table is exact.
+                ri = arf[state * limit + c];
+            } else if (rangesDisjoint && c < 0x10000) {
+                ri = walkIdx.walkRangeIndex(state, c);
+                if (ri == -2) ri = Integer.MIN_VALUE;
+            } else {
+                ri = Integer.MIN_VALUE;
+            }
+            if (ri == Integer.MIN_VALUE) {
+                // Binary search rightmost entry with lo <= c, then walk back
+                // while the per-state prefix-max-hi still reaches c; the MOST
+                // SPECIFIC satisfied mask owns the step (see extractFrom).
+                int rlo = 0, rhi = count - 1, anchor = -1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    if (rg[(base + mid) * 5] <= c) { anchor = mid; rlo = mid + 1; }
+                    else rhi = mid - 1;
+                }
+                int best = -1, bestSpec = -1;
+                for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+                    int o = (base + i) * 5;
+                    if (c <= rg[o + 1]) {
+                        int requiredMask = rg[o + 4];
+                        if (requiredMask != 0) {
+                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                            if ((posFlags & requiredMask) != requiredMask) continue;
+                        }
+                        int spec = Integer.bitCount(requiredMask);
+                        if (spec >= bestSpec) { best = i; bestSpec = spec; }   // >= : lower index wins ties
+                    }
+                }
+                if (best >= 0) {
+                    int o = (base + best) * 5;
+                    int target = rg[o + 2];
+                    if (target < 0) return null;   // dead marker of the owning context
+                    chosen = o; chosenTarget = target;
+                }
+            } else if (ri >= 0) {
+                int o = (base + ri) * 5;
+                int target = rg[o + 2];
+                if (target >= 0) {
+                    int requiredMask = rg[o + 4];
+                    boolean ok = requiredMask == 0;
+                    if (!ok) {
+                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                        ok = (posFlags & requiredMask) == requiredMask;
+                    }
+                    if (ok) { chosen = o; chosenTarget = target; }
+                }
+            }
+            if (chosen < 0) return null;   // dead: no full match through this prefix
+            // Target entry mask is a position predicate, evaluated BEFORE the
+            // transition's ops run (see extractFrom).
+            int width = c > 0xFFFF ? 2 : 1;
+            int entryReqNext = sem[chosenTarget];
+            if (entryReqNext != 0
+                    && (positionFlags(input, pos + width, to) & entryReqNext) != entryReqNext) return null;
+            if (regs != null) {
+                int opsOff = rg[chosen + 3];
+                if (opsOff != 0) applyOps(op, opsOff, regs, pos);
+            }
+            state = chosenTarget;
+            if (width == 2) pos++;
+            pos++;
+            posFlags = -1;
+        }
+        // EOF: an alive accept config here consumed exactly [from, to) — a
+        // full match. Gate and apply the winner's φ reading EOF-time registers.
+        if ((sm[state] & 1) == 0) return null;
+        int eofFlags = positionFlags(input, to, to);
+        final int[] fm = this.finalOpsByMask;
+        if (fm != null) {
+            int cell = fm[state * 64 + eofFlags];
+            if (cell < 0) return null;   // no accept config alive under these posFlags
+            if (regs != null && cell != 0) applyOps(op, cell, regs, to);
+        } else {
+            int acceptMask = sam[state];
+            if (acceptMask != 0 && (eofFlags & acceptMask) != acceptMask) return null;
+            if (regs != null) applyFinalOps(state, regs, to);
+        }
+        return new MatchHolder(from, to, regs == null ? new int[0] : regs.clone());
+    }
+
     /** String find with anchor enforcement and register extraction. */
     private MatchHolder runStringExtract(String input, int from, int to) {
         int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? 0 : to;

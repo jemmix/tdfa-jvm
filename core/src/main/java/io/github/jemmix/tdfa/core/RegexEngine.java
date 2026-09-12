@@ -42,6 +42,22 @@ public interface RegexEngine {
      */
     MatchResult match(CharSequence input, int from);
 
+    /**
+     * Match the ENTIRE input, returning capture registers, or {@code null} if
+     * the input is not a whole match. Unlike {@link #match(CharSequence, int)}
+     * a mid-input accept never satisfies this — the walk runs to end-of-input
+     * and only an accept alive exactly at EOF counts (so {@code (a|ab)} whole-
+     * matches {@code "ab"} even though leftmost-first find stops after
+     * {@code "a"}).
+     *
+     * <p>The default {@code match(input, 0)} is whole-exact only for engines
+     * compiled anchored at both ends (what the facade hands custom
+     * {@code RegexEngineFactory}s for whole matching). Engines over unanchored
+     * or cut-free artifacts must override — {@code TdfaRunner} and the
+     * generated classes do (a single cut-free walk; see {@code Tdfa.compileUnpruned}).
+     */
+    default MatchResult matchWhole(CharSequence input) { return match(input, 0); }
+
     /** Number of capturing groups (excluding group 0). */
     int groupCount();
 

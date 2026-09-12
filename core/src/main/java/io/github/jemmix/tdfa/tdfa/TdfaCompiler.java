@@ -35,6 +35,13 @@ final class TdfaCompiler {
         final int[] breakpoints;
         /** If true, leftmost-longest semantics (keep stepping past accepts); if false, Perl leftmost-first (suppress lower-priority paths past an accept). */
         final boolean longest;
+        /**
+         * Pike-cut-free determinization (see {@link Tdfa#compileUnpruned}):
+         * stepping follows every alive config, never cutting below an accept.
+         * Used for the whole-match artifact; find() may share it iff the
+         * {@link Tdfa#pikeCutMatters()} predicate comes out false.
+         */
+        final boolean unpruned;
 
         /**
          * Multimap from DFA-state shape key to the list of DFA-state IDs that
@@ -122,8 +129,14 @@ final class TdfaCompiler {
         long cfgEdges;
         /** Running sum of closure (kernel) sizes — re2c's kernels_total. */
         long kernelsTotal = 0;
+        /** Set by the stop-table pass on unpruned compiles (see the predicate comment there). */
+        boolean pikeCutMatters;
 
         TdfaCompiler(Tnfa nfa, boolean longestMatch) {
+            this(nfa, longestMatch, false);
+        }
+
+        TdfaCompiler(Tnfa nfa, boolean longestMatch, boolean unpruned) {
             this.nfa = nfa;
             this.tags = nfa.tagCount;
             this.epsOut = sortedOutgoing(nfa.epsFrom, nfa.epsPri);
@@ -136,6 +149,7 @@ final class TdfaCompiler {
             for (int t = 0; t < tags; t++) finalRegisters[t] = tags + t;
             this.breakpoints = computeBreakpoints();
             this.longest = longestMatch;
+            this.unpruned = unpruned;
             // Per-cell active symbol-edge sets (see rangeActiveEdges). Each class range
             // [lo, hi] covers a contiguous run of breakpoint cells: lo and hi+1 are
             // themselves breakpoints (they are boundaries of this very class), so the
@@ -497,6 +511,41 @@ final class TdfaCompiler {
                             }
                         }
                         stateStopOnAcceptMask[s * 64 + M] = higherPriSym ? NEVER_STOP : 0;
+                    }
+                    if (unpruned) {
+                        // Pike-cut divergence predicate (feeds Tdfa.pikeCutMatters).
+                        // Sufficiency argument for "no hazard ⇒ unpruned walk ≡
+                        // pruned walk": the cut deletes below-accept configs from a
+                        // state's stepping input only when an accept is alive in
+                        // that context, and the walk steps from a state without
+                        // breaking only while stopNow says extend (NEVER_STOP) —
+                        // at a STOP record both walks break identically. So a cut
+                        // transition is taken only at (S, M) with an alive accept
+                        // AND a NEVER_STOP cell; if additionally no alive config
+                        // below the first alive accept can step, the cut removes
+                        // only non-steppable configs, which never contribute to
+                        // target kernels — every stepped set, hence every state
+                        // and accept reached, is identical in both builds.
+                        // (Conservative: kernel masks approximate the runner's
+                        // fm/sam record gates from above, so this flags a superset
+                        // of the real divergence positions.)
+                        for (int M = 0; M < 64 && !pikeCutMatters; M++) {
+                            if (stateStopOnAcceptMask[s * 64 + M] != NEVER_STOP) continue;
+                            int firstAliveAccept = -1;
+                            for (int i = 0; i < cnt; i++) {
+                                int st = pk != null ? pk[i * 2] : cfgs.get(i).state;
+                                int em = pk != null ? pk[i * 2 + 1] : cfgs.get(i).emptyMask;
+                                if ((em & ~M) != 0) continue;            // dead under M
+                                if (st == nfa.accept) { firstAliveAccept = i; break; }
+                            }
+                            if (firstAliveAccept < 0) continue;
+                            for (int i = firstAliveAccept + 1; i < cnt; i++) {
+                                int st = pk != null ? pk[i * 2] : cfgs.get(i).state;
+                                int em = pk != null ? pk[i * 2 + 1] : cfgs.get(i).emptyMask;
+                                if ((em & ~M) != 0) continue;            // dead under M
+                                if (symOut[st].length > 0) { pikeCutMatters = true; break; }
+                            }
+                        }
                     }
                 }
             }
@@ -870,7 +919,8 @@ final class TdfaCompiler {
                         minEntryMask, minAcceptMask, longest, finalStop, uniformStop, nfa.multiline,
                         nfa.unicodeWordBoundary, nfa.wordRanges,
                         hasFixed(nfa.fixedBase) ? nfa.fixedBase : null,
-                        hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null);
+                        hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null,
+                        unpruned && pikeCutMatters);
             }
         }
 
@@ -1228,7 +1278,7 @@ final class TdfaCompiler {
          * tables see the full closure); only this live set's stepping input.
          */
         List<Config> pruneBelowAccept(List<Config> live) {
-            if (longest) return live;
+            if (longest || unpruned) return live;
             int cut = -1;
             for (int i = 0; i < live.size(); i++) {
                 if (live.get(i).state == nfa.accept) { cut = i; break; }
@@ -1240,7 +1290,7 @@ final class TdfaCompiler {
 
         /** In-place variant for freshly-built live lists. */
         void pruneBelowAcceptInPlace(List<Config> live) {
-            if (longest) return;
+            if (longest || unpruned) return;
             int cut = -1;
             for (int i = 0; i < live.size(); i++) {
                 if (live.get(i).state == nfa.accept) { cut = i; break; }
@@ -1357,7 +1407,7 @@ final class TdfaCompiler {
             int firstAcceptIdx = -1;
             int acceptEmptyMask = 0;
             boolean suppress = false;
-            if (!longest) {
+            if (!longest && !unpruned) {
                 for (int i = 0; i < ownCount; i++) {
                     Config c = configs.get(i);
                     if (c.state == nfa.accept) {

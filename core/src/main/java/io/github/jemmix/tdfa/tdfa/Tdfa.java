@@ -62,6 +62,20 @@ public final class Tdfa {
      * stops at the first accept on the highest-priority path.
      */
     final boolean longestMatch;
+    /**
+     * Pike-cut divergence flag, meaningful only for {@linkplain
+     * #compileUnpruned unpruned} Perl-mode compiles: true iff some accepting
+     * state under some position-flags admits an alive accept that the runner
+     * would EXTEND past (stop cell {@link #NEVER_STOP}) while a lower-priority
+     * steppable config sits below it in the kernel — the exact condition under
+     * which the compile-time pike cut changes find() behavior (it deletes those
+     * configs' continuations, and the pruned walk cannot reach accepts that the
+     * unpruned walk can). When false, the unpruned artifact is walk-identical
+     * to the pruned one and may serve find(); when true, find() needs a
+     * pruned compile ({@link #compile}). Always false for pruned and POSIX
+     * compiles (the cut never applies there).
+     */
+    final boolean pikeCutMatters;
     final boolean multiline;
     /**
      * True iff the DFA was compiled with Unicode-aware shorthand ({@code (?u)}),
@@ -249,6 +263,18 @@ public final class Tdfa {
                  int[] entryHiPrefix,
                  int[] stateEntryMask, int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
                  boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset) {
+        this(tagCount, groupCount, namedGroups, registerCount, finalRegBase, startState, stateCount,
+                stateMeta, stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges, ops, entryHiPrefix,
+                stateEntryMask, stateAcceptMask, longestMatch, stopOnAcceptMask, stopMaskUniform, multiline,
+                unicodeWordBoundary, wordRanges, fixedBase, fixedOffset, false);
+    }
+
+    Tdfa(int tagCount, int groupCount, java.util.Map<String, Integer> namedGroups, int registerCount, int finalRegBase, int startState, int stateCount,
+                 int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] stateFinalOpsByMask, int[] ranges, int[] ops,
+                 int[] entryHiPrefix,
+                 int[] stateEntryMask, int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
+                 boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset,
+                 boolean pikeCutMatters) {
         this.tagCount = tagCount; this.groupCount = groupCount;
         this.namedGroups = namedGroups != null ? java.util.Collections.unmodifiableMap(namedGroups) : java.util.Collections.emptyMap();
         this.registerCount = registerCount;
@@ -266,6 +292,7 @@ public final class Tdfa {
         this.stateAcceptMask = stateAcceptMask;
         this.startStateEntryMask = stateEntryMask[startState];
         this.longestMatch = longestMatch;
+        this.pikeCutMatters = pikeCutMatters;
         this.stopOnAcceptMask = stopOnAcceptMask;
         this.stopMaskUniform = stopMaskUniform;
         this.multiline = multiline;
@@ -463,8 +490,35 @@ public final class Tdfa {
     /** Compile with a transparency hook receiving stage timings/decisions (may be {@code null}). */
     public static Tdfa compile(Tnfa nfa, boolean longestMatch,
                                io.github.jemmix.tdfa.core.CompileObserver observer) {
-        return new TdfaCompiler(nfa, longestMatch).compile(observer);
+        return new TdfaCompiler(nfa, longestMatch, false).compile(observer);
     }
+
+    /**
+     * Compile WITHOUT the Perl pike cut: transitions follow every alive
+     * config, including lower-priority continuations past an accept, so the
+     * artifact supports whole-input walks ({@code matchWhole}) — an accept
+     * config alive at end-of-input is a full match even when a
+     * higher-priority alternative accepted earlier (e.g. {@code (a|ab)} on
+     * {@code "ab"}). POSIX-mode and pruned compiles also support whole walks
+     * only when their transitions happen to be cut-free — this factory is the
+     * guaranteed-cut-free form.
+     *
+     * <p>Use {@link #pikeCutMatters()} on the result to decide whether the
+     * artifact may also serve find(): false means the cut would have deleted
+     * only configs that no walk ever steps (the pruned and unpruned walks are
+     * identical); true means find() needs the pruned {@link #compile}.
+     */
+    public static Tdfa compileUnpruned(Tnfa nfa, boolean longestMatch,
+                                       io.github.jemmix.tdfa.core.CompileObserver observer) {
+        return new TdfaCompiler(nfa, longestMatch, true).compile(observer);
+    }
+
+    /**
+     * For unpruned Perl-mode compiles: whether the pike cut would change
+     * find() behavior on this artifact (see {@link #compileUnpruned}); false
+     * means find() may run on it. Constant false otherwise.
+     */
+    public boolean pikeCutMatters() { return pikeCutMatters; }
 
     // ===== compile-knob policy =====
     //
