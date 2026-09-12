@@ -8,12 +8,22 @@ import io.github.jemmix.tdfa.tnfa.Tnfa;
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
 import io.github.jemmix.tdfa.unicode.UnicodeProviders;
 
-import java.util.function.Supplier;
-
 /**
  * {@link Pattern} compilation orchestration: flags &rarr; inline-flag prefix,
  * pipeline (parse &rarr; TNFA &rarr; TDFA), engine-source resolution, and
- * shell-or-shared implementation selection.
+ * shell-or-shared implementation selection. Fully eager — everything
+ * compiles inside {@code compile()}.
+ *
+ * <p><b>Single compile, two artifacts at most.</b> The whole-match engine
+ * ({@code matches()}) is an unpruned determinization
+ * ({@link Tdfa#compileUnpruned}) of the SAME parse — not a second
+ * parse/anchored wrap as before. find() shares that artifact whenever the
+ * pike-cut predicate says the cut would change nothing
+ * ({@code !wholeTdfa.pikeCutMatters()}); the rare alternation shapes where it
+ * would (e.g. {@code ab|a|ac}) keep a pruned find compile for leftmost-first
+ * exactness. The BYO-factory path still hands the factory an ANCHORED TDFA
+ * for its whole engine (custom engines implement {@code matchWhole} via the
+ * interface default, which is whole-exact only over anchored artifacts).
  *
  * <p>Engine source resolution (provenance-based, no capability negotiation):
  * <ul>
@@ -56,22 +66,72 @@ final class PatternCompiler {
                 ? observer : io.github.jemmix.tdfa.core.CompileObserver.NONE;
         try {
             Tnfa nfa = Tnfa.compile(fl, disableUnicodeGroups, false, prov, obs);
-            Tdfa tdfa = Tdfa.compile(nfa, longest, obs);
-            int ps = tdfa.stateCount();
+
+            // Whole-match artifact: cut-free transitions so an accept alive at
+            // EOF is a full match (Tdfa.compileUnpruned). find() shares it
+            // unless the pike cut provably matters; then find keeps the pruned
+            // compile and whole runs on this one (two artifacts, one parse).
+            //
+            // Budget ladder for bomb shapes: the unpruned build's kernels can
+            // exceed the determinization caps that the pruned build fits (cuts
+            // bound kernel growth). Then whole tries the eager ANCHORED build;
+            // if that is over budget too, whole degrades to the historical
+            // LAZY anchored engine so compile() acceptance stays exactly the
+            // find artifact's (matches() surfaces the rejection on first use,
+            // the pre-eager observable behavior). Everything outside the caps'
+            // bomb class compiles fully eagerly.
+            Tdfa wholeTdfa;
+            Tdfa findTdfa;
+            try {
+                wholeTdfa = Tdfa.compileUnpruned(nfa, longest, obs);
+                if (wholeTdfa.pikeCutMatters()) {
+                    obs.note("pikeCut", "find recompiled (pruned; whole kept unpruned)");
+                    findTdfa = Tdfa.compile(nfa, longest, obs);
+                } else {
+                    findTdfa = wholeTdfa;
+                }
+            } catch (RuntimeException overBudget) {
+                if (!budgetRejection(overBudget)) throw overBudget;
+                findTdfa = Tdfa.compile(nfa, longest, obs);
+                try {
+                    wholeTdfa = anchorTdfa(fl, disableUnicodeGroups, longest, prov, regex);
+                    obs.note("whole", "unpruned build over determinization budget — eager anchored");
+                } catch (RuntimeException overBudget2) {
+                    if (!budgetRejection(overBudget2)) throw overBudget2;
+                    wholeTdfa = null;
+                    obs.note("whole", "over budget (unpruned and anchored) — lazy anchored whole;"
+                            + " compile acceptance follows the find artifact");
+                }
+            }
+            int ps = findTdfa.stateCount();
 
             if (vmSwitched()) {
                 obs.note("engine", "shared-interpreter (tdfa.engine=VM)");
-                return new TDFAPattern(regex, flags, ps,
-                        new TdfaRunner(tdfa), anchoredVm(fl, disableUnicodeGroups, longest, prov, regex), provider);
+                RegexEngine eng = new TdfaRunner(findTdfa);
+                return new TDFAPattern(regex, flags, ps, eng,
+                        whole(fl, disableUnicodeGroups, longest, prov, regex, findTdfa, wholeTdfa, eng), provider);
             }
 
             if (factory != null) {
                 long t0 = System.nanoTime();
-                RegexEngine eng = factory.create(tdfa);
+                RegexEngine eng = factory.create(findTdfa);
+                // BYO whole is ALWAYS the anchored artifact: a custom engine's
+                // matchWhole is the interface default (match(input, 0)),
+                // whole-exact only over an anchored TDFA — sharing the
+                // unpruned find artifact is safe solely for engines with a
+                // native matchWhole (TdfaRunner, generated classes). Over
+                // budget, degrade to the historical lazy anchored engine.
+                RegexEngine whole;
+                try {
+                    whole = factory.create(
+                            anchorTdfa(fl, disableUnicodeGroups, longest, prov, regex));
+                } catch (RuntimeException over) {
+                    if (!budgetRejection(over)) throw over;
+                    whole = new LazyEngine(() -> factory.create(
+                            anchorTdfa(fl, disableUnicodeGroups, longest, prov, regex)));
+                }
                 obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.ENGINE,
                         System.nanoTime() - t0, 0);
-                Supplier<RegexEngine> whole =
-                        () -> factory.create(anchorTdfa(fl, disableUnicodeGroups, longest, prov, regex));
                 try {
                     Pattern p = (Pattern) io.github.jemmix.tdfa.asm.ShellEmitter.emit(
                             new io.github.jemmix.tdfa.asm.ShellEmitter.Spec(
@@ -94,12 +154,12 @@ final class PatternCompiler {
             io.github.jemmix.tdfa.asm.TdfaAsmBackend.Generated gen;
             long t1 = System.nanoTime();
             try {
-                gen = io.github.jemmix.tdfa.asm.TdfaAsmBackend.generate(tdfa);
+                gen = io.github.jemmix.tdfa.asm.TdfaAsmBackend.generate(findTdfa);
             } catch (RuntimeException | LinkageError genFailure) {
                 if (Boolean.getBoolean("tdfa.gen.debug")) genFailure.printStackTrace();
                 obs.note("engine", "shared-interpreter (engine emission failed)");
-                return new TDFAPattern(regex, flags, ps,
-                        new TdfaRunner(tdfa), anchoredVm(fl, disableUnicodeGroups, longest, prov, regex), provider);
+                RegexEngine eng = new TdfaRunner(findTdfa);
+                return new TDFAPattern(regex, flags, ps, eng, whole(fl, disableUnicodeGroups, longest, prov, regex, findTdfa, wholeTdfa, eng), provider);
             }
             obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.ENGINE,
                     System.nanoTime() - t1, 0);
@@ -107,15 +167,16 @@ final class PatternCompiler {
                 Pattern p = (Pattern) io.github.jemmix.tdfa.asm.ShellEmitter.emit(
                         new io.github.jemmix.tdfa.asm.ShellEmitter.Spec(
                                 regex, flags, ps, gen.engine(),
-                                anchoredAsm(fl, disableUnicodeGroups, longest, prov, regex),
+                                whole(fl, disableUnicodeGroups, longest, prov, regex,
+                                        findTdfa, wholeTdfa, gen.engine()),
                                 gen.owner(), provider));
                 obs.note("engine", "generated");
                 return p;
             } catch (RuntimeException | LinkageError ex) {
                 if (Boolean.getBoolean("tdfa.gen.debug")) ex.printStackTrace();
                 obs.note("engine", "shared-interpreter (shell emission failed)");
-                return new TDFAPattern(regex, flags, ps,
-                        new TdfaRunner(tdfa), anchoredVm(fl, disableUnicodeGroups, longest, prov, regex), provider);
+                RegexEngine eng = new TdfaRunner(findTdfa);
+                return new TDFAPattern(regex, flags, ps, eng, whole(fl, disableUnicodeGroups, longest, prov, regex, findTdfa, wholeTdfa, eng), provider);
             }
         } catch (RuntimeException e) {
             throw io.github.jemmix.tdfa.core.CompiledRegex.translate(e, regex);
@@ -126,40 +187,82 @@ final class PatternCompiler {
             | Pattern.MULTILINE | Pattern.DISABLE_UNICODE_GROUPS | Pattern.LONGEST_MATCH
             | Pattern.UNICODE_CHARACTER_CLASS;
 
+    /**
+     * Whole-match engine for the facade's own tiers: the find engine itself
+     * when the artifacts are shared (one engine object, one generated class —
+     * generated engines carry a native {@code matchWhole}), else a dedicated
+     * interpreter over the whole TDFA — or, on the over-budget bomb corner,
+     * the historical lazy anchored engine.
+     */
+    private static RegexEngine whole(String fl, boolean disableUnicodeGroups, boolean longest,
+                                     UnicodeDataProvider prov, String regex,
+                                     Tdfa findTdfa, Tdfa wholeTdfa, RegexEngine findEngine) {
+        if (wholeTdfa == null)
+            return new LazyEngine(() -> new TdfaRunner(
+                    anchorTdfa(fl, disableUnicodeGroups, longest, prov, regex)));
+        return findTdfa == wholeTdfa ? findEngine : new TdfaRunner(wholeTdfa);
+    }
+
+    /**
+     * The determinization budget-rejection idiom ("pattern too large: ..."),
+     * in either shape it reaches this class: the raw {@code IllegalStateException}
+     * from {@code Tdfa.compile*}, or the translated {@code PatternSyntaxException}
+     * from {@link #anchorTdfa} (which wraps for its lazy callers).
+     */
+    private static boolean budgetRejection(RuntimeException ex) {
+        String m = ex.getMessage();
+        return m != null && m.contains("pattern too large");
+    }
+
+    /**
+     * Budget-corner whole engine: compiles its delegate on first use — the
+     * pre-eager facade's lazy behavior, kept solely for bomb patterns whose
+     * whole builds exceed the determinization caps (see the compile ladder in
+     * {@link #compile}). Benign race: redundant compiles discard all but one
+     * engine. All hot entries delegate to the resolved engine.
+     */
+    private static final class LazyEngine implements RegexEngine {
+        private final java.util.function.Supplier<RegexEngine> src;
+        private volatile RegexEngine delegate;
+        LazyEngine(java.util.function.Supplier<RegexEngine> src) { this.src = src; }
+
+        private RegexEngine eng() {
+            RegexEngine e = delegate;
+            if (e == null) { e = src.get(); delegate = e; }
+            return e;
+        }
+
+        @Override public boolean matches(CharSequence input) { return eng().matches(input); }
+        @Override public boolean find(CharSequence input) { return eng().find(input); }
+        @Override public io.github.jemmix.tdfa.core.MatchResult match(CharSequence input, int from) {
+            return eng().match(input, from);
+        }
+        @Override public io.github.jemmix.tdfa.core.MatchResult matchWhole(CharSequence input) {
+            return eng().matchWhole(input);
+        }
+        @Override public int groupCount() { return eng().groupCount(); }
+        @Override public java.util.Map<String, Integer> namedGroups() { return eng().namedGroups(); }
+        @Override public int programSize() { return eng().programSize(); }
+    }
+
     /** {@code -Dtdfa.engine=VM}: global no-codegen switch, read per compile. */
     private static boolean vmSwitched() {
         return "VM".equalsIgnoreCase(System.getProperty("tdfa.engine"));
     }
 
+    /**
+     * Anchored both-ends TDFA for the BYO-factory whole engine: the factory's
+     * engine answers {@code matchWhole} through the interface default
+     * ({@code match(input, 0)}), which is whole-exact only over an anchored
+     * artifact. Compiled eagerly inside {@code compile()}.
+     */
     private static Tdfa anchorTdfa(String flregex, boolean disableUnicodeGroups,
                                    boolean longest, UnicodeDataProvider prov, String regex) {
-        // The anchored TDFA compiles lazily (first matches()) — outside the
-        // compile-time translate in compile(). Budget exhaustion there must
-        // surface as the same clean PatternSyntaxException the unanchored
-        // compile throws, not as a raw internal error from a match call.
         try {
             Tnfa an = Tnfa.compile(flregex, disableUnicodeGroups, true, prov);
             return Tdfa.compile(an, longest);
         } catch (RuntimeException e) {
             throw io.github.jemmix.tdfa.core.CompiledRegex.translate(e, regex);
         }
-    }
-
-    private static Supplier<RegexEngine> anchoredVm(String flregex, boolean disableUnicodeGroups,
-                                                    boolean longest, UnicodeDataProvider prov, String regex) {
-        return () -> new TdfaRunner(anchorTdfa(flregex, disableUnicodeGroups, longest, prov, regex));
-    }
-
-    private static Supplier<RegexEngine> anchoredAsm(String flregex, boolean disableUnicodeGroups,
-                                                     boolean longest, UnicodeDataProvider prov, String regex) {
-        return () -> {
-            Tdfa at = anchorTdfa(flregex, disableUnicodeGroups, longest, prov, regex);
-            try {
-                return io.github.jemmix.tdfa.asm.TdfaAsmBackend.generate(at).engine();
-            } catch (RuntimeException genFailure) {
-                if (Boolean.getBoolean("tdfa.gen.debug")) genFailure.printStackTrace();
-                return new TdfaRunner(at);
-            }
-        };
     }
 }

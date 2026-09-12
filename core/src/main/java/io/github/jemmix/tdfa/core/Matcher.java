@@ -1,7 +1,5 @@
 package io.github.jemmix.tdfa.core;
 
-import java.util.function.Supplier;
-
 /**
  * Stateful matcher over one input: find-iteration, group access, and the
  * full replacement machinery ({@code replaceAll}/{@code replaceFirst}/
@@ -20,7 +18,7 @@ import java.util.function.Supplier;
 public class Matcher {
 
     private final RegexEngine engine;
-    private final Supplier<RegexEngine> wholeEngine;
+    private final RegexEngine wholeEngine;
 
     @EmittedSurface  // the 7 fields below are linked by name from generated shells
     protected CharSequence input;
@@ -39,7 +37,7 @@ public class Matcher {
     @EmittedSurface
     protected int appendPos;
 
-    public Matcher(RegexEngine engine, Supplier<RegexEngine> wholeEngine, CharSequence input) {
+    public Matcher(RegexEngine engine, RegexEngine wholeEngine, CharSequence input) {
         this.engine = engine;
         this.wholeEngine = wholeEngine;
         this.input = input;
@@ -67,7 +65,7 @@ public class Matcher {
     // ---- match operations ----
 
     public boolean matches() {
-        MatchResult m = wholeEngine.get().match(input, 0);
+        MatchResult m = wholeEngine.matchWhole(input);
         hasMatch = m != null;
         if (hasMatch) {
             match = m;

@@ -106,6 +106,7 @@ public final class TdfaAsmBackend {
             genDelegateMatches(cw, owner);
             genDelegateFind(cw, owner);
             genDelegateMatch(cw, owner);
+            genMatchWhole(cw, owner);
             genMetadataMethods(cw, owner);
         } else {
             genClinit(cw, tdfa, fastPath);
@@ -113,6 +114,7 @@ public final class TdfaAsmBackend {
             genMatches(cw, owner);
             genFind(cw, owner);
             genMatch(cw, owner);
+            genMatchWhole(cw, owner);
             genExtractOne(cw, tdfa, owner);
             genToResult(cw, tdfa, owner);
             genEntryOkC(cw, owner);
@@ -1891,6 +1893,24 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "match", "(" + CS_D + "I)L" + RESULT + ";", false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0); mv.visitEnd();
+    }
+
+    /**
+     * Override of the {@code RegexEngine.matchWhole} default: delegates to the
+     * embedded runner's native cut-free whole walk. Shared by both dispatch
+     * modes (both hold a final {@code runner}); the v1 shape is delegation —
+     * inlining the whole loop into the generated class is future work if the
+     * matches() micro-benchmarks demand it.
+     */
+    private static void genMatchWhole(ClassWriter cw, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + ")L" + RESULT + ";", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "matchWhole", "(" + CS_D + ")L" + RESULT + ";", false);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitMaxs(0, 0); mv.visitEnd();
     }

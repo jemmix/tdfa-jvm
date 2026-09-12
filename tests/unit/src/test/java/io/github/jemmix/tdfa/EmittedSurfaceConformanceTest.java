@@ -14,7 +14,6 @@ import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -114,7 +113,7 @@ class EmittedSurfaceConformanceTest {
         }
         // Facade ctors linked by descriptor from ShellEmitter.
         hookC(TDFAPattern.class, String.class, int.class, int.class,
-                io.github.jemmix.tdfa.core.RegexEngine.class, Supplier.class,
+                io.github.jemmix.tdfa.core.RegexEngine.class, io.github.jemmix.tdfa.core.RegexEngine.class,
                 UnicodeDataProvider.class);
         hookC(PatternMatcher.class, TDFAPattern.class, CharSequence.class);
         hookM(Class.forName("io.github.jemmix.tdfa.Pattern$Utf8"), "decode", byte[].class);

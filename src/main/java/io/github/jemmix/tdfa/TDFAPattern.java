@@ -7,7 +7,6 @@ import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Supplier;
 
 /**
  * Shared {@link Pattern} implementation: holds the compiled engines and the
@@ -21,7 +20,6 @@ import java.util.function.Supplier;
  * (a different runtime package) and must subclass and call into it.
  *
  * <p><b>Thread safety:</b> instances are immutable after construction
- * (except the lazily-published second engine, see {@link #wholeEngine()})
  * and safe for concurrent use from multiple threads. The {@link
  * PatternMatcher matchers} they produce are NOT thread-safe — one matcher
  * per thread.
@@ -34,16 +32,14 @@ public class TDFAPattern implements Pattern {
     private final int flags;
     private final int programSize;
     private transient RegexEngine engine;
-    // A second engine for matches() (anchored both ends), compiled lazily.
-    // anchorBoth injects start/end anchors at the AST level (not text — safe
-    // against \Q..\E), and the trailing anchor supplies context that prevents
-    // the leftmost-first DFA from pruning a longer alternative's continuation
-    // once a shorter branch reaches accept (e.g. (a|ab) against "ab" must
-    // retain the `ab` path). Same parse input and a subset of the
-    // determinization work, so if the eager engine compiles, this one cannot
-    // fail — deferring it can't move a compile error past Pattern.compile().
-    private transient volatile RegexEngine wholeEngine;
-    private transient Supplier<RegexEngine> wholeSupplier;
+    // A second engine for matches() (anchored both ends), compiled EAGERLY
+    // alongside the main engine — the same artifact whenever the pike cut
+    // doesn't matter (see PatternCompiler), else the unpruned determinization
+    // of the same parse. matchWhole walks it to EOF; an accept config alive
+    // at end-of-input is a full match (the trailing context that a
+    // leftmost-first DFA would have pruned — e.g. (a|ab) against "ab" must
+    // retain the `ab` path — survives in the cut-free build).
+    private transient RegexEngine wholeEngine;
     /** The Unicode tables this pattern was compiled against ({@code null} =
      *  the process default). Retained only for serialization round-trips —
      *  recompiles inside this process go through the engines. Transient:
@@ -53,13 +49,13 @@ public class TDFAPattern implements Pattern {
 
     @EmittedSurface  // shells super-ctor call: signature feeds ShellEmitter descriptor
 public TDFAPattern(String pattern, int flags, int programSize,
-                       RegexEngine engine, Supplier<RegexEngine> wholeSupplier,
-                       UnicodeDataProvider provider) {
+                        RegexEngine engine, RegexEngine wholeEngine,
+                        UnicodeDataProvider provider) {
         this.pattern = pattern;
         this.flags = flags;
         this.programSize = programSize;
         this.engine = engine;
-        this.wholeSupplier = wholeSupplier;
+        this.wholeEngine = wholeEngine;
         this.provider = provider;
     }
 
@@ -69,15 +65,10 @@ public TDFAPattern(String pattern, int flags, int programSize,
     /** The pinned Unicode tables this pattern compiles against ({@code null} = process default). */
     public UnicodeDataProvider unicodeProvider() { return provider; }
 
-    /** Engine for {@code matches()}: anchored both ends, compiled lazily on first use. */
+    /** Engine for {@code matches()}: cut-free whole-match artifact, compiled eagerly. */
     @EmittedSurface
     public RegexEngine wholeEngine() {
-        RegexEngine w = wholeEngine;
-        if (w == null) {
-            w = wholeSupplier.get();
-            wholeEngine = w;
-        }
-        return w;
+        return wholeEngine;
     }
 
     @Override public PatternMatcher matcher(CharSequence input) {
@@ -173,8 +164,7 @@ public TDFAPattern(String pattern, int flags, int programSize,
         in.defaultReadObject();
         TDFAPattern tmp = (TDFAPattern) Pattern.compile(pattern, flags, null, provider);
         this.engine = tmp.engine;
-        this.wholeEngine = null;
-        this.wholeSupplier = tmp.wholeSupplier;
+        this.wholeEngine = tmp.wholeEngine;
         this.provider = tmp.provider;
     }
 

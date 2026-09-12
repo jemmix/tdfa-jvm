@@ -6,7 +6,7 @@ import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
-import java.util.function.Supplier;
+
 
 /**
  * Emits the per-pattern facade shell — a Pattern/PatternMatcher pair into the
@@ -30,7 +30,7 @@ import java.util.function.Supplier;
  * final class GenNNNPattern extends TDFAPattern {
  *     public final GenNNN eng;              // concrete engine class (per-pattern), or
  *                                            // RegexEngine-typed for bring-your-own engines
- *     GenNNNPattern(String pattern, int flags, int ps, RegexEngine e, Supplier w, GenNNN eng) { ... }
+ *     GenNNNPattern(String pattern, int flags, int ps, RegexEngine e, RegexEngine w, GenNNN eng) { ... }
  *     {@literal @Override} public PatternMatcher matcher(CharSequence in) { return new GenNNNMatcher(this, in); }
  * }
  * final class GenNNNMatcher extends PatternMatcher {
@@ -58,9 +58,10 @@ public final class ShellEmitter {
      * <p>Components: {@code pattern} is the regex source text (recompiled by
      * the serialization proxy); {@code flags} the facade flag bits;
      * {@code programSize} the states in the compiled DFA (cost estimate);
-     * {@code engine} the per-pattern engine instance; {@code wholeSupplier}
-     * the lazily-compiled \A(?:...)\z-anchored engine for matches();
-     * {@code engineInternalName} the slashed internal name of a per-pattern
+     * {@code engine} the per-pattern engine instance; {@code wholeEngine}
+     * the eagerly-compiled whole-match engine for matches() (cut-free
+     * artifact, or an anchored engine on the BYO path); {@code
+     * engineInternalName} the slashed internal name of a per-pattern
      * generated engine class for concrete-type wiring, or {@code null} to
      * type the shell's engine field as {@link RegexEngine}.
      */
@@ -70,7 +71,7 @@ public final class ShellEmitter {
         private final int flags;
         private final int programSize;
         private final RegexEngine engine;
-        private final Supplier<RegexEngine> wholeSupplier;
+        private final RegexEngine wholeEngine;
         private final String engineInternalName;
         /** Pinned Unicode tables ({@code null} = process default) — threaded
          *  into the shell's super-ctor so serialization round-trips keep the
@@ -78,11 +79,11 @@ public final class ShellEmitter {
         private final io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider;
 
         public Spec(String pattern, int flags, int programSize,
-                    RegexEngine engine, Supplier<RegexEngine> wholeSupplier,
+                    RegexEngine engine, RegexEngine wholeEngine,
                     String engineInternalName,
                     io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
             this.pattern = pattern; this.flags = flags; this.programSize = programSize;
-            this.engine = engine; this.wholeSupplier = wholeSupplier;
+            this.engine = engine; this.wholeEngine = wholeEngine;
             this.engineInternalName = engineInternalName;
             this.provider = provider;
         }
@@ -90,7 +91,7 @@ public final class ShellEmitter {
         public int flags() { return flags; }
         public int programSize() { return programSize; }
         public RegexEngine engine() { return engine; }
-        public Supplier<RegexEngine> wholeSupplier() { return wholeSupplier; }
+        public RegexEngine wholeEngine() { return wholeEngine; }
         public String engineInternalName() { return engineInternalName; }
         public io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider() { return provider; }
     }
@@ -196,14 +197,13 @@ public final class ShellEmitter {
         mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matches", "()Z", null, null);
         mv.visitCode();
         // locals: 1 = m
-        // RegexEngine w = p.wholeEngine(); m = w.match(input, 0)
+        // RegexEngine w = p.wholeEngine(); m = w.matchWhole(input)
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, matOwner, "p", patDesc);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFAPATTERN, "wholeEngine", "()L" + ENGINE_ITF + ";", false);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "input", CS);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, ENGINE_ITF, "match", "(" + CS + "I)L" + RESULT + ";", true);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, ENGINE_ITF, "matchWhole", "(" + CS + ")L" + RESULT + ";", true);
         mv.visitVarInsn(Opcodes.ASTORE, 1);
         // hasMatch = m != null; if (m != null) { match=m; lms=m.start(0); lme=m.end(0); } return hasMatch;
         Label mNull = new Label(), hasMatchSet = new Label();
@@ -295,10 +295,10 @@ public final class ShellEmitter {
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER,
                 patOwner, null, TDFAPATTERN, null);
         cw.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, "eng", engDesc, null, null).visitEnd();
-        // (String pattern, int flags, int ps, RegexEngine e, Supplier w, UnicodeDataProvider prov, Eng eng)
+        // (String pattern, int flags, int ps, RegexEngine e, RegexEngine w, UnicodeDataProvider prov, Eng eng)
         String provDesc = "Lio/github/jemmix/tdfa/unicode/UnicodeDataProvider;";
         mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>",
-                "(Ljava/lang/String;IIL" + ENGINE_ITF + ";Ljava/util/function/Supplier;" + provDesc + engDesc + ")V", null, null);
+                "(Ljava/lang/String;IIL" + ENGINE_ITF + ";L" + ENGINE_ITF + ";" + provDesc + engDesc + ")V", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
@@ -308,7 +308,7 @@ public final class ShellEmitter {
         mv.visitVarInsn(Opcodes.ALOAD, 5);
         mv.visitVarInsn(Opcodes.ALOAD, 6);
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, TDFAPATTERN, "<init>",
-                "(Ljava/lang/String;IIL" + ENGINE_ITF + ";Ljava/util/function/Supplier;" + provDesc + ")V", false);
+                "(Ljava/lang/String;IIL" + ENGINE_ITF + ";L" + ENGINE_ITF + ";" + provDesc + ")V", false);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitVarInsn(Opcodes.ALOAD, 7);
         mv.visitFieldInsn(Opcodes.PUTFIELD, patOwner, "eng", engDesc);
@@ -355,10 +355,10 @@ public final class ShellEmitter {
                     ? Class.forName(engOwner.replace('/', '.'), true, gcl)
                     : RegexEngine.class;
             return patCls.getDeclaredConstructor(
-                    String.class, int.class, int.class, RegexEngine.class, Supplier.class,
+                    String.class, int.class, int.class, RegexEngine.class, RegexEngine.class,
                     io.github.jemmix.tdfa.unicode.UnicodeDataProvider.class, engCls
             ).newInstance(spec.pattern(), spec.flags(), spec.programSize(),
-                    engInstance, spec.wholeSupplier(), spec.provider(), engInstance);
+                    engInstance, spec.wholeEngine(), spec.provider(), engInstance);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("shell emission failed", e);
         }

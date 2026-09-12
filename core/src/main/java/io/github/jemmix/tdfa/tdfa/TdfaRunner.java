@@ -326,15 +326,8 @@ public final class TdfaRunner implements RegexEngine {
      * differs: no stop table, one gate + φ application at EOF.
      */
     @EmittedSurface @Override public MatchResult matchWhole(CharSequence input) {
-        MatchHolder h;
-        if (input instanceof String) {
-            String s = (String) input;
-            trace(Strategy.ANCHORED);
-            h = wholeWalk(s, 0, s.length());
-        } else {
-            trace(Strategy.GENERIC);
-            h = runGeneric(input, 0, input.length(), true);
-        }
+        trace(input instanceof String ? Strategy.ANCHORED : Strategy.GENERIC);
+        MatchHolder h = wholeWalk(input, 0, input.length());
         if (h == null) return null;
         if (tdfa.fixedBase != null) {
             MatchResult.reconstructFixed(h.regs, tdfa.finalRegBase, tdfa.fixedBase, tdfa.fixedOffset);
@@ -342,8 +335,8 @@ public final class TdfaRunner implements RegexEngine {
         return new MatchResult(h.regs, tdfa.finalRegBase, tdfa.groupCount, h.matchStart, h.matchEnd);
     }
 
-    /** String whole-walk; null = input is not a full match. See {@link #matchWhole}. */
-    private MatchHolder wholeWalk(String input, int from, int to) {
+    /** Whole-walk (String and generic CharSequence); null = not a full match. See {@link #matchWhole}. */
+    private MatchHolder wholeWalk(CharSequence input, int from, int to) {
         final int[] sm = this.stateMeta;
         final int[] rg = this.ranges;
         final int[] op = this.ops;
@@ -369,7 +362,7 @@ public final class TdfaRunner implements RegexEngine {
         // Entry check for start state — inline
         {
             int entryReq = sem[state];
-            if (entryReq != 0 && (positionFlags(input, pos, to) & entryReq) != entryReq) return null;
+            if (entryReq != 0 && (positionFlagsCS(input, pos, to) & entryReq) != entryReq) return null;
         }
 
         int posFlags = -1;
@@ -406,7 +399,7 @@ public final class TdfaRunner implements RegexEngine {
                     if (c <= rg[o + 1]) {
                         int requiredMask = rg[o + 4];
                         if (requiredMask != 0) {
-                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                            if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
                             if ((posFlags & requiredMask) != requiredMask) continue;
                         }
                         int spec = Integer.bitCount(requiredMask);
@@ -426,7 +419,7 @@ public final class TdfaRunner implements RegexEngine {
                     int requiredMask = rg[o + 4];
                     boolean ok = requiredMask == 0;
                     if (!ok) {
-                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                        if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
                         ok = (posFlags & requiredMask) == requiredMask;
                     }
                     if (ok) { chosen = o; chosenTarget = target; }
@@ -438,7 +431,7 @@ public final class TdfaRunner implements RegexEngine {
             int width = c > 0xFFFF ? 2 : 1;
             int entryReqNext = sem[chosenTarget];
             if (entryReqNext != 0
-                    && (positionFlags(input, pos + width, to) & entryReqNext) != entryReqNext) return null;
+                    && (positionFlagsCS(input, pos + width, to) & entryReqNext) != entryReqNext) return null;
             if (regs != null) {
                 int opsOff = rg[chosen + 3];
                 if (opsOff != 0) applyOps(op, opsOff, regs, pos);
@@ -451,7 +444,7 @@ public final class TdfaRunner implements RegexEngine {
         // EOF: an alive accept config here consumed exactly [from, to) — a
         // full match. Gate and apply the winner's φ reading EOF-time registers.
         if ((sm[state] & 1) == 0) return null;
-        int eofFlags = positionFlags(input, to, to);
+        int eofFlags = positionFlagsCS(input, to, to);
         final int[] fm = this.finalOpsByMask;
         if (fm != null) {
             int cell = fm[state * 64 + eofFlags];
