@@ -1273,6 +1273,57 @@ hard-gating every fixed family, replay corpora, probe-before-fix.
       budget demonstrates the bomb families rejecting in seconds. README documents
       the honest eager-DFA cost vs lazy engines.
 
+## Single-compile whole/find (2026-09-12)
+
+`Pattern.compile` builds everything eagerly from one parse: the whole-match
+artifact is a cut-free (`compileUnpruned`) determinization of the same TNFA,
+shared with find() whenever the pike-cut predicate says the cut would change
+nothing (see `Tdfa.pikeCutMatters`); divergence-class patterns keep a pruned
+find artifact beside it. `matchWhole` walks to EOF — an accept config alive at
+end-of-input is a full match. Work that remains:
+
+- [ ] **DESIGN RULE — no lazy compiles, ever: if it dies during construction,
+      it dies.** `Pattern.compile` must be the whole story; no engine may be
+      materialized on first match call. The current `LazyEngine` corner in
+      `PatternCompiler`'s budget ladder (whole build over `WHOLE_WORK_CAP` →
+      historical lazy anchored engine, rejection surfaces at first
+      `matches()`) is an accepted-for-now DEVIATION kept solely so
+      compile() acceptance stays tied to the find artifact — remove it: the
+      whole artifact is built eagerly or `compile()` fails with the budget
+      rejection outright. Landing this requires a corpus-impact decision
+      first (bombs like `(a{1,100}){1,100}` currently compile find-only and
+      would start failing compile(); `SingleCompileWholeTest.
+      bombOverBudgetKeepsHistoricalContract` pins the deviation and flips
+      with it).
+- [ ] Inline `matchWhole` into generated engines (ASM tier) — it is currently
+      a delegating stub to the embedded `TdfaRunner`, so `matches()` runs the
+      interpreted walk instead of the previously-inlined generated anchored
+      walk. Emit the whole-walk leaf the same way `extractOne` is emitted if
+      the benchmark run below shows it matters.
+- [ ] **Benchmark the single-compile change** — not yet measured. Run
+      `scripts/bench-regression.sh --quick` (then `--jmh` if quick is clean)
+      against `benchmarks/baselines/`: expected finds: compile deltas
+      (dictionary single-compile faster; datefinder ~2× slower — two eager
+      determinizations, unpruned whole + pruned find), `matches()`
+      throughput (interpreted walk now — see previous item), `find()`
+      expected flat (tables identical: same artifact for safe patterns, same
+      pruned compile for cut-matters). Recapture baselines per policy if
+      within thresholds.
+- [ ] Pre-existing, now more visible: `RegexEngine.matches` (the boolean
+      whole walk) is wrong on raw PRUNED artifacts — `(a|ab)` on `"ab"`
+      returns false (the cut deleted the `ab` continuation; facade-built
+      engines are correct since they carry the unpruned artifact). Either
+      reroute it through `matchWhole != null` everywhere or document the
+      anchored-artifact-only contract on the interface.
+- [ ] Overnight fuzz round for the unpruned determinization (validated so
+      far with a 4×2 min patched-oracle soak vs the pre-change commit:
+      0 mismatches both sides).
+- [ ] Maybe: shave the double determinization for cut-matters patterns
+      (parse is shared; determinization is the whole cost — a smarter
+      reuse would need the subordinate-marking refinement discussed in the
+      design round; only worth it if datefinder-class compile walls bother
+      anyone after the benchmark run).
+
 ## Wishlist (maybe, someday, if motivated)
 
 - [ ] `condy` / `invokedynamic` for lazy per-regex specialization
