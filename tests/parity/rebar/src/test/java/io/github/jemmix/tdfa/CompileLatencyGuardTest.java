@@ -49,14 +49,20 @@ import static org.assertj.core.api.Assertions.assertThat;
  * count verification on both backends — far outside this guard's 5 s
  * scope by design.
  *
- * <p>Budget: 5 s per compile (generous CI headroom over the ~3 s worst
- * measured on a laptop; the point is catching superlinear regressions, not
- * micro-optimizing).
+ * <p>Budget: 10 s per compile. The single-compile facade made compile()
+ * eagerly build the whole-match artifact (and, for pike-cut-divergent
+ * patterns like datefinder, the second pruned find artifact) — datefinder
+ * went from ~1 s (find only; the anchored engine compiled lazily and this
+ * test never called matches()) to ~1.5 s locally / up to ~6 s on a slow CI
+ * runner. 10 s keeps the guard's purpose — catching superlinear
+ * regressions, not micro-optimizing — with headroom over the CI worst
+ * measured, while aws-keys sits at ~2 s CI (its whole attempt rejects at
+ * WHOLE_WORK_CAP and degrades to the lazy anchored engine).
  */
 class CompileLatencyGuardTest {
 
     /** Wall budget per compile, milliseconds. */
-    private static final long BUDGET_MS = 5_000;
+    private static final long BUDGET_MS = 10_000;
 
     static String benchmarksDir = System.getProperty("rebar.benchmarks.dir");
 
