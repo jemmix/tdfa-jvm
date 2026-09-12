@@ -34,7 +34,7 @@ public final class CompilationReport implements CompileObserver {
         notes.put(key, value);
     }
 
-    /** Total wall-clock nanoseconds spent in {@code stage} (summed across eager + lazy compiles). */
+    /** Total wall-clock nanoseconds spent in {@code stage} (summed across the compile's artifacts). */
     public long nanos(CompileObserver.Stage stage) { return nanos.getOrDefault(stage, 0L); }
 
     /** Stage detail (per-stage semantics, summed if the stage fired more than once). */

@@ -23,9 +23,14 @@ package io.github.jemmix.tdfa.core;
  * implementation is a no-op — compile with no observer attached pays a handful
  * of virtual calls, nothing else.
  *
- * <p><b>Lazy stages.</b> The anchored whole-engine backing {@code matches()}
- * compiles on first use; its stages fire into the same observer at that
- * point, not during {@code compile()}.
+ * <p><b>Stage multiplicity.</b> A compile runs the pipeline once for the
+ * whole-match artifact (cut-free determinization) and — only when the pike
+ * cut matters for find() or the whole attempt is over budget — once more for
+ * the pruned find artifact; stages fire once per artifact, in that order.
+ * The single-artifact case (the vast majority) fires each stage exactly
+ * once, all inside {@code compile()} — nothing compiles lazily anymore,
+ * except the documented over-budget bomb corner ({@code whole} note), where
+ * matches() compiles the anchored engine on first use.
  */
 public interface CompileObserver {
 

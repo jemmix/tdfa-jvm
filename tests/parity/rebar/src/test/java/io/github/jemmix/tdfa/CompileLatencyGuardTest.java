@@ -26,7 +26,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       alternation"; now ~1-3 s);</li>
  *   <li>{@code curated/09-aws-keys/full} — 191-char nested bounded/greedy
  *       alternation (was: AST bomb rule "variable bounded repeat of
- *       wide-unbounded repeat"; now ~0.4 s);</li>
+ *       wide-unbounded repeat"; ~0.4 s through the find compile, ~1.4 s with
+ *       the eager whole attempt rejecting at its work cap —
+ *       PatternCompiler.WHOLE_WORK_CAP — and degrading to the lazy
+ *       anchored whole engine);</li>
  *   <li>{@code curated/12-dictionary/single} — 2 663-branch literal
  *       alternation, 45 KB regex (legitimately slow-but-finishing;
  *       19.5 K states, minimizes to 6.8 K; ~1.5 s — guards the stateIndex
