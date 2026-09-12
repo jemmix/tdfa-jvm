@@ -72,18 +72,18 @@ final class PatternCompiler {
             // unless the pike cut provably matters; then find keeps the pruned
             // compile and whole runs on this one (two artifacts, one parse).
             //
-            // Budget ladder for bomb shapes: the unpruned build's kernels can
-            // exceed the determinization caps that the pruned build fits (cuts
-            // bound kernel growth). Then whole tries the eager ANCHORED build;
-            // if that is over budget too, whole degrades to the historical
-            // LAZY anchored engine so compile() acceptance stays exactly the
-            // find artifact's (matches() surfaces the rejection on first use,
-            // the pre-eager observable behavior). Everything outside the caps'
-            // bomb class compiles fully eagerly.
+            // The whole attempt is WORK-BOUNDED (WHOLE_WORK_CAP): a cut-heavy
+            // pattern's cut-free build can churn orders of magnitude past its
+            // pruned cost (aws-keys: ~4G ticks vs 30M) before the output caps
+            // trip, and an eager attempt at the default budget would stall
+            // compile() for seconds. A bounded rejection degrades whole to the
+            // historical LAZY anchored engine — compile() acceptance stays
+            // exactly the find artifact's, and matches() surfaces the
+            // rejection on first use (the pre-eager observable behavior).
             Tdfa wholeTdfa;
             Tdfa findTdfa;
             try {
-                wholeTdfa = Tdfa.compileUnpruned(nfa, longest, obs);
+                wholeTdfa = Tdfa.compileUnpruned(nfa, longest, obs, WHOLE_WORK_CAP);
                 if (wholeTdfa.pikeCutMatters()) {
                     obs.note("pikeCut", "find recompiled (pruned; whole kept unpruned)");
                     findTdfa = Tdfa.compile(nfa, longest, obs);
@@ -92,16 +92,10 @@ final class PatternCompiler {
                 }
             } catch (RuntimeException overBudget) {
                 if (!budgetRejection(overBudget)) throw overBudget;
+                obs.note("whole", "unpruned build over budget — lazy anchored whole;"
+                        + " compile acceptance follows the find artifact");
+                wholeTdfa = null;
                 findTdfa = Tdfa.compile(nfa, longest, obs);
-                try {
-                    wholeTdfa = anchorTdfa(fl, disableUnicodeGroups, longest, prov, regex);
-                    obs.note("whole", "unpruned build over determinization budget — eager anchored");
-                } catch (RuntimeException overBudget2) {
-                    if (!budgetRejection(overBudget2)) throw overBudget2;
-                    wholeTdfa = null;
-                    obs.note("whole", "over budget (unpruned and anchored) — lazy anchored whole;"
-                            + " compile acceptance follows the find artifact");
-                }
             }
             int ps = findTdfa.stateCount();
 
@@ -186,6 +180,14 @@ final class PatternCompiler {
     private static final int VALID_FLAGS = Pattern.CASE_INSENSITIVE | Pattern.DOTALL
             | Pattern.MULTILINE | Pattern.DISABLE_UNICODE_GROUPS | Pattern.LONGEST_MATCH
             | Pattern.UNICODE_CHARACTER_CLASS;
+
+    /**
+     * Work budget (ticks) for the eager whole-match attempt: ~3x the worst
+     * legit in-corpus unpruned build measured (datefinder at ~88M ticks /
+     * ~0.7 s) while rejecting cut-heavy shapes (aws-keys ~4G ticks) in about
+     * a second instead of stalling compile() for tens of seconds.
+     */
+    private static final long WHOLE_WORK_CAP = 1L << 28;
 
     /**
      * Whole-match engine for the facade's own tiers: the find engine itself

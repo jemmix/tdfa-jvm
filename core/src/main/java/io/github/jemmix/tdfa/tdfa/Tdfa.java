@@ -510,7 +510,23 @@ public final class Tdfa {
      */
     public static Tdfa compileUnpruned(Tnfa nfa, boolean longestMatch,
                                        io.github.jemmix.tdfa.core.CompileObserver observer) {
-        return new TdfaCompiler(nfa, longestMatch, true).compile(observer);
+        return compileUnpruned(nfa, longestMatch, observer, -1L);
+    }
+
+    /**
+     * Work-bounded variant of {@link #compileUnpruned(Tnfa, boolean, CompileObserver)}:
+     * {@code workCap > 0} clamps the compile work budget to
+     * {@code min(-Dtdfa.max.work, workCap)} ticks (positive caps only tighten —
+     * a user-lowered property still wins). The facade uses this to bound its
+     * whole-match attempt: a cut-heavy pattern's cut-free build can churn
+     * orders of magnitude past its pruned cost before the output caps trip,
+     * and a bounded rejection degrades to the historical lazy whole engine
+     * instead of stalling compile().
+     */
+    public static Tdfa compileUnpruned(Tnfa nfa, boolean longestMatch,
+                                       io.github.jemmix.tdfa.core.CompileObserver observer,
+                                       long workCap) {
+        return new TdfaCompiler(nfa, longestMatch, true, workCap).compile(observer);
     }
 
     /**

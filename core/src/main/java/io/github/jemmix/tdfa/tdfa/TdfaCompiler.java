@@ -21,8 +21,9 @@ final class TdfaCompiler {
         final int tags;
         /** Compile work budget: every unbounded loop ticks it (fuzzer-found
          *  nested-quantifier bombs churn fixpoints without growing output —
-         *  the state/kernel caps never trip). */
-        final WorkMeter meter = new WorkMeter(Long.getLong("tdfa.max.work", 1L << 32));
+         *  the state/kernel caps never trip). {@code null} = the
+         *  {@code tdfa.max.work} property default. */
+        final WorkMeter meter;
         int[][] epsOut;
         int[][] symOut;
         /** Per-state popped-mask bitsets for the closure's subsumption cut (see epsilonClosure). */
@@ -137,6 +138,20 @@ final class TdfaCompiler {
         }
 
         TdfaCompiler(Tnfa nfa, boolean longestMatch, boolean unpruned) {
+            this(nfa, longestMatch, unpruned, -1L);
+        }
+
+        /**
+         * @param workCap upper bound on the compile work budget (ticks);
+         *        {@code <= 0} uses the {@code tdfa.max.work} property verbatim;
+         *        a positive value is applied as {@code min(property, cap)} so
+         *        user-lowered budgets win and only deliberate raises are
+         *        tightened. Used by the facade's whole-match attempt to bound
+         *        how long an over-budget unpruned build may burn before
+         *        rejecting (the cut-free build of a cut-heavy pattern can
+         *        churn orders of magnitude past its pruned cost).
+         */
+        TdfaCompiler(Tnfa nfa, boolean longestMatch, boolean unpruned, long workCap) {
             this.nfa = nfa;
             this.tags = nfa.tagCount;
             this.epsOut = sortedOutgoing(nfa.epsFrom, nfa.epsPri);
@@ -150,6 +165,8 @@ final class TdfaCompiler {
             this.breakpoints = computeBreakpoints();
             this.longest = longestMatch;
             this.unpruned = unpruned;
+            long work = Long.getLong("tdfa.max.work", 1L << 32);
+            this.meter = new WorkMeter(workCap > 0 ? Math.min(work, workCap) : work);
             // Per-cell active symbol-edge sets (see rangeActiveEdges). Each class range
             // [lo, hi] covers a contiguous run of breakpoint cells: lo and hi+1 are
             // themselves breakpoints (they are boundaries of this very class), so the
