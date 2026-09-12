@@ -182,12 +182,16 @@ final class PatternCompiler {
             | Pattern.UNICODE_CHARACTER_CLASS;
 
     /**
-     * Work budget (ticks) for the eager whole-match attempt: ~3x the worst
-     * legit in-corpus unpruned build measured (datefinder at ~88M ticks /
-     * ~0.7 s) while rejecting cut-heavy shapes (aws-keys ~4G ticks) in about
-     * a second instead of stalling compile() for tens of seconds.
+     * Work budget (ticks) for the eager whole-match attempt: comfortably above
+     * the worst legit in-corpus unpruned build measured (datefinder's
+     * (?i)(?u) variant at ~115M ticks — tick counts are deterministic,
+     * machine-independent) while rejecting cut-heavy shapes (aws-keys ~4G
+     * ticks) in well under a second, so even a slow CI runner stays inside
+     * the rebar compile-latency guard's 5 s budget (aws: ~1.4 s local, ~2 s
+     * CI, including the bounded rejection, the pruned find compile and the
+     * ASM generation).
      */
-    private static final long WHOLE_WORK_CAP = 1L << 28;
+    private static final long WHOLE_WORK_CAP = 1L << 27;
 
     /**
      * Whole-match engine for the facade's own tiers: the find engine itself
