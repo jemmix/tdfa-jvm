@@ -28,8 +28,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       alternation (was: AST bomb rule "variable bounded repeat of
  *       wide-unbounded repeat"; ~0.4 s through the find compile, ~1.4 s
  *       with the eager whole attempt rejecting at its work cap —
- *       PatternCompiler.WHOLE_WORK_CAP — and the eagerly compiled
- *       anchored whole artifact taking over);</li>
+ *       SingleCompile.WHOLE_WORK_CAP — and both bounded whole attempts
+ *       recorded);</li>
  *   <li>{@code curated/12-dictionary/single} — 2 663-branch literal
  *       alternation, 45 KB regex (legitimately slow-but-finishing;
  *       19.5 K states, minimizes to 6.8 K; ~1.5 s — guards the stateIndex

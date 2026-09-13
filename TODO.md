@@ -1280,8 +1280,8 @@ artifact is a cut-free (`compileUnpruned`) determinization of the same TNFA,
 shared with find() whenever the pike-cut predicate says the cut would change
 nothing (see `Tdfa.pikeCutMatters`); divergence-class patterns keep a pruned
 find artifact beside it. `matchWhole` walks to EOF — an accept config alive at
-end-of-input is a full match. The follow-up list, resolved (commit 0fded73,
-benchmarks below):
+end-of-input is a full match. The follow-up list, resolved (commits 0fded73
++ 7df04fc, benchmarks below):
 
 - [x] **DESIGN RULE — no lazy compiles, ever.** `LazyEngine` is removed;
       nothing materializes on a match call. The over-budget corner eagerly
@@ -1324,11 +1324,17 @@ benchmarks below):
       interface (exact over anchored/unpruned artifacts; over pruned
       unanchored artifacts where the cut fired, matches() may reject
       whole-matchable inputs — use the facade, which always carries a
-      whole-exact engine).
+      whole-exact engine). The ladder itself now lives in ONE place —
+      `core.SingleCompile`, shared by the facade AND the evergreen
+      `CompiledRegex` tier, whose matches() had the same pre-refactoring
+      shape (anchored walk over the pruned artifact — `(a|ab)` on "ab"
+      returned false); it is exact now, pinned in
+      `SingleCompileWholeTest.evergreenTier`.
 - [ ] Overnight fuzz round for the unpruned determinization + the new ladder
-      (validated so far: 4×2 min patched-oracle soak pre-change, 1 min
-      patched-oracle slice post-change — 406 K cases, 0 mismatches, 0 hangs,
-      88 BUDGET_REJECT = the known bomb class at the usual rate).
+      (validated so far: 4×2 min patched-oracle soak pre-change, plus
+      406 K-case and 8-min/2.96 M-case patched-oracle slices on the final
+      ladder — 0 mismatches, 0 hangs, 808 BUDGET_REJECT = the known bomb
+      class at the usual rate).
 - [ ] Maybe: shave the double determinization for cut-matters patterns
       (parse is shared; determinization is the whole cost — a smarter
       reuse would need the subordinate-marking refinement discussed in the
