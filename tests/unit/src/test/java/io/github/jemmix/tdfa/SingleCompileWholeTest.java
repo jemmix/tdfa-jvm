@@ -111,6 +111,35 @@ class SingleCompileWholeTest {
         expectCommon();
     }
 
+    /**
+     * The evergreen core tier ({@code CompiledRegex}) runs the same
+     * single-compile ladder: matches() through the eagerly compiled whole
+     * engine, find() leftmost-first, and the bomb corner records its
+     * rejection at compile time (find keeps working).
+     */
+    @Test
+    void evergreenTier() {
+        io.github.jemmix.tdfa.core.CompiledRegex p =
+                io.github.jemmix.tdfa.core.CompiledRegex.compile("(a|ab)");
+        assertThat(p.matches("ab")).isTrue();
+        assertThat(p.matches("ac")).isFalse();
+        assertThat(p.find("xxab")).isTrue();
+        io.github.jemmix.tdfa.core.CompiledRegex q =
+                io.github.jemmix.tdfa.core.CompiledRegex.compile("ab|a|ac");
+        assertThat(q.matches("ac")).isTrue();
+        assertThat(q.find("xac")).isTrue();
+        io.github.jemmix.tdfa.core.CompiledRegex m =
+                io.github.jemmix.tdfa.core.CompiledRegex.compile("a$");
+        assertThat(m.matches("a")).isTrue();
+        assertThat(m.matches("a\nb")).isFalse();
+        io.github.jemmix.tdfa.core.CompiledRegex bomb =
+                io.github.jemmix.tdfa.core.CompiledRegex.compile("(a{1,100}){1,100}");
+        assertThat(bomb.find("a".repeat(120))).isTrue();
+        assertThatThrownBy(() -> bomb.matches("a".repeat(50)))
+                .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
+                .hasMessageContaining("pattern too large");
+    }
+
     @Test
     void interpreterFactory() {
         // BYO factory: whole is the facade's whole engine over the shared
