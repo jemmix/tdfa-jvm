@@ -152,6 +152,18 @@ class StrategyConformanceTest {
         t2 = TdfaRunner.traceSnapshot();
         assertThat(b2).as("%s: matches result", ctx).isEqualTo(b1);
         assertThat(t2).as("%s: matches strategy trace (vm=%s)", ctx, t1).isEqualTo(t1);
+        // matchWhole() — the generated wholeOne leaf vs the runner's wholeWalk
+        TdfaRunner.traceSnapshot();
+        MatchResult w1 = vm.matchWhole(in);
+        t1 = TdfaRunner.traceSnapshot();
+        MatchResult w2 = asm.matchWhole(in);
+        t2 = TdfaRunner.traceSnapshot();
+        assertSameResult(w1, w2, ctx + " [matchWhole]");
+        assertThat(t2).as("%s: matchWhole strategy trace (vm=%s)", ctx, t1).isEqualTo(t1);
+        // CharSequence input: both must take the GENERIC delegation path
+        CharSequence cs = new StringBuilder(in);
+        assertThat(asm.matchWhole(cs) == null).as("%s: matchWhole(CharSequence) nullity", ctx)
+                .isEqualTo(vm.matchWhole(cs) == null);
         return 9;
     }
 

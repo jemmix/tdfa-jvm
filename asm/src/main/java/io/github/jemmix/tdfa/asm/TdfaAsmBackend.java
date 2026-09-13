@@ -114,7 +114,8 @@ public final class TdfaAsmBackend {
             genMatches(cw, owner);
             genFind(cw, owner);
             genMatch(cw, owner);
-            genMatchWhole(cw, owner);
+            genMatchWholeInlined(cw, owner);
+            genWholeOne(cw, tdfa, owner);
             genExtractOne(cw, tdfa, owner);
             genToResult(cw, tdfa, owner);
             genEntryOkC(cw, owner);
@@ -1898,11 +1899,10 @@ public final class TdfaAsmBackend {
     }
 
     /**
-     * Override of the {@code RegexEngine.matchWhole} default: delegates to the
-     * embedded runner's native cut-free whole walk. Shared by both dispatch
-     * modes (both hold a final {@code runner}); the v1 shape is delegation —
-     * inlining the whole loop into the generated class is future work if the
-     * matches() micro-benchmarks demand it.
+     * Override of the {@code RegexEngine.matchWhole} default. DELEGATE-mode
+     * classes forward to the embedded runner's native cut-free whole walk
+     * (the runner holds the same artifact, so the walk is exact). INLINED
+     * classes ({@link #genMatchWholeInlined}) emit the walk itself.
      */
     private static void genMatchWhole(ClassWriter cw, String owner) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + ")L" + RESULT + ";", null, null);
@@ -1913,6 +1913,130 @@ public final class TdfaAsmBackend {
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "matchWhole", "(" + CS_D + ")L" + RESULT + ";", false);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitMaxs(0, 0); mv.visitEnd();
+    }
+
+    /**
+     * INLINED-mode {@code matchWhole}: String inputs run the emitted
+     * whole-walk leaf ({@link #genWholeOne} — same per-state dispatch and
+     * register machinery as {@code extractOne}, whole protocol: no stop
+     * table, accept gate + φ exactly at EOF); non-Strings delegate to the
+     * runner's generic walk. Traces ANCHORED/GENERIC at the same points
+     * {@code TdfaRunner.matchWhole} does (strategy conformance).
+     */
+    private static void genMatchWholeInlined(ClassWriter cw, String owner) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + ")L" + RESULT + ";", null, null);
+        mv.visitCode();
+        // locals: 1 = s
+        Label isStr = new Label();
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitTypeInsn(Opcodes.INSTANCEOF, STR);
+        mv.visitJumpInsn(Opcodes.IFNE, isStr);
+        emitTrace(mv, "GENERIC");
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "matchWhole", "(" + CS_D + ")L" + RESULT + ";", false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitLabel(isStr);
+        emitTrace(mv, "ANCHORED");
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, STR);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "wholeOne", "(Ljava/lang/String;)L" + HOLDER + ";", false);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "toResult", "(L" + HOLDER + ";)L" + RESULT + ";", false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0); mv.visitEnd();
+    }
+
+    /**
+     * The generated whole-walk leaf ({@code private static MatchHolder
+     * wholeOne(String s)}): anchored at 0, walks to end-of-input, succeeds
+     * iff an accept is alive exactly at EOF — the bytecode transcription of
+     * {@code TdfaRunner.wholeWalk} for fastPath DFAs (no masks, disjoint
+     * ranges — pickMode guarantees this for INLINED classes), so the mask
+     * machinery degenerates away: no positionFlags, no entry checks, no
+     * stop table; φ applies once at EOF reading EOF-time registers. A dead
+     * step (no transition) means the input is not a whole match — null.
+     */
+    private static void genWholeOne(ClassWriter cw, Tdfa tdfa, String owner) {
+        final int[] op = tdfa.ops();
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                "wholeOne", "(Ljava/lang/String;)L" + HOLDER + ";", null, null);
+        mv.visitCode();
+        // locals: 0=s, 1=len, 2=state, 3=pos, 4=regs, 5=c, 6=t1/scratch, 7=r
+        final int IN = 0, LEN = 1, STATE = 2, POS = 3, REGS = 4, C_LV = 5, PF = 6;
+        mv.visitVarInsn(Opcodes.ALOAD, IN);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "length", "()I", false);
+        mv.visitVarInsn(Opcodes.ISTORE, LEN);
+        // regs from the per-thread pool (clone-before-return, as extractOne)
+        if (tdfa.registerCount() == 0) {
+            mv.visitInsn(Opcodes.ACONST_NULL);
+            mv.visitVarInsn(Opcodes.ASTORE, REGS);
+        } else {
+            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "REGS_POOL", REGS_POOL_D);
+            ic(mv, tdfa.registerCount());
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, REGS_POOL_C, "take", "(I)[I", false);
+            mv.visitVarInsn(Opcodes.ASTORE, REGS);
+            mv.visitVarInsn(Opcodes.ALOAD, REGS);
+            mv.visitInsn(Opcodes.ICONST_M1);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, ARRAYS, "fill", "([II)V", false);
+        }
+        // fastPath ⇒ ENTRY_MASK[0] == 0: no start-entry check to emit
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitVarInsn(Opcodes.ISTORE, STATE);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitVarInsn(Opcodes.ISTORE, POS);
+
+        // loop: while (pos < len) step; dead → null
+        Label loop = new Label(), eof = new Label(), dead = new Label();
+        mv.visitLabel(loop);
+        mv.visitVarInsn(Opcodes.ILOAD, POS);
+        mv.visitVarInsn(Opcodes.ILOAD, LEN);
+        mv.visitJumpInsn(Opcodes.IF_ICMPGE, eof);
+        mv.visitVarInsn(Opcodes.ALOAD, IN);
+        mv.visitVarInsn(Opcodes.ILOAD, POS);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
+        mv.visitVarInsn(Opcodes.ISTORE, C_LV);
+        emitCodePointDecode(mv, IN, C_LV, POS, LEN, PF);   // PF slot doubles as scratch t1
+        emitDfaDispatch(mv, tdfa, owner, IN, STATE, POS, LEN, PF, C_LV, REGS, loop, dead, op);
+        mv.visitLabel(dead);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ARETURN);
+
+        // EOF: accept gate + eager φ reading EOF-time registers, then the holder
+        mv.visitLabel(eof);
+        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "IS_ACCEPT", "[I");
+        mv.visitVarInsn(Opcodes.ILOAD, STATE);
+        mv.visitInsn(Opcodes.IALOAD);
+        Label noAcc = new Label();
+        mv.visitJumpInsn(Opcodes.IFEQ, noAcc);
+        if (tdfa.registerCount() > 0) {
+            mv.visitVarInsn(Opcodes.ILOAD, STATE);
+            mv.visitVarInsn(Opcodes.ALOAD, REGS);
+            mv.visitVarInsn(Opcodes.ILOAD, LEN);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phi", "(I[II)V", false);
+        }
+        // r = regs == null ? new int[0] : regs.clone(); return new MatchHolder(0, len, r)
+        if (tdfa.registerCount() == 0) {
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
+        } else {
+            mv.visitVarInsn(Opcodes.ALOAD, REGS);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "[I", "clone", "()Ljava/lang/Object;", false);
+            mv.visitTypeInsn(Opcodes.CHECKCAST, "[I");
+        }
+        mv.visitVarInsn(Opcodes.ASTORE, 7);   // r
+        mv.visitTypeInsn(Opcodes.NEW, HOLDER);
+        mv.visitInsn(Opcodes.DUP);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitVarInsn(Opcodes.ILOAD, LEN);
+        mv.visitVarInsn(Opcodes.ALOAD, 7);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, HOLDER, "<init>", "(II[I)V", false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitLabel(noAcc);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
     /** RegexEngine metadata (groupCount/namedGroups/programSize), delegating to
      *  the final {@code runner} field — monomorphic. Needed by both dispatch

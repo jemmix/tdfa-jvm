@@ -60,8 +60,8 @@ public final class ShellEmitter {
      * {@code programSize} the states in the compiled DFA (cost estimate);
      * {@code engine} the per-pattern engine instance; {@code wholeEngine}
      * the eagerly-compiled whole-match engine for matches() (cut-free
-     * artifact, or an anchored engine on the BYO path); {@code
-     * engineInternalName} the slashed internal name of a per-pattern
+     * artifact, or an anchored engine on the over-budget corner);
+     * {@code engineInternalName} the slashed internal name of a per-pattern
      * generated engine class for concrete-type wiring, or {@code null} to
      * type the shell's engine field as {@link RegexEngine}.
      */

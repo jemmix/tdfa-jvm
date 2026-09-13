@@ -145,42 +145,57 @@ class CompileBudgetTest {
         }
     }
 
-    /** Fuzz round 27 (caseSeeds 4496606199222982303, 917334682215128318 —
-     *  HANG_ENGINE, verdict=spin): the budget-corner LazyEngine re-ran its
-     *  doomed anchored whole compile on EVERY matches() call (delegate stays
-     *  null on failure), so a batch of M-probes re-burned the 8 M-tick
-     *  rejection ~16× and crossed the fuzz watchdog as a spin; at the library
-     *  budget the state-cap family pays the full rejection (~57 M ticks) per
-     *  call, forever. The failure must cache: same exception instance, no
-     *  recompile. Pinned with \x{...}/ escapes per CFG_EDGE_BOMB above. */
+    /** Fuzz round 27's spin family (caseSeeds 4496606199222982303,
+     *  917334682215128318), under the no-lazy-compiles contract: a bomb
+     *  whose whole builds (unpruned AND anchored) exceed the budget runs
+     *  each doomed attempt exactly ONCE — inside compile() — and every
+     *  matches() call rethrows the recorded rejection; nothing recompiles
+     *  at match time (the former LazyEngine corner re-burned the 8 M-tick
+     *  rejection ~16× per batch and crossed the fuzz watchdog as a spin).
+     *  compile() acceptance still follows the find artifact alone — the
+     *  bounded-gap family ([\s\S]{0,60}x[\s\S]{0,60}: find compiles, the
+     *  whole DFA is an intrinsically-100K+-state counter cross-product)
+     *  keeps find() working. Pinned with \x{...}/escapes per CFG_EDGE_BOMB
+     *  above. */
     @Test
-    void lazyWholeRejectionIsCachedNotRetriedPerCall() {
+    void bombWholeOverBudgetRecordsRejectionOnceEagerly() {
         String bomb = "(?:(?m:\u00e9)(?:\\w[^\u03a9z\\-]{0,}|\ud835\udd04\udfff){1,4}){1,5}";
         System.setProperty("tdfa.max.work", "8388608");
         try {
-            io.github.jemmix.tdfa.Pattern p = Pattern.compile(bomb);   // find artifact accepted
-            RuntimeException[] first = new RuntimeException[1];
             long t0 = System.nanoTime();
-            assertThatCode(() -> {
-                try { p.matcher("\u00e9zz").matches(); }
-                catch (RuntimeException ex) { first[0] = ex; throw ex; }
-            }).isInstanceOf(PatternSyntaxException.class)
-                    .hasMessageContaining("pattern too large");
-            long rejectionMs = (System.nanoTime() - t0) / 1_000_000;
-            // the retry that must NOT recompile: same cached instance, ~free
+            io.github.jemmix.tdfa.Pattern p = Pattern.compile(bomb);   // find artifact accepted
+            assertThat((System.nanoTime() - t0) / 1_000_000)
+                    .as("wall of the eager ladder (two bounded doomed whole builds)")
+                    .isLessThan(10_000);
+            RuntimeException[] recorded = new RuntimeException[1];
+            assertThatCode(() -> p.matcher("\u00e9zz").matches())
+                    .isInstanceOf(PatternSyntaxException.class)
+                    .hasMessageContaining("pattern too large")
+                    .satisfies(ex -> recorded[0] = (RuntimeException) ex);
             long t1 = System.nanoTime();
             assertThatCode(() -> p.matcher("\u00e9zz").matches())
-                    .isInstanceOf(PatternSyntaxException.class);
+                    .isInstanceOf(PatternSyntaxException.class)
+                    .satisfies(ex -> assertThat((RuntimeException) ex).isSameAs(recorded[0]));
             assertThat((System.nanoTime() - t1) / 1_000_000)
-                    .as("wall of the cached-rethrow matches()").isLessThan(rejectionMs / 2 + 1);
-            RuntimeException second = null;
-            try { p.matcher("\u00e9zz").matches(); }
-            catch (RuntimeException ex) { second = ex; }
-            assertThat(second).as("cached failure instance").isSameAs(first[0]);
-            assertThat(rejectionMs).as("first rejection wall").isLessThan(10_000);
+                    .as("wall of the recorded-rethrow matches()").isLessThan(5);
         } finally {
             System.clearProperty("tdfa.max.work");
         }
+    }
+
+    @Test
+    void boundedGapWholeBombKeepsFind() {
+        // The corpus-impact decision made concrete: find compiles (~3.7 M
+        // kernels), both whole builds reject (anchored: 100 001 states —
+        // the counter cross-product is the MINIMAL whole DFA). find() must
+        // keep working; matches() rethrows the recorded rejection.
+        io.github.jemmix.tdfa.Pattern p =
+                Pattern.compile("[\\s\\S]{0,60}x[\\s\\S]{0,60}");
+        assertThat(p.matcher("aaaxbbb").find()).isTrue();
+        assertThat(p.matcher("nothing to find in this line at all").find()).isFalse();
+        assertThatCode(() -> p.matcher("aaaxbbb").matches())
+                .isInstanceOf(PatternSyntaxException.class)
+                .hasMessageContaining("pattern too large");
     }
 
     @Test

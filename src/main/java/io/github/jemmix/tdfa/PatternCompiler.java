@@ -12,7 +12,10 @@ import io.github.jemmix.tdfa.unicode.UnicodeProviders;
  * {@link Pattern} compilation orchestration: flags &rarr; inline-flag prefix,
  * pipeline (parse &rarr; TNFA &rarr; TDFA), engine-source resolution, and
  * shell-or-shared implementation selection. Fully eager — everything
- * compiles inside {@code compile()}.
+ * compiles inside {@code compile()}; an artifact's death is decided there
+ * (whole over budget &rarr; recorded rejection, any other failure &rarr;
+ * compile fails) — the no-lazy-compiles design rule: no engine is ever
+ * materialized on a match call.
  *
  * <p><b>Single compile, two artifacts at most.</b> The whole-match engine
  * ({@code matches()}) is an unpruned determinization
@@ -21,17 +24,28 @@ import io.github.jemmix.tdfa.unicode.UnicodeProviders;
  * pike-cut predicate says the cut would change nothing
  * ({@code !wholeTdfa.pikeCutMatters()}); the rare alternation shapes where it
  * would (e.g. {@code ab|a|ac}) keep a pruned find compile for leftmost-first
- * exactness. The BYO-factory path still hands the factory an ANCHORED TDFA
- * for its whole engine (custom engines implement {@code matchWhole} via the
- * interface default, which is whole-exact only over anchored artifacts).
+ * exactness. One whole resolver serves every tier ({@link #whole}): the
+ * find engine itself when the artifacts are shared, else a
+ * {@link TdfaRunner} over the whole TDFA, else — the over-budget corner
+ * only — a {@link TdfaRunner} over the eagerly compiled both-ends-anchored
+ * TDFA (pruned determinization; every accept in an anchored build is
+ * end-of-input-gated, so the pike cut is inert there and the cut-free whole
+ * walk stays exact), else — both whole builds over budget — a holder that
+ * rethrows the compile-time-recorded rejection on every whole call while
+ * find() keeps working (acceptance follows the find artifact alone).
+ * Nothing materializes at match time, ever.
  *
  * <p>Engine source resolution (provenance-based, no capability negotiation):
  * <ul>
  *   <li>{@code -Dtdfa.engine=VM} &rarr; shared implementation over the
  *       interpreter — no code generation anywhere;</li>
  *   <li>explicit {@link RegexEngineFactory} &rarr; shell emitted around the
- *       factory's engines ({@code RegexEngine}-typed field — monomorphic
- *       per pattern), shared implementation as emission-failure fallback;</li>
+ *       factory's FIND engine ({@code RegexEngine}-typed field — monomorphic
+ *       per pattern); whole matching runs the facade's own whole engine —
+ *       a custom engine's {@code matchWhole} is the interface default
+ *       ({@code match(input, 0)}), whole-exact only over anchored
+ *       artifacts, so the factory is never asked to execute whole
+ *       matches; shared implementation as emission-failure fallback;</li>
  *   <li>default &rarr; ASM per-pattern engine generation with a
  *       concrete-typed shell, shared implementation as fallback.</li>
  * </ul>
@@ -76,10 +90,14 @@ final class PatternCompiler {
             // pattern's cut-free build can churn orders of magnitude past its
             // pruned cost (aws-keys: ~4G ticks vs 30M) before the output caps
             // trip, and an eager attempt at the default budget would stall
-            // compile() for seconds. A bounded rejection degrades whole to the
-            // historical LAZY anchored engine — compile() acceptance stays
-            // exactly the find artifact's, and matches() surfaces the
-            // rejection on first use (the pre-eager observable behavior).
+            // compile() for seconds. On a bounded rejection whole() falls to
+            // the eagerly compiled ANCHORED artifact — and if that build
+            // rejects too, the rejection is RECORDED at compile time and
+            // rethrown by every whole-match call (OverBudgetWhole): compile()
+            // acceptance stays the find artifact's alone (the historical
+            // contract — patterns whose whole DFA is intrinsically huge, e.g.
+            // [\s\S]{0,60}x[\s\S]{0,60}'s counter cross-product, keep find()),
+            // and NOTHING ever compiles at match time (no-lazy-compiles rule).
             Tdfa wholeTdfa;
             Tdfa findTdfa;
             try {
@@ -92,8 +110,7 @@ final class PatternCompiler {
                 }
             } catch (RuntimeException overBudget) {
                 if (!budgetRejection(overBudget)) throw overBudget;
-                obs.note("whole", "unpruned build over budget — lazy anchored whole;"
-                        + " compile acceptance follows the find artifact");
+                obs.note("whole", "unpruned build over budget — anchored whole attempted eagerly");
                 wholeTdfa = null;
                 findTdfa = Tdfa.compile(nfa, longest, obs);
             }
@@ -109,21 +126,14 @@ final class PatternCompiler {
             if (factory != null) {
                 long t0 = System.nanoTime();
                 RegexEngine eng = factory.create(findTdfa);
-                // BYO whole is ALWAYS the anchored artifact: a custom engine's
-                // matchWhole is the interface default (match(input, 0)),
-                // whole-exact only over an anchored TDFA — sharing the
-                // unpruned find artifact is safe solely for engines with a
-                // native matchWhole (TdfaRunner, generated classes). Over
-                // budget, degrade to the historical lazy anchored engine.
-                RegexEngine whole;
-                try {
-                    whole = factory.create(
-                            anchorTdfa(fl, disableUnicodeGroups, longest, prov, regex));
-                } catch (RuntimeException over) {
-                    if (!budgetRejection(over)) throw over;
-                    whole = new LazyEngine(() -> factory.create(
-                            anchorTdfa(fl, disableUnicodeGroups, longest, prov, regex)));
-                }
+                // One factory call (the find engine): whole matching runs the
+                // facade's own whole engine — a custom engine's matchWhole is
+                // the interface default (match(input,0)), whole-exact only
+                // over anchored artifacts, so it cannot consume the shared
+                // unpruned artifact. Over budget, whole() eagerly compiles
+                // the anchored artifact; its rejection fails compile().
+                RegexEngine whole = whole(fl, disableUnicodeGroups, longest, prov, regex,
+                        findTdfa, wholeTdfa, eng);
                 obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.ENGINE,
                         System.nanoTime() - t0, 0);
                 try {
@@ -194,83 +204,74 @@ final class PatternCompiler {
     private static final long WHOLE_WORK_CAP = 1L << 27;
 
     /**
-     * Whole-match engine for the facade's own tiers: the find engine itself
-     * when the artifacts are shared (one engine object, one generated class —
+     * Whole-match engine for EVERY tier: the find engine itself when the
+     * artifacts are shared (one engine object, one generated class —
      * generated engines carry a native {@code matchWhole}), else a dedicated
-     * interpreter over the whole TDFA — or, on the over-budget bomb corner,
-     * the historical lazy anchored engine.
+     * interpreter over the whole TDFA, else — the over-budget corner — an
+     * interpreter over the eagerly compiled anchored TDFA (pruned
+     * determinization, but every accept in an anchored build is
+     * end-of-input-gated, so the pike cut is inert there and the cut-free
+     * whole walk is exact over it). If the anchored build ALSO rejects on
+     * budget, the rejection is recorded and rethrown by every whole call
+     * ({@link OverBudgetWhole}) — compile() acceptance follows the find
+     * artifact alone. Everything is built inside {@code compile()}; no
+     * engine materializes at match time.
      */
     private static RegexEngine whole(String fl, boolean disableUnicodeGroups, boolean longest,
                                      UnicodeDataProvider prov, String regex,
                                      Tdfa findTdfa, Tdfa wholeTdfa, RegexEngine findEngine) {
-        if (wholeTdfa == null)
-            return new LazyEngine(() -> new TdfaRunner(
-                    anchorTdfa(fl, disableUnicodeGroups, longest, prov, regex)));
-        return findTdfa == wholeTdfa ? findEngine : new TdfaRunner(wholeTdfa);
+        if (wholeTdfa != null)
+            return findTdfa == wholeTdfa ? findEngine : new TdfaRunner(wholeTdfa);
+        try {
+            return new TdfaRunner(
+                    anchorTdfa(fl, disableUnicodeGroups, longest, prov, regex, WHOLE_WORK_CAP));
+        } catch (RuntimeException over) {
+            if (!budgetRejection(over)) throw over;
+            return new OverBudgetWhole(findEngine, over);
+        }
+    }
+
+    /**
+     * Whole engine for the both-builds-over-budget corner: the compile-time
+     * rejection IS the whole engine's permanent answer — {@code matchWhole}/
+     * {@code matches} rethrow the recorded instance on every call
+     * (deterministic; zero compile at match time — the no-lazy-compiles
+     * rule). Find operations delegate to the find engine: compile()
+     * acceptance follows the find artifact alone, the pre-eager facade's
+     * contract (fuzz round 27's spin family — the lazy engine re-burned its
+     * doomed anchored compile per matches() call — is dead by construction:
+     * the failure is computed once, inside compile()).
+     */
+    private static final class OverBudgetWhole implements RegexEngine {
+        private final RegexEngine find;
+        private final RuntimeException rejection;
+        OverBudgetWhole(RegexEngine find, RuntimeException rejection) {
+            this.find = find;
+            this.rejection = rejection;
+        }
+
+        @Override public boolean matches(CharSequence input) { throw rejection; }
+        @Override public io.github.jemmix.tdfa.core.MatchResult matchWhole(CharSequence input) {
+            throw rejection;
+        }
+        @Override public boolean find(CharSequence input) { return find.find(input); }
+        @Override public io.github.jemmix.tdfa.core.MatchResult match(CharSequence input, int from) {
+            return find.match(input, from);
+        }
+        @Override public int groupCount() { return find.groupCount(); }
+        @Override public java.util.Map<String, Integer> namedGroups() { return find.namedGroups(); }
+        @Override public int programSize() { return find.programSize(); }
     }
 
     /**
      * The determinization budget-rejection idiom ("pattern too large: ..."),
      * in either shape it reaches this class: the raw {@code IllegalStateException}
      * from {@code Tdfa.compile*}, or the translated {@code PatternSyntaxException}
-     * from {@link #anchorTdfa} (which wraps for its lazy callers).
+     * from {@link #anchorTdfa} (which wraps rejections for whole()).
      */
     private static boolean budgetRejection(RuntimeException ex) {
         String m = ex.getMessage();
         return m != null && m.contains("pattern too large");
-    }
-
-    /**
-     * Budget-corner whole engine: compiles its delegate on first use — the
-     * pre-eager facade's lazy behavior, kept solely for bomb patterns whose
-     * whole builds exceed the determinization caps (see the compile ladder in
-     * {@link #compile}). Benign race: redundant compiles discard all but one
-     * engine. All hot entries delegate to the resolved engine.
-     *
-     * <p>A FAILED first compile is cached, not retried: the delegate's
-     * rejection is deterministic (same parse, same caps), and re-running it
-     * re-burned the full doomed determinization on EVERY matches() call —
-     * fuzz round 27's HANG_ENGINE spins (caseSeeds 4496606199222982303,
-     * 917334682215128318: ~7 s CPU per batch at the 8 M fuzz budget; the
-     * state-cap family re-burns ~57 M ticks ≈ 2 s CPU per call at the
-     * library budget, forever). Subsequent calls rethrow the original
-     * exception instance. Only RuntimeExceptions cache: Errors (OOM etc.)
-     * stay retryable. Cache-before-throw also under concurrent callers: the
-     * redundant-compile race may duplicate the doomed attempt, but never
-     * past the first stored failure.
-     */
-    private static final class LazyEngine implements RegexEngine {
-        private final java.util.function.Supplier<RegexEngine> src;
-        private volatile RegexEngine delegate;
-        private volatile RuntimeException failure;
-        LazyEngine(java.util.function.Supplier<RegexEngine> src) { this.src = src; }
-
-        private RegexEngine eng() {
-            RegexEngine e = delegate;
-            if (e != null) return e;
-            RuntimeException f = failure;
-            if (f != null) throw f;
-            try {
-                e = src.get();
-                delegate = e;
-                return e;
-            } catch (RuntimeException ex) {
-                failure = ex;
-                throw ex;
-            }
-        }
-
-        @Override public boolean matches(CharSequence input) { return eng().matches(input); }
-        @Override public boolean find(CharSequence input) { return eng().find(input); }
-        @Override public io.github.jemmix.tdfa.core.MatchResult match(CharSequence input, int from) {
-            return eng().match(input, from);
-        }
-        @Override public io.github.jemmix.tdfa.core.MatchResult matchWhole(CharSequence input) {
-            return eng().matchWhole(input);
-        }
-        @Override public int groupCount() { return eng().groupCount(); }
-        @Override public java.util.Map<String, Integer> namedGroups() { return eng().namedGroups(); }
-        @Override public int programSize() { return eng().programSize(); }
     }
 
     /** {@code -Dtdfa.engine=VM}: global no-codegen switch, read per compile. */
@@ -279,16 +280,19 @@ final class PatternCompiler {
     }
 
     /**
-     * Anchored both-ends TDFA for the BYO-factory whole engine: the factory's
-     * engine answers {@code matchWhole} through the interface default
-     * ({@code match(input, 0)}), which is whole-exact only over an anchored
-     * artifact. Compiled eagerly inside {@code compile()}.
+     * Anchored both-ends TDFA for the over-budget whole corner: every accept
+     * in an anchored build is end-of-input-gated, so the pike cut is inert
+     * and the cut-free whole walk is exact over the (pruned) artifact.
+     * Compiled eagerly inside {@code compile()} under the same work cap;
+     * rejections translate to the facade's {@code PatternSyntaxException}
+     * (the caller records them or fails the compile).
      */
     private static Tdfa anchorTdfa(String flregex, boolean disableUnicodeGroups,
-                                   boolean longest, UnicodeDataProvider prov, String regex) {
+                                   boolean longest, UnicodeDataProvider prov, String regex,
+                                   long workCap) {
         try {
             Tnfa an = Tnfa.compile(flregex, disableUnicodeGroups, true, prov);
-            return Tdfa.compile(an, longest);
+            return Tdfa.compile(an, longest, null, workCap);
         } catch (RuntimeException e) {
             throw io.github.jemmix.tdfa.core.CompiledRegex.translate(e, regex);
         }

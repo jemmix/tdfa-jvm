@@ -20,7 +20,20 @@ import java.util.NoSuchElementException;
  */
 public interface RegexEngine {
 
-    /** Match the entire input (anchored both ends). */
+    /**
+     * Match the entire input (anchored both ends).
+     *
+     * <p><b>Artifact contract.</b> Exact over artifacts whose transitions
+     * keep whole-match continuations: both-ends-anchored artifacts (what the
+     * facade hands out on the over-budget corner), cut-free (unpruned)
+     * artifacts, and any pruned artifact whose compile-time pike cut never
+     * fired. Over a pruned UNANCHORED artifact where the cut deleted
+     * continuations (e.g. find compiles of {@code (a|ab)}-class patterns),
+     * this may reject an input the pattern whole-matches — the boolean walk
+     * shares {@link #matchWhole}'s artifact requirement; use the facade's
+     * {@code Pattern.matcher().matches()}, which always carries a
+     * whole-exact engine.
+     */
     boolean matches(CharSequence input);
 
     /** Whether any match exists anywhere in the input. */
@@ -55,6 +68,10 @@ public interface RegexEngine {
      * {@code RegexEngineFactory}s for whole matching). Engines over unanchored
      * or cut-free artifacts must override — {@code TdfaRunner} and the
      * generated classes do (a single cut-free walk; see {@code Tdfa.compileUnpruned}).
+     * The overridden walk is exact over unpruned and anchored artifacts
+     * alike: an anchored build's accepts are all end-of-input-gated, so its
+     * compile-time pike cut never fires mid-walk (same artifact contract as
+     * {@link #matches}).
      */
     default MatchResult matchWhole(CharSequence input) { return match(input, 0); }
 

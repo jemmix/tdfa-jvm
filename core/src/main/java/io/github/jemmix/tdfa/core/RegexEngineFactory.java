@@ -8,10 +8,11 @@ import io.github.jemmix.tdfa.tdfa.Tdfa;
  *
  * <p>Bring-your-own-engine hook. Implementations must be stateless (or
  * externally synchronized): a single factory may be asked to create engines
- * for many patterns, and — for one pattern — up to two engines (the plain
- * engine and a second, {@code \A(?:...)\z}-anchored engine backing
- * {@code matches()}); consult the calling tier's documentation for the exact
- * contract.
+ * for many patterns. Per pattern the facade asks exactly ONCE — for the
+ * find engine; whole matching ({@code matches()}) runs the facade's own
+ * native whole-match engine over the cut-free artifact, since a custom
+ * engine's {@code matchWhole} would be the interface default
+ * ({@code match(input, 0)}), whole-exact only over anchored artifacts.
  *
  * <pre>
  *   Pattern p = Pattern.compile(regex, flags, TdfaRunner::new);
@@ -22,8 +23,9 @@ public interface RegexEngineFactory {
 
     /**
      * Create an engine executing {@code tdfa}. Called at most a handful of
-     * times per compiled pattern; the returned engine must be effectively
-     * immutable and thread-safe.
+     * times per compiled pattern (once per pattern in the current facade —
+     * the find engine); the returned engine must be effectively immutable
+     * and thread-safe.
      *
      * <p>Representation note: {@link Tdfa}'s array accessors return defensive
      * copies — an engine built through them cannot be corrupted by a later

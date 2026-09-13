@@ -113,8 +113,8 @@ class SingleCompileWholeTest {
 
     @Test
     void interpreterFactory() {
-        // BYO factory: whole is the anchored artifact (matchWhole default =
-        // match(input,0) over anchored tables); find is the factory engine.
+        // BYO factory: whole is the facade's whole engine over the shared
+        // unpruned artifact (native matchWhole); find is the factory engine.
         Pattern p = Pattern.compile("(a|ab)", 0, io.github.jemmix.tdfa.tdfa.TdfaRunner::new);
         PatternMatcher m = p.matcher("ab");
         assertThat(m.matches()).isTrue();
@@ -125,15 +125,84 @@ class SingleCompileWholeTest {
         assertThat(mbf.group()).isEqualTo("a");
     }
 
+    /**
+     * The over-budget corner's whole engine: a {@code TdfaRunner} over the
+     * eagerly compiled BOTH-ENDS-ANCHORED artifact, answering through the
+     * cut-free whole walk. Exactness argument: every accept in an anchored
+     * build is end-of-input-gated, so the compile-time pike cut never fires
+     * mid-walk and the cut-free whole walk is exact over the (pruned)
+     * artifact. Pinned as full equivalence with the facade's whole engine
+     * (the unpruned artifact — whole span AND group spans; the oracle-free
+     * invariant), plus whole-boolean agreement with java.util.regex (whose
+     * nested-star capture spans intentionally differ from our re2j charter
+     * — e.g. {@code (a*)*} — so only the boolean is compared there).
+     * Randomized at landing time: 18 k anchored-vs-unpruned pairs over a
+     * generator battery, both longest modes, 0 diffs.
+     */
     @Test
-    void bombOverBudgetKeepsHistoricalContract() {
-        // Nested-counted bomb: the whole builds (unpruned AND anchored) exceed
-        // the determinization caps, so compile() succeeds on the find
-        // artifact's acceptance and matches() surfaces the rejection on first
-        // use — the pre-single-compile observable behavior, now pinned.
+    void anchoredArtifactWholeWalkIsExact() {
+        String[] pats = {
+                "(a|ab)", "ab|a|ac", "ax?|a.y", "(a)(b|bc)", "a*", "a+", "(a*)*", "(a?){2,}",
+                "(^|$)+", "a$", "^a", "(?m)^a$", "(?m)a$", "\\Aab\\z", "a\\z", "(?i)AbC",
+                "(ab|a)+", "(a|ab)+", "x.*y", "x.+?y", "\\bword\\b", "(?:ab|a)(?:c|bcd)",
+                "(a??b??)*", "((a)|b)+", "(a{1,3}?)b", "(\\w+)\\s+(\\w+)", "(a)|(ab)",
+        };
+        String[] inputs = {
+                "", "a", "ab", "abc", "ac", "ad", "ax", "a.y", "b", "abab", "ababc", "aaab",
+                "a\n", "a\nb", "xay", "xabcy", "xxy", "xy", "word", " word ", "a b",
+                "hello brave new world", "AbC", "abcd", "zz", "aab", "aaaa", "aaaaab", "\n",
+        };
+        for (String p : pats) {
+            io.github.jemmix.tdfa.tdfa.TdfaRunner anchored;
+            java.util.regex.Pattern jur;
+            try {
+                io.github.jemmix.tdfa.tnfa.Tnfa an = io.github.jemmix.tdfa.tnfa.Tnfa.compile(
+                        p, false, true, io.github.jemmix.tdfa.unicode.UnicodeProviders.get());
+                anchored = new io.github.jemmix.tdfa.tdfa.TdfaRunner(
+                        io.github.jemmix.tdfa.tdfa.Tdfa.compile(an, false));
+                jur = java.util.regex.Pattern.compile(p);
+            } catch (RuntimeException e) { continue; }
+            io.github.jemmix.tdfa.core.RegexEngine facadeWhole =
+                    ((TDFAPattern) Pattern.compile(p)).wholeEngine();
+            for (String s : inputs) {
+                io.github.jemmix.tdfa.core.MatchResult am = anchored.matchWhole(s);
+                io.github.jemmix.tdfa.core.MatchResult fm = facadeWhole.matchWhole(s);
+                String a = am == null ? "null" : span(am);
+                String f = fm == null ? "null" : span(fm);
+                assertThat(a)
+                        .as("anchored whole of %s on %s (spans)", p, s.replace("\n", "\\n"))
+                        .isEqualTo(f);
+                assertThat(am != null)
+                        .as("anchored whole boolean of %s on %s vs jur", p, s.replace("\n", "\\n"))
+                        .isEqualTo(jur.matcher(s).matches());
+            }
+        }
+    }
+
+    private static String span(io.github.jemmix.tdfa.core.MatchResult m) {
+        StringBuilder sb = new StringBuilder("[").append(m.start(0)).append(',').append(m.end(0)).append(')');
+        for (int g = 1; g <= m.groupCount(); g++)
+            sb.append(';').append(m.start(g) < 0 ? "null" : m.start(g) + "," + m.end(g));
+        return sb.toString();
+    }
+
+    @Test
+    void bombOverBudgetKeepsFindOnlyAcceptanceWithRecordedRejection() {
+        // Nested-counted bomb: BOTH whole builds (unpruned and anchored)
+        // exceed the determinization caps. compile() still accepts on the
+        // find artifact's alone (the historical contract — a whole-match
+        // bomb must not take find() away), and matches() rethrows the
+        // rejection RECORDED AT COMPILE TIME — same instance on every call,
+        // no recompile (the no-lazy-compiles rule: nothing materializes at
+        // match time; the former LazyEngine corner re-burned its doomed
+        // build per call — fuzz round 27's spins).
         Pattern p = Pattern.compile("(a{1,100}){1,100}");
         assertThat(p.matcher("a".repeat(120)).find()).isTrue();
+        RuntimeException[] recorded = new RuntimeException[1];
         assertThatThrownBy(() -> p.matcher("a".repeat(50)).matches())
-                .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class);
+                .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
+                .hasMessageContaining("pattern too large")
+                .satisfies(ex -> recorded[0] = (RuntimeException) ex);
+        assertThatThrownBy(() -> p.matcher("a".repeat(50)).matches()).isSameAs(recorded[0]);
     }
 }

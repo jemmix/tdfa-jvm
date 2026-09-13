@@ -494,6 +494,19 @@ public final class Tdfa {
     }
 
     /**
+     * Work-bounded variant of {@link #compile(Tnfa, boolean, CompileObserver)}
+     * (same cap semantics as {@link #compileUnpruned(Tnfa, boolean, CompileObserver, long)}):
+     * {@code workCap > 0} clamps the compile work budget to
+     * {@code min(-Dtdfa.max.work, workCap)} ticks. The facade's over-budget
+     * whole corner uses this to bound its anchored attempt.
+     */
+    public static Tdfa compile(Tnfa nfa, boolean longestMatch,
+                               io.github.jemmix.tdfa.core.CompileObserver observer,
+                               long workCap) {
+        return new TdfaCompiler(nfa, longestMatch, false, workCap).compile(observer);
+    }
+
+    /**
      * Compile WITHOUT the Perl pike cut: transitions follow every alive
      * config, including lower-priority continuations past an accept, so the
      * artifact supports whole-input walks ({@code matchWhole}) — an accept
