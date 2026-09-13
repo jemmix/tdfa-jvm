@@ -226,16 +226,38 @@ final class PatternCompiler {
      * whole builds exceed the determinization caps (see the compile ladder in
      * {@link #compile}). Benign race: redundant compiles discard all but one
      * engine. All hot entries delegate to the resolved engine.
+     *
+     * <p>A FAILED first compile is cached, not retried: the delegate's
+     * rejection is deterministic (same parse, same caps), and re-running it
+     * re-burned the full doomed determinization on EVERY matches() call —
+     * fuzz round 27's HANG_ENGINE spins (caseSeeds 4496606199222982303,
+     * 917334682215128318: ~7 s CPU per batch at the 8 M fuzz budget; the
+     * state-cap family re-burns ~57 M ticks ≈ 2 s CPU per call at the
+     * library budget, forever). Subsequent calls rethrow the original
+     * exception instance. Only RuntimeExceptions cache: Errors (OOM etc.)
+     * stay retryable. Cache-before-throw also under concurrent callers: the
+     * redundant-compile race may duplicate the doomed attempt, but never
+     * past the first stored failure.
      */
     private static final class LazyEngine implements RegexEngine {
         private final java.util.function.Supplier<RegexEngine> src;
         private volatile RegexEngine delegate;
+        private volatile RuntimeException failure;
         LazyEngine(java.util.function.Supplier<RegexEngine> src) { this.src = src; }
 
         private RegexEngine eng() {
             RegexEngine e = delegate;
-            if (e == null) { e = src.get(); delegate = e; }
-            return e;
+            if (e != null) return e;
+            RuntimeException f = failure;
+            if (f != null) throw f;
+            try {
+                e = src.get();
+                delegate = e;
+                return e;
+            } catch (RuntimeException ex) {
+                failure = ex;
+                throw ex;
+            }
         }
 
         @Override public boolean matches(CharSequence input) { return eng().matches(input); }

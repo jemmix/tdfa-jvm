@@ -145,6 +145,44 @@ class CompileBudgetTest {
         }
     }
 
+    /** Fuzz round 27 (caseSeeds 4496606199222982303, 917334682215128318 —
+     *  HANG_ENGINE, verdict=spin): the budget-corner LazyEngine re-ran its
+     *  doomed anchored whole compile on EVERY matches() call (delegate stays
+     *  null on failure), so a batch of M-probes re-burned the 8 M-tick
+     *  rejection ~16× and crossed the fuzz watchdog as a spin; at the library
+     *  budget the state-cap family pays the full rejection (~57 M ticks) per
+     *  call, forever. The failure must cache: same exception instance, no
+     *  recompile. Pinned with \x{...}/ escapes per CFG_EDGE_BOMB above. */
+    @Test
+    void lazyWholeRejectionIsCachedNotRetriedPerCall() {
+        String bomb = "(?:(?m:\u00e9)(?:\\w[^\u03a9z\\-]{0,}|\ud835\udd04\udfff){1,4}){1,5}";
+        System.setProperty("tdfa.max.work", "8388608");
+        try {
+            io.github.jemmix.tdfa.Pattern p = Pattern.compile(bomb);   // find artifact accepted
+            RuntimeException[] first = new RuntimeException[1];
+            long t0 = System.nanoTime();
+            assertThatCode(() -> {
+                try { p.matcher("\u00e9zz").matches(); }
+                catch (RuntimeException ex) { first[0] = ex; throw ex; }
+            }).isInstanceOf(PatternSyntaxException.class)
+                    .hasMessageContaining("pattern too large");
+            long rejectionMs = (System.nanoTime() - t0) / 1_000_000;
+            // the retry that must NOT recompile: same cached instance, ~free
+            long t1 = System.nanoTime();
+            assertThatCode(() -> p.matcher("\u00e9zz").matches())
+                    .isInstanceOf(PatternSyntaxException.class);
+            assertThat((System.nanoTime() - t1) / 1_000_000)
+                    .as("wall of the cached-rethrow matches()").isLessThan(rejectionMs / 2 + 1);
+            RuntimeException second = null;
+            try { p.matcher("\u00e9zz").matches(); }
+            catch (RuntimeException ex) { second = ex; }
+            assertThat(second).as("cached failure instance").isSameAs(first[0]);
+            assertThat(rejectionMs).as("first rejection wall").isLessThan(10_000);
+        } finally {
+            System.clearProperty("tdfa.max.work");
+        }
+    }
+
     @Test
     void legitPatternsCompileUnderDefaultBudget() {
         // Largest legit in-corpus shapes: dictionary-style literal alternation
