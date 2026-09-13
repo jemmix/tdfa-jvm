@@ -33,4 +33,11 @@ jmh {
     resultFormat = 'JSON'
     resultsFile = file("$buildDir/reports/jmh/results.json")
     humanOutputFile = file("$buildDir/reports/jmh/human.txt")
+    // -PjmhInclude=<regex>: actually apply the filter (the plugin does not
+    // map this property itself; without this, scripts/bench-regression.sh
+    // --jmh silently ran the FULL suite — 4x its documented 5-10 min —
+    // because the flag was ignored).
+    if (project.hasProperty('jmhInclude')) {
+        includes = [project.getProperty('jmhInclude')]
+    }
 }

@@ -1,0 +1,640 @@
+[
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "io.github.jemmix.tdfa.bench.RegressionBench.asmAnchored",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/Users/andy/Library/Java/JavaVirtualMachines/openjdk-26.0.2/Contents/Home/bin/java",
+        "jvmArgs" : [
+            "-Dfile.encoding=UTF-8",
+            "-Djava.io.tmpdir=/Users/andy/projects/tdfa-jvm/benchmarks/micro/build/tmp/jmh",
+            "-Duser.country=RU",
+            "-Duser.language=de",
+            "-Duser.variant"
+        ],
+        "jdkVersion" : "26.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "26.0.2+10-55",
+        "warmupIterations" : 2,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 2,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 0.02654698093392445,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 0.026156460236280894,
+                "50.0" : 0.02654698093392445,
+                "90.0" : 0.02693750163156801,
+                "95.0" : 0.02693750163156801,
+                "99.0" : 0.02693750163156801,
+                "99.9" : 0.02693750163156801,
+                "99.99" : 0.02693750163156801,
+                "99.999" : 0.02693750163156801,
+                "99.9999" : 0.02693750163156801,
+                "100.0" : 0.02693750163156801
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    0.02693750163156801,
+                    0.026156460236280894
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "io.github.jemmix.tdfa.bench.RegressionBench.asmCompile",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/Users/andy/Library/Java/JavaVirtualMachines/openjdk-26.0.2/Contents/Home/bin/java",
+        "jvmArgs" : [
+            "-Dfile.encoding=UTF-8",
+            "-Djava.io.tmpdir=/Users/andy/projects/tdfa-jvm/benchmarks/micro/build/tmp/jmh",
+            "-Duser.country=RU",
+            "-Duser.language=de",
+            "-Duser.variant"
+        ],
+        "jdkVersion" : "26.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "26.0.2+10-55",
+        "warmupIterations" : 2,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 2,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 620.1869910144239,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 545.4895778621812,
+                "50.0" : 620.1869910144239,
+                "90.0" : 694.8844041666666,
+                "95.0" : 694.8844041666666,
+                "99.0" : 694.8844041666666,
+                "99.9" : 694.8844041666666,
+                "99.99" : 694.8844041666666,
+                "99.999" : 694.8844041666666,
+                "99.9999" : 694.8844041666666,
+                "100.0" : 694.8844041666666
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    545.4895778621812,
+                    694.8844041666666
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "io.github.jemmix.tdfa.bench.RegressionBench.asmExtract",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/Users/andy/Library/Java/JavaVirtualMachines/openjdk-26.0.2/Contents/Home/bin/java",
+        "jvmArgs" : [
+            "-Dfile.encoding=UTF-8",
+            "-Djava.io.tmpdir=/Users/andy/projects/tdfa-jvm/benchmarks/micro/build/tmp/jmh",
+            "-Duser.country=RU",
+            "-Duser.language=de",
+            "-Duser.variant"
+        ],
+        "jdkVersion" : "26.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "26.0.2+10-55",
+        "warmupIterations" : 2,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 2,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 0.05598090544452772,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 0.05593379959510899,
+                "50.0" : 0.05598090544452772,
+                "90.0" : 0.056028011293946446,
+                "95.0" : 0.056028011293946446,
+                "99.0" : 0.056028011293946446,
+                "99.9" : 0.056028011293946446,
+                "99.99" : 0.056028011293946446,
+                "99.999" : 0.056028011293946446,
+                "99.9999" : 0.056028011293946446,
+                "100.0" : 0.056028011293946446
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    0.05593379959510899,
+                    0.056028011293946446
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "io.github.jemmix.tdfa.bench.RegressionBench.asmFindAllDense",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/Users/andy/Library/Java/JavaVirtualMachines/openjdk-26.0.2/Contents/Home/bin/java",
+        "jvmArgs" : [
+            "-Dfile.encoding=UTF-8",
+            "-Djava.io.tmpdir=/Users/andy/projects/tdfa-jvm/benchmarks/micro/build/tmp/jmh",
+            "-Duser.country=RU",
+            "-Duser.language=de",
+            "-Duser.variant"
+        ],
+        "jdkVersion" : "26.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "26.0.2+10-55",
+        "warmupIterations" : 2,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 2,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 1024.6797079381838,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 1020.9250682281059,
+                "50.0" : 1024.6797079381838,
+                "90.0" : 1028.4343476482618,
+                "95.0" : 1028.4343476482618,
+                "99.0" : 1028.4343476482618,
+                "99.9" : 1028.4343476482618,
+                "99.99" : 1028.4343476482618,
+                "99.999" : 1028.4343476482618,
+                "99.9999" : 1028.4343476482618,
+                "100.0" : 1028.4343476482618
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    1028.4343476482618,
+                    1020.9250682281059
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "io.github.jemmix.tdfa.bench.RegressionBench.asmFindAllSparse",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/Users/andy/Library/Java/JavaVirtualMachines/openjdk-26.0.2/Contents/Home/bin/java",
+        "jvmArgs" : [
+            "-Dfile.encoding=UTF-8",
+            "-Djava.io.tmpdir=/Users/andy/projects/tdfa-jvm/benchmarks/micro/build/tmp/jmh",
+            "-Duser.country=RU",
+            "-Duser.language=de",
+            "-Duser.variant"
+        ],
+        "jdkVersion" : "26.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "26.0.2+10-55",
+        "warmupIterations" : 2,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 2,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 562.7828244815953,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 558.9382295719844,
+                "50.0" : 562.7828244815953,
+                "90.0" : 566.6274193912063,
+                "95.0" : 566.6274193912063,
+                "99.0" : 566.6274193912063,
+                "99.9" : 566.6274193912063,
+                "99.99" : 566.6274193912063,
+                "99.999" : 566.6274193912063,
+                "99.9999" : 566.6274193912063,
+                "100.0" : 566.6274193912063
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    566.6274193912063,
+                    558.9382295719844
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "io.github.jemmix.tdfa.bench.RegressionBench.asmScanNoMatch",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/Users/andy/Library/Java/JavaVirtualMachines/openjdk-26.0.2/Contents/Home/bin/java",
+        "jvmArgs" : [
+            "-Dfile.encoding=UTF-8",
+            "-Djava.io.tmpdir=/Users/andy/projects/tdfa-jvm/benchmarks/micro/build/tmp/jmh",
+            "-Duser.country=RU",
+            "-Duser.language=de",
+            "-Duser.variant"
+        ],
+        "jdkVersion" : "26.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "26.0.2+10-55",
+        "warmupIterations" : 2,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 2,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 584.0879053271569,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 582.2212651997684,
+                "50.0" : 584.0879053271569,
+                "90.0" : 585.9545454545455,
+                "95.0" : 585.9545454545455,
+                "99.0" : 585.9545454545455,
+                "99.9" : 585.9545454545455,
+                "99.99" : 585.9545454545455,
+                "99.999" : 585.9545454545455,
+                "99.9999" : 585.9545454545455,
+                "100.0" : 585.9545454545455
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    585.9545454545455,
+                    582.2212651997684
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "io.github.jemmix.tdfa.bench.RegressionBench.vmAnchored",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/Users/andy/Library/Java/JavaVirtualMachines/openjdk-26.0.2/Contents/Home/bin/java",
+        "jvmArgs" : [
+            "-Dfile.encoding=UTF-8",
+            "-Djava.io.tmpdir=/Users/andy/projects/tdfa-jvm/benchmarks/micro/build/tmp/jmh",
+            "-Duser.country=RU",
+            "-Duser.language=de",
+            "-Duser.variant"
+        ],
+        "jdkVersion" : "26.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "26.0.2+10-55",
+        "warmupIterations" : 2,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 2,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 0.07586625685484721,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 0.07572533335611645,
+                "50.0" : 0.07586625685484721,
+                "90.0" : 0.076007180353578,
+                "95.0" : 0.076007180353578,
+                "99.0" : 0.076007180353578,
+                "99.9" : 0.076007180353578,
+                "99.99" : 0.076007180353578,
+                "99.999" : 0.076007180353578,
+                "99.9999" : 0.076007180353578,
+                "100.0" : 0.076007180353578
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    0.076007180353578,
+                    0.07572533335611645
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "io.github.jemmix.tdfa.bench.RegressionBench.vmCompile",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/Users/andy/Library/Java/JavaVirtualMachines/openjdk-26.0.2/Contents/Home/bin/java",
+        "jvmArgs" : [
+            "-Dfile.encoding=UTF-8",
+            "-Djava.io.tmpdir=/Users/andy/projects/tdfa-jvm/benchmarks/micro/build/tmp/jmh",
+            "-Duser.country=RU",
+            "-Duser.language=de",
+            "-Duser.variant"
+        ],
+        "jdkVersion" : "26.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "26.0.2+10-55",
+        "warmupIterations" : 2,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 2,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 354.74849730381266,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 285.0686094724901,
+                "50.0" : 354.74849730381266,
+                "90.0" : 424.42838513513516,
+                "95.0" : 424.42838513513516,
+                "99.0" : 424.42838513513516,
+                "99.9" : 424.42838513513516,
+                "99.99" : 424.42838513513516,
+                "99.999" : 424.42838513513516,
+                "99.9999" : 424.42838513513516,
+                "100.0" : 424.42838513513516
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    424.42838513513516,
+                    285.0686094724901
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "io.github.jemmix.tdfa.bench.RegressionBench.vmExtract",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/Users/andy/Library/Java/JavaVirtualMachines/openjdk-26.0.2/Contents/Home/bin/java",
+        "jvmArgs" : [
+            "-Dfile.encoding=UTF-8",
+            "-Djava.io.tmpdir=/Users/andy/projects/tdfa-jvm/benchmarks/micro/build/tmp/jmh",
+            "-Duser.country=RU",
+            "-Duser.language=de",
+            "-Duser.variant"
+        ],
+        "jdkVersion" : "26.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "26.0.2+10-55",
+        "warmupIterations" : 2,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 2,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 0.12678101404664663,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 0.1267674487419741,
+                "50.0" : 0.12678101404664663,
+                "90.0" : 0.12679457935131916,
+                "95.0" : 0.12679457935131916,
+                "99.0" : 0.12679457935131916,
+                "99.9" : 0.12679457935131916,
+                "99.99" : 0.12679457935131916,
+                "99.999" : 0.12679457935131916,
+                "99.9999" : 0.12679457935131916,
+                "100.0" : 0.12679457935131916
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    0.12679457935131916,
+                    0.1267674487419741
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "io.github.jemmix.tdfa.bench.RegressionBench.vmFindAllDense",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/Users/andy/Library/Java/JavaVirtualMachines/openjdk-26.0.2/Contents/Home/bin/java",
+        "jvmArgs" : [
+            "-Dfile.encoding=UTF-8",
+            "-Djava.io.tmpdir=/Users/andy/projects/tdfa-jvm/benchmarks/micro/build/tmp/jmh",
+            "-Duser.country=RU",
+            "-Duser.language=de",
+            "-Duser.variant"
+        ],
+        "jdkVersion" : "26.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "26.0.2+10-55",
+        "warmupIterations" : 2,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 2,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 1212.3610752099307,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 1212.0701807228916,
+                "50.0" : 1212.3610752099307,
+                "90.0" : 1212.6519696969697,
+                "95.0" : 1212.6519696969697,
+                "99.0" : 1212.6519696969697,
+                "99.9" : 1212.6519696969697,
+                "99.99" : 1212.6519696969697,
+                "99.999" : 1212.6519696969697,
+                "99.9999" : 1212.6519696969697,
+                "100.0" : 1212.6519696969697
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    1212.0701807228916,
+                    1212.6519696969697
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "io.github.jemmix.tdfa.bench.RegressionBench.vmFindAllSparse",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/Users/andy/Library/Java/JavaVirtualMachines/openjdk-26.0.2/Contents/Home/bin/java",
+        "jvmArgs" : [
+            "-Dfile.encoding=UTF-8",
+            "-Djava.io.tmpdir=/Users/andy/projects/tdfa-jvm/benchmarks/micro/build/tmp/jmh",
+            "-Duser.country=RU",
+            "-Duser.language=de",
+            "-Duser.variant"
+        ],
+        "jdkVersion" : "26.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "26.0.2+10-55",
+        "warmupIterations" : 2,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 2,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 650.8554816381652,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 600.5995701438849,
+                "50.0" : 650.8554816381652,
+                "90.0" : 701.1113931324456,
+                "95.0" : 701.1113931324456,
+                "99.0" : 701.1113931324456,
+                "99.9" : 701.1113931324456,
+                "99.99" : 701.1113931324456,
+                "99.999" : 701.1113931324456,
+                "99.9999" : 701.1113931324456,
+                "100.0" : 701.1113931324456
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    701.1113931324456,
+                    600.5995701438849
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "io.github.jemmix.tdfa.bench.RegressionBench.vmScanNoMatch",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/Users/andy/Library/Java/JavaVirtualMachines/openjdk-26.0.2/Contents/Home/bin/java",
+        "jvmArgs" : [
+            "-Dfile.encoding=UTF-8",
+            "-Djava.io.tmpdir=/Users/andy/projects/tdfa-jvm/benchmarks/micro/build/tmp/jmh",
+            "-Duser.country=RU",
+            "-Duser.language=de",
+            "-Duser.variant"
+        ],
+        "jdkVersion" : "26.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "26.0.2+10-55",
+        "warmupIterations" : 2,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 2,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 596.8602310047694,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 590.8372591283863,
+                "50.0" : 596.8602310047694,
+                "90.0" : 602.8832028811524,
+                "95.0" : 602.8832028811524,
+                "99.0" : 602.8832028811524,
+                "99.9" : 602.8832028811524,
+                "99.99" : 602.8832028811524,
+                "99.999" : 602.8832028811524,
+                "99.9999" : 602.8832028811524,
+                "100.0" : 602.8832028811524
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    590.8372591283863,
+                    602.8832028811524
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    }
+]
+
+

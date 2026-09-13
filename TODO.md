@@ -1273,51 +1273,62 @@ hard-gating every fixed family, replay corpora, probe-before-fix.
       budget demonstrates the bomb families rejecting in seconds. README documents
       the honest eager-DFA cost vs lazy engines.
 
-## Single-compile whole/find (2026-09-12)
+## Single-compile whole/find (2026-09-12 — resolved 2026-09-13)
 
 `Pattern.compile` builds everything eagerly from one parse: the whole-match
 artifact is a cut-free (`compileUnpruned`) determinization of the same TNFA,
 shared with find() whenever the pike-cut predicate says the cut would change
 nothing (see `Tdfa.pikeCutMatters`); divergence-class patterns keep a pruned
 find artifact beside it. `matchWhole` walks to EOF — an accept config alive at
-end-of-input is a full match. Work that remains:
+end-of-input is a full match. The follow-up list, resolved (commit 0fded73,
+benchmarks below):
 
-- [ ] **DESIGN RULE — no lazy compiles, ever: if it dies during construction,
-      it dies.** `Pattern.compile` must be the whole story; no engine may be
-      materialized on first match call. The current `LazyEngine` corner in
-      `PatternCompiler`'s budget ladder (whole build over `WHOLE_WORK_CAP` →
-      historical lazy anchored engine, rejection surfaces at first
-      `matches()`) is an accepted-for-now DEVIATION kept solely so
-      compile() acceptance stays tied to the find artifact — remove it: the
-      whole artifact is built eagerly or `compile()` fails with the budget
-      rejection outright. Landing this requires a corpus-impact decision
-      first (bombs like `(a{1,100}){1,100}` currently compile find-only and
-      would start failing compile(); `SingleCompileWholeTest.
-      bombOverBudgetKeepsHistoricalContract` pins the deviation and flips
-      with it).
-- [ ] Inline `matchWhole` into generated engines (ASM tier) — it is currently
-      a delegating stub to the embedded `TdfaRunner`, so `matches()` runs the
-      interpreted walk instead of the previously-inlined generated anchored
-      walk. Emit the whole-walk leaf the same way `extractOne` is emitted if
-      the benchmark run below shows it matters.
-- [ ] **Benchmark the single-compile change** — not yet measured. Run
-      `scripts/bench-regression.sh --quick` (then `--jmh` if quick is clean)
-      against `benchmarks/baselines/`: expected finds: compile deltas
-      (dictionary single-compile faster; datefinder ~2× slower — two eager
-      determinizations, unpruned whole + pruned find), `matches()`
-      throughput (interpreted walk now — see previous item), `find()`
-      expected flat (tables identical: same artifact for safe patterns, same
-      pruned compile for cut-matters). Recapture baselines per policy if
-      within thresholds.
-- [ ] Pre-existing, now more visible: `RegexEngine.matches` (the boolean
-      whole walk) is wrong on raw PRUNED artifacts — `(a|ab)` on `"ab"`
-      returns false (the cut deleted the `ab` continuation; facade-built
-      engines are correct since they carry the unpruned artifact). Either
-      reroute it through `matchWhole != null` everywhere or document the
-      anchored-artifact-only contract on the interface.
-- [ ] Overnight fuzz round for the unpruned determinization (validated so
-      far with a 4×2 min patched-oracle soak vs the pre-change commit:
-      0 mismatches both sides).
+- [x] **DESIGN RULE — no lazy compiles, ever.** `LazyEngine` is removed;
+      nothing materializes on a match call. The over-budget corner eagerly
+      attempts the both-ends-anchored artifact inside compile() (same
+      `WHOLE_WORK_CAP`); if that rejects too, the rejection is RECORDED and
+      rethrown by every whole call (`OverBudgetWhole`) — same exception
+      instance, zero compile at match time, fuzz round 27's per-call re-burn
+      dead by construction. DEVIATION from the rule's strictest reading
+      (compile-fails-outright), decided on measured corpus impact: the
+      bounded-gap family (`[\s\S]{0,60}x[\s\S]{0,60}`: find compiles at ~3.7 M
+      kernels, the whole DFA is an intrinsically 100 K+-state counter
+      cross-product) would have LOST find() — compile() acceptance stays the
+      find artifact's alone (the historical contract). Anchored-artifact
+      whole-walk exactness (every anchored accept is end-of-input-gated ⇒ the
+      pike cut never fires mid-walk): validated 18 K randomized
+      anchored-vs-unpruned pairs, both longest modes, 0 diffs; pinned in
+      `SingleCompileWholeTest.anchoredArtifactWholeWalkIsExact`. BYO factories
+      now get ONE call (find engine) — the old second eager anchored build
+      was the measured +112 % vmCompile regression; whole matching runs the
+      facade's own whole engine (a custom engine's matchWhole default can't
+      consume the shared unpruned artifact anyway).
+- [x] Inline `matchWhole` into generated engines: INLINED classes emit
+      `wholeOne` (the extractOne-shaped leaf with the whole protocol — no
+      stop table, accept gate + eager φ at EOF, dead = not-a-whole-match);
+      DELEGATE classes keep the (always-exact) runner delegation. Cost: ~6 %
+      compile on trivial fastPath patterns (the extra leaf's emission),
+      measured par on the JMH compile ops. matches() through the generated
+      tier: 348 ns (pre-single-compile) → 27 ns (JMH asmAnchored, −92 %).
+- [x] **Benchmarked** vs the pre-refactoring commit (full JMH A/B, both
+      suites + probes): vmCompile +112 % → +4.7 % (the honest eager-whole
+      determinization; within threshold), asmCompile par, find rows flat,
+      vmFindAllDense −16 %, everything matches()-shaped −47…−95 %. The
+      quick harness's info.* rows were JIT-noise (steady-state probes are
+      ground truth — matches() was NEVER slower post-refactoring, the TODO's
+      predicted regression didn't exist; the delegating stub was still 4.6×
+      faster than the old anchored ladder). Quick+JMH baselines recaptured
+      per policy; `-PjmhInclude` now actually filters (the plugin ignored
+      it — `--jmh` silently ran the full 4×-documented suite).
+- [x] `RegexEngine.matches`/`matchWhole` artifact contract DOCUMENTED on the
+      interface (exact over anchored/unpruned artifacts; over pruned
+      unanchored artifacts where the cut fired, matches() may reject
+      whole-matchable inputs — use the facade, which always carries a
+      whole-exact engine).
+- [ ] Overnight fuzz round for the unpruned determinization + the new ladder
+      (validated so far: 4×2 min patched-oracle soak pre-change, 1 min
+      patched-oracle slice post-change — 406 K cases, 0 mismatches, 0 hangs,
+      88 BUDGET_REJECT = the known bomb class at the usual rate).
 - [ ] Maybe: shave the double determinization for cut-matters patterns
       (parse is shared; determinization is the whole cost — a smarter
       reuse would need the subordinate-marking refinement discussed in the
