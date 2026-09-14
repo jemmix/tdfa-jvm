@@ -36,6 +36,15 @@ rm -rf "$work"
 mkdir -p "$work/src" "$work/classes"
 # Tarball top-level dir is re2j/ — strip it.
 tar -xzf "$archive" -C "$work/src" --strip-components=1
+# The vendored tarball carries macOS provenance xattrs as PAX headers on
+# every member (stamped by the machine that snapped it, baked in by
+# bsdtar). GNU tar on Linux cannot restore "com.apple.provenance" (not a
+# valid un-prefixed xattr name there) and materializes each one as a
+# ._<name> AppleDouble sidecar FILE — 118 binary junk files that match
+# '*.java' below and kill javac (CI, macOS-developer blind spot: bsdtar
+# restores the xattrs silently and writes no sidecars). Strip them; the
+# delete is a no-op on macOS.
+find "$work/src" -name '._*' -delete
 
 count=0
 for p in patches/*.patch; do
@@ -46,7 +55,9 @@ for p in patches/*.patch; do
 done
 
 # -/super/ is GWT super-source (overrides for GWT builds), not javac source
-find "$work/src/java" -name '*.java' -not -path '*/super/*' > "$work/sources.txt"
+# ('._*' guard is belt-and-suspenders: the delete above already removed
+# any AppleDouble sidecars a future tar might materialize)
+find "$work/src/java" -name '*.java' -not -name '._*' -not -path '*/super/*' > "$work/sources.txt"
 javac --release 8 -nowarn -d "$work/classes" @"$work/sources.txt"
 # Manifest with the level baked in (unquoted heredoc expands ${level}; the
 # former `sed -i ''` rewrite was macOS-only syntax and failed under GNU sed).
