@@ -15,9 +15,10 @@
 # via -Pfuzz.one=<caseSeed>). A nonzero fuzzer exit (findings found) is logged
 # and does NOT stop the soak.
 #
-# Fuzz against our patched re2j fork (surrogate-pair-interior fix,
-# vendor/re2j-jemmix/): append -Pfuzz.patchedOracle=true
-#   scripts/fuzz-soak.sh 480 1 build/fuzz '' -Pfuzz.patchedOracle=true
+# The oracle is our patched re2j fork by default (surrogate-pair-interior
+# + FoldCase fixes, vendor/re2j-jemmix/, built on demand). To soak against
+# released (pristine) re2j 1.8 instead: append -Pfuzz.pristineOracle=true
+#   scripts/fuzz-soak.sh 480 1 build/fuzz '' -Pfuzz.pristineOracle=true
 #
 # Diagnostics land in $OUT automatically: gc-<pid>.log per chunk
 # (-PfuzzGcLog, passed below), ts/upMs on every failure record, and a

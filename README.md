@@ -114,9 +114,10 @@ records (`:tests:parity:re2j:fuzz`, overnight soaks via
 `scripts/fuzz-soak.sh`): **~300 M accumulated cases, 0 engine divergences**
 (480 × 1-min chunks; 0 hangs, 0 known, 0 oracle). A fixed-seed 500-case slice
 (`FuzzSmokeTest`) runs as a hard gate in every default build. Any recorded
-failure replays turnkey via `-Pfuzz.one=<caseSeed>`. Fuzzing can also swap in
-a patched re2j oracle (`-Pfuzz.patchedOracle=true`) built on demand from the
-vendored pristine archive.
+failure replays turnkey via `-Pfuzz.one=<caseSeed>`. The default oracle is
+our patched re2j fork (built on demand from the vendored pristine archive,
+so every divergence is a real finding); released re2j 1.8 remains available
+via `-Pfuzz.pristineOracle=true`.
 
 **Performance** — all harnesses in-repo, results committed as artifacts
 (`benchmarks/results-*.txt`):

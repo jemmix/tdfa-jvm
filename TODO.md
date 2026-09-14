@@ -994,9 +994,11 @@ hard-gating every fixed family, replay corpora, probe-before-fix.
       violation (range/singletons without a single-rune prefix never enter interiors: stepping
       is codepoint-aligned). JDK agrees with us on every row. Upstream issue creation is
       restricted on google/re2j; PR from the fork pending. We keep codepoint-boundary semantics
-      regardless — the fuzzer classifies the family as KNOWN_DIVERGENCE, and
-      `-Pfuzz.patchedOracle=true` (vendor/re2j-jemmix/) fuzzes against the patched re2j to
-      shrink the divergence stream. NB: singleton CLASS `[\uDC21]` matches like the literal;
+      regardless — under the released oracle the fuzzer classifies the family
+      as KNOWN_DIVERGENCE. The patched re2j (vendor/re2j-jemmix/) is now the
+      DEFAULT fuzz oracle; `-Pfuzz.pristineOracle=true` opts back into
+      released 1.8 (with the classifier re-enabled). NB: singleton CLASS
+      `[\uDC21]` matches like the literal;
       only the RANGE form avoids the fast path (earlier note here said "class form" — imprecise).
 - [x] **Fuzz round 3 engine fixes (2026-08-28) — final-ops correctness by construction.**
       Three coordinated changes, all gates green (unit + re2j parity + corpus/Fowler + conformance):

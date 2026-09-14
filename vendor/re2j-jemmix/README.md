@@ -32,8 +32,8 @@ repo — no external fetches needed to rebuild.
   (pure javac+jar, no build system needed):
   `vendor/re2j-jemmix/build-patched.sh [1|2|3]` (default 3).
 - `re2j-1.8-jemmix-fix{1,2,3}.jar` — build outputs, **gitignored**. Built on
-  demand: `:tests:parity:re2j:buildPatchedOracle` runs the script when the
-  patched oracle is requested.
+  demand: `:tests:parity:re2j:buildPatchedOracle` runs the script whenever
+  the default (patched) oracle is on the test classpath.
 
 ## Fork / upstreaming
 
@@ -65,7 +65,16 @@ Google individual CLA is a merge prerequisite).
 
 ## Use as the fuzz oracle
 
-    ./gradlew :tests:parity:re2j:fuzz -Pfuzz.patchedOracle=true -Pfuzz.minutes=480 ...
+The patched build is the DEFAULT oracle for the parity/fuzz subproject —
+plain invocations use it, building the jar automatically via
+`buildPatchedOracle` (no local toolchain beyond javac + tar needed):
 
-The Gradle property builds the jar automatically via `buildPatchedOracle`
-(no local toolchain beyond javac + tar needed).
+    ./gradlew :tests:parity:re2j:fuzz -Pfuzz.minutes=480 ...
+
+To fuzz/parity-test against released (pristine) re2j 1.8 from Maven instead:
+
+    ./gradlew :tests:parity:re2j:fuzz -Pfuzz.pristineOracle=true -Pfuzz.minutes=480 ...
+
+The fuzzer probes which oracle is on the classpath (the lone-low-surrogate
+interior behavior is the discriminator) and turns its known-divergence
+classifier off under the patched build — every divergence is a real finding.
