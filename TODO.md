@@ -1330,6 +1330,27 @@ end-of-input is a full match. The follow-up list, resolved (commits 0fded73
       shape (anchored walk over the pruned artifact — `(a|ab)` on "ab"
       returned false); it is exact now, pinned in
       `SingleCompileWholeTest.evergreenTier`.
+- [x] **Fuzz round 28 (2026-09-14) — wholeOne ignored phi-variant accepting
+      states.** Three asm-only probe-M mismatches (all exclusive to
+      `matches()`; find/lookingAt/restart clean): `(?:.)((?:\B)?)` on a
+      supplementary pair, `(\b)?` on "" under LONGEST_MATCH, and
+      `.(?<n0>(\z)*)` on "_". Root: a fastPath DFA may still carry
+      `stateFinalOpsByMask` (an accepting state merging configs whose
+      zero-width gates differ — the `stateAcceptMask` intersection
+      collapses to 0, so nothing disqualifies), and the generated wholeOne
+      leaf applied the state-keyed default phi at EOF with no position
+      flags: the wrong variant's registers won (group - or 0..0 instead of
+      the true span). Fix: wholeOne's EOF block now mirrors wholeWalk —
+      `phiMasked(state, regs, len, positionFlagsC(len, len, s))` gates AND
+      selects the winner; positionFlagsC's unconditional word bits are safe
+      because bits no fm cell distinguishes never change the winner
+      (`Tdfa.tableDeps`). Regression-pinned in `SingleCompileWholeTest.
+      finalVariantGateAtEofMatchesOracleOnBothTiers` + the three shapes in
+      `StrategyConformanceTest`'s catalog (matchWhole span parity, asm vs
+      vm). Validated: 3/3 caseSeeds replay clean; 2-min seed-9928 slice
+      byte-identical failure sets pre/post fix (2581 = 2581 lines, all the
+      documented lone-surrogate/budget families); +6-min 2.57 M-case soak
+      with zero probe-M signatures.
 - [ ] Overnight fuzz round for the unpruned determinization + the new ladder
       (validated so far: 4×2 min patched-oracle soak pre-change, plus
       406 K-case and 8-min/2.96 M-case patched-oracle slices on the final

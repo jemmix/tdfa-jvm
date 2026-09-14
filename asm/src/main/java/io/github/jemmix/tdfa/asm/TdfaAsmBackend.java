@@ -1951,14 +1951,22 @@ public final class TdfaAsmBackend {
      * The generated whole-walk leaf ({@code private static MatchHolder
      * wholeOne(String s)}): anchored at 0, walks to end-of-input, succeeds
      * iff an accept is alive exactly at EOF — the bytecode transcription of
-     * {@code TdfaRunner.wholeWalk} for fastPath DFAs (no masks, disjoint
-     * ranges — pickMode guarantees this for INLINED classes), so the mask
-     * machinery degenerates away: no positionFlags, no entry checks, no
-     * stop table; φ applies once at EOF reading EOF-time registers. A dead
-     * step (no transition) means the input is not a whole match — null.
+     * {@code TdfaRunner.wholeWalk} for fastPath DFAs (no entry/transition
+     * masks, disjoint ranges — pickMode guarantees this for INLINED
+     * classes), so the loop itself carries no mask machinery: no
+     * positionFlags, no entry checks, no stop table. φ applies once at EOF
+     * reading EOF-time registers — state-keyed when accepting states are
+     * uniform, else (φ-variant states, {@code stateFinalOpsByMask != null})
+     * the byMask table is authoritative exactly as in wholeWalk: gate AND
+     * winner selection keyed by the EOF position flags via {@code
+     * phiMasked} (positionFlagsC's unconditional word bits are safe — bits
+     * no fm cell distinguishes never change the winner, see {@code
+     * Tdfa.tableDeps}). A dead step (no transition) means the input is not
+     * a whole match — null.
      */
     private static void genWholeOne(ClassWriter cw, Tdfa tdfa, String owner) {
         final int[] op = tdfa.ops();
+        final int[] byMask = tdfa.stateFinalOpsByMask();
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
                 "wholeOne", "(Ljava/lang/String;)L" + HOLDER + ";", null, null);
         mv.visitCode();
@@ -2009,7 +2017,22 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.IALOAD);
         Label noAcc = new Label();
         mv.visitJumpInsn(Opcodes.IFEQ, noAcc);
-        if (tdfa.registerCount() > 0) {
+        if (byMask != null) {
+            // φ-variant accepting states: fm cell at [state*64 + eofFlags]
+            // gates AND selects the winner's ops (wholeWalk parity). REGS is
+            // null when registerCount == 0 — phiMasked's ops blocks only run
+            // for cells > 0, which imply registers, so null never
+            // dereferences (same contract as the extractOne call site).
+            mv.visitVarInsn(Opcodes.ILOAD, STATE);
+            mv.visitVarInsn(Opcodes.ALOAD, REGS);
+            mv.visitVarInsn(Opcodes.ILOAD, LEN);
+            mv.visitVarInsn(Opcodes.ILOAD, LEN);
+            mv.visitVarInsn(Opcodes.ILOAD, LEN);
+            mv.visitVarInsn(Opcodes.ALOAD, IN);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "positionFlagsC", "(IILjava/lang/String;)I", false);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phiMasked", "(I[III)Z", false);
+            mv.visitJumpInsn(Opcodes.IFEQ, noAcc);
+        } else if (tdfa.registerCount() > 0) {
             mv.visitVarInsn(Opcodes.ILOAD, STATE);
             mv.visitVarInsn(Opcodes.ALOAD, REGS);
             mv.visitVarInsn(Opcodes.ILOAD, LEN);

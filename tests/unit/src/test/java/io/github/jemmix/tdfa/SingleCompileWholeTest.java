@@ -215,6 +215,61 @@ class SingleCompileWholeTest {
         return sb.toString();
     }
 
+    /**
+     * Fuzz round 28 (asm-only probe-M mismatches): accepting states whose
+     * configs carry DIFFERENT zero-width assertions (\b/\B/\z after a group)
+     * compile to a {@code stateFinalOpsByMask} table even on fastPath DFAs;
+     * the generated wholeOne leaf must gate and select the φ winner by the
+     * EOF position flags exactly like the runner's wholeWalk — not apply the
+     * state-keyed default φ. Pinned on both tiers with oracle spans: the
+     * supplementary-input \B case, the empty-input \b case (LONGEST flag,
+     * group must stay non-participating), and the trailing (\z)* case.
+     */
+    @Test
+    void finalVariantGateAtEofMatchesOracleOnBothTiers() {
+        // (?:.)((?:\B)?) on "\ud800\udfff": \B alive at EOF → group 1 = [2,2).
+        {
+            String in = "\ud800\udfff";
+            PatternMatcher asm = Pattern.compile("(?:.)((?:\\B)?)").matcher(in);
+            assertThat(asm.matches()).isTrue();
+            assertThat(asm.start(1)).isEqualTo(2);
+            assertThat(asm.end(1)).isEqualTo(2);
+            PatternMatcher vm = Pattern.compile("(?:.)((?:\\B)?)", 0,
+                    io.github.jemmix.tdfa.tdfa.TdfaRunner::new).matcher(in);
+            assertThat(vm.matches()).isTrue();
+            assertThat(vm.start(1)).isEqualTo(2);
+            assertThat(vm.end(1)).isEqualTo(2);
+        }
+        // (\b)? on "": \b dead at EOF of empty input → whole matches via the
+        // empty branch, group 1 non-participating (NOT the [0,0) the default
+        // φ produced). Same answer at flags=0 and LONGEST_MATCH (fuzz case).
+        for (int flags : new int[]{0, Pattern.LONGEST_MATCH}) {
+            PatternMatcher asm = Pattern.compile("(\\b)?", flags).matcher("");
+            assertThat(asm.matches()).as("flags=%d", flags).isTrue();
+            assertThat(asm.start(1)).as("flags=%d", flags).isEqualTo(-1);
+            PatternMatcher vm = Pattern.compile("(\\b)?", flags,
+                    io.github.jemmix.tdfa.tdfa.TdfaRunner::new).matcher("");
+            assertThat(vm.matches()).isTrue();
+            assertThat(vm.start(1)).isEqualTo(-1);
+        }
+        // .(?<n0>(\z)*) on "_": \z alive at EOF → both groups = [1,1).
+        {
+            PatternMatcher asm = Pattern.compile(".(?<n0>(\\z)*)").matcher("_");
+            assertThat(asm.matches()).isTrue();
+            assertThat(asm.start(1)).isEqualTo(1);
+            assertThat(asm.end(1)).isEqualTo(1);
+            assertThat(asm.start("n0")).isEqualTo(1);
+            assertThat(asm.end("n0")).isEqualTo(1);
+            PatternMatcher vm = Pattern.compile(".(?<n0>(\\z)*)", 0,
+                    io.github.jemmix.tdfa.tdfa.TdfaRunner::new).matcher("_");
+            assertThat(vm.matches()).isTrue();
+            assertThat(vm.start(1)).isEqualTo(1);
+            assertThat(vm.end(1)).isEqualTo(1);
+        }
+        // CharSequence inputs route the generic (runner) whole walk — exact too.
+        assertThat(Pattern.compile("(\\b)?").matcher(new StringBuilder("")).matches()).isTrue();
+    }
+
     @Test
     void bombOverBudgetKeepsFindOnlyAcceptanceWithRecordedRejection() {
         // Nested-counted bomb: BOTH whole builds (unpruned and anchored)

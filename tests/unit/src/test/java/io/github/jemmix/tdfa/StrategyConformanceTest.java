@@ -46,6 +46,12 @@ class StrategyConformanceTest {
             {"\\w+@\\w+\\.(com|org|net)", "no addresses anywhere in this particular line at all"},
             {"[a-z]+qrst", "the quick brown fox jumps over the lazy dog qrstxx"},
             {"(?m)^line", "first\nline two\nline three\nline four\nline five"},
+            // φ-variant accepting states (stateFinalOpsByMask on a fastPath
+            // DFA): wholeOne's EOF gate/φ selection is compared span-exact
+            // against wholeWalk via matchWhole (fuzz round 28 family).
+            {"(?:.)((?:\\B)?)", "\ud800\udfff"},
+            {"(\\b)?", "word words"},
+            {".(?<n0>(\\z)*)", "_"},
     });
 
     private static final int[] LENGTHS = {1, 2, 3, 15, 40, 63, 64, 65, 100, 127, 128, 129,
