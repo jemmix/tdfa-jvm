@@ -30,11 +30,15 @@ dependencies {
     testImplementation platform('org.junit:junit-bom:5.10.2'),
             'org.junit.jupiter:junit-jupiter',
             'org.assertj:assertj-core:3.25.3'
-    // re2j as live oracle for parity comparison. The fuzz task can swap in a
-    // patched build from our fork (-Pfuzz.patchedOracle=true) to fuzz against
-    // the surrogate-pair-interior fixes — see vendor/re2j-jemmix/README.md.
-    // The patched jar is a build output (gitignored), built on demand from the
-    // single committed pristine archive + per-fix patches.
+    // re2j as live oracle for parity comparison. DEFAULT: our patched fork
+    // (vendor/re2j-jemmix/) — the released 1.8 oracle has known bugs of its
+    // own (lone-surrogate pair-interior literal prefix, FoldCase factoring),
+    // so findings under it need a known-divergence classifier to interpret.
+    // The patched build removes those, making any divergence a real finding.
+    // Built on demand by buildPatchedOracle from the single committed
+    // pristine archive + per-fix patches (jar is a gitignored build output).
+    // -Pfuzz.pristineOracle=true swaps in the released Maven artifact to run
+    // against stock re2j 1.8 behavior instead — see vendor/re2j-jemmix/README.md.
     def patchedOracleJar = rootProject.file('vendor/re2j-jemmix/re2j-1.8-jemmix-fix3.jar')
     tasks.register('buildPatchedOracle', Exec) {
         group = 'build'
@@ -46,11 +50,11 @@ dependencies {
                 'vendor/re2j-jemmix/patches/*.patch', 'vendor/re2j-jemmix/build-patched.sh'])
         outputs.file patchedOracleJar
     }
-    if (project.hasProperty('fuzz.patchedOracle')) {
+    if (project.hasProperty('fuzz.pristineOracle')) {
+        testImplementation 'com.google.re2j:re2j:1.8'
+    } else {
         tasks.named('compileTestJava') { dependsOn 'buildPatchedOracle' }
         testImplementation files(patchedOracleJar)
-    } else {
-        testImplementation 'com.google.re2j:re2j:1.8'
     }
     // bytecode policy check + CheckClassAdapter verification on the
     // ASM-generated engine classes (asm-util pulls asm-analysis)
@@ -70,6 +74,8 @@ test {
 }
 
 // Overnight differential soak: tdfa (both engines) vs re2j oracle.
+// The oracle is our patched re2j fork by default (built on demand); pass
+// -Pfuzz.pristineOracle=true to soak against released re2j 1.8 instead.
 //   ./gradlew :tests:parity:re2j:fuzz                      # 8h, logs to build/fuzz
 //   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.minutes=60 -Pfuzz.seed=42 -Pfuzz.out=/tmp/soak
 // Chunked soak (hang-leak containment, shared out dir via append):

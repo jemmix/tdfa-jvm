@@ -48,12 +48,12 @@ done
 # -/super/ is GWT super-source (overrides for GWT builds), not javac source
 find "$work/src/java" -name '*.java' -not -path '*/super/*' > "$work/sources.txt"
 javac --release 8 -nowarn -d "$work/classes" @"$work/sources.txt"
-manifest="$work/MANIFEST.MF"
-cat > "$manifest" <<'M'
+# Manifest with the level baked in (unquoted heredoc expands ${level}; the
+# former `sed -i ''` rewrite was macOS-only syntax and failed under GNU sed).
+cat > "$work/MANIFEST.MF" <<M
 Implementation-Title: re2j-jemmix
-Implementation-Version: 1.8-jemmix-fixLEVEL
+Implementation-Version: 1.8-jemmix-fix${level}
 M
-sed -i '' "s/fixLEVEL/fix${level}/" "$manifest"
-jar cfm "re2j-1.8-jemmix-fix${level}.jar" "$manifest" -C "$work/classes" .
+jar cfm "re2j-1.8-jemmix-fix${level}.jar" "$work/MANIFEST.MF" -C "$work/classes" .
 rm -rf "$work"
 echo "wrote re2j-1.8-jemmix-fix${level}.jar ($(wc -c < "re2j-1.8-jemmix-fix${level}.jar" | tr -d ' ') bytes)"

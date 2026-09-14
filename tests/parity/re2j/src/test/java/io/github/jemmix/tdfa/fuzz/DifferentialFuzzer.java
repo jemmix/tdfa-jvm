@@ -105,9 +105,10 @@ public final class DifferentialFuzzer {
     private static final io.github.jemmix.tdfa.parity.LayeredComparator LAYERED =
             new io.github.jemmix.tdfa.parity.LayeredComparator(com.google.re2j.Re2jUnicodeProvider.INSTANCE);
 
-    /** Which re2j is on the classpath — released 1.8, or our patched fork
-     *  (vendor/re2j-jemmix, -Pfuzz.patchedOracle=true)? Probed, not declared:
-     *  the lone-low-interior behavior is the discriminator (same probe as
+    /** Which re2j is on the classpath — our patched fork (the DEFAULT
+     *  oracle, vendor/re2j-jemmix/) or released 1.8
+     *  (-Pfuzz.pristineOracle=true)? Probed, not declared: the
+     *  lone-low-interior behavior is the discriminator (same probe as
      *  LayeredComparatorTest). Under the patched oracle the lone-surrogate
      *  "known divergence" family is FIXED — any divergence there is a real
      *  finding, so the known-divergence classifier runs only when released. */
