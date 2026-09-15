@@ -22,6 +22,27 @@ public final class Re2jOracle {
     private Re2jOracle() {}
 
     /**
+     * Which re2j is on the test classpath: released 1.8 (true) or the
+     * patched fork (false). Probed, not declared — the lone-low surrogate
+     * pair-interior behavior is the discriminator (same probe as the
+     * fuzzer).
+     */
+    public static boolean releasedOracle() {
+        return com.google.re2j.Pattern.compile("\uDC21").matcher("a\uD801\uDC21zz").find();
+    }
+
+    /**
+     * True when the oracle folds the post-6.0 case-fold orbits (fork fix5+).
+     * Released 1.8's tables predate U+1C80..U+1C88 entirely: it folds the
+     * partner letters without the historic ones, and compiling
+     * {@code (?i)\u1C80} hangs its unbounded orbit walk — never probe with
+     * those literals, only with partner-side patterns like this one.
+     */
+    public static boolean foldsHistoricCyrillic() {
+        return com.google.re2j.Pattern.compile("(?i)\u0442").matcher("\u1C85").find();
+    }
+
+    /**
      * Engine compositions for parameterized tests: {@code null} = default
      * per-pattern generation (ASM); {@code TdfaRunner::new} = bring-your-own
      * interpreter via the generic shell — exercising BYO-engine composition
