@@ -76,6 +76,10 @@ public final class Re2jOracle {
     public static int[] tdfaFind(String pattern, String input, RegexEngineFactory factory) {
         Matcher m =
                 io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory, UNICODE).matcher(input);
+        return tdfaSpans(m);
+    }
+
+    private static int[] tdfaSpans(Matcher m) {
         if (!m.find()) return null;
         int gc = m.groupCount();
         int[] out = new int[2 + 2 * gc];

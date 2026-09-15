@@ -91,13 +91,16 @@ class CompileBudgetTest {
         }
     }
 
-    /** The classic nested-counted shape now compiles under default caps —
-     *  the right-nested suffix collapsed the determinization ~90x in kernel
-     *  total ((a{1,100}){1,100}: 19.6 M kernels -> 148 K, 10001 states). */
+    /** The classic nested-counted shape's FIND artifact now compiles under
+     *  default caps — the right-nested suffix collapsed the determinization
+     *  ~90x in kernel total ((a{1,100}){1,100}: 19.6 M kernels -> 148 K,
+     *  10001 states). Its whole builds still reject (pinned in
+     *  SingleCompileWholeTest), so the lenient flag carries the pin. */
     @Test
     void nestedCountedNowCompiles() {
         long t0 = System.nanoTime();
-        io.github.jemmix.tdfa.Pattern p = Pattern.compile("(a{1,100}){1,100}");
+        io.github.jemmix.tdfa.Pattern p = Pattern.compile("(a{1,100}){1,100}",
+                io.github.jemmix.tdfa.Pattern.DEFER_WHOLE_REJECTION);
         assertThat(p.matcher("a".repeat(120)).find()).isTrue();
         assertThat((System.nanoTime() - t0) / 1_000_000)
                 .as("nested-counted compile wall").isLessThan(15_000);
@@ -146,24 +149,26 @@ class CompileBudgetTest {
     }
 
     /** Fuzz round 27's spin family (caseSeeds 4496606199222982303,
-     *  917334682215128318), under the no-lazy-compiles contract: a bomb
-     *  whose whole builds (unpruned AND anchored) exceed the budget runs
-     *  each doomed attempt exactly ONCE — inside compile() — and every
-     *  matches() call rethrows the recorded rejection; nothing recompiles
-     *  at match time (the former LazyEngine corner re-burned the 8 M-tick
-     *  rejection ~16× per batch and crossed the fuzz watchdog as a spin).
-     *  compile() acceptance still follows the find artifact alone — the
-     *  bounded-gap family ([\s\S]{0,60}x[\s\S]{0,60}: find compiles, the
-     *  whole DFA is an intrinsically-100K+-state counter cross-product)
-     *  keeps find() working. Pinned with \x{...}/escapes per CFG_EDGE_BOMB
-     *  above. */
+     * 917334682215128318), under the no-lazy-compiles contract and the
+     * opt-in defer policy ({@code DEFER_WHOLE_REJECTION}): a bomb whose
+     * whole builds (unpruned AND anchored) exceed the budget runs each
+     * doomed attempt exactly ONCE — inside compile() — and every matches()
+     * call rethrows the recorded rejection; nothing recompiles at match
+     * time (the former LazyEngine corner re-burned the 8 M-tick rejection
+     * ~16× per batch and crossed the fuzz watchdog as a spin). Without the
+     * flag, compile() itself fails with the same clean rejection (the
+     * default since 2026-09-15 — pinned in SingleCompileWholeTest). The
+     * bounded-gap family ([\s\S]{0,60}x[\s\S]{0,60}: find compiles, the
+     * whole DFA is an intrinsically-100K+-state counter cross-product) is
+     * pinned below. Pinned with \x{...}/escapes per CFG_EDGE_BOMB above. */
     @Test
     void bombWholeOverBudgetRecordsRejectionOnceEagerly() {
         String bomb = "(?:(?m:\u00e9)(?:\\w[^\u03a9z\\-]{0,}|\ud835\udd04\udfff){1,4}){1,5}";
         System.setProperty("tdfa.max.work", "8388608");
         try {
             long t0 = System.nanoTime();
-            io.github.jemmix.tdfa.Pattern p = Pattern.compile(bomb);   // find artifact accepted
+            io.github.jemmix.tdfa.Pattern p = Pattern.compile(bomb,
+                    io.github.jemmix.tdfa.Pattern.DEFER_WHOLE_REJECTION);   // find artifact accepted
             assertThat((System.nanoTime() - t0) / 1_000_000)
                     .as("wall of the eager ladder (two bounded doomed whole builds)")
                     .isLessThan(10_000);
@@ -185,12 +190,19 @@ class CompileBudgetTest {
 
     @Test
     void boundedGapWholeBombKeepsFind() {
-        // The corpus-impact decision made concrete: find compiles (~3.7 M
-        // kernels), both whole builds reject (anchored: 100 001 states —
-        // the counter cross-product is the MINIMAL whole DFA). find() must
-        // keep working; matches() rethrows the recorded rejection.
-        io.github.jemmix.tdfa.Pattern p =
-                Pattern.compile("[\\s\\S]{0,60}x[\\s\\S]{0,60}");
+        // The corpus-impact decision made concrete — and REVERSED
+        // (2026-09-15): find compiles (~3.7 M kernels), both whole builds
+        // reject (anchored: 100 001 states — the counter cross-product is
+        // the MINIMAL whole DFA). Default: compile() fails — shipping a
+        // Pattern whose matches() is permanently broken behind a
+        // successful compile is the trap; the lenient find-only acceptance
+        // (find() works, matches() rethrows the recorded rejection) is the
+        // explicit opt-in.
+        assertThatCode(() -> Pattern.compile("[\\s\\S]{0,60}x[\\s\\S]{0,60}"))
+                .isInstanceOf(PatternSyntaxException.class)
+                .hasMessageContaining("pattern too large");
+        io.github.jemmix.tdfa.Pattern p = Pattern.compile(
+                "[\\s\\S]{0,60}x[\\s\\S]{0,60}", io.github.jemmix.tdfa.Pattern.DEFER_WHOLE_REJECTION);
         assertThat(p.matcher("aaaxbbb").find()).isTrue();
         assertThat(p.matcher("nothing to find in this line at all").find()).isFalse();
         assertThatCode(() -> p.matcher("aaaxbbb").matches())
@@ -218,9 +230,11 @@ class CompileBudgetTest {
     void budgetOverrideRaisesTheCeiling() {
         // The caps are per-compile reads of the system properties, so a raised
         // budget admits patterns the default would reject. Uses the kernel-total
-        // cap (re2c's MAX_DFA_SIZE analogue): {0,60} × 2 totals ~28 K kernel
+        // cap (re2j's MAX_DFA_SIZE analogue): {0,60} × 2 totals ~28 K kernel
         // entries across its states (the right-nested suffix shrank the flat
-        // tail's 220 K) — over a 20 K cap, under any heap.
+        // tail's 220 K) — over a 20 K cap, under any heap. The DEFER flag
+        // carries the find-only acceptance: the whole side rejects regardless
+        // of the caps (see boundedGapWholeBombKeepsFind).
         System.setProperty("tdfa.max.kernels", "20000");
         try {
             assertThatCode(() -> Pattern.compile(
@@ -228,7 +242,8 @@ class CompileBudgetTest {
         } finally {
             System.clearProperty("tdfa.max.kernels");
         }
-        assertThatCode(() -> Pattern.compile("[\\s\\S]{0,60}x[\\s\\S]{0,60}"))
+        assertThatCode(() -> Pattern.compile("[\\s\\S]{0,60}x[\\s\\S]{0,60}",
+                io.github.jemmix.tdfa.Pattern.DEFER_WHOLE_REJECTION))
                 .doesNotThrowAnyException();
     }
 }

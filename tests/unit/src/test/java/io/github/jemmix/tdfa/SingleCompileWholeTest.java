@@ -114,8 +114,9 @@ class SingleCompileWholeTest {
     /**
      * The evergreen core tier ({@code CompiledRegex}) runs the same
      * single-compile ladder: matches() through the eagerly compiled whole
-     * engine, find() leftmost-first, and the bomb corner records its
-     * rejection at compile time (find keeps working).
+     * engine, find() leftmost-first, and the bomb corner fails compile()
+     * by default (lenient acceptance under
+     * {@code CompileOptions.deferWholeRejection()}).
      */
     @Test
     void evergreenTier() {
@@ -132,8 +133,14 @@ class SingleCompileWholeTest {
                 io.github.jemmix.tdfa.core.CompiledRegex.compile("a$");
         assertThat(m.matches("a")).isTrue();
         assertThat(m.matches("a\nb")).isFalse();
+        // Bomb corner: DEFAULT fails compile(); the opt-in keeps the
+        // historical lenient acceptance (find works, matches rethrows).
+        assertThatThrownBy(() -> io.github.jemmix.tdfa.core.CompiledRegex.compile("(a{1,100}){1,100}"))
+                .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
+                .hasMessageContaining("pattern too large");
         io.github.jemmix.tdfa.core.CompiledRegex bomb =
-                io.github.jemmix.tdfa.core.CompiledRegex.compile("(a{1,100}){1,100}");
+                io.github.jemmix.tdfa.core.CompiledRegex.compile("(a{1,100}){1,100}",
+                        io.github.jemmix.tdfa.core.CompileOptions.of().deferWholeRejection());
         assertThat(bomb.find("a".repeat(120))).isTrue();
         assertThatThrownBy(() -> bomb.matches("a".repeat(50)))
                 .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
@@ -270,17 +277,28 @@ class SingleCompileWholeTest {
         assertThat(Pattern.compile("(\\b)?").matcher(new StringBuilder("")).matches()).isTrue();
     }
 
+    /**
+     * Nested-counted bomb: BOTH whole builds (unpruned and anchored) exceed
+     * the determinization caps. DEFAULT (2026-09-15): compile() FAILS with
+     * the clean "pattern too large" rejection — a pattern is accepted only
+     * when every artifact it ships built, the same compile-time budget
+     * contract the find artifact has always had. OPT-IN
+     * ({@code DEFER_WHOLE_REJECTION}, foldable from
+     * {@code CompileOptions.deferWholeRejection()}): the historical lenient
+     * acceptance — find() keeps working and matches() rethrows the rejection
+     * RECORDED AT COMPILE TIME, same instance on every call, no recompile
+     * (the no-lazy-compiles rule: nothing materializes at match time; the
+     * former LazyEngine corner re-burned its doomed build per call — fuzz
+     * round 27's spins). The flag travels in the flags int, so the lenient
+     * acceptance survives the serialization round-trip (pattern+flags).
+     */
     @Test
-    void bombOverBudgetKeepsFindOnlyAcceptanceWithRecordedRejection() {
-        // Nested-counted bomb: BOTH whole builds (unpruned and anchored)
-        // exceed the determinization caps. compile() still accepts on the
-        // find artifact's alone (the historical contract — a whole-match
-        // bomb must not take find() away), and matches() rethrows the
-        // rejection RECORDED AT COMPILE TIME — same instance on every call,
-        // no recompile (the no-lazy-compiles rule: nothing materializes at
-        // match time; the former LazyEngine corner re-burned its doomed
-        // build per call — fuzz round 27's spins).
-        Pattern p = Pattern.compile("(a{1,100}){1,100}");
+    void wholeBombFailsCompileByDefaultDeferFlagRecordsRejection() {
+        String bomb = "(a{1,100}){1,100}";
+        assertThatThrownBy(() -> Pattern.compile(bomb))
+                .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
+                .hasMessageContaining("pattern too large");
+        Pattern p = Pattern.compile(bomb, Pattern.DEFER_WHOLE_REJECTION);
         assertThat(p.matcher("a".repeat(120)).find()).isTrue();
         RuntimeException[] recorded = new RuntimeException[1];
         assertThatThrownBy(() -> p.matcher("a".repeat(50)).matches())
@@ -288,5 +306,26 @@ class SingleCompileWholeTest {
                 .hasMessageContaining("pattern too large")
                 .satisfies(ex -> recorded[0] = (RuntimeException) ex);
         assertThatThrownBy(() -> p.matcher("a".repeat(50)).matches()).isSameAs(recorded[0]);
+
+        // Options route folds to the same flag (flags() shows it)...
+        Pattern o = Pattern.compile(bomb,
+                io.github.jemmix.tdfa.core.CompileOptions.of().deferWholeRejection());
+        assertThat(o.flags() & Pattern.DEFER_WHOLE_REJECTION).isNotZero();
+        assertThat(o.matcher("a".repeat(120)).find()).isTrue();
+        // ...and the round-trip recompiles leniently on the reader's side.
+        assertThatCode(() -> {
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            try (java.io.ObjectOutputStream oos = new java.io.ObjectOutputStream(bos)) {
+                oos.writeObject(o);
+            }
+            try (java.io.ObjectInputStream ois = new java.io.ObjectInputStream(
+                    new java.io.ByteArrayInputStream(bos.toByteArray()))) {
+                Pattern r = (Pattern) ois.readObject();
+                assertThat(r.matcher("a".repeat(120)).find()).isTrue();
+                assertThatThrownBy(() -> r.matcher("a".repeat(50)).matches())
+                        .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
+                        .hasMessageContaining("pattern too large");
+            }
+        }).doesNotThrowAnyException();
     }
 }

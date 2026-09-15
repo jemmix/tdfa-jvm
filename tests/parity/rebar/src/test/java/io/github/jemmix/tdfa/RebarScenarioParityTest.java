@@ -172,6 +172,15 @@ class RebarScenarioParityTest {
      */
     static final Set<String> BOMB_SCENARIOS = Set.of("curated/10-bounded-repeat/context");
 
+    /** Find-only scenarios whose whole-match ladder churns without
+     *  converging (aws-keys' anchored build rejects at ANY work cap — its
+     *  "cap+1 ticks" report is meter granularity, not a knife edge). These
+     *  models (count/grep) never call matches(), so they compile with
+     *  {@code DEFER_WHOLE_REJECTION}: find() on the find artifact, the
+     *  whole rejection recorded. Not in this set + "pattern too large" =
+     *  FAILURE, as ever. */
+    static final Set<String> DEFER_WHOLE_SCENARIOS = Set.of("curated/09-aws-keys/full");
+
     /** Default true; set {@code -Dtdfa.test.rebar.skipBombs=false} to run the bombs for real. */
     static final boolean SKIP_BOMBS =
             Boolean.parseBoolean(System.getProperty("tdfa.test.rebar.skipBombs", "true"));
@@ -239,6 +248,7 @@ class RebarScenarioParityTest {
         int flags = 0;
         if (s.caseInsensitive()) flags |= Pattern.CASE_INSENSITIVE;
         if (s.unicode()) flags |= Pattern.UNICODE_CHARACTER_CLASS;
+        if (DEFER_WHOLE_SCENARIOS.contains(s.fullName())) flags |= Pattern.DEFER_WHOLE_REJECTION;
         long compileStart = System.nanoTime();
         Pattern compiled;
         try {
