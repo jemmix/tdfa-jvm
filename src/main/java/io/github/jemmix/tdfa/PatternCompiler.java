@@ -13,9 +13,10 @@ import io.github.jemmix.tdfa.unicode.UnicodeProviders;
  * pipeline (parse &rarr; TNFA &rarr; TDFA), engine-source resolution, and
  * shell-or-shared implementation selection. Fully eager — everything
  * compiles inside {@code compile()}; an artifact's death is decided there
- * (whole over budget &rarr; recorded rejection, any other failure &rarr;
- * compile fails) — the no-lazy-compiles design rule: no engine is ever
- * materialized on a match call.
+ * (whole over budget &rarr; compile fails, or with
+ * {@code DEFER_WHOLE_REJECTION} a recorded rejection thrown by whole calls;
+ * any other failure &rarr; compile fails) — the no-lazy-compiles design
+ * rule: no engine is ever materialized on a match call.
  *
  * <p><b>Single compile, two artifacts at most.</b> The whole-match engine
  * ({@code matches()}) is an unpruned determinization
@@ -30,10 +31,11 @@ import io.github.jemmix.tdfa.unicode.UnicodeProviders;
  * only — a {@link TdfaRunner} over the eagerly compiled both-ends-anchored
  * TDFA (pruned determinization; every accept in an anchored build is
  * end-of-input-gated, so the pike cut is inert there and the cut-free whole
- * walk stays exact), else — both whole builds over budget — a holder that
- * rethrows the compile-time-recorded rejection on every whole call while
- * find() keeps working (acceptance follows the find artifact alone).
- * Nothing materializes at match time, ever.
+ * walk stays exact), else — both whole builds over budget — compile()
+ * FAILS by default; opted in via {@code Pattern.DEFER_WHOLE_REJECTION}, a
+ * holder that rethrows the compile-time-recorded rejection on every whole
+ * call while find() keeps working (acceptance follows the find artifact
+ * alone). Nothing materializes at match time, ever.
  *
  * <p>Engine source resolution (provenance-based, no capability negotiation):
  * <ul>
@@ -65,7 +67,7 @@ final class PatternCompiler {
         if (regex == null) throw new NullPointerException("pattern is null");
         if ((flags & ~VALID_FLAGS) != 0) {
             throw new IllegalArgumentException(
-                    "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS, LONGEST_MATCH, UNICODE_CHARACTER_CLASS");
+                    "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS, LONGEST_MATCH, UNICODE_CHARACTER_CLASS, DEFER_WHOLE_REJECTION");
         }
         String flregex = regex;
         if ((flags & Pattern.CASE_INSENSITIVE) != 0) flregex = "(?i)" + flregex;
@@ -74,6 +76,7 @@ final class PatternCompiler {
         if ((flags & Pattern.UNICODE_CHARACTER_CLASS) != 0) flregex = "(?u)" + flregex;
         boolean longest = (flags & Pattern.LONGEST_MATCH) != 0;
         boolean disableUnicodeGroups = (flags & Pattern.DISABLE_UNICODE_GROUPS) != 0;
+        boolean deferWhole = (flags & Pattern.DEFER_WHOLE_REJECTION) != 0;
         final UnicodeDataProvider prov = provider != null ? provider : UnicodeProviders.get();
         final String fl = flregex;
         final io.github.jemmix.tdfa.core.CompileObserver obs = observer != null
@@ -84,10 +87,11 @@ final class PatternCompiler {
             // Single-compile ladder (one brain, every tier — core.SingleCompile):
             // whole artifact first (cut-free, work-bounded), find shares it
             // unless the pike cut provably matters; over budget the anchored
-            // artifact is attempted eagerly, and a second rejection is
-            // RECORDED and rethrown by every whole call — compile() acceptance
-            // stays the find artifact's alone, and NOTHING ever compiles at
-            // match time (no-lazy-compiles rule).
+            // artifact is attempted eagerly, and a second rejection FAILS
+            // compile() by default — or, opted in via DEFER_WHOLE_REJECTION,
+            // is RECORDED and rethrown by every whole call (compile()
+            // acceptance then stays the find artifact's alone). NOTHING ever
+            // compiles at match time (no-lazy-compiles rule).
             io.github.jemmix.tdfa.core.SingleCompile.Artifacts art =
                     io.github.jemmix.tdfa.core.SingleCompile.artifacts(nfa, longest, obs);
             Tdfa findTdfa = art.find;
@@ -97,7 +101,7 @@ final class PatternCompiler {
                 obs.note("engine", "shared-interpreter (tdfa.engine=VM)");
                 RegexEngine eng = new TdfaRunner(findTdfa);
                 return new TDFAPattern(regex, flags, ps, eng,
-                        whole(fl, disableUnicodeGroups, longest, prov, regex, art, eng), provider);
+                        whole(fl, disableUnicodeGroups, longest, deferWhole, prov, regex, art, eng), provider);
             }
 
             if (factory != null) {
@@ -108,8 +112,9 @@ final class PatternCompiler {
                 // the interface default (match(input,0)), whole-exact only
                 // over anchored artifacts, so it cannot consume the shared
                 // unpruned artifact. Over budget, whole() eagerly compiles
-                // the anchored artifact or records its rejection.
-                RegexEngine whole = whole(fl, disableUnicodeGroups, longest, prov, regex, art, eng);
+                // the anchored artifact, or fails compile() (records its
+                // rejection under DEFER_WHOLE_REJECTION).
+                RegexEngine whole = whole(fl, disableUnicodeGroups, longest, deferWhole, prov, regex, art, eng);
                 obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.ENGINE,
                         System.nanoTime() - t0, 0);
                 try {
@@ -139,7 +144,7 @@ final class PatternCompiler {
                 if (Boolean.getBoolean("tdfa.gen.debug")) genFailure.printStackTrace();
                 obs.note("engine", "shared-interpreter (engine emission failed)");
                 RegexEngine eng = new TdfaRunner(findTdfa);
-                return new TDFAPattern(regex, flags, ps, eng, whole(fl, disableUnicodeGroups, longest, prov, regex, art, eng), provider);
+                return new TDFAPattern(regex, flags, ps, eng, whole(fl, disableUnicodeGroups, longest, deferWhole, prov, regex, art, eng), provider);
             }
             obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.ENGINE,
                     System.nanoTime() - t1, 0);
@@ -147,8 +152,8 @@ final class PatternCompiler {
                 Pattern p = (Pattern) io.github.jemmix.tdfa.asm.ShellEmitter.emit(
                         new io.github.jemmix.tdfa.asm.ShellEmitter.Spec(
                                 regex, flags, ps, gen.engine(),
-                                whole(fl, disableUnicodeGroups, longest, prov, regex,
-                                        art, gen.engine()),
+                                whole(fl, disableUnicodeGroups, longest, deferWhole,
+                                        prov, regex, art, gen.engine()),
                                 gen.owner(), provider));
                 obs.note("engine", "generated");
                 return p;
@@ -156,7 +161,7 @@ final class PatternCompiler {
                 if (Boolean.getBoolean("tdfa.gen.debug")) ex.printStackTrace();
                 obs.note("engine", "shared-interpreter (shell emission failed)");
                 RegexEngine eng = new TdfaRunner(findTdfa);
-                return new TDFAPattern(regex, flags, ps, eng, whole(fl, disableUnicodeGroups, longest, prov, regex, art, eng), provider);
+                return new TDFAPattern(regex, flags, ps, eng, whole(fl, disableUnicodeGroups, longest, deferWhole, prov, regex, art, eng), provider);
             }
         } catch (RuntimeException e) {
             throw io.github.jemmix.tdfa.core.CompiledRegex.translate(e, regex);
@@ -165,23 +170,25 @@ final class PatternCompiler {
 
     private static final int VALID_FLAGS = Pattern.CASE_INSENSITIVE | Pattern.DOTALL
             | Pattern.MULTILINE | Pattern.DISABLE_UNICODE_GROUPS | Pattern.LONGEST_MATCH
-            | Pattern.UNICODE_CHARACTER_CLASS;
+            | Pattern.UNICODE_CHARACTER_CLASS | Pattern.DEFER_WHOLE_REJECTION;
 
     /**
      * Facade wrapper over the shared single-compile whole resolver (core
      * {@code SingleCompile} — one brain, every tier): the find engine itself
      * when the artifacts are shared, else a dedicated interpreter over the
      * whole TDFA, else the over-budget ladder (eagerly compiled anchored
-     * artifact, or the recorded rejection). The anchored build re-parses the
-     * FLAG-PREFIXED regex ({@code fl}); rejections translate with the bare
-     * user regex for messages. Everything runs inside {@code compile()}.
+     * artifact, or — opted in via {@code DEFER_WHOLE_REJECTION} only — the
+     * recorded rejection; the default FAILS compile()). The anchored build
+     * re-parses the FLAG-PREFIXED regex ({@code fl}); rejections translate
+     * with the bare user regex for messages. Everything runs inside
+     * {@code compile()}.
      */
     private static RegexEngine whole(String fl, boolean disableUnicodeGroups, boolean longest,
-                                     UnicodeDataProvider prov, String regex,
+                                     boolean deferWhole, UnicodeDataProvider prov, String regex,
                                      io.github.jemmix.tdfa.core.SingleCompile.Artifacts art,
                                      RegexEngine findEngine) {
         return io.github.jemmix.tdfa.core.SingleCompile.wholeEngine(
-                art, findEngine, fl, regex, disableUnicodeGroups, longest, prov);
+                art, findEngine, fl, regex, disableUnicodeGroups, longest, deferWhole, prov);
     }
 
     /** {@code -Dtdfa.engine=VM}: global no-codegen switch, read per compile. */

@@ -58,7 +58,8 @@ public final class CompiledRegex {
             long t0 = System.nanoTime();
             RegexEngine engine = new io.github.jemmix.tdfa.tdfa.TdfaRunner(a.find);
             RegexEngine whole = SingleCompile.wholeEngine(a, engine, pattern, pattern,
-                    options.isDisableUnicodeGroups(), options.isLongestMatch(), provider);
+                    options.isDisableUnicodeGroups(), options.isLongestMatch(),
+                    options.isDeferWholeRejection(), provider);
             obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
             obs.note("engine", "interpreter");
             return new CompiledRegex(pattern, engine, whole);
@@ -93,8 +94,10 @@ public final class CompiledRegex {
     /** Whole-input match ({@code matches()} semantics) through the eagerly
      *  compiled whole engine — exact for whole-match continuations the
      *  leftmost-first find artifact would have pruned (e.g. {@code (a|ab)}
-     *  whole-matches {@code "ab"}). Rethrows the compile-time-recorded
-     *  rejection for both-builds-over-budget patterns. */
+     *  whole-matches {@code "ab"}). For both-builds-over-budget patterns
+     *  compiled with {@link CompileOptions#deferWholeRejection()}, rethrows
+     *  the compile-time-recorded rejection (without the option, such
+     *  patterns fail {@code compile()} instead). */
     public boolean matches(CharSequence input) { return wholeEngine.matchWhole(input) != null; }
 
     public boolean find(CharSequence input) { return engine.find(input); }

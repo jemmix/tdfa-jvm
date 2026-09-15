@@ -25,33 +25,52 @@ import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
  *       alternation shapes where it would (e.g. {@code ab|a|ac}) keep a
  *       pruned find compile beside it for leftmost-first exactness.</li>
  *   <li>Over budget: the both-ends-ANCHORED artifact is attempted eagerly
- *       under the same cap. Every accept in an anchored build is
- *       end-of-input-gated, so the pike cut never fires mid-walk and the
- *       cut-free whole walk is exact over the (pruned) artifact —
+ *       (under {@link #ANCHORED_WORK_CAP}, 2&times; the first cap — the
+ *       last chance before compile failure). Every accept in an anchored
+ *       build is end-of-input-gated, so the pike cut never fires mid-walk
+ *       and the cut-free whole walk is exact over the (pruned) artifact —
  *       validated randomized at landing (18 K anchored-vs-unpruned pairs,
  *       both longest modes, 0 diffs).</li>
- *   <li>Both whole builds over budget: the rejection is RECORDED at
- *       compile time and rethrown by every whole call
- *       ({@link OverBudgetWholeEngine}) — deterministic, zero compile at
- *       match time. compile() acceptance follows the find artifact alone
- *       (the historical contract: patterns whose whole DFA is
- *       intrinsically huge, e.g. {@code [\s\S]{0,60}x[\s\S]{0,60}}'s
- *       counter cross-product, keep find()).</li>
+ *   <li>Both whole builds over budget: by DEFAULT the rejection fails
+ *       {@code compile()} outright (a pattern is accepted only when every
+ *       artifact it ships built — the compile-time budget contract matches
+ *       the find artifact's). The opt-in switch
+ *       ({@code Pattern.DEFER_WHOLE_REJECTION} /
+ *       {@link CompileOptions#deferWholeRejection()}) keeps the historical
+ *       lenient contract: the rejection is RECORDED at compile time and
+ *       rethrown by every whole call ({@link OverBudgetWholeEngine}) —
+ *       deterministic, zero compile at match time, find() keeps working
+ *       (patterns whose whole DFA is intrinsically huge, e.g.
+ *       {@code [\s\S]{0,60}x[\s\S]{0,60}}'s counter cross-product).</li>
  * </ul>
  */
 public final class SingleCompile {
     private SingleCompile() { }
 
     /**
-     * Work budget (ticks) for the eager whole-match attempts (unpruned and,
-     * on rejection, anchored): comfortably above the worst legit in-corpus
-     * unpruned build measured (datefinder's {@code (?i)(?u)} variant at
-     * ~115 M ticks — tick counts are deterministic, machine-independent)
-     * while rejecting cut-heavy shapes (aws-keys ~4G ticks) in well under a
-     * second, so even a slow CI runner stays inside the rebar
-     * compile-latency guard's budget.
+     * Work budget (ticks) for the eager UNPRUNED whole attempt: comfortably
+     * above the worst legit in-corpus unpruned build measured (datefinder's
+     * {@code (?i)(?u)} variant at ~115 M ticks — tick counts are
+     * deterministic, machine-independent) while rejecting cut-heavy shapes
+     * (aws-keys ~4G ticks) in well under a second, so even a slow CI runner
+     * stays inside the rebar compile-latency guard's budget.
      */
     public static final long WHOLE_WORK_CAP = 1L << 27;
+
+    /**
+     * Work budget (ticks) for the eager ANCHORED last-chance attempt — 2&times;
+     * {@link #WHOLE_WORK_CAP}. The anchored build is what stands between a
+     * budget rejection and compile() failure, and legit-but-heavy shapes
+     * land just past the first cap (fuzz round 18's overnight quantifier
+     * shape converges at 134 219 263 ticks — 0.001% over 2^27). Doubling
+     * only THIS cap admits them at zero extra wall (a shape burning N
+     * ticks burns N either way; under the doubled cap it finishes instead
+     * of rejecting), while genuinely non-converging churn (aws-keys'
+     * anchored build rejects at any cap — its "cap+1 ticks" report is meter
+     * granularity, not a knife edge) pays at most what the doomed unpruned
+     * attempt already spent.
+     */
+    public static final long ANCHORED_WORK_CAP = 1L << 28;
 
     /** Resolved artifact pair: the find TDFA plus the whole TDFA (or the
      *  over-budget marker). Carrier class (Java 8 floor). */
@@ -93,34 +112,41 @@ public final class SingleCompile {
      * find engine itself when the artifacts are shared (one engine object —
      * generated engines carry a native {@code matchWhole}), else a
      * dedicated interpreter over the whole TDFA, else — over-budget corner —
-     * an interpreter over the eagerly compiled anchored TDFA, else the
-     * recorded rejection. The anchored build re-parses {@code pattern} with
-     * {@code anchorBoth}; its budget rejection is recorded (translated with
-     * {@code patternForErrors}), any other failure rethrows.
+     * an interpreter over the eagerly compiled anchored TDFA. The anchored
+     * build re-parses {@code pattern} with {@code anchorBoth}; on its budget
+     * rejection the default FAILS the compile (the raw rejection rethrows,
+     * for the caller to translate like any other failure), while
+     * {@code deferRejection} records it (translated with
+     * {@code patternForErrors}) for {@link OverBudgetWholeEngine}. Any other
+     * failure always rethrows.
      */
     public static RegexEngine wholeEngine(Artifacts a, RegexEngine findEngine,
                                           String pattern, String patternForErrors,
                                           boolean disableUnicodeGroups, boolean longestMatch,
+                                          boolean deferRejection,
                                           UnicodeDataProvider provider) {
         if (a.whole != null)
             return a.shared() ? findEngine : new TdfaRunner(a.whole);
         try {
             Tnfa an = Tnfa.compile(pattern, disableUnicodeGroups, true, provider);
-            return new TdfaRunner(Tdfa.compile(an, longestMatch, null, WHOLE_WORK_CAP));
+            return new TdfaRunner(Tdfa.compile(an, longestMatch, null, ANCHORED_WORK_CAP));
         } catch (RuntimeException over) {
             if (!budgetRejection(over)) throw over;
+            if (!deferRejection) throw over;
             return new OverBudgetWholeEngine(findEngine,
                     CompiledRegex.translate(over, patternForErrors));
         }
     }
 
     /**
-     * Whole engine for the both-builds-over-budget corner: the
-     * compile-time rejection IS the whole engine's permanent answer —
-     * {@code matchWhole}/{@code matches} rethrow the recorded instance on
-     * every call (deterministic; zero compile at match time — the
-     * no-lazy-compiles rule). Find operations delegate to the find engine:
-     * compile() acceptance follows the find artifact alone.
+     * Whole engine for the both-builds-over-budget corner under the opt-in
+     * defer policy ({@link CompileOptions#deferWholeRejection()} /
+     * {@code Pattern.DEFER_WHOLE_REJECTION}): the compile-time rejection IS
+     * the whole engine's permanent answer — {@code matchWhole}/{@code matches}
+     * rethrow the recorded instance on every call (deterministic; zero
+     * compile at match time — the no-lazy-compiles rule). Find operations
+     * delegate to the find engine: compile() acceptance follows the find
+     * artifact alone.
      */
     public static final class OverBudgetWholeEngine implements RegexEngine {
         private final RegexEngine find;
