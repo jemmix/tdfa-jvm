@@ -1296,7 +1296,9 @@ end-of-input is a full match. The follow-up list, resolved (commits 0fded73
       bounded-gap family (`[\s\S]{0,60}x[\s\S]{0,60}`: find compiles at ~3.7 M
       kernels, the whole DFA is an intrinsically 100 K+-state counter
       cross-product) would have LOST find() — compile() acceptance stays the
-      find artifact's alone (the historical contract). Anchored-artifact
+      find artifact's alone (the historical contract). **(SUPERSEDED
+      2026-09-15 — the deviation is now OPT-IN, see the default-flip entry
+      below.)** Anchored-artifact
       whole-walk exactness (every anchored accept is end-of-input-gated ⇒ the
       pike cut never fires mid-walk): validated 18 K randomized
       anchored-vs-unpruned pairs, both longest modes, 0 diffs; pinned in
@@ -1305,6 +1307,42 @@ end-of-input is a full match. The follow-up list, resolved (commits 0fded73
       was the measured +112 % vmCompile regression; whole matching runs the
       facade's own whole engine (a custom engine's matchWhole default can't
       consume the shared unpruned artifact anyway).
+- [x] **Default flipped (2026-09-15): whole-bomb patterns FAIL compile() —
+      the lenient record-and-rethrow acceptance is OPT-IN.** Both whole
+      builds (unpruned, anchored) over budget now reject `compile()` with
+      the standard translated `"pattern too large"` PSE — a pattern is
+      accepted only when every artifact it ships built, the same
+      compile-time budget contract the find artifact always had. The
+      historical lenient contract (find works; matches() rethrows the
+      recorded rejection, same instance forever) moved behind
+      `Pattern.DEFER_WHOLE_REJECTION` / `CompileOptions.deferWholeRejection()`
+      (an int flag so it round-trips serialization with pattern+flags;
+      `OverBudgetWholeEngine` is its engine). Rationale for reversing the
+      2026-09-13 corpus-impact call: a successful compile shipping a
+      permanently-broken matches() is a trap — the lenience is a semantic
+      choice the user should make explicitly, not a silent default.
+      Findings from the flip (both knife-edge-looking, only one real):
+      - aws-keys' anchored build reports "cap+1 ticks" at EVERY cap —
+        134 217 729/134 217 728 at 2^27, 268 435 457/268 435 456 at 2^28 —
+        meter granularity on a build that churns without converging. The
+        old CompileLatencyGuardTest claim that its anchored artifact
+        "builds" was wrong (the rejection was recorded silently; nothing
+        ever called matches()). rebar's aws-keys scenarios + the guard row
+        now compile under the flag (`DEFER_WHOLE_SCENARIOS`) — find-only
+        models, matches() out of scope.
+      - fuzz round 18's overnight quantifier shape
+        (`((.{1,5}?[ \n\ud807\udc07\s]?){0,5}?)z`) GENUINELY converges at
+        134 219 263 ticks — 0.001 % over 2^27. New
+        `SingleCompile.ANCHORED_WORK_CAP` (2× the first cap, the
+        last-chance attempt only) admits it at zero extra wall: a shape
+        burning N ticks burns N either way, and shapes that still reject
+        pay at most what the doomed unpruned attempt already spent. Its
+        find-parity pin stays flag-free.
+      Pinned: `SingleCompileWholeTest.
+      wholeBombFailsCompileByDefaultDeferFlagRecordsRejection` (default
+      throw; opt-in recorded instance; options fold; serialization
+      round-trip), `CompileBudgetTest` bomb/bounded-gap rows,
+      `boundedGapWholeBombKeepsFind` (default-throw + flag-find).
 - [x] Inline `matchWhole` into generated engines: INLINED classes emit
       `wholeOne` (the extractOne-shaped leaf with the whole protocol — no
       stop table, accept gate + eager φ at EOF, dead = not-a-whole-match);
