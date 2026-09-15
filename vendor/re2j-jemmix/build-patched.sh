@@ -10,13 +10,13 @@
 #   vendor/re2j-jemmix/build-patched.sh 3        # fix1+fix2+fix3
 #
 # Compiles java/ only (javatests/ is not shipped). Pure tar+patch+javac+jar,
-# no build system needed. Writes re2j-1.8-jemmix-fix{1,2,3}.jar into this
+# no build system needed. Writes re2j-1.8-jemmix-fix{1,2,3,4}.jar into this
 # directory — build outputs, gitignored (never committed).
 set -euo pipefail
 cd "$(dirname "$0")"
 
-level="${1:-3}"
-case "$level" in 1|2|3) ;; *) echo "usage: $0 [1|2|3]" >&2; exit 2 ;; esac
+level="${1:-4}"
+case "$level" in 1|2|3|4) ;; *) echo "usage: $0 [1|2|3|4]" >&2; exit 2 ;; esac
 
 archive="$(ls ../archives/re2j-*.tar.gz)"
 if [ "$(printf '%s\n' "$archive" | wc -l)" -ne 1 ]; then

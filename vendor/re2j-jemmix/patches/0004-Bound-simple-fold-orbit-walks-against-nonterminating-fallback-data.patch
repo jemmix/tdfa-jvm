@@ -1,0 +1,149 @@
+diff --git a/java/com/google/re2j/CharClass.java b/java/com/google/re2j/CharClass.java
+index cdd6ad6..a856670 100644
+--- a/java/com/google/re2j/CharClass.java
++++ b/java/com/google/re2j/CharClass.java
+@@ -154,8 +154,12 @@ class CharClass {
+     // Brute force.  Depend on appendRange to coalesce ranges on the fly.
+     for (int c = lo; c <= hi; c++) {
+       appendRange(c, c);
+-      for (int f = Unicode.simpleFold(c); f != c; f = Unicode.simpleFold(f)) {
++      // The walk is bounded (see Unicode.MAX_FOLD_ORBIT_HOPS): on
++      // well-formed fold data it cycles back to c within 3 hops.
++      int hops = 0;
++      for (int f = Unicode.simpleFold(c); f != c && hops < Unicode.MAX_FOLD_ORBIT_HOPS; f = Unicode.simpleFold(f)) {
+         appendRange(f, f);
++        hops++;
+       }
+     }
+     return this;
+diff --git a/java/com/google/re2j/Parser.java b/java/com/google/re2j/Parser.java
+index 0e73e70..40220d4 100644
+--- a/java/com/google/re2j/Parser.java
++++ b/java/com/google/re2j/Parser.java
+@@ -196,10 +196,14 @@ class Parser {
+     }
+     int min = r;
+     int r0 = r;
+-    for (r = Unicode.simpleFold(r); r != r0; r = Unicode.simpleFold(r)) {
++    // The walk is bounded (see Unicode.MAX_FOLD_ORBIT_HOPS): on
++    // well-formed fold data it cycles back to r0 within 3 hops.
++    int hops = 0;
++    for (r = Unicode.simpleFold(r); r != r0 && hops < Unicode.MAX_FOLD_ORBIT_HOPS; r = Unicode.simpleFold(r)) {
+       if (min > r) {
+         min = r;
+       }
++      hops++;
+     }
+     return min;
+   }
+diff --git a/java/com/google/re2j/Unicode.java b/java/com/google/re2j/Unicode.java
+index 8ec0288..1d191ca 100644
+--- a/java/com/google/re2j/Unicode.java
++++ b/java/com/google/re2j/Unicode.java
+@@ -30,6 +30,19 @@ class Unicode {
+   static final int MIN_FOLD = 0x0041;
+   static final int MAX_FOLD = 0x1044f;
+ 
++  // Maximum number of simpleFold hops an orbit walk may take (the walks in
++  // CharClass.appendFoldedRange, Parser.minFoldRune and equalsIgnoreCase).
++  // Simple-fold orbits have at most 4 members, so on well-formed fold data
++  // every walk returns to its start within 3 hops and this bound is inert.
++  // It binds only when the generated CASE_ORBIT table and the runtime's
++  // case mappings disagree about an orbit -- codepoints whose asymmetric
++  // case mappings postdate the table's Unicode version: simpleFold steps
++  // into the partner's symmetric orbit, which never leads back to the
++  // walk's start. The cap degrades that nontermination (Pattern.compile or
++  // Matcher.find hanging forever) to a bounded walk over the orbit the
++  // current data can express.
++  static final int MAX_FOLD_ORBIT_HOPS = 100;
++
+   // is32 uses binary search to test whether rune is in the specified
+   // slice of 32-bit ranges.
+   // TODO(adonovan): opt: consider using int[n*3] instead of int[n][3].
+@@ -150,10 +163,14 @@ class Unicode {
+ 
+     // Fall back to full Unicode case folding otherwise.
+     // Invariant: r1 must be non-negative
+-    for (int r = Unicode.simpleFold(r1); r != r1; r = Unicode.simpleFold(r)) {
++    // The walk is bounded (see MAX_FOLD_ORBIT_HOPS): on well-formed fold
++    // data it cycles back to r1 within 3 hops.
++    int hops = 0;
++    for (int r = Unicode.simpleFold(r1); r != r1 && hops < MAX_FOLD_ORBIT_HOPS; r = Unicode.simpleFold(r)) {
+       if (r == r2) {
+         return true;
+       }
++      hops++;
+     }
+ 
+     return false;
+diff --git a/javatests/com/google/re2j/CaseFoldTerminationTest.java b/javatests/com/google/re2j/CaseFoldTerminationTest.java
+new file mode 100644
+index 0000000..cd097f3
+--- /dev/null
++++ b/javatests/com/google/re2j/CaseFoldTerminationTest.java
+@@ -0,0 +1,65 @@
++/*
++ * Copyright (c) 2020 The Go Authors. All rights reserved.
++ *
++ * Use of this source code is governed by a BSD-style
++ * license that can be found in the LICENSE file.
++ */
++package com.google.re2j;
++
++import static org.junit.Assert.assertFalse;
++import static org.junit.Assert.assertTrue;
++
++import org.junit.Test;
++import org.junit.runner.RunWith;
++import org.junit.runners.JUnit4;
++
++/**
++ * Tests that simple-fold orbit walks terminate.
++ *
++ * <p>Orbit walks (class-range folding, literal canonicalization, case-insensitive literal
++ * comparison) assume simpleFold's next-pointer graph cycles back to the walk's start. That holds
++ * for runes in CASE_ORBIT (generated as closed orbits) and for the toLower/toUpper fallback on
++ * symmetric pairs. It breaks for runes whose asymmetric case mappings postdate the table's Unicode
++ * version: U+1C80..U+1C88 (Cyrillic historic letters, Unicode 9.0; tables at 6.0) fall back into
++ * the partner's symmetric orbit, which never leads back -- compiling or matching such patterns used
++ * to hang forever. The walks are hop-bounded (Unicode.MAX_FOLD_ORBIT_HOPS), which degrades the
++ * nontermination to a terminating walk over the orbit the current data can express.
++ */
++@RunWith(JUnit4.class)
++public class CaseFoldTerminationTest {
++
++  private static Matcher matcher(String pattern, String input) {
++    return Pattern.compile(pattern).matcher(input);
++  }
++
++  @Test
++  public void foldWalkTerminatesOnHistoricCyrillicLiterals() {
++    // Every one of U+1C80..U+1C88 used to hang the compile under (?i).
++    for (char c = '\u1C80'; c <= '\u1C88'; c++) {
++      Pattern.compile("(?i)" + c);
++    }
++  }
++
++  @Test
++  public void foldWalkTerminatesOnHistoricCyrillicClasses() {
++    Pattern.compile("(?i)[\u1C80-\u1C88]");
++  }
++
++  @Test
++  public void boundedWalkCollectsTheExpressibleOrbit() {
++    // U+1C80 (Ꚁ) case-folds with В/в. The bounded walk must terminate and
++    // still fold: the orbit it can express contains the partner pair.
++    Matcher m = matcher("(?i)\u1C80", "\u0432");
++    assertTrue(m.find());
++    assertTrue(matcher("(?i)\u1C80", "\u0412").find());
++    assertTrue(matcher("(?i)\u1C80", "\u1C80").find());
++    assertFalse(matcher("(?i)\u1C80", "x").find());
++  }
++
++  @Test
++  public void matchTimeFoldComparisonTerminates() {
++    // equalsIgnoreCase walks the same orbit graph at match time.
++    assertTrue(matcher("(?i)\u0442", "\u0442").find());
++    assertFalse(matcher("(?i)\u0442", "x").find());
++  }
++}

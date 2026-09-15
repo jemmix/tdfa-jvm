@@ -27,11 +27,30 @@ repo — no external fetches needed to rebuild.
     (java.util.regex does; tdfa's engines do; released re2j's non-prefix
     paths do). The skip now applies only to hits strictly beyond the
     start. Found by the tdfa fuzzer's `find(len/2)` restart probe.
+  - `0004` — bound the simple-fold orbit walks
+    (`CharClass.appendFoldedRange`, `Parser.minFoldRune`,
+    `Unicode.equalsIgnoreCase`) by `Unicode.MAX_FOLD_ORBIT_HOPS`. The walks
+    assume `simpleFold`'s next-pointer graph cycles back to the start; that
+    holds for `CASE_ORBIT` (generated as closed orbits) and the
+    toLower/toUpper fallback on symmetric pairs, but breaks for runes whose
+    asymmetric case mappings postdate the table's Unicode version
+    (U+1C80..U+1C88, Unicode 9.0 vs tables at 6.0): the fallback steps into
+    the partner's symmetric orbit and never returns — `Pattern.compile`
+    hangs forever (e.g. `(?i)Ꚁ`). Simple-fold orbits have at most 4
+    members, so the cap is inert on well-formed data (verified: compile
+    results are bit-identical); on the stale-table runes it degrades the
+    hang to a bounded walk over the orbit the current data can express
+    (7 of 9 literals collect the exact modern orbit; Ꚅ/ꚅ collect a strict
+    subset — the full orbit needs `0005`). Adds
+    `javatests/.../CaseFoldTerminationTest.java`. Control-flow-only fix,
+    zero data changes — upstreamable as-is (Go is immune only because its
+    `unicode.caseOrbit` is regenerated per release; the same fallback code
+    shape exists there).
 - `build-patched.sh` — verifies the archive checksum, extracts into a
   gitignored `.build/` scratch dir, applies patches, compiles `java/` only
   (pure javac+jar, no build system needed):
-  `vendor/re2j-jemmix/build-patched.sh [1|2|3]` (default 3).
-- `re2j-1.8-jemmix-fix{1,2,3}.jar` — build outputs, **gitignored**. Built on
+  `vendor/re2j-jemmix/build-patched.sh [1|2|3|4]` (default 4).
+- `re2j-1.8-jemmix-fix{1,2,3,4}.jar` — build outputs, **gitignored**. Built on
   demand: `:tests:parity:re2j:buildPatchedOracle` runs the script whenever
   the default (patched) oracle is on the test classpath.
 
