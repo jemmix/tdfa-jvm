@@ -46,6 +46,19 @@ repo — no external fetches needed to rebuild.
     zero data changes — upstreamable as-is (Go is immune only because its
     `unicode.caseOrbit` is regenerated per release; the same fallback code
     shape exists there).
+  - `0005` — overlay the asymmetric case-fold orbits the generated table
+    (Unicode 6.0) predates: the Cyrillic historic letters U+1C80..U+1C88
+    (Unicode 9.0), eight orbits wired as closed next-pointer cycles beside
+    CASE_ORBIT (`UnicodeTables.CASE_ORBIT_OVERLAY`, consulted on table
+    miss only, so generated entries keep precedence — a parallel table
+    because A64A/A64B exceed the char-indexed array's length). With 0004
+    alone, folding these runes degrades (partner-side walks miss the
+    historic letter); 0005 completes them. After 0004+0005 the fork's fold
+    universe is bit-identical to tdfa's across all 0x110000 codepoints
+    (verified by exhaustive orbit diff). NOT for the 0004 upstream PR:
+    upstream should regenerate the tables from current Unicode instead of
+    carrying a hand-written overlay (the generator's data source is the
+    stale part, ICU 6.0-era).
 - `build-patched.sh` — verifies the archive checksum, extracts into a
   gitignored `.build/` scratch dir, applies patches, compiles `java/` only
   (pure javac+jar, no build system needed):
