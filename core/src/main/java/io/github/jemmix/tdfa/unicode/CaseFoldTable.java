@@ -6,7 +6,7 @@ import java.util.Map;
 
 /**
  * Reverse Unicode case-fold table: maps each canonical fold key to the
- * ranges of all BMP codepoints that fold to that key.
+ * ranges of all codepoints that fold to that key.
  *
  * <p>Used by {@code Parser} to expand literal chars under case-insensitive
  * + Unicode mode to include Unicode simple case folds (e.g., {@code s ↔ ſ}
@@ -15,12 +15,17 @@ import java.util.Map;
  *
  * <p>The canonical fold key is {@code Character.toUpperCase(Character.toLowerCase(cp))}.
  * The JDK's {@code toLowerCase}/{@code toUpperCase} implement the Unicode
- * {@code CaseFolding.txt} simple case mappings, so two codepoints are
- * case-fold-equivalent iff they share the same fold key. There are 28 fold
- * groups with &gt;2 members in the BMP (e.g., {@code s/S/ſ},
- * {@code k/K/K}, {@code Ω/ω/Ω}).
+ * simple case mappings, so two codepoints are case-fold-equivalent when they
+ * share the same fold key (e.g., {@code s/S/ſ}, {@code k/K/K},
+ * {@code Ω/ω/Ω}) — with one pinned exception: the Turkic dotted/dotless I
+ * pair. Simple case folding keeps U+0130 (İ) and U+0131 (ı) out of the
+ * i-orbit (their cross mappings are Turkic-locale rules, not unconditional
+ * mappings), but the JDK's locale-independent {@code toUpperCase('ı') = 'I'}
+ * would merge {I, i, İ, ı} into one orbit. re2j (CASE_ORBIT self-entries)
+ * and Go's {@code unicode.SimpleFold} both keep the pair fold-inert, so
+ * {@link #foldKey} pins both codepoints to themselves.
  *
- * <p>The table is built lazily on first use (one pass over 0..0xFFFF) and
+ * <p>The table is built lazily on first use (one pass over 0..0x10FFFF) and
  * cached for the JVM lifetime.
  */
 public final class CaseFoldTable {
@@ -49,6 +54,14 @@ public final class CaseFoldTable {
     }
 
     private static int foldKey(int cp) {
+        // Simple case folding keeps the Turkic İ/ı pair out of the i-orbit
+        // (their cross mappings are locale rules, not unconditional ones);
+        // JDK case mapping is locale-independent and links ı→I, which would
+        // over-merge {I, i, İ, ı} into one fold orbit. re2j and Go both keep
+        // the pair fold-inert — pin both to inert singleton orbits.
+        if (cp == 0x130 || cp == 0x131) {
+            return cp;
+        }
         return Character.toUpperCase(Character.toLowerCase(cp));
     }
 

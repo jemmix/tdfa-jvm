@@ -73,6 +73,34 @@ class CaseInsensitiveTest {
         assertThat(a).isEqualTo(CaseFoldTable.foldRanges(0x017F));
     }
 
+    /** Simple case folding keeps the Turkic İ/ı pair out of the i-orbit;
+     *  re2j and Go agree. JDK case mapping alone would merge
+     *  {I, i, İ, ı} — the fold table pins the pair inert. */
+    @Test void foldTableTurkicIPairInert() {
+        assertThat(CaseFoldTable.foldRanges(0x0130)).as("İ (U+0130)").isNull();
+        assertThat(CaseFoldTable.foldRanges(0x0131)).as("ı (U+0131)").isNull();
+        int[] i = CaseFoldTable.foldRanges('i');
+        assertThat(i).isNotNull();
+        assertThat(containsCp(i, 'i')).isTrue();
+        assertThat(containsCp(i, 'I')).isTrue();
+        assertThat(containsCp(i, 0x0130)).as("i-orbit must not contain İ").isFalse();
+        assertThat(containsCp(i, 0x0131)).as("i-orbit must not contain ı").isFalse();
+    }
+
+    /** Cyrillic historic letters (U+1C80..U+1C88, Unicode 9.0) fold onto
+     *  their partner letters — full modern orbits, both directions. */
+    @Test void foldTableHistoricCyrillicOrbits() {
+        int[] ve = CaseFoldTable.foldRanges(0x1C80);   // Ꚁ ↔ В/в
+        assertThat(containsCp(ve, 0x0412)).as("В").isTrue();
+        assertThat(containsCp(ve, 0x0432)).as("в").isTrue();
+        assertThat(CaseFoldTable.foldRanges(0x0432)).isEqualTo(ve);
+        int[] te = CaseFoldTable.foldRanges(0x0442);   // т ↔ Т/Ꚅ/ꚅ (4-member)
+        assertThat(containsCp(te, 0x0422)).as("Т").isTrue();
+        assertThat(containsCp(te, 0x1C84)).as("Ꚅ").isTrue();
+        assertThat(containsCp(te, 0x1C85)).as("ꚅ").isTrue();
+        assertThat(CaseFoldTable.foldRanges(0x1C85)).isEqualTo(te);
+    }
+
     private static boolean containsCp(int[] ranges, int cp) {
         for (int i = 0; i + 1 < ranges.length; i += 2)
             if (cp >= ranges[i] && cp <= ranges[i + 1]) return true;
@@ -102,6 +130,34 @@ class CaseInsensitiveTest {
     @ParameterizedTest @MethodSource("factories")
     void plainIFoldMatchesLongS(RegexEngineFactory f) {
         assertThat(match("(?i)s", "\u017F", f)).as("(?i)s → ſ").isNotNull();
+    }
+
+    /** Turkic İ/ı stay out of the i-orbit under plain (?i) — simple-fold
+     *  semantics, re2j and Go parity (they match themselves, nothing else). */
+    @ParameterizedTest @MethodSource("factories")
+    void plainIFoldKeepsTurkicIPairInert(RegexEngineFactory f) {
+        assertThat(match("(?i)i", "i", f)).isNotNull();
+        assertThat(match("(?i)i", "I", f)).isNotNull();
+        assertThat(match("(?i)i", "\u0130", f)).as("(?i)i must not match İ").isNull();
+        assertThat(match("(?i)i", "\u0131", f)).as("(?i)i must not match ı").isNull();
+        assertThat(match("(?i)\u0130", "i", f)).as("(?i)İ must not match i").isNull();
+        assertThat(match("(?i)\u0130", "\u0131", f)).as("(?i)İ must not match ı").isNull();
+        assertThat(match("(?i)\u0131", "\u0131", f)).as("(?i)ı matches itself").isNotNull();
+        assertThat(match("(?i)[i\u0131]", "\u0131", f)).isNotNull();
+        assertThat(match("(?i)[i\u0131]", "\u0130", f)).as("class fold must not pull in İ").isNull();
+    }
+
+    /** Cyrillic historic letters fold with their partners under plain (?i),
+     *  both directions (modern Unicode orbits; re2j 1.8's 6.0-era table
+     *  does not have them — fork patch 0005 brings the oracle to parity). */
+    @ParameterizedTest @MethodSource("factories")
+    void plainIFoldHistoricCyrillic(RegexEngineFactory f) {
+        assertThat(match("(?i)\u0442", "\u1C84", f)).as("(?i)т → Ꚅ").isNotNull();
+        assertThat(match("(?i)\u0442", "\u1C85", f)).as("(?i)т → ꚅ").isNotNull();
+        assertThat(match("(?i)\u1C85", "\u0442", f)).as("(?i)ꚅ → т").isNotNull();
+        assertThat(match("(?i)\u1C80", "\u0432", f)).as("(?i)Ꚁ → в").isNotNull();
+        assertThat(match("(?i)\u1C80", "\u0412", f)).as("(?i)Ꚁ → В").isNotNull();
+        assertThat(match("(?i)\u0432", "\u1C80", f)).as("(?i)в → Ꚁ").isNotNull();
     }
 
     @ParameterizedTest @MethodSource("factories")

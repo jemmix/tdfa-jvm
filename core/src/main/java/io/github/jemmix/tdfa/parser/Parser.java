@@ -149,21 +149,16 @@ public final class Parser {
     /**
      * Expands a literal codepoint under case-insensitive mode into a CharClass,
      * or returns {@code null} if the codepoint should remain a plain literal
-     * (no case-fold equivalents). Uses full Unicode case folding
-     * (e.g., {@code s ↔ ſ}) when {@code unicodeShorthand} is enabled,
-     * falling back to {@code toLowerCase}/{@code toUpperCase} for BMP
-     * codepoints otherwise. Supplementary codepoints have no simple-fold
-     * table yet and stay unexpanded.
+     * (no case-fold equivalents). Full Unicode simple folding via
+     * {@link CaseFoldTable} (e.g., {@code s ↔ ſ}), supplementary codepoints
+     * included; the Turkic İ/ı pair is fold-inert by simple-fold semantics
+     * (see {@link CaseFoldTable}).
      */
     private Ast caseFoldChar(int cp) {
         // re2j folds FULL Unicode simple folding under plain (?i) — no (?u)
         // needed (verified against re2j 1.8: (?i)s matches ſ, (?i)k matches K).
         int[] ranges = CaseFoldTable.foldRanges(cp);
-        if (ranges != null) return new CharClass(ranges, false);
-        int lo = Character.toLowerCase(cp);
-        int hi = Character.toUpperCase(cp);
-        if (lo != hi) return new CharClass(new int[]{lo, lo, hi, hi}, false);
-        return null;
+        return ranges != null ? new CharClass(ranges, false) : null;
     }
 
     /** Atom for one literal codepoint. BMP stays {@link Ast.Symbol}; a
