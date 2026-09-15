@@ -497,12 +497,52 @@ public final class DifferentialFuzzer {
     // ---- pattern generator ----
 
     /** Char pools. Supplementary codepoints and lone surrogates are
-     *  first-class citizens: they found every recent bug family. */
+     *  first-class citizens: they found every recent bug family. The
+     *  fold-orbit family members (Turkic İ/ı, Cyrillic historic letters
+     *  and their partners) exercise the case-fold universes where engines
+     *  historically disagreed. */
     static final int[] POOL_ASCII = "abz09ZY_-.#@ ~".chars().toArray();
     static final int[] POOL_EDGE = {'\n', '\t', '\r', ' ', '\u0000'};
-    static final int[] POOL_UNICODE = {0xE9, 0xDF, 0x17F, 0x3042, 0x6F22, 0x4E00, 0x03A9, 0x20AC};
+    static final int[] POOL_UNICODE = {
+            0xE9, 0xDF, 0x17F, 0x3042, 0x6F22, 0x4E00, 0x03A9, 0x20AC,
+            0x130, 0x131,                     // Turkic İ/ı — fold-inert pair
+            0x442,                            // т — plain partner of the historic orbits
+            0x1C80, 0x1C84, 0x1C85, 0x1C88,   // Cyrillic historic letters (Unicode 9.0)
+            0xA64A};                          // Ԫ — orbit partner beyond re2j 1.8's table range
     static final int[] POOL_SUPP = {0x10421, 0x10402, 0x10000, 0x1F4A9, 0x1D504, 0x11C07, 0x103FF};
     static final int[] POOL_LONE = {0xD800, 0xDBFF, 0xDC00, 0xDC21, 0xDFFF};
+
+    /** True for the Cyrillic historic letters U+1C80..U+1C88 as PATTERN
+     *  runes under (?i) on the RELEASED oracle: its Unicode 6.0 CASE_ORBIT
+     *  predates them, so simpleFold's fallback steps into the partner's
+     *  symmetric orbit and never cycles back — the compile hangs. The
+     *  patched oracle (fix4+) bounds the walk, so they generate freely
+     *  there. Inputs carrying them are safe on any oracle (no compile-time
+     *  walk); the released-oracle semantic gap they expose is classified
+     *  in {@code knownDivergence}. */
+    static boolean releasedFoldHang(int cp) {
+        return cp >= 0x1C80 && cp <= 0x1C88;
+    }
+
+    /** POOL_UNICODE as drawn for pattern runes under (?i) on the released
+     *  oracle (hang members removed); the full pool everywhere else. */
+    static final int[] POOL_UNICODE_CI = releasedCiPool();
+
+    static int[] releasedCiPool() {
+        if (!RELEASED_ORACLE) return POOL_UNICODE;
+        int n = 0;
+        for (int cp : POOL_UNICODE) if (!releasedFoldHang(cp)) n++;
+        int[] out = new int[n];
+        int i = 0;
+        for (int cp : POOL_UNICODE) if (!releasedFoldHang(cp)) out[i++] = cp;
+        return out;
+    }
+
+    /** POOL_UNICODE draw for pattern context. */
+    static int unicodeCp(SplittableRandom rnd, boolean ci) {
+        int[] pool = ci ? POOL_UNICODE_CI : POOL_UNICODE;
+        return pool[rnd.nextInt(pool.length)];
+    }
 
     static final int MAX_DEPTH = 4;
     private static int ciSuppAvoided;   // informational; generation-side counters
@@ -682,11 +722,14 @@ public final class DifferentialFuzzer {
             int roll = rnd.nextInt(10);
             if (roll < 3) {
                 int lo, hi;
-                if (ci) {
-                    // (?i) ranges: ASCII-narrow only. re2j's parser folds every
-                    // cp in the range; wide ranges are an ORACLE hang (44 of the
-                    // first ~50 soak hangs). We fold full-Unicode now too, but
-                    // the oracle-side limitation keeps this guard.
+                if (ci && RELEASED_ORACLE) {
+                    // (?i) ranges: ASCII-narrow only on the RELEASED oracle.
+                    // Its parser folds every cp in the range with an
+                    // unbounded orbit walk, and any range reaching
+                    // U+1C80..U+1C88 never terminates (the walk steps into
+                    // the partner's symmetric orbit and cannot cycle back).
+                    // The patched oracle (fix4+) bounds the walk, so ranges
+                    // generate full-width there.
                     ciRangeAvoided++;
                     lo = POOL_ASCII[rnd.nextInt(POOL_ASCII.length)];
                     hi = POOL_ASCII[rnd.nextInt(POOL_ASCII.length)];
@@ -716,7 +759,7 @@ public final class DifferentialFuzzer {
     static int pickClassCp(SplittableRandom rnd, boolean ci) {
         return switch (rnd.nextInt(8)) {
             case 0, 1, 2 -> POOL_ASCII[rnd.nextInt(POOL_ASCII.length)];
-            case 3 -> POOL_UNICODE[rnd.nextInt(POOL_UNICODE.length)];
+            case 3 -> unicodeCp(rnd, ci);
             case 4 -> POOL_SUPP[rnd.nextInt(POOL_SUPP.length)];
             case 5 -> POOL_LONE[rnd.nextInt(POOL_LONE.length)];
             default -> 'a' + rnd.nextInt(26);
@@ -727,7 +770,7 @@ public final class DifferentialFuzzer {
     static String patternLiteral(SplittableRandom rnd, boolean ci) {
         int cp = switch (rnd.nextInt(8)) {
             case 0, 1, 2, 3 -> POOL_ASCII[rnd.nextInt(POOL_ASCII.length)];
-            case 4 -> POOL_UNICODE[rnd.nextInt(POOL_UNICODE.length)];
+            case 4 -> unicodeCp(rnd, ci);
             case 5 -> POOL_SUPP[rnd.nextInt(POOL_SUPP.length)];
             case 6 -> POOL_LONE[rnd.nextInt(POOL_LONE.length)];
             default -> 'a' + rnd.nextInt(26);
@@ -808,6 +851,19 @@ public final class DifferentialFuzzer {
                         return;
                     }
                 }
+                if (known != null && o.c.flags() != 0
+                        && o.exceptions.isEmpty() && !o.oracle.startsWith("<")
+                        && o.asm.equals(o.vm) && !o.asm.equals(o.oracle)) {
+                    // flags≠0 carries no layer attribution (the comparator's
+                    // four columns have no flag plumbing), so the PARSER
+                    // standard degrades to stack self-consistency: both
+                    // engines agree with each other, the oracle alone
+                    // differs. Without this branch every CASE_INSENSITIVE
+                    // stale-orbit case would surface as a failure signature.
+                    knownDivergence++;
+                    logs.failure(caseSeed, o, "KNOWN_DIVERGENCE (" + known + ")", layerStr);
+                    return;
+                }
                 failures++;
                 String kind = kindOf(o);
                 String sig = kind + " | shape~" + shape(o.c.pattern());
@@ -845,6 +901,19 @@ public final class DifferentialFuzzer {
          *       a lone low surrogate. (Plain {@code (?i)} folds full Unicode
          *       simple folding exactly like re2j since 12d9921 — any fold
          *       divergence is a real bug, not a known one.)</li>
+         *   <li><b>stale case-fold orbits</b> — released re2j 1.8's
+         *       CASE_ORBIT is generated from Unicode 6.0; the Cyrillic
+         *       historic letters U+1C80..U+1C88 (Unicode 9.0) fold onto
+         *       existing Cyrillic letters, and only the modern side folds
+         *       them: {@code (?i)т} matches Ꚅ/ꚅ on tdfa, not on released
+         *       re2j. The letters themselves cannot appear as pattern runes
+         *       under (?i) here (their released compile hangs — see
+         *       {@code releasedFoldHang}); inputs carrying them are fine.
+         *       The patched oracle overlays the complete orbits (fork patch
+         *       0005; fold universes bit-identical by exhaustive diff), so
+         *       under it any divergence in this family is a real bug. The
+         *       Turkic İ/ı pair is NOT here: tdfa keeps it fold-inert like
+         *       every re2j, so it agrees everywhere.</li>
          * </ul>
          */
         static String knownDivergence(Outcome o) {
@@ -854,11 +923,40 @@ public final class DifferentialFuzzer {
                 if (c >= 0xD800 && c <= 0xDBFF) { i++; continue; }  // well-formed pair: interior low is not a lone low
                 if (c >= 0xDC00 && c <= 0xDFFF && o.asm.equals(o.vm) && !o.asm.equals(o.oracle))
                     return "re2j matches lone-low pattern at/into pair interior; JDK agrees with us";            }
+            if (foldOrbitStale(o, p))
+                return "re2j 1.8 folds U+1C80..U+1C88 stale (Unicode 6.0 orbit table); tdfa folds the modern orbit (fork patch 0005)";
             // NOTE: the former plain-(?i) full-folding entry is GONE — we now
             // fold full Unicode simple folding under plain (?i) exactly like
             // re2j (literals, explicit classes, and word shorthands; verified
             // against re2j 1.8), so any fold divergence is a real bug.
             return null;
+        }
+
+        /** The stale-orbit family needs case folding active (compile flag
+         *  or inline group), a partner rune in the pattern (В/в, Т/т, Ԫ/ԫ
+         *  ... — the runes whose orbit gains a member on the modern side),
+         *  and a historic letter in the input (the member the released
+         *  oracle cannot reach). Partner-side only: the historic letters
+         *  are excluded from pattern runes under (?i) on the released
+         *  oracle (their compile hangs there). */
+        static boolean foldOrbitStale(Outcome o, String p) {
+            if ((o.c.flags() & FLAG_CI) == 0 && !p.contains("(?i")) return false;
+            boolean partner = false;
+            for (int i = 0; i < p.length() && !partner; i++) {
+                switch (p.charAt(i)) {
+                    case '\u0412': case '\u0432': case '\u0414': case '\u0434':
+                    case '\u041E': case '\u043E': case '\u0421': case '\u0441':
+                    case '\u0422': case '\u0442': case '\u042A': case '\u044A':
+                    case '\u0462': case '\u0463': case '\uA64A': case '\uA64B':
+                        partner = true; break;
+                    default: break;
+                }
+            }
+            if (!partner) return false;
+            String in = o.c.input();
+            for (int i = 0; i < in.length(); i++)
+                if (in.charAt(i) >= '\u1C80' && in.charAt(i) <= '\u1C88') return true;
+            return false;
         }
 
         static String kindOf(Outcome o) {
