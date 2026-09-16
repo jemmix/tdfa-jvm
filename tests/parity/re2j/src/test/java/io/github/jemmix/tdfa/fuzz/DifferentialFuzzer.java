@@ -516,10 +516,10 @@ public final class DifferentialFuzzer {
      *  runes under (?i) on the RELEASED oracle: its Unicode 6.0 CASE_ORBIT
      *  predates them, so simpleFold's fallback steps into the partner's
      *  symmetric orbit and never cycles back — the compile hangs. The
-     *  patched oracle (fix4+) bounds the walk, so they generate freely
-     *  there. Inputs carrying them are safe on any oracle (no compile-time
-     *  walk); the released-oracle semantic gap they expose is classified
-     *  in {@code knownDivergence}. */
+     *  patched oracle (fork patch 0003) declines the asymmetric mappings,
+     *  so they compile freely there (fold-inert). Inputs carrying them
+     *  are safe on any oracle (no compile-time walk), and fold semantics
+     *  track the oracle by construction (see knownDivergence). */
     static boolean releasedFoldHang(int cp) {
         return cp >= 0x1C80 && cp <= 0x1C88;
     }
@@ -728,8 +728,9 @@ public final class DifferentialFuzzer {
                     // unbounded orbit walk, and any range reaching
                     // U+1C80..U+1C88 never terminates (the walk steps into
                     // the partner's symmetric orbit and cannot cycle back).
-                    // The patched oracle (fix4+) bounds the walk, so ranges
-                    // generate full-width there.
+                    // The patched oracle (fork patch 0003) declines the
+                    // asymmetric mappings, so ranges generate full-width
+                    // there.
                     ciRangeAvoided++;
                     lo = POOL_ASCII[rnd.nextInt(POOL_ASCII.length)];
                     hi = POOL_ASCII[rnd.nextInt(POOL_ASCII.length)];
@@ -895,27 +896,22 @@ public final class DifferentialFuzzer {
          *       fast path entirely (no single-rune prefix). We keep
          *       codepoint-boundary semantics either way.
          *   <li><b>lone-low surrogate patterns</b> — re2j's literal-prefix
-         *       fast path lands on pair interiors; we keep
-         *       codepoint-boundary semantics either way. Applies when both
-         *       our engines agree with each other and the pattern contains
-         *       a lone low surrogate. (Plain {@code (?i)} folds full Unicode
-         *       simple folding exactly like re2j since 12d9921 — any fold
-         *       divergence is a real bug, not a known one.)</li>
-         *   <li><b>stale case-fold orbits</b> — released re2j 1.8's
-         *       CASE_ORBIT is generated from Unicode 6.0; the Cyrillic
-         *       historic letters U+1C80..U+1C88 (Unicode 9.0) fold onto
-         *       existing Cyrillic letters, and only the modern side folds
-         *       them: {@code (?i)т} matches Ꚅ/ꚅ on tdfa, not on released
-         *       re2j. The letters themselves cannot appear as pattern runes
-         *       under (?i) here (their released compile hangs — see
-         *       {@code releasedFoldHang}); inputs carrying them are fine.
-         *       The patched oracle overlays the complete orbits (fork patch
-         *       0005; fold universes bit-identical by exhaustive diff), so
-         *       under it any divergence in this family is a real bug. The
-         *       Turkic İ/ı pair is NOT here: tdfa keeps it fold-inert like
-         *       every re2j, so it agrees everywhere.</li>
-         * </ul>
-         */
+          *       fast path lands on pair interiors; we keep
+          *       codepoint-boundary semantics either way. Applies when both
+          *       our engines agree with each other and the pattern contains
+          *       a lone low surrogate.</li>
+          * </ul>
+          *
+          * Fold divergences have NO entry — under any oracle: tdfa is
+          * compiled with {@code Re2jUnicodeProvider}, whose fold universe
+          * IS the oracle's own ({@code Unicode.simpleFold} walk, live), so
+          * the two cannot disagree on folding. (The former stale-orbit
+          * entry covered the days when tdfa folded a JDK-modern universe
+          * against the oracle's 6.0-era one.) The patched oracle's guard
+          * patch additionally makes the asymmetric-orbit family
+          * fold-inert there; the released oracle still cannot compile
+          * those literals — see {@code releasedFoldHang}.
+          */
         static String knownDivergence(Outcome o) {
             String p = o.c.pattern();
             for (int i = 0; i < p.length(); i++) {
@@ -923,40 +919,11 @@ public final class DifferentialFuzzer {
                 if (c >= 0xD800 && c <= 0xDBFF) { i++; continue; }  // well-formed pair: interior low is not a lone low
                 if (c >= 0xDC00 && c <= 0xDFFF && o.asm.equals(o.vm) && !o.asm.equals(o.oracle))
                     return "re2j matches lone-low pattern at/into pair interior; JDK agrees with us";            }
-            if (foldOrbitStale(o, p))
-                return "re2j 1.8 folds U+1C80..U+1C88 stale (Unicode 6.0 orbit table); tdfa folds the modern orbit (fork patch 0005)";
             // NOTE: the former plain-(?i) full-folding entry is GONE — we now
             // fold full Unicode simple folding under plain (?i) exactly like
             // re2j (literals, explicit classes, and word shorthands; verified
             // against re2j 1.8), so any fold divergence is a real bug.
             return null;
-        }
-
-        /** The stale-orbit family needs case folding active (compile flag
-         *  or inline group), a partner rune in the pattern (В/в, Т/т, Ԫ/ԫ
-         *  ... — the runes whose orbit gains a member on the modern side),
-         *  and a historic letter in the input (the member the released
-         *  oracle cannot reach). Partner-side only: the historic letters
-         *  are excluded from pattern runes under (?i) on the released
-         *  oracle (their compile hangs there). */
-        static boolean foldOrbitStale(Outcome o, String p) {
-            if ((o.c.flags() & FLAG_CI) == 0 && !p.contains("(?i")) return false;
-            boolean partner = false;
-            for (int i = 0; i < p.length() && !partner; i++) {
-                switch (p.charAt(i)) {
-                    case '\u0412': case '\u0432': case '\u0414': case '\u0434':
-                    case '\u041E': case '\u043E': case '\u0421': case '\u0441':
-                    case '\u0422': case '\u0442': case '\u042A': case '\u044A':
-                    case '\u0462': case '\u0463': case '\uA64A': case '\uA64B':
-                        partner = true; break;
-                    default: break;
-                }
-            }
-            if (!partner) return false;
-            String in = o.c.input();
-            for (int i = 0; i < in.length(); i++)
-                if (in.charAt(i) >= '\u1C80' && in.charAt(i) <= '\u1C88') return true;
-            return false;
         }
 
         static String kindOf(Outcome o) {

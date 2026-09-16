@@ -258,4 +258,62 @@ public final class Unicode17_0 implements UnicodeDataProvider {
         }
         return flat;
     }
+
+    private final java.util.Map<Integer, int[]> foldOrbits = new java.util.HashMap<>();
+
+    /** Literal/class folding is pinned to this snapshot's simple-case-fold
+     *  universe (FOLD_PAIRS) rather than the runtime JDK's — see
+     *  UnicodeDataProvider.suppliesFoldUniverse(). */
+    @Override public boolean suppliesFoldUniverse() { return true; }
+
+    @Override public int[] foldCounterparts(int cp) {
+        if (cp < 0 || cp > MAX_CP) return null;
+        synchronized (foldOrbits) {
+            int[] cached = foldOrbits.get(cp);
+            if (cached != null) return cached.length == 0 ? null : cached;
+        }
+        int[] result = buildOrbit(cp);
+        synchronized (foldOrbits) { foldOrbits.put(cp, result == null ? new int[0] : result); }
+        return result;
+    }
+
+    /** Fold-equivalent codepoints of {@code cp} (inclusive) as merged
+     *  ranges, or {@code null} when cp has no counterparts in this
+     *  snapshot. FOLD_PAIRS is an edge list over the simple-fold orbits
+     *  (CaseFolding C+S, BMP), so the orbit is the connected component. */
+    private static int[] buildOrbit(int cp) {
+        int[] members = new int[8];
+        int n = 0;
+        members[n++] = cp;
+        for (int i = 0; i < n; i++) {
+            int x = members[i];
+            for (int p = 0; p < FOLD_PAIRS.length; p += 2) {
+                int other = FOLD_PAIRS[p] == x ? FOLD_PAIRS[p + 1]
+                        : (FOLD_PAIRS[p + 1] == x ? FOLD_PAIRS[p] : -1);
+                if (other < 0) continue;
+                int j = 0;
+                while (j < n && members[j] != other) j++;
+                if (j == n) members[n++] = other;
+            }
+        }
+        if (n == 1) return null;
+        java.util.Arrays.sort(members, 0, n);
+        int lo = members[0], hi = members[0];
+        int count = 1;
+        for (int i = 1; i < n; i++) {
+            if (members[i] <= hi + 1) { hi = members[i]; continue; }
+            count++;
+            lo = hi = members[i];
+        }
+        int[] flat = new int[count * 2];
+        int w = 0;
+        lo = hi = members[0];
+        for (int i = 1; i <= n; i++) {
+            int v = i < n ? members[i] : -1;
+            if (v != -1 && v <= hi + 1) { hi = v; continue; }
+            flat[w++] = lo; flat[w++] = hi;
+            lo = hi = v;
+        }
+        return flat;
+    }
 }

@@ -55,4 +55,33 @@ public interface UnicodeDataProvider {
      * case folding.
      */
     int[] foldTableFor(String name);
+
+    /**
+     * Whether this provider supplies its own simple-case-fold universe for
+     * literal and class folding under case-insensitive mode (see
+     * {@link #foldCounterparts(int)}). When {@code false}, the parser folds
+     * via its built-in JDK-derived universe
+     * (see {@link CaseFoldTable#foldRanges(int)}).
+     *
+     * <p>Providers that pin a Unicode snapshot (or bridge a live oracle)
+     * should return {@code true} so folding is pinned with it — otherwise the
+     * fold universe floats with the runtime JDK while {@code \p{...}} tables
+     * stay frozen, and the two disagree on every codepoint the snapshot
+     * predates.
+     */
+    default boolean suppliesFoldUniverse() {
+        return false;
+    }
+
+    /**
+     * Case-fold counterparts of {@code cp} under this provider's simple-case-
+     * fold universe: flattened lo/hi ranges covering every codepoint
+     * fold-equivalent to {@code cp} (including {@code cp} itself), or
+     * {@code null} when {@code cp} has no counterparts beyond itself. Only
+     * consulted when {@link #suppliesFoldUniverse()} returns {@code true};
+     * the default implementation is unreachable.
+     */
+    default int[] foldCounterparts(int cp) {
+        return null;
+    }
 }

@@ -1,20 +1,21 @@
-diff --git a/java/com/google/re2j/MachineInput.java b/java/com/google/re2j/MachineInput.java
-index f69ba04..fd76591 100644
 --- a/java/com/google/re2j/MachineInput.java
 +++ b/java/com/google/re2j/MachineInput.java
-@@ -201,10 +201,26 @@ abstract class MachineInput {
+@@ -201,10 +201,29 @@
      @Override
      int index(RE2 re2, int pos) {
        pos += start;
 +      // A raw indexOf hit can land on the low half of a well-formed surrogate
 +      // pair (only when the needle starts with a low-surrogate unit).  Such a
 +      // position is not a codepoint boundary: step() would decode the lone
-+      // low unit as a rune and a lone-low pattern would match into the pair
++      // low unit as a rune and a lone-low pattern could match into the pair
 +      // interior, inconsistently with range classes (which have no literal
 +      // prefix and therefore never reach interior positions).  Skip interior
-+      // hits and keep searching.
++      // hits and keep searching -- but honor the explicitly given search
++      // start as-is: Matcher.find(int) handed a pair-interior position
++      // matches AT it (java.util.regex parity), so only hits strictly beyond
++      // the start are scan hits subject to the boundary rule.
        int i = indexOf(str, re2.prefix, pos);
-+      while (i >= 0 && isPairInterior(i)) {
++      while (i >= 0 && i > pos && isPairInterior(i)) {
 +        i = indexOf(str, re2.prefix, i + 1);
 +      }
        return i < 0 ? i : i - pos;
@@ -29,12 +30,9 @@ index f69ba04..fd76591 100644
      @Override
      int context(int pos) {
        pos += start;
-diff --git a/javatests/com/google/re2j/SurrogatePairTest.java b/javatests/com/google/re2j/SurrogatePairTest.java
-new file mode 100644
-index 0000000..66f983a
 --- a/javatests/com/google/re2j/SurrogatePairTest.java
 +++ b/javatests/com/google/re2j/SurrogatePairTest.java
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,103 @@
 +/*
 + * Copyright (c) 2020 The Go Authors. All rights reserved.
 + *
@@ -52,7 +50,8 @@ index 0000000..66f983a
 +import org.junit.runners.JUnit4;
 +
 +/**
-+ * Tests that matches never start inside a well-formed surrogate pair, regardless of pattern shape.
++ * Tests that matches never start inside a well-formed surrogate pair during a scan, regardless of
++ * pattern shape, while an explicitly given pair-interior search start is honored.
 + *
 + * <p>The unanchored-match fast path jumps to raw {@link String#indexOf} hits, whose UTF-16 unit
 + * indices can land on the low half of a pair. Other code paths decode codepoints and never enter a
@@ -115,6 +114,18 @@ index 0000000..66f983a
 +    assertEquals(1, m.start());
 +    assertTrue(matcher("\uDC21", "a\uDC21b").find());
 +    assertTrue(matcher("[\uD800-\uDFFF]", "\uD801b").find());
++  }
++
++  @Test
++  public void explicitInteriorStartIsHonored() {
++    // JDK parity: find(int) handed a position that IS a pair's low half
++    // matches there. The interior skip governs scanning, not the explicitly
++    // given start — refusing it would also diverge from this library's own
++    // non-prefix search paths, which honor the given start.
++    Matcher m = matcher("\uDC21", PAIR_DC21);
++    assertTrue(m.find(2));
++    assertEquals(2, m.start());
++    assertEquals(3, m.end());
 +  }
 +
 +  @Test

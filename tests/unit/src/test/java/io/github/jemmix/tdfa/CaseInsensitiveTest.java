@@ -148,8 +148,13 @@ class CaseInsensitiveTest {
     }
 
     /** Cyrillic historic letters fold with their partners under plain (?i),
-     *  both directions (modern Unicode orbits; re2j 1.8's 6.0-era table
-     *  does not have them — fork patch 0005 brings the oracle to parity). */
+     *  both directions — the DEFAULT (JDK-derived, modern) fold universe,
+     *  matching java.util.regex on contemporary JDKs. No oracle folds
+     *  them: re2j 1.8's 6.0-era table predates them (stale from the
+     *  partner side, hang from the letters; fork patch 0003 declines the
+     *  asymmetric mappings, making them fold-inert there). Oracle-parity
+     *  lane: FoldCaseParityTest (bridge folds with the oracle by
+     *  construction). */
     @ParameterizedTest @MethodSource("factories")
     void plainIFoldHistoricCyrillic(RegexEngineFactory f) {
         assertThat(match("(?i)\u0442", "\u1C84", f)).as("(?i)т → Ꚅ").isNotNull();

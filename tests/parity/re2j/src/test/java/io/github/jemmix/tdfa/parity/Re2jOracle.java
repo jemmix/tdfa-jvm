@@ -32,17 +32,6 @@ public final class Re2jOracle {
     }
 
     /**
-     * True when the oracle folds the post-6.0 case-fold orbits (fork fix5+).
-     * Released 1.8's tables predate U+1C80..U+1C88 entirely: it folds the
-     * partner letters without the historic ones, and compiling
-     * {@code (?i)\u1C80} hangs its unbounded orbit walk — never probe with
-     * those literals, only with partner-side patterns like this one.
-     */
-    public static boolean foldsHistoricCyrillic() {
-        return com.google.re2j.Pattern.compile("(?i)\u0442").matcher("\u1C85").find();
-    }
-
-    /**
      * Engine compositions for parameterized tests: {@code null} = default
      * per-pattern generation (ASM); {@code TdfaRunner::new} = bring-your-own
      * interpreter via the generic shell — exercising BYO-engine composition
@@ -93,6 +82,13 @@ public final class Re2jOracle {
     /** re2j-exact Unicode tables so parity tests are bit-exact against re2j, not JDK-version-dependent. */
     private static final io.github.jemmix.tdfa.unicode.UnicodeDataProvider UNICODE =
             com.google.re2j.Re2jUnicodeProvider.INSTANCE;
+
+    /** tdfa under its DEFAULT fold universe (JDK-derived, modern orbits) —
+     *  the engine-truth lane: what the library does when not pinned to an
+     *  oracle/snapshot fold universe. */
+    public static int[] tdfaFindDefaultUniverse(String pattern, String input) {
+        return tdfaSpans(io.github.jemmix.tdfa.Pattern.compile(pattern, 0, null, null).matcher(input));
+    }
 
     public static int[] tdfaFind(String pattern, String input, RegexEngineFactory factory) {
         Matcher m =

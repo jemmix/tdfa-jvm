@@ -149,16 +149,27 @@ public final class Parser {
     /**
      * Expands a literal codepoint under case-insensitive mode into a CharClass,
      * or returns {@code null} if the codepoint should remain a plain literal
-     * (no case-fold equivalents). Full Unicode simple folding via
-     * {@link CaseFoldTable} (e.g., {@code s ↔ ſ}), supplementary codepoints
+     * (no case-fold equivalents). Full Unicode simple folding via the active
+     * fold universe (see {@link #foldUniverse(int)}), supplementary codepoints
      * included; the Turkic İ/ı pair is fold-inert by simple-fold semantics
      * (see {@link CaseFoldTable}).
      */
     private Ast caseFoldChar(int cp) {
         // re2j folds FULL Unicode simple folding under plain (?i) — no (?u)
         // needed (verified against re2j 1.8: (?i)s matches ſ, (?i)k matches K).
-        int[] ranges = CaseFoldTable.foldRanges(cp);
+        int[] ranges = foldUniverse(cp);
         return ranges != null ? new CharClass(ranges, false) : null;
+    }
+
+    /** Fold ranges for {@code cp} under the active fold universe: the
+     *  provider's own when it supplies one (parity tiers pin folding to
+     *  their Unicode snapshot, the oracle bridge to the live oracle), else
+     *  the built-in JDK-derived universe. */
+    private int[] foldUniverse(int cp) {
+        if (provider != null && provider.suppliesFoldUniverse()) {
+            return provider.foldCounterparts(cp);
+        }
+        return CaseFoldTable.foldRanges(cp);
     }
 
     /** Atom for one literal codepoint. BMP stays {@link Ast.Symbol}; a
@@ -389,7 +400,7 @@ public final class Parser {
             int lo = arr[i], hi = arr[i + 1];
             ivs.add(new int[]{lo, hi});
             for (int cp = lo; cp <= hi; cp++) {
-                int[] fr = CaseFoldTable.foldRanges(cp);
+                int[] fr = foldUniverse(cp);
                 if (fr != null) for (int v : fr) ivs.add(new int[]{v, v});
             }
         }

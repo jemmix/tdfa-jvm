@@ -1141,6 +1141,53 @@ hard-gating every fixed family, replay corpora, probe-before-fix.
       families deterministically (Turkic oracle-independent; historic
       letters asserted at patched parity AND as released documented
       divergence). Commits b434f4f..30cd6e2.
+- [x] **re2j fork patch restructure: upstreamable units + oracle-fold
+      targeting by construction** (2026-09-16). The five-patch series is
+      now three, each a self-contained upstream unit:
+      (a) 0001 = the surrogate fix SQUASHED with its overcorrection fix
+      (former 0003): interior `indexOf` hits are skipped EXCEPT a hit at
+      the explicitly given search start (`Matcher.find(int)` parity). The
+      withdrawn PR #208 was exactly the pre-squash state.
+      (b) 0002 unchanged (FoldCase in Regexp.equals/hashCode).
+      (c) 0003 REPLACES the hop-cap (former 0004): simpleFold's fallback
+      now follows toLower/toUpper only when the partner maps back
+      (symmetric pair); asymmetric-orbit runes (the U+1C80..88 family)
+      become fold-inert and every walk terminates structurally — no cap.
+      Empirical post-mortem on the cap approach drove this: measured on
+      the fix4 build, `(?i)Ꚁ` failed to match Ꚁ ITSELF (minFoldRune
+      canonicalized the literal to В; the pattern-side equalsIgnoreCase
+      walk from В never returns), literal vs class forms disagreed, and
+      folds were asymmetric — terminating garbage, not a target.
+      (d) 0005 (orbit overlay) DELETED — not upstreamable (upstream
+      should regenerate tables from current Unicode) and expressed no
+      dataset. Oracle fold universe now = "6.0 table ⊕ runtime symmetric
+      mappings"; exhaustive diff vs tdfa's default universe on JDK 26:
+      exactly the 25 family codepoints differ (letters inert, partners
+      plain pairs; İ/ı and all post-6.0 symmetric pairs agree).
+      TARGETING, the "run the fuzzer with unicode 6.0" step, is by
+      construction instead of replication: `UnicodeDataProvider` grew
+      `suppliesFoldUniverse()`/`foldCounterparts(cp)`; the Parser folds
+      through the provider when it supplies a universe; the
+      `Re2jUnicodeProvider` bridge walks the live oracle's own
+      simpleFold (hop-bounded defensively; released-oracle asymmetric
+      runes bail out inert). Fuzzer/parity compile tdfa with the bridge,
+      so fold universes CANNOT disagree under any oracle — the fuzzer's
+      stale-orbit knownDivergence entry is retired, and "every divergence
+      is a real finding" holds for folds under the patched oracle too.
+      tdfa's DEFAULT universe stays JDK-modern (JDK parity); the family
+      gap is pinned in FoldCaseParityTest as agreement-under-bridge +
+      modern-by-default. Pinned unicode modules v6_0/v17_0 now supply
+      fold universes from their CaseFolding snapshots (BMP C+S) via
+      gen-unicode.py — a pinned tier's folding no longer floats with the
+      runtime JDK (the same disease this round's ancestor fixed on our
+      side). Gates: unit + re2j parity (patched AND released lanes) +
+      re2j-suite + rebar green; 3-min fuzz smokes both lanes: 0 real
+      failures (released lane: 10595 known lone-surrogate records, the
+      documented family; patched lane: 0 known, 0 mismatches).
+      Upstream plan: three issue/PR pairs from jemmix/re2j — surrogate
+      (branch rebuilt from the squashed 0001; dfea17f is stale),
+      fix-foldcase (as branched), symmetry guard (branch TBD). CLA first.
+
 ## Performance
 
 - [x] **O(n²) unanchored `find()` — no-match case** — fixed via multi-state parallel simulation in `TdfaRunner.multiStateAnyMatch`: a single forward pass tracks the set of all DFA states reachable from any start position (O(n × |states|)), replacing the outer-loop restart. Used for boolean `find()` directly and as a no-match pre-check for the extract path. 200 K-char no-match haystack: ~14 ms (was >30 s).

@@ -75,6 +75,30 @@ class PinnedUnicodeTablesTest {
                 .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class);
     }
 
+    /** Literal/class folding is pinned to the snapshot too (not the runtime
+     *  JDK): v6 folds only what CaseFolding 6.0 knew, v17 adds the Cyrillic
+     *  historic letters (Unicode 9.0). The Turkic İ/ı pair has no C+S
+     *  entries in either snapshot — fold-inert, matching every re2j. */
+    @Test void literalFoldingPinnedToSnapshot() {
+        var v6 = io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0.provider();
+        var v17 = io.github.jemmix.tdfa.unicode.v17_0.Unicode17_0.provider();
+        assertThat(v6.suppliesFoldUniverse()).isTrue();
+        assertThat(v17.suppliesFoldUniverse()).isTrue();
+        // s ↔ ſ in both snapshots
+        assertThat(contains(v6.foldCounterparts('s'), 0x17F)).isTrue();
+        assertThat(contains(v17.foldCounterparts('s'), 0x17F)).isTrue();
+        // U+1C80 (Unicode 9.0): inert under 6.0, folds onto в under 17.0
+        assertThat(v6.foldCounterparts(0x1C80)).isNull();
+        assertThat(contains(v17.foldCounterparts(0x1C80), 0x0432)).isTrue();
+        // İ/ı: no C+S entries in any snapshot
+        assertThat(v6.foldCounterparts(0x130)).isNull();
+        assertThat(v17.foldCounterparts(0x130)).isNull();
+        // ... and the parser threads it end to end
+        assertThat(CompiledRegex.compile("(?i)\u1C80", CompileOptions.of().unicode(v6)).find("\u0432")).isFalse();
+        assertThat(CompiledRegex.compile("(?i)\u1C80", CompileOptions.of().unicode(v17)).find("\u0432")).isTrue();
+        assertThat(CompiledRegex.compile("(?i)\u1C80", CompileOptions.of().unicode(v6)).find("\u1C80")).isTrue();
+    }
+
     private static boolean contains(int[] table, int cp) {
         if (table == null) return false;
         int lo = 0, hi = table.length / 2 - 1;

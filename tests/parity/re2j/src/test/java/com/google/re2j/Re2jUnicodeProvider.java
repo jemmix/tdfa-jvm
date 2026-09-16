@@ -9,8 +9,9 @@ import java.util.Map;
 
 /**
  * Bridge {@link UnicodeDataProvider} that resolves {@code \p{...}} property tables from
- * re2j's own frozen Unicode tables ({@link UnicodeTables}) and case-fold counterparts via
- * re2j's {@link Unicode#simpleFold(int)}. Lives in the {@code com.google.re2j} package so it
+ * re2j's own frozen Unicode tables ({@code UnicodeTables}) and case-fold counterparts (for
+ * both case-insensitive {@code \p{X}} and literal/class folding) via re2j's
+ * {@link Unicode#simpleFold(int)}. Lives in the {@code com.google.re2j} package so it
  * can read re2j's package-private static state directly — this makes it bit-exact with re2j
  * by construction (no transcription of the ~4000-line {@code UnicodeTables.java}).
  *
@@ -69,6 +70,74 @@ public final class Re2jUnicodeProvider implements UnicodeDataProvider {
         if (cached != null) return cached;
         int[] flat = expand(fold);
         expanded.put("fold:" + name, flat);
+        return flat;
+    }
+
+    /**
+     * Literal/class folding follows the oracle's own fold universe, so tdfa folds exactly like
+     * the re2j on the classpath (released or patched) by construction — no transcription of its
+     * behavior. The orbit is {@link Unicode#simpleFold}'s next-pointer walk; simple-fold orbits
+     * have at most 4 members, so the walk is hop-bounded defensively: the bound only engages on
+     * the released oracle's asymmetric-mapping runes (U+1C80..U+1C88, whose walks never cycle
+     * back — the patched oracle declines those mappings instead), and a bounded walk yields
+     * no orbit (fold-inert) rather than a partial one.
+     */
+    @Override
+    public boolean suppliesFoldUniverse() {
+        return true;
+    }
+
+    private final Map<Integer, int[]> orbits = new HashMap<>();
+
+    @Override
+    public int[] foldCounterparts(int cp) {
+        if (cp < 0 || cp > MAX_RUNE) return null;
+        synchronized (orbits) {
+            int[] cached = orbits.get(cp);
+            if (cached != null) return cached.length == 0 ? null : cached;
+        }
+        int[] result = buildOrbit(cp);
+        synchronized (orbits) {
+            orbits.put(cp, result == null ? new int[0] : result);
+        }
+        return result;
+    }
+
+    /** Orbit of {@code cp} as merged ranges including {@code cp}, or {@code null} if it has
+     *  no fold counterparts (or the walk failed to close — see {@link #foldCounterparts(int)}). */
+    private static int[] buildOrbit(int cp) {
+        int[] members = new int[5];
+        int n = 0;
+        members[n++] = cp;
+        int f = Unicode.simpleFold(cp);
+        for (int hops = 0; f != cp && hops < 4; hops++) {
+            int i = 0;
+            while (i < n && members[i] != f) i++;
+            if (i == n) {
+                if (n == members.length) return null; // not closing: bail out inert
+                members[n++] = f;
+            }
+            f = Unicode.simpleFold(f);
+        }
+        if (f != cp) return null; // bounded without cycling back: fold-inert
+        if (n == 1) return null;
+        java.util.Arrays.sort(members, 0, n);
+        ArrayList<int[]> merged = new ArrayList<>();
+        int lo = members[0], hi = members[0];
+        for (int i = 1; i < n; i++) {
+            if (members[i] <= hi + 1) {
+                hi = members[i];
+                continue;
+            }
+            merged.add(new int[]{lo, hi});
+            lo = hi = members[i];
+        }
+        merged.add(new int[]{lo, hi});
+        int[] flat = new int[merged.size() * 2];
+        for (int i = 0; i < merged.size(); i++) {
+            flat[2 * i] = merged.get(i)[0];
+            flat[2 * i + 1] = merged.get(i)[1];
+        }
         return flat;
     }
 
