@@ -1106,6 +1106,41 @@ hard-gating every fixed family, replay corpora, probe-before-fix.
       records, ~300 M accumulated cases; see the fuzz entries in Correctness). Remaining
       wishlist beyond it: property shrinking for minimal repros.
 
+- [x] **Case-fold universe round: Turkic İ/ı over-merge + re2j orbit-table
+      staleness** (2026-09-15, fuzz round 27 family). Two independent defects,
+      one root-cause shape: fold data claimed to implement "simple case
+      folding" without being pinned to it.
+      (a) OURS: `CaseFoldTable.foldKey = toUpper(toLower(cp))` trusted JDK
+      case mapping to be simple folding. It is not: `toUpperCase('ı')='I'`
+      is a locale-independent mapping that simple folding does not license
+      (the İ/ı cross mappings are Turkic-locale rules), so {I, i, İ, ı}
+      merged into one orbit — `(?i)i` matched İ and ı on tdfa alone (re2j
+      pins the pair inert via CASE_ORBIT self-entries; Go agrees). Fixed by
+      pinning the pair to inert singleton orbits in `foldKey`, and deleting
+      `Parser.caseFoldChar`'s toLower/toUpper fallback, which re-introduced
+      exactly this merge (verified: the fallback fires beyond the group
+      table on U+0130/U+0131 alone — everywhere else it is subsumed).
+      (b) THE ORACLE: re2j 1.8's CASE_ORBIT is generated from Unicode 6.0;
+      the Cyrillic historic letters U+1C80..U+1C88 (Unicode 9.0) fold onto
+      existing Cyrillic letters. From a partner (В, Д, О, С, Т, Ъ, Ѣ, Ԫ) the
+      released walk folds the pair and misses the letter (semantic
+      staleness, both directions); from the letter itself the fallback walk
+      enters the partner's symmetric orbit and NEVER returns —
+      `Pattern.compile("(?i)Ꚁ")` hangs forever (the fuzzer's original "CI
+      compile hang" family, root-caused to these 9 codepoints). Fork patch
+      0004 bounds the three orbit walks (inert on well-formed data: orbits
+      have ≤4 members; the 9 literals degrade to terminating walks), fork
+      patch 0005 overlays the eight complete orbits (a parallel table:
+      A64A/A64B exceed the char-indexed array's length). Exhaustive orbit
+      diff over all 0x110000 codepoints: fork fold universe == tdfa's,
+      0 delta.
+      Prevention: POOL_UNICODE carries the family members (İ ı т Ꚁ Ꚅ ꚅ Ꚉ
+      Ԫ); released-oracle generation filters the 9 hang runes from (?i)
+      pattern draws and keeps (?i) class ranges ASCII-narrow (the patched
+      oracle generates them full-width); `FoldCaseParityTest` pins both
+      families deterministically (Turkic oracle-independent; historic
+      letters asserted at patched parity AND as released documented
+      divergence). Commits b434f4f..30cd6e2.
 ## Performance
 
 - [x] **O(n²) unanchored `find()` — no-match case** — fixed via multi-state parallel simulation in `TdfaRunner.multiStateAnyMatch`: a single forward pass tracks the set of all DFA states reachable from any start position (O(n × |states|)), replacing the outer-loop restart. Used for boolean `find()` directly and as a no-match pre-check for the extract path. 200 K-char no-match haystack: ~14 ms (was >30 s).
