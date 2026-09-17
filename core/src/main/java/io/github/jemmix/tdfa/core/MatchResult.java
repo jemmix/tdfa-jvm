@@ -108,4 +108,31 @@ public final class MatchResult {
             }
         }
     }
+
+    /**
+     * Debugging aid: whole-match bounds plus every group's span, NIL shown
+     * as {@code -1,-1} — a tag dump without this is misery (review P2).
+     */
+    @Override public String toString() {
+        StringBuilder sb = new StringBuilder("Match[0]=").append(matchStart).append(',').append(matchEnd);
+        for (int g = 1; g <= groupCount; g++) {
+            sb.append(" [").append(g).append("]=").append(start(g)).append(',').append(end(g));
+        }
+        return sb.toString();
+    }
+
+    /** Value equality over the snapshot (same bounds and identical tag values). */
+    @Override public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof MatchResult)) return false;
+        MatchResult m = (MatchResult) o;
+        return finalRegBase == m.finalRegBase && groupCount == m.groupCount
+                && matchStart == m.matchStart && matchEnd == m.matchEnd
+                && java.util.Arrays.equals(regs, m.regs);
+    }
+
+    @Override public int hashCode() {
+        int h = 31 * (31 * (31 * matchStart + matchEnd) + groupCount) + finalRegBase;
+        return 31 * h + java.util.Arrays.hashCode(regs);
+    }
 }

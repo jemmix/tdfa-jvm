@@ -87,4 +87,24 @@ public final class CompileOptions {
 
     /** Configured observer, or {@code null} for none. */
     public CompileObserver observer() { return observer; }
+
+    /** Value equality (wither classes get compared in tests; the observer is
+     *  compared by identity — it is a hook, not a value). */
+    @Override public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof CompileOptions)) return false;
+        CompileOptions c = (CompileOptions) o;
+        return longestMatch == c.longestMatch
+                && disableUnicodeGroups == c.disableUnicodeGroups
+                && deferWholeRejection == c.deferWholeRejection
+                && java.util.Objects.equals(unicodeProvider, c.unicodeProvider)
+                && observer == c.observer;
+    }
+
+    @Override public int hashCode() {
+        int h = (longestMatch ? 1 : 0) * 31 + (disableUnicodeGroups ? 1 : 0);
+        h = h * 31 + (deferWholeRejection ? 1 : 0);
+        h = h * 31 + (unicodeProvider == null ? 0 : unicodeProvider.hashCode());
+        return h * 31 + System.identityHashCode(observer);
+    }
 }

@@ -15,15 +15,18 @@ import java.util.Map;
  *
  * <p>The canonical fold key is {@code Character.toUpperCase(Character.toLowerCase(cp))}.
  * The JDK's {@code toLowerCase}/{@code toUpperCase} implement the Unicode
- * simple case mappings, so two codepoints are case-fold-equivalent when they
- * share the same fold key (e.g., {@code s/S/ſ}, {@code k/K/K},
- * {@code Ω/ω/Ω}) — with one pinned exception: the Turkic dotted/dotless I
- * pair. Simple case folding keeps U+0130 (İ) and U+0131 (ı) out of the
- * i-orbit (their cross mappings are Turkic-locale rules, not unconditional
- * mappings), but the JDK's locale-independent {@code toUpperCase('ı') = 'I'}
- * would merge {I, i, İ, ı} into one orbit. re2j (CASE_ORBIT self-entries)
- * and Go's {@code unicode.SimpleFold} both keep the pair fold-inert, so
- * {@link #foldKey} pins both codepoints to themselves.
+ * simple case mappings, so two codepoints are treated as case-fold-equivalent
+ * when they share the same fold key (e.g., {@code s/S/ſ}, {@code k/K/K},
+ * {@code Ω/ω/Ω}). This composition approximates — and has been probed
+ * exhaustively against re2j's fold orbits, but is not formally identical to —
+ * Unicode simple case folding; with one pinned exception: the Turkic
+ * dotted/dotless I pair. Simple case folding keeps U+0130 (İ) and U+0131 (ı)
+ * out of the i-orbit (their cross mappings are Turkic-locale rules, not
+ * unconditional mappings), but the JDK's locale-independent
+ * {@code toUpperCase('ı') = 'I'} would merge {I, i, İ, ı} into one orbit.
+ * re2j (CASE_ORBIT self-entries) and Go's {@code unicode.SimpleFold} both
+ * keep the pair fold-inert, so {@link #foldKey} pins both codepoints to
+ * themselves.
  *
  * <p>The table is built lazily on first use (one pass over 0..0x10FFFF) and
  * cached for the JVM lifetime.
@@ -35,9 +38,16 @@ public final class CaseFoldTable {
     private CaseFoldTable() {}
 
     /**
-     * Returns flattened ranges (lo0, hi0, lo1, hi1, ...) of all BMP codepoints
-     * that are case-fold-equivalent to {@code ch}, or {@code null} if {@code ch}
-     * has no case-fold equivalents beyond itself (digits, punctuation, etc.).
+     * Returns flattened ranges (lo0, hi0, lo1, hi1, ...) of ALL codepoints —
+     * BMP and supplementary — that are case-fold-equivalent to {@code ch}, or
+     * {@code null} if {@code ch} has no case-fold equivalents beyond itself
+     * (digits, punctuation, etc.).
+     *
+     * <p><b>Provenance:</b> the table is derived at runtime from the running
+     * JDK's {@link Character} simple case mappings, so fold orbits can vary
+     * with the JVM's Unicode version — unlike the pinnable
+     * {@code UnicodeDataProvider} tables used for {@code \p{...}} classes.
+     * The İ/ı pin below is the one deliberate divergence.
      */
     public static int[] foldRanges(int ch) {
         Map<Integer, int[]> c = cache;

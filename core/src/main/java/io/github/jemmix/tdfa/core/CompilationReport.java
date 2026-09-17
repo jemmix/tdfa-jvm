@@ -60,4 +60,17 @@ public final class CompilationReport implements CompileObserver {
         if (!notes.isEmpty()) sb.append(", notes=").append(notes);
         return sb.append('}').toString();
     }
+
+    /** Value equality over the accumulated snapshot (two reports that observed
+     *  the same compile compare equal). The instance itself stays mutable. */
+    @Override public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof CompilationReport)) return false;
+        CompilationReport r = (CompilationReport) o;
+        return nanos.equals(r.nanos) && details.equals(r.details) && notes.equals(r.notes);
+    }
+
+    @Override public int hashCode() {
+        return 31 * (31 * nanos.hashCode() + details.hashCode()) + notes.hashCode();
+    }
 }
