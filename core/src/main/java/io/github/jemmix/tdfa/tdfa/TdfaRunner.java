@@ -102,6 +102,14 @@ public final class TdfaRunner implements RegexEngine {
     // (O(stateWords + stateCount) each — significant for dictionary-scale DFAs)
     // and the regs[] allocation on failed single-start walks. Successful walks
     // still clone regs into the returned MatchHolder (it escapes the runner).
+    //
+    // RETENTION (documented trade-off, review P2): SCRATCH (and TRACE_BUF
+    // when -Dtdfa.trace.strategy is enabled) are never evicted — a thread
+    // that once matched a 234 K-state DFA retains ~2 MB of scratch for its
+    // lifetime; TRACE_BUF grows unboundedly until traceSnapshot() drains it.
+    // Deliberate: eviction hooks on match paths cost more than the retention;
+    // bounded deployments can call traceSnapshot() periodically or pool
+    // matcher threads. Static, so they do not pin any Tdfa/Pattern.
     private static final class Scratch {
         int[] regs;
         int[] live, next, origin, originNext;

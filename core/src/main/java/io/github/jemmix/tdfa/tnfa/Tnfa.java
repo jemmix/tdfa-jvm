@@ -413,6 +413,13 @@ public final class Tnfa {
             Ast mandatoryAst = mandatory.isEmpty() ? new Ast.Empty() :
                     (mandatory.size() == 1 ? mandatory.get(0) : new Ast.Concat(mandatory));
             Ast result = mandatoryAst;
+            // {0,0} falls through as bare Empty: neither the body's tags nor
+            // its ntags are emitted. Sound because a group's tags are
+            // syntactically unique (allocated at its '(' alone), so no other
+            // construction can ever write them — there is no stale value to
+            // kill, and the group simply reports NIL. The asymmetry with the
+            // quest case (which meticulously emits ntags) is deliberate: there
+            // is nothing below an empty body to poison (review P2 note).
             if (max == Integer.MAX_VALUE) {
                 // {n,} = (n-1) copies followed by body+  — NOT body*.
                 // re2j's Simplify general case ("x{4,} is xxxx+"): a PLUS tail
