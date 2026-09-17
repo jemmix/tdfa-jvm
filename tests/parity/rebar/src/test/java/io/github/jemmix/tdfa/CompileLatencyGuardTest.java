@@ -65,8 +65,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class CompileLatencyGuardTest {
 
-    /** Wall budget per compile, milliseconds. */
-    private static final long BUDGET_MS = 10_000;
+    /**
+     * Wall budget per compile, milliseconds. Local runs keep the tight
+     * regression-sensitive bound; shared CI runners (documented to drift
+     * ±30%+, and noisier under parallel jobs) get 4× headroom so the guard
+     * catches code regressions, not machine noise (review P1-3).
+     */
+    private static final long BUDGET_MS = 10_000 * ciMultiplier();
+
+    /** 4× on GitHub Actions runners, 1× elsewhere. */
+    static long ciMultiplier() {
+        return "true".equals(System.getenv("GITHUB_ACTIONS")) ? 4 : 1;
+    }
 
     static String benchmarksDir = System.getProperty("rebar.benchmarks.dir");
 

@@ -112,6 +112,17 @@ class RebarScenarioParityTest {
         skipBuckets.computeIfAbsent(reason.intern(), k -> new AtomicInteger()).incrementAndGet();
     }
 
+    /**
+     * Total-skip ceiling (review P2: the gray-skip path could silently shrink
+     * the green set). Recorded baseline 2026-09-17: 2 total, both
+     * {@code bomb:over-budget-by-design}; every other reason family
+     * (unsupported-model, no-scalar-count, regex-null, haystack-resolve-failed,
+     * compile-failed) is at 0 — a compile-exception bug appearing at scale
+     * blows far past this cap, so the margin only absorbs rare environmental
+     * haystack-resolution hiccups.
+     */
+    static final int MAX_TOTAL_SKIPS = 8;
+
     static {
         String dir = System.getProperty("rebar.benchmarks.dir");
         benchmarksDir = Paths.get(dir);
@@ -359,6 +370,12 @@ class RebarScenarioParityTest {
                 passCount.get(), failCount.get(), skipCount.get(),
                 passCount.get() + failCount.get() + skipCount.get());
         System.out.println("╚══════════════════════════════════════════════════════════════════════╝");
+        // Gray-skip cap (see MAX_TOTAL_SKIPS): a skip is only legitimate for a
+        // recorded reason; an unexpected compile-exception family shrinking the
+        // green set must FAIL the gate, not vanish into the histogram.
+        org.junit.jupiter.api.Assertions.assertTrue(skipCount.get() <= MAX_TOTAL_SKIPS,
+                "rebar parity skipped " + skipCount.get() + " scenarios (cap " + MAX_TOTAL_SKIPS
+                        + ", recorded baseline 2) — the green set shrank; see the skip histogram");
 
         // Skip-reason histogram
         if (!skipBuckets.isEmpty()) {

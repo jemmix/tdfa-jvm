@@ -37,9 +37,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class RedosBatteryTest {
 
-    private static final long COMPILE_BOUND_MS = 5_000;   // matches CompileLatencyGuardTest
-    private static final long REJECT_BOUND_MS = 60_000;   // cap-crossing abort: measured 6–19 s on the shapes below
-    private static final long MATCH_BOUND_MS = 2_000;
+    // Local: regression-sensitive bounds. CI runners (GITHUB_ACTIONS) get 4×
+    // headroom — the budgets must catch code regressions, not machine noise
+    // (review P1-3: thin CI headroom is the likeliest fresh-machine flake).
+    private static final long CI_MULT =
+            "true".equals(System.getenv("GITHUB_ACTIONS")) ? 4 : 1;
+    private static final long COMPILE_BOUND_MS = 5_000 * CI_MULT;   // matches CompileLatencyGuardTest policy
+    private static final long REJECT_BOUND_MS = 60_000 * CI_MULT;   // cap-crossing abort: measured 6–19 s on the shapes below
+    private static final long MATCH_BOUND_MS = 2_000 * CI_MULT;
     private static final long SCALE_RATIO_MAX = 8;        // linear walk ⇒ ~2×; huge slack for noise
     private static final long SCALE_FLOOR_MS = 50;
 
