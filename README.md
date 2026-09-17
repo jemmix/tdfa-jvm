@@ -281,7 +281,7 @@ tdfa-jvm/                             ← root = the facade artifact (io.github.
 Heap: the unit/rebar/fuzz test JVMs require `-Xmx2g` (configured in their
 build files) — containers with less will OOM.
 
-JDK 25+ to build (Gradle daemon; core+asm still ship a Java 8 floor and are
+JDK 25+ to build (Gradle daemon; core+asm+facade ship a Java 8 floor and are
 CI-verified with a real javac 8). Vendored deps (re2j, rebar) are extracted
 automatically by the `:prepareVendor` task before any test that needs them;
 run `./gradlew prepareVendor` once before opening in IntelliJ so generated
