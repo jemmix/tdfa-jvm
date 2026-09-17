@@ -26,7 +26,8 @@ repo — no external fetches needed to rebuild.
     its case-sensitive twin and deleted the case-sensitive arm:
     `(?i:Z)x|Z` matched lowercase "z" (Go's regexp/syntax compares
     Flags&FoldCase; the port dropped it). Was misread as a residual
-    lone-surrogate oracle divergence (fuzz record 2026-08-30).
+    lone-surrogate oracle divergence (fuzz record 2026-08-30). Adds
+    `javatests/.../FoldCaseFactoringTest.java`.
   - `0003` — make `simpleFold`'s fallback follow only symmetric case
     mappings. The fallback (table miss → `toLower`/`toUpper`) assumed the
     mappings form closed two-element orbits; for runes whose asymmetric
@@ -80,28 +81,40 @@ cannot float with the runtime JDK.
 ## Fork / upstreaming
 
 Same fixes live on https://github.com/jemmix/re2j, one branch per fix,
-based on upstream master and passing re2j's format/license gates
-(`verifyGoogleJavaFormat` + `license`; the patch files here remain the
-canonical per-fix diffs against tag `re2j-1.8`):
+based on upstream master (951a615) and passing re2j's format/license
+gates (`verifyGoogleJavaFormat` + `license`) and the full test suite on
+JDK 8 (`./gradlew check`, per their CI). The patch files here remain the
+canonical per-fix diffs against tag `re2j-1.8` — regenerated from the
+branched content (the two new test classes were reflowed by
+`googleJavaFormat` during branch verification; `java/` hunks unchanged).
 
-- `fix-surrogate-pair-interior-prefix` (`dfea17f`) — **STALE: predates the
-  explicit-start honoring; rebuild the branch from patch 0001 (the squash)
-  before opening the PR.** The bug remains upstream-worthy: results
-  depended on pattern shape (`\uDC21` matched inside a pair while the
-  wider `\uDC21|\uDC22` and `[\uD800-\uDFFF]` did not — a monotonicity
-  violation), and JDK 26's java.util.regex also refuses interior starts
-  on scan.
-- `fix-foldcase-in-regexp-equals` (`9a7eca4`) — fix2, upstream-ready as
-  branched.
-- simple-fold symmetry guard (fix3) — branch TBD from patch 0003. Story:
-  infinite compile on `(?i)` + any rune whose asymmetric case mapping
-  postdates the generated tables; the fallback must verify the pair maps
-  back before stepping. Go is immune in practice only because
-  `unicode.caseOrbit` is regenerated per release; the same fallback shape
-  exists there.
+All three are filed upstream (2026-09-17), each with its issue:
 
-Three issue/PR pairs total (TODO decision A; Google individual CLA is a
-merge prerequisite — the failed check on the withdrawn PR #208).
+- `fix-surrogate-pair-interior-prefix` (`420ec9c`) — issue #207, PR
+  google/re2j#208. The PR (originally the withdrawn pre-squash branch
+  dfea17f) was REOPENED after the rebuild, with a comment explaining the
+  withdrawal (the original patch refused explicit `Matcher.find(int)`
+  interior starts) and what changed; branch rebuilt on master from
+  patch 0001. Reopen required briefly restoring dfea17f as branch head —
+  GitHub refuses to reopen a closed PR whose branch was force-pushed —
+  then re-pushing 420ec9c.
+- `fix-foldcase-in-regexp-equals` (`9a7eca4`) — issue google/re2j#211
+  (filed with repro; confirmed on pristine master), PR google/re2j#212.
+- `fix-simple-fold-asymmetric-mappings` (`98bfd5f`) — PR
+  google/re2j#213, fixing EXISTING issue google/re2j#168 (fmeum, 2023 —
+  the U+1C80 hang; rsc's comment there already sketched our exact
+  fallback guard, so no duplicate issue was filed). Positioned as the
+  minimal control-flow fix, explicitly complementary to the table
+  regeneration discussed in that thread.
+
+CLA: signed (the re-run check on #208 went green 2026-09-11, before it
+was withdrawn). Upstream Java CI on all three PRs sits at
+`action_required` — the standard fork-PR workflow-approval gate for a
+first-time contributor; a maintainer must approve the runs. Local
+verification: `./gradlew check` on host Zulu JDK 8 (1832/1831/1829
+tests, 0 failures). Issues and PRs disclose the agentic (GLM 5.3)
+composition of analysis/patches, matching the disclosure already on
+#207.
 
 ## Use as the fuzz oracle
 

@@ -1184,9 +1184,31 @@ hard-gating every fixed family, replay corpora, probe-before-fix.
       re2j-suite + rebar green; 3-min fuzz smokes both lanes: 0 real
       failures (released lane: 10595 known lone-surrogate records, the
       documented family; patched lane: 0 known, 0 mismatches).
-      Upstream plan: three issue/PR pairs from jemmix/re2j — surrogate
-      (branch rebuilt from the squashed 0001; dfea17f is stale),
-      fix-foldcase (as branched), symmetry guard (branch TBD). CLA first.
+       Upstream plan: three issue/PR pairs from jemmix/re2j — surrogate
+       (branch rebuilt from the squashed 0001; dfea17f is stale),
+       fix-foldcase (as branched), symmetry guard (branch TBD). CLA first.
+
+**re2j upstreaming round (2026-09-17):** all three filed. Fix1: branch
+rebuilt from 0001 on master (420ec9c; google-java-format reflowed
+SurrogatePairTest), PR google/re2j#208 REOPENED — the withdrawn PR was
+the pre-squash branch; GitHub refuses to reopen a closed PR whose
+branch was force-pushed, so dfea17f went back up briefly as head, PR
+reopened, then 420ec9c pushed; descriptive comment covers the
+withdrawal cause (explicit find(int) interior starts) and the fix.
+Fix2: repro confirmed on pristine master, issue #211 filed, PR #212
+from 9a7eca4 (its FoldCaseFactoringTest now also vendored in patch
+0002). Fix3: NO new issue — google/re2j#168 (2023) is the same bug
+(rsc's comment there sketches our exact fallback guard); PR #213 from
+new branch fix-simple-fold-asymmetric-mappings (98bfd5f), framed as the
+minimal control-flow fix complementary to the table regeneration
+discussed in-thread. Local gates per branch: ./gradlew check on host
+Zulu JDK 8 — 1832/1831/1829 tests, 0 failures, format+license green
+(CI: cla/google green; Java CI action_required = fork-PR approval gate).
+CLA was already signed (re-run green on #208 pre-withdrawal). Issues/
+PRs disclose agentic (GLM 5.3) composition, matching #207. Vendored
+patches 0001–0003 regenerated from the branched content (test-file
+reflow only; java/ hunts unchanged; oracle rebuild verified). Pending:
+maintainer review; the Java CI runs need workflow approval.
 
 ## Performance
 

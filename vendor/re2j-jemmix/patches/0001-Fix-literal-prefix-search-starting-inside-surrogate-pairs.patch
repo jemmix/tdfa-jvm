@@ -1,6 +1,8 @@
+diff --git a/java/com/google/re2j/MachineInput.java b/java/com/google/re2j/MachineInput.java
+index f69ba04..df407a3 100644
 --- a/java/com/google/re2j/MachineInput.java
 +++ b/java/com/google/re2j/MachineInput.java
-@@ -201,10 +201,29 @@
+@@ -201,10 +201,29 @@ abstract class MachineInput {
      @Override
      int index(RE2 re2, int pos) {
        pos += start;
@@ -30,9 +32,12 @@
      @Override
      int context(int pos) {
        pos += start;
---- a/javatests/com/google/re2j/SurrogatePairTest.java
+diff --git a/javatests/com/google/re2j/SurrogatePairTest.java b/javatests/com/google/re2j/SurrogatePairTest.java
+new file mode 100644
+index 0000000..1799838
+--- /dev/null
 +++ b/javatests/com/google/re2j/SurrogatePairTest.java
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,99 @@
 +/*
 + * Copyright (c) 2020 The Go Authors. All rights reserved.
 + *
@@ -53,11 +58,12 @@
 + * Tests that matches never start inside a well-formed surrogate pair during a scan, regardless of
 + * pattern shape, while an explicitly given pair-interior search start is honored.
 + *
-+ * <p>The unanchored-match fast path jumps to raw {@link String#indexOf} hits, whose UTF-16 unit
++ * <p>
++ * The unanchored-match fast path jumps to raw {@link String#indexOf} hits, whose UTF-16 unit
 + * indices can land on the low half of a pair. Other code paths decode codepoints and never enter a
 + * pair interior, so before the fix the result depended on whether the pattern compiled to a
-+ * singleton literal prefix: {@code "\uDC21"} matched inside a pair while the equivalent {@code
-+ * "\uDC21|\uDC22"} and {@code "[\uD800-\uDFFF]"} did not.
++ * singleton literal prefix: {@code "\uDC21"} matched inside a pair while the equivalent
++ * {@code "\uDC21|\uDC22"} and {@code "[\uD800-\uDFFF]"} did not.
 + */
 +@RunWith(JUnit4.class)
 +public class SurrogatePairTest {
@@ -79,12 +85,7 @@
 +    // These describe (near-)identical languages and must agree; widening the
 +    // language must never remove matches.
 +    String[] equivalents = {
-+      "\uDC21",
-+      "[\uDC21]",
-+      "\uDC21|\uDC22",
-+      "\uDC21|\uDC23",
-+      "[\uDC21\uDC22]",
-+      "[\uDC21-\uDC22]",
++      "\uDC21", "[\uDC21]", "\uDC21|\uDC22", "\uDC21|\uDC23", "[\uDC21\uDC22]", "[\uDC21-\uDC22]",
 +      "[\uD800-\uDFFF]",
 +    };
 +    for (String pattern : equivalents) {

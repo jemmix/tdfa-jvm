@@ -1,6 +1,8 @@
+diff --git a/java/com/google/re2j/Unicode.java b/java/com/google/re2j/Unicode.java
+index 8ec0288..439168c 100644
 --- a/java/com/google/re2j/Unicode.java
 +++ b/java/com/google/re2j/Unicode.java
-@@ -115,11 +115,24 @@
+@@ -115,11 +115,24 @@ class Unicode {
      // No folding specified.  This is a one- or two-element
      // equivalence class containing rune and toLower(rune)
      // and toUpper(rune) if they are different from rune.
@@ -27,9 +29,12 @@
    }
  
    // equalsIgnoreCase performs case-insensitive equality comparison
---- a/javatests/com/google/re2j/CaseFoldTerminationTest.java
+diff --git a/javatests/com/google/re2j/CaseFoldTerminationTest.java b/javatests/com/google/re2j/CaseFoldTerminationTest.java
+new file mode 100644
+index 0000000..6b21bac
+--- /dev/null
 +++ b/javatests/com/google/re2j/CaseFoldTerminationTest.java
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,82 @@
 +/*
 + * Copyright (c) 2020 The Go Authors. All rights reserved.
 + *
@@ -49,7 +54,8 @@
 + * Tests that simple-fold orbit walks terminate and stay shape-consistent for runes whose case
 + * mappings postdate the generated table's Unicode version.
 + *
-+ * <p>{@code Unicode.simpleFold}'s fallback follows {@code toLower}/{@code toUpper} on table misses,
++ * <p>
++ * {@code Unicode.simpleFold}'s fallback follows {@code toLower}/{@code toUpper} on table misses,
 + * assuming they form closed two-element orbits with the rune. That holds for symmetric pairs, but
 + * runes whose asymmetric mappings postdate the table (U+1C80..U+1C88, Cyrillic historic letters,
 + * Unicode 9.0 vs tables at 6.0) step into the partner's own orbit and never cycle back: compiling
