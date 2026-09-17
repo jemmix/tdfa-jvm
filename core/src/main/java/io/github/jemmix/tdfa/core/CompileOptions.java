@@ -90,6 +90,7 @@ public final class CompileOptions {
 
     /** Value equality (wither classes get compared in tests; the observer is
      *  compared by identity — it is a hook, not a value). */
+    @SuppressWarnings("ReferenceEquality") // observer: identity is the semantics (see below)
     @Override public boolean equals(Object o) {
         if (this == o) return true;
         if (!(o instanceof CompileOptions)) return false;
@@ -98,6 +99,9 @@ public final class CompileOptions {
                 && disableUnicodeGroups == c.disableUnicodeGroups
                 && deferWholeRejection == c.deferWholeRejection
                 && java.util.Objects.equals(unicodeProvider, c.unicodeProvider)
+                // Identity is intentional: the observer is a push hook, not a
+                // value — two different hook instances with equal state are
+                // still different options (they observe different people).
                 && observer == c.observer;
     }
 
