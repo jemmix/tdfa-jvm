@@ -127,8 +127,13 @@ public final class Tdfa {
      * mutually exclusive with {@link #stopOnAcceptMask}.
      */
     final byte[] stopMaskUniform;
-    /** Lazily-materialized 2D expansion of {@link #stopMaskUniform} (benign race). */
-    private int[] stopMaskTableCache;
+    /**
+     * Lazily-materialized 2D expansion of {@link #stopMaskUniform}. Volatile so
+     * the filled array is safely published to racing readers (a plain field
+     * could expose default-value cells under the JMM); duplicate
+     * materialization by racing threads is benign, mutation is never intended.
+     */
+    private volatile int[] stopMaskTableCache;
     /** Lazily-computed {@link #posFlagDeps()} (benign race; -1 = not computed). */
     private int posFlagDepsCache = -1;
     /** Sentinel for "don't stop on accept" — distinct from 0 (= stop). */
