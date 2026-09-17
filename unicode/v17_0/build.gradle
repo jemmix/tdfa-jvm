@@ -4,7 +4,6 @@ plugins {
 
 group = 'io.github.jemmix'
 // Artifact: io.github.jemmix:tdfa-unicode-17.0 — Unicode 17.0.0 tables (current stable at generation time).
-version = '0.1.0-SNAPSHOT'
 
 java {
     sourceCompatibility = JavaVersion.VERSION_25

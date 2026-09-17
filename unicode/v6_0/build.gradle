@@ -4,7 +4,6 @@ plugins {
 
 group = 'io.github.jemmix'
 // Artifact: io.github.jemmix:tdfa-unicode-6.0 — Unicode 6.0.0 tables (re2j's version).
-version = '0.1.0-SNAPSHOT'
 
 java {
     sourceCompatibility = JavaVersion.VERSION_25
