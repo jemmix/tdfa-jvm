@@ -87,8 +87,14 @@ final class HistTable {
         return contents[id];
     }
 
-    /** Bitset of tags appearing in {@code id}'s sequence, {@code words} words.
-     *  All requests in one compile use the same word count ({@code (tags+63)/64}). */
+    /**
+     * Bitset of tags appearing in {@code id}'s sequence, {@code words} words.
+     * All requests in one compile use the same word count ({@code (tags+63)/64}).
+     *
+     * <p>Returns the SHARED cached row (memoized across every consumer of this
+     * compile) — callers must not mutate it: one stray {@code bits[i] |= …}
+     * poisons every subsequent consumer, symptom-free.
+     */
     long[] bits(int id, int words) {
         if (cachedWords != words) {
             bitsCache = null;
@@ -113,8 +119,13 @@ final class HistTable {
         return bits;
     }
 
-    /** Per-tag LAST sign in {@code id}'s sequence (0 absent, +1 POS, -1 NIL).
-     *  All requests in one compile use the same tag count. */
+    /**
+     * Per-tag LAST sign in {@code id}'s sequence (0 absent, +1 POS, -1 NIL).
+     * All requests in one compile use the same tag count.
+     *
+     * <p>Returns the SHARED cached row — callers must not mutate it (same
+     * poisoning hazard as {@link #bits}).
+     */
     int[] lastSign(int id, int tags) {
         if (cachedTags != tags) {
             lastSignCache = null;

@@ -82,12 +82,13 @@ public final class Optimize {
     /**
      * Find used registers, return a remapping {@code V[old] = new} where new is
      * a contiguous 1-based numbering (paper uses 1-based; we remap to 0-based at
-     * the end). Unused registers map to 0 (sentinel — will be detected if ever
-     * applied, but renaming shouldn't encounter them since they're unused).
+     * the end). Unused registers map to {@code -1} (unmapped) — they are unseen
+     * by the walk below, so {@link #rename} fails loudly if an op ever
+     * references one (that would mean a corrupted program, not a hole to skip).
      *
      * <p>Final-register invariant: indices {@code [tagCount .. 2*tagCount-1]} are
-     * always marked used, and they are renumbered as a contiguous block at the
-     * top of the new range so that MatchResult's
+     * always marked used, and they are renumbered as a contiguous block at
+     * the top of the new range so that MatchResult's
      * {@code regs[finalRegBase + t - 1]} offset can be communicated once and
      * benefit from all subsequent passes.
      *
@@ -127,16 +128,31 @@ public final class Optimize {
         return vmap;
     }
 
-    /** Apply register renaming V[old] → new to every op in the CFG. Paper: {@code renaming}. */
+    /**
+     * Apply register renaming V[old] → new to every op in the CFG. Paper: {@code renaming}.
+     *
+     * <p>Fail-fast: compaction marks every op-referenced register used, so an
+     * unmapped (or out-of-range) reference here means a corrupted program —
+     * a stale index ≥ regCount would otherwise surface as a runtime AIOOBE
+     * or silent capture corruption far from the cause. Throws
+     * {@link IllegalStateException} instead of silently skipping.
+     */
     static void rename(Cfg cfg, int[] vmap) {
         for (Cfg.Block b : cfg.blocks) {
             for (Cfg.Op op : b.ops) {
-                if (op.dst < vmap.length && vmap[op.dst] >= 0) op.dst = vmap[op.dst];
+                op.dst = mapped(op.dst, vmap);
                 if (op.kind == Cfg.KIND_COPY || op.kind == Cfg.KIND_APPEND) {
-                    if (op.src < vmap.length && vmap[op.src] >= 0) op.src = vmap[op.src];
+                    op.src = mapped(op.src, vmap);
                 }
             }
         }
+    }
+
+    private static int mapped(int r, int[] vmap) {
+        if (r < 0 || r >= vmap.length || vmap[r] < 0)
+            throw new IllegalStateException("regopt: rename: op references unmapped register " + r
+                    + " (vmap covers " + vmap.length + " registers) — compaction invariant broken");
+        return vmap[r];
     }
 
     private static int countUsed(int[] vmap) {
@@ -368,6 +384,7 @@ public final class Optimize {
             for (int oi = 0; oi < b.ops.size(); oi++) {
                 if (keep[oi]) survivors.add(b.ops.get(oi));
             }
+            cfg.dceRemovedOps += b.ops.size() - survivors.size();
             b.ops.clear();
             b.ops.addAll(survivors);
         }

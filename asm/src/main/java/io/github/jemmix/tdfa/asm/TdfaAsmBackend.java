@@ -56,8 +56,15 @@ public final class TdfaAsmBackend {
         GenClassLoader(ClassLoader parent) { super(parent); }
         /** Register another class to be defined by this loader (same pattern). */
         public void register(String name, byte[] bytes) { classes.put(name, bytes); }
+        /**
+         * Bytes stay registered after definition: removing them on first lookup
+         * turned a transient LinkageError during {@code defineClass} into a
+         * permanent CNFE on retry (the bytes were gone), masking the original
+         * failure. Retention is bounded by the loader's own lifetime (one
+         * pattern, unloaded with its classes).
+         */
         @Override protected Class<?> findClass(String n) throws ClassNotFoundException {
-            byte[] b = classes.remove(n);
+            byte[] b = classes.get(n);
             if (b != null) return defineClass(n, b, 0, b.length);
             return super.findClass(n);
         }
