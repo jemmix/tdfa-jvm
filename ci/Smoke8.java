@@ -1,3 +1,5 @@
+import io.github.jemmix.tdfa.Pattern;
+import io.github.jemmix.tdfa.PatternMatcher;
 import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.RegexEngine;
@@ -8,12 +10,14 @@ import io.github.jemmix.tdfa.tnfa.Tnfa;
 /**
  * JDK 8 runtime smoke for the Java 8 floor modules (CI job jars-and-tests;
  * docs/REVIEW-2026-09.md §1d). Compiled AND run on a real JDK 8 against the
- * core and asm jars — the two modules that ship Java 8 bytecode. The facade,
- * pikesim, and unicode data modules ship Java 25 bytecode and cannot load
- * on 8 by design; this smoke therefore drives the core-tier API directly:
- * parse/TNFA/TDFA, the table interpreter (TdfaRunner), and the ASM tier
- * (generated per-pattern classes must load and run on 8; they are emitted
- * V1_8). Exits non-zero on any mismatch.
+ * core, asm, and facade jars — the three modules that ship Java 8 bytecode.
+ * The facade's only runtime dependencies are core and asm (plus asm 9.9.1
+ * itself, major 49), so the whole public API loads and runs on 8: the user
+ * tier (Pattern/PatternMatcher — default engine path generates the
+ * per-pattern ASM shell on the JDK 8 runtime, emitted V1_8) plus the
+ * core-tier pipeline directly (parse/TNFA/TDFA, the table interpreter
+ * TdfaRunner). pikesim and the unicode data modules ship Java 25 bytecode
+ * and cannot load on 8 by design. Exits non-zero on any mismatch.
  *
  * <p>Deliberately plain Java 8: no var, no records, no factory methods.
  */
@@ -53,6 +57,26 @@ public class Smoke8 {
             count++;
         }
         expect("findAll count", count, 3);
+
+        // --- facade tier: the public Pattern API on a JDK 8 runtime ---
+        // Default compile path emits the per-pattern ASM shell HERE, inside
+        // Pattern.compile() — so this also proves generated shells link and
+        // run against the Java 8 facade classes.
+        Pattern p = Pattern.compile("(\\w+)-(\\d+)");
+        PatternMatcher m = p.matcher("order-77!");
+        expect("facade find", m.find(), true);
+        expect("facade g1", m.group(1), "order");
+        expect("facade g2", m.group(2), "77");
+        expect("facade matches", Pattern.matches("[a-z]+-\\d+", "abc-9"), true);
+        expect("facade matches neg", Pattern.matches("[a-z]+-\\d+", "x abc-9"), false);
+        expect("facade programSize", p.programSize() > 0, true);
+        // Same output java.util.regex gives: the matches are consumed as
+        // separators, so the segments are "", " ", " " (trailing "" dropped).
+        String[] parts = p.split("a-1 b-22 c-333");
+        expect("facade split len", parts.length, 3);
+        expect("facade split [0]", parts.length > 0 ? parts[0] : null, "");
+        expect("facade split [1]", parts.length > 1 ? parts[1] : null, " ");
+        expect("facade split [2]", parts.length > 2 ? parts[2] : null, " ");
 
         if (failures > 0) {
             System.err.println("SMOKE8 FAILURES: " + failures);

@@ -23,8 +23,8 @@ tasks.qodanaScan {
 group = 'io.github.jemmix'
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_25
-    targetCompatibility = JavaVersion.VERSION_25
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
 }
 
 repositories {
@@ -59,12 +59,25 @@ jar {
     }
 }
 
+// Java 8 floor, two enforcement modes (2026-09 r5, docs/REVIEW-2026-09.md §1d):
+//  - default: cross-compile with --release 8 (language level AND API surface
+//    via ct.sym; ErrorProne still hosted inside the compiler).
+//  - -PrealJdk8 (the CI jar pipeline): pin the compiler toolchain to a REAL
+//    JDK 8 javac — the strongest possible compat proof. javac 8 has no
+//    --release flag, and ErrorProne 2.x cannot host inside it (needs 17+),
+//    so both are dropped in that mode only.
+def realJdk8 = providers.gradleProperty('realJdk8').isPresent()
+if (realJdk8) {
+    java.toolchain.languageVersion = JavaLanguageVersion.of(8)
+}
+
 tasks.withType(JavaCompile).configureEach {
+    if (realJdk8) {
+        options.errorprone.enabled = false
+    } else {
+        it.options.release = 8
+    }
     options.encoding = 'UTF-8'
-    // Floor policy (2026-09 r4, docs/REVIEW-2026-09.md §1d): the facade
-    // SHIPS as Java 25 bytecode (latest LTS); core and asm ship Java 8
-    // bytecode (see their build.gradle — real-javac-8 mode included).
-    it.options.release = 25
     options.debug = true
     // Style-modernization checks disabled on a freeze-bound codebase: the
     // mechanical rewrites (pattern-matching instanceof, arrow switches)

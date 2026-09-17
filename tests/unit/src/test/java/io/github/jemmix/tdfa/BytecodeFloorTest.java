@@ -17,10 +17,10 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Bytecode floor per shipped module (docs/REVIEW-2026-09.md §1d): core and
- * asm must be class-file major version 52 or lower — loadable by a Java 8
- * runtime — while the facade, pikesim, and the unicode data modules ship as
- * Java 25 bytecode (latest LTS, major 69).
+ * Bytecode floor per shipped module (docs/REVIEW-2026-09.md §1d): core,
+ * asm, and the facade must be class-file major version 52 or lower —
+ * loadable by a Java 8 runtime — while pikesim and the unicode data
+ * modules ship as Java 25 bytecode (latest LTS, major 69).
  *
  * <p>The {@code --release} flags (and the real-javac-8 toolchain mode) in
  * the build.gradle files are the primary enforcement; this test is the
@@ -43,7 +43,7 @@ class BytecodeFloorTest {
 
     /** One anchor + ceiling per shipped module — compile-time presence guarantee. */
     private static final Object[][] ANCHORS = {
-            {io.github.jemmix.tdfa.Pattern.class, MAJOR_JAVA_25},                    // facade
+            {io.github.jemmix.tdfa.Pattern.class, MAJOR_JAVA_8},                   // facade
             {io.github.jemmix.tdfa.tdfa.Tdfa.class, MAJOR_JAVA_8},                   // core
             {io.github.jemmix.tdfa.asm.TdfaAsmBackend.class, MAJOR_JAVA_8},          // asm
             {io.github.jemmix.tdfa.sim.PikeSim.class, MAJOR_JAVA_25},                // lib:pikesim
