@@ -136,13 +136,20 @@ public final class FixedTags {
         throw new IllegalStateException("unknown ast: " + e);
     }
 
+    // Overflow-poisoned like NAN: a wrapped fixed offset is garbage that would
+    // silently mis-derive capture positions (large {n} × multi-char bodies).
+    // Poisoning only forgoes the fixed-tag optimization for that tag — sound.
     private static int add(int a, int b) {
         if (a == NAN || b == NAN) return NAN;
-        return a + b;
+        int r = a + b;
+        if (((a ^ r) & (b ^ r)) < 0) return NAN;
+        return r;
     }
 
     private static int mul(int n, int k) {
         if (k == NAN) return NAN;
-        return n * k;
+        long r = (long) n * k;
+        if (r != (int) r) return NAN;
+        return (int) r;
     }
 }
