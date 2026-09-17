@@ -456,8 +456,12 @@ final class TdfaCompiler {
             // densePcs priority depends on which assertion edges are live at the
             // current cursor position — see computePerStateOrder(seed, posMask).
             // 64 = 2^6 position-flag bits (BEGIN/END_TEXT, WORD/NO_WORD, ABS_BEGIN/ABS_END).
-            int[] stateStopOnAcceptMask = new int[n * 64];
-            java.util.Arrays.fill(stateStopOnAcceptMask, NEVER_STOP);
+            // POSIX (longest) mode never reads this table — the artifact stores
+            // neither stop tier and every reader gates on Perl mode — so the
+            // n*64 alloc/fill is pure churn there (~25 MB at 100 K states) and
+            // is skipped entirely.
+            int[] stateStopOnAcceptMask = longest ? null : new int[n * 64];
+            if (stateStopOnAcceptMask != null) java.util.Arrays.fill(stateStopOnAcceptMask, NEVER_STOP);
             int ALL_BITS = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY
                     | Tnfa.ABS_BEGIN | Tnfa.ABS_END;
             for (int s = 0; s < n; s++) {
@@ -815,10 +819,9 @@ final class TdfaCompiler {
                     minFinalOpsOff = new int[newN];
                     minEntryMask = new int[newN];
                     minAcceptMask = new int[newN];
-                    minStopMask = new int[newN * 64];
+                    minStopMask = longest ? null : new int[newN * 64];
                     minRanges = new int[newTotalRanges * 5];
                     if (stateFinalOpsByMask != null) minFinalOpsByMask = new int[newN * 64];
-                    if (longest) java.util.Arrays.fill(minStopMask, NEVER_STOP);
                     int minRangesHead = 0;
                     for (int g = 0; g < newN; g++) {
                         int r = rep[g];
@@ -906,13 +909,18 @@ final class TdfaCompiler {
             {
                 int acceptCnt = 0;
                 for (int s = 0; s < stateCount; s++) if ((minMeta[s] & 1) != 0) acceptCnt++;
-                int globalVal = minStopMask.length > 0 ? minStopMask[0] : 0;
-                for (int s = 0; s < stateCount && perStateUniform; s++) {
-                    int v0 = minStopMask[s * 64];
-                    for (int m = 1; m < 64; m++) {
-                        if (minStopMask[s * 64 + m] != v0) { perStateUniform = false; globalUniform = false; break; }
+                // POSIX has no stop table at all; report the same "uniform"
+                // attribution it always had (the all-NEVER_STOP fill it would
+                // trivially satisfy) without the O(n*64) scan.
+                if (minStopMask != null) {
+                    int globalVal = minStopMask.length > 0 ? minStopMask[0] : 0;
+                    for (int s = 0; s < stateCount && perStateUniform; s++) {
+                        int v0 = minStopMask[s * 64];
+                        for (int m = 1; m < 64; m++) {
+                            if (minStopMask[s * 64 + m] != v0) { perStateUniform = false; globalUniform = false; break; }
+                        }
+                        if (v0 != globalVal) globalUniform = false;
                     }
-                    if (v0 != globalVal) globalUniform = false;
                 }
                 // Storage tier: POSIX -> neither (readers gate on Perl mode);
                 // Perl + per-state-uniform -> byte[n]; general Perl -> int[n*64].
