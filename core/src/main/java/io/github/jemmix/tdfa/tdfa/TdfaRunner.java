@@ -508,7 +508,7 @@ public final class TdfaRunner implements RegexEngine {
         trace(Strategy.WALK_RESTART);
         for (int startSearch = from + 1; startSearch <= maxStart; startSearch++) {
             if (Alphabet.pairInterior(input, startSearch)) continue;
-            if (Boolean.getBoolean("tdfa.trace")) System.err.println("[walk] === start " + startSearch);
+            if (WTRACE) System.err.println("[walk] === start " + startSearch);
             MatchHolder h = extractFrom(input, startSearch, to);
             if (h != null) return h;
         }
@@ -1630,10 +1630,23 @@ public final class TdfaRunner implements RegexEngine {
     }
 
     private MatchHolder runGeneric(CharSequence input, int from, int to, boolean anchored) {
+        // Scratch-regs reuse across restarts (the wholeWalk idiom): failed
+        // restarts pay only the -1 refill, not a fresh allocation per start;
+        // successful escapes clone into the MatchHolder, so reuse is safe.
+        Scratch sc = SCRATCH.get();
         int startSearch = from;
         while (true) {
-            final int[] regs = regSize == 0 ? null : new int[regSize];
-            if (regs != null) Arrays.fill(regs, -1);
+            final int[] regs;
+            if (regSize == 0) {
+                regs = null;
+            } else if (sc.regs != null && sc.regs.length >= regSize) {
+                regs = sc.regs;
+                Arrays.fill(regs, 0, regSize, -1);
+            } else {
+                regs = new int[regSize];
+                java.util.Arrays.fill(regs, -1);
+                sc.regs = regs;
+            }
             int state = startState;
             int lastAcceptPos = -1;
             boolean haveAccept = false;
