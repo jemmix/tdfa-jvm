@@ -263,7 +263,26 @@ tdfa-jvm/                             ← root = the facade artifact (io.github.
 ./gradlew :benchmarks:micro:jmh       # JMH microbenchmarks
 ```
 
-JDK 17+. Vendored deps (re2j, rebar) are extracted
+**What `check` deliberately does NOT run** (the "run everything" above means
+"every gating test"; these are opt-in by design):
+
+- `*InliningGuard*` — the JIT-inlining guard runs as a separate action
+  (`tests/unit` excludes it; it needs a pristine JIT).
+- the differential **fuzz soak** — `check` carries the fixed-seed fuzz smoke
+  (`FuzzSmokeTest`, seed `0xC0FFEE`) only; the soak is
+  `-Pfuzz.minutes=480` (default 8 h).
+- **patched-oracle fuzzing** — `-Pfuzz.patchedOracle=true` (builds the
+  patched re2j on demand).
+- **BOMB_SCENARIOS** — the known-over-budget rebar shapes; opt-in via
+  `-Dtdfa.max.states=250000` and ≥ 1–6 GB heap.
+- every **benchmark** — perf gating is `scripts/bench-regression.sh --quick`
+  against a per-machine baseline (15% rule), not part of `check`.
+
+Heap: the unit/rebar/fuzz test JVMs require `-Xmx2g` (configured in their
+build files) — containers with less will OOM.
+
+JDK 25+ to build (Gradle daemon; core+asm still ship a Java 8 floor and are
+CI-verified with a real javac 8). Vendored deps (re2j, rebar) are extracted
 automatically by the `:prepareVendor` task before any test that needs them;
 run `./gradlew prepareVendor` once before opening in IntelliJ so generated
 sources appear in the IDE. See [`vendor/README.md`](vendor/README.md) for the
