@@ -33,9 +33,54 @@ import java.util.Map;
  */
 public final class CaseFoldTable {
 
-    private static volatile Map<Integer, int[]> cache;
+    /** Published index (built once; volatile for safe lazy publication). */
+    private static volatile FoldIndex index;
 
     private CaseFoldTable() {}
+
+    /**
+     * Primitive open-addressed fold-key → ranges index (linear probing,
+     * power-of-two capacity). Replaces the former boxed
+     * {@code HashMap<Integer,int[]> }: the class-fold path calls this once
+     * per codepoint of every range under (?i) — for {@code (?i)[\W]}-shaped
+     * classes that is ~1.1M lookups per compile, where each boxed get cost
+     * an autobox, a hashCode, and a probe (review P2). Keys stored as
+     * {@code foldKey + 1} so slot 0 can mean empty.
+     */
+    private static final class FoldIndex {
+        final int[] keys;
+        final int[][] values;
+
+        FoldIndex(Map<Integer, int[]> folded) {
+            int cap = 1 << 15;   // ~4K multi-member orbits → load ≤ ~0.13
+            while (cap < folded.size() * 4) cap <<= 1;
+            keys = new int[cap];
+            values = new int[cap][];
+            for (Map.Entry<Integer, int[]> e : folded.entrySet()) {
+                int k = e.getKey() + 1;
+                int i = spread(e.getKey()) & (cap - 1);
+                while (keys[i] != 0) i = (i + 1) & (cap - 1);
+                keys[i] = k;
+                values[i] = e.getValue();
+            }
+        }
+
+        private static int spread(int fk) {
+            return fk * 0x9E3779B9;   // fold keys cluster low; spread high bits
+        }
+
+        /** Ranges for {@code fk}, or null when the orbit is a singleton. */
+        int[] get(int fk) {
+            int mask = keys.length - 1;
+            int i = spread(fk) & mask;
+            while (true) {
+                int k = keys[i];
+                if (k == 0) return null;
+                if (k == fk + 1) return values[i];
+                i = (i + 1) & mask;
+            }
+        }
+    }
 
     /**
      * Returns flattened ranges (lo0, hi0, lo1, hi1, ...) of ALL codepoints —
@@ -50,17 +95,17 @@ public final class CaseFoldTable {
      * The İ/ı pin below is the one deliberate divergence.
      */
     public static int[] foldRanges(int ch) {
-        Map<Integer, int[]> c = cache;
-        if (c == null) {
+        FoldIndex idx = index;
+        if (idx == null) {
             synchronized (CaseFoldTable.class) {
-                c = cache;
-                if (c == null) {
-                    c = buildCache();
-                    cache = c;
+                idx = index;
+                if (idx == null) {
+                    idx = new FoldIndex(buildFolded());
+                    index = idx;
                 }
             }
         }
-        return c.get(foldKey(ch));
+        return idx.get(foldKey(ch));
     }
 
     private static int foldKey(int cp) {
@@ -75,7 +120,8 @@ public final class CaseFoldTable {
         return Character.toUpperCase(Character.toLowerCase(cp));
     }
 
-    private static Map<Integer, int[]> buildCache() {
+    /** Grouped, merged fold orbits (multi-member keys only) — input to {@link FoldIndex}. */
+    private static Map<Integer, int[]> buildFolded() {
         Map<Integer, ArrayList<Integer>> groups = new HashMap<>();
         for (int cp = 0; cp <= 0x10FFFF; cp++) {
             int fk = foldKey(cp);
