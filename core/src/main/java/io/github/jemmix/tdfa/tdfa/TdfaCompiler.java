@@ -711,6 +711,12 @@ final class TdfaCompiler {
                 }
                 boolean isAccept = accept.get(s);
                 stateBase[s] = rangeBase;
+                if (k > 0xFFFF)
+                    // The 16-bit rangeCount pack in stateMeta would silently
+                    // wrap (validate cannot detect it post-pack — the count
+                    // reads back wrong-but-plausible). Fail the compile loudly.
+                    throw new IllegalStateException("tdfa: state " + s + " needs " + k
+                            + " range entries — exceeds the 16-bit rangeCount packing (pattern too large)");
                 stateMeta[s] = ((k & 0xFFFF) << 1) | (isAccept ? 1 : 0);
                 stateFinalOpsOff[s] = finalOpsOff;
                 if (sb.finalOpsVariants != null && isAccept) {

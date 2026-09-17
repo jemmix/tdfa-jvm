@@ -295,7 +295,6 @@ public final class Tdfa {
         this.ops = ops;
         this.stateEntryMask = stateEntryMask;
         this.stateAcceptMask = stateAcceptMask;
-        this.startStateEntryMask = stateEntryMask[startState];
         this.longestMatch = longestMatch;
         this.pikeCutMatters = pikeCutMatters;
         this.stopOnAcceptMask = stopOnAcceptMask;
@@ -307,9 +306,13 @@ public final class Tdfa {
         this.fixedOffset = fixedOffset;
         // Well-formedness gate: every consumer (VM runner, search-DFA memo,
         // ASM emitter, minimizer) trusts these arrays. Violations must surface
-        // here, at construction — not as a wrong match 2,000 lines away.
-        validate(stateCount, stateMeta, stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges, entryHiPrefix, ops,
-                stateEntryMask, stateAcceptMask, registerCount, finalRegBase, tagCount);
+        // here, at construction — not as a wrong match 2,000 lines away. Runs
+        // BEFORE any array-indexing field read so every corruption (short
+        // arrays, bad startState) reports as this gate's ISE, never a raw
+        // AIOOBE out of the constructor.
+        validate(startState, stateCount, stateMeta, stateBase, stateFinalOpsOff, stateFinalOpsByMask,
+                ranges, entryHiPrefix, ops, stateEntryMask, stateAcceptMask, registerCount, finalRegBase, tagCount);
+        this.startStateEntryMask = stateEntryMask[startState];
     }
 
     /**
@@ -317,24 +320,46 @@ public final class Tdfa {
      * entries + ops) once per compile; never on the match path.
      *
      * <ul>
+     *   <li>startState inside the state space; per-state arrays exactly
+     *       {@code stateCount} long; hi-prefix table exactly one cell per
+     *       range entry</li>
      *   <li>per-state range entries: in bounds, codepoint domain, lo ascending
      *       (the runners' binary search depends on it), prefix-max consistent</li>
-     *   <li>transition targets within the state space; ops offsets within ops</li>
+     *   <li>transition targets within the state space (dead marker is exactly
+     *       {@code -1}); ops offsets within ops and blocks OP_END-terminated</li>
      *   <li>assertion masks limited to the six defined bits; accept ⊆ entry</li>
      *   <li>final-register block {@code [finalRegBase, finalRegBase+tagCount)}
      *       fits the register file (dedicated final slots — coalescing finals
      *       with working registers corrupts the MatchResult readout)</li>
      * </ul>
      */
-    private static void validate(int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
+    private static void validate(int startState, int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
                                  int[] stateFinalOpsByMask,
                                  int[] ranges, int[] entryHiPrefix, int[] ops,
                                  int[] stateEntryMask, int[] stateAcceptMask,
                                  int registerCount, int finalRegBase, int tagCount) {
         int entries = ranges.length / 5;
+        if (startState < 0 || startState >= stateCount)
+            throw new IllegalStateException("tdfa: startState " + startState
+                    + " outside state space [0," + stateCount + ")");
         if (stateAcceptMask.length != stateCount)
             throw new IllegalStateException("tdfa: stateAcceptMask length " + stateAcceptMask.length
                     + " != stateCount " + stateCount);
+        if (stateMeta.length != stateCount)
+            throw new IllegalStateException("tdfa: stateMeta length " + stateMeta.length
+                    + " != stateCount " + stateCount);
+        if (stateBase.length != stateCount)
+            throw new IllegalStateException("tdfa: stateBase length " + stateBase.length
+                    + " != stateCount " + stateCount);
+        if (stateFinalOpsOff.length != stateCount)
+            throw new IllegalStateException("tdfa: stateFinalOpsOff length " + stateFinalOpsOff.length
+                    + " != stateCount " + stateCount);
+        if (stateEntryMask.length != stateCount)
+            throw new IllegalStateException("tdfa: stateEntryMask length " + stateEntryMask.length
+                    + " != stateCount " + stateCount);
+        if (entryHiPrefix.length != entries)
+            throw new IllegalStateException("tdfa: entryHiPrefix length " + entryHiPrefix.length
+                    + " != range entries " + entries);
         for (int s = 0; s < stateCount; s++) {
             int meta = stateMeta[s];
             int cnt = rangeCount(meta);
@@ -356,19 +381,11 @@ public final class Tdfa {
                 if (target >= stateCount)
                     throw new IllegalStateException("tdfa: state " + s + " entry " + i
                             + " target " + target + " beyond state count " + stateCount);
-                if (opsOff != 0 && (opsOff < 0 || opsOff >= ops.length))
-                    throw new IllegalStateException("tdfa: state " + s + " entry " + i + " ops offset out of bounds");
-                if (opsOff != 0 && tagCount > 0) {
-                    // Finals are final-ops-only: transition ops writing the
-                    // final block would let dead paths clobber accept-time
-                    // values (runners apply φ eagerly at accept-record).
-                    for (int j = opsOff; ops[j] != OP_END; j += 3) {
-                        int dst = ops[j + 1];
-                        if (dst >= finalRegBase && dst < finalRegBase + tagCount)
-                            throw new IllegalStateException("tdfa: state " + s + " entry " + i
-                                    + " transition op writes final register " + dst
-                                    + " — final block is final-ops-only");
-                    }
+                if (target < -1)
+                    throw new IllegalStateException("tdfa: state " + s + " entry " + i
+                            + " target " + target + " < -1 (dead marker is exactly -1)");
+                if (opsOff != 0) {
+                    checkOpsBlock(s, i, opsOff, ops, false, finalRegBase, tagCount);
                 }
                 if ((mask & ~0x3F) != 0)
                     throw new IllegalStateException("tdfa: state " + s + " entry " + i + " unknown assertion-mask bits");
@@ -381,6 +398,9 @@ public final class Tdfa {
             int fops = stateFinalOpsOff[s];
             if (fops != 0 && (fops < 0 || fops >= ops.length))
                 throw new IllegalStateException("tdfa: state " + s + " final-ops offset out of bounds");
+            if (fops != 0) {
+                checkOpsBlock(s, -1, fops, ops, true, finalRegBase, tagCount);
+            }
         }
         if (stateFinalOpsByMask != null) {
             if (stateFinalOpsByMask.length != stateCount * 64)
@@ -396,6 +416,38 @@ public final class Tdfa {
         if (tagCount > 0 && (finalRegBase < 0 || finalRegBase + tagCount > registerCount))
             throw new IllegalStateException("tdfa: final-register block [" + finalRegBase
                     + "," + (finalRegBase + tagCount) + ") exceeds register file of " + registerCount);
+    }
+
+    /**
+     * Structural check of one ops block at {@code opsOff}: in bounds and
+     * OP_END-terminated on its stride-3 grid (an unterminated block would
+     * otherwise run off {@code ops} as a bare AIOOBE far from the corruption).
+     * For transition blocks ({@code isFinal == false}) with tags: finals are
+     * final-ops-only — transition ops writing the final block would let dead
+     * paths clobber accept-time values (runners apply φ eagerly at
+     * accept-record).
+     */
+    private static void checkOpsBlock(int s, int i, int opsOff, int[] ops,
+                                      boolean isFinal, int finalRegBase, int tagCount) {
+        if (opsOff < 0 || opsOff >= ops.length)
+            throw new IllegalStateException("tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i)
+                    + " ops offset out of bounds");
+        int j = opsOff;
+        while (true) {
+            if (j >= ops.length)
+                throw new IllegalStateException("tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i)
+                        + " ops block at " + opsOff + " not OP_END-terminated within ops");
+            if (ops[j] == OP_END) break;
+            if (j + 2 >= ops.length)
+                throw new IllegalStateException("tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i)
+                        + " ops block at " + opsOff + " not OP_END-terminated within ops");
+            int dst = ops[j + 1];
+            if (!isFinal && tagCount > 0 && dst >= finalRegBase && dst < finalRegBase + tagCount)
+                throw new IllegalStateException("tdfa: state " + s + " entry " + i
+                        + " transition op writes final register " + dst
+                        + " — final block is final-ops-only");
+            j += 3;
+        }
     }
 
     /** Position-aware final-ops table ({@code [state*64+posFlags]} → offset, -1 = accept
