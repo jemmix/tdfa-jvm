@@ -43,6 +43,12 @@ import org.objectweb.asm.Opcodes;
  */
 public final class ShellEmitter {
 
+    /** Monotonic BYO-shell name sequence: deterministic within a JVM,
+     *  collision-free while any shell is live, and stable across runs for
+     *  dumps/debuggers (identityHashCode was none of these). */
+    private static final java.util.concurrent.atomic.AtomicLong SHELL_SEQ =
+            new java.util.concurrent.atomic.AtomicLong();
+
     // Facade-tier types, by descriptor only (no compile-time dependency).
     private static final String TDFAPATTERN = "io/github/jemmix/tdfa/TDFAPattern";
     private static final String PATMAT = "io/github/jemmix/tdfa/PatternMatcher";
@@ -110,13 +116,13 @@ public final class ShellEmitter {
         boolean concrete = spec.engineInternalName() != null;
         RegexEngine engInstance = spec.engine();
 
-        // Deterministic per-instance naming: derive from the engine's class
-        // when concrete, else from identity hash.
+        // Per-instance naming: derive from the engine's class when concrete,
+        // else from the monotonic shell sequence.
         String base;
         if (concrete) {
             base = engOwner;
         } else {
-            base = "io/github/jemmix/tdfa/gen/Shell" + Integer.toHexString(System.identityHashCode(spec));
+            base = "io/github/jemmix/tdfa/gen/Shell" + Long.toHexString(SHELL_SEQ.incrementAndGet());
         }
         String patOwner = base + "Pattern";
         String matOwner = base + "Matcher";
