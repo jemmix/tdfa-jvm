@@ -111,6 +111,19 @@ public final class BudgetWeights {
     public static final int MINIMIZE_CELL_BYTES = 4;
 
     /**
+     * One live explicit-stack frame (parser group frame, fixed-tags walk
+     * frame, or TNFA build frame) is assumed to weigh 64 bytes. The
+     * compile pipeline is iterative end-to-end, so nesting depth costs
+     * heap, not JVM stack; the frame stacks are charged against the
+     * compile RAM budget <em>while the frames are live</em> (released on
+     * pop), through this weight. This is what bounds parenthesis soup
+     * and the multiplicative {@code {n,m}} desugaring depth in the TNFA
+     * builder — depth-driven shapes that per-structure caps alone cannot
+     * see, because their totals stay small while their depth explodes.
+     */
+    public static final int NESTING_FRAME_BYTES = 64;
+
+    /**
      * The per-kernel &epsilon;-closure spike (one closure, before any
      * totals cap can count it) is bounded to 1/16 of the compile RAM
      * budget. At the 128 MiB default: 8 MiB / 80 B = ~100 K configs — the

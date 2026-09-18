@@ -5,13 +5,17 @@ import io.github.jemmix.tdfa.ast.Ast;
 import io.github.jemmix.tdfa.ast.CharClass;
 import io.github.jemmix.tdfa.unicode.CaseFoldTable;
 
+import io.github.jemmix.tdfa.tdfa.FrameBudget;
+
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Hand-rolled recursive-descent parser for a PCRE-ish subset:
+ * Hand-rolled iterative-descent parser for a PCRE-ish subset:
  * - literals, escape sequences (\n \t \r \f \a \v \d \D \w \W \s \S)
  * - hex escapes (\xNN, \x{N+}), octal escapes (\NNN, 1–3 digits capped at 0xFF)
  * - char classes [abc], [a-z], [^...], with POSIX classes [:alpha:] etc.
@@ -32,6 +36,15 @@ import java.util.Map;
  *
  * Pending re2j parity (see parity test suite):
  * - full Unicode case folding for arbitrary class ranges under (?i)
+ *
+ * Iterative descent: atoms, classes, escapes, and quantifiers are parsed by
+ * plain loops/leaf calls, and group nesting pushes a {@link GroupFrame} on
+ * an explicit stack instead of recursing ('(' opens a frame, ')' closes
+ * it). Nesting depth therefore costs heap, not JVM stack, and is charged
+ * to the transient compile RAM budget
+ * (io.github.jemmix.tdfa.tdfa.FrameBudget) while the frames are live —
+ * re2j's parser is iterative the same way, which is why it needs no depth
+ * cap.
  */
 public final class Parser {
     private final String src;
@@ -39,23 +52,11 @@ public final class Parser {
     private int nextTag = 1;
     private int groupCount = 0;
     private final Map<String, Integer> groupNames = new LinkedHashMap<>();
-    /** Current group-nesting depth (recursion cap; see MAX_GROUP_DEPTH). */
-    private int depth = 0;
     /** re2j's repeat-count cap: {n,m} with n or m over 1000 is "invalid
      *  repeat count" (verified against re2j 1.8). Also the parse-time bound
      *  on Tnfa's eager {n,m} desugaring — without it, a{500000000} OOMs the
      *  Builder before any determinization budget can fire. */
     private static final int MAX_REPEAT_COUNT = 1000;
-    /** Group-nesting cap: the recursive-descent cycle parseAlt→parseConcat→
-     *  parseRepeat→parseAtom→parseGroup costs JVM stack frames per level
-     *  (re2j's parser is iterative and needs none). The cap must fire
-     *  DETERMINISTICALLY before any later AST walk (also recursive) risks
-     *  the JVM stack: the cycle plus downstream passes cost ~6-10 frames
-     *  per level, and interpreted frames can exceed 100 bytes — 256 levels
-     *  stays comfortably inside a 1 MB worker stack (the first CI run
-     *  overflowed at the old 1000-deep cap on 1 MB runners while passing
-     *  on 2 MB desktops). 256 is far beyond any sane pattern. */
-    private static final int MAX_GROUP_DEPTH = 256;
     boolean caseInsensitive = false;
     boolean dotall = false;
     boolean multiline = false;
@@ -111,24 +112,64 @@ public final class Parser {
         return new Ast.Concat(java.util.Collections.unmodifiableList(java.util.Arrays.asList(new Ast.StartAnchor(true), e, new Ast.EndAnchor(true))));
     }
 
-    /** alt := concat ('|' concat)* */
+    /** alt := concat ('|' concat)* — the outer parse loop. The stack holds
+     *  one {@link GroupFrame} per open group plus the root frame; '(' opens
+     *  a group (openGroup), ')' closes and assembles it (closeGroup), '|'
+     *  starts the next branch of the current frame's alternation. */
     private Ast parseAlt() {
-        List<Ast> alts = new ArrayList<>();
-        alts.add(parseConcat());
-        while (peek() == '|') { pos++; alts.add(parseConcat()); }
-        return alts.size() == 1 ? alts.get(0) : new Ast.Alt(alts);
+        FrameBudget frames = FrameBudget.create();
+        Deque<GroupFrame> stack = new ArrayDeque<>();
+        stack.push(new GroupFrame());
+        while (true) {
+            GroupFrame f = stack.peek();
+            char c = peek();
+            if (pos < src.length() && c != '|' && c != ')') {
+                if (c == '(') {
+                    Ast flagOnly = openGroup(stack, frames);
+                    if (flagOnly != null) f.parts.add(applyQuantifier(flagOnly));
+                } else {
+                    f.parts.add(parseRepeat());
+                }
+                continue;
+            }
+            if (c == '|') {
+                pos++;
+                f.alts.add(finishConcat(f.parts));
+                f.parts = new ArrayList<>();
+                continue;
+            }
+            if (c == ')') {
+                // ')' with no open group is not this loop's to consume:
+                // leave it — parseResult reports the trailing junk
+                if (stack.size() == 1) break;
+                closeGroup(stack, frames);
+                continue;
+            }
+            // end of input inside one or more groups: the innermost is unclosed
+            if (stack.size() > 1) expect(')');
+            break;
+        }
+        GroupFrame root = stack.pop();
+        root.alts.add(finishConcat(root.parts));
+        return root.alts.size() == 1 ? root.alts.get(0) : new Ast.Alt(root.alts);
     }
 
-    /** concat := repeat* (no explicit separator) */
-    private Ast parseConcat() {
-        List<Ast> parts = new ArrayList<>();
-        while (pos < src.length() && peek() != '|' && peek() != ')') parts.add(parseRepeat());
+    /** concat := repeat* (no explicit separator) — the single-branch shape;
+     *  branches in progress live in the current {@link GroupFrame}. */
+    private static Ast finishConcat(List<Ast> parts) {
         return parts.isEmpty() ? new Ast.Empty() : (parts.size() == 1 ? parts.get(0) : new Ast.Concat(parts));
     }
 
     /** repeat := atom quantifier? */
     private Ast parseRepeat() {
-        Ast atom = parseAtom();
+        return applyQuantifier(parseAtom());
+    }
+    /** Quantifier tail of {@code repeat := atom quantifier?} — shared by
+     *  atoms parsed inline and group bodies assembled when their ')' pops.
+     *  For groups this runs after the ')' has restored the enclosing
+     *  frame's flags, so a lazy '?' suffix reads the enclosing group's
+     *  ungreedy state, not the body's. */
+    private Ast applyQuantifier(Ast atom) {
         if (pos >= src.length()) return atom;
         char c = peek();
         int min, max;
@@ -196,10 +237,10 @@ public final class Parser {
         return cp <= 0xFFFF ? new Ast.Symbol((char) cp) : new CharClass(new int[]{cp, cp}, false);
     }
 
-    /** atom := group | class | dot | anchor | escape | literal */
+    /** atom := class | dot | anchor | escape | literal — groups are handled
+     *  by the caller ({@link #parseAlt()}'s loop) so nesting never recurses. */
     private Ast parseAtom() {
         char c = cur();
-        if (c == '(') return parseGroup();
         if (c == '[') { pos++; return parseClass(); }
         if (c == '.') { pos++; return dotall ? DOTALL : DOT; }
         if (c == '^') { pos++; return new Ast.StartAnchor(false, this.multiline); }
@@ -223,46 +264,37 @@ public final class Parser {
         return literalAtom(cp);
     }
 
-    /** group := '(' ('?:')? alt ')' | '(' '?flags' ')' | '(' '?flags:' alt ')' | '(' '?<' name '>' alt ')' | '(' '?P<' name '>' alt ')' */
-    private Ast parseGroup() {
-        expect('(');
-        // Flags are scoped to the enclosing group (re2j semantics, verified
-        // against re2j 1.8: `((?i)a)b` does NOT fold `b` — every ')' restores
-        // the flag state saved at its '('). Flag-ONLY groups `(?i)` are the
-        // exception: they apply until the end of the ENCLOSING group, so their
-        // exit must not restore (flagOnly below). unicodeShorthand restores
-        // too: \w/\d/\s class nodes materialize ranges at parse time
-        // (correctly scoped); the pattern-global runtime \b word table
-        // reflects the final top-level flag state.
-        boolean savedCi = caseInsensitive, savedDs = dotall, savedMl = multiline;
-        boolean savedUs = unicodeShorthand, savedUg = ungreedy;
-        boolean[] flagOnly = {false};
-        // Recursion depth cap: parseAlt→…→parseGroup is the only recursive
-        // cycle, and it is stack-frame-per-paren (re2j parses iteratively and
-        // needs no cap). 256 is far beyond any sane pattern and small enough
-        // that the cap fires before ANY environment's default stack is at
-        // risk (see MAX_GROUP_DEPTH); deeper input is a clean parse error,
-        // never a StackOverflowError through Pattern.compile.
-        if (++depth > MAX_GROUP_DEPTH)
-            throw fail(this, "group nesting too deep (>" + MAX_GROUP_DEPTH + ")");
-        try {
-            return parseGroupBody(flagOnly);
-        } finally {
-            depth--;
-            if (!flagOnly[0]) {
-                caseInsensitive = savedCi;
-                dotall = savedDs;
-                multiline = savedMl;
-                unicodeShorthand = savedUs;
-                ungreedy = savedUg;
-            }
-        }
+    /** One open group on the explicit descent stack: the concat parts and
+     *  completed alternation branches of its body, the tag pair allocated at
+     *  its '(' (open-paren order), and the flags to restore at its ')'. */
+    private static final class GroupFrame {
+        List<Ast> parts = new ArrayList<>();
+        List<Ast> alts = new ArrayList<>();
+        boolean capturing;
+        int open = -1, close = -1;
+        boolean savedCi, savedDs, savedMl, savedUs, savedUg;
     }
 
-    /** Group body after '(' — the caller saved flags, enforces the depth cap,
-     *  and restores flags unless the body is a flag-only group (which marks
-     *  {@code flagOnly[0]}; its flags must persist into the enclosing group). */
-    private Ast parseGroupBody(boolean[] flagOnly) {
+    /** group := '(' ('?:')? alt ')' | '(' '?flags' ')' | '(' '?flags:' alt ')' | '(' '?<' name '>' alt ')' | '(' '?P<' name '>' alt ')'
+     *
+     * <p>Called at '(' by {@link #parseAlt()}'s loop (the caller has already
+     * peeked it). Either pushes a {@link GroupFrame} for a body-bearing group
+     * and returns null, or — for a flag-only group like {@code (?i)} — returns
+     * the resulting {@link Ast.Empty} atom with no frame, its flags persisting
+     * into the enclosing group.
+     *
+     * <p>Flags are scoped to the enclosing group (re2j semantics, verified
+     * against re2j 1.8: `((?i)a)b` does NOT fold `b` — every ')' restores
+     * the flag state saved at its '('). Flag-ONLY groups `(?i)` are the
+     * exception: they apply until the end of the ENCLOSING group, so they
+     * never save/restore. unicodeShorthand restores too: \w/\d/\s class
+     * nodes materialize ranges at parse time (correctly scoped); the
+     * pattern-global runtime \b word table reflects the final top-level
+     * flag state. */
+    private Ast openGroup(Deque<GroupFrame> stack, FrameBudget frames) {
+        expect('(');
+        boolean savedCi = caseInsensitive, savedDs = dotall, savedMl = multiline;
+        boolean savedUs = unicodeShorthand, savedUg = ungreedy;
         boolean capturing = true;
         String groupName = null;
         if (pos + 1 < src.length() && src.charAt(pos) == '?' && src.charAt(pos + 1) == ':') {
@@ -322,16 +354,14 @@ public final class Parser {
                     if (mlSet) this.multiline = ml;
                     if (usSet) this.unicodeShorthand = us;
                     if (ugSet) this.ungreedy = ug;
-                    flagOnly[0] = true;   // flags persist into the enclosing group
-                    return new Ast.Empty(); // flag-only group, continue
+                    return new Ast.Empty(); // flag-only group, continue — no frame, no restore
                 }
             }
         }
-        // Allocate tag pair BEFORE recursing into the body so group numbers
-        // follow open-paren position (standard regex convention): outer groups
-        // get LOWER numbers than their inner groups. Allocating after the
-        // recursive parseAlt would assign numbers in close-paren order, which
-        // is inside-out.
+        // Allocate the tag pair BEFORE the body is parsed so group numbers
+        // follow open-paren position (standard regex convention): outer
+        // groups get LOWER numbers than their inner groups. Allocating at
+        // ')' would assign numbers in close-paren order, which is inside-out.
         int open = -1, close = -1;
         if (capturing) {
             open = nextTag++;
@@ -343,10 +373,42 @@ public final class Parser {
                 groupNames.put(groupName, groupCount);
             }
         }
-        Ast body = parseAlt();
-        expect(')');
-        if (!capturing) return body;
-        return new Ast.Concat(java.util.Collections.unmodifiableList(java.util.Arrays.asList(new Ast.Tag(open), body, new Ast.Tag(close))));
+        GroupFrame f = new GroupFrame();
+        f.capturing = capturing;
+        f.open = open;
+        f.close = close;
+        f.savedCi = savedCi;
+        f.savedDs = savedDs;
+        f.savedMl = savedMl;
+        f.savedUs = savedUs;
+        f.savedUg = savedUg;
+        frames.push();
+        stack.push(f);
+        return null;
+    }
+
+    /** Pop the innermost group at its ')': assemble its alternation, restore
+     *  the flags saved at its '(', wrap in the tag pair if capturing, and
+     *  append the result — with any trailing quantifier — to the parent's
+     *  concat parts. */
+    private void closeGroup(Deque<GroupFrame> stack, FrameBudget frames) {
+        expect(')');   // the caller peeked it; the group owns its consumption
+        GroupFrame f = stack.pop();
+        frames.pop();
+        f.alts.add(finishConcat(f.parts));
+        Ast body = f.alts.size() == 1 ? f.alts.get(0) : new Ast.Alt(f.alts);
+        // Restore the flag state saved at '(' (flag-only groups never pushed
+        // a frame). Restored BEFORE the quantifier is applied: a trailing
+        // lazy '?' after ')' must read the ENCLOSING group's ungreedy state.
+        caseInsensitive = f.savedCi;
+        dotall = f.savedDs;
+        multiline = f.savedMl;
+        unicodeShorthand = f.savedUs;
+        ungreedy = f.savedUg;
+        Ast group = f.capturing
+                ? new Ast.Concat(java.util.Collections.unmodifiableList(java.util.Arrays.asList(new Ast.Tag(f.open), body, new Ast.Tag(f.close))))
+                : body;
+        stack.peek().parts.add(applyQuantifier(group));
     }
 
     /** class := '^'? class-item+ ']' */

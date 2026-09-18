@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.CompiledRegex;
+import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.PatternSyntaxException;
 import org.junit.jupiter.api.Test;
 
@@ -19,21 +20,65 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ParserHardeningTest {
 
     @Test void deepNestingIsCleanParseErrorNotStackOverflow() {
+        // unclosed groups: the iterative parser walks all 2000 '(' without
+        // touching the JVM stack and reports the EOF like any syntax error
         assertThatThrownBy(() -> CompiledRegex.compile("(".repeat(2000) + "a"))
                 .isInstanceOf(PatternSyntaxException.class)
-                .hasMessageContaining("group nesting too deep");
+                .hasMessageContaining("expected ')'");
     }
 
-    @Test void deepNestingAtLimitStillCompiles() {
-        // keep in sync with Parser.MAX_GROUP_DEPTH — chosen so the cap fires
-        // before any default JVM stack (1 MB CI workers included) is at risk
-        int depth = 256;
+    @Test void deepNestingCompilesAndMatches() {
+        // nesting is first-class: bounded only by the compile RAM budget
+        // (frames + builder bytes), like re2j's iterative parser — no
+        // dedicated depth cap exists
+        int depth = 1000;
         String re = "(".repeat(depth) + "a" + ")".repeat(depth);
-        assertThatCode(() -> CompiledRegex.compile(re)).doesNotThrowAnyException();
+        CompiledRegex r = CompiledRegex.compile(re);
+        assertThat(r.find("a")).isTrue();
+        // outermost group is group 1, innermost is group depth — open-paren order
+        for (MatchResult m : r.findAll("a")) {
+            assertThat(m.groupCount()).isEqualTo(depth);
+            assertThat(m.tag(2 * depth - 1)).isEqualTo(0);   // innermost open
+            assertThat(m.tag(2 * depth)).isEqualTo(1);       // innermost close
+        }
     }
 
-    @Test void deepEscapeFreeNestingAlsoBounded() {
-        // the recursion is per-group regardless of body shape
+    @Test void deepNestingOverRamBudgetIsCleanBudgetError() {
+        // nesting frames are weighted against the one compile RAM budget:
+        // over it, the standard "pattern too large" error — never OOM/SOE.
+        // 30 KB / 64 B per frame = ~470 live frames, so 600-deep rejects.
+        System.setProperty("tdfa.budget.compile.memory", "30720");
+        try {
+            String re = "(".repeat(600) + "a" + ")".repeat(600);
+            assertThatThrownBy(() -> CompiledRegex.compile(re))
+                    .isInstanceOf(PatternSyntaxException.class)
+                    .hasMessageContaining("pattern too large")
+                    .hasMessageContaining("tdfa.budget.compile.memory");
+        } finally {
+            System.clearProperty("tdfa.budget.compile.memory");
+        }
+    }
+
+    @Test void nestedBoundedRepeatDesugarBlowupIsCleanBudgetError() {
+        // {2,1000} desugars to ~1000-deep nested optional suffixes in the
+        // TNFA builder, and nested groups MULTIPLY that depth — a
+        // depth-driven blowup whose totals stay small. Live frames and
+        // metered builder states both weigh against the one compile RAM
+        // budget, so it rejects cleanly. The tiny pattern compiles fine
+        // under defaults.
+        assertThatCode(() -> CompiledRegex.compile("(?:(?:a{2,1000}))")).doesNotThrowAnyException();
+        System.setProperty("tdfa.budget.compile.memory", "100000");
+        try {
+            assertThatThrownBy(() -> CompiledRegex.compile("(?:(?:a{2,1000}))"))
+                    .isInstanceOf(PatternSyntaxException.class)
+                    .hasMessageContaining("pattern too large");
+        } finally {
+            System.clearProperty("tdfa.budget.compile.memory");
+        }
+    }
+
+    @Test void deepEscapeFreeNestingStillCleanError() {
+        // the per-group frame is pushed regardless of body shape
         assertThatThrownBy(() -> CompiledRegex.compile("(?:".repeat(2000) + "a"))
                 .isInstanceOf(PatternSyntaxException.class);
     }

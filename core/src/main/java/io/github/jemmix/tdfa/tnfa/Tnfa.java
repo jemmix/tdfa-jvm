@@ -2,9 +2,12 @@ package io.github.jemmix.tdfa.tnfa;
 
 import io.github.jemmix.tdfa.ast.Ast;
 import io.github.jemmix.tdfa.ast.CharClass;
+import io.github.jemmix.tdfa.tdfa.FrameBudget;
 import io.github.jemmix.tdfa.parser.Parser;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 
@@ -26,7 +29,16 @@ import java.util.Map;
  *   NO_WORD_BOUNDARY  = 8   ( \B )
  *
  * Based on paper Algorithm 2 (TNFA construction), simplified: ntags on alternation
- * paths is included; repetition is handled by structural recursion.
+ * paths is included; repetition is handled structurally.
+ *
+ * Construction is iterative (re2j's Compiler is too): an explicit
+ * {@link BuildFrame} worklist — one frame per AST node in progress — drives
+ * the minting of states and edges. The minting ORDER is part of the
+ * contract (pre-body fresh() for repeats, concat children right-to-left,
+ * alt branches left-to-right followed by their ntag chains), because it
+ * fixes state numbering and thus the built NFA bit-for-bit. Nesting depth
+ * (and the multiplicative {n,m} desugaring depth) costs heap, charged to
+ * the transient compile RAM budget ({@link FrameBudget}), never JVM stack.
  */
 public final class Tnfa {
     public static final int NO_TAG = 0;
@@ -137,20 +149,27 @@ public final class Tnfa {
     }
 
     /** Collect {@link Ast.Tag#fixedOn} / {@link Ast.Tag#fixedOffset} annotations into
-     *  1-indexed arrays for forwarding to the TDFA compiler. */
-    private static void collectFixedAnnotations(Ast e, int[] fixedBase, int[] fixedOffset) {
-        if (e instanceof Ast.Tag) {
-            Ast.Tag t = (Ast.Tag) e;
-            if (t.fixedOn != 0) {
-                fixedBase[t.tag] = t.fixedOn;
-                fixedOffset[t.tag] = t.fixedOffset;
+     *  1-indexed arrays for forwarding to the TDFA compiler. Iterative
+     *  worklist — the front-end puts no bound on AST depth, so no walk here
+     *  may consume program stack proportional to it. */
+    private static void collectFixedAnnotations(Ast root, int[] fixedBase, int[] fixedOffset) {
+        ArrayDeque<Ast> work = new ArrayDeque<>();
+        work.push(root);
+        while (!work.isEmpty()) {
+            Ast e = work.pop();
+            if (e instanceof Ast.Tag) {
+                Ast.Tag t = (Ast.Tag) e;
+                if (t.fixedOn != 0) {
+                    fixedBase[t.tag] = t.fixedOn;
+                    fixedOffset[t.tag] = t.fixedOffset;
+                }
+            } else if (e instanceof Ast.Concat) {
+                work.addAll(((Ast.Concat) e).children);
+            } else if (e instanceof Ast.Alt) {
+                work.addAll(((Ast.Alt) e).children);
+            } else if (e instanceof Ast.Repeat) {
+                work.push(((Ast.Repeat) e).body);
             }
-        } else if (e instanceof Ast.Concat) {
-            for (Ast c : ((Ast.Concat) e).children) collectFixedAnnotations(c, fixedBase, fixedOffset);
-        } else if (e instanceof Ast.Alt) {
-            for (Ast c : ((Ast.Alt) e).children) collectFixedAnnotations(c, fixedBase, fixedOffset);
-        } else if (e instanceof Ast.Repeat) {
-            collectFixedAnnotations(((Ast.Repeat) e).body, fixedBase, fixedOffset);
         }
     }
 
@@ -211,8 +230,317 @@ public final class Tnfa {
             symClasses.add(cc);
         }
 
-        /** Returns entry state of sub-NFA that flows into `entryTo`. */
-        int build(Ast e, int entryTo) {
+        /** One node in progress on the explicit build stack. DISPATCH frames
+         *  carry a node to enter; the other kinds are continuations that
+         *  resume when the child they spawned completes. */
+        private static final class BuildFrame {
+            static final int DISPATCH = 0;       // entering a node
+            static final int CONCAT = 1;         // threading children right-to-left
+            static final int ALT = 2;            // branches left-to-right, ntag prefixes
+            static final int QUEST = 3;          // e? awaiting body entry
+            static final int STAR_NULLABLE = 4;  // e* with nullable body: (e+)? shape
+            static final int STAR_PLAIN = 5;     // e* with non-nullable body: hub loop
+            static final int PLUS = 6;           // e+
+
+            int kind = DISPATCH;
+            Ast node;            // DISPATCH/CONCAT/ALT: the node; repeat kinds: the body
+            int entryTo;
+            // repeat priorities (greedy/lazy) and the state freshened pre-body
+            int bodyPri, skipPri;
+            int s;               // QUEST: s; STAR_NULLABLE: hub; STAR_PLAIN: s0; PLUS: loopBack
+            int hub;             // STAR_PLAIN: the loop hub
+            // CONCAT scratch: children, next index (descending), threaded entry
+            List<Ast> ch;
+            int idx;
+            int cur;
+            // ALT scratch
+            int newStart;
+            List<java.util.BitSet> branchGroups;
+            java.util.BitSet union;
+        }
+
+        /** Returns entry state of sub-NFA that flows into {@code entryTo}.
+         *  Explicit-frame worklist: a DISPATCH frame enters a node; each
+         *  container/repeat converts to a continuation frame that resumes
+         *  when the child it spawned completes. The order in which
+         *  fresh()/eps()/sym()/anchorEps()/taggedEps() fire is fixed by the
+         *  per-shape dispatch and resume steps below and is part of the
+         *  construction contract (it determines state numbering).
+         *  Continuation frames are charged to the transient compile RAM
+         *  budget while they live on the stack. */
+        int build(Ast root, int entryToRoot) {
+            FrameBudget frames = FrameBudget.create();
+            ArrayDeque<BuildFrame> stack = new ArrayDeque<>();
+            int result = 0;
+            pushNode(stack, root, entryToRoot);
+            while (!stack.isEmpty()) {
+                BuildFrame f = stack.pop();
+                if (f.kind == BuildFrame.DISPATCH) {
+                    Ast e = f.node;
+                    int leaf = buildLeaf(e, f.entryTo);
+                    if (leaf >= 0) { result = leaf; continue; }
+                    if (e instanceof Ast.Concat) {
+                        List<Ast> ch = ((Ast.Concat) e).children;
+                        if (ch.isEmpty()) { result = f.entryTo; continue; }
+                        f.kind = BuildFrame.CONCAT;
+                        f.ch = ch;
+                        f.idx = ch.size() - 1;
+                        f.cur = f.entryTo;
+                        frames.push();
+                        stack.push(f);
+                        pushNode(stack, ch.get(f.idx), f.cur);
+                        continue;
+                    }
+                    if (e instanceof Ast.Alt) {
+                        // Build all alternatives flowing into entryTo with descending priority.
+                        // For POSIX (BT19 §7.3): prepend ntag (negative-tag) sub-automata to each
+                        // branch for groups that exist in OTHER branches but not this one. This
+                        // guarantees the U-tree prefix property and encodes "no match" structurally
+                        // so POSIX comparison can pick the correct alternative.
+                        List<Ast> ch = ((Ast.Alt) e).children;
+                        int newStart = fresh();
+                        // Compute groups per branch and union.
+                        List<java.util.BitSet> branchGroups = new ArrayList<>();
+                        java.util.BitSet union = new java.util.BitSet();
+                        for (Ast child : ch) {
+                            java.util.BitSet g = new java.util.BitSet();
+                            collectGroups(child, g);
+                            branchGroups.add(g);
+                            union.or(g);
+                        }
+                        if (ch.isEmpty()) { result = newStart; continue; }
+                        f.kind = BuildFrame.ALT;
+                        f.ch = ch;
+                        f.idx = 0;
+                        f.newStart = newStart;
+                        f.branchGroups = branchGroups;
+                        f.union = union;
+                        frames.push();
+                        stack.push(f);
+                        pushNode(stack, ch.get(0), f.entryTo);
+                        continue;
+                    }
+                    // Ast.Repeat — dispatch by shape (see the per-kind resume steps).
+                    Ast.Repeat r = (Ast.Repeat) e;
+                    Ast body = r.body;
+                    int min = r.min, max = r.max;
+                    // Greedy: prefer BODY/REPEAT (pri 1) over SKIP/EXIT (pri 2).
+                    // Lazy:   prefer SKIP/EXIT   (pri 1) over BODY/REPEAT (pri 2).
+                    boolean lazy = !r.greedy;
+                    int bodyPri = lazy ? 2 : 1;
+                    int skipPri = lazy ? 1 : 2;
+                    if (min == 0 && max == 1) {
+                        // e? : newStart -(pri bodyPri)-> body -> entryTo ; newStart -(pri skipPri)-> [ntags] -> entryTo
+                        f.kind = BuildFrame.QUEST;
+                        f.node = body;
+                        f.bodyPri = bodyPri;
+                        f.skipPri = skipPri;
+                        f.s = fresh();
+                        frames.push();
+                        stack.push(f);
+                        pushNode(stack, body, f.entryTo);
+                        continue;
+                    }
+                    if (min == 0 && max == Integer.MAX_VALUE) {
+                        // e* : loop. ntags only on the INITIAL skip (0 iterations); subsequent
+                        // exits from the loop hub do NOT re-emit ntags because the group already
+                        // matched in a prior iteration (BT19 §7.3 — ntag represents no-match).
+                        //
+                        // Topology mirrors re2j's Compiler.star(), which has two shapes:
+                        //
+                        // (a) NON-nullable body — one shared hub that both the body's exit
+                        //     and the initial entry pass through, deciding iterate-vs-exit
+                        //     (re2j Prog loop()). A SPLIT entry/loop variant would let an
+                        //     OUTER repeat's re-entry path (which crosses the group's
+                        //     open-tag edge and arrives at this star's ENTRY node) find it
+                        //     unvisited and steal the ε-closure slot, so the surviving
+                        //     continuation would carry a RE-OPENED group tag — reporting the
+                        //     last iteration's span for shapes like (a*?)*? on "aaa"
+                        //     (g1=[2,3) where re2j reports [0,3)). The shared hub kills the
+                        //     outer re-entry at an already-visited node — re2j's observable
+                        //     priority — and the plain continuation wins.
+                        //
+                        // (b) NULLABLE body — (f+)? (re2j: "When f1 can match an empty
+                        //     string, f1* must be implemented as (f1+)? to get the priority
+                        //     match order correct"): a quest whose body-side enters the
+                        //     plus's body DIRECTLY, with the iterate/exit hub only at the
+                        //     body's exit. This keeps the enter-body-ε-through-exit accept
+                        //     at the TOP of the priority order with the group's close tag
+                        //     traversed (re2j (a*?)* on "aaa" = [0,0) g1=[0,0)), which a
+                        //     plain hub loop cannot: the ε-pass collapses into the hub
+                        //     dedup and the surviving accept loses to the body's rune.
+                        if (isNullable(body)) {
+                            f.kind = BuildFrame.STAR_NULLABLE;
+                            f.node = body;
+                            f.bodyPri = bodyPri;
+                            f.skipPri = skipPri;
+                            f.s = fresh();     // plus loop hub (at body exit)
+                            frames.push();
+                            stack.push(f);
+                            pushNode(stack, body, f.s);
+                        } else {
+                            f.kind = BuildFrame.STAR_PLAIN;
+                            f.node = body;
+                            f.bodyPri = bodyPri;
+                            f.skipPri = skipPri;
+                            f.s = fresh();     // pre-loop decision: initial skip vs enter
+                            f.hub = fresh();   // loop hub: iterate vs exit
+                            frames.push();
+                            stack.push(f);
+                            pushNode(stack, body, f.hub);
+                        }
+                        continue;
+                    }
+                    if (min == 1 && max == Integer.MAX_VALUE) {
+                        // e+ : body followed by e* (the e* uses the lazy/greedy preference)
+                        f.kind = BuildFrame.PLUS;
+                        f.node = body;
+                        f.bodyPri = bodyPri;
+                        f.skipPri = skipPri;
+                        f.s = fresh();
+                        frames.push();
+                        stack.push(f);
+                        pushNode(stack, body, f.s);
+                        continue;
+                    }
+                    // Bounded repetitions {n}, {n,}, {n,m} — desugar via concatenation + tail.
+                    // (We desugar rather than implementing the paper's bounded-rep construction literally;
+                    //  tags are duplicated, which is acceptable for our subset.)
+                    List<Ast> mandatory = new ArrayList<>();
+                    for (int i = 0; i < min; i++) mandatory.add(body);
+                    Ast mandatoryAst = mandatory.isEmpty() ? new Ast.Empty() :
+                            (mandatory.size() == 1 ? mandatory.get(0) : new Ast.Concat(mandatory));
+                    Ast desugared = mandatoryAst;
+                    // {0,0} falls through as bare Empty: neither the body's tags nor
+                    // its ntags are emitted. Sound because a group's tags are
+                    // syntactically unique (allocated at its '(' alone), so no other
+                    // construction can ever write them — there is no stale value to
+                    // kill, and the group simply reports NIL. The asymmetry with the
+                    // quest case (which meticulously emits ntags) is deliberate: there
+                    // is nothing below an empty body to poison (review P2 note).
+                    if (max == Integer.MAX_VALUE) {
+                        // {n,} = (n-1) copies followed by body+  — NOT body*.
+                        // re2j's Simplify general case ("x{4,} is xxxx+"): a PLUS tail
+                        // guarantees one real iteration, and a nullable body's empty
+                        // RE-iteration is cut by the pike pc-dedup (the plus entry pc
+                        // is revisited), so the last NON-EMPTY capture survives —
+                        // (a?){2,} on "aa" reports g1="a". A STAR tail instead lets
+                        // the greedy first-iteration-empty write an empty capture
+                        // (g1=""), diverging from re2j.
+                        // min >= 2 here ({0,} star and {1,} plus have their own cases).
+                        List<Ast> copies = new ArrayList<>();
+                        for (int i = 0; i < min - 1; i++) copies.add(body);
+                        Ast copiesAst = copies.isEmpty() ? new Ast.Empty() :
+                                (copies.size() == 1 ? copies.get(0) : new Ast.Concat(copies));
+                        desugared = new Ast.Concat(java.util.Collections.unmodifiableList(java.util.Arrays.asList(copiesAst, new Ast.Repeat(body, 1, Integer.MAX_VALUE, r.greedy))));
+                    } else if (max > min) {
+                        // {n,m} = mandatory + RIGHT-NESTED optional suffix (x(x(x)?)?)?,
+                        // exactly re2j Simplify's shape ("x{2,5} = xx(x(x(x)?)?)?").
+                        // A FLAT tail (B?B?B?) is match-equivalent but resolves
+                        // the priority tie "enter the next optional copy" vs "extend the
+                        // current copy's inner lazy body" the OPPOSITE way: nested-lazy
+                        // captures then report the extended span while re2j/JDK report
+                        // the next copy's (e.g. ((a{1,2}?c?){0,5}?)d on "aad": re2j/JDK
+                        // report g2="a" — two outer iterations — a flat tail reports
+                        // g2="aa").
+                        Ast suffix = new Ast.Repeat(body, 0, 1, r.greedy);
+                        for (int i = min + 1; i < max; i++) {
+                            suffix = new Ast.Repeat(new Ast.Concat(java.util.Collections.unmodifiableList(java.util.Arrays.asList(body, suffix))), 0, 1, r.greedy);
+                        }
+                        desugared = new Ast.Concat(java.util.Collections.unmodifiableList(java.util.Arrays.asList(mandatoryAst, suffix)));
+                    }
+                    // build the desugared form directly into entryTo — pass-through,
+                    // no continuation frame for the Repeat itself.
+                    pushNode(stack, desugared, f.entryTo);
+                    continue;
+                }
+                if (f.kind == BuildFrame.CONCAT) {
+                    // build right-to-left: the completed child's entry becomes the
+                    // next (leftward) child's exit
+                    f.cur = result;
+                    f.idx--;
+                    if (f.idx >= 0) {
+                        stack.push(f);
+                        pushNode(stack, f.ch.get(f.idx), f.cur);
+                    } else {
+                        result = f.cur;
+                        frames.pop();
+                    }
+                    continue;
+                }
+                if (f.kind == BuildFrame.ALT) {
+                    int altStart = result;
+                    // Prepend ntags for missing groups (in union but not in this branch).
+                    java.util.BitSet missing = (java.util.BitSet) f.union.clone();
+                    missing.andNot(f.branchGroups.get(f.idx));
+                    for (int g = missing.length(); (g = missing.previousSetBit(g - 1)) >= 0; ) {
+                        int ntagState = fresh();
+                        int closeTag = 2 * g;  // close tag of group g (positive number)
+                        taggedEps(ntagState, altStart, 1, -closeTag);  // negative = nil
+                        altStart = ntagState;
+                    }
+                    eps(f.newStart, altStart, f.idx + 1);
+                    f.idx++;
+                    if (f.idx < f.ch.size()) {
+                        stack.push(f);
+                        pushNode(stack, f.ch.get(f.idx), f.entryTo);
+                    } else {
+                        result = f.newStart;
+                        frames.pop();
+                    }
+                    continue;
+                }
+                if (f.kind == BuildFrame.QUEST) {
+                    int bodyStart = result;
+                    eps(f.s, bodyStart, f.bodyPri);
+                    // Initial skip path: prepend ntags for body groups (0 iterations ⇒ no match).
+                    int skipTarget = ntagChain(f.node, f.entryTo);
+                    eps(f.s, skipTarget, f.skipPri);
+                    result = f.s;
+                    frames.pop();
+                    continue;
+                }
+                if (f.kind == BuildFrame.STAR_NULLABLE) {
+                    int bodyStart = result;
+                    int hub = f.s;
+                    eps(hub, bodyStart, f.bodyPri);               // iterate (no ntag; group already matched)
+                    eps(hub, f.entryTo, f.skipPri);               // or exit (no ntag)
+                    int s0 = fresh();                             // quest: skip vs enter the plus
+                    eps(s0, bodyStart, f.bodyPri);
+                    int skipFromStart = ntagChain(f.node, f.entryTo);
+                    eps(s0, skipFromStart, f.skipPri);
+                    result = s0;
+                    frames.pop();
+                    continue;
+                }
+                if (f.kind == BuildFrame.STAR_PLAIN) {
+                    int bodyStart = result;
+                    eps(f.s, f.hub, f.bodyPri);                   // enter the loop (greedy) / skip (lazy)
+                    int skipFromStart = ntagChain(f.node, f.entryTo);
+                    eps(f.s, skipFromStart, f.skipPri);
+                    eps(f.hub, bodyStart, f.bodyPri);             // iterate (no ntag; group already matched)
+                    eps(f.hub, f.entryTo, f.skipPri);             // or exit
+                    result = f.s;
+                    frames.pop();
+                    continue;
+                }
+                if (f.kind == BuildFrame.PLUS) {
+                    int bodyStart = result;
+                    eps(f.s, bodyStart, f.bodyPri);
+                    eps(f.s, f.entryTo, f.skipPri);
+                    result = bodyStart;
+                    frames.pop();
+                    continue;
+                }
+                throw new IllegalStateException("unknown build frame kind: " + f.kind);
+            }
+            return result;
+        }
+
+        /** Leaf nodes (nothing to build below them): emit their state/edge and
+         *  return the entry, or -1 when {@code e} is a container
+         *  (Concat/Alt/Repeat) the caller must frame. */
+        private int buildLeaf(Ast e, int entryTo) {
             if (e instanceof Ast.Empty) {
                 int s = fresh();
                 eps(s, entryTo, 1);
@@ -240,7 +568,7 @@ public final class Tnfa {
                 }
                 return s;
             }
-            Ast.StartAnchor sa;                         // ^ or \A
+            Ast.StartAnchor sa;                             // ^ or \A
             if (e instanceof Ast.StartAnchor && (sa = (Ast.StartAnchor) e) != null) {
                 int s = fresh();
                 // Anchor flavor is per-edge (parse-time (?m), group-scoped flags
@@ -249,7 +577,7 @@ public final class Tnfa {
                 anchorEps(s, entryTo, 1, sa.absolute || !sa.multiline ? ABS_BEGIN : BEGIN_TEXT);
                 return s;
             }
-            Ast.EndAnchor ea;                           // $ or \z
+            Ast.EndAnchor ea;                               // $ or \z
             if (e instanceof Ast.EndAnchor && (ea = (Ast.EndAnchor) e) != null) {
                 int s = fresh();
                 // m-$ needs END_TEXT (line end, always \n-aware); plain $ and \z
@@ -257,74 +585,69 @@ public final class Tnfa {
                 anchorEps(s, entryTo, 1, ea.absolute || !ea.multiline ? ABS_END : END_TEXT);
                 return s;
             }
-            if (e instanceof Ast.WordBoundary) {     // \b
+            if (e instanceof Ast.WordBoundary) {            // \b
                 int s = fresh();
                 anchorEps(s, entryTo, 1, WORD_BOUNDARY);
                 return s;
             }
-            if (e instanceof Ast.NoWordBoundary) {   // \B
+            if (e instanceof Ast.NoWordBoundary) {          // \B
                 int s = fresh();
                 anchorEps(s, entryTo, 1, NO_WORD_BOUNDARY);
                 return s;
             }
-            if (e instanceof Ast.Concat) {
-                int cur = entryTo;
-                // build right-to-left
-                List<Ast> ch = ((Ast.Concat) e).children;
-                for (int i = ch.size() - 1; i >= 0; i--) cur = build(ch.get(i), cur);
-                return cur;
-            }
-            if (e instanceof Ast.Alt) {
-                // Build all alternatives flowing into entryTo with descending priority.
-                // For POSIX (BT19 §7.3): prepend ntag (negative-tag) sub-automata to each
-                // branch for groups that exist in OTHER branches but not this one. This
-                // guarantees the U-tree prefix property and encodes "no match" structurally
-                // so POSIX comparison can pick the correct alternative.
-                int newStart = fresh();
-                List<Ast> ch = ((Ast.Alt) e).children;
-                // Compute groups per branch and union.
-                List<java.util.BitSet> branchGroups = new ArrayList<>();
-                java.util.BitSet union = new java.util.BitSet();
-                for (Ast child : ch) {
-                    java.util.BitSet g = new java.util.BitSet();
-                    collectGroups(child, g);
-                    branchGroups.add(g);
-                    union.or(g);
-                }
-                for (int i = 0; i < ch.size(); i++) {
-                    int altStart = build(ch.get(i), entryTo);
-                    // Prepend ntags for missing groups (in union but not in this branch).
-                    java.util.BitSet missing = (java.util.BitSet) union.clone();
-                    missing.andNot(branchGroups.get(i));
-                    for (int g = missing.length(); (g = missing.previousSetBit(g - 1)) >= 0; ) {
-                        int ntagState = fresh();
-                        int closeTag = 2 * g;  // close tag of group g (positive number)
-                        taggedEps(ntagState, altStart, 1, -closeTag);  // negative = nil
-                        altStart = ntagState;
-                    }
-                    eps(newStart, altStart, i + 1);
-                }
-                return newStart;
-            }
-            if (e instanceof Ast.Repeat) {
-                return buildRepeat((Ast.Repeat) e, entryTo);
-            }
-            throw new IllegalStateException("unknown ast: " + e);
+            return -1;
         }
 
-        /** Collect group numbers (1-based) used anywhere in the AST subtree. */
-        private static void collectGroups(Ast e, java.util.BitSet out) {
-            if (e instanceof Ast.Tag) {
-                Ast.Tag t = (Ast.Tag) e;
-                int g = (t.tag + 1) / 2;
-                out.set(g);
-            } else if (e instanceof Ast.Concat) {
-                for (Ast c : ((Ast.Concat) e).children) collectGroups(c, out);
-            } else if (e instanceof Ast.Alt) {
-                for (Ast c : ((Ast.Alt) e).children) collectGroups(c, out);
-            } else if (e instanceof Ast.Repeat) {
-                collectGroups(((Ast.Repeat) e).body, out);
+        /** Push a node to enter (leaf or container — decided at dispatch). */
+        private static void pushNode(ArrayDeque<BuildFrame> stack, Ast e, int entryTo) {
+            BuildFrame f = new BuildFrame();
+            f.node = e;
+            f.entryTo = entryTo;
+            stack.push(f);
+        }
+
+        /** Prepend ntag (negative-tag) states for every group in {@code body}
+         *  ahead of {@code target} — descending group number, so a group's
+         *  no-match marker sits closer to the body it belongs to — and
+         *  return the new chain head. */
+        private int ntagChain(Ast body, int target) {
+            java.util.BitSet bodyGroups = new java.util.BitSet();
+            collectGroups(body, bodyGroups);
+            for (int g = bodyGroups.length(); (g = bodyGroups.previousSetBit(g - 1)) >= 0; ) {
+                int ntagState = fresh();
+                taggedEps(ntagState, target, 1, -(2 * g));
+                target = ntagState;
             }
+            return target;
+        }
+
+        /** Collect group numbers (1-based) used anywhere in the AST subtree.
+         *  Iterative worklist — visitation order is irrelevant (set union). */
+        private static void collectGroups(Ast root, java.util.BitSet out) {
+            ArrayDeque<Ast> work = new ArrayDeque<>();
+            work.push(root);
+            while (!work.isEmpty()) {
+                Ast e = work.pop();
+                if (e instanceof Ast.Tag) {
+                    Ast.Tag t = (Ast.Tag) e;
+                    int g = (t.tag + 1) / 2;
+                    out.set(g);
+                } else if (e instanceof Ast.Concat) {
+                    work.addAll(((Ast.Concat) e).children);
+                } else if (e instanceof Ast.Alt) {
+                    work.addAll(((Ast.Alt) e).children);
+                } else if (e instanceof Ast.Repeat) {
+                    work.push(((Ast.Repeat) e).body);
+                }
+            }
+        }
+
+        /** One node in the iterative nullable fold. */
+        private static final class NFrame {
+            Ast node;
+            boolean resumed;
+            List<Ast> ch;
+            int idx;
         }
 
         /**
@@ -332,179 +655,72 @@ public final class Tnfa {
          * of re2j's {@code Frag.nullable}, which drives its
          * {@code x* → (x+)?} star compilation for nullable bodies). Anchors and
          * word boundaries are zero-width, hence nullable; symbol-bearing nodes
-         * are not.
+         *  are not. Iterative fold: concat is an AND over children,
+         *  alternation an OR, and a repeat with {@code min > 0} passes its
+         *  body's answer through ({@code min == 0} is nullable without
+         *  visiting the body); the AND/OR folds short-circuit, as the
+         *  semantics permit.
          */
-        private static boolean isNullable(Ast e) {
-            if (e instanceof Ast.Symbol) return false;
-            if (e instanceof CharClass) return false;
-            if (e instanceof Ast.Repeat) {
-                Ast.Repeat r = (Ast.Repeat) e;
-                return r.min == 0 || isNullable(r.body);
-            }
-            if (e instanceof Ast.Concat) {
-                for (Ast c : ((Ast.Concat) e).children) {
-                    if (!isNullable(c)) return false;
-                }
-                return true;
-            }
-            if (e instanceof Ast.Alt) {
-                for (Ast c : ((Ast.Alt) e).children) {
-                    if (isNullable(c)) return true;
-                }
-                return false;
-            }
-            return true;  // Empty, Tag, anchors, word boundaries
-        }
-
-        private int buildRepeat(Ast.Repeat r, int entryTo) {
-            int min = r.min, max = r.max;
-            Ast body = r.body;
-            boolean lazy = !r.greedy;
-            // Greedy: prefer BODY/REPEAT (pri 1) over SKIP/EXIT (pri 2).
-            // Lazy:   prefer SKIP/EXIT   (pri 1) over BODY/REPEAT (pri 2).
-            int bodyPri = lazy ? 2 : 1;
-            int skipPri = lazy ? 1 : 2;
-            if (min == 0 && max == 1) {
-                // e? : newStart -(pri bodyPri)-> body -> entryTo ; newStart -(pri skipPri)-> [ntags] -> entryTo
-                int s = fresh();
-                int bodyStart = build(body, entryTo);
-                eps(s, bodyStart, bodyPri);
-                int skipTarget = entryTo;
-                // Prepend ntags for groups in body (they didn't match on skip path).
-                java.util.BitSet bodyGroups = new java.util.BitSet();
-                collectGroups(body, bodyGroups);
-                for (int g = bodyGroups.length(); (g = bodyGroups.previousSetBit(g - 1)) >= 0; ) {
-                    int ntagState = fresh();
-                    taggedEps(ntagState, skipTarget, 1, -(2 * g));
-                    skipTarget = ntagState;
-                }
-                eps(s, skipTarget, skipPri);
-                return s;
-            }
-            if (min == 0 && max == Integer.MAX_VALUE) {
-                // e* : loop. ntags only on the INITIAL skip (0 iterations); subsequent
-                // exits from the loop hub do NOT re-emit ntags because the group already
-                // matched in a prior iteration (BT19 §7.3 — ntag represents no-match).
-                //
-                // Topology mirrors re2j's Compiler.star(), which has two shapes:
-                //
-                // (a) NON-nullable body — one shared hub that both the body's exit
-                //     and the initial entry pass through, deciding iterate-vs-exit
-                //     (re2j Prog loop()). With the former split entry/loop nodes, an
-                //     OUTER repeat's re-entry path (which crosses the group's
-                //     open-tag edge and arrives at this star's ENTRY node) found it
-                //     unvisited and stole the ε-closure slot, so the surviving
-                //     continuation carried a RE-OPENED group tag — reporting the
-                //     last iteration's span for shapes like (a*?)*? on "aaa"
-                //     (g1=[2,3) where re2j reports [0,3)). With the shared hub, the
-                //     outer re-entry dies at the already-visited entry/hub nodes —
-                //     re2j's observable priority — and the plain continuation wins.
-                //
-                // (b) NULLABLE body — (f+)? (re2j: "When f1 can match an empty
-                //     string, f1* must be implemented as (f1+)? to get the priority
-                //     match order correct"): a quest whose body-side enters the
-                //     plus's body DIRECTLY, with the iterate/exit hub only at the
-                //     body's exit. This keeps the enter-body-ε-through-exit accept
-                //     at the TOP of the priority order with the group's close tag
-                //     traversed (re2j (a*?)* on "aaa" = [0,0) g1=[0,0)), which a
-                //     plain hub loop cannot: the ε-pass collapses into the hub
-                //     dedup and the surviving accept loses to the body's rune.
-                if (isNullable(body)) {
-                    int hub = fresh();          // plus loop hub (at body exit)
-                    int bodyStart = build(body, hub);
-                    eps(hub, bodyStart, bodyPri);               // iterate (no ntag; group already matched)
-                    eps(hub, entryTo, skipPri);                 // or exit (no ntag)
-                    int s0 = fresh();          // quest: skip vs enter the plus
-                    eps(s0, bodyStart, bodyPri);
-                    int skipFromStart = entryTo;
-                    {
-                        java.util.BitSet bodyGroups = new java.util.BitSet();
-                        collectGroups(body, bodyGroups);
-                        for (int g = bodyGroups.length(); (g = bodyGroups.previousSetBit(g - 1)) >= 0; ) {
-                            int ntagState = fresh();
-                            taggedEps(ntagState, skipFromStart, 1, -(2 * g));
-                            skipFromStart = ntagState;
-                        }
+        private static boolean isNullable(Ast root) {
+            ArrayDeque<NFrame> stack = new ArrayDeque<>();
+            boolean result = true;
+            NFrame f0 = new NFrame();
+            f0.node = root;
+            stack.push(f0);
+            while (!stack.isEmpty()) {
+                NFrame f = stack.pop();
+                Ast e = f.node;
+                if (!f.resumed) {
+                    if (e instanceof Ast.Symbol || e instanceof CharClass) { result = false; continue; }
+                    if (e instanceof Ast.Repeat) {
+                        if (((Ast.Repeat) e).min == 0) { result = true; continue; }
+                        f.resumed = true;          // pass-through: result = body's
+                        stack.push(f);
+                        NFrame c = new NFrame();
+                        c.node = ((Ast.Repeat) e).body;
+                        stack.push(c);
+                        continue;
                     }
-                    eps(s0, skipFromStart, skipPri);
-                    return s0;
-                }
-                int s0 = fresh();      // pre-loop decision: initial skip vs enter
-                int hub = fresh();     // loop hub: iterate vs exit
-                int bodyStart = build(body, hub);
-                eps(s0, hub, bodyPri);                             // enter the loop (greedy) / skip (lazy)
-                // Initial skip path: prepend ntags for body groups (0 iterations ⇒ no match).
-                int skipFromStart = entryTo;
-                {
-                    java.util.BitSet bodyGroups = new java.util.BitSet();
-                    collectGroups(body, bodyGroups);
-                    for (int g = bodyGroups.length(); (g = bodyGroups.previousSetBit(g - 1)) >= 0; ) {
-                        int ntagState = fresh();
-                        taggedEps(ntagState, skipFromStart, 1, -(2 * g));
-                        skipFromStart = ntagState;
+                    if (e instanceof Ast.Concat || e instanceof Ast.Alt) {
+                        boolean isConcat = e instanceof Ast.Concat;
+                        f.ch = isConcat ? ((Ast.Concat) e).children : ((Ast.Alt) e).children;
+                        f.idx = 0;
+                        f.resumed = true;
+                        if (f.ch.isEmpty()) { result = isConcat; continue; }
+                        stack.push(f);
+                        NFrame c = new NFrame();
+                        c.node = f.ch.get(0);
+                        stack.push(c);
+                        continue;
                     }
+                    result = true;  // Empty, Tag, anchors, word boundaries
+                    continue;
                 }
-                eps(s0, skipFromStart, skipPri);
-                eps(hub, bodyStart, bodyPri);                      // iterate (no ntag; group already matched)
-                eps(hub, entryTo, skipPri);                        // or exit (no ntag)
-                return s0;
-            }
-            if (min == 1 && max == Integer.MAX_VALUE) {
-                // e+ : body followed by e* (the e* uses the lazy/greedy preference)
-                int loopBack = fresh();
-                int bodyStart = build(body, loopBack);
-                eps(loopBack, bodyStart, bodyPri);
-                eps(loopBack, entryTo, skipPri);
-                return bodyStart;
-            }
-            // Bounded repetitions {n}, {n,}, {n,m} — desugar via concatenation + tail.
-            // (We desugar rather than implementing the paper's bounded-rep construction literally;
-            //  tags are duplicated, which is acceptable for our subset.)
-            List<Ast> mandatory = new ArrayList<>();
-            for (int i = 0; i < min; i++) mandatory.add(body);
-            Ast mandatoryAst = mandatory.isEmpty() ? new Ast.Empty() :
-                    (mandatory.size() == 1 ? mandatory.get(0) : new Ast.Concat(mandatory));
-            Ast result = mandatoryAst;
-            // {0,0} falls through as bare Empty: neither the body's tags nor
-            // its ntags are emitted. Sound because a group's tags are
-            // syntactically unique (allocated at its '(' alone), so no other
-            // construction can ever write them — there is no stale value to
-            // kill, and the group simply reports NIL. The asymmetry with the
-            // quest case (which meticulously emits ntags) is deliberate: there
-            // is nothing below an empty body to poison (review P2 note).
-            if (max == Integer.MAX_VALUE) {
-                // {n,} = (n-1) copies followed by body+  — NOT body*.
-                // re2j's Simplify general case ("x{4,} is xxxx+"): a PLUS tail
-                // guarantees one real iteration, and a nullable body's empty
-                // RE-iteration is cut by the pike pc-dedup (the plus entry pc
-                // is revisited), so the last NON-EMPTY capture survives —
-                // (a?){2,} on "aa" reports g1="a". A STAR tail instead lets
-                // the greedy first-iteration-empty write an empty capture
-                // (g1=""), diverging from re2j (fuzz round 9: 25 records).
-                // min >= 2 here ({0,} star and {1,} plus have their own cases).
-                List<Ast> copies = new ArrayList<>();
-                for (int i = 0; i < min - 1; i++) copies.add(body);
-                Ast copiesAst = copies.isEmpty() ? new Ast.Empty() :
-                        (copies.size() == 1 ? copies.get(0) : new Ast.Concat(copies));
-                result = new Ast.Concat(java.util.Collections.unmodifiableList(java.util.Arrays.asList(copiesAst, new Ast.Repeat(body, 1, Integer.MAX_VALUE, r.greedy))));
-            } else if (max > min) {
-                // {n,m} = mandatory + RIGHT-NESTED optional suffix (x(x(x)?)?)?,
-                // exactly re2j Simplify's shape ("x{2,5} = xx(x(x(x)?)?)?").
-                // The former FLAT tail (B?B?B?) is match-equivalent but resolves
-                // the priority tie "enter the next optional copy" vs "extend the
-                // current copy's inner lazy body" the OPPOSITE way: nested-lazy
-                // captures then report the extended span while re2j/JDK report
-                // the next copy's (fuzz round 18: ((a{1,2}?c?){0,5}?)d on "aad":
-                // re2j/JDK g2="a" — two outer iterations — flat tail g2="aa").
-                Ast suffix = new Ast.Repeat(body, 0, 1, r.greedy);
-                for (int i = min + 1; i < max; i++) {
-                    suffix = new Ast.Repeat(new Ast.Concat(java.util.Collections.unmodifiableList(java.util.Arrays.asList(body, suffix))), 0, 1, r.greedy);
+                if (e instanceof Ast.Concat) {
+                    if (!result) continue;        // AND: one non-nullable child settles it
+                    f.idx++;
+                    if (f.idx < f.ch.size()) {
+                        stack.push(f);
+                        NFrame c = new NFrame();
+                        c.node = f.ch.get(f.idx);
+                        stack.push(c);
+                    }
+                    continue;                     // result stays true (child was nullable)
                 }
-                result = new Ast.Concat(java.util.Collections.unmodifiableList(java.util.Arrays.asList(mandatoryAst, suffix)));
+                if (e instanceof Ast.Alt) {
+                    if (result) continue;         // OR: one nullable child settles it
+                    f.idx++;
+                    if (f.idx < f.ch.size()) {
+                        stack.push(f);
+                        NFrame c = new NFrame();
+                        c.node = f.ch.get(f.idx);
+                        stack.push(c);
+                    }
+                    // else: result stays false (child was non-nullable)
+                }
+                // Repeat pass-through: result already holds the body's answer
             }
-            // re-enter the builder with the desugared form, but DO NOT re-process via parser;
-            // build it directly into entryTo.
-            return build(result, entryTo);
+            return result;
         }
 
         Tnfa build(int start, int accept, int tagCount, int groupCount, boolean multiline,

@@ -1,10 +1,43 @@
 package io.github.jemmix.tdfa.ast;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 
 /** Base class for regex AST. */
 public abstract class Ast {
     @Override public abstract String toString();
+
+    /** Render a whole subtree with an explicit token stack: container
+     *  {@code toString()} implementations must not descend through their
+     *  children's {@code toString()}, because AST depth scales with pattern
+     *  nesting. Output matches {@link java.util.AbstractList#toString}
+     *  formatting for Concat/Alt ("[a, b, c]"). */
+    static void render(Ast root, StringBuilder sb) {
+        Deque<Object> tokens = new ArrayDeque<>();
+        tokens.push(root);
+        while (!tokens.isEmpty()) {
+            Object o = tokens.pop();
+            if (o instanceof String) { sb.append((String) o); continue; }
+            Ast e = (Ast) o;
+            if (e instanceof Concat || e instanceof Alt) {
+                List<Ast> ch = e instanceof Concat ? ((Concat) e).children : ((Alt) e).children;
+                if (e instanceof Alt) sb.append("Alt");
+                sb.append('[');
+                tokens.push("]");
+                for (int i = ch.size() - 1; i >= 0; i--) {
+                    tokens.push(ch.get(i));
+                    if (i > 0) tokens.push(", ");
+                }
+            } else if (e instanceof Repeat) {
+                Repeat r = (Repeat) e;
+                tokens.push("{" + r.min + "," + (r.max == Integer.MAX_VALUE ? "" : r.max) + "}" + (r.greedy ? "" : "?"));
+                tokens.push(r.body);
+            } else {
+                sb.append(e.toString());
+            }
+        }
+    }
 
     public static final class Empty extends Ast {
         @Override public String toString() { return "\u03B5"; }
@@ -33,13 +66,13 @@ public abstract class Ast {
     public static final class Concat extends Ast {
         public final List<Ast> children;
         public Concat(List<Ast> children) { this.children = children; }
-        @Override public String toString() { return children.toString(); }
+        @Override public String toString() { StringBuilder sb = new StringBuilder(); render(this, sb); return sb.toString(); }
     }
 
     public static final class Alt extends Ast {
         public final List<Ast> children;
         public Alt(List<Ast> children) { this.children = children; }
-        @Override public String toString() { return "Alt" + children; }
+        @Override public String toString() { StringBuilder sb = new StringBuilder(); render(this, sb); return sb.toString(); }
     }
 
     /** Generalized repetition e^{n,m}. m == Integer.MAX_VALUE means unbounded. */
@@ -51,7 +84,7 @@ public abstract class Ast {
             this.body = body; this.min = min; this.max = max; this.greedy = greedy;
         }
         @Override public String toString() {
-            return body + "{" + min + "," + (max == Integer.MAX_VALUE ? "" : max) + "}" + (greedy ? "" : "?");
+            StringBuilder sb = new StringBuilder(); render(this, sb); return sb.toString();
         }
     }
 
