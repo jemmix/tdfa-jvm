@@ -42,10 +42,23 @@ import java.util.Map;
         final int[] stateEntryMask, stateAcceptMask, stateStopOnAcceptMask;
         final int[] stateFinalOpsByMask;
         final boolean longest;
-        /** Cap on n×K range-normalization cells (read per compile, like the
-         *  other determinization budgets). Default 32 M cells = 128 MiB of
-         *  compile-time scratch worst case. Override -Dtdfa.minimize.norm.cells. */
+        /** Cap on n×K range-normalization cells. Derived per compile from
+         *  the compile RAM budget ({@link Budgets#maxMinimizeNormCells()})
+         *  through the weight model — at the 128 MiB default, 32 M cells =
+         *  128 MiB of compile-time scratch worst case. Over it (or on
+         *  overlapping ranges), minimization degrades to the unnormalized
+         *  (correct, less-merging) path. */
         final long maxNormCells;
+        /** Compile work meter (shared with determinization/regopt): the
+         *  Moore fixpoint is O((n+R)·I) — I rounds of n signature builds —
+         *  and was the one unbounded loop the meter never saw (review r10
+         *  P1-4: near-cap literal-chain DFAs can peel one group per round
+         *  ⇒ O(n²) sig builds, minutes, unmetered, inside compile()).
+         *  Exhaustion propagates as {@link WorkMeter.Exhausted}; the CALLER
+         *  degrades to the unminimized DFA instead of failing the compile
+         *  (minimization is an optional pass — same semantics as the
+         *  norm-cell degrade). */
+        final WorkMeter meter;
         /** Op-sequence interning: maps the byte content of an OP_END-terminated block to a unique int id. */
         final Map<OpSeq, Integer> opSeqIds = new HashMap<>();
         /** Cached op-sequence id per ops[] offset (lazily computed). -1 = not computed. */
@@ -60,7 +73,8 @@ import java.util.Map;
 
         DfaMinimizer(int n, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
                      int[] ranges, int[] ops, int[] stateEntryMask, int[] stateAcceptMask,
-                     int[] stateStopOnAcceptMask, int[] stateFinalOpsByMask, boolean longest) {
+                     int[] stateStopOnAcceptMask, int[] stateFinalOpsByMask, boolean longest,
+                     WorkMeter meter) {
             this.n = n;
             this.stateMeta = stateMeta;
             this.stateBase = stateBase;
@@ -72,7 +86,8 @@ import java.util.Map;
             this.stateStopOnAcceptMask = stateStopOnAcceptMask;
             this.stateFinalOpsByMask = stateFinalOpsByMask;
             this.longest = longest;
-            this.maxNormCells = Integer.getInteger("tdfa.minimize.norm.cells", 1 << 25);
+            this.meter = meter;
+            this.maxNormCells = Budgets.maxMinimizeNormCells();
             this.opsIdAt = new int[ops.length];
             java.util.Arrays.fill(this.opsIdAt, -1);
             detectOverlapsAndInit();
@@ -134,6 +149,7 @@ import java.util.Map;
             }
             stateRangeAt = new int[n * K];
             for (int s = 0; s < n; s++) {
+                meter.tick();   // n×K merge scan — budget-visible
                 int base = stateBase[s];
                 int count = Tdfa.rangeCount(stateMeta[s]);
                 int rangeIdx = 0;
@@ -171,6 +187,7 @@ import java.util.Map;
 
         /** Compute the partition (mapping old state id -> new state id) via Moore's algorithm. */
         int[] computePartition() {
+            meter.tick(n);   // initial partition: n attribute-signature builds
             int[] partition = initialPartition();
             int groups = 0;
             for (int p : partition) groups = Math.max(groups, p + 1);
@@ -184,6 +201,7 @@ import java.util.Map;
                 int[] newPartition = new int[n];
                 int nextGroup = 0;
                 for (int s = 0; s < n; s++) {
+                    meter.tick();   // one transition-signature build per state per round
                     SigKey key = transSig(s, partition);
                     Integer g = newGroupMap.get(key);
                     if (g == null) { g = nextGroup++; newGroupMap.put(key, g); }

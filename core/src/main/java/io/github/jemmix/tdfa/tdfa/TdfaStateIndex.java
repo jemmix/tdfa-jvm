@@ -307,7 +307,7 @@ final class TdfaStateIndex {
                 throw new IllegalStateException("pattern too large: TDFA determinization budget exceeded ("
                         + owner.states.size() + " states, kernel total " + owner.kernelsTotal + ", ticks " + owner.meter.spent()
                         + "; caps " + owner.maxStates + " states / " + owner.maxKernelsTotal
-                        + " — raise -Dtdfa.max.states / -Dtdfa.max.kernels)");
+                        + " — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
             }
             return new AddResult(id, ops);
         }

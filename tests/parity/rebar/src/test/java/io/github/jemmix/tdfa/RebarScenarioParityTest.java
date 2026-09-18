@@ -168,17 +168,20 @@ class RebarScenarioParityTest {
      * to every suite run, to verify one shape family that is already covered
      * by dedicated probes and documented candor notes. Opt in with
      * {@code -Dtdfa.test.rebar.skipBombs=false} — the test then does a PLAIN
-     * compile at whatever caps the JVM provides: raise them explicitly (e.g.
-     * {@code -Dtdfa.max.states=250000} and ≥1 GB heap) or expect the engine's
+     * compile at whatever budgets the JVM provides: raise them explicitly
+     * (e.g. {@code -Dtdfa.budget.compile.memory=4000000000
+     * -Dtdfa.budget.compile.compute=4000000000} and ≥1 GB heap — the shape
+     * needs ~3.6 GB of weighted kernel RAM) or expect the engine's
      * own clean "pattern too large" rejection.
      *
      * <ul>
      *   <li>{@code curated/10-bounded-repeat/context} — two-site
-     *       {@code [\s\S]{0,100}} counter cross-product: 234 369-state minimal
-     *       DFA (kernel total ~44 M, under the default 50 M — the STATE cap is
-     *       the only binding one). Measured at the raised ceiling after the
-     *       2026-08-20 memory work: ~21 s compile, fits -Xmx1g, ~82 MB
-     *       retained, count=53 verified on both backends (TODO.md "budget").
+     *       {@code [\s\S]{0,100}} counter cross-product: 234 369-state
+     *       minimal DFA, kernel total ~44 M (3.6 GB weighted — over the
+     *       default RAM budget on both axes). Measured at the raised
+     *       budget after the 2026-08-20 memory work: ~21 s compile, fits
+     *       -Xmx1g, ~82 MB retained, count=53 verified on both backends
+     *       (TODO.md "budget").
      * </ul>
      */
     static final Set<String> BOMB_SCENARIOS = Set.of("curated/10-bounded-repeat/context");
@@ -205,8 +208,8 @@ class RebarScenarioParityTest {
                 "grep", "compile", "grep-captures");
         //
         // No numeric time/size gates (2026-08-20): the engine's own
-        // determinization budget (re2c-identical caps — 100 K states /
-        // 50 M kernel-total) is the only watchdog. A compile rejected with
+        // determinization budgets (RAM + CPU, weight-model-derived caps)
+        // are the only watchdog. A compile rejected with
         // "pattern too large" on any scenario NOT in BOMB_SCENARIOS is a
         // FAILURE (surfaced, not skipped); the named bombs skip visibly and
         // are opt-in via -Dtdfa.test.rebar.skipBombs=false. Compile-latency
@@ -218,8 +221,8 @@ class RebarScenarioParityTest {
             skipCount.incrementAndGet();
             timings.add(new Timing(s.fullName(), 0, 0, "SKIP:bomb"));
             assumeTrue(false, "over-budget bomb (skipped by default; see BOMB_SCENARIOS javadoc). "
-                    + "Run with -Dtdfa.test.rebar.skipBombs=false -Dtdfa.max.states=250000 "
-                    + "(heap >= 1g) to verify it for real.");
+                    + "Run with -Dtdfa.test.rebar.skipBombs=false -Dtdfa.budget.compile.memory=4000000000 "
+                    + "-Dtdfa.budget.compile.compute=4000000000 (heap >= 1g) to verify it for real.");
             return;
         }
 

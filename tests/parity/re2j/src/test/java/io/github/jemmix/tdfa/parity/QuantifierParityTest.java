@@ -193,9 +193,10 @@ class QuantifierParityTest {
         assertSameFind("((a{1,2}?c?){0,5}?)d", "aad", factory);
     }
 
-    /** The round-18 original overnight shape — also the ANCHORED_WORK_CAP
+    /** The round-18 original overnight shape — also the whole-ladder cap
      *  calibration case: its anchored whole build lands one tick-class over
-     *  2^27 (134.22 M ticks) and compiles under the 2^28 last-chance cap. */
+     *  the first eager cap (134.22 M ticks ≈ ⅓ of the 500 M default compile
+     *  CPU budget) and compiles under the ⅔ last-chance cap. */
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void nestedLazyCountedOriginalOvernightShape(RegexEngineFactory factory) {

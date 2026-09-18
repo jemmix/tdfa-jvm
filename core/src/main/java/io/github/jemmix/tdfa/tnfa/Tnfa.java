@@ -98,8 +98,19 @@ public final class Tnfa {
                                io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider,
                                io.github.jemmix.tdfa.core.CompileObserver observer) {
         long t0 = System.nanoTime();
+        // Front-end budget: ONE work meter (CPU, ticks) spans parse + TNFA
+        // build so the pre-determinization surface is bounded too — the
+        // parser's O(universe) fold-range scan ticks it (review r10 P1-1),
+        // and the Builder's state/edge creation ticks it AND accumulates
+        // weighted bytes against the compile RAM budget (review r10 P0-1:
+        // nested counted repeats used to OOM the JVM here before any
+        // determinization cap could fire — ((a{300}){300}){300} is a clean
+        // "pattern too large" rejection now). Determinization constructs
+        // its own meter per attempt (TdfaCompiler).
+        io.github.jemmix.tdfa.tdfa.WorkMeter meter =
+                new io.github.jemmix.tdfa.tdfa.WorkMeter(io.github.jemmix.tdfa.tdfa.Budgets.compileComputeTicks());
         io.github.jemmix.tdfa.parser.ParseResult parsed =
-                Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth, provider);
+                Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth, provider, meter);
         if (observer != null) observer.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.PARSE,
                 System.nanoTime() - t0, parsed.tagCount());
         long t1 = System.nanoTime();
@@ -114,7 +125,7 @@ public final class Tnfa {
             for (int t = 1; t <= tagCount; t++) if (fixedBase[t] != 0) n++;
             if (n > 0) System.err.println("[tdfa] fixed-tags: dropped " + n + "/" + tagCount);
         }
-        Builder b = new Builder();
+        Builder b = new Builder(meter);
         int accept = b.fresh();
         int start = b.build(ast, accept);
         Tnfa nfa = b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(),
@@ -148,13 +159,54 @@ public final class Tnfa {
         final List<int[]> syms = new ArrayList<>();       // [from, to]
         final List<CharClass> symClasses = new ArrayList<>();
         int counter = 0;
+        /** Shared with the parser (see Tnfa.compile): one CPU budget for
+         *  the whole front-end; every builder action ticks it. */
+        final io.github.jemmix.tdfa.tdfa.WorkMeter meter;
+        /** Weighted bytes of everything minted so far (states + edges,
+         *  through BudgetWeights) against the compile RAM budget. */
+        long weightedBytes = 0;
+        final long memBudget;
 
-        int fresh() { return counter++; }
+        Builder(io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
+            this.meter = meter;
+            this.memBudget = io.github.jemmix.tdfa.tdfa.Budgets.compileMemoryBytes();
+        }
 
-        void eps(int from, int to, int pri) { eps.add(new int[]{from, to, pri, NO_TAG, 0}); }
-        void taggedEps(int from, int to, int pri, int tag) { eps.add(new int[]{from, to, pri, tag, 0}); }
-        void anchorEps(int from, int to, int pri, int emptyMask) { eps.add(new int[]{from, to, pri, NO_TAG, emptyMask}); }
+        private void charge(int bytes) {
+            if ((weightedBytes += bytes) > memBudget) {
+                throw new IllegalStateException("pattern too large: TNFA construction exceeds the compile memory budget ("
+                        + weightedBytes + " weighted bytes for " + counter + " states — raise -D"
+                        + io.github.jemmix.tdfa.tdfa.Budgets.COMPILE_MEMORY_PROP + ")");
+            }
+        }
+
+        int fresh() {
+            meter.tick(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_STATE_BYTES);
+            return counter++;
+        }
+
+        void eps(int from, int to, int pri) {
+            meter.tick(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_EPS_EDGE_BYTES);
+            eps.add(new int[]{from, to, pri, NO_TAG, 0});
+        }
+
+        void taggedEps(int from, int to, int pri, int tag) {
+            meter.tick(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_EPS_EDGE_BYTES);
+            eps.add(new int[]{from, to, pri, tag, 0});
+        }
+
+        void anchorEps(int from, int to, int pri, int emptyMask) {
+            meter.tick(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_EPS_EDGE_BYTES);
+            eps.add(new int[]{from, to, pri, NO_TAG, emptyMask});
+        }
+
         void sym(int from, int to, CharClass cc) {
+            meter.tick(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_SYM_EDGE_BYTES);
             syms.add(new int[]{from, to});
             symClasses.add(cc);
         }

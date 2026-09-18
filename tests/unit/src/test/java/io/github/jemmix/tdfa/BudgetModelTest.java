@@ -1,0 +1,152 @@
+package io.github.jemmix.tdfa;
+
+import io.github.jemmix.tdfa.core.CompileObserver;
+import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.tdfa.Budgets;
+import io.github.jemmix.tdfa.tdfa.BudgetWeights;
+import io.github.jemmix.tdfa.tdfa.Tdfa;
+import io.github.jemmix.tdfa.tnfa.Tnfa;
+import java.util.HashMap;
+import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+
+/**
+ * The budget model itself: the three {@code tdfa.budget.*} properties, the
+ * hardcoded weight model ({@link BudgetWeights}) that translates them into
+ * the internal caps, and the review-r10 budget holes the model closes —
+ * the pre-determinization surface (TNFA builder RAM+CPU, P0-1; the
+ * parser's fold-range scan, P1-1) and the Moore fixpoint (P1-4, which
+ * degrades instead of rejecting because the unminimized DFA is correct).
+ */
+class BudgetModelTest {
+
+    @AfterEach
+    void cleanup() {
+        System.clearProperty(Budgets.COMPILE_MEMORY_PROP);
+        System.clearProperty(Budgets.COMPILE_COMPUTE_PROP);
+        System.clearProperty(Budgets.RUNTIME_MEMORY_PROP);
+    }
+
+    /** Defaults: 128 MiB compile RAM, 500 M compile ticks (5 s at the
+     *  assumed 100 M ticks/s), 16 MiB runtime RAM per pattern. */
+    @Test
+    void budgetDefaults() {
+        assertThat(Budgets.compileMemoryBytes()).isEqualTo(128L << 20);
+        assertThat(Budgets.compileComputeTicks()).isEqualTo(500_000_000L);
+        assertThat(Budgets.runtimeMemoryBytes()).isEqualTo(16L << 20);
+    }
+
+    /** The weight model, pinned: every derived default cap is a budget
+     *  divided by a weight, and the numbers below are the contract.
+     *  (128 MiB / 256 B = 524 288 states, / 80 B = 1 677 721 kernels,
+     *  / 16 / 80 B = 104 857 closure configs, / 32 B = 4 194 304 CFG
+     *  edges, / 4 B = 33 554 432 norm cells; 500 M / 3 and 2/3 for the
+     *  whole ladder; 16 MiB halved into weighted search-DFA rows/blocks.) */
+    @Test
+    void derivedCapsPinTheWeightModel() {
+        assertThat(BudgetWeights.TNFA_BUILD_ACTION_TICKS).isEqualTo(5);
+        assertThat(BudgetWeights.TNFA_EPS_EDGE_BYTES).isEqualTo(64);
+        assertThat(BudgetWeights.KERNEL_CONFIG_BYTES).isEqualTo(80);
+        assertThat(Budgets.maxDfaStates()).isEqualTo(524_288);
+        assertThat(Budgets.maxKernelConfigs()).isEqualTo(1_677_721L);
+        assertThat(Budgets.maxClosureConfigs()).isEqualTo(104_857);
+        assertThat(Budgets.maxCfgEdges()).isEqualTo(4_194_304L);
+        assertThat(Budgets.maxMinimizeNormCells()).isEqualTo(33_554_432L);
+        assertThat(Budgets.wholeWorkCap()).isEqualTo(166_666_666L);
+        assertThat(Budgets.anchoredWorkCap()).isEqualTo(333_333_333L);
+        // 8 MiB half-budget in rows: fixed 640 B + 8 B/state-word, floored.
+        assertThat(Budgets.sdfaMaxRows(1)).isEqualTo(12_945);
+        assertThat(Budgets.sdfaMaxRows(3125)).isEqualTo(327);
+        assertThat(Budgets.sdfaMaxBlocks()).isEqualTo(3_855);
+    }
+
+    /** Properties override the defaults and take effect on the next call —
+     *  budgets are fresh per compile / per runner, never class-frozen. */
+    @Test
+    void propertiesOverrideAndAreReadFresh() {
+        System.setProperty(Budgets.COMPILE_MEMORY_PROP, "4096");   // 16 states
+        assertThat(Budgets.maxDfaStates()).isEqualTo(16);
+        System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "7777");
+        assertThat(Budgets.wholeWorkCap()).isEqualTo(2_592);       // 7777/3
+        System.setProperty(Budgets.RUNTIME_MEMORY_PROP, "217600"); // 100 blocks
+        assertThat(Budgets.sdfaMaxBlocks()).isEqualTo(50);
+        // and the pipeline sees it on the very next compile:
+        assertThatCode(() -> Pattern.compile("ab|cd|ef|gh|ij"))
+                .isInstanceOf(PatternSyntaxException.class)
+                .hasMessageContaining("pattern too large")
+                .hasMessageContaining(Budgets.COMPILE_MEMORY_PROP);
+    }
+
+    /** Review r10 P0-1: nested counted repeats used to OOM the JVM in
+     *  Tnfa$Builder.buildRepeat before any determinization cap could fire
+     *  (27 M states / -Xmx2g). The builder's weighted RAM accounting and
+     *  per-action ticks now reject the same 19-char bomb cleanly, fast,
+     *  through the facade's translated PatternSyntaxException. */
+    @Test
+    void nestedRepeatBombRejectsBeforeDeterminization() {
+        long t0 = System.nanoTime();
+        assertThatCode(() -> Pattern.compile("((a{300}){300}){300}"))
+                .isInstanceOf(PatternSyntaxException.class)
+                .hasMessageContaining("pattern too large")
+                .hasMessageContaining("TNFA construction")
+                .hasMessageContaining(Budgets.COMPILE_MEMORY_PROP);
+        assertThat((System.nanoTime() - t0) / 1_000_000)
+                .as("wall to the front-end rejection").isLessThan(10_000);
+    }
+
+    /** Review r10 P1-1: the parser's O(universe) fold-range scan under
+     *  {@code (?i)} is metered CPU work — a full-universe class cannot
+     *  burn scan time invisible to the compute budget. */
+    @Test
+    void foldRangeScanIsBudgetVisible() {
+        System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "100000");
+        assertThatCode(() -> Pattern.compile("(?i)[\\x{0}-\\x{10FFFF}]"))
+                .isInstanceOf(PatternSyntaxException.class)
+                .hasMessageContaining("pattern too large")
+                .hasMessageContaining(Budgets.COMPILE_COMPUTE_PROP);
+    }
+
+    /** Review r10 P1-4: the Moore fixpoint is metered, and because the
+     *  unminimized DFA is still correct, exhaustion DEGRADES (the pass is
+     *  skipped, noted in the observer) instead of failing the compile.
+     *  The suffix-chain DFA over {@code a?×900 b} (flat concatenation —
+     *  the equivalent {@code a{0,900}b} desugars into ~900 AST levels and
+     *  overflows shallower CI stacks) determinizes in ~2.2 M ticks but
+     *  peels one Moore group per round (~900 rounds × 902 states, needing
+     *  ~3.5 M): a wide budget window, and tick counts are deterministic,
+     *  so 2.75 M sits centrally in it on every machine. */
+    @Test
+    void minimizerFixpointDegradesInsteadOfRejecting() {
+        StringBuilder chain = new StringBuilder();
+        for (int i = 0; i < 900; i++) chain.append("a?");
+        chain.append('b');
+        String suffixChain = chain.toString();
+        Map<String, String> notes = new HashMap<>();
+        CompileObserver rec = new CompileObserver() {
+            @Override public void note(String key, String value) { notes.put(key, value); }
+        };
+        System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "2750000");
+        Tdfa t = Tdfa.compile(Tnfa.compile(suffixChain), false, rec);
+        assertThat(notes.get("minimize")).isEqualTo("skipped (compute budget)");
+        assertThat(t.stateCount()).isEqualTo(902);
+        // with budget to spare, the same pattern minimizes normally:
+        System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "8000000");
+        notes.clear();
+        Tdfa t2 = Tdfa.compile(Tnfa.compile(suffixChain), false, rec);
+        assertThat(notes.get("minimize")).isNull();
+        assertThat(t2.stateCount()).isEqualTo(902);   // chain is already minimal
+        // and the artifact is correct through the full facade, at the default
+        // budgets (the whole-match ladder's eager attempts are capped at
+        // fractions of the CPU budget, so the budgeted legs above stay on
+        // the Tdfa API where the caps don't interfere):
+        System.clearProperty(Budgets.COMPILE_COMPUTE_PROP);
+        io.github.jemmix.tdfa.Pattern p = Pattern.compile(suffixChain);
+        assertThat(p.matcher("a".repeat(900) + "b").find()).isTrue();
+        assertThat(p.matcher("a".repeat(901) + "b").find()).isTrue();   // unanchored: matches from index 1
+        assertThat(p.matcher("a".repeat(901) + "c").find()).isFalse();
+    }
+}
