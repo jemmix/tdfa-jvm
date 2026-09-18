@@ -182,4 +182,32 @@ class ParserHardeningParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void hexMaxCodepointAccepted(RegexEngineFactory factory) { assertSameCompileSuccess("\\x{10FFFF}", factory); }
+
+    // ---- 5. deep nesting: the iterative parser accepts what re2j accepts ----
+    // (re2j's own parser is iterative and applies no nesting cap; so does
+    // ours — depth is bounded only by the compile RAM budget)
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void deepNonCapturingNestingParity(RegexEngineFactory factory) {
+        int depth = 1000;
+        assertSameFind("(?:".repeat(depth) + "a" + ")".repeat(depth), "a", factory);
+        assertSameFind("(?:".repeat(depth) + "a" + ")".repeat(depth) + "b", "b", factory);
+    }
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void deepCapturingNestingAllGroupSpansParity(RegexEngineFactory factory) {
+        // assertSameFind compares the FULL capture array — all 400 group spans
+        // must agree with the oracle, proving tag numbering survived the
+        // explicit-stack rewrite (open-paren order) at depth
+        int depth = 400;
+        assertSameFind("(".repeat(depth) + "a" + ")".repeat(depth), "a", factory);
+    }
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void deepNestingWithQuantifiersParity(RegexEngineFactory factory) {
+        assertSameFind("(?:" + "(".repeat(300) + "a" + ")".repeat(300) + ")+", "aaa", factory);
+    }
 }
