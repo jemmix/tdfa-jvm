@@ -53,13 +53,21 @@ public final class CompiledRegex {
                 ? options.unicodeProvider() : UnicodeProviders.get();
         CompileObserver obs = options.observer() != null ? options.observer() : CompileObserver.NONE;
         try {
-            Tnfa nfa = Tnfa.compile(pattern, options.isDisableUnicodeGroups(), false, provider, obs);
-            SingleCompile.Artifacts a = SingleCompile.artifacts(nfa, options.isLongestMatch(), obs);
+            // One CPU ledger for the whole compile (front-end + every
+            // shipped ladder attempt), and the per-engine runtime-memo
+            // split when the pattern keeps a dedicated whole runner —
+            // see PatternCompiler for the same wiring.
+            io.github.jemmix.tdfa.tdfa.WorkMeter ledger = new io.github.jemmix.tdfa.tdfa.WorkMeter(
+                    io.github.jemmix.tdfa.tdfa.Budgets.compileComputeTicks());
+            Tnfa nfa = Tnfa.compile(pattern, options.isDisableUnicodeGroups(), false, provider, obs, ledger);
+            SingleCompile.Artifacts a = SingleCompile.artifacts(nfa, options.isLongestMatch(), obs, ledger);
             long t0 = System.nanoTime();
-            RegexEngine engine = new io.github.jemmix.tdfa.tdfa.TdfaRunner(a.find);
+            long memoBudget = io.github.jemmix.tdfa.tdfa.Budgets.runtimeMemoryBytes()
+                    / (a.shared() ? 1 : 2);
+            RegexEngine engine = new io.github.jemmix.tdfa.tdfa.TdfaRunner(a.find, memoBudget);
             RegexEngine whole = SingleCompile.wholeEngine(a, engine, pattern, pattern,
                     options.isDisableUnicodeGroups(), options.isLongestMatch(),
-                    options.isDeferWholeRejection(), provider);
+                    options.isDeferWholeRejection(), provider, ledger);
             obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
             obs.note("engine", "interpreter");
             return new CompiledRegex(pattern, engine, whole);

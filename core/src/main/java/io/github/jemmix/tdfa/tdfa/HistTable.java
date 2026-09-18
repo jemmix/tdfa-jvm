@@ -17,6 +17,14 @@ import java.util.Arrays;
  * consumers read cached tables.
  *
  * <p>Not thread-safe: compilation is single-threaded.
+ *
+ * <p><b>Budget.</b> The intern table and its derived caches are transient
+ * compile-time structures charged against the compile RAM budget
+ * ({@link Budgets#compileMemoryBytes()} through {@link
+ * BudgetWeights#HIST_FIXED_BYTES} plus 4 B per content int / cache cell):
+ * history-heavy tagged compiles can dwarf the kernel configs themselves
+ * (histories grow with nesting depth, caches scale with tags). Over
+ * budget: the standard clean "pattern too large" rejection.
  */
 final class HistTable {
     /** id 0 is the canonical empty sequence. */
@@ -36,9 +44,24 @@ final class HistTable {
     private int[][] lastSignCache;
     private int cachedWords = -1;
     private int cachedTags = -1;
+    /** Weighted bytes charged so far (contents + caches), against the
+     *  compile RAM budget read once per compile at construction. */
+    private long chargedBytes;
+    private final long memBudget;
 
     HistTable() {
         contents[0] = new int[0];
+        this.memBudget = Budgets.compileMemoryBytes();
+    }
+
+    /** Count {@code bytes} of history structure; over budget throws the
+     *  standard budget rejection. */
+    private void charge(long bytes) {
+        if ((chargedBytes += bytes) > memBudget) {
+            throw new IllegalStateException("pattern too large: tag histories exceed the compile memory budget ("
+                    + chargedBytes + " weighted bytes over " + next + " interned sequences — raise -D"
+                    + Budgets.COMPILE_MEMORY_PROP + ")");
+        }
     }
 
     /** Intern {@code seq} (not retained — copied on first sighting). */
@@ -60,6 +83,7 @@ final class HistTable {
         hNext[id] = hFirst[slot];
         hFirst[slot] = id;
         if ((id + 1) * 4 > hFirst.length * 3) rehash();
+        charge(BudgetWeights.HIST_FIXED_BYTES + 4L * seq.length);
         return id;
     }
 
@@ -115,6 +139,7 @@ final class HistTable {
                 bits[t >>> 6] |= 1L << t;
             }
             bitsCache[id] = bits;
+            charge(BudgetWeights.HIST_FIXED_BYTES + 8L * words);
         }
         return bits;
     }
@@ -143,6 +168,7 @@ final class HistTable {
             int[] seq = contents[id];
             for (int v : seq) last[Math.abs(v) - 1] = v > 0 ? 1 : -1;
             lastSignCache[id] = last;
+            charge(BudgetWeights.HIST_FIXED_BYTES + 4L * tags);
         }
         return last;
     }

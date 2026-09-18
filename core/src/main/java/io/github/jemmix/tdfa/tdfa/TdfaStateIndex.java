@@ -303,11 +303,14 @@ final class TdfaStateIndex {
             owner.builders.add(new DfaStateBuilder(id));
             if (isAccept) owner.accept.set(id);
             owner.kernelsTotal += configs.size();
-            if (owner.states.size() > owner.maxStates || owner.kernelsTotal > owner.maxKernelsTotal) {
+            owner.kernelsWeighted += (long) configs.size() * owner.kernelConfigBytes;
+            if (owner.states.size() > owner.maxStates || owner.kernelsWeighted > Budgets.compileMemoryBytes()) {
                 throw new IllegalStateException("pattern too large: TDFA determinization budget exceeded ("
-                        + owner.states.size() + " states, kernel total " + owner.kernelsTotal + ", ticks " + owner.meter.spent()
-                        + "; caps " + owner.maxStates + " states / " + owner.maxKernelsTotal
-                        + " — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
+                        + owner.states.size() + " states, kernel total " + owner.kernelsTotal + " ("
+                        + owner.kernelsWeighted + " weighted bytes), ticks " + owner.meter.spent()
+                        + "; caps " + owner.maxStates + " states / " + Budgets.compileMemoryBytes()
+                        + " weighted kernel bytes (" + owner.maxKernelsTotal + " tagless-equivalent configs) — raise -D"
+                        + Budgets.COMPILE_MEMORY_PROP + ")");
             }
             return new AddResult(id, ops);
         }

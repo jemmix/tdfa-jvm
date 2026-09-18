@@ -42,26 +42,37 @@ class BudgetModelTest {
 
     /** The weight model, pinned: every derived default cap is a budget
      *  divided by a weight, and the numbers below are the contract.
-     *  (128 MiB / 256 B = 524 288 states, / 80 B = 1 677 721 kernels,
-     *  / 16 / 80 B = 104 857 closure configs, / 32 B = 4 194 304 CFG
-     *  edges, / 4 B = 33 554 432 norm cells; 500 M / 3 and 2/3 for the
-     *  whole ladder; 16 MiB halved into weighted search-DFA rows/blocks.) */
+     *  (128 MiB / 256 B = 524 288 states — Perl mode / 512 B = 262 144,
+     *  / 80 B = 1 677 721 kernels, / 16 / 80 B = 104 857 closure configs,
+     *  / 32 B = 4 194 304 CFG edges, / 4 B = 33 554 432 norm cells;
+     *  500 M / 3 and 2/3 for the whole ladder; 16 MiB partitioned 4/8 rows,
+     *  3/8 search blocks, 1/8 walk memo — see BudgetWeights.) */
     @Test
     void derivedCapsPinTheWeightModel() {
         assertThat(BudgetWeights.TNFA_BUILD_ACTION_TICKS).isEqualTo(5);
         assertThat(BudgetWeights.TNFA_EPS_EDGE_BYTES).isEqualTo(64);
         assertThat(BudgetWeights.KERNEL_CONFIG_BYTES).isEqualTo(80);
         assertThat(Budgets.maxDfaStates()).isEqualTo(524_288);
+        // Perl mode adds the stop-table surcharge (int[n*64] = 256 B/state):
+        assertThat(Budgets.maxDfaStates(BudgetWeights.STOP_TABLE_STATE_BYTES)).isEqualTo(262_144);
         assertThat(Budgets.maxKernelConfigs()).isEqualTo(1_677_721L);
         assertThat(Budgets.maxClosureConfigs()).isEqualTo(104_857);
         assertThat(Budgets.maxCfgEdges()).isEqualTo(4_194_304L);
         assertThat(Budgets.maxMinimizeNormCells()).isEqualTo(33_554_432L);
         assertThat(Budgets.wholeWorkCap()).isEqualTo(166_666_666L);
         assertThat(Budgets.anchoredWorkCap()).isEqualTo(333_333_333L);
-        // 8 MiB half-budget in rows: fixed 640 B + 8 B/state-word, floored.
+        // 8 MiB row share (4/8) in weighted rows: fixed 640 B + 8 B/state-word,
+        // floored.
         assertThat(Budgets.sdfaMaxRows(1)).isEqualTo(12_945);
         assertThat(Budgets.sdfaMaxRows(3125)).isEqualTo(327);
-        assertThat(Budgets.sdfaMaxBlocks()).isEqualTo(3_855);
+        // 6 MiB block share (3/8): the walk memo takes the last eighth.
+        assertThat(Budgets.sdfaMaxBlocks()).isEqualTo(2_891);
+        // walk memo: 1/8 = 2 MiB, floored at the 64-block minimum.
+        assertThat(Budgets.walkMaxBytes()).isEqualTo(2_097_152L);
+        // per-engine split: the budget-parameterized variants see half:
+        assertThat(Budgets.sdfaMaxRows(1, 8_388_608L)).isEqualTo(6_472);
+        assertThat(Budgets.sdfaMaxBlocks(8_388_608L)).isEqualTo(1_445);
+        assertThat(Budgets.walkMaxBytes(8_388_608L)).isEqualTo(1_048_576L);
     }
 
     /** Properties override the defaults and take effect on the next call —
@@ -72,8 +83,8 @@ class BudgetModelTest {
         assertThat(Budgets.maxDfaStates()).isEqualTo(16);
         System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "7777");
         assertThat(Budgets.wholeWorkCap()).isEqualTo(2_592);       // 7777/3
-        System.setProperty(Budgets.RUNTIME_MEMORY_PROP, "217600"); // 100 blocks
-        assertThat(Budgets.sdfaMaxBlocks()).isEqualTo(50);
+        System.setProperty(Budgets.RUNTIME_MEMORY_PROP, "217600"); // ~37 blocks
+        assertThat(Budgets.sdfaMaxBlocks()).isEqualTo(37);
         // and the pipeline sees it on the very next compile:
         assertThatCode(() -> Pattern.compile("ab|cd|ef|gh|ij"))
                 .isInstanceOf(PatternSyntaxException.class)
@@ -148,5 +159,139 @@ class BudgetModelTest {
         assertThat(p.matcher("a".repeat(900) + "b").find()).isTrue();
         assertThat(p.matcher("a".repeat(901) + "b").find()).isTrue();   // unanchored: matches from index 1
         assertThat(p.matcher("a".repeat(901) + "c").find()).isFalse();
+    }
+
+    // ===== budget-accounting pins (round r11) =====
+
+    /** Active-set precompute (TdfaCompiler ctor): O(cells × edges)
+     *  cc.matches probes plus one long[words] per cell must be visible to
+     *  BOTH budgets — a many-distinct-single-char alternation asks for
+     *  megabytes of arrays and 10^10 probes, and both the RAM charge and
+     *  the work ticks must reject it cleanly. */
+    @Test
+    void activeSetPrecomputeIsBudgetVisible() {
+        // ~2600 disjoint single-char classes: 5200+ cells × 41 words × 8 B
+        // ≈ 1.7 MB of active-set arrays — far over a 512 KB RAM budget.
+        StringBuilder p = new StringBuilder();
+        for (int i = 0; i < 2600; i++) {
+            if (i > 0) p.append('|');
+            p.append('\\').append('x').append('{').append(Integer.toHexString(0x2000 + i)).append('}');
+        }
+        System.setProperty(Budgets.COMPILE_MEMORY_PROP, "524288");
+        try {
+            long t0 = System.nanoTime();
+            assertThatCode(() -> Pattern.compile(p.toString()))
+                    .isInstanceOf(PatternSyntaxException.class)
+                    .hasMessageContaining("pattern too large")
+                    .hasMessageContaining("active-set");
+            assertThat((System.nanoTime() - t0) / 1_000_000).as("wall to RAM rejection").isLessThan(10_000);
+        } finally {
+            System.clearProperty(Budgets.COMPILE_MEMORY_PROP);
+        }
+        // Same shape under a tiny WORK budget: the probe scan's ticks reject.
+        System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "100000");
+        try {
+            assertThatCode(() -> Pattern.compile(p.toString()))
+                    .isInstanceOf(PatternSyntaxException.class)
+                    .hasMessageContaining("pattern too large")
+                    .hasMessageContaining(Budgets.COMPILE_COMPUTE_PROP);
+        } finally {
+            System.clearProperty(Budgets.COMPILE_COMPUTE_PROP);
+        }
+        // and at the DEFAULT budgets the same shape compiles fine (its DFA
+        // is a trivial chain): the caps see only the pathological scale.
+        assertThatCode(() -> Pattern.compile(p.toString())).doesNotThrowAnyException();
+    }
+
+    /** Kernel configs carry int[tags] register slices: the per-config
+     *  weight is tag-aware (80 B + 4 B/tag), so a capture-heavy closure
+     *  bomb rejects on the RAM budget, not on the heap. */
+    @Test
+    void kernelWeightsAreTagAware() {
+        // 40 groups × optional nesting: closures multiply configs, each
+        // carrying an int[80] regs slice on top of the 80 B base weight.
+        // Scoped to 25 KB the weighted spike cap fires.
+        StringBuilder p = new StringBuilder();
+        for (int i = 0; i < 20; i++) p.append("((a?)");
+        for (int i = 0; i < 20; i++) p.append(")");
+        System.setProperty(Budgets.COMPILE_MEMORY_PROP, "25600");
+        try {
+            assertThatCode(() -> Pattern.compile(p.toString()))
+                    .isInstanceOf(PatternSyntaxException.class)
+                    .hasMessageContaining("pattern too large")
+                    .hasMessageContaining(Budgets.COMPILE_MEMORY_PROP);
+        } finally {
+            System.clearProperty(Budgets.COMPILE_MEMORY_PROP);
+        }
+    }
+
+    /** Interned tag histories and their derived caches are charged against
+     *  the compile RAM budget. Deep nesting grows histories quadratically
+     *  (every prefix length interned) while the TNFA itself stays linear —
+     *  the history charge must fire first. */
+    @Test
+    void tagHistoriesAreCharged() {
+        System.setProperty(Budgets.COMPILE_MEMORY_PROP, "2097152");
+        try {
+            StringBuilder p = new StringBuilder();
+            for (int i = 0; i < 1000; i++) p.append("((a)");
+            for (int i = 0; i < 1000; i++) p.append(")");
+            assertThatCode(() -> Pattern.compile(p.toString()))
+                    .isInstanceOf(PatternSyntaxException.class)
+                    .hasMessageContaining("pattern too large")
+                    .hasMessageContaining(Budgets.COMPILE_MEMORY_PROP);
+        } finally {
+            System.clearProperty(Budgets.COMPILE_MEMORY_PROP);
+        }
+    }
+
+    /** The walk-block memo (wide-codepoint dispatch) is budget-bounded:
+     *  per-state id tables and 512-int blocks are charged against the
+     *  runner's walk share; over it, dispatch falls back to binary search
+     *  and the match answer is unchanged. */
+    @Test
+    void walkMemoIsBudgetBoundedAndCorrect() {
+        System.setProperty(Budgets.RUNTIME_MEMORY_PROP, "20480"); // 2 KB walk share -> floor
+        try {
+            io.github.jemmix.tdfa.Pattern p = Pattern.compile("[\\x{400}-\\x{600}]{2,}");
+            // Wide-codepoint scans exercise WalkIndex; the capped memo must
+            // still answer exactly (binary-search fallback).
+            assertThat(p.matcher("\u0451\u04FF\u0500x").find()).isTrue();
+            assertThat(p.matcher("x\u0451x").find()).isFalse();
+            assertThat(p.matcher("\u05FF\u0400\u0401").find()).isTrue();
+        } finally {
+            System.clearProperty(Budgets.RUNTIME_MEMORY_PROP);
+        }
+    }
+
+    /** One Pattern.compile's shipped work stays within ONE compile CPU
+     *  budget: the ladder's attempts (front-end, succeeded unpruned whole,
+     *  pruned find, anchored re-parse + determinize) share a ledger; the
+     *  doomed unpruned probe is the only uncharged spend (its fraction
+     *  cap bounds it). */
+    @Test
+    void ladderTotalIsOneCpuBudget() {
+        // A bomb whose doomed attempts burn their caps: the compile must
+        // finish (reject or defer) having spent at most the scoped budget —
+        // wall-clock bounded well under what 2x would allow, and the
+        // deferred find artifact still works.
+        System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "6000000");
+        try {
+            long t0 = System.nanoTime();
+            io.github.jemmix.tdfa.Pattern p = Pattern.compile(
+                    "(?:(?m:\u00e9)(?:\\w[^\u03a9z\\-]{0,}|\ud835\udd04\udfff){1,4}){1,5}",
+                    io.github.jemmix.tdfa.Pattern.DEFER_WHOLE_REJECTION);
+            assertThat(p.matcher("\u00e9zz").find()).isTrue();
+            assertThatCode(() -> p.matcher("\u00e9zz").matches())
+                    .isInstanceOf(PatternSyntaxException.class)
+                    .hasMessageContaining("pattern too large");
+            // 6 M ticks ≈ tens of ms of rejection work per attempt; the
+            // ledger keeps the total near the scoped budget. Generous
+            // upper bound for CI variance.
+            assertThat((System.nanoTime() - t0) / 1_000_000)
+                    .as("wall of the fully-ledgered ladder").isLessThan(15_000);
+        } finally {
+            System.clearProperty(Budgets.COMPILE_COMPUTE_PROP);
+        }
     }
 }

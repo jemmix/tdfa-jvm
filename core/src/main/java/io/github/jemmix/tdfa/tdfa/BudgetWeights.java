@@ -69,6 +69,9 @@ public final class BudgetWeights {
      * relative to the compile CPU budget: the unpruned whole build gets
      * one third, the anchored last-chance build two thirds (the historical
      * 2&times; relation). Only tighten: a user-lowered budget always wins.
+     * These are PER-ATTEMPT caps — the facade debits every attempt against
+     * one shared ledger (see {@link WorkMeter#fork(long)}), so the ladder's
+     * total stays within the single compile CPU budget.
      */
     public static final int WHOLE_LADDER_DENOMINATOR = 3;
 
@@ -87,19 +90,54 @@ public final class BudgetWeights {
     public static final int TNFA_SYM_EDGE_BYTES = 64;
 
     /**
-     * A determinization kernel config is assumed to weigh 80 bytes — the
-     * measured boxed-all-in figure (lists, intern table, builders) from
-     * the 2026-09 memory work: 6.4 M kernels peaked under 1 GB.
+     * A determinization kernel config weighs 80 bytes boxed — the measured
+     * all-in figure (lists, intern table, builders; 6.4 M kernels peaked
+     * under 1 GB) — <em>plus</em> {@link #KERNEL_REG_TAG_BYTES} per tag:
+     * every Config carries an {@code int[tags]} register slice (cloned per
+     * transition op allocation), so the per-config footprint scales with
+     * the capture count and the flat 80 B only holds for near-tagless
+     * patterns.
      */
     public static final int KERNEL_CONFIG_BYTES = 80;
+
+    /** Variable part of one kernel config, per tag (the regs int share). */
+    public static final int KERNEL_REG_TAG_BYTES = 4;
 
     /**
      * A determinized DFA state is assumed to weigh 256 bytes all-in
      * (flat-table share plus its builder/sig scratch during compile) —
      * chain DFAs run lighter, wide class DFAs heavier; the average is the
-     * assumption.
+     * assumption. Perl-mode compiles additionally materialize the
+     * position-aware stop table ({@code int[n*64]}) — {@link
+     * #STOP_TABLE_STATE_BYTES} per state, charged on top through {@link
+     * Budgets#maxDfaStates(int)}.
      */
     public static final int DFA_STATE_BYTES = 256;
+
+    /** The Perl-mode position-aware stop-on-accept table, per DFA state
+     *  (64 int cells): charged in addition to {@link #DFA_STATE_BYTES}
+     *  because it is a distinct dense allocation outside the 256 B
+     *  average. POSIX (longest) compiles never allocate it. */
+    public static final int STOP_TABLE_STATE_BYTES = 256;
+
+    /** One live boxed {@code Range} in a DfaStateBuilder during
+     *  determinization (object header, five fields, list slot): charged
+     *  per NEW live range — addRange coalesces adjacent same-target
+     *  appends inline, so the live count tracks the post-coalesce total,
+     *  not the per-cell emission count. */
+    public static final int RANGE_BOXED_BYTES = 48;
+
+    /** One breakpoint cell of the determinizer's active-edge precompute:
+     *  the {@code long[words]} bitset share is counted separately at 8 B
+     *  per word; this is the per-cell auxiliary share (same-as-previous
+     *  flag, interned set id, array slack). */
+    public static final int ACTIVE_CELL_AUX_BYTES = 8;
+
+    /** Fixed overhead of one interned tag-history sequence (array header,
+     *  hash-chain slot, contents-table share); content ints are charged at
+     *  4 B each on top, as are the per-id derived caches (bits row: 8 B per
+     *  word; lastSign row: 4 B per tag). */
+    public static final int HIST_FIXED_BYTES = 40;
 
     /** A materialized CFG successor arc is assumed to weigh 32 bytes
      *  (adjacency slot plus intern overhead in the transitive-closure
@@ -155,4 +193,25 @@ public final class BudgetWeights {
     /** Floor cap for search-DFA blocks, so a tiny runtime budget still
      *  yields a usable memo. */
     public static final int RUNTIME_MIN_BLOCKS = 16;
+
+    // ===== runtime memo partition =====
+
+    /** The runtime RAM budget is partitioned across the per-pattern lazy
+     *  match-time memos in eighths: search-DFA rows 4/8, search-DFA
+     *  transition blocks 3/8, and the walk-block memo (wide-codepoint
+     *  dispatch, {@code WalkIndex}) 1/8. Every lazy structure a runner
+     *  retains draws from one of the three shares. */
+    public static final int RUNTIME_WALK_DIVISOR = 8;
+
+    /** One per-state walk-block id table ({@code int[128]} + the
+     *  AtomicReferenceArray slot), the walk memo's per-state share. */
+    public static final int WALK_STATE_TABLE_BYTES = 516;
+
+    /** One memoized 512-codepoint walk block (int[512] + overhead) — the
+     *  same shape as {@link #RUNTIME_BLOCK_BYTES}. */
+    public static final int WALK_BLOCK_BYTES = 2176;
+
+    /** Floor for walk blocks so a tiny runtime budget keeps the memo
+     *  usable. */
+    public static final int WALK_MIN_BLOCKS = 64;
 }

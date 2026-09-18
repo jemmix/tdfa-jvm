@@ -52,6 +52,9 @@ public final class TdfaRunner implements RegexEngine {
     private final WalkIndex walkIdx;
     final boolean rangesDisjoint;
     final int[] rhp;             // tdfa.entryHiPrefix — prefix-max-hi per entry
+    /** This runner's share of the pattern's runtime RAM budget (see the
+     *  constructor overload): caps the lazy search-DFA and walk memos. */
+    final long memoBudgetBytes;
     /** Tight 128-entry table for the SIMULATIONS: constant stride keeps the
      *  hot loop's machine code identical to the pre-Latin-1 shape (a 256-stride
      *  table measurably slowed pure-ASCII scans ~15%); codepoints >= 128 take
@@ -135,7 +138,24 @@ public final class TdfaRunner implements RegexEngine {
 
     @EmittedSurface
     public TdfaRunner(Tdfa tdfa) {
+        this(tdfa, Budgets.runtimeMemoryBytes());
+    }
+
+    /**
+     * Construct with an explicit lazy-memo budget: the bytes this runner's
+     * search-DFA memo (rows + blocks) and walk-block memo may retain,
+     * partitioned per the weight model (see {@link Budgets}). The facade
+     * hands HALF the runtime RAM budget to a pattern's SECOND engine (the
+     * dedicated whole/anchored runner beside the find engine), keeping the
+     * PATTERN's combined lazy memos within one
+     * {@code tdfa.budget.runtime.memory}; the default constructor uses the
+     * whole budget for the shared-single-engine case.
+     *
+     * @param memoBudgetBytes lazy-memo byte budget for this runner (&gt;0)
+     */
+    public TdfaRunner(Tdfa tdfa, long memoBudgetBytes) {
         this.tdfa = tdfa;
+        this.memoBudgetBytes = memoBudgetBytes;
         this.stateMeta = tdfa.stateMeta;
         this.stateBase = tdfa.stateBase;
         this.stateFinalOpsOff = tdfa.stateFinalOpsOff;
@@ -168,7 +188,7 @@ public final class TdfaRunner implements RegexEngine {
         this.stateCount = tdfa.stateCount;
         this.stateWords = (tdfa.stateCount + 31) >>> 5;
         this.acceptBits = RunnerTables.buildAcceptBits(tdfa);
-        this.searchDfa = new SearchDfa(this);   // after all table fields are assigned
+        this.searchDfa = new SearchDfa(this, memoBudgetBytes);   // after all table fields are assigned
         this.literalNeedle = RunnerTables.detectLiteralNeedle(tdfa);
         this.unicodeWordBoundary = tdfa.unicodeWordBoundary;
         this.wordRanges = tdfa.wordRanges;
@@ -179,7 +199,7 @@ public final class TdfaRunner implements RegexEngine {
         this.wordBits = RunnerTables.buildWordBits(tdfa.unicodeWordBoundary ? tdfa.wordRanges : null);
         this.startBits = (literalNeedle == null && (tdfa.stateMeta[tdfa.startState] & 1) == 0)
                 ? buildStartBits() : null;
-        this.walkIdx = new WalkIndex(this);
+        this.walkIdx = new WalkIndex(this, memoBudgetBytes);
     }
 
     public Tdfa tdfa() { return tdfa; }

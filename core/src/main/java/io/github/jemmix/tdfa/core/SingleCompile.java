@@ -98,19 +98,30 @@ public final class SingleCompile {
      * the unpruned attempt degrade to the pruned find compile (plus the
      * anchored whole fallback inside {@link #wholeEngine}); any OTHER
      * failure rethrows for the caller to translate.
+     *
+     * <p>The {@code ledger} is the compile's CPU ledger. The SHIPPED work
+     * (front-end, a succeeded whole, the pruned find, the anchored
+     * re-parse + determinize) all debits it, so one {@code
+     * Pattern.compile}'s shipped work stays within the single {@code
+     * tdfa.budget.compile.compute} budget. The unpruned whole attempt is
+     * a PROBE: it runs on its own fraction-capped meter and is charged
+     * only on success — a rejected probe's bounded churn (at most {@link
+     * #wholeWorkCap()} ticks) is the price of trying.
      */
-    public static Artifacts artifacts(Tnfa nfa, boolean longestMatch, CompileObserver obs) {
+    public static Artifacts artifacts(Tnfa nfa, boolean longestMatch, CompileObserver obs,
+                                      io.github.jemmix.tdfa.tdfa.WorkMeter ledger) {
         try {
             Tdfa whole = Tdfa.compileUnpruned(nfa, longestMatch, obs, wholeWorkCap());
+            ledger.charge(whole.compileWorkTicks());
             if (whole.pikeCutMatters()) {
                 obs.note("pikeCut", "find recompiled (pruned; whole kept unpruned)");
-                return new Artifacts(Tdfa.compile(nfa, longestMatch, obs), whole);
+                return new Artifacts(Tdfa.compile(nfa, longestMatch, obs, ledger.fork(0)), whole);
             }
             return new Artifacts(whole, whole);
         } catch (RuntimeException overBudget) {
             if (!budgetRejection(overBudget)) throw overBudget;
             obs.note("whole", "unpruned build over budget — anchored whole attempted eagerly");
-            return new Artifacts(Tdfa.compile(nfa, longestMatch, obs), null);
+            return new Artifacts(Tdfa.compile(nfa, longestMatch, obs, ledger.fork(0)), null);
         }
     }
 
@@ -126,17 +137,27 @@ public final class SingleCompile {
      * {@code deferRejection} records it (translated with
      * {@code patternForErrors}) for {@link OverBudgetWholeEngine}. Any other
      * failure always rethrows.
+     *
+     * <p>Every whole/anchored runner this method constructs is a SECOND
+     * engine beside the pattern's find engine, so its lazy match-time memos
+     * are capped at HALF the runtime RAM budget (per-pattern split — the
+     * budget is per pattern, not per engine). The anchored parse and
+     * determinize fork the same CPU ledger as the rest of the ladder.
      */
     public static RegexEngine wholeEngine(Artifacts a, RegexEngine findEngine,
                                           String pattern, String patternForErrors,
                                           boolean disableUnicodeGroups, boolean longestMatch,
                                           boolean deferRejection,
-                                          UnicodeDataProvider provider) {
+                                          UnicodeDataProvider provider,
+                                          io.github.jemmix.tdfa.tdfa.WorkMeter ledger) {
         if (a.whole != null)
-            return a.shared() ? findEngine : new TdfaRunner(a.whole);
+            return a.shared() ? findEngine : new TdfaRunner(a.whole, Budgets.runtimeMemoryBytes() / 2);
         try {
-            Tnfa an = Tnfa.compile(pattern, disableUnicodeGroups, true, provider);
-            return new TdfaRunner(Tdfa.compile(an, longestMatch, null, anchoredWorkCap()));
+            Tnfa an = Tnfa.compile(pattern, disableUnicodeGroups, true, provider, null,
+                    ledger.fork(0));
+            return new TdfaRunner(Tdfa.compile(an, longestMatch, null,
+                            ledger.fork(Budgets.anchoredWorkCap())),
+                    Budgets.runtimeMemoryBytes() / 2);
         } catch (RuntimeException over) {
             if (!budgetRejection(over)) throw over;
             if (!deferRejection) throw over;
