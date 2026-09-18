@@ -61,7 +61,7 @@ public class ParameterizedShortInputBench {
                 case "tdfa" -> matches = Pattern.compile(regex, 0, TdfaRunner::new)::matches;
                 case "asmc" -> matches = Pattern.compile(regex)::matches;
                 case "jur" -> {
-                    var pattern = Pattern.compile(regex);
+                    var pattern = java.util.regex.Pattern.compile(regex);
                     matches = s -> pattern.matcher(s).matches();
                 }
                 case "re2j" -> {
