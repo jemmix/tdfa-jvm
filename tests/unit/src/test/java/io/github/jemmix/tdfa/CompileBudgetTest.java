@@ -7,20 +7,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
- * Engine determinization budget (re2c-identical design; re2c
- * src/dfa/determinization.cc + constants.h: MAX_DFA_STATES = 100 K,
- * MAX_DFA_SIZE = 50 M kernel-total). A pattern whose TDFA construction
- * exceeds the caps must fail compilation with a clean
- * {@code "pattern too large"} {@link PatternSyntaxException} — quickly,
- * without exhausting memory — instead of burning unbounded time/heap.
+ * Engine determinization budgets: compile RAM ({@code tdfa.budget.compile.memory})
+ * bounds the OUTPUT structures through the weight model (states, kernel
+ * totals, closure spikes, CFG edges — see {@code BudgetWeights}/{@code Budgets}),
+ * compile CPU ({@code tdfa.budget.compile.compute}, ticks) bounds the WORK
+ * ({@code WorkMeter}). A pattern whose TDFA construction exceeds either
+ * must fail compilation with a clean {@code "pattern too large"}
+ * {@link PatternSyntaxException} — quickly, without exhausting memory —
+ * instead of burning unbounded time/heap.
  *
  * <p>Reference-implementation context: re2c 4.5.1 refuses two-site
  * {@code [^]{0,16}x[^]{0,16}} outright ("DFA has too many states"); our
  * construction is more compact on that family (10 K states at {0,100}) and
  * only caps the intrinsically-huge cross-products (the rebar
  * bounded-repeat/context shape: 200 K+ MINIMAL states, aborts at the
- * default cap in ~10 s on a default heap where the uncapped compile needs
- * 12 GB and ~49 s).
+ * default budget in seconds on a default heap where the uncapped compile
+ * needs 12 GB and ~49 s).
  */
 class CompileBudgetTest {
 
@@ -28,43 +30,49 @@ class CompileBudgetTest {
     private static final String CONTEXT_BOMB =
             "[A-Za-z]{10}\\s+[\\s\\S]{0,100}Result[\\s\\S]{0,100}\\s+[A-Za-z]{10}";
 
+    /** Compile RAM budget that derives a ~20 K-state cap (the historical
+     *  tight cap for the context bomb: 20 000 &times; 256 B/state). Also
+     *  derives ~64 K kernels / ~4 K closure — far below this shape's
+     *  needs on every axis. */
+    private static final String MEM_20K_STATES = "5120000";
+
     @Test
     void overBudgetPatternFailsFastWithCleanError() {
-        System.setProperty("tdfa.max.states", "20000");
+        System.setProperty("tdfa.budget.compile.memory", MEM_20K_STATES);
         try {
             long t0 = System.nanoTime();
             assertThatCode(() -> Pattern.compile(CONTEXT_BOMB))
                     .isInstanceOf(PatternSyntaxException.class)
                     .hasMessageContaining("pattern too large")
-                    .hasMessageContaining("tdfa.max.states");
+                    .hasMessageContaining("tdfa.budget.compile.memory");
             long ms = (System.nanoTime() - t0) / 1_000_000;
             // ~2 s measured at the 20 K cap on laptop hardware; the point is
             // fail-FAST — the uncapped compile needs 12 GB and ~49 s.
-            assertThat(ms).as("wall to rejection at 20 K state cap").isLessThan(15_000);
+            assertThat(ms).as("wall to rejection at the derived 20 K state cap").isLessThan(15_000);
         } finally {
-            System.clearProperty("tdfa.max.states");
+            System.clearProperty("tdfa.budget.compile.memory");
         }
     }
 
     /**
      * The WORK budget (WorkMeter): nested-quantifier bombs whose closure
-     * churns fixpoints without materializing states never trip the state/kernel
-     * caps (fuzzer-found; e.g. the tryMap family). A tight budget must reject
-     * them with the same clean error shape.
+     * churns fixpoints without materializing states never trip the
+     * state/kernel caps (fuzzer-found; e.g. the tryMap family). A tight
+     * budget must reject them with the same clean error shape.
      */
     @Test
     void workBudgetRejectsClosureSpinners() {
         String spinner = "(kq)(?U:(\\n*?n)mZ)(?<n0>(?U:( )q)(?:(?:\\W\\z)(\\#.+\\~|\\n{1,1}éu(?<n2>s\\#)\\.)*?){4,}\\t)";
-        System.setProperty("tdfa.max.work", "10000000");
+        System.setProperty("tdfa.budget.compile.compute", "10000000");
         try {
             long t0 = System.nanoTime();
             assertThatCode(() -> Pattern.compile(spinner))
                     .isInstanceOf(PatternSyntaxException.class)
                     .hasMessageContaining("pattern too large")
-                    .hasMessageContaining("tdfa.max.work");
+                    .hasMessageContaining("tdfa.budget.compile.compute");
             assertThat((System.nanoTime() - t0) / 1_000_000).as("wall to work-budget rejection").isLessThan(30_000);
         } finally {
-            System.clearProperty("tdfa.max.work");
+            System.clearProperty("tdfa.budget.compile.compute");
         }
     }
 
@@ -76,23 +84,23 @@ class CompileBudgetTest {
      *  burned 19.6 M kernels — see nestedCountedNowCompiles below. */
     @Test
     void alternationCountedBombCleanRejects() {
-        System.setProperty("tdfa.max.states", "20000");
+        System.setProperty("tdfa.budget.compile.memory", MEM_20K_STATES);
         try {
             long t0 = System.nanoTime();
             assertThatCode(() -> Pattern.compile(
                     "(x{2,4}?z|\\D{1,6}?.+$|~|W(?U:9(\\.b~))\\-){4,}"))
                     .isInstanceOf(PatternSyntaxException.class)
                     .hasMessageContaining("pattern too large")
-                    .hasMessageContaining("tdfa.max.states");
+                    .hasMessageContaining("tdfa.budget.compile.memory");
             assertThat((System.nanoTime() - t0) / 1_000_000)
                     .as("wall to state-cap rejection").isLessThan(30_000);
         } finally {
-            System.clearProperty("tdfa.max.states");
+            System.clearProperty("tdfa.budget.compile.memory");
         }
     }
 
     /** The classic nested-counted shape's FIND artifact now compiles under
-     *  default caps — the right-nested suffix collapsed the determinization
+     *  default budgets — the right-nested suffix collapsed the determinization
      *  ~90x in kernel total ((a{1,100}){1,100}: 19.6 M kernels -> 148 K,
      *  10001 states). Its whole builds still reject (pinned in
      *  SingleCompileWholeTest), so the lenient flag carries the pin. */
@@ -122,7 +130,8 @@ class CompileBudgetTest {
         assertThatCode(() -> Pattern.compile(CFG_EDGE_BOMB))
                 .isInstanceOf(PatternSyntaxException.class)
                 .hasMessageContaining("pattern too large")
-                .hasMessageContaining("CFG edge budget");
+                .hasMessageContaining("CFG edge budget")
+                .hasMessageContaining("tdfa.budget.compile.memory");
         // ~0.7 s measured (cap trips during the successor-arc BFS); the point
         // is fail-fast — uncapped, the compile took ~60 s per engine.
         assertThat((System.nanoTime() - t0) / 1_000_000)
@@ -131,20 +140,21 @@ class CompileBudgetTest {
 
     /** Per-kernel spike bound: kernelsTotal only counts after addState, so a
      *  single closure can spike the heap on its own. The wide-alternation
-     *  bomb builds 4-figure closures. */
+     *  bomb builds 4-figure closures. Derived closure cap = RAM budget /
+     *  16 / 80 B: 12 800 bytes → 10 configs. */
 
     @Test
     void closureSpikeCapRejectsCleanly() {
-        System.setProperty("tdfa.max.closure", "10");
+        System.setProperty("tdfa.budget.compile.memory", "12800");
         try {
             // 13-arm alternation: initial closure is ~16 configs wide
             assertThatCode(() -> Pattern.compile(
                     "(ab|cd|ef|gh|ij|kl|mn|op|qr|st|uv|wx|yz){2}"))
                     .isInstanceOf(PatternSyntaxException.class)
                     .hasMessageContaining("pattern too large")
-                    .hasMessageContaining("tdfa.max.closure");
+                    .hasMessageContaining("tdfa.budget.compile.memory");
         } finally {
-            System.clearProperty("tdfa.max.closure");
+            System.clearProperty("tdfa.budget.compile.memory");
         }
     }
 
@@ -159,12 +169,12 @@ class CompileBudgetTest {
      * flag, compile() itself fails with the same clean rejection (the
      * default since 2026-09-15 — pinned in SingleCompileWholeTest). The
      * bounded-gap family ([\s\S]{0,60}x[\s\S]{0,60}: find compiles, the
-     * whole DFA is an intrinsically-100K+-state counter cross-product) is
+     * whole DFA is an intrinsically-huge counter cross-product) is
      * pinned below. Pinned with \x{...}/escapes per CFG_EDGE_BOMB above. */
     @Test
     void bombWholeOverBudgetRecordsRejectionOnceEagerly() {
         String bomb = "(?:(?m:\u00e9)(?:\\w[^\u03a9z\\-]{0,}|\ud835\udd04\udfff){1,4}){1,5}";
-        System.setProperty("tdfa.max.work", "8388608");
+        System.setProperty("tdfa.budget.compile.compute", "8388608");
         try {
             long t0 = System.nanoTime();
             io.github.jemmix.tdfa.Pattern p = Pattern.compile(bomb,
@@ -184,20 +194,20 @@ class CompileBudgetTest {
             assertThat((System.nanoTime() - t1) / 1_000_000)
                     .as("wall of the recorded-rethrow matches()").isLessThan(5);
         } finally {
-            System.clearProperty("tdfa.max.work");
+            System.clearProperty("tdfa.budget.compile.compute");
         }
     }
 
     @Test
     void boundedGapWholeBombKeepsFind() {
         // The corpus-impact decision made concrete — and REVERSED
-        // (2026-09-15): find compiles (~3.7 M kernels), both whole builds
-        // reject (anchored: 100 001 states — the counter cross-product is
-        // the MINIMAL whole DFA). Default: compile() fails — shipping a
-        // Pattern whose matches() is permanently broken behind a
-        // successful compile is the trap; the lenient find-only acceptance
-        // (find() works, matches() rethrows the recorded rejection) is the
-        // explicit opt-in.
+        // (2026-09-15): find compiles (~28 K kernels under the RAM-derived
+        // cap), both whole builds reject (anchored: 100 001+ states — the
+        // counter cross-product is the MINIMAL whole DFA). Default:
+        // compile() fails — shipping a Pattern whose matches() is
+        // permanently broken behind a successful compile is the trap; the
+        // lenient find-only acceptance (find() works, matches() rethrows
+        // the recorded rejection) is the explicit opt-in.
         assertThatCode(() -> Pattern.compile("[\\s\\S]{0,60}x[\\s\\S]{0,60}"))
                 .isInstanceOf(PatternSyntaxException.class)
                 .hasMessageContaining("pattern too large");
@@ -214,7 +224,7 @@ class CompileBudgetTest {
     void legitPatternsCompileUnderDefaultBudget() {
         // Largest legit in-corpus shapes: dictionary-style literal alternation
         // (19.6 K pre-min states at 2 663 branches) and the datefinder
-        // alternation — both far under the 100 K default cap.
+        // alternation — both far under the RAM-derived default caps.
         StringBuilder dict = new StringBuilder();
         for (int i = 0; i < 2000; i++) {
             if (i > 0) dict.append('|');
@@ -228,19 +238,19 @@ class CompileBudgetTest {
 
     @Test
     void budgetOverrideRaisesTheCeiling() {
-        // The caps are per-compile reads of the system properties, so a raised
-        // budget admits patterns the default would reject. Uses the kernel-total
-        // cap (re2j's MAX_DFA_SIZE analogue): {0,60} × 2 totals ~28 K kernel
-        // entries across its states (the right-nested suffix shrank the flat
-        // tail's 220 K) — over a 20 K cap, under any heap. The DEFER flag
-        // carries the find-only acceptance: the whole side rejects regardless
-        // of the caps (see boundedGapWholeBombKeepsFind).
-        System.setProperty("tdfa.max.kernels", "20000");
+        // The budgets are per-compile reads of the system properties, so a
+        // lowered RAM budget rejects patterns the default admits (and a
+        // raised one admits more). 1.6 MB derives a ~20 K kernel cap (the
+        // {0,60} × 2 shape totals ~28 K kernel entries across its states —
+        // the right-nested suffix shrank the flat tail's 220 K). The DEFER
+        // flag carries the find-only acceptance: the whole side rejects
+        // regardless of the caps (see boundedGapWholeBombKeepsFind).
+        System.setProperty("tdfa.budget.compile.memory", "1600000");
         try {
             assertThatCode(() -> Pattern.compile(
                     "[\\s\\S]{0,60}x[\\s\\S]{0,60}")).isInstanceOf(PatternSyntaxException.class);
         } finally {
-            System.clearProperty("tdfa.max.kernels");
+            System.clearProperty("tdfa.budget.compile.memory");
         }
         assertThatCode(() -> Pattern.compile("[\\s\\S]{0,60}x[\\s\\S]{0,60}",
                 io.github.jemmix.tdfa.Pattern.DEFER_WHOLE_REJECTION))

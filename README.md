@@ -6,7 +6,7 @@ deterministic finite automaton, then to JVM bytecode. **No backtracking — ever
 - vs [`java.util.regex`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/regex/package-summary.html): **1.3× faster on short-input search** (ASM geomean 0.75×, per-call `find()`) — and the durable difference is **ReDoS immunity by construction**: no backtracking engine exists in this library, so pathological patterns cannot burn match-time budget anywhere (current JDKs have tamed many `java.util.regex` blowups, but the guarantee here is structural, not empirical).
 - vs [`re2j`](https://github.com/google/re2j): **2–6× faster on short-input search, 2–3× faster on anchored matches** (scan geomeans 0.17–0.51× across harnesses, faster on the large majority of corpus rows) — while remaining a drop-in replacement with identical results on 5.7 M differential cases + ~300 M fuzz cases.
 - vs [`reggie`](https://github.com/DataDog/java-reggie): a huge inspiration. They dispatch across multiple regex engines per pattern for peak performance; we use one algorithm for everything by design. Different tradeoffs.
-- **Cost, stated up front**: compile is ~290 µs (VM) / ~1.3 ms (ASM) per pattern cold vs ~16 µs for `java.util.regex` (steady-state ~32 / ~38 µs once first-compiles amortize) — eager AOT determinization is the price of the linear-time guarantee. Patterns whose TDFA would exceed the determinization budget fail compilation with a clean "pattern too large" error rather than exhausting time and memory. Budget knobs (defaults): `-Dtdfa.max.states` (100 K DFA states), `-Dtdfa.max.kernels` (10 M kernel-total), `-Dtdfa.max.work` (2³² work-meter units), `-Dtdfa.max.closure` (100 K ε-closure configs) — raise them if you legitimately need bigger (e.g. two-site bounded wide-class repeats like `[\s\S]{0,100}x[\s\S]{0,100}` — a 234 K-state minimal DFA, ~21 s and a <1 GB transient to compile, where `re2j`/`java.util.regex` accept instantly: they pay at match time instead). The whole-match (`matches()`) artifact faces the same compile-time contract: both of its eager builds are work-capped (`SingleCompile.WHOLE_WORK_CAP`, and 2× that for the anchored last-chance attempt), and when both reject, `compile()` fails — `Pattern.DEFER_WHOLE_REJECTION` / `CompileOptions.deferWholeRejection()` opts into accepting such patterns find-only (`find()` works; `matches()` throws the recorded rejection).
+- **Cost, stated up front**: compile is ~290 µs (VM) / ~1.3 ms (ASM) per pattern cold vs ~16 µs for `java.util.regex` (steady-state ~32 / ~38 µs once first-compiles amortize) — eager AOT determinization is the price of the linear-time guarantee. Patterns whose TDFA would exceed the resource budgets fail compilation with a clean "pattern too large" error rather than exhausting time and memory. Budgets are three `-D` properties — compile RAM, compile CPU, runtime RAM — and every internal cap derives from them through a hardcoded weight model (see the table below). Raise them if you legitimately need bigger (e.g. two-site bounded wide-class repeats like `[\s\S]{0,100}x[\s\S]{0,100}` — a 234 K-state minimal DFA, ~3.6 GB of weighted kernels, ~21 s to compile where `re2j`/`java.util.regex` accept instantly: they pay at match time instead). The whole-match (`matches()`) artifact faces the same compile-time contract: both of its eager builds are work-capped (⅓ and ⅔ of the compile CPU budget), and when both reject, `compile()` fails — `Pattern.DEFER_WHOLE_REJECTION` / `CompileOptions.deferWholeRejection()` opts into accepting such patterns find-only (`find()` works; `matches()` throws the recorded rejection).
 
 An implementation of Borsotti–Trofimovich 2022
 (*A closer look at TDFA* — [paper](https://github.com/skvadrik/re2c/blob/master/doc/papers/2022_a_closer_look_at_tdfa/2022_borsotti_trofimovich_a_closer_look_at_tdfa.pdf)).
@@ -173,8 +173,27 @@ execution.
   N=2 iteration loop)
 - §6.4 fixed tags — drop tags reconstructible post-match from a sibling
 
-Toggle individually: `-Dtdfa.noregopt`, `-Dtdfa.nofallback`,
-`-Dtdfa.nominimize`.
+Toggle individually: `-Dtdfa.noregopt`, `-Dtdfa.nominimize`.
+
+**Resource budgets** — three properties; every internal cap (DFA states,
+kernel totals, ε-closure spikes, CFG edges, minimizer scratch, the
+whole-match ladder's eager attempts, the lazy search-DFA memo) derives
+from them through the hardcoded weight model `BudgetWeights` (assumed
+bytes per structure, assumed ticks per action — one tick ≈ 10 ns, tick
+counts are deterministic and machine-independent). Raise the budget, not
+a cap; reads are per compile / per runner, never class-frozen:
+
+| Property | Meaning | Default |
+|---|---|---|
+| `tdfa.budget.compile.memory` | compile RAM, bytes | 128 MiB |
+| `tdfa.budget.compile.compute` | compile CPU, ticks (5 s at the assumed 100 M ticks/s) | 500 M |
+| `tdfa.budget.runtime.memory` | match-time RAM **per pattern** (search-DFA memo; N live patterns cost ≤ N budgets) | 16 MiB |
+
+Match time is deliberately CPU-unbudgeted — the linear-time guarantee
+makes a runtime compute budget meaningless; the runtime budget bounds RAM
+only. Pass-gating knobs (whether optional compile passes run — tuning,
+not budgets): `-Dtdfa.nominimize`, `-Dtdfa.minimize.max` (20000),
+`-Dtdfa.noregopt`, `-Dtdfa.regopt.max` (2000).
 
 **Search acceleration, disclosed** — unanchored `find()` does not walk the DFA
 character-by-character in three cases, in service of scan throughput (the
@@ -274,7 +293,9 @@ tdfa-jvm/                             ← root = the facade artifact (io.github.
 - **patched-oracle fuzzing** — `-Pfuzz.patchedOracle=true` (builds the
   patched re2j on demand).
 - **BOMB_SCENARIOS** — the known-over-budget rebar shapes; opt-in via
-  `-Dtdfa.max.states=250000` and ≥ 1–6 GB heap.
+  `-Dtdfa.test.rebar.skipBombs=false` plus raised budgets
+  (`-Dtdfa.budget.compile.memory=4000000000 -Dtdfa.budget.compile.compute=4000000000`)
+  and ≥ 1–6 GB heap.
 - every **benchmark** — perf gating is `scripts/bench-regression.sh --quick`
   against a per-machine baseline (15% rule), not part of `check`.
 

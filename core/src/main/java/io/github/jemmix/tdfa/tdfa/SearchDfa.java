@@ -3,15 +3,16 @@ package io.github.jemmix.tdfa.tdfa;
 import java.util.HashMap;
 
 import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_KILL;
-import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_MAX_BLOCKS;
-import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_MAX_ROWS;
 
 /** Extracted verbatim from TdfaRunner (2026-09 god-file split); the
  *  {@code r} back-reference carries the shared runner tables. Docs moved
- *  with the code. Caps/sentinel stay on TdfaRunner (its scan paths use them
- *  too) and are static-imported here.
+ *  with the code. The kill sentinel stays on TdfaRunner (its scan paths
+ *  use it too) and is static-imported here.
  *
  * Static nested: shared per-Tdfa lifetime; references the runner's tables.
+ * The memo's row/block caps are derived per runner from the match-time RAM
+ * budget ({@link Budgets#runtimeMemoryBytes()} — {@code -Dtdfa.budget.runtime.memory})
+ * through the weight model: half the budget in rows, half in blocks.
  *
  * Thread-safety (the RegexEngine contract requires concurrent-safe
  * engines): the mutation path — internRow / transition / buildBlock — is
@@ -31,8 +32,17 @@ import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_MAX_ROWS;
     final class SearchDfa {
         final TdfaRunner r;
         final int nw;
+        /** Row cap — RAM-budget-derived (see class doc). */
+        final int maxRows;
+        /** Block cap — RAM-budget-derived (see class doc). */
+        final int maxBlocks;
         final Object lock = new Object();
-        SearchDfa(TdfaRunner r) { this.r = r; this.nw = r.stateWords; }
+        SearchDfa(TdfaRunner r) {
+            this.r = r;
+            this.nw = r.stateWords;
+            this.maxRows = Budgets.sdfaMaxRows(nw);
+            this.maxBlocks = Budgets.sdfaMaxBlocks();
+        }
 
         // ---- writer-confined (all accesses under lock) ----
         private final HashMap<Wrapper, Integer> rowById = new HashMap<>();    // bitset -> row id
@@ -79,7 +89,7 @@ import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_MAX_ROWS;
             Wrapper probe = new Wrapper(words);
             Integer id = rowById.get(probe);
             if (id != null) return id;
-            if (rowWordsArr.length >= SDFA_MAX_ROWS || capped) { capped = true; return -1; }
+            if (rowWordsArr.length >= maxRows || capped) { capped = true; return -1; }
             int[] key = words.clone();
             int nid = rowWordsArr.length;
             rowById.put(new Wrapper(key), nid);
@@ -173,7 +183,7 @@ import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_MAX_ROWS;
                 Integer cached = blockById.get(key);
                 if (cached != null) blockId = cached;
                 else {
-                    if (blocksArr.length >= SDFA_MAX_BLOCKS) {
+                    if (blocksArr.length >= maxBlocks) {
                         setRowCell(rowId, b, -2);
                         return -2;
                     }

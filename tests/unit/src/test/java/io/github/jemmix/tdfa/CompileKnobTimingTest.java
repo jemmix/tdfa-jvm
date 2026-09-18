@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.jemmix.tdfa.core.CompileObserver;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
@@ -25,6 +26,7 @@ class CompileKnobTimingTest {
     void cleanup() {
         System.clearProperty("tdfa.noregopt");
         System.clearProperty("tdfa.nominimize");
+        System.clearProperty(io.github.jemmix.tdfa.tdfa.Budgets.COMPILE_MEMORY_PROP);
     }
 
     private CompileObserver recording() {
@@ -56,5 +58,24 @@ class CompileKnobTimingTest {
         Tdfa t = Tdfa.compile(Tnfa.compile("a|b|c"), false, recording());
         assertThat(t.stateCount()).isPositive();
         assertThat(notes.get("regopt")).isNotNull();
+    }
+
+    @Test
+    void budgetKnobTakesEffectWithoutClassReload() {
+        // The budget properties join the same policy: read once per compile,
+        // never class-init frozen. Set AFTER init — the very next compile
+        // must see the tightened RAM budget (4096 B / 256 B per state = a
+        // 16-state cap), and clearing it must re-admit the pattern.
+        Tdfa.compile(Tnfa.compile("ab|cd"), false, recording());   // warm classes
+        System.setProperty(io.github.jemmix.tdfa.tdfa.Budgets.COMPILE_MEMORY_PROP, "4096");
+        try {
+            assertThatThrownBy(() -> Tdfa.compile(Tnfa.compile("ab|cd|ef|gh|ij"), false, recording()))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("pattern too large");
+        } finally {
+            System.clearProperty(io.github.jemmix.tdfa.tdfa.Budgets.COMPILE_MEMORY_PROP);
+        }
+        assertThat(Tdfa.compile(Tnfa.compile("ab|cd|ef|gh|ij"), false, recording()).stateCount())
+                .isPositive();
     }
 }

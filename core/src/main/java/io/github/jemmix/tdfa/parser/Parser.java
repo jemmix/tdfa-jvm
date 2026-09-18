@@ -64,11 +64,16 @@ public final class Parser {
     boolean disableUnicodeGroups = false;
     boolean unicodeShorthand = false;
     io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider;
+    /** Front-end work meter shared with the TNFA builder (see
+     *  {@code Tnfa.compile}); meters the O(universe) fold-range scan. */
+    final io.github.jemmix.tdfa.tdfa.WorkMeter meter;
 
-    private Parser(String src, boolean disableUnicodeGroups, io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
+    private Parser(String src, boolean disableUnicodeGroups, io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider,
+                   io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
         this.src = src;
         this.disableUnicodeGroups = disableUnicodeGroups;
         this.provider = provider;
+        this.meter = meter;
     }
 
     public static Ast parse(String src) {
@@ -76,10 +81,21 @@ public final class Parser {
     }
 
     /** Parse and return the full result: AST plus tag/group counters, effective
-     *  flags, and named-group metadata (the composable-pipeline entry point). */
+     *  flags, and named-group metadata (the composable-pipeline entry point).
+     *  Meters against a fresh compile CPU budget. */
     public static ParseResult parseResult(String src, boolean disableUnicodeGroups, boolean anchorBoth,
                                           io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
-        Parser p = new Parser(src, disableUnicodeGroups, provider);
+        return parseResult(src, disableUnicodeGroups, anchorBoth, provider,
+                new io.github.jemmix.tdfa.tdfa.WorkMeter(
+                        io.github.jemmix.tdfa.tdfa.Budgets.compileComputeTicks()));
+    }
+
+    /** Metered variant: the caller (Tnfa.compile) shares one CPU budget
+     *  across parse and TNFA construction. */
+    public static ParseResult parseResult(String src, boolean disableUnicodeGroups, boolean anchorBoth,
+                                          io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider,
+                                          io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
+        Parser p = new Parser(src, disableUnicodeGroups, provider, meter);
         Ast e = p.parseAlt();
         if (p.pos != p.src.length()) throw fail(p, "unexpected '" + p.cur() + "'");
         e = anchorBoth ? anchorBoth(e) : e;
@@ -393,13 +409,16 @@ public final class Parser {
 
     /** Union of {@code ranges} with every member's full simple-fold orbit (re2j's foldCase).
      *  Output is sorted by lo with overlapping ranges merged — complementRanges
-     *  and downstream range walkers rely on that. */
+     *  and downstream range walkers rely on that. The per-codepoint scan is
+     *  metered (review r10 P1-1): it is O(universe) per wide class under
+     *  {@code (?i)}, so it must be budget-visible CPU work. */
     private int[] foldExpandRanges(int[] arr) {
         List<int[]> ivs = new ArrayList<>(arr.length);
         for (int i = 0; i < arr.length; i += 2) {
             int lo = arr[i], hi = arr[i + 1];
             ivs.add(new int[]{lo, hi});
             for (int cp = lo; cp <= hi; cp++) {
+                meter.tick(io.github.jemmix.tdfa.tdfa.BudgetWeights.FOLD_SCAN_CODEPOINT_TICKS);
                 int[] fr = foldUniverse(cp);
                 if (fr != null) for (int v : fr) ivs.add(new int[]{v, v});
             }

@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa.core;
 
+import io.github.jemmix.tdfa.tdfa.Budgets;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
@@ -15,7 +16,7 @@ import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
  *   <li>Whole artifact first: the cut-free determinization
  *       ({@link Tdfa#compileUnpruned}) of the SAME parse — an accept config
  *       alive at end-of-input is a full match, so {@code matchWhole} walks
- *       it to EOF. Work-bounded by {@link #WHOLE_WORK_CAP}: a cut-heavy
+ *       it to EOF. Work-bounded by {@link #wholeWorkCap()}: a cut-heavy
  *       pattern's cut-free build can churn orders of magnitude past its
  *       pruned cost before the output caps trip (aws-keys: ~4G ticks vs
  *       30M) and an eager attempt at the default budget would stall
@@ -25,7 +26,7 @@ import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
  *       alternation shapes where it would (e.g. {@code ab|a|ac}) keep a
  *       pruned find compile beside it for leftmost-first exactness.</li>
  *   <li>Over budget: the both-ends-ANCHORED artifact is attempted eagerly
- *       (under {@link #ANCHORED_WORK_CAP}, 2&times; the first cap — the
+ *       (under {@link #anchoredWorkCap()}, 2&times; the first cap — the
  *       last chance before compile failure). Every accept in an anchored
  *       build is end-of-input-gated, so the pike cut never fires mid-walk
  *       and the cut-free whole walk is exact over the (pruned) artifact —
@@ -48,29 +49,35 @@ public final class SingleCompile {
     private SingleCompile() { }
 
     /**
-     * Work budget (ticks) for the eager UNPRUNED whole attempt: comfortably
-     * above the worst legit in-corpus unpruned build measured (datefinder's
-     * {@code (?i)(?u)} variant at ~115 M ticks — tick counts are
-     * deterministic, machine-independent) while rejecting cut-heavy shapes
-     * (aws-keys ~4G ticks) in well under a second, so even a slow CI runner
-     * stays inside the rebar compile-latency guard's budget.
+     * Work budget (ticks) for the eager UNPRUNED whole attempt:
+     * {@link Budgets#wholeWorkCap()} — one third of the compile CPU budget
+     * ({@code tdfa.budget.compile.compute}; 166 M ticks at the default
+     * 500 M). Comfortably above the worst legit in-corpus unpruned build
+     * measured (datefinder's {@code (?i)(?u)} variant at ~115 M ticks —
+     * tick counts are deterministic, machine-independent) while rejecting
+     * cut-heavy shapes (aws-keys ~4G ticks) in well under a second, so
+     * even a slow CI runner stays inside the rebar compile-latency guard's
+     * budget. Read per compile; a user-lowered compute budget tightens
+     * this cap with it.
      */
-    public static final long WHOLE_WORK_CAP = 1L << 27;
+    public static long wholeWorkCap() { return Budgets.wholeWorkCap(); }
 
     /**
-     * Work budget (ticks) for the eager ANCHORED last-chance attempt — 2&times;
-     * {@link #WHOLE_WORK_CAP}. The anchored build is what stands between a
-     * budget rejection and compile() failure, and legit-but-heavy shapes
-     * land just past the first cap (fuzz round 18's overnight quantifier
-     * shape converges at 134 219 263 ticks — 0.001% over 2^27). Doubling
+     * Work budget (ticks) for the eager ANCHORED last-chance attempt —
+     * {@link Budgets#anchoredWorkCap()}, 2&times; {@link #wholeWorkCap()}
+     * (two thirds of the compile CPU budget; 333 M ticks at the default).
+     * The anchored build is what stands between a budget rejection and
+     * compile() failure, and legit-but-heavy shapes land just past the
+     * first cap (fuzz round 18's overnight quantifier shape converges at
+     * 134 219 263 ticks — 0.001% over the old 2^27 constant). Doubling
      * only THIS cap admits them at zero extra wall (a shape burning N
      * ticks burns N either way; under the doubled cap it finishes instead
      * of rejecting), while genuinely non-converging churn (aws-keys'
-     * anchored build rejects at any cap — its "cap+1 ticks" report is meter
-     * granularity, not a knife edge) pays at most what the doomed unpruned
-     * attempt already spent.
+     * anchored build rejects at any cap — its "cap+1 ticks" report is
+     * meter granularity, not a knife edge) pays at most what the doomed
+     * unpruned attempt already spent.
      */
-    public static final long ANCHORED_WORK_CAP = 1L << 28;
+    public static long anchoredWorkCap() { return Budgets.anchoredWorkCap(); }
 
     /** Resolved artifact pair: the find TDFA plus the whole TDFA (or the
      *  over-budget marker). Carrier class (Java 8 floor). */
@@ -94,7 +101,7 @@ public final class SingleCompile {
      */
     public static Artifacts artifacts(Tnfa nfa, boolean longestMatch, CompileObserver obs) {
         try {
-            Tdfa whole = Tdfa.compileUnpruned(nfa, longestMatch, obs, WHOLE_WORK_CAP);
+            Tdfa whole = Tdfa.compileUnpruned(nfa, longestMatch, obs, wholeWorkCap());
             if (whole.pikeCutMatters()) {
                 obs.note("pikeCut", "find recompiled (pruned; whole kept unpruned)");
                 return new Artifacts(Tdfa.compile(nfa, longestMatch, obs), whole);
@@ -129,7 +136,7 @@ public final class SingleCompile {
             return a.shared() ? findEngine : new TdfaRunner(a.whole);
         try {
             Tnfa an = Tnfa.compile(pattern, disableUnicodeGroups, true, provider);
-            return new TdfaRunner(Tdfa.compile(an, longestMatch, null, ANCHORED_WORK_CAP));
+            return new TdfaRunner(Tdfa.compile(an, longestMatch, null, anchoredWorkCap()));
         } catch (RuntimeException over) {
             if (!budgetRejection(over)) throw over;
             if (!deferRejection) throw over;

@@ -715,9 +715,9 @@ public final class TdfaRunner implements RegexEngine {
      * and the caller may advance its match-window bound past this position"
      * (sound: nothing alive from an earlier start survives a kill).
      *
-     * <p>Caps ({@link #SDFA_MAX_ROWS}/{@link #SDFA_MAX_BLOCKS}) bound memory; past the
-     * caps the scan falls back to the unmemoized simulation (still tracking
-     * kill points, so the extract window stays bounded either way).
+     * <p>Caps bound memory; past the caps the scan falls back to the
+     * unmemoized simulation (still tracking kill points, so the extract
+     * window stays bounded either way).
      *
      * <p><b>Soundness</b> — the same over-approximation the origin sim uses
      * ({@link #multiStateLeftmostStart}): transition/entry masks are ignored
@@ -726,15 +726,17 @@ public final class TdfaRunner implements RegexEngine {
      * exact extract confirms or continues), but it can never miss one.
      */
     static final int SDFA_KILL = -2;
-    // Small re2-style lazy-DFA budgets: past the caps the scan degrades to the
-    // unmemoized simulation (still kill-point aware). The bomb shape if these
-    // are too high: live-set rows proliferate on .*-heavy patterns and each
-    // runner (one per compiled Regex) keeps its own memo — dozens of live
-    // runners × MBs each OOMs the parity suites (seen: 27 live Tdfas). The
-    // memo is shared across threads matching the same Pattern (safe: see
-    // SearchDfa — locked mutation, snapshot reads), NOT per-thread.
-    static final int SDFA_MAX_ROWS = 512;      // rows: ~512B each + blockIds
-    static final int SDFA_MAX_BLOCKS = 1024;   // 1024 * 512 * 4B = 2 MB cap
+    // Lazy-DFA memo caps, DERIVED per runner from the match-time RAM budget
+    // ({@link Budgets#runtimeMemoryBytes()}, -Dtdfa.budget.runtime.memory,
+    // default 16 MiB per compiled pattern) through the weight model:
+    // half the budget in rows, half in 512-codepoint blocks (the historical
+    // 512-row/1024-block constants were the same idea without the budget).
+    // Past the caps the scan degrades to the unmemoized simulation (still
+    // kill-point aware). Each runner (one per compiled Regex) keeps its own
+    // memo — N live Patterns cost at most N runtime budgets of memo RAM.
+    // The memo is shared across threads matching the same Pattern (safe:
+    // see SearchDfa — locked mutation, snapshot reads), NOT per-thread.
+    // Below SDFA_MIN_WINDOW the raw scan runs unmemoized entirely.
     private static final int SDFA_MIN_WINDOW = 2048;   // below: unmemoized raw scan
     /** Origin-sim budget before falling back to the memoized trigger scan. */
     private static final int LSS_BUDGET_CHARS = 4096;

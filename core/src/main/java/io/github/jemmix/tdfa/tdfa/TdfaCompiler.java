@@ -22,7 +22,7 @@ final class TdfaCompiler {
         /** Compile work budget: every unbounded loop ticks it (fuzzer-found
          *  nested-quantifier bombs churn fixpoints without growing output —
          *  the state/kernel caps never trip). {@code null} = the
-         *  {@code tdfa.max.work} property default. */
+         *  {@code tdfa.budget.compile.compute} budget. */
         final WorkMeter meter;
         int[][] epsOut;
         int[][] symOut;
@@ -104,21 +104,24 @@ final class TdfaCompiler {
          * outright; ours determinizes that family compactly but still caps the
          * intrinsically-huge cross-products like rebar's
          * {@code [\s\S]{0,100}Result[\s\S]{0,100}} — a 200 K+-state minimal DFA).
-         * Read per-compile (not cached) so tests can override; defaults leave the
-         * largest legit in-corpus pattern (dictionary, 19.6 K pre-min states) 5x headroom.
+         * All caps are DERIVED per compile from the RAM budget
+         * ({@link Budgets#compileMemoryBytes()}) through {@link BudgetWeights}
+         * — raise {@code -Dtdfa.budget.compile.memory} for heavier legitimate
+         * use (with heap); defaults leave the largest legit in-corpus pattern
+         * (dictionary, 19.6 K pre-min states) ample headroom.
          */
-        final int maxStates = Integer.getInteger("tdfa.max.states", 100_000);
+        final int maxStates = Budgets.maxDfaStates();
         /** Memory-bound: each kernel config is a live Config (~80 B boxed all-
-         *  in: lists, intern table, builders). Measured: 6.4 M kernels peaks
-         *  under 1 GB, 18 M exceeds it. 10 M keeps every measured legit shape
-         *  (e.g. (a{1,50}){1,50} at 6.4 M) and clean-rejects nested-counted
-         *  bombs on default heaps instead of OOM-ing. Raise via
-         *  -Dtdfa.max.kernels (with heap) for heavier legitimate use. */
-        final int maxKernelsTotal = Integer.getInteger("tdfa.max.kernels", 10_000_000);
+         *  in: lists, intern table, builders — the measured weight behind
+         *  {@link BudgetWeights#KERNEL_CONFIG_BYTES}). The cap keeps every
+         *  measured legit shape (e.g. (a{1,50}){1,50}'s family far below it)
+         *  and clean-rejects nested-counted bombs on the RAM budget instead
+         *  of OOM-ing. */
+        final long maxKernelsTotal = Budgets.maxKernelConfigs();
         /** Per-kernel spike bound — the totals cap only counts AFTER addState,
          *  so one closure of a nested-counted bomb could exhaust the heap on
          *  its own. Checked while the closure is built. */
-        final int maxClosure = Integer.getInteger("tdfa.max.closure", 100_000);
+        final int maxClosure = Budgets.maxClosureConfigs();
         /** CFG successor-arc cap: buildCfg materializes TRANSITIVE zero-op
          *  reachability as direct edges (liveness needs them), and φ-variant
          *  finals can make that product explode — the round-24 specimen was a
@@ -126,7 +129,7 @@ final class TdfaCompiler {
          *  (≈6,940 successors/block): liveness then burned ~60 s at library
          *  budget and >10 s past the fuzz watchdog per engine. Sane shapes
          *  are orders of magnitude below the cap. */
-        final long maxCfgEdges = Long.getLong("tdfa.max.cfg.edges", 4_000_000L);
+        final long maxCfgEdges = Budgets.maxCfgEdges();
         long cfgEdges;
         /** Running sum of closure (kernel) sizes — re2c's kernels_total. */
         long kernelsTotal = 0;
@@ -143,13 +146,15 @@ final class TdfaCompiler {
 
         /**
          * @param workCap upper bound on the compile work budget (ticks);
-         *        {@code <= 0} uses the {@code tdfa.max.work} property verbatim;
-         *        a positive value is applied as {@code min(property, cap)} so
-         *        user-lowered budgets win and only deliberate raises are
-         *        tightened. Used by the facade's whole-match attempt to bound
-         *        how long an over-budget unpruned build may burn before
-         *        rejecting (the cut-free build of a cut-heavy pattern can
-         *        churn orders of magnitude past its pruned cost).
+         *        {@code <= 0} uses the {@code tdfa.budget.compile.compute}
+         *        budget verbatim; a positive value is applied as
+         *        {@code min(budget, cap)} so user-lowered budgets win and
+         *        only deliberate raises are tightened. Used by the facade's
+         *        whole-match ladder ({@link Budgets#wholeWorkCap()} /
+         *        {@link Budgets#anchoredWorkCap()}) to bound how long an
+         *        over-budget unpruned build may burn before rejecting (the
+         *        cut-free build of a cut-heavy pattern can churn orders of
+         *        magnitude past its pruned cost).
          */
         TdfaCompiler(Tnfa nfa, boolean longestMatch, boolean unpruned, long workCap) {
             this.nfa = nfa;
@@ -165,7 +170,7 @@ final class TdfaCompiler {
             this.breakpoints = computeBreakpoints();
             this.longest = longestMatch;
             this.unpruned = unpruned;
-            long work = Long.getLong("tdfa.max.work", 1L << 32);
+            long work = Budgets.compileComputeTicks();
             this.meter = new WorkMeter(workCap > 0 ? Math.min(work, workCap) : work);
             // Per-cell active symbol-edge sets (see rangeActiveEdges). Each class range
             // [lo, hi] covers a contiguous run of breakpoint cells: lo and hi+1 are
@@ -784,15 +789,28 @@ final class TdfaCompiler {
             // worst-case and subset construction with map-dedup already
             // tends to produce minimal DFAs (dictionary alternations:
             // ~30s of pure overhead saved by skipping). Knob policy: Tdfa javadoc.
+            // The fixpoint itself is METERED (review r10 P1-4 — it was the
+            // one unbounded loop the WorkMeter never saw); because the
+            // unminimized DFA is still correct, exhaustion here DEGRADES
+            // (skip the pass) rather than failing the compile — the same
+            // degrade-not-reject semantics as the norm-cell cap below.
             final boolean minimizeEnabled = !Boolean.getBoolean("tdfa.nominimize");
             final int minimizeMaxStates = Integer.getInteger("tdfa.minimize.max", 20000);
             final boolean debug = Boolean.getBoolean("tdfa.debug");
             long tMin = System.nanoTime();
             if (minimizeEnabled && n > 1 && n <= minimizeMaxStates) {
-                DfaMinimizer m = new DfaMinimizer(n, stateMeta, stateBase, stateFinalOpsOff,
-                        flatRanges, flatOps, stateEntryMask, stateAcceptMask,
-                        stateStopOnAcceptMask, stateFinalOpsByMask, longest);
-                int[] partition = m.computePartition();
+                int[] partition;
+                try {
+                    DfaMinimizer m = new DfaMinimizer(n, stateMeta, stateBase, stateFinalOpsOff,
+                            flatRanges, flatOps, stateEntryMask, stateAcceptMask,
+                            stateStopOnAcceptMask, stateFinalOpsByMask, longest, meter);
+                    partition = m.computePartition();
+                } catch (WorkMeter.Exhausted overBudget) {
+                    obs.note("minimize", "skipped (compute budget)");
+                    if (debug) System.err.println("[tdfa] minimize degraded: " + overBudget.getMessage());
+                    partition = null;
+                }
+                if (partition != null) {
                 int newN = 0;
                 for (int p : partition) newN = Math.max(newN, p + 1);
                 if (newN < n) {
@@ -852,6 +870,7 @@ final class TdfaCompiler {
                     }
                     if (debug) System.err.println("[tdfa] minimized: " + n + " -> " + newN + " states");
                     stateCount = newN;
+                }
                 }
             }
             // === BT22 §6.2 fallback operations ===
@@ -1044,7 +1063,7 @@ final class TdfaCompiler {
                     if (cfgEdges > maxCfgEdges) {
                         throw new IllegalStateException("pattern too large: TDFA CFG edge budget exceeded ("
                                 + cfgEdges + " successor arcs at block " + cfg.blocks.size()
-                                + "; cap " + maxCfgEdges + " — raise -Dtdfa.max.cfg.edges if you need denser graphs)");
+                                + "; cap " + maxCfgEdges + " — raise -D" + Budgets.COMPILE_MEMORY_PROP + " if you need denser graphs)");
                     }
                     DfaStateBuilder tb = builders.get(t);
                     for (int r = 0; r < tb.ranges.size(); r++) {
@@ -1187,7 +1206,7 @@ final class TdfaCompiler {
                 // otherwise exhaust the heap on its own.
                 if (out.size() > maxClosure) {
                     throw new IllegalStateException("pattern too large: TDFA ε-closure exceeds "
-                            + maxClosure + " configs (" + c.state + " reached; raise -Dtdfa.max.closure)");
+                            + maxClosure + " configs (" + c.state + " reached; raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
                 }
                 // Push children in REVERSE priority order. Same contract as the seeds:
                 // the pre-push check skips only already-POPPED keys; co-resident

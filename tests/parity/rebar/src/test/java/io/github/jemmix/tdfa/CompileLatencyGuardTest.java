@@ -28,8 +28,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       alternation (was: AST bomb rule "variable bounded repeat of
  *       wide-unbounded repeat"; ~0.4 s through the find compile, ~2 s with
  *       the eager whole ladder — the cut-heavy unpruned attempt rejects at
- *       {@code SingleCompile.WHOLE_WORK_CAP}, and the anchored last-chance
- *       build under {@code SingleCompile.ANCHORED_WORK_CAP} churns without
+ *       the ⅓-of-CPU-budget whole cap ({@code Budgets.wholeWorkCap()}),
+ *       and the anchored last-chance build under the ⅔ cap
+ *       ({@code Budgets.anchoredWorkCap()}) churns without
  *       converging, so its rejection is recorded; compiled with
  *       {@code DEFER_WHOLE_REJECTION} accordingly — this guard times the
  *       full eager ladder either way, and matches() is out of its scope);</li>

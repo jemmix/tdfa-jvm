@@ -1320,19 +1320,29 @@ maintainer review; the Java CI runs need workflow approval.
       JMH baselines record benchmark-class FQNs → re-capture
       `benchmarks/baselines/*` after the rename (quick mode suffices). Mechanical
       sed + full gate + jars pipeline + JDK 8 smoke.
-- [ ] **Review/organize budget & tuning flags** — the `-D` surface grew
-      accretion-style: compile caps `tdfa.max.{states,kernels,closure,work}`,
-      minimizer/regopt knobs `tdfa.minimize.max`, `tdfa.minimize.norm.cells`,
-      `tdfa.nominimize`, `tdfa.noregopt`, `tdfa.regopt.max`, runtime/engine
-      `tdfa.engine`, `tdfa.trace.strategy`, diagnostics `tdfa.debug*` /
-      `tdfa.asm.dump` / `tdfa.gen.debug`, plus the harness family `fuzz.*`
-      (incl. the `fuzz.maxWork` gradle → `fuzz.max.work` → `tdfa.max.work`
-      passthrough). Read-timing is already unified and pinned
-      (`CompileKnobTimingTest`, c838547; inventory comment at Tdfa.java:496).
-      Remaining: naming consistency (one `tdfa.max.*` family for the caps?),
-      user-facing vs test/diagnostic split, and ONE documented table with
-      defaults (README) — today the flags live only in javadoc, comments, and
-      error-message strings.
+- [x] **Review/organize budget & tuning flags** — RESOLVED (2026-09-18, the
+      budget-model revision): the budget surface is now THREE properties —
+      `tdfa.budget.compile.memory` (bytes, default 128 MiB),
+      `tdfa.budget.compile.compute` (ticks, default 5 s = 500 M at the
+      assumed 100 M ticks/s), `tdfa.budget.runtime.memory` (bytes per
+      pattern, default 16 MiB) — and every internal cap (states, kernels,
+      closure, cfg-edges, norm-cells, whole-ladder work caps, search-DFA
+      memo) DERIVES from them through the hardcoded weight model
+      (`BudgetWeights`/`Budgets`; weights pinned by `BudgetModelTest`).
+      The old direct cap flags `tdfa.max.{states,kernels,closure,work,
+      cfg.edges}` and `tdfa.minimize.norm.cells` are deleted (README now
+      carries the one documented table). Kept, with reasons: the pass
+      gates `tdfa.minimize.max`/`tdfa.nominimize`/`tdfa.regopt.max`/
+      `tdfa.noregopt` (they choose whether an optional pass RUNS —
+      degrade-not-reject semantics, not resource budgets), the harness
+      family `fuzz.*` (`fuzz.max.work` now overrides
+      `tdfa.budget.compile.compute`), and diagnostics `tdfa.debug*`/
+      `tdfa.asm.dump`/`tdfa.gen.debug`. Same revision closed review r10's
+      budget holes: P0-1 (TNFA builder metered, RAM+ticks — nested-repeat
+      bombs reject cleanly), P1-1 (fold-range scan metered), P1-4 (Moore
+      fixpoint metered, degrades to unminimized on exhaustion). Read-timing
+      stays unified and pinned (`CompileKnobTimingTest` — now also covers
+      the budget properties).
 - [x] SpotBugs / Error Prone / PMD — zero warnings — DONE (2026-09-04, REVIEW-2026-09 §1):
       ErrorProne 2.50.0 on facade/core/asm (zero findings after ~40 driven fixes;
       every suppression carries written rationale) + SpotBugs 4.9.8 hard-fail on
@@ -1372,12 +1382,14 @@ maintainer review; the Java CI runs need workflow approval.
       bit-identical digests vs the single-threaded reference).
 - [ ] Memory leak testing (generated class GC under load)
 - [x] Security review (untrusted regex DoS: compile-time blowup, state explosion) —
-      DONE: every compile phase is work-metered with clean `PatternSyntaxException`
-      rejection (WorkMeter + re2c-parity state/kernel/closure caps, `CompileBudgetTest`;
-      minimizer cell budget P1 #3), parser resource caps close the pre-determinization
-      surface ({n,m} ≤ 1000, group depth ≤ 256 — REVIEW §1 B2), and the fuzz-scoped
-      budget demonstrates the bomb families rejecting in seconds. README documents
-      the honest eager-DFA cost vs lazy engines.
+       DONE: every compile phase is work-metered with clean `PatternSyntaxException`
+       rejection (WorkMeter + RAM/CPU budget-derived caps, `CompileBudgetTest`/
+       `BudgetModelTest`; minimizer cell budget P1 #3), the front-end meters close
+       the pre-determinization surface ({n,m} ≤ 1000, group depth ≤ 256 — REVIEW
+       §1 B2; TNFA-builder ticks + weighted RAM and the fold-scan ticks — review
+       r10 P0-1/P1-1, closed with the budget-model revision), and the fuzz-scoped
+       budget demonstrates the bomb families rejecting in seconds. README documents
+       the honest eager-DFA cost vs lazy engines.
 
 ## Single-compile whole/find (2026-09-12 — resolved 2026-09-13)
 

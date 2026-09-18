@@ -62,13 +62,14 @@ public final class DifferentialFuzzer {
         long one = Long.getLong("fuzz.one", 0);
         if (one != 0) {
             // Replay under the SAME scoped budget the soak uses — without
-            // this, a one-case replay runs at the library budget (2^32) and
-            // budget monsters replay in tens of seconds, misrepresenting
-            // their in-soak behavior (round 24: a 57 s replay got labeled
-            // "clean"). -Dfuzz.max.work=0 restores the library budget.
+            // this, a one-case replay runs at the library budget (5 s of
+            // ticks) and budget monsters replay in tens of seconds,
+            // misrepresenting their in-soak behavior (round 24: a 57 s
+            // replay got labeled "clean"). -Dfuzz.max.work=0 restores the
+            // library budget.
             long fuzzWork = fuzzWorkBudget();
             String prevWork = fuzzWork > 0
-                    ? System.setProperty("tdfa.max.work", Long.toString(fuzzWork)) : null;
+                    ? System.setProperty("tdfa.budget.compile.compute", Long.toString(fuzzWork)) : null;
             try {
                 Case c = generate(one);
                 System.out.println("pattern: " + escape(c.pattern()));
@@ -77,12 +78,12 @@ public final class DifferentialFuzzer {
                 Outcome o = runOne(c);
                 System.out.println("oracle:  " + o.oracle);
                 System.out.println("asm:     " + o.asm);
-                System.out.println("vm:      " + o.vm);
+                System.out.println("vm:     " + o.vm);
                 if (!o.exceptions.isEmpty()) o.exceptions.forEach(System.out::println);
             } finally {
                 if (fuzzWork > 0) {
-                    if (prevWork != null) System.setProperty("tdfa.max.work", prevWork);
-                    else System.clearProperty("tdfa.max.work");
+                    if (prevWork != null) System.setProperty("tdfa.budget.compile.compute", prevWork);
+                    else System.clearProperty("tdfa.budget.compile.compute");
                 }
             }
             return;
@@ -185,7 +186,8 @@ public final class DifferentialFuzzer {
      *  no sacrificed threads, no background spin, and the divergence is
      *  recorded as BUDGET_REJECT instead of a hang (same known class).
      *  Legit fuzz patterns measure <<1M ticks, so the slice is unaffected.
-     *  Set -Dfuzz.max.work=0 to fuzz at the library default (2^32). */
+     *  Set -Dfuzz.max.work=0 to fuzz at the library default (500 M ticks,
+     *  i.e. 5 s at the assumed tick rate). */
     static long fuzzWorkBudget() {
         return Long.getLong("fuzz.max.work", 8L << 20);
     }
@@ -195,7 +197,7 @@ public final class DifferentialFuzzer {
         Files.createDirectories(outDir);
         long fuzzWork = fuzzWorkBudget();
         String prevWork = fuzzWork > 0
-                ? System.setProperty("tdfa.max.work", Long.toString(fuzzWork)) : null;
+                ? System.setProperty("tdfa.budget.compile.compute", Long.toString(fuzzWork)) : null;
         try (Logs logs = new Logs(outDir)) {
             SplittableRandom master = new SplittableRandom(masterSeed);
             long deadline = System.nanoTime() + minutes * 60_000_000_000L;
@@ -266,8 +268,8 @@ public final class DifferentialFuzzer {
             r.writeSummary(logs);
             return r;
         } finally {
-            if (prevWork != null) System.setProperty("tdfa.max.work", prevWork);
-            else if (fuzzWork > 0) System.clearProperty("tdfa.max.work");
+            if (prevWork != null) System.setProperty("tdfa.budget.compile.compute", prevWork);
+            else if (fuzzWork > 0) System.clearProperty("tdfa.budget.compile.compute");
         }
     }
 

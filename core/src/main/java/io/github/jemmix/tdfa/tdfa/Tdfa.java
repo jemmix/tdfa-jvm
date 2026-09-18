@@ -554,8 +554,9 @@ public final class Tdfa {
      * Work-bounded variant of {@link #compile(Tnfa, boolean, CompileObserver)}
      * (same cap semantics as {@link #compileUnpruned(Tnfa, boolean, CompileObserver, long)}):
      * {@code workCap > 0} clamps the compile work budget to
-     * {@code min(-Dtdfa.max.work, workCap)} ticks. The facade's over-budget
-     * whole corner uses this to bound its anchored attempt.
+     * {@code min(tdfa.budget.compile.compute, workCap)} ticks. The facade's over-budget
+     * whole corner uses this to bound its anchored attempt
+     * ({@link Budgets#anchoredWorkCap()}).
      */
     public static Tdfa compile(Tnfa nfa, boolean longestMatch,
                                io.github.jemmix.tdfa.core.CompileObserver observer,
@@ -586,12 +587,13 @@ public final class Tdfa {
     /**
      * Work-bounded variant of {@link #compileUnpruned(Tnfa, boolean, CompileObserver)}:
      * {@code workCap > 0} clamps the compile work budget to
-     * {@code min(-Dtdfa.max.work, workCap)} ticks (positive caps only tighten —
-     * a user-lowered property still wins). The facade uses this to bound its
-     * whole-match attempt: a cut-heavy pattern's cut-free build can churn
-     * orders of magnitude past its pruned cost before the output caps trip,
-     * and a bounded rejection degrades to the historical lazy whole engine
-     * instead of stalling compile().
+     * {@code min(tdfa.budget.compile.compute, workCap)} ticks (positive caps
+     * only tighten — a user-lowered budget still wins). The facade uses this
+     * to bound its whole-match attempt
+     * ({@link Budgets#wholeWorkCap()}): a cut-heavy pattern's cut-free
+     * build can churn orders of magnitude past its pruned cost before the
+     * output caps trip, and a bounded rejection degrades to the historical
+     * lazy whole engine instead of stalling compile().
      */
     public static Tdfa compileUnpruned(Tnfa nfa, boolean longestMatch,
                                        io.github.jemmix.tdfa.core.CompileObserver observer,
@@ -613,17 +615,21 @@ public final class Tdfa {
     // a static initializer: setting a property takes effect on the next
     // compile in the same JVM, and tests can vary knobs without forking.
     // Knobs and their sites:
+    //   tdfa.budget.compile.memory / .compute               (budgets, Budgets —
+    //   tdfa.budget.runtime.memory                            all caps derive)
     //   tdfa.nominimize, tdfa.minimize.max, tdfa.noregopt, tdfa.regopt.max,
     //   tdfa.debug, tdfa.debug.closure, tdfa.debug.finals          (compile)
-    //   tdfa.max.states/kernels/closure/work                       (caps, TdfaCompiler)
-    //   tdfa.minimize.norm.cells                                    (DfaMinimizer)
     //   tdfa.engine, tdfa.gen.debug                                 (facade, per compile)
-    // The only frozen reads left are RUNTIME diagnostics on hot loops
-    // (TdfaRunner.WTRACE) and the tdfa.asm.dump emission switch — see
-    // those sites. tdfa.debug previously had THREE readers at TWO
-    // different timings (frozen in Tdfa, frozen again in
-    // TdfaCompiler.Builder, fresh in Tnfa) — the split produced partial
-    // debug output whenever the property was set after class init; all
-    // three now read fresh, once per compile.
+    // The derived determinization caps (states/kernels/closure/cfg-edges/
+    // norm-cells, the whole-ladder work caps, the search-DFA memo caps) are
+    // all linear functions of the two compile budgets / the runtime budget
+    // through the weight model (BudgetWeights) — the former direct cap
+    // properties (tdfa.max.*) are gone. The only frozen reads left are
+    // RUNTIME diagnostics on hot loops (TdfaRunner.WTRACE) and the
+    // tdfa.asm.dump emission switch — see those sites. tdfa.debug
+    // previously had THREE readers at TWO different timings (frozen in
+    // Tdfa, frozen again in TdfaCompiler.Builder, fresh in Tnfa) — the
+    // split produced partial debug output whenever the property was set
+    // after class init; all three now read fresh, once per compile.
 
 }
