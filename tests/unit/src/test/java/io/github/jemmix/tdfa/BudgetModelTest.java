@@ -113,29 +113,40 @@ class BudgetModelTest {
     /** Review r10 P1-4: the Moore fixpoint is metered, and because the
      *  unminimized DFA is still correct, exhaustion DEGRADES (the pass is
      *  skipped, noted in the observer) instead of failing the compile.
-     *  The suffix-chain DFA {@code a{0,900}b} determinizes in well under
-     *  200 K ticks but peels one Moore group per round (~900 rounds × 902
-     *  states ≈ 810 K ticks) — a wide, deterministic budget window. */
+     *  The suffix-chain DFA over {@code a?×900 b} (flat concatenation —
+     *  the equivalent {@code a{0,900}b} desugars into ~900 AST levels and
+     *  overflows shallower CI stacks) determinizes in ~2.2 M ticks but
+     *  peels one Moore group per round (~900 rounds × 902 states, needing
+     *  ~3.5 M): a wide budget window, and tick counts are deterministic,
+     *  so 2.75 M sits centrally in it on every machine. */
     @Test
     void minimizerFixpointDegradesInsteadOfRejecting() {
+        StringBuilder chain = new StringBuilder();
+        for (int i = 0; i < 900; i++) chain.append("a?");
+        chain.append('b');
+        String suffixChain = chain.toString();
         Map<String, String> notes = new HashMap<>();
         CompileObserver rec = new CompileObserver() {
             @Override public void note(String key, String value) { notes.put(key, value); }
         };
-        System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "200000");
-        Tdfa t = Tdfa.compile(Tnfa.compile("a{0,900}b"), false, rec);
+        System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "2750000");
+        Tdfa t = Tdfa.compile(Tnfa.compile(suffixChain), false, rec);
         assertThat(notes.get("minimize")).isEqualTo("skipped (compute budget)");
         assertThat(t.stateCount()).isEqualTo(902);
-        // and the artifact is correct unminimized:
-        io.github.jemmix.tdfa.Pattern p = Pattern.compile("a{0,900}b");
+        // with budget to spare, the same pattern minimizes normally:
+        System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "8000000");
+        notes.clear();
+        Tdfa t2 = Tdfa.compile(Tnfa.compile(suffixChain), false, rec);
+        assertThat(notes.get("minimize")).isNull();
+        assertThat(t2.stateCount()).isEqualTo(902);   // chain is already minimal
+        // and the artifact is correct through the full facade, at the default
+        // budgets (the whole-match ladder's eager attempts are capped at
+        // fractions of the CPU budget, so the budgeted legs above stay on
+        // the Tdfa API where the caps don't interfere):
+        System.clearProperty(Budgets.COMPILE_COMPUTE_PROP);
+        io.github.jemmix.tdfa.Pattern p = Pattern.compile(suffixChain);
         assertThat(p.matcher("a".repeat(900) + "b").find()).isTrue();
         assertThat(p.matcher("a".repeat(901) + "b").find()).isTrue();   // unanchored: matches from index 1
         assertThat(p.matcher("a".repeat(901) + "c").find()).isFalse();
-        // with budget to spare, the same pattern minimizes normally:
-        System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "4000000");
-        notes.clear();
-        Tdfa t2 = Tdfa.compile(Tnfa.compile("a{0,900}b"), false, rec);
-        assertThat(notes.get("minimize")).isNull();
-        assertThat(t2.stateCount()).isEqualTo(902);   // chain is already minimal
     }
 }
