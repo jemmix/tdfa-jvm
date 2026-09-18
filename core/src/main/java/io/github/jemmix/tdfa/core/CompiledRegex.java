@@ -53,10 +53,10 @@ public final class CompiledRegex {
                 ? options.unicodeProvider() : UnicodeProviders.get();
         CompileObserver obs = options.observer() != null ? options.observer() : CompileObserver.NONE;
         try {
-            // One CPU ledger for the whole compile (front-end + every eager
-            // ladder attempt), and the per-engine runtime-memo split when the
-            // pattern keeps a dedicated whole runner — see PatternCompiler,
-            // same hardening.
+            // One CPU ledger for the whole compile (front-end + every
+            // shipped ladder attempt), and the per-engine runtime-memo
+            // split when the pattern keeps a dedicated whole runner —
+            // see PatternCompiler for the same wiring.
             io.github.jemmix.tdfa.tdfa.WorkMeter ledger = new io.github.jemmix.tdfa.tdfa.WorkMeter(
                     io.github.jemmix.tdfa.tdfa.Budgets.compileComputeTicks());
             Tnfa nfa = Tnfa.compile(pattern, options.isDisableUnicodeGroups(), false, provider, obs, ledger);

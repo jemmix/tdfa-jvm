@@ -23,8 +23,7 @@ import java.util.Arrays;
  * ({@link Budgets#compileMemoryBytes()} through {@link
  * BudgetWeights#HIST_FIXED_BYTES} plus 4 B per content int / cache cell):
  * history-heavy tagged compiles can dwarf the kernel configs themselves
- * (histories grow with nesting depth, caches scale with tags), and before
- * the 2026-09 adversarial review none of it was budget-visible. Over
+ * (histories grow with nesting depth, caches scale with tags). Over
  * budget: the standard clean "pattern too large" rejection.
  */
 final class HistTable {

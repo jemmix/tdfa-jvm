@@ -117,11 +117,11 @@ final class TdfaCompiler {
          *  in: lists, intern table, builders — the measured weight behind
          *  {@link BudgetWeights#KERNEL_CONFIG_BYTES}) PLUS its int[tags]
          *  register slice (4 B/tag): a many-group pattern's configs scale
-         *  with the capture count, which the flat 80 B never saw. The cap
-         *  keeps every measured legit shape (e.g. (a{1,50}){1,50}'s family
-         *  far below it) and clean-rejects nested-counted bombs on the RAM
-         *  budget instead of OOM-ing. The check itself compares the WEIGHTED
-         *  total against the compile RAM budget (see kernelsWeighted). */
+         *  with the capture count. The cap keeps every measured legit shape
+         *  (e.g. (a{1,50}){1,50}'s family far below it) and clean-rejects
+         *  nested-counted bombs on the RAM budget instead of OOM-ing. The
+         *  check itself compares the WEIGHTED total against the compile RAM
+         *  budget (see kernelsWeighted). */
         final long maxKernelsTotal = Budgets.maxKernelConfigs();
         /** Per-config weight this compile charges (see maxKernelsTotal).
          *  Assigned in the constructor (needs the final tags count). */
@@ -214,15 +214,14 @@ final class TdfaCompiler {
             // codepoint line (letter / space / other cells), so adjacency-only reuse
             // would never fire.
             //
-            // Adversarial review 2026-09: this precompute is O(cells × edges)
-            // cc.matches probes plus one long[words] PER CELL — on class-heavy
-            // patterns (tens of thousands of disjoint single-char alternations)
-            // that is gigabytes and 10^10 probes that NO budget saw. Both are
-            // budget-visible now: the arrays are charged up front against the
-            // compile RAM budget (before a single one is allocated), the probe
-            // scan and set interning tick the work meter, and interning is
-            // hash-based (the former linear distinct-set scan was itself
-            // quadratic in cells).
+            // This precompute is O(cells × edges) cc.matches probes plus one
+            // long[words] PER CELL — on class-heavy patterns (tens of
+            // thousands of disjoint single-char alternations) that is
+            // gigabytes of arrays and 10^10 probes. It is fully
+            // budget-visible: the arrays are charged up front against the
+            // compile RAM budget (before a single one is allocated), the
+            // probe scan and set interning tick the work meter, and
+            // interning is hash-based, so no quadratic rescans.
             int cells = breakpoints.length - 1;
             int edgeCount = nfa.symClass.length;
             int words = (edgeCount + 63) >> 6;
@@ -259,8 +258,7 @@ final class TdfaCompiler {
         }
 
         /** Hashable intern key for one cell's active-edge bitset (deterministic
-         *  first-seen id assignment — same as the former linear scan, without
-         *  its quadratic rescans). */
+         *  first-seen id assignment — no rescanning of earlier sets). */
         private static final class ActiveSetKey {
             final long[] bits;
             final int hash;
@@ -298,9 +296,8 @@ final class TdfaCompiler {
                 for (int a = 1; a < arr.length; a++) {
                     int key = arr[a]; int kp = pri[key]; int b = a - 1;
                     // Insertion sort is O(d²) in the out-degree d — a single
-                    // hub with a six-figure alternation fan-in made this the
-                    // one unmetered quadratic in the front of determinization
-                    // (adversarial review 2026-09). Every shift is a tick.
+                    // hub with a six-figure alternation fan-in makes this the
+                    // front of determinization. Every shift is a tick.
                     while (b >= 0 && pri[arr[b]] > kp) {
                         meter.tick();
                         arr[b + 1] = arr[b]; b--;
@@ -324,10 +321,9 @@ final class TdfaCompiler {
 
         /** Compute breakpoints: every codepoint where some NFA CharClass boundary occurs. */
         int[] computeBreakpoints() {
-            // Metered (adversarial review 2026-09): the boxed TreeSet insert
-            // is O(log) per boundary and boundaries scale with total class
-            // ranges — a class-heavy pattern's front-end sort was invisible
-            // to the work budget.
+            // The boxed TreeSet insert is O(log) per boundary and boundaries
+            // scale with total class ranges — metered like the rest of the
+            // front of determinization.
             TreeSet<Integer> bps = new TreeSet<>();
             bps.add(0);
             bps.add(0x110000); // sentinel upper bound (exclusive)
@@ -478,11 +474,10 @@ final class TdfaCompiler {
                     for (int bi = 0; bi < cellCount; bi++) {
                         // One tick per (context, cell) sweep step: the
                         // per-set DEDUP fast path below still does real work
-                        // (an addRange + charge) per cell — states × cells
-                        // addRange calls were the one unbounded path in the
-                        // whole determinize loop the meter never saw
-                        // (adversarial review 2026-09: 500 K states × tens
-                        // of thousands of cells = 10^10 untimed appends).
+                        // per cell (an addRange + charge), and the sweep is
+                        // states × cells — hundreds of thousands of states
+                        // times tens of thousands of cells must trip the
+                        // budget, not just the slow path.
                         meter.tick();
                         int rangeLo = breakpoints[bi];
                         int rangeHi = breakpoints[bi + 1] - 1;

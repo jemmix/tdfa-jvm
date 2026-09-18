@@ -188,7 +188,7 @@ class-frozen:
 | Property | Meaning | Default |
 |---|---|---|
 | `tdfa.budget.compile.memory` | compile RAM, bytes (all transient compile structures, weighted) | 128 MiB |
-| `tdfa.budget.compile.compute` | compile CPU, ticks (5 s at the assumed 100 M ticks/s) — one shared ledger per `Pattern.compile` covers the shipped work of every eager attempt | 500 M |
+| `tdfa.budget.compile.compute` | compile CPU, ticks (5 s at the assumed 100 M ticks/s) — one shared ledger per `Pattern.compile` covers the shipped work of every eager attempt (a budget-rejected eager whole probe can add up to ⅓ of the budget in wall time) | 500 M |
 | `tdfa.budget.runtime.memory` | match-time RAM **per pattern** (lazy memos — search-DFA rows/blocks and the walk-block memo — partitioned across the pattern's engines) | 16 MiB |
 
 Match time is deliberately CPU-unbudgeted — the linear-time guarantee

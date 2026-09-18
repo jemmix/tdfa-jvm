@@ -1518,6 +1518,60 @@ end-of-input is a full match. The follow-up list, resolved (commits 0fded73
       design round; only worth it if datefinder-class compile walls bother
       anyone after the benchmark run).
 
+## Budget round r11 follow-ups (2026-09-18, open)
+
+Opened by the budget-accounting round (`docs/REVIEW-2026-09-budget.md`,
+PR #8). Two design questions the round deliberately did NOT decide:
+
+- [ ] **Partial-whole TDFA — one artifact for find() AND matches().**
+      Today `Pattern.compile` determinizes up to three times (unpruned
+      whole, pruned find when `pikeCutMatters`, anchored fallback in the
+      over-budget corner) because the pike cut that makes find() exact
+      deletes the continuations whole-input walks need. Options to
+      evaluate, roughly in increasing invasiveness:
+      1. *Anchored-first ladder* — build the both-ends-anchored artifact
+         as the ONLY whole artifact (it is exact for matches() by
+         construction and cheaper than the cut-free build on cut-heavy
+         shapes, since anchoring prunes harder). Cost: the shared
+         find+whole single-build case disappears (anchored can't serve
+         find), so every pattern pays two determinizations; net win only
+         if the unpruned-shared case is rarer than measured or the
+         anchored build gets much cheaper.
+      2. *Cut-residue side table (the actual "partial-whole" artifact)* —
+         during the PRUNED compile, when the pike cut deletes configs,
+         record the deleted continuations keyed by (state, range, ctx) in
+         a bounded side table; `matchWhole` walks the pruned artifact and
+         spawns recorded shadow tracks at marked transitions. One
+         determinization total; the side table replaces the second build
+         and its cap replaces the whole-ladder probe budget. Needs: a
+         construction proof (recorded tracks are exactly the unpruned
+         walk's divergence), a size cap with clean rejection, and
+         randomized anchored-vs-partial parity like the anchored
+         artifact's 18 K-pair validation.
+      3. *Drop whole exactness* — `matches()` := `find()` from 0 plus a
+         full-span check. One build, zero new machinery; wrong group
+         spans (and wrong booleans on `(a|ab)`-class shapes where the
+         whole winner outranks the find winner). Only if the contract is
+         ever relaxed deliberately.
+      Decision input to gather first: corpus frequency of
+      `pikeCutMatters` (observer note `pikeCut` exists) and the
+      over-budget-corner rate.
+- [ ] **Execution RAM checked at the end of compilation.** The runtime
+      budget bounds the lazy memos (rows/blocks/walk, per-engine split),
+      but nothing verifies at compile end that the RETAINED footprint —
+      flat artifact tables, eager dispatch tables (ascii/latin tiers),
+      memo caps incl. their floors — fits `tdfa.budget.runtime.memory`.
+      User-facing contract to build: "if it compiles, it will execute
+      within budget" — an end-of-`Pattern.compile` check that computes
+      the weighted retained/memo-ceiling bytes and fails with the clean
+      "pattern too large" family (pointing at
+      `-Dtdfa.budget.runtime.memory`) when exceeded. Open questions:
+      where eager dispatch tables belong (construction-time constants
+      today, see the r11 scope notes — moving them under the budget
+      re-tiers the dictionary fast paths), how floors interact with tiny
+      budgets (reject vs clamp), and what is checkable for BYO factory
+      engines (nothing, likely — document).
+
 ## Wishlist (maybe, someday, if motivated)
 
 - [ ] `condy` / `invokedynamic` for lazy per-regex specialization

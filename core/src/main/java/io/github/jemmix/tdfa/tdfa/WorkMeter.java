@@ -27,14 +27,13 @@ package io.github.jemmix.tdfa.tdfa;
  * convention), and every tick on any family member debits the ledger too.
  * The facade's SHIPPED work — front-end parse/TNFA, a succeeded unpruned
  * whole, the pruned find, the anchored re-parse + determinize — runs on
- * the one ledger, so a single {@code Pattern.compile} cannot exceed the
- * CPU budget on shipped work. The eager unpruned WHOLE attempt is a
+ * the one ledger, so a single {@code Pattern.compile}'s shipped work
+ * cannot exceed the CPU budget. The eager unpruned WHOLE attempt is a
  * <em>probe</em>: it runs on its own fraction-capped meter and its spend
  * is {@link #charge(long) charged} to the ledger only on success — a
- * budget-REJECTED probe's bounded churn (at most
- * {@link Budgets#wholeWorkCap()} ticks) is the documented price of
- * trying, keeping the ladder's mandatory attempts (previously up to
- * 2&times; the budget combined) inside one budget.
+ * budget-REJECTED probe's bounded churn (at most {@link
+ * Budgets#wholeWorkCap()} ticks) is the price of trying, and keeps the
+ * ladder's mandatory attempts inside the one budget.
  */
 public final class WorkMeter {
     private final long budget;

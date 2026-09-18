@@ -90,15 +90,13 @@ public final class BudgetWeights {
     public static final int TNFA_SYM_EDGE_BYTES = 64;
 
     /**
-     * A determinization kernel config is assumed to weigh 80 bytes boxed —
-     * the measured all-in figure (lists, intern table, builders) from the
-     * 2026-09 memory work: 6.4 M kernels peaked under 1 GB — <em>plus</em>
-     * {@link #KERNEL_REG_TAG_BYTES} per tag: every Config carries an
-     * {@code int[tags]} register slice (cloned per transition op
-     * allocation), so the per-config footprint scales with the capture
-     * count and the flat 80 B only holds for near-tagless patterns
-     * (adversarial review 2026-09: a many-group pattern undercharged its
-     * configs by orders of magnitude).
+     * A determinization kernel config weighs 80 bytes boxed — the measured
+     * all-in figure (lists, intern table, builders; 6.4 M kernels peaked
+     * under 1 GB) — <em>plus</em> {@link #KERNEL_REG_TAG_BYTES} per tag:
+     * every Config carries an {@code int[tags]} register slice (cloned per
+     * transition op allocation), so the per-config footprint scales with
+     * the capture count and the flat 80 B only holds for near-tagless
+     * patterns.
      */
     public static final int KERNEL_CONFIG_BYTES = 80;
 
@@ -118,10 +116,8 @@ public final class BudgetWeights {
 
     /** The Perl-mode position-aware stop-on-accept table, per DFA state
      *  (64 int cells): charged in addition to {@link #DFA_STATE_BYTES}
-     *  because it is a distinct dense allocation the 256 B average never
-     *  included (adversarial review 2026-09: at the RAM-derived state cap
-     *  the stop table alone consumed the whole assumed budget). POSIX
-     *  (longest) compiles never allocate it. */
+     *  because it is a distinct dense allocation outside the 256 B
+     *  average. POSIX (longest) compiles never allocate it. */
     public static final int STOP_TABLE_STATE_BYTES = 256;
 
     /** One live boxed {@code Range} in a DfaStateBuilder during
@@ -203,9 +199,8 @@ public final class BudgetWeights {
     /** The runtime RAM budget is partitioned across the per-pattern lazy
      *  match-time memos in eighths: search-DFA rows 4/8, search-DFA
      *  transition blocks 3/8, and the walk-block memo (wide-codepoint
-     *  dispatch, {@code WalkIndex}) 1/8. Before the 2026-09 adversarial
-     *  review the walk memo was entirely outside the budget (a fixed
-     *  64-block cap plus UNBOUNDED per-state id tables, 512 B each). */
+     *  dispatch, {@code WalkIndex}) 1/8. Every lazy structure a runner
+     *  retains draws from one of the three shares. */
     public static final int RUNTIME_WALK_DIVISOR = 8;
 
     /** One per-state walk-block id table ({@code int[128]} + the
@@ -217,6 +212,6 @@ public final class BudgetWeights {
     public static final int WALK_BLOCK_BYTES = 2176;
 
     /** Floor for walk blocks so a tiny runtime budget keeps the memo
-     *  usable (the historical fixed cap was 64). */
+     *  usable. */
     public static final int WALK_MIN_BLOCKS = 64;
 }

@@ -82,13 +82,13 @@ final class PatternCompiler {
         final io.github.jemmix.tdfa.core.CompileObserver obs = observer != null
                 ? observer : io.github.jemmix.tdfa.core.CompileObserver.NONE;
         try {
-            // One CPU ledger for the WHOLE compile (adversarial review
-            // 2026-09): the front-end parse/TNFA build and every eager
-            // ladder attempt (unpruned whole, pruned find, anchored
-            // re-parse + determinize) debit the same pool, so a single
-            // Pattern.compile can never burn more than the one
-            // tdfa.budget.compile.compute budget (the attempts previously
-            // each carried their own full/fractional budget — up to 2x).
+            // One CPU ledger for the WHOLE compile: the front-end parse/TNFA
+            // build and every shipped ladder attempt (succeeded unpruned
+            // whole, pruned find, anchored re-parse + determinize) debit
+            // the same pool, so a single Pattern.compile's shipped work
+            // stays within the one tdfa.budget.compile.compute budget.
+            // (The unpruned whole attempt itself is a fraction-capped
+            // probe, charged only on success — see SingleCompile.)
             io.github.jemmix.tdfa.tdfa.WorkMeter ledger =
                     new io.github.jemmix.tdfa.tdfa.WorkMeter(
                             io.github.jemmix.tdfa.tdfa.Budgets.compileComputeTicks());

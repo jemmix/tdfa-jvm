@@ -225,12 +225,11 @@ import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_KILL;
          * row's cells array is published fully -1-filled at row intern and
          * its cells only ever transition -1 → final under this lock; plain
          * int writes are atomic, so a lock-free reader sees either -1 (it
-         * re-checks under the lock) or the final value. The former
-         * copy-on-write of the whole {@code rowBlockIdsArr} snapshot per
-         * CELL write was pure waste — O(rows) clone per (row, block) pair,
-         * unaccounted transient churn the cap math never modeled — while
-         * the outer array still only ever grows (rows), which is what the
-         * snapshot readers actually rely on. */
+         * re-checks under the lock) or the final value. Copying the row
+         * (or the whole {@code rowBlockIdsArr} snapshot) per cell would be
+         * O(rows) churn per (row, block) pair for no reader benefit — the
+         * outer array only ever grows (rows), which is what snapshot
+         * readers rely on. */
         private void setRowCell(int rowId, int b, int value) {
             rowBlockIdsArr[rowId][b] = value;
         }

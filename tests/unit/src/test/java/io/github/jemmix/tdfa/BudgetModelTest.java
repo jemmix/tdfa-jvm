@@ -161,13 +161,13 @@ class BudgetModelTest {
         assertThat(p.matcher("a".repeat(901) + "c").find()).isFalse();
     }
 
-    // ===== adversarial review 2026-09: previously unaccounted resources =====
+    // ===== budget-accounting pins (round r11) =====
 
     /** Active-set precompute (TdfaCompiler ctor): O(cells × edges)
-     *  cc.matches probes plus one long[words] per cell was charged to NO
-     *  budget — a many-distinct-single-char alternation could allocate
-     *  gigabytes and 10^10 probes before any cap fired. Both the RAM
-     *  charge and the work ticks must reject it cleanly now. */
+     *  cc.matches probes plus one long[words] per cell must be visible to
+     *  BOTH budgets — a many-distinct-single-char alternation asks for
+     *  megabytes of arrays and 10^10 probes, and both the RAM charge and
+     *  the work ticks must reject it cleanly. */
     @Test
     void activeSetPrecomputeIsBudgetVisible() {
         // ~2600 disjoint single-char classes: 5200+ cells × 41 words × 8 B
@@ -205,12 +205,12 @@ class BudgetModelTest {
 
     /** Kernel configs carry int[tags] register slices: the per-config
      *  weight is tag-aware (80 B + 4 B/tag), so a capture-heavy closure
-     *  bomb rejects on the RAM budget instead of on the heap. */
+     *  bomb rejects on the RAM budget, not on the heap. */
     @Test
     void kernelWeightsAreTagAware() {
         // 40 groups × optional nesting: closures multiply configs, each
-        // carrying an int[80] regs slice — the flat 80 B weight used to
-        // undercharge it 5x. Scoped to 25 KB the weighted spike cap fires.
+        // carrying an int[80] regs slice on top of the 80 B base weight.
+        // Scoped to 25 KB the weighted spike cap fires.
         StringBuilder p = new StringBuilder();
         for (int i = 0; i < 20; i++) p.append("((a?)");
         for (int i = 0; i < 20; i++) p.append(")");
@@ -226,10 +226,9 @@ class BudgetModelTest {
     }
 
     /** Interned tag histories and their derived caches are charged against
-     *  the compile RAM budget (deep nested captures used to intern
-     *  unbounded sequence content unseen by any cap). Deep nesting grows
-     *  histories quadratically (every prefix length interned) while the
-     *  TNFA itself stays linear — the history charge must fire first. */
+     *  the compile RAM budget. Deep nesting grows histories quadratically
+     *  (every prefix length interned) while the TNFA itself stays linear —
+     *  the history charge must fire first. */
     @Test
     void tagHistoriesAreCharged() {
         System.setProperty(Budgets.COMPILE_MEMORY_PROP, "2097152");
@@ -265,10 +264,11 @@ class BudgetModelTest {
         }
     }
 
-    /** One Pattern.compile burns at most ONE compile CPU budget: the whole
-     *  ladder's attempts (front-end, unpruned whole, pruned find, anchored
-     *  re-parse + determinize) share a ledger — the previously separate
-     *  full/fractional budgets summed to up to 2x the user's budget. */
+    /** One Pattern.compile's shipped work stays within ONE compile CPU
+     *  budget: the ladder's attempts (front-end, succeeded unpruned whole,
+     *  pruned find, anchored re-parse + determinize) share a ledger; the
+     *  doomed unpruned probe is the only uncharged spend (its fraction
+     *  cap bounds it). */
     @Test
     void ladderTotalIsOneCpuBudget() {
         // A bomb whose doomed attempts burn their caps: the compile must
@@ -285,9 +285,9 @@ class BudgetModelTest {
             assertThatCode(() -> p.matcher("\u00e9zz").matches())
                     .isInstanceOf(PatternSyntaxException.class)
                     .hasMessageContaining("pattern too large");
-            // 6 M ticks ≈ tens of ms of rejection work per attempt; if the
-            // attempts each carried their own budget the doomed anchors
-            // alone could burn ~2x. Generous upper bound for CI variance.
+            // 6 M ticks ≈ tens of ms of rejection work per attempt; the
+            // ledger keeps the total near the scoped budget. Generous
+            // upper bound for CI variance.
             assertThat((System.nanoTime() - t0) / 1_000_000)
                     .as("wall of the fully-ledgered ladder").isLessThan(15_000);
         } finally {

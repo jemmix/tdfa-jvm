@@ -13,11 +13,7 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  *  the partition): each published per-state table weighs {@link
  *  BudgetWeights#WALK_STATE_TABLE_BYTES}, each block {@link
  *  BudgetWeights#WALK_BLOCK_BYTES}, and past the allowance dispatch falls
- *  back to binary search (correct, slower). Before the 2026-09 adversarial
- *  review the blocks were capped by a magic constant (64) and the
- *  per-state tables were entirely UNBOUNDED — up to 512 B × stateCount of
- *  unaccounted match-time RAM on a wide-codepoint scan of a large disjoint
- *  DFA. */
+ *  back to binary search (correct, slower). */
 final class WalkIndex {
     private final TdfaRunner r;
 
@@ -130,8 +126,8 @@ final class WalkIndex {
         return n;
     }
 
-    /** Block-count cap derived from the walk allowance (floored at the
-     *  historical constant so a tiny budget keeps a usable memo). */
+    /** Block-count cap derived from the walk allowance (floored so a tiny
+     *  budget keeps a usable memo). */
     private int maxWalkBlocks() {
         return (int) Math.max(BudgetWeights.WALK_MIN_BLOCKS, maxBytes / BudgetWeights.WALK_BLOCK_BYTES);
     }

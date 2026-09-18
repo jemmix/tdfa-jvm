@@ -101,15 +101,12 @@ public final class SingleCompile {
      *
      * <p>The {@code ledger} is the compile's CPU ledger. The SHIPPED work
      * (front-end, a succeeded whole, the pruned find, the anchored
-     * re-parse + determinize) all debit it, so one {@code
+     * re-parse + determinize) all debits it, so one {@code
      * Pattern.compile}'s shipped work stays within the single {@code
-     * tdfa.budget.compile.compute} budget — previously each eager attempt
-     * carried its own full/fractional budget and a compile could burn up
-     * to 2&times; the user's. The unpruned whole attempt is a PROBE: it
-     * runs on its own fraction-capped meter and is charged only on
-     * success — a rejected probe's bounded churn (at most {@link
-     * #wholeWorkCap()} ticks) is the documented price of trying
-     * (adversarial review 2026-09).
+     * tdfa.budget.compile.compute} budget. The unpruned whole attempt is
+     * a PROBE: it runs on its own fraction-capped meter and is charged
+     * only on success — a rejected probe's bounded churn (at most {@link
+     * #wholeWorkCap()} ticks) is the price of trying.
      */
     public static Artifacts artifacts(Tnfa nfa, boolean longestMatch, CompileObserver obs,
                                       io.github.jemmix.tdfa.tdfa.WorkMeter ledger) {
@@ -144,9 +141,8 @@ public final class SingleCompile {
      * <p>Every whole/anchored runner this method constructs is a SECOND
      * engine beside the pattern's find engine, so its lazy match-time memos
      * are capped at HALF the runtime RAM budget (per-pattern split — the
-     * budget is per pattern, not per engine; adversarial review 2026-09).
-     * The anchored parse and determinize fork the same CPU ledger as the
-     * rest of the ladder.
+     * budget is per pattern, not per engine). The anchored parse and
+     * determinize fork the same CPU ledger as the rest of the ladder.
      */
     public static RegexEngine wholeEngine(Artifacts a, RegexEngine findEngine,
                                           String pattern, String patternForErrors,
