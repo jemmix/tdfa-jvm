@@ -10,9 +10,12 @@ import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_KILL;
  *  use it too) and is static-imported here.
  *
  * Static nested: shared per-Tdfa lifetime; references the runner's tables.
- * The memo's row/block caps are derived per runner from the match-time RAM
- * budget ({@link Budgets#runtimeMemoryBytes()} — {@code -Dtdfa.budget.runtime.memory})
- * through the weight model: half the budget in rows, half in blocks.
+ * The memo's caps derive per runner from the match-time RAM budget
+ * ({@link Budgets} — {@code -Dtdfa.budget.runtime.memory}) through the
+ * weight model's eighths partition: rows 4/8, blocks 3/8 (the walk-block
+ * memo takes the last eighth), all against the runner's share of the
+ * budget — the full budget for a pattern's only engine, half for a
+ * find+whole pair.
  *
  * Thread-safety (the RegexEngine contract requires concurrent-safe
  * engines): the mutation path — internRow / transition / buildBlock — is
@@ -37,16 +40,20 @@ import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_KILL;
         /** Block cap — RAM-budget-derived (see class doc). */
         final int maxBlocks;
         final Object lock = new Object();
-        SearchDfa(TdfaRunner r) {
+        SearchDfa(TdfaRunner r, long memoBudgetBytes) {
             this.r = r;
             this.nw = r.stateWords;
-            this.maxRows = Budgets.sdfaMaxRows(nw);
-            this.maxBlocks = Budgets.sdfaMaxBlocks();
+            this.maxRows = Budgets.sdfaMaxRows(nw, memoBudgetBytes);
+            this.maxBlocks = Budgets.sdfaMaxBlocks(memoBudgetBytes);
         }
 
         // ---- writer-confined (all accesses under lock) ----
         private final HashMap<Wrapper, Integer> rowById = new HashMap<>();    // bitset -> row id
         private final HashMap<Wrapper, Integer> blockById = new HashMap<>();  // content -> block id
+        /** Reusable probe key for both intern maps (lock-confined; the maps
+         *  never hold it — a fresh Wrapper is still allocated on the intern
+         *  path only). */
+        private final Wrapper probe = new Wrapper(new int[0]);
 
         // ---- immutable snapshots; volatile-published on growth (copy-on-write) ----
         /** row id -> live-set bitset; rows are interned (never mutated after publish). */
@@ -60,9 +67,11 @@ import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_KILL;
         private volatile int[][] blocksArr = {};
         volatile boolean capped;
 
-        /** Immutable-ish int[] key wrapper with cached hash. */
+        /** Immutable-ish int[] key wrapper with cached hash. Stored keys are
+         *  NEVER mutated after insertion; the shared {@link #probe} instance
+         *  (lock-confined, never stored) reassigns its fields instead. */
         private static final class Wrapper {
-            final int[] a; final int hash;
+            int[] a; int hash;
             Wrapper(int[] a) { this.a = a; hash = java.util.Arrays.hashCode(a); }
             @Override public int hashCode() { return hash; }
             @Override public boolean equals(Object o) {
@@ -86,7 +95,8 @@ import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_KILL;
         /** Must hold {@link #lock}. Interns {@code words}; -1 (and cap flag)
          *  when the row budget is exhausted. */
         private int internRowLocked(int[] words) {
-            Wrapper probe = new Wrapper(words);
+            probe.a = words;
+            probe.hash = java.util.Arrays.hashCode(words);
             Integer id = rowById.get(probe);
             if (id != null) return id;
             if (rowWordsArr.length >= maxRows || capped) { capped = true; return -1; }
@@ -209,17 +219,20 @@ import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_KILL;
             return internRowLocked(d);
         }
 
-        /** Must hold {@link #lock}. Publish the cell for (rowId, b): COW the
-         *  rowBlockIdsArr row so an immutable-snapshot reader either sees -1
-         *  or the final value — intermediate states are impossible because
-         *  the fresh row copy is filled before the snapshot swap. */
+        /** Must hold {@link #lock}. Publish the cell for (rowId, b).
+         *
+         * <p>In-place write, per the class-level publication protocol: the
+         * row's cells array is published fully -1-filled at row intern and
+         * its cells only ever transition -1 → final under this lock; plain
+         * int writes are atomic, so a lock-free reader sees either -1 (it
+         * re-checks under the lock) or the final value. The former
+         * copy-on-write of the whole {@code rowBlockIdsArr} snapshot per
+         * CELL write was pure waste — O(rows) clone per (row, block) pair,
+         * unaccounted transient churn the cap math never modeled — while
+         * the outer array still only ever grows (rows), which is what the
+         * snapshot readers actually rely on. */
         private void setRowCell(int rowId, int b, int value) {
-            int[] row = rowBlockIdsArr[rowId];
-            int[] fresh = java.util.Arrays.copyOf(row, 128);
-            fresh[b] = value;
-            int[][] rb = rowBlockIdsArr.clone();
-            rb[rowId] = fresh;
-            rowBlockIdsArr = rb;   // volatile publish
+            rowBlockIdsArr[rowId][b] = value;
         }
 
         /** Encoded transition via blocks; builds lazily. c must be < 0x10000.

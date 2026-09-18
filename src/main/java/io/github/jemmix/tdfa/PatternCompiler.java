@@ -82,7 +82,17 @@ final class PatternCompiler {
         final io.github.jemmix.tdfa.core.CompileObserver obs = observer != null
                 ? observer : io.github.jemmix.tdfa.core.CompileObserver.NONE;
         try {
-            Tnfa nfa = Tnfa.compile(fl, disableUnicodeGroups, false, prov, obs);
+            // One CPU ledger for the WHOLE compile (adversarial review
+            // 2026-09): the front-end parse/TNFA build and every eager
+            // ladder attempt (unpruned whole, pruned find, anchored
+            // re-parse + determinize) debit the same pool, so a single
+            // Pattern.compile can never burn more than the one
+            // tdfa.budget.compile.compute budget (the attempts previously
+            // each carried their own full/fractional budget — up to 2x).
+            io.github.jemmix.tdfa.tdfa.WorkMeter ledger =
+                    new io.github.jemmix.tdfa.tdfa.WorkMeter(
+                            io.github.jemmix.tdfa.tdfa.Budgets.compileComputeTicks());
+            Tnfa nfa = Tnfa.compile(fl, disableUnicodeGroups, false, prov, obs, ledger);
 
             // Single-compile ladder (one brain, every tier — core.SingleCompile):
             // whole artifact first (cut-free, work-bounded), find shares it
@@ -93,15 +103,22 @@ final class PatternCompiler {
             // acceptance then stays the find artifact's alone). NOTHING ever
             // compiles at match time (no-lazy-compiles rule).
             io.github.jemmix.tdfa.core.SingleCompile.Artifacts art =
-                    io.github.jemmix.tdfa.core.SingleCompile.artifacts(nfa, longest, obs);
+                    io.github.jemmix.tdfa.core.SingleCompile.artifacts(nfa, longest, obs, ledger);
             Tdfa findTdfa = art.find;
             int ps = findTdfa.stateCount();
+            // Per-pattern runtime RAM split: a pattern keeping a SECOND
+            // engine (dedicated whole/anchored runner) halves each engine's
+            // lazy-memo budget so the pattern's combined memos stay within
+            // one tdfa.budget.runtime.memory.
+            long findMemoBudget = art.shared()
+                    ? io.github.jemmix.tdfa.tdfa.Budgets.runtimeMemoryBytes()
+                    : io.github.jemmix.tdfa.tdfa.Budgets.runtimeMemoryBytes() / 2;
 
             if (vmSwitched()) {
                 obs.note("engine", "shared-interpreter (tdfa.engine=VM)");
-                RegexEngine eng = new TdfaRunner(findTdfa);
+                RegexEngine eng = new TdfaRunner(findTdfa, findMemoBudget);
                 return new TDFAPattern(regex, flags, ps, eng,
-                        whole(fl, disableUnicodeGroups, longest, deferWhole, prov, regex, art, eng), provider);
+                        whole(fl, disableUnicodeGroups, longest, deferWhole, prov, regex, art, eng, ledger), provider);
             }
 
             if (factory != null) {
@@ -113,8 +130,10 @@ final class PatternCompiler {
                 // over anchored artifacts, so it cannot consume the shared
                 // unpruned artifact. Over budget, whole() eagerly compiles
                 // the anchored artifact, or fails compile() (records its
-                // rejection under DEFER_WHOLE_REJECTION).
-                RegexEngine whole = whole(fl, disableUnicodeGroups, longest, deferWhole, prov, regex, art, eng);
+                // rejection under DEFER_WHOLE_REJECTION). A BYO engine's own
+                // memory is outside the facade's runtime-budget accounting
+                // (the memo split applies to the facade's own runners).
+                RegexEngine whole = whole(fl, disableUnicodeGroups, longest, deferWhole, prov, regex, art, eng, ledger);
                 obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.ENGINE,
                         System.nanoTime() - t0, 0);
                 try {
@@ -139,12 +158,12 @@ final class PatternCompiler {
             io.github.jemmix.tdfa.asm.TdfaAsmBackend.Generated gen;
             long t1 = System.nanoTime();
             try {
-                gen = io.github.jemmix.tdfa.asm.TdfaAsmBackend.generate(findTdfa);
+                gen = io.github.jemmix.tdfa.asm.TdfaAsmBackend.generate(findTdfa, findMemoBudget);
             } catch (RuntimeException | LinkageError genFailure) {
                 if (Boolean.getBoolean("tdfa.gen.debug")) genFailure.printStackTrace();
                 obs.note("engine", "shared-interpreter (engine emission failed)");
-                RegexEngine eng = new TdfaRunner(findTdfa);
-                return new TDFAPattern(regex, flags, ps, eng, whole(fl, disableUnicodeGroups, longest, deferWhole, prov, regex, art, eng), provider);
+                RegexEngine eng = new TdfaRunner(findTdfa, findMemoBudget);
+                return new TDFAPattern(regex, flags, ps, eng, whole(fl, disableUnicodeGroups, longest, deferWhole, prov, regex, art, eng, ledger), provider);
             }
             obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.ENGINE,
                     System.nanoTime() - t1, 0);
@@ -153,15 +172,15 @@ final class PatternCompiler {
                         new io.github.jemmix.tdfa.asm.ShellEmitter.Spec(
                                 regex, flags, ps, gen.engine(),
                                 whole(fl, disableUnicodeGroups, longest, deferWhole,
-                                        prov, regex, art, gen.engine()),
+                                        prov, regex, art, gen.engine(), ledger),
                                 gen.owner(), provider));
                 obs.note("engine", "generated");
                 return p;
             } catch (RuntimeException | LinkageError ex) {
                 if (Boolean.getBoolean("tdfa.gen.debug")) ex.printStackTrace();
                 obs.note("engine", "shared-interpreter (shell emission failed)");
-                RegexEngine eng = new TdfaRunner(findTdfa);
-                return new TDFAPattern(regex, flags, ps, eng, whole(fl, disableUnicodeGroups, longest, deferWhole, prov, regex, art, eng), provider);
+                RegexEngine eng = new TdfaRunner(findTdfa, findMemoBudget);
+                return new TDFAPattern(regex, flags, ps, eng, whole(fl, disableUnicodeGroups, longest, deferWhole, prov, regex, art, eng, ledger), provider);
             }
         } catch (RuntimeException e) {
             throw io.github.jemmix.tdfa.core.CompiledRegex.translate(e, regex);
@@ -186,9 +205,10 @@ final class PatternCompiler {
     private static RegexEngine whole(String fl, boolean disableUnicodeGroups, boolean longest,
                                      boolean deferWhole, UnicodeDataProvider prov, String regex,
                                      io.github.jemmix.tdfa.core.SingleCompile.Artifacts art,
-                                     RegexEngine findEngine) {
+                                     RegexEngine findEngine,
+                                     io.github.jemmix.tdfa.tdfa.WorkMeter ledger) {
         return io.github.jemmix.tdfa.core.SingleCompile.wholeEngine(
-                art, findEngine, fl, regex, disableUnicodeGroups, longest, deferWhole, prov);
+                art, findEngine, fl, regex, disableUnicodeGroups, longest, deferWhole, prov, ledger);
     }
 
     /** {@code -Dtdfa.engine=VM}: global no-codegen switch, read per compile. */

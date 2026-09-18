@@ -176,18 +176,20 @@ execution.
 Toggle individually: `-Dtdfa.noregopt`, `-Dtdfa.nominimize`.
 
 **Resource budgets** — three properties; every internal cap (DFA states,
-kernel totals, ε-closure spikes, CFG edges, minimizer scratch, the
-whole-match ladder's eager attempts, the lazy search-DFA memo) derives
-from them through the hardcoded weight model `BudgetWeights` (assumed
-bytes per structure, assumed ticks per action — one tick ≈ 10 ns, tick
-counts are deterministic and machine-independent). Raise the budget, not
-a cap; reads are per compile / per runner, never class-frozen:
+kernel totals, ε-closure spikes, the active-set precompute, boxed
+transition ranges, tag-history tables, CFG edges, minimizer scratch, the
+whole-match ladder's eager attempts, the lazy search-DFA memo, the lazy
+walk-block memo) derives from them through the hardcoded weight model
+`BudgetWeights` (assumed bytes per structure, assumed ticks per action —
+one tick ≈ 10 ns, tick counts are deterministic and machine-independent).
+Raise the budget, not a cap; reads are per compile / per runner, never
+class-frozen:
 
 | Property | Meaning | Default |
 |---|---|---|
-| `tdfa.budget.compile.memory` | compile RAM, bytes | 128 MiB |
-| `tdfa.budget.compile.compute` | compile CPU, ticks (5 s at the assumed 100 M ticks/s) | 500 M |
-| `tdfa.budget.runtime.memory` | match-time RAM **per pattern** (search-DFA memo; N live patterns cost ≤ N budgets) | 16 MiB |
+| `tdfa.budget.compile.memory` | compile RAM, bytes (all transient compile structures, weighted) | 128 MiB |
+| `tdfa.budget.compile.compute` | compile CPU, ticks (5 s at the assumed 100 M ticks/s) — one shared ledger per `Pattern.compile` covers the shipped work of every eager attempt | 500 M |
+| `tdfa.budget.runtime.memory` | match-time RAM **per pattern** (lazy memos — search-DFA rows/blocks and the walk-block memo — partitioned across the pattern's engines) | 16 MiB |
 
 Match time is deliberately CPU-unbudgeted — the linear-time guarantee
 makes a runtime compute budget meaningless; the runtime budget bounds RAM

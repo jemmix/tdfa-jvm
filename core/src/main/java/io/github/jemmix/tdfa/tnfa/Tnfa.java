@@ -109,6 +109,21 @@ public final class Tnfa {
     public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
                                io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider,
                                io.github.jemmix.tdfa.core.CompileObserver observer) {
+        return compile(pattern, disableUnicodeGroups, anchorBoth, provider, observer,
+                new io.github.jemmix.tdfa.tdfa.WorkMeter(
+                        io.github.jemmix.tdfa.tdfa.Budgets.compileComputeTicks()));
+    }
+
+    /**
+     * Ledger variant: parse + TNFA build run on the CALLER's work meter
+     * (typically forked from the compile's root ledger — see {@code
+     * WorkMeter#fork}), so front-end work is debited against the same CPU
+     * budget as every determinization attempt of the same compile.
+     */
+    public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
+                               io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider,
+                               io.github.jemmix.tdfa.core.CompileObserver observer,
+                               io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
         long t0 = System.nanoTime();
         // Front-end budget: ONE work meter (CPU, ticks) spans parse + TNFA
         // build so the pre-determinization surface is bounded too — the
@@ -119,8 +134,6 @@ public final class Tnfa {
         // determinization cap could fire — ((a{300}){300}){300} is a clean
         // "pattern too large" rejection now). Determinization constructs
         // its own meter per attempt (TdfaCompiler).
-        io.github.jemmix.tdfa.tdfa.WorkMeter meter =
-                new io.github.jemmix.tdfa.tdfa.WorkMeter(io.github.jemmix.tdfa.tdfa.Budgets.compileComputeTicks());
         io.github.jemmix.tdfa.parser.ParseResult parsed =
                 Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth, provider, meter);
         if (observer != null) observer.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.PARSE,

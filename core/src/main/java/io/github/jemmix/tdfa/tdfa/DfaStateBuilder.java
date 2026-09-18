@@ -14,8 +14,32 @@ import java.util.List;
         /** [64] posFlags → variant index, or -1 (no accept config alive). */
         int[] finalMaskVariant;
         DfaStateBuilder(int id) { this.id = id; }
-        void addRange(int lo, int hi, int target, int[] ops, int requiredMask) {
+
+        /**
+         * Append one range entry, coalescing INLINE with the previous entry
+         * when it is the immediately adjacent cell run with identical
+         * (target, ops, requiredMask). Determinization emits per breakpoint
+         * cell in ascending order (per assertion context, which requiredMask
+         * separates), so adjacency-merge at append time keeps the LIVE boxed
+         * range count at the post-coalesce total throughout the sweep — the
+         * figure the compile RAM budget charges ({@link
+         * BudgetWeights#RANGE_BOXED_BYTES} per new range), instead of one
+         * boxed object per cell pending the materialization-time coalesce.
+         *
+         * @return true iff a NEW live range was created (the caller's charge
+         *         signal); false when merged into the previous entry.
+         */
+        boolean addRange(int lo, int hi, int target, int[] ops, int requiredMask) {
+            if (!ranges.isEmpty()) {
+                Range last = ranges.get(ranges.size() - 1);
+                if (last.hi == lo - 1 && last.target == target && last.requiredMask == requiredMask
+                        && java.util.Arrays.equals(last.ops, ops)) {
+                    ranges.set(ranges.size() - 1, new Range(last.lo, hi, target, ops, requiredMask));
+                    return false;
+                }
+            }
             ranges.add(new Range(lo, hi, target, ops, requiredMask));
+            return true;
         }
         void coalesce() {
             ranges.sort(Comparator.comparingInt(r -> r.lo));

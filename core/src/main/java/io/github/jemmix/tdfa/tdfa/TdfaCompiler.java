@@ -108,21 +108,30 @@ final class TdfaCompiler {
          * ({@link Budgets#compileMemoryBytes()}) through {@link BudgetWeights}
          * — raise {@code -Dtdfa.budget.compile.memory} for heavier legitimate
          * use (with heap); defaults leave the largest legit in-corpus pattern
-         * (dictionary, 19.6 K pre-min states) ample headroom.
+         * (dictionary, 19.6 K pre-min states) ample headroom. Perl-mode
+         * compiles add the stop-table per-state weight (see {@link
+         * Budgets#maxDfaStates(int)}); assigned in the constructor.
          */
-        final int maxStates = Budgets.maxDfaStates();
+        final int maxStates;
         /** Memory-bound: each kernel config is a live Config (~80 B boxed all-
          *  in: lists, intern table, builders — the measured weight behind
-         *  {@link BudgetWeights#KERNEL_CONFIG_BYTES}). The cap keeps every
-         *  measured legit shape (e.g. (a{1,50}){1,50}'s family far below it)
-         *  and clean-rejects nested-counted bombs on the RAM budget instead
-         *  of OOM-ing. */
+         *  {@link BudgetWeights#KERNEL_CONFIG_BYTES}) PLUS its int[tags]
+         *  register slice (4 B/tag): a many-group pattern's configs scale
+         *  with the capture count, which the flat 80 B never saw. The cap
+         *  keeps every measured legit shape (e.g. (a{1,50}){1,50}'s family
+         *  far below it) and clean-rejects nested-counted bombs on the RAM
+         *  budget instead of OOM-ing. The check itself compares the WEIGHTED
+         *  total against the compile RAM budget (see kernelsWeighted). */
         final long maxKernelsTotal = Budgets.maxKernelConfigs();
-        /** Per-kernel spike bound — the totals cap only counts AFTER addState,
-         *  so one closure of a nested-counted bomb could exhaust the heap on
-         *  its own. Checked while the closure is built. */
-        final int maxClosure = Budgets.maxClosureConfigs();
-        /** CFG successor-arc cap: buildCfg materializes TRANSITIVE zero-op
+        /** Per-config weight this compile charges (see maxKernelsTotal).
+         *  Assigned in the constructor (needs the final tags count). */
+        final int kernelConfigBytes;
+        /** Per-kernel spike bound in WEIGHTED bytes (see maxClosureConfigs):
+         *  the totals cap only counts AFTER addState, so one closure of a
+         *  nested-counted bomb could exhaust the heap on its own. Checked
+         *  while the closure is built. */
+        final long maxClosureBytes;
+        /** Cap on materialized CFG successor arcs: buildCfg materializes TRANSITIVE zero-op
          *  reachability as direct edges (liveness needs them), and φ-variant
          *  finals can make that product explode — the round-24 specimen was a
          *  287-state DFA whose CFG had 22,637 blocks and 157,176,487 edges
@@ -133,6 +142,14 @@ final class TdfaCompiler {
         long cfgEdges;
         /** Running sum of closure (kernel) sizes — re2c's kernels_total. */
         long kernelsTotal = 0;
+        /** Running sum of closure sizes in weighted bytes (per-config weight
+         *  is tag-aware; see kernelConfigBytes), against the compile RAM
+         *  budget. Tagless compiles: identical accounting to kernelsTotal. */
+        long kernelsWeighted = 0;
+        /** Live boxed Range entries across all builders, in weighted bytes
+         *  (addRange coalesces inline, so this tracks the post-coalesce
+         *  live set), against the compile RAM budget. */
+        long boxedRangeBytes = 0;
         /** Set by the stop-table pass on unpruned compiles (see the predicate comment there). */
         boolean pikeCutMatters;
 
@@ -157,8 +174,24 @@ final class TdfaCompiler {
          *        magnitude past its pruned cost).
          */
         TdfaCompiler(Tnfa nfa, boolean longestMatch, boolean unpruned, long workCap) {
+            this(nfa, longestMatch, unpruned,
+                    new WorkMeter(Math.min(Budgets.compileComputeTicks(),
+                            workCap > 0 ? workCap : Long.MAX_VALUE)));
+        }
+
+        /**
+         * Ledger variant: the caller (the facade's single-compile ladder)
+         * hands a METER FORKED from the compile's root meter — its budget is
+         * already the per-attempt cap, and its ticks debit the shared ledger
+         * so the whole {@code Pattern.compile} stays within one CPU budget.
+         */
+        TdfaCompiler(Tnfa nfa, boolean longestMatch, boolean unpruned, WorkMeter sharedMeter) {
             this.nfa = nfa;
             this.tags = nfa.tagCount;
+            this.meter = sharedMeter;
+            this.kernelConfigBytes = BudgetWeights.KERNEL_CONFIG_BYTES
+                    + BudgetWeights.KERNEL_REG_TAG_BYTES * this.tags;
+            this.maxStates = Budgets.maxDfaStates(longestMatch ? 0 : BudgetWeights.STOP_TABLE_STATE_BYTES);
             this.epsOut = sortedOutgoing(nfa.epsFrom, nfa.epsPri);
             this.symOut = plainOutgoing(nfa.symFrom);
             this.maskBitset = new long[nfa.stateCount];
@@ -170,8 +203,7 @@ final class TdfaCompiler {
             this.breakpoints = computeBreakpoints();
             this.longest = longestMatch;
             this.unpruned = unpruned;
-            long work = Budgets.compileComputeTicks();
-            this.meter = new WorkMeter(workCap > 0 ? Math.min(work, workCap) : work);
+            this.maxClosureBytes = Budgets.compileMemoryBytes() / BudgetWeights.CLOSURE_SPIKE_DIVISOR;
             // Per-cell active symbol-edge sets (see rangeActiveEdges). Each class range
             // [lo, hi] covers a contiguous run of breakpoint cells: lo and hi+1 are
             // themselves breakpoints (they are boundaries of this very class), so the
@@ -181,16 +213,35 @@ final class TdfaCompiler {
             // distinct set instead of per adjacent cell: the sets interleave along the
             // codepoint line (letter / space / other cells), so adjacency-only reuse
             // would never fire.
+            //
+            // Adversarial review 2026-09: this precompute is O(cells × edges)
+            // cc.matches probes plus one long[words] PER CELL — on class-heavy
+            // patterns (tens of thousands of disjoint single-char alternations)
+            // that is gigabytes and 10^10 probes that NO budget saw. Both are
+            // budget-visible now: the arrays are charged up front against the
+            // compile RAM budget (before a single one is allocated), the probe
+            // scan and set interning tick the work meter, and interning is
+            // hash-based (the former linear distinct-set scan was itself
+            // quadratic in cells).
             int cells = breakpoints.length - 1;
             int edgeCount = nfa.symClass.length;
             int words = (edgeCount + 63) >> 6;
+            long activeSetBytes = (long) cells * ((long) words * 8L + BudgetWeights.ACTIVE_CELL_AUX_BYTES);
+            long memBudget = Budgets.compileMemoryBytes();
+            if (activeSetBytes > memBudget) {
+                throw new IllegalStateException("pattern too large: breakpoint active-set precompute exceeds the compile memory budget ("
+                        + cells + " cells x " + words + " words = " + activeSetBytes + " weighted bytes — raise -D"
+                        + Budgets.COMPILE_MEMORY_PROP + ")");
+            }
             this.rangeActiveEdges = new long[cells][];
             this.rangeSameEdges = new boolean[cells];
             this.activeSetId = new int[cells];
             this.cellCount = cells;
             long[] prevBits = null;
-            java.util.ArrayList<long[]> distinctSets = new java.util.ArrayList<>();
+            java.util.HashMap<ActiveSetKey, Integer> distinctSets = new java.util.HashMap<>();
             for (int bi = 0; bi < cells; bi++) {
+                meter.tick(edgeCount);   // one cc.matches probe per edge per cell
+                meter.tick(words);       // set fill + hash + intern compare share
                 long[] bits = new long[words];
                 for (int idx = 0; idx < edgeCount; idx++) {
                     CharClass cc = nfa.symClass[idx];
@@ -198,15 +249,36 @@ final class TdfaCompiler {
                 }
                 rangeActiveEdges[bi] = bits;
                 if (bi > 0) rangeSameEdges[bi] = java.util.Arrays.equals(bits, prevBits);
-                int id = -1;
-                for (int d = 0; d < distinctSets.size(); d++) {
-                    if (java.util.Arrays.equals(bits, distinctSets.get(d))) { id = d; break; }
-                }
-                if (id < 0) { id = distinctSets.size(); distinctSets.add(bits); }
+                ActiveSetKey key = new ActiveSetKey(bits);
+                Integer id = distinctSets.get(key);
+                if (id == null) { id = distinctSets.size(); distinctSets.put(key, id); }
                 activeSetId[bi] = id;
                 prevBits = bits;
             }
             this.activeSetCount = distinctSets.size();
+        }
+
+        /** Hashable intern key for one cell's active-edge bitset (deterministic
+         *  first-seen id assignment — same as the former linear scan, without
+         *  its quadratic rescans). */
+        private static final class ActiveSetKey {
+            final long[] bits;
+            final int hash;
+            ActiveSetKey(long[] bits) { this.bits = bits; this.hash = java.util.Arrays.hashCode(bits); }
+            @Override public int hashCode() { return hash; }
+            @Override public boolean equals(Object o) {
+                return o instanceof ActiveSetKey && java.util.Arrays.equals(bits, ((ActiveSetKey) o).bits);
+            }
+        }
+
+        /** Charge one newly-live boxed Range (addRange returned true) against
+         *  the compile RAM budget. */
+        void chargeRange() {
+            if ((boxedRangeBytes += BudgetWeights.RANGE_BOXED_BYTES) > Budgets.compileMemoryBytes()) {
+                throw new IllegalStateException("pattern too large: transition range entries exceed the compile memory budget ("
+                        + (boxedRangeBytes / BudgetWeights.RANGE_BOXED_BYTES) + " live entries, " + boxedRangeBytes
+                        + " weighted bytes — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
+            }
         }
 
         /** Number of breakpoint cells (cells = equivalence classes between adjacent breakpoints). */
@@ -225,7 +297,14 @@ final class TdfaCompiler {
             for (int[] arr : out) {
                 for (int a = 1; a < arr.length; a++) {
                     int key = arr[a]; int kp = pri[key]; int b = a - 1;
-                    while (b >= 0 && pri[arr[b]] > kp) { arr[b + 1] = arr[b]; b--; }
+                    // Insertion sort is O(d²) in the out-degree d — a single
+                    // hub with a six-figure alternation fan-in made this the
+                    // one unmetered quadratic in the front of determinization
+                    // (adversarial review 2026-09). Every shift is a tick.
+                    while (b >= 0 && pri[arr[b]] > kp) {
+                        meter.tick();
+                        arr[b + 1] = arr[b]; b--;
+                    }
                     arr[b + 1] = key;
                 }
             }
@@ -245,11 +324,16 @@ final class TdfaCompiler {
 
         /** Compute breakpoints: every codepoint where some NFA CharClass boundary occurs. */
         int[] computeBreakpoints() {
+            // Metered (adversarial review 2026-09): the boxed TreeSet insert
+            // is O(log) per boundary and boundaries scale with total class
+            // ranges — a class-heavy pattern's front-end sort was invisible
+            // to the work budget.
             TreeSet<Integer> bps = new TreeSet<>();
             bps.add(0);
             bps.add(0x110000); // sentinel upper bound (exclusive)
             for (CharClass cc : nfa.symClass) {
                 if (cc == null) continue;
+                meter.tick();
                 for (int r = 0; r < cc.ranges.length; r += 2) {
                     int lo = cc.ranges[r], hi = cc.ranges[r + 1];
                     bps.add(lo);
@@ -392,13 +476,21 @@ final class TdfaCompiler {
                     TdfaStateIndex.AddResult[] perSet = new TdfaStateIndex.AddResult[activeSetCount];
                     boolean[] perSetDone = new boolean[activeSetCount];
                     for (int bi = 0; bi < cellCount; bi++) {
+                        // One tick per (context, cell) sweep step: the
+                        // per-set DEDUP fast path below still does real work
+                        // (an addRange + charge) per cell — states × cells
+                        // addRange calls were the one unbounded path in the
+                        // whole determinize loop the meter never saw
+                        // (adversarial review 2026-09: 500 K states × tens
+                        // of thousands of cells = 10^10 untimed appends).
+                        meter.tick();
                         int rangeLo = breakpoints[bi];
                         int rangeHi = breakpoints[bi + 1] - 1;
                         int setId = activeSetId[bi];
                         if (perSetDone[setId]) {
                             TdfaStateIndex.AddResult ar = perSet[setId];
                             if (ar != null) {
-                                builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, ctxMask);
+                                if (builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, ctxMask)) chargeRange();
                             }
                             continue;
                         }
@@ -410,7 +502,7 @@ final class TdfaCompiler {
                         int[] ops = variants.transitionRegops(closed, sid);
                         TdfaStateIndex.AddResult ar = index.addState(closed, ops, stepped);
                         if (debug) System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> " + ar.targetId + " ops.len=" + ops.length + " mask=" + ctxMask);
-                        builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, ctxMask);
+                        if (builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, ctxMask)) chargeRange();
                         if (!processed.get(ar.targetId)) work.push(ar.targetId);
                         perSet[setId] = ar;
                         setRes[setId] = ar.targetId;
@@ -420,6 +512,7 @@ final class TdfaCompiler {
                 // context owns every cell unambiguously.
                 if (nCtx2 > 1) {
                     for (int bi = 0; bi < cellCount; bi++) {
+                        meter.tick();   // cells × contexts marker scan — same sweep bound
                         int rangeLo = breakpoints[bi];
                         int rangeHi = breakpoints[bi + 1] - 1;
                         int setId = activeSetId[bi];
@@ -428,7 +521,7 @@ final class TdfaCompiler {
                             if (ctxSetRes[ci][setId] != -1) continue;
                             for (int cj = ci + 1; cj < nCtx2; cj++) {
                                 if (ctxSetRes[cj][setId] > 0) {
-                                    builders.get(sid).addRange(rangeLo, rangeHi, -1, null, ctxList.get(ci)[0]);
+                                    if (builders.get(sid).addRange(rangeLo, rangeHi, -1, null, ctxList.get(ci)[0])) chargeRange();
                                     if (debug) System.err.println("[tdfa] state " + sid + " cell " + rangeLo + ".." + rangeHi + " DEAD marker mask=" + Integer.toBinaryString(ctxList.get(ci)[0]));
                                     break;
                                 }
@@ -647,11 +740,13 @@ final class TdfaCompiler {
             int totalRanges = 0;
             int totalOpsSlots = 1;  // reserve ops[0] = OP_END for the "no ops" case (opsOff=0 means empty)
             for (int s = 0; s < n; s++) {
+                meter.tick();
                 DfaStateBuilder sb = builders.get(s);
                 sb.coalesce();
                 sb.sortByMaskSpecificity();
                 totalRanges += sb.ranges.size();
                 for (Range r : sb.ranges) {
+                    meter.tick();
                     if (r.ops != null && r.ops.length > 0) totalOpsSlots += r.ops.length + 1;  // +1 for OP_END
                 }
                 if (accept.get(s)) {
@@ -676,10 +771,12 @@ final class TdfaCompiler {
             int rangesHead = 0;    // next free slot in flatRanges (in units of 5 ints)
             int globalMaxReg = 2 * tags;  // at least r0 + R_f
             for (int s = 0; s < n; s++) {
+                meter.tick();
                 DfaStateBuilder sb = builders.get(s);
                 int k = sb.ranges.size();
                 int rangeBase = rangesHead;
                 for (int i = 0; i < k; i++) {
+                    meter.tick();
                     Range r = sb.ranges.get(i);
                     int o = rangesHead * 5;
                     flatRanges[o]     = r.lo;
@@ -964,13 +1061,15 @@ final class TdfaCompiler {
                         + ",hiPrefix=" + (minHiPrefix.length * 4L)
                         + ",scalars=" + ((minMeta.length + minBase.length + minFinalOpsOff.length) * 4L + stateCount) + "}"
                         + " stopMaskUniform=" + (perStateUniform ? (globalUniform ? "global" : "perState") : "no"));
-                return new Tdfa(tags, nfa.groupCount, nfa.namedGroups, globalMaxReg, finalRegBase, 0, stateCount,
+                Tdfa result = new Tdfa(tags, nfa.groupCount, nfa.namedGroups, globalMaxReg, finalRegBase, 0, stateCount,
                         minMeta, minBase, minFinalOpsOff, minFinalOpsByMask, minRanges, flatOps, minHiPrefix,
                         minEntryMask, minAcceptMask, longest, finalStop, uniformStop, nfa.multiline,
                         nfa.unicodeWordBoundary, nfa.wordRanges,
                         hasFixed(nfa.fixedBase) ? nfa.fixedBase : null,
                         hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null,
                         unpruned && pikeCutMatters);
+                result.compileWorkTicks = meter.spent();
+                return result;
             }
         }
 
@@ -1201,12 +1300,14 @@ final class TdfaCompiler {
                 if (maskEpoch[c.state] != epoch) { maskEpoch[c.state] = epoch; maskBitset[c.state] = 0L; }
                 maskBitset[c.state] |= 1L << c.emptyMask;
                 out.add(c);
-                // Per-kernel spike bound: kernelsTotal is only counted after
-                // addState, so a single closure of a nested-counted bomb could
-                // otherwise exhaust the heap on its own.
-                if (out.size() > maxClosure) {
-                    throw new IllegalStateException("pattern too large: TDFA ε-closure exceeds "
-                            + maxClosure + " configs (" + c.state + " reached; raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
+                // Per-kernel spike bound (weighted bytes): kernelsTotal only
+                // counts after addState, so a single closure of a
+                // nested-counted bomb could otherwise exhaust the heap on
+                // its own. Tag-aware: the config weight carries its regs.
+                if ((out.size() + 1) * (long) kernelConfigBytes > maxClosureBytes) {
+                    throw new IllegalStateException("pattern too large: TDFA ε-closure exceeds the closure spike budget ("
+                            + (out.size() + 1) + " configs x " + kernelConfigBytes + " weighted bytes, cap "
+                            + maxClosureBytes + "; " + c.state + " reached — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
                 }
                 // Push children in REVERSE priority order. Same contract as the seeds:
                 // the pre-push check skips only already-POPPED keys; co-resident
@@ -1403,6 +1504,7 @@ final class TdfaCompiler {
             }
             int counter = 0;
             while (sp > 0) {
+                meter.tick();   // per popped node: this DFS runs 64× per accepting state
                 int s = stackArr[--sp];
                 if (visited[s]) continue;
                 visited[s] = true;

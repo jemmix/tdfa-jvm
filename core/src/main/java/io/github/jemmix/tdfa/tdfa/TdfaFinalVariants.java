@@ -108,6 +108,7 @@ final class TdfaFinalVariants {
         }
 
         void computeFinalVariants(DfaStateBuilder sb, int[] st, int[] mk, java.util.function.IntFunction<Config> at) {
+            owner.meter.tick(64L * st.length);   // 64 masks × n aliveness scan — budget-visible
             int[] winner = new int[64];
             boolean uniform = true;
             for (int M = 0; M < 64; M++) {

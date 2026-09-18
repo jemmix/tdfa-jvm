@@ -77,6 +77,10 @@ public final class Tdfa {
      */
     final boolean pikeCutMatters;
     final boolean multiline;
+    /** Work ticks this artifact's determinization burned (set by the
+     *  compiler at the end of {@code compile()}); the facade's CPU ledger
+     *  charges it when the artifact ships. */
+    long compileWorkTicks;
     /**
      * True iff the DFA was compiled with Unicode-aware shorthand ({@code (?u)}),
      * so {@code \b}/{@code \B} word-boundary checks must use the Unicode
@@ -585,7 +589,8 @@ public final class Tdfa {
     }
 
     /**
-     * Work-bounded variant of {@link #compileUnpruned(Tnfa, boolean, CompileObserver)}:
+     * Work-bounded variant of {@link #compileUnpruned(Tnfa, boolean, CompileObserver)}
+     * (same cap semantics as {@link #compile(Tnfa, boolean, CompileObserver, long)}):
      * {@code workCap > 0} clamps the compile work budget to
      * {@code min(tdfa.budget.compile.compute, workCap)} ticks (positive caps
      * only tighten — a user-lowered budget still wins). The facade uses this
@@ -602,11 +607,38 @@ public final class Tdfa {
     }
 
     /**
+     * Ledger variant of {@link #compile(Tnfa, boolean, CompileObserver)}:
+     * the meter comes from the caller's compile ledger ({@link
+     * WorkMeter#fork(long)}) — its budget is the per-attempt cap and its
+     * ticks debit the shared pool, so the facade's whole ladder stays
+     * within one compile CPU budget.
+     */
+    public static Tdfa compile(Tnfa nfa, boolean longestMatch,
+                               io.github.jemmix.tdfa.core.CompileObserver observer,
+                               WorkMeter sharedMeter) {
+        return new TdfaCompiler(nfa, longestMatch, false, sharedMeter).compile(observer);
+    }
+
+    /**
+     * Ledger variant of {@link #compileUnpruned(Tnfa, boolean, CompileObserver, long)}
+     * (see {@link #compile(Tnfa, boolean, CompileObserver, WorkMeter)}).
+     */
+    public static Tdfa compileUnpruned(Tnfa nfa, boolean longestMatch,
+                                       io.github.jemmix.tdfa.core.CompileObserver observer,
+                                       WorkMeter sharedMeter) {
+        return new TdfaCompiler(nfa, longestMatch, true, sharedMeter).compile(observer);
+    }
+
+    /**
      * For unpruned Perl-mode compiles: whether the pike cut would change
      * find() behavior on this artifact (see {@link #compileUnpruned}); false
      * means find() may run on it. Constant false otherwise.
      */
     public boolean pikeCutMatters() { return pikeCutMatters; }
+
+    /** Work ticks this artifact's determinization burned (see the field
+     *  doc — the facade's CPU-ledger settlement reads it). */
+    public long compileWorkTicks() { return compileWorkTicks; }
 
     // ===== compile-knob policy =====
     //

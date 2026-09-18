@@ -23,11 +23,25 @@ package io.github.jemmix.tdfa.tdfa;
  * </table>
  *
  * <p>The derived caps (max DFA states, kernel totals, &epsilon;-closure
- * spike, CFG edges, minimizer normalization cells, whole-ladder work
- * caps, search-DFA memo rows/blocks) are all linear functions of the two
- * compile budgets / the runtime budget through the weight model — there
- * is deliberately no way to set them directly anymore. Raise the budget,
- * not the cap.
+ * spike, active-set precompute, boxed transition ranges, CFG edges,
+ * minimizer normalization cells, tag-history tables, whole-ladder work
+ * caps, search-DFA memo rows/blocks, walk-memo blocks/per-state tables)
+ * are all linear functions of the two compile budgets / the runtime budget
+ * through the weight model (BudgetWeights) — there is deliberately no way
+ * to set them directly anymore. Raise the budget, not the cap.
+ *
+ * <p><b>Ledger.</b> The compile CPU budget bounds one whole facade compile:
+ * the eager ladder's attempts (front-end, unpruned whole, pruned find,
+ * anchored re-parse + determinize) each get a fractional per-attempt cap
+ * but all debit one shared ledger ({@link WorkMeter#fork(long)}), so a
+ * single {@code Pattern.compile} can never burn more than the budget.
+ *
+ * <p><b>Per-pattern runtime split.</b> The runtime RAM budget bounds the
+ * lazy match-time memos of the pattern's engines. A pattern retaining TWO
+ * engines (find plus a dedicated whole/anchored runner — the non-shared
+ * ladder corners) splits the budget in half per engine, so the pattern's
+ * combined memos stay within one budget; a shared artifact (one engine)
+ * gets the whole budget.
  *
  * <p>Knob policy (see the inventory note in {@link Tdfa}): every read is
  * fresh — budgets take effect on the next compile (or the next runner
@@ -76,7 +90,18 @@ public final class Budgets {
 
     /** Cap on determinized DFA states: RAM budget / assumed bytes per state. */
     public static int maxDfaStates() {
-        return clampInt(compileMemoryBytes() / BudgetWeights.DFA_STATE_BYTES);
+        return maxDfaStates(0);
+    }
+
+    /**
+     * Cap on determinized DFA states with a per-state surcharge the caller
+     * knows applies (Perl mode adds the position-aware stop table,
+     * {@link BudgetWeights#STOP_TABLE_STATE_BYTES} per state — a dense
+     * {@code int[n*64]} allocation the base weight never included).
+     */
+    public static int maxDfaStates(int extraPerStateBytes) {
+        return clampInt(compileMemoryBytes()
+                / (BudgetWeights.DFA_STATE_BYTES + extraPerStateBytes));
     }
 
     /** Cap on total determinization kernel configs (re2c's kernels_total):
@@ -85,8 +110,8 @@ public final class Budgets {
         return compileMemoryBytes() / BudgetWeights.KERNEL_CONFIG_BYTES;
     }
 
-    /** Per-closure spike cap (checked while a closure is built, before any
-     *  total can count it): 1/{@link BudgetWeights#CLOSURE_SPIKE_DIVISOR}
+    /** Per-kernel &epsilon;-closure spike (checked while a closure is built,
+     *  before any total can count it): 1/{@link BudgetWeights#CLOSURE_SPIKE_DIVISOR}
      *  of the RAM budget in configs. */
     public static int maxClosureConfigs() {
         return clampInt(compileMemoryBytes()
@@ -119,23 +144,53 @@ public final class Budgets {
         return (2 * compileComputeTicks()) / BudgetWeights.WHOLE_LADDER_DENOMINATOR;
     }
 
-    // ===== runtime RAM-derived caps (search-DFA memo) =====
+    // ===== runtime RAM-derived caps (lazy per-pattern memos) =====
 
     /** Memoized search-DFA row cap for a runner whose live-set bitsets are
      *  {@code stateWords} ints wide: half the runtime RAM budget in
-     *  weighted rows (the other half is {@link #sdfaMaxBlocks()}). */
+     *  weighted rows at the default budget (the row share of the eighths
+     *  partition — rows 4/8, {@link #sdfaMaxBlocks(int)} 3/8, {@link
+     *  #walkMaxBytes(int)} 1/8). */
     public static int sdfaMaxRows(int stateWords) {
+        return sdfaMaxRows(stateWords, runtimeMemoryBytes());
+    }
+
+    /** Budget-parameterized variant of {@link #sdfaMaxRows(int)}: the
+     *  facade hands a pattern's second engine half the budget (per-pattern
+     *  runtime split, see the class doc). */
+    public static int sdfaMaxRows(int stateWords, long budgetBytes) {
         long rowBytes = BudgetWeights.RUNTIME_ROW_FIXED_BYTES
                 + (long) stateWords * BudgetWeights.RUNTIME_ROW_STATE_BYTES;
-        long rows = (runtimeMemoryBytes() / 2) / rowBytes;
+        long rows = (budgetBytes / 2) / rowBytes;
         return (int) Math.max(BudgetWeights.RUNTIME_MIN_ROWS, Math.min(rows, Integer.MAX_VALUE));
     }
 
-    /** Memoized search-DFA block cap: half the runtime RAM budget in
-     *  weighted 512-codepoint blocks. */
+    /** Memoized search-DFA block cap: three eighths of the runtime RAM
+     *  budget in weighted 512-codepoint blocks (see the partition note in
+     *  the class doc). */
     public static int sdfaMaxBlocks() {
-        long blocks = (runtimeMemoryBytes() / 2) / BudgetWeights.RUNTIME_BLOCK_BYTES;
+        return sdfaMaxBlocks(runtimeMemoryBytes());
+    }
+
+    /** Budget-parameterized variant of {@link #sdfaMaxBlocks()} (see
+     *  {@link #sdfaMaxRows(int, long)}). */
+    public static int sdfaMaxBlocks(long budgetBytes) {
+        long blocks = (budgetBytes * 3 / 8) / BudgetWeights.RUNTIME_BLOCK_BYTES;
         return (int) Math.max(BudgetWeights.RUNTIME_MIN_BLOCKS, Math.min(blocks, Integer.MAX_VALUE));
+    }
+
+    /** The walk-block memo's share of the runtime RAM budget: one eighth
+     *  (see the partition note in the class doc). */
+    public static long walkMaxBytes() {
+        return walkMaxBytes(runtimeMemoryBytes());
+    }
+
+    /** Budget-parameterized variant of {@link #walkMaxBytes()} (see
+     *  {@link #sdfaMaxRows(int, long)}); floored so the minimum block set
+     *  always fits. */
+    public static long walkMaxBytes(long budgetBytes) {
+        return Math.max((long) BudgetWeights.WALK_MIN_BLOCKS * BudgetWeights.WALK_BLOCK_BYTES,
+                budgetBytes / BudgetWeights.RUNTIME_WALK_DIVISOR);
     }
 
     private static int clampInt(long v) {

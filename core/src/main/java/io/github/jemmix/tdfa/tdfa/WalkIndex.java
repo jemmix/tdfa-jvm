@@ -5,7 +5,19 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 /** Lazy per-state walk-block memo (codepoints past the flat Latin-1 table):
  *  extracted verbatim from TdfaRunner (2026-09 god-file split). The monitor
  *  is this index instance (it was the runner's; the runner has no other
- *  synchronized methods, so the lock domain is unchanged in effect). */
+ *  synchronized methods, so the lock domain is unchanged in effect).
+ *
+ *  <p><b>Budget.</b> The memo — per-state block-id tables plus the shared
+ *  512-codepoint blocks — is charged against this runner's share of the
+ *  runtime RAM budget ({@link Budgets#walkMaxBytes(long)}, one eighth of
+ *  the partition): each published per-state table weighs {@link
+ *  BudgetWeights#WALK_STATE_TABLE_BYTES}, each block {@link
+ *  BudgetWeights#WALK_BLOCK_BYTES}, and past the allowance dispatch falls
+ *  back to binary search (correct, slower). Before the 2026-09 adversarial
+ *  review the blocks were capped by a magic constant (64) and the
+ *  per-state tables were entirely UNBOUNDED — up to 512 B × stateCount of
+ *  unaccounted match-time RAM on a wide-codepoint scan of a large disjoint
+ *  DFA. */
 final class WalkIndex {
     private final TdfaRunner r;
 
@@ -24,29 +36,51 @@ final class WalkIndex {
      *  default-0 cell misread as block id 0. */
     private final java.util.concurrent.atomic.AtomicReferenceArray<int[]> walkBlockIdx;
     private static final int[][] EMPTY_BLOCKS = {};
-    /** Cap on walk blocks (512 ints each): past it, dispatch falls back to
-     *  binary search (dictionary-scale DFAs must not grow unbounded memos). */
-    private static final int WALK_MAX_BLOCKS = 64;
+    /** This memo's byte allowance (runner's share of the runtime budget;
+     *  see the class doc) and the weighted bytes committed so far
+     *  (published tables + blocks). */
+    private final long maxBytes;
+    private long chargedBytes;
 
-    WalkIndex(TdfaRunner r) {
+    WalkIndex(TdfaRunner r, long memoBudgetBytes) {
         this.r = r;
         this.walkBlockIdx = r.rangesDisjoint
                 ? new AtomicReferenceArray<>(r.stateCount) : null;
+        this.maxBytes = Budgets.walkMaxBytes(memoBudgetBytes);
+    }
+
+    /** Must effectively hold this' monitor or be benignly racy: count
+     *  {@code bytes} against the walk allowance; false when over (callers
+     *  fall back to binary search). */
+    private synchronized boolean tryCharge(long bytes) {
+        if (chargedBytes + bytes > maxBytes) return false;
+        chargedBytes += bytes;
+        return true;
     }
 
     /**
      * Range index for codepoint {@code c} (BMP, disjoint DFA) via lazy walk
-     * blocks: -1 = dead entry, -2 = block cap exceeded (caller falls back to
+     * blocks: -1 = dead entry, -2 = budget cap exceeded (caller falls back to
      * binary search). See {@link #walkBlocksArr} for the publication scheme.
      */
+    @SuppressWarnings("ReferenceEquality")
     int walkRangeIndex(int state, int c) {
         int[] idx = walkBlockIdx.get(state);
         if (idx == null) {
-            idx = new int[128];
-            java.util.Arrays.fill(idx, -1);
-            walkBlockIdx.set(state, idx);      // volatile publish of the filled array
-            idx = walkBlockIdx.get(state);     // adopt the winner if we lost the race
+            // Per-state id table: charged like every other memo structure;
+            // over the allowance the state permanently falls back to binary
+            // search (cell pinned to the -2 sentinel via a shared marker).
+            if (tryCharge(BudgetWeights.WALK_STATE_TABLE_BYTES)) {
+                idx = new int[128];
+                java.util.Arrays.fill(idx, -1);
+                walkBlockIdx.set(state, idx);      // volatile publish of the filled array
+                idx = walkBlockIdx.get(state);     // adopt the winner if we lost the race
+            } else {
+                walkBlockIdx.compareAndSet(state, null, CAP_MARKER);
+                idx = walkBlockIdx.get(state);
+            }
         }
+        if (idx == CAP_MARKER) return -2;
         int b = c >>> 9;
         int id = idx[b];
         if (id == -1) id = buildWalkBlock(state, b);
@@ -59,6 +93,10 @@ final class WalkIndex {
         return -2;       // stale id vs a fresh snapshot: treat as capped (rare, safe)
     }
 
+    /** Shared marker for states whose per-state table did not fit the walk
+     *  allowance: every lookup takes the binary-search fallback. */
+    private static final int[] CAP_MARKER = new int[128];
+
     /** Build one 512-cp block for `state` (lowest entry index per cell — for
      *  disjoint DFAs the containing entry is unique). Synchronized + double-checked
      *  against the PUBLISHED id table (two threads racing a first-visit of the
@@ -70,7 +108,7 @@ final class WalkIndex {
         int[] pub = walkBlockIdx.get(state);
         int e = pub != null ? pub[b] : -1;
         if (e != -1) return e;
-        if (walkBlockCount >= WALK_MAX_BLOCKS) {
+        if (walkBlockCount >= maxWalkBlocks() || !tryCharge(BudgetWeights.WALK_BLOCK_BYTES)) {
             if (pub != null) pub[b] = -2;
             return -2;
         }
@@ -90,5 +128,11 @@ final class WalkIndex {
         walkBlocksArr = next;    // volatile publish: cells contents visible to readers
         if (pub != null) pub[b] = n;
         return n;
+    }
+
+    /** Block-count cap derived from the walk allowance (floored at the
+     *  historical constant so a tiny budget keeps a usable memo). */
+    private int maxWalkBlocks() {
+        return (int) Math.max(BudgetWeights.WALK_MIN_BLOCKS, maxBytes / BudgetWeights.WALK_BLOCK_BYTES);
     }
 }
