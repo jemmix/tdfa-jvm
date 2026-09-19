@@ -175,6 +175,14 @@ execution.
 
 Toggle individually: `-Dtdfa.noregopt`, `-Dtdfa.nominimize`.
 
+Not claimed under that faithfulness banner (tracked in TODO.md):
+deterministic compilation (same regex → identical TDFA across runs is not
+guaranteed), non-trivial cycle rejection in `map`+`topological_sort`
+(BT22 §3.3 — the passes dedup, but do not detect cycles), strict TDFA(1)
+conformance to the paper's lookahead-delay wording (unverified), and
+multi-valued tags (tags under repetition do not accumulate multiple
+offsets).
+
 **Resource budgets** — three properties; every internal cap (DFA states,
 kernel totals, ε-closure spikes, the active-set precompute, boxed
 transition ranges, tag-history tables, CFG edges, minimizer scratch, the
@@ -291,21 +299,23 @@ tdfa-jvm/                             ← root = the facade artifact (io.github.
   (`tests/unit` excludes it; it needs a pristine JIT).
 - the differential **fuzz soak** — `check` carries the fixed-seed fuzz smoke
   (`FuzzSmokeTest`, seed `0xC0FFEE`) only; the soak is
-  `-Pfuzz.minutes=480` (default 8 h).
-- **patched-oracle fuzzing** — `-Pfuzz.patchedOracle=true` (builds the
-  patched re2j on demand).
+  `-Pfuzz.minutes=480` (default 8 h). The default oracle is the patched re2j
+  fork (built on demand); `-Pfuzz.pristineOracle=true` soaks against released
+  re2j 1.8 instead.
 - **BOMB_SCENARIOS** — the known-over-budget rebar shapes; opt-in via
   `-Dtdfa.test.rebar.skipBombs=false` plus raised budgets
   (`-Dtdfa.budget.compile.memory=4000000000 -Dtdfa.budget.compile.compute=4000000000`)
   and ≥ 1–6 GB heap.
-- every **benchmark** — perf gating is `scripts/bench-regression.sh --quick`
-  against a per-machine baseline (15% rule), not part of `check`.
+- every **benchmark** — perf gating is `scripts/bench-regression.sh`
+  (quick harness by default, 15% rule; `--jmh` for the full JMH gate, 10%)
+  against a per-machine baseline, not part of `check`.
 
-Heap: the unit/rebar/fuzz test JVMs require `-Xmx2g` (configured in their
-build files) — containers with less will OOM.
+Heap: the unit/rebar test JVMs require `-Xmx2g` and the fuzz soak JVM
+`-Xmx4g` (configured in their build files) — containers with less will OOM.
 
 JDK 25+ to build (Gradle daemon; core+asm+facade ship a Java 8 floor and are
-CI-verified with a real javac 8). Vendored deps (re2j, rebar) are extracted
+CI-verified with a real javac 8). Vendored deps (re2j, rebar, testregex,
+openjdk-regex) are extracted
 automatically by the `:prepareVendor` task before any test that needs them;
 run `./gradlew prepareVendor` once before opening in IntelliJ so generated
 sources appear in the IDE. See [`vendor/README.md`](vendor/README.md) for the
