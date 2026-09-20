@@ -37,11 +37,11 @@ package io.github.jemmix.tdfa.tdfa;
  */
 public final class WorkMeter {
     private final long budget;
-    private long spent;
-    /** Shared cross-attempt pool; every family member holds the same instance. */
+    /**
+     * Shared cross-attempt pool; every family member holds the same instance.
+     */
     private final Ledger ledger;
-
-    private static final class Ledger { long remaining; }
+    private long spent;
 
     public WorkMeter(long budget) {
         this.budget = budget;
@@ -49,7 +49,10 @@ public final class WorkMeter {
         this.ledger.remaining = budget;
     }
 
-    private WorkMeter(long budget, Ledger ledger) { this.budget = budget; this.ledger = ledger; }
+    private WorkMeter(long budget, Ledger ledger) {
+        this.budget = budget;
+        this.ledger = ledger;
+    }
 
     /**
      * Derive a child meter for one compile attempt: its own budget is
@@ -74,41 +77,60 @@ public final class WorkMeter {
         ledger.remaining -= n;
     }
 
-    /** The remaining ticks under this meter's own budget (never negative). */
-    public long remaining() { return Math.max(0, budget - spent); }
+    /**
+     * The remaining ticks under this meter's own budget (never negative).
+     */
+    public long remaining() {
+        return Math.max(0, budget - spent);
+    }
 
-    public long spent() { return spent; }
+    public long spent() {
+        return spent;
+    }
 
-    /** Count one unit of work; throw when the budget is exhausted. */
+    /**
+     * Count one unit of work; throw when the budget is exhausted.
+     */
     public void tick() {
         if (++spent > budget) {
             throw new Exhausted("pattern too large: TDFA compile work budget exceeded ("
-                    + spent + "/" + budget + " ticks — raise -D" + Budgets.COMPILE_COMPUTE_PROP + ")");
+                + spent + "/" + budget + " ticks — raise -D" + Budgets.COMPILE_COMPUTE_PROP + ")");
         }
         if (--ledger.remaining < 0) {
             throw new Exhausted("pattern too large: TDFA compile work budget exceeded (total across compile attempts — raise -D"
-                    + Budgets.COMPILE_COMPUTE_PROP + ")");
+                + Budgets.COMPILE_COMPUTE_PROP + ")");
         }
     }
 
-    /** Count {@code n} units at once (bulk loops whose trip count is known). */
+    /**
+     * Count {@code n} units at once (bulk loops whose trip count is known).
+     */
     public void tick(long n) {
         if ((spent += n) > budget) {
             throw new Exhausted("pattern too large: TDFA compile work budget exceeded ("
-                    + spent + "/" + budget + " ticks — raise -D" + Budgets.COMPILE_COMPUTE_PROP + ")");
+                + spent + "/" + budget + " ticks — raise -D" + Budgets.COMPILE_COMPUTE_PROP + ")");
         }
         if ((ledger.remaining -= n) < 0) {
             throw new Exhausted("pattern too large: TDFA compile work budget exceeded (total across compile attempts — raise -D"
-                    + Budgets.COMPILE_COMPUTE_PROP + ")");
+                + Budgets.COMPILE_COMPUTE_PROP + ")");
         }
     }
 
-    /** Budget exhaustion, as a distinct type so optional passes (the Moore
-     *  minimizer) can catch exactly this and degrade — skip themselves —
-     *  instead of failing a compile whose main artifact is fine. Same
-     *  "pattern too large" message family as every other budget rejection. */
+    private static final class Ledger {
+        long remaining;
+    }
+
+    /**
+     * Budget exhaustion, as a distinct type so optional passes (the Moore
+     * minimizer) can catch exactly this and degrade — skip themselves —
+     * instead of failing a compile whose main artifact is fine. Same
+     * "pattern too large" message family as every other budget rejection.
+     */
     public static final class Exhausted extends IllegalStateException {
         private static final long serialVersionUID = 1L;
-        Exhausted(String message) { super(message); }
+
+        Exhausted(String message) {
+            super(message);
+        }
     }
 }

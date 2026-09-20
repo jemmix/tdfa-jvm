@@ -32,21 +32,29 @@ public final class FrameBudget {
     private final long budget;
     private long liveBytes;
 
+    FrameBudget(long budget) {
+        this.budget = budget;
+    }
+
     public static FrameBudget create() {
         return new FrameBudget(Budgets.compileMemoryBytes());
     }
 
-    FrameBudget(long budget) { this.budget = budget; }
-
-    /** Charge one live frame; over budget throws the standard budget error. */
+    /**
+     * Charge one live frame; over budget throws the standard budget error.
+     */
     public void push() {
         if ((liveBytes += BudgetWeights.NESTING_FRAME_BYTES) > budget) {
             throw new IllegalStateException("pattern too large: nesting exceeds compile memory budget ("
-                    + liveBytes / BudgetWeights.NESTING_FRAME_BYTES + " live frames, "
-                    + liveBytes + " weighted bytes — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
+                + liveBytes / BudgetWeights.NESTING_FRAME_BYTES + " live frames, "
+                + liveBytes + " weighted bytes — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
         }
     }
 
-    /** Release one frame that is no longer live. */
-    public void pop() { liveBytes -= BudgetWeights.NESTING_FRAME_BYTES; }
+    /**
+     * Release one frame that is no longer live.
+     */
+    public void pop() {
+        liveBytes -= BudgetWeights.NESTING_FRAME_BYTES;
+    }
 }

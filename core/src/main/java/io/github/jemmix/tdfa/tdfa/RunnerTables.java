@@ -1,12 +1,17 @@
 package io.github.jemmix.tdfa.tdfa;
 
-/** Construction-time table builders + literal-needle analysis for
- *  TdfaRunner — extracted verbatim (2026-09 god-file split; statics, no
- *  instance state). */
+/**
+ * Construction-time table builders + literal-needle analysis for
+ * TdfaRunner — extracted verbatim (2026-09 god-file split; statics, no
+ * instance state).
+ */
 final class RunnerTables {
-    private RunnerTables() {}
+    private RunnerTables() {
+    }
 
-    /** Build flat per-state range-index lookup: {@code [state * limit + c] → range index} (-1 = dead). */
+    /**
+     * Build flat per-state range-index lookup: {@code [state * limit + c] → range index} (-1 = dead).
+     */
     static int[] buildAsciiRangeFlat(Tdfa tdfa, int limit) {
         int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
         int[] flat = new int[tdfa.stateCount * limit];
@@ -65,7 +70,9 @@ final class RunnerTables {
         return bits;
     }
 
-    /** Check if all states have pairwise-disjoint ranges (no overlapping ranges). */
+    /**
+     * Check if all states have pairwise-disjoint ranges (no overlapping ranges).
+     */
     static boolean checkRangesDisjoint(Tdfa tdfa) {
         int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
         long[] sortBuf = null;
@@ -77,7 +84,10 @@ final class RunnerTables {
             // (sortByMaskSpecificity is the only reorderer) — one O(cnt) scan.
             boolean sortedByLo = true;
             for (int i = 1; i < cnt; i++) {
-                if (rg[(base + i) * 5] < rg[(base + i - 1) * 5]) { sortedByLo = false; break; }
+                if (rg[(base + i) * 5] < rg[(base + i - 1) * 5]) {
+                    sortedByLo = false;
+                    break;
+                }
             }
             if (!sortedByLo) {
                 // Pack (lo << 32)|hi and sort — O(cnt log cnt) vs the old O(cnt²)
@@ -109,46 +119,54 @@ final class RunnerTables {
         return true;
     }
 
-    /** indexOf for the literal needle that respects the alphabet: a hit is
-     *  real only if it starts at a codepoint boundary (not the low half of a
-     *  pair) and does not end on the high half of a pair. Raw indexOf sees
-     *  UTF-16 units and would otherwise accept unit sequences that overlap
-     *  pair halves — e.g. needle "a\uD800" on input "a\uD800\uDFFF".
+    /**
+     * indexOf for the literal needle that respects the alphabet: a hit is
+     * real only if it starts at a codepoint boundary (not the low half of a
+     * pair) and does not end on the high half of a pair. Raw indexOf sees
+     * UTF-16 units and would otherwise accept unit sequences that overlap
+     * pair halves — e.g. needle "a\uD800" on input "a\uD800\uDFFF".
      *
-     *  <p>The explicitly given {@code from} is honored as-is even when it is
-     *  itself a pair interior: JDK, re2j and the general walk all match a
-     *  lone-low needle AT a start the caller hands them (the walk decodes
-     *  the lone low unit and matches), and a needle-shaped pattern must
-     *  answer exactly like its non-needle equivalent. End-overlap rejection
-     *  still applies at every hit including {@code from}: the walk decodes
-     *  FORWARD, so a needle ending on a high half paired with the next unit
-     *  never matches from any start. */
+     * <p>The explicitly given {@code from} is honored as-is even when it is
+     * itself a pair interior: JDK, re2j and the general walk all match a
+     * lone-low needle AT a start the caller hands them (the walk decodes
+     * the lone low unit and matches), and a needle-shaped pattern must
+     * answer exactly like its non-needle equivalent. End-overlap rejection
+     * still applies at every hit including {@code from}: the walk decodes
+     * FORWARD, so a needle ending on a high half paired with the next unit
+     * never matches from any start.
+     */
     static int literalIndexOf(String s, String needle, int from) {
         int idx = s.indexOf(needle, from);
         while (idx >= 0
-                && (needleEndOverlapsPair(s, idx, needle.length())
-                    || (idx > from && io.github.jemmix.tdfa.ast.Alphabet.pairInterior(s, idx))))
+            && (needleEndOverlapsPair(s, idx, needle.length())
+            || (idx > from && io.github.jemmix.tdfa.ast.Alphabet.pairInterior(s, idx))))
             idx = s.indexOf(needle, idx + 1);
         return idx;
     }
 
-    /** True when a needle hit ending at unit {@code idx + needleLen - 1}
-     *  swallows the high half of a surrogate pair: the last needle unit is a
-     *  high surrogate that pairs with the next input unit, so the raw-unit
-     *  indexOf hit is not a codepoint-sequence match. Public static: the
-     *  ASM-emitted literal path calls it for the same guard. */
+    /**
+     * True when a needle hit ending at unit {@code idx + needleLen - 1}
+     * swallows the high half of a surrogate pair: the last needle unit is a
+     * high surrogate that pairs with the next input unit, so the raw-unit
+     * indexOf hit is not a codepoint-sequence match. Public static: the
+     * ASM-emitted literal path calls it for the same guard.
+     */
     static boolean needleEndOverlapsPair(String s, int idx, int needleLen) {
         int last = s.charAt(idx + needleLen - 1);
         if (last < 0xD800 || last > 0xDBFF) return false;
         int end = idx + needleLen;
         return end < s.length()
-                && s.charAt(end) >= 0xDC00 && s.charAt(end) <= 0xDFFF;
+            && s.charAt(end) >= 0xDC00 && s.charAt(end) <= 0xDFFF;
     }
 
-    static void setBit(long[] bits, int c) { bits[c >>> 6] |= 1L << (c & 63); }
+    static void setBit(long[] bits, int c) {
+        bits[c >>> 6] |= 1L << (c & 63);
+    }
 
-    /** Word-class bitset over BMP UTF-16 units. ASCII mode (null ranges):
-     *  the 63-char [_0-9A-Za-z] set; unicode mode: wordRanges clipped to the BMP. */
+    /**
+     * Word-class bitset over BMP UTF-16 units. ASCII mode (null ranges):
+     * the 63-char [_0-9A-Za-z] set; unicode mode: wordRanges clipped to the BMP.
+     */
     static long[] buildWordBits(int[] ranges) {
         long[] bits = new long[1024];
         if (ranges == null) {
@@ -165,10 +183,12 @@ final class RunnerTables {
         return bits;
     }
 
-    /** Detect the literal-chain shape; null otherwise. Public static: the
-     *  ASM backend asks at emit time so literal DFAs get the fully-delegated
-     *  generated class (its indexOf short-circuit beats the generated walk
-     *  at every input length). */
+    /**
+     * Detect the literal-chain shape; null otherwise. Public static: the
+     * ASM backend asks at emit time so literal DFAs get the fully-delegated
+     * generated class (its indexOf short-circuit beats the generated walk
+     * at every input length).
+     */
     static String detectLiteralNeedle(Tdfa tdfa) {
         try {
             if (tdfa.groupCount != 0 || tdfa.tagCount != 0) return null;

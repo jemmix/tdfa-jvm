@@ -27,44 +27,62 @@ import java.util.Arrays;
  * budget: the standard clean "pattern too large" rejection.
  */
 final class HistTable {
-    /** id 0 is the canonical empty sequence. */
+    /**
+     * id 0 is the canonical empty sequence.
+     */
     static final int EMPTY_ID = 0;
-
+    private final long memBudget;
     private int[][] contents = new int[16][];
-    /** Primitive-chained hash: per-id content hashes + slot head/next chains —
-     *  one boxed HashMap<Long,int[]> per intern became a top profile entry on
-     *  append-heavy compiles. */
+    /**
+     * Primitive-chained hash: per-id content hashes + slot head/next chains —
+     * one boxed HashMap<Long,int[]> per intern became a top profile entry on
+     * append-heavy compiles.
+     */
     private long[] idHash = new long[16];
     private int[] hFirst = new int[32];
     private int[] hNext = new int[16];
     private int hMask = 31;
     private int next = 1;
-    /** Per-id caches, null until first requested. */
+    /**
+     * Per-id caches, null until first requested.
+     */
     private long[][] bitsCache;
     private int[][] lastSignCache;
     private int cachedWords = -1;
     private int cachedTags = -1;
-    /** Weighted bytes charged so far (contents + caches), against the
-     *  compile RAM budget read once per compile at construction. */
+    /**
+     * Weighted bytes charged so far (contents + caches), against the
+     * compile RAM budget read once per compile at construction.
+     */
     private long chargedBytes;
-    private final long memBudget;
 
     HistTable() {
         contents[0] = new int[0];
         this.memBudget = Budgets.compileMemoryBytes();
     }
 
-    /** Count {@code bytes} of history structure; over budget throws the
-     *  standard budget rejection. */
+    private static long mix64(long key) {
+        key ^= key >>> 33;
+        key *= 0xff51afd7ed558ccdL;
+        key ^= key >>> 33;
+        return key;
+    }
+
+    /**
+     * Count {@code bytes} of history structure; over budget throws the
+     * standard budget rejection.
+     */
     private void charge(long bytes) {
         if ((chargedBytes += bytes) > memBudget) {
             throw new IllegalStateException("pattern too large: tag histories exceed the compile memory budget ("
-                    + chargedBytes + " weighted bytes over " + next + " interned sequences — raise -D"
-                    + Budgets.COMPILE_MEMORY_PROP + ")");
+                + chargedBytes + " weighted bytes over " + next + " interned sequences — raise -D"
+                + Budgets.COMPILE_MEMORY_PROP + ")");
         }
     }
 
-    /** Intern {@code seq} (not retained — copied on first sighting). */
+    /**
+     * Intern {@code seq} (not retained — copied on first sighting).
+     */
     int intern(int[] seq) {
         if (seq == null || seq.length == 0) return EMPTY_ID;
         long h = 0x9E3779B97F4A7C15L;
@@ -99,14 +117,9 @@ final class HistTable {
         hMask = nMask;
     }
 
-    private static long mix64(long key) {
-        key ^= key >>> 33;
-        key *= 0xff51afd7ed558ccdL;
-        key ^= key >>> 33;
-        return key;
-    }
-
-    /** The interned content of {@code id} (read-only — callers must not mutate). */
+    /**
+     * The interned content of {@code id} (read-only — callers must not mutate).
+     */
     int[] content(int id) {
         return contents[id];
     }
@@ -126,9 +139,9 @@ final class HistTable {
         }
         if (bitsCache == null || bitsCache.length < contents.length) {
             int newLen = Math.max(contents.length,
-                    (bitsCache == null ? 16 : bitsCache.length) * 2);
+                (bitsCache == null ? 16 : bitsCache.length) * 2);
             bitsCache = Arrays.copyOf(
-                    bitsCache == null ? new long[16][] : bitsCache, newLen);
+                bitsCache == null ? new long[16][] : bitsCache, newLen);
         }
         long[] bits = bitsCache[id];
         if (bits == null) {
@@ -158,9 +171,9 @@ final class HistTable {
         }
         if (lastSignCache == null || lastSignCache.length < contents.length) {
             int newLen = Math.max(contents.length,
-                    (lastSignCache == null ? 16 : lastSignCache.length) * 2);
+                (lastSignCache == null ? 16 : lastSignCache.length) * 2);
             lastSignCache = Arrays.copyOf(
-                    lastSignCache == null ? new int[16][] : lastSignCache, newLen);
+                lastSignCache == null ? new int[16][] : lastSignCache, newLen);
         }
         int[] last = lastSignCache[id];
         if (last == null) {
