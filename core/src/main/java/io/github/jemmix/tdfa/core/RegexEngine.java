@@ -16,7 +16,8 @@ import java.util.NoSuchElementException;
  *
  * <p>Implementations must be effectively immutable and safe for concurrent
  * use from multiple threads (per-match state lives in the returned
- * {@link MatchResult}, not in the engine).
+ * {@link MatchResult} and the caller's {@link MatchScratch} carrier, not in
+ * the engine).
  */
 public interface RegexEngine {
 
@@ -52,19 +53,26 @@ public interface RegexEngine {
      * {@code match} directly with an out-of-range {@code from} surfaces the
      * walk's own {@code IndexOutOfBoundsException} — same class, less
      * polite message). The input must not be mutated during the call.
+     *
+     * <p>The caller's {@link MatchScratch} holds the reusable per-match
+     * buffers (register file, simulation sets), so a {@link Matcher}
+     * iterating {@code find()} over one input pools them across calls
+     * instead of allocating per call; callers without a matcher pass a
+     * fresh carrier. The carrier must be non-null, is never retained
+     * beyond the call, and is a pure reuse hint — never semantic.
      */
-    MatchResult match(CharSequence input, int from);
+    MatchResult match(CharSequence input, int from, MatchScratch scratch);
 
     /**
      * Match the ENTIRE input, returning capture registers, or {@code null} if
-     * the input is not a whole match. Unlike {@link #match(CharSequence, int)}
+     * the input is not a whole match. Unlike {@link #match(CharSequence, int, MatchScratch)}
      * a mid-input accept never satisfies this — the walk runs to end-of-input
      * and only an accept alive exactly at EOF counts (so {@code (a|ab)} whole-
      * matches {@code "ab"} even though leftmost-first find stops after
      * {@code "a"}).
      *
-     * <p>The default {@code match(input, 0)} is whole-exact only for engines
-     * compiled anchored at both ends (what the facade hands custom
+     * <p>The default {@code match(input, 0, scratch)} is whole-exact only for
+     * engines compiled anchored at both ends (what the facade hands custom
      * {@code RegexEngineFactory}s for whole matching). Engines over unanchored
      * or cut-free artifacts must override — {@code TdfaRunner} and the
      * generated classes do (a single cut-free walk; see {@code Tdfa.compileUnpruned}).
@@ -73,7 +81,9 @@ public interface RegexEngine {
      * compile-time pike cut never fires mid-walk (same artifact contract as
      * {@link #matches}).
      */
-    default MatchResult matchWhole(CharSequence input) { return match(input, 0); }
+    default MatchResult matchWhole(CharSequence input, MatchScratch scratch) {
+        return match(input, 0, scratch);
+    }
 
     /** Number of capturing groups (excluding group 0). */
     int groupCount();
@@ -97,7 +107,7 @@ public interface RegexEngine {
 
             private MatchResult advance() {
                 if (from > input.length()) return null;
-                MatchResult m = match(input, from);
+                MatchResult m = match(input, from, new MatchScratch());
                 if (m == null) return null;
                 from = (m.end(0) == m.start(0)) ? m.end(0) + 1 : m.end(0);
                 return m;

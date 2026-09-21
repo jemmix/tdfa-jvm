@@ -201,8 +201,8 @@ class SingleCompileWholeTest {
             io.github.jemmix.tdfa.core.RegexEngine facadeWhole =
                     ((TDFAPattern) Pattern.compile(p)).wholeEngine();
             for (String s : inputs) {
-                io.github.jemmix.tdfa.core.MatchResult am = anchored.matchWhole(s);
-                io.github.jemmix.tdfa.core.MatchResult fm = facadeWhole.matchWhole(s);
+                io.github.jemmix.tdfa.core.MatchResult am = anchored.matchWhole(s, new io.github.jemmix.tdfa.core.MatchScratch());
+                io.github.jemmix.tdfa.core.MatchResult fm = facadeWhole.matchWhole(s, new io.github.jemmix.tdfa.core.MatchScratch());
                 String a = am == null ? "null" : span(am);
                 String f = fm == null ? "null" : span(fm);
                 assertThat(a)

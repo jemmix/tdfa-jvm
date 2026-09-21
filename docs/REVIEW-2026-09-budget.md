@@ -166,5 +166,8 @@ is also reused instead of allocated per probe.
 - **The minimizer's degrade-not-reject semantics** are unchanged: `Exhausted`
   inside an optional pass still skips the pass; with the ledger it can no
   longer starve later mandatory attempts of shared-budget ticks (B1).
-- **`Scratch`/`TRACE_BUF` ThreadLocals** remain the documented retention
-  trade-off from review r10 P2.
+- **`Scratch`/`TRACE_BUF` ThreadLocals** were the documented retention
+  trade-off from review r10 P2; the `Scratch` half was retired 2026-09-21
+  by the per-matcher carrier (`core.MatchScratch`, owned by `core.Matcher`
+  — see TODO "scratch carrier"). `TRACE_BUF` remains, populated only under
+  `-Dtdfa.trace.strategy` (test instrument).

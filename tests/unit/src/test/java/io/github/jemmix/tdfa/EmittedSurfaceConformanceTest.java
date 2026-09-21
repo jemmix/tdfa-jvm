@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.github.jemmix.tdfa.core.EmittedSurface;
 import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.Matcher;
+import io.github.jemmix.tdfa.core.MatchScratch;
 import io.github.jemmix.tdfa.tdfa.MatchHolder;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
@@ -75,19 +76,20 @@ class EmittedSurfaceConformanceTest {
         hookC(TdfaRunner.class, Tdfa.class);
         hookM(TdfaRunner.class, "matches", CharSequence.class);
         hookM(TdfaRunner.class, "find", CharSequence.class);
-        hookM(TdfaRunner.class, "match", CharSequence.class, int.class);
+        hookM(TdfaRunner.class, "match", CharSequence.class, int.class, MatchScratch.class);
+        hookM(TdfaRunner.class, "matchWhole", CharSequence.class, MatchScratch.class);
         hookM(TdfaRunner.class, "startBits");
         hookM(TdfaRunner.class, "candScanMax");
-        hookM(TdfaRunner.class, "restartExtract", String.class, int.class, int.class, int.class);
+        hookM(TdfaRunner.class, "restartExtract", String.class, int.class, int.class, int.class, MatchScratch.class);
         hookM(TdfaRunner.class, "originSimBudget");
-        hookM(TdfaRunner.class, "originSimLeftmost", CharSequence.class, int.class, int.class, int.class);
-        hookM(TdfaRunner.class, "triggerScanTop", String.class, int.class, int.class);
+        hookM(TdfaRunner.class, "originSimLeftmost", CharSequence.class, int.class, int.class, int.class, MatchScratch.class);
+        hookM(TdfaRunner.class, "triggerScanTop", String.class, int.class, int.class, MatchScratch.class);
         hookM(TdfaRunner.class, "booleanMatchFrom", String.class, int.class, int.class);
         hookM(TdfaRunner.class, "groupCount");
         hookM(TdfaRunner.class, "namedGroups");
         hookM(TdfaRunner.class, "programSize");
         hookM(TdfaRunner.class, "trace", TdfaRunner.Strategy.class);
-        hookM(TdfaRunner.class, "takeRegs", int.class);
+        hookM(TdfaRunner.class, "takeRegs", int.class, MatchScratch.class);
         hookF(TdfaRunner.class, "ADAPTIVE_PREFILTER_AFTER");
     }
 
@@ -105,11 +107,16 @@ class EmittedSurfaceConformanceTest {
 
     @Test
     void shellHooks() throws Exception {
-        // core.Matcher's seven protected fields, linked from emitted shells.
+        // core.Matcher's protected fields, linked from emitted shells (the 7
+        // bookkeeping fields + the scratch carrier handed to carrier-aware
+        // engine calls).
         for (String f : new String[]{"input", "inputLength", "match", "hasMatch",
-                "lastMatchStart", "lastMatchEnd", "appendPos"}) {
+                "lastMatchStart", "lastMatchEnd", "appendPos", "scratch"}) {
             hookF(Matcher.class, f);
         }
+        // Carrier itself: its name is baked into the emitters' method
+        // descriptors (match/matchWhole/takeRegs/extractOne/wholeOne).
+        hookC(MatchScratch.class);
         // Facade ctors linked by descriptor from ShellEmitter.
         hookC(TDFAPattern.class, String.class, int.class, int.class,
                 io.github.jemmix.tdfa.core.RegexEngine.class, io.github.jemmix.tdfa.core.RegexEngine.class,

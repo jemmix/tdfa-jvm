@@ -20,6 +20,8 @@ public final class TdfaAsmBackend {
     private static final String ENGINE = "io/github/jemmix/tdfa/core/RegexEngine";
     private static final String HOLDER = "io/github/jemmix/tdfa/tdfa/MatchHolder";  // moved out of TdfaRunner (2026-09 split)
     private static final String RESULT = "io/github/jemmix/tdfa/core/MatchResult";
+    private static final String SCRATCH = "io/github/jemmix/tdfa/core/MatchScratch";
+    private static final String SCRATCH_D = "L" + SCRATCH + ";";
     private static final String STR = "java/lang/String";
     private static final String CS_D = "Ljava/lang/CharSequence;";
     private static final String ARRAYS = "java/util/Arrays";
@@ -425,23 +427,27 @@ public final class TdfaAsmBackend {
 
     /**
      * The emitted strategy ladder — a bytecode transcription of
-     * {@code TdfaRunner.runStringExtractFast}. Strategy pieces (literal
-     * needle, candidate bounds, origin sim, trigger scan) are calls into the
-     * embedded runner (monomorphic: TdfaRunner is final); the walk itself is
-     * the generated {@code extractOne} leaf (inlined dispatch + inlined ops).
-     * Emits {@code TdfaRunner.trace} calls at the same decision points the
-     * runner records, so the strategy-conformance test can assert the two
-     * backends pick identical sequences.
+     * {@code TdfaRunner.runStringExtractFast}, emitted AS the interface's
+     * carrier-aware {@code match(CS, int, MatchScratch)}: matcher-driven
+     * calls pool their buffers in the caller's carrier (the shells dispatch
+     * here with the final concrete receiver); carrier-less callers pass a
+     * fresh one. Strategy pieces (literal needle, candidate bounds, origin
+     * sim, trigger scan) are calls into the embedded runner (monomorphic:
+     * TdfaRunner is final); the walk itself is the generated
+     * {@code extractOne} leaf (inlined dispatch + inlined ops). Emits
+     * {@code TdfaRunner.trace} calls at the same decision points the runner
+     * records, so the strategy-conformance test can assert the two backends
+     * pick identical sequences.
      *
      * <p>Only emitted for fastPath INLINED classes (pickMode guarantees
      * fastPath: no masks, disjoint ranges) — non-fastPath shapes never see
      * this method because they compile to DELEGATE classes.
      */
     private static void genMatch(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I)L" + RESULT + ";", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", null, null);
         mv.visitCode();
-        // locals: 0=this, 1=input, 2=from, 3=s, 4=len, 5=holder, 6=leftmost/idx,
-        //         7=p, 8=fails, 9=c, 10=bits
+        // locals: 0=this, 1=input, 2=from, 3=sc, 4=s, 5=len, 6=holder,
+        //         7=leftmost/idx, 8=p, 9=fails, 10=c, 11=bits
         Label isStr = new Label();
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitTypeInsn(Opcodes.INSTANCEOF, STR);
@@ -451,15 +457,16 @@ public final class TdfaAsmBackend {
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "match", "(" + CS_D + "I)L" + RESULT + ";", false);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", false);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitLabel(isStr);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitTypeInsn(Opcodes.CHECKCAST, STR);
-        mv.visitVarInsn(Opcodes.ASTORE, 3);
-        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitVarInsn(Opcodes.ASTORE, 4);
+        mv.visitVarInsn(Opcodes.ALOAD, 4);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "length", "()I", false);
-        mv.visitVarInsn(Opcodes.ISTORE, 4);
+        mv.visitVarInsn(Opcodes.ISTORE, 5);
 
         // No literal-needle ladder here by construction: a DFA with a needle
         // always compiles as DELEGATE (generateBytes), so in the INLINED
@@ -469,18 +476,18 @@ public final class TdfaAsmBackend {
 
         // --- 1) one exact walk from `from` ---
         emitTrace(mv, "EXACT_FROM");
-        emitExtractOne(mv, owner, 3, 2, 4, 5);
-        emitReturnToResult(mv, owner, 5);
+        emitExtractOne(mv, owner, 4, 2, 5, 6, 3);
+        emitReturnToResult(mv, owner, 6);
 
         // --- 1b) short-input candidate scan ---
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "startBits", "()[J", false);
-        mv.visitVarInsn(Opcodes.ASTORE, 10);
+        mv.visitVarInsn(Opcodes.ASTORE, 11);
         Label skipCand = new Label();
-        mv.visitVarInsn(Opcodes.ALOAD, 10);
+        mv.visitVarInsn(Opcodes.ALOAD, 11);
         mv.visitJumpInsn(Opcodes.IFNULL, skipCand);
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
         mv.visitInsn(Opcodes.ISUB);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -489,27 +496,27 @@ public final class TdfaAsmBackend {
         mv.visitJumpInsn(Opcodes.IF_ICMPGT, skipCand);
         emitTrace(mv, "CAND_SCAN");
         mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitVarInsn(Opcodes.ISTORE, 8);                       // fails = 0
+        mv.visitVarInsn(Opcodes.ISTORE, 9);                       // fails = 0
         mv.visitVarInsn(Opcodes.ILOAD, 2);
         mv.visitInsn(Opcodes.ICONST_1);
         mv.visitInsn(Opcodes.IADD);
-        mv.visitVarInsn(Opcodes.ISTORE, 7);                       // p = from + 1
+        mv.visitVarInsn(Opcodes.ISTORE, 8);                       // p = from + 1
         Label candLoop = new Label(), candDone = new Label(), candNext = new Label(), candWalk = new Label();
         mv.visitLabel(candLoop);
-        mv.visitVarInsn(Opcodes.ILOAD, 7);
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitVarInsn(Opcodes.ILOAD, 8);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
         mv.visitJumpInsn(Opcodes.IF_ICMPGE, candDone);
-        mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitVarInsn(Opcodes.ILOAD, 7);
+        mv.visitVarInsn(Opcodes.ALOAD, 4);
+        mv.visitVarInsn(Opcodes.ILOAD, 8);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
-        mv.visitVarInsn(Opcodes.ISTORE, 9);
+        mv.visitVarInsn(Opcodes.ISTORE, 10);
         // bit test: (bits[c >>> 6] >>> (c & 63) & 1L) != 0L
-        mv.visitVarInsn(Opcodes.ALOAD, 10);
-        mv.visitVarInsn(Opcodes.ILOAD, 9);
+        mv.visitVarInsn(Opcodes.ALOAD, 11);
+        mv.visitVarInsn(Opcodes.ILOAD, 10);
         mv.visitIntInsn(Opcodes.BIPUSH, 6);
         mv.visitInsn(Opcodes.ISHR);
         mv.visitInsn(Opcodes.LALOAD);
-        mv.visitVarInsn(Opcodes.ILOAD, 9);
+        mv.visitVarInsn(Opcodes.ILOAD, 10);
         mv.visitIntInsn(Opcodes.BIPUSH, 63);
         mv.visitInsn(Opcodes.IAND);
         mv.visitInsn(Opcodes.LSHR);
@@ -520,31 +527,31 @@ public final class TdfaAsmBackend {
         mv.visitJumpInsn(Opcodes.IFEQ, candNext);
         // never start a match mid-pair (runner-identical guard; the pre-test
         // makes it one compare on the ASCII fast path)
-        mv.visitVarInsn(Opcodes.ILOAD, 9);
+        mv.visitVarInsn(Opcodes.ILOAD, 10);
         mv.visitIntInsn(Opcodes.SIPUSH, 0xDC00);
         mv.visitJumpInsn(Opcodes.IF_ICMPLT, candWalk);
-        mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitVarInsn(Opcodes.ILOAD, 7);
+        mv.visitVarInsn(Opcodes.ALOAD, 4);
+        mv.visitVarInsn(Opcodes.ILOAD, 8);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, ALPHABET, "pairInterior", "(" + CS_D + "I)Z", false);
         mv.visitJumpInsn(Opcodes.IFNE, candNext);
         // adaptive boolean pre-filter: same threshold as the runner's loop
-        mv.visitVarInsn(Opcodes.ILOAD, 8);
+        mv.visitVarInsn(Opcodes.ILOAD, 9);
         ic(mv, TdfaRunner.ADAPTIVE_PREFILTER_AFTER);
         mv.visitJumpInsn(Opcodes.IF_ICMPLT, candWalk);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
-        mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitVarInsn(Opcodes.ILOAD, 7);
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitVarInsn(Opcodes.ALOAD, 4);
+        mv.visitVarInsn(Opcodes.ILOAD, 8);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "booleanMatchFrom", "(Ljava/lang/String;II)Z", false);
         mv.visitJumpInsn(Opcodes.IFNE, candWalk);
         mv.visitJumpInsn(Opcodes.GOTO, candNext);
         mv.visitLabel(candWalk);
-        emitExtractOne(mv, owner, 3, 7, 4, 5);
-        emitReturnToResult(mv, owner, 5);
-        mv.visitIincInsn(8, 1);                                   // fails++
+        emitExtractOne(mv, owner, 4, 8, 5, 6, 3);
+        emitReturnToResult(mv, owner, 6);
+        mv.visitIincInsn(9, 1);                                   // fails++
         mv.visitLabel(candNext);
-        mv.visitIincInsn(7, 1);
+        mv.visitIincInsn(8, 1);
         mv.visitJumpInsn(Opcodes.GOTO, candLoop);
         mv.visitLabel(candDone);
         mv.visitInsn(Opcodes.ACONST_NULL);
@@ -555,71 +562,77 @@ public final class TdfaAsmBackend {
         emitTrace(mv, "ORIGIN_SIM");
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
-        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitVarInsn(Opcodes.ALOAD, 4);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "originSimBudget", "()I", false);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "originSimLeftmost", "(" + CS_D + "III)I", false);
-        mv.visitVarInsn(Opcodes.ISTORE, 6);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "originSimLeftmost", "(" + CS_D + "III" + SCRATCH_D + ")I", false);
+        mv.visitVarInsn(Opcodes.ISTORE, 7);
         Label noBudget = new Label();
-        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitVarInsn(Opcodes.ILOAD, 7);
         mv.visitFieldInsn(Opcodes.GETSTATIC, RUNNER, "LSS_BUDGET", "I");
         mv.visitJumpInsn(Opcodes.IF_ICMPNE, noBudget);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
-        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitVarInsn(Opcodes.ALOAD, 4);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "triggerScanTop", "(Ljava/lang/String;II)I", false);
-        mv.visitVarInsn(Opcodes.ISTORE, 6);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "triggerScanTop", "(Ljava/lang/String;II" + SCRATCH_D + ")I", false);
+        mv.visitVarInsn(Opcodes.ISTORE, 7);
         Label noMatch1 = new Label();
-        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitVarInsn(Opcodes.ILOAD, 7);
         mv.visitJumpInsn(Opcodes.IFLT, noMatch1);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
-        mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitVarInsn(Opcodes.ILOAD, 6);
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitVarInsn(Opcodes.ALOAD, 4);
+        mv.visitVarInsn(Opcodes.ILOAD, 7);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
         mv.visitInsn(Opcodes.ICONST_M1);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "originSimLeftmost", "(" + CS_D + "III)I", false);
-        mv.visitVarInsn(Opcodes.ISTORE, 6);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "originSimLeftmost", "(" + CS_D + "III" + SCRATCH_D + ")I", false);
+        mv.visitVarInsn(Opcodes.ISTORE, 7);
         mv.visitLabel(noBudget);
-        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitVarInsn(Opcodes.ILOAD, 7);
         mv.visitJumpInsn(Opcodes.IFLT, noMatch1);
         // exact walk from leftmost
-        emitExtractOne(mv, owner, 3, 6, 4, 5);
-        emitReturnToResult(mv, owner, 5);
+        emitExtractOne(mv, owner, 4, 7, 5, 6, 3);
+        emitReturnToResult(mv, owner, 6);
         // --- 3) defensive restart: delegated to the runner (one definition;
         //     cold path — the sim/walk agreement fallback) ---
         emitTrace(mv, "WALK_RESTART");
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
-        mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitVarInsn(Opcodes.ALOAD, 4);
+        mv.visitVarInsn(Opcodes.ILOAD, 7);
         mv.visitInsn(Opcodes.ICONST_1);
         mv.visitInsn(Opcodes.IADD);
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "restartExtract",
-                "(Ljava/lang/String;III)L" + HOLDER + ";", false);
-        mv.visitVarInsn(Opcodes.ASTORE, 5);
-        mv.visitVarInsn(Opcodes.ALOAD, 5);
+                "(Ljava/lang/String;III" + SCRATCH_D + ")L" + HOLDER + ";", false);
+        mv.visitVarInsn(Opcodes.ASTORE, 6);
+        mv.visitVarInsn(Opcodes.ALOAD, 6);
         mv.visitJumpInsn(Opcodes.IFNULL, noMatch1);
-        emitReturnToResult(mv, owner, 5);
+        emitReturnToResult(mv, owner, 6);
         mv.visitLabel(noMatch1);
         mv.visitInsn(Opcodes.ACONST_NULL);
         mv.visitInsn(Opcodes.ARETURN);
-        mv.visitMaxs(0, 0); mv.visitEnd();
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 
-    /** extractOne(s, fromLocal, toLocal) → holderLocal. */
-    private static void emitExtractOne(MethodVisitor mv, String owner, int sL, int fromL, int toL, int holderL) {
+    /** extractOne(s, fromLocal, toLocal, sc) → holderLocal. */
+    private static void emitExtractOne(MethodVisitor mv, String owner, int sL, int fromL, int toL, int holderL, int scL) {
         mv.visitVarInsn(Opcodes.ALOAD, sL);
         mv.visitVarInsn(Opcodes.ILOAD, fromL);
         mv.visitVarInsn(Opcodes.ILOAD, toL);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "extractOne", "(Ljava/lang/String;II)L" + HOLDER + ";", false);
+        mv.visitVarInsn(Opcodes.ALOAD, scL);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "extractOne", "(Ljava/lang/String;II" + SCRATCH_D + ")L" + HOLDER + ";", false);
         mv.visitVarInsn(Opcodes.ASTORE, holderL);
     }
 
@@ -646,11 +659,12 @@ public final class TdfaAsmBackend {
      * The generated walk leaf: one exact walk from {@code from} over the
      * String (no char[] copy, no restart loop — the emitted ladder in
      * genMatch positions every call). Inlined per-state dispatch + inlined
-     * register ops; reads via String.charAt.
+     * register ops; reads via String.charAt. The caller's MatchScratch
+     * carrier supplies the pooled register file ({@code takeRegs(n, sc)}).
      */
     private static void genExtractOne(ClassWriter cw, Tdfa tdfa, String owner) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "extractOne", "(Ljava/lang/String;II)L" + HOLDER + ";", null, null);
+                "extractOne", "(Ljava/lang/String;II" + SCRATCH_D + ")L" + HOLDER + ";", null, null);
         mv.visitCode();
         emitRunCore(mv, tdfa, owner);
         mv.visitMaxs(0, 0);
@@ -908,7 +922,7 @@ public final class TdfaAsmBackend {
         boolean pfNeeded = tdfa.posFlagDeps() != 0;
         final int[] byMask = tdfa.stateFinalOpsByMask();
 
-        // Locals: 0=input(String), 1=from, 2=len; 4..9 search/accept state
+        // Locals: 0=input(String), 1=from, 2=len, 3=sc(MatchScratch); 4..9 search/accept state
         final int IN=0, FROM=1, LEN=2;
         final int MS=4, ST=5, STATE=6, POS=7, HA=8, LAP=9;
         final int REGS = 10, LAS = 11, PF = 12, C_LV = 13;
@@ -938,20 +952,21 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, MS);
         mv.visitJumpInsn(Opcodes.IF_ICMPGT, searchEnd);
 
-        // Per-start: fetch regs from the runner's shared per-thread pool
-        // (TdfaRunner.takeRegs — the same Scratch.regs the interpreter uses;
-        // one array per thread across all engines). Ranged fill(-1): the
-        // pooled array may be longer than n (grown by a capture-heavier
-        // pattern on this thread); success paths clone before returning, so
-        // the pool never escapes.
+        // Per-start: fetch regs from the caller's carrier pool
+        // (TdfaRunner.takeRegs — the same MatchScratch.regs the interpreter
+        // uses; one carrier per matcher across all engines). Ranged
+        // fill(-1): the pooled array may be longer than n (grown by a
+        // capture-heavier pattern on this carrier); success paths clone
+        // before returning, so the pool never escapes.
         {
             if (tdfa.registerCount() == 0) {
                 mv.visitInsn(Opcodes.ACONST_NULL);
                 mv.visitVarInsn(Opcodes.ASTORE, REGS);
             } else {
-                // REGS = TdfaRunner.takeRegs(n); Arrays.fill(REGS, 0, n, -1);
+                // REGS = TdfaRunner.takeRegs(n, sc); Arrays.fill(REGS, 0, n, -1);
                 ic(mv, tdfa.registerCount());
-                mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "takeRegs", "(I)[I", false);
+                mv.visitVarInsn(Opcodes.ALOAD, 3);   // sc (4th param)
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "takeRegs", "(I" + SCRATCH_D + ")[I", false);
                 mv.visitVarInsn(Opcodes.ASTORE, REGS);
                 mv.visitVarInsn(Opcodes.ALOAD, REGS);
                 mv.visitInsn(Opcodes.ICONST_0);
@@ -1896,17 +1911,18 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitMaxs(0, 0); mv.visitEnd();
     }
-
     private static void genDelegateMatch(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I)L" + RESULT + ";", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "match", "(" + CS_D + "I)L" + RESULT + ";", false);
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", false);
         mv.visitInsn(Opcodes.ARETURN);
-        mv.visitMaxs(0, 0); mv.visitEnd();
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 
     /**
@@ -1916,28 +1932,30 @@ public final class TdfaAsmBackend {
      * classes ({@link #genMatchWholeInlined}) emit the walk itself.
      */
     private static void genMatchWhole(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + ")L" + RESULT + ";", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "matchWhole", "(" + CS_D + ")L" + RESULT + ";", false);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "matchWhole", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", false);
         mv.visitInsn(Opcodes.ARETURN);
-        mv.visitMaxs(0, 0); mv.visitEnd();
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
-
     /**
-     * INLINED-mode {@code matchWhole}: String inputs run the emitted
-     * whole-walk leaf ({@link #genWholeOne} — same per-state dispatch and
-     * register machinery as {@code extractOne}, whole protocol: no stop
+     * INLINED-mode {@code matchWhole}, emitted AS the interface's carrier-
+     * aware {@code matchWhole(CS, MatchScratch)}: String inputs run the
+     * emitted whole-walk leaf ({@link #genWholeOne} — same per-state dispatch
+     * and register machinery as {@code extractOne}, whole protocol: no stop
      * table, accept gate + φ exactly at EOF); non-Strings delegate to the
      * runner's generic walk. Traces ANCHORED/GENERIC at the same points
      * {@code TdfaRunner.matchWhole} does (strategy conformance).
      */
     private static void genMatchWholeInlined(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + ")L" + RESULT + ";", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", null, null);
         mv.visitCode();
-        // locals: 1 = s
+        // locals: 1 = input, 2 = sc
         Label isStr = new Label();
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitTypeInsn(Opcodes.INSTANCEOF, STR);
@@ -1946,13 +1964,15 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "matchWhole", "(" + CS_D + ")L" + RESULT + ";", false);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "matchWhole", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", false);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitLabel(isStr);
         emitTrace(mv, "ANCHORED");
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitTypeInsn(Opcodes.CHECKCAST, STR);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "wholeOne", "(Ljava/lang/String;)L" + HOLDER + ";", false);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "wholeOne", "(Ljava/lang/String;" + SCRATCH_D + ")L" + HOLDER + ";", false);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "toResult", "(L" + HOLDER + ";)L" + RESULT + ";", false);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitMaxs(0, 0); mv.visitEnd();
@@ -1979,22 +1999,23 @@ public final class TdfaAsmBackend {
         final int[] op = tdfa.ops();
         final int[] byMask = tdfa.stateFinalOpsByMask();
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "wholeOne", "(Ljava/lang/String;)L" + HOLDER + ";", null, null);
+                "wholeOne", "(Ljava/lang/String;" + SCRATCH_D + ")L" + HOLDER + ";", null, null);
         mv.visitCode();
-        // locals: 0=s, 1=len, 2=state, 3=pos, 4=regs, 5=c, 6=t1/scratch, 7=r
-        final int IN = 0, LEN = 1, STATE = 2, POS = 3, REGS = 4, C_LV = 5, PF = 6;
+        // locals: 0=s, 1=sc, 2=len, 3=state, 4=pos, 5=regs, 6=c, 7=pf/t1, 8=r
+        final int IN = 0, LEN = 2, STATE = 3, POS = 4, REGS = 5, C_LV = 6, PF = 7;
         mv.visitVarInsn(Opcodes.ALOAD, IN);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "length", "()I", false);
         mv.visitVarInsn(Opcodes.ISTORE, LEN);
-        // regs from the shared per-thread pool (clone-before-return, as
+        // regs from the caller's carrier pool (clone-before-return, as
         // extractOne); ranged fill — pooled array may exceed n
         if (tdfa.registerCount() == 0) {
             mv.visitInsn(Opcodes.ACONST_NULL);
             mv.visitVarInsn(Opcodes.ASTORE, REGS);
         } else {
-            // REGS = TdfaRunner.takeRegs(n); Arrays.fill(REGS, 0, n, -1);
+            // REGS = TdfaRunner.takeRegs(n, sc); Arrays.fill(REGS, 0, n, -1);
             ic(mv, tdfa.registerCount());
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "takeRegs", "(I)[I", false);
+            mv.visitVarInsn(Opcodes.ALOAD, 1);   // sc
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "takeRegs", "(I" + SCRATCH_D + ")[I", false);
             mv.visitVarInsn(Opcodes.ASTORE, REGS);
             mv.visitVarInsn(Opcodes.ALOAD, REGS);
             mv.visitInsn(Opcodes.ICONST_0);
@@ -2061,12 +2082,12 @@ public final class TdfaAsmBackend {
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "[I", "clone", "()Ljava/lang/Object;", false);
             mv.visitTypeInsn(Opcodes.CHECKCAST, "[I");
         }
-        mv.visitVarInsn(Opcodes.ASTORE, 7);   // r
+        mv.visitVarInsn(Opcodes.ASTORE, 8);   // r
         mv.visitTypeInsn(Opcodes.NEW, HOLDER);
         mv.visitInsn(Opcodes.DUP);
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitVarInsn(Opcodes.ILOAD, LEN);
-        mv.visitVarInsn(Opcodes.ALOAD, 7);
+        mv.visitVarInsn(Opcodes.ALOAD, 8);
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, HOLDER, "<init>", "(II[I)V", false);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitLabel(noAcc);

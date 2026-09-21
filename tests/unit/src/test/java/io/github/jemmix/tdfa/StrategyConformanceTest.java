@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.MatchResult;
+import io.github.jemmix.tdfa.core.MatchScratch;
 import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
@@ -144,9 +145,9 @@ class StrategyConformanceTest {
         assertThat(t2).as("%s: find strategy trace (vm=%s)", ctx, t1).isEqualTo(t1);
         // match(in, 0)
         TdfaRunner.traceSnapshot();
-        MatchResult m1 = vm.match(in, 0);
+        MatchResult m1 = vm.match(in, 0, new MatchScratch());
         t1 = TdfaRunner.traceSnapshot();
-        MatchResult m2 = asm.match(in, 0);
+        MatchResult m2 = asm.match(in, 0, new MatchScratch());
         t2 = TdfaRunner.traceSnapshot();
         assertSameResult(m1, m2, ctx);
         assertThat(t2).as("%s: extract strategy trace (vm=%s)", ctx, t1).isEqualTo(t1);
@@ -160,16 +161,16 @@ class StrategyConformanceTest {
         assertThat(t2).as("%s: matches strategy trace (vm=%s)", ctx, t1).isEqualTo(t1);
         // matchWhole() — the generated wholeOne leaf vs the runner's wholeWalk
         TdfaRunner.traceSnapshot();
-        MatchResult w1 = vm.matchWhole(in);
+        MatchResult w1 = vm.matchWhole(in, new MatchScratch());
         t1 = TdfaRunner.traceSnapshot();
-        MatchResult w2 = asm.matchWhole(in);
+        MatchResult w2 = asm.matchWhole(in, new MatchScratch());
         t2 = TdfaRunner.traceSnapshot();
         assertSameResult(w1, w2, ctx + " [matchWhole]");
         assertThat(t2).as("%s: matchWhole strategy trace (vm=%s)", ctx, t1).isEqualTo(t1);
         // CharSequence input: both must take the GENERIC delegation path
         CharSequence cs = new StringBuilder(in);
-        assertThat(asm.matchWhole(cs) == null).as("%s: matchWhole(CharSequence) nullity", ctx)
-                .isEqualTo(vm.matchWhole(cs) == null);
+        assertThat(asm.matchWhole(cs, new MatchScratch()) == null).as("%s: matchWhole(CharSequence) nullity", ctx)
+                .isEqualTo(vm.matchWhole(cs, new MatchScratch()) == null);
         return 9;
     }
 

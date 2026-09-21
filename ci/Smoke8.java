@@ -2,6 +2,7 @@ import io.github.jemmix.tdfa.Pattern;
 import io.github.jemmix.tdfa.PatternMatcher;
 import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.MatchResult;
+import io.github.jemmix.tdfa.core.MatchScratch;
 import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
@@ -91,7 +92,7 @@ public class Smoke8 {
         expect(tag + " find neg", e.find("no dash here"), false);
         expect(tag + " matches", e.matches("abc-9"), true);
         expect(tag + " matches neg", e.matches("x abc-9"), false);
-        MatchResult m = e.match("id-42!", 0);
+        MatchResult m = e.match("id-42!", 0, new MatchScratch());
         expect(tag + " match nonnull", m != null, true);
         if (m != null) {
             expect(tag + " g1", sub("id-42!", m.start(1), m.end(1)), "id");

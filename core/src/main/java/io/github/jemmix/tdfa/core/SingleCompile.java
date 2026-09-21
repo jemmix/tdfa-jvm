@@ -185,10 +185,10 @@ public final class SingleCompile {
         }
 
         @Override public boolean matches(CharSequence input) { throw rejection; }
-        @Override public MatchResult matchWhole(CharSequence input) { throw rejection; }
+        @Override public MatchResult matchWhole(CharSequence input, MatchScratch scratch) { throw rejection; }
         @Override public boolean find(CharSequence input) { return find.find(input); }
-        @Override public MatchResult match(CharSequence input, int from) {
-            return find.match(input, from);
+        @Override public MatchResult match(CharSequence input, int from, MatchScratch scratch) {
+            return find.match(input, from, scratch);
         }
         @Override public int groupCount() { return find.groupCount(); }
         @Override public java.util.Map<String, Integer> namedGroups() { return find.namedGroups(); }
