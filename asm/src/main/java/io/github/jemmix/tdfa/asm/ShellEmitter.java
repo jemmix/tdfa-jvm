@@ -188,9 +188,8 @@ public final class ShellEmitter {
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitLabel(notPast);
-        // m = p.eng.match(input, start, this.scratch)  — carrier-aware: the
-        // matcher's buffers pool across find() iterations (BYO engines hit
-        // the interface default, which ignores the carrier).
+        // m = p.eng.match(input, start, this.scratch)  — carrier-aware entry:
+        // the matcher's buffers pool across find() iterations.
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, matOwner, "p", patDesc);
         mv.visitFieldInsn(Opcodes.GETFIELD, patOwner, "eng", engDesc);

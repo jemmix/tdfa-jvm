@@ -460,18 +460,11 @@ public final class TdfaRunner implements RegexEngine {
         return runGeneric(input, 0, input.length(), false, new MatchScratch()) != null;
     }
 
-    @EmittedSurface
-    @Override
-    public MatchResult match(CharSequence input, int from) {
-        return match(input, from, new MatchScratch());
-    }
-
     /**
      * Carrier-aware match: {@code sc} holds this call's reusable buffers
      * (see {@link MatchScratch}); a {@link io.github.jemmix.tdfa.core.Matcher}
-     * passes its own carrier so iteration pools across calls. The default
-     * {@link RegexEngine#match(CharSequence, int, MatchScratch)} delegates
-     * here with a fresh carrier.
+     * passes its own carrier so iteration pools across calls, carrier-less
+     * callers pass a fresh one.
      */
     @EmittedSurface
     @Override
@@ -509,12 +502,6 @@ public final class TdfaRunner implements RegexEngine {
      * markers, entry masks checked before ops run); only the accept protocol
      * differs: no stop table, one gate + φ application at EOF.
      */
-    @EmittedSurface
-    @Override
-    public MatchResult matchWhole(CharSequence input) {
-        return matchWhole(input, new MatchScratch());
-    }
-
     /**
      * Carrier-aware whole match — see {@link #match(CharSequence, int, MatchScratch)}
      * for the reuse contract.

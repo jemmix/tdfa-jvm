@@ -106,11 +106,11 @@ public final class CompiledRegex {
      *  compiled with {@link CompileOptions#deferWholeRejection()}, rethrows
      *  the compile-time-recorded rejection (without the option, such
      *  patterns fail {@code compile()} instead). */
-    public boolean matches(CharSequence input) { return wholeEngine.matchWhole(input) != null; }
+    public boolean matches(CharSequence input) { return wholeEngine.matchWhole(input, new MatchScratch()) != null; }
 
     public boolean find(CharSequence input) { return engine.find(input); }
 
-    public MatchResult match(CharSequence input, int from) { return engine.match(input, from); }
+    public MatchResult match(CharSequence input, int from) { return engine.match(input, from, new MatchScratch()); }
 
     public Iterable<MatchResult> findAll(CharSequence input) { return engine.findAll(input); }
 

@@ -76,9 +76,7 @@ class EmittedSurfaceConformanceTest {
         hookC(TdfaRunner.class, Tdfa.class);
         hookM(TdfaRunner.class, "matches", CharSequence.class);
         hookM(TdfaRunner.class, "find", CharSequence.class);
-        hookM(TdfaRunner.class, "match", CharSequence.class, int.class);
         hookM(TdfaRunner.class, "match", CharSequence.class, int.class, MatchScratch.class);
-        hookM(TdfaRunner.class, "matchWhole", CharSequence.class);
         hookM(TdfaRunner.class, "matchWhole", CharSequence.class, MatchScratch.class);
         hookM(TdfaRunner.class, "startBits");
         hookM(TdfaRunner.class, "candScanMax");
@@ -116,7 +114,8 @@ class EmittedSurfaceConformanceTest {
                 "lastMatchStart", "lastMatchEnd", "appendPos", "scratch"}) {
             hookF(Matcher.class, f);
         }
-        // Carrier itself: generated wrappers link its no-arg ctor by descriptor.
+        // Carrier itself: its name is baked into the emitters' method
+        // descriptors (match/matchWhole/takeRegs/extractOne/wholeOne).
         hookC(MatchScratch.class);
         // Facade ctors linked by descriptor from ShellEmitter.
         hookC(TDFAPattern.class, String.class, int.class, int.class,

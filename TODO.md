@@ -1600,8 +1600,10 @@ PR #8). Two design questions the round deliberately did NOT decide:
       trade-off, review r10 P2: SCRATCH kept ~2 MB/thread alive after one
       234 K-state DFA; every virtual thread paid its own Scratch +
       ThreadLocal entry). Done 2026-09-21: `core.MatchScratch` is the
-      carrier, `RegexEngine` grew carrier-aware overloads with default
-      delegations (`match`/`matchWhole`), every `@EmittedSurface` hook
+      carrier, owned by `core.Matcher`; `RegexEngine`'s `match`/
+      `matchWhole` entries carry the carrier directly (the abstract match
+      grew the param; matchWhole's default delegates with it — no
+      carrier-less twins to keep in sync), every `@EmittedSurface` hook
       (`restartExtract`, `originSimLeftmost`, `triggerScanTop`, the static
       walk leaves `extractOne`/`wholeOne`, `takeRegs`) carries the carrier,
       and the conformance tables re-pinned. `booleanMatchFrom` and the

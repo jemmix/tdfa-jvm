@@ -427,57 +427,24 @@ public final class TdfaAsmBackend {
 
     /**
      * The emitted strategy ladder — a bytecode transcription of
-     * {@code TdfaRunner.runStringExtractFast}. Strategy pieces (literal
-     * needle, candidate bounds, origin sim, trigger scan) are calls into the
-     * embedded runner (monomorphic: TdfaRunner is final); the walk itself is
-     * the generated {@code extractOne} leaf (inlined dispatch + inlined ops).
-     * Emits {@code TdfaRunner.trace} calls at the same decision points the
-     * runner records, so the strategy-conformance test can assert the two
-     * backends pick identical sequences.
-     *
-     * <p>The ladder lives in a private {@code matchImpl(CS, int, MatchScratch)}
-     * reached by {@code INVOKESPECIAL} from both public entries: the
-     * interface's two-arg {@code match(CS, int)} (fresh carrier per call —
-     * direct engine use, findAll iteration) and the carrier-aware
-     * {@code match(CS, int, MatchScratch)} (matcher-driven calls pool their
-     * buffers in the caller's carrier; the shells dispatch here with the
-     * final concrete receiver). Private + INVOKESPECIAL keeps the tier free
-     * of self-{@code INVOKEVIRTUAL}s (devirtualization policy: a generated
-     * class is not reflectively loadable, so a self-virtual call can't be
-     * proven monomorphic).
+     * {@code TdfaRunner.runStringExtractFast}, emitted AS the interface's
+     * carrier-aware {@code match(CS, int, MatchScratch)}: matcher-driven
+     * calls pool their buffers in the caller's carrier (the shells dispatch
+     * here with the final concrete receiver); carrier-less callers pass a
+     * fresh one. Strategy pieces (literal needle, candidate bounds, origin
+     * sim, trigger scan) are calls into the embedded runner (monomorphic:
+     * TdfaRunner is final); the walk itself is the generated
+     * {@code extractOne} leaf (inlined dispatch + inlined ops). Emits
+     * {@code TdfaRunner.trace} calls at the same decision points the runner
+     * records, so the strategy-conformance test can assert the two backends
+     * pick identical sequences.
      *
      * <p>Only emitted for fastPath INLINED classes (pickMode guarantees
      * fastPath: no masks, disjoint ranges) — non-fastPath shapes never see
      * this method because they compile to DELEGATE classes.
      */
     private static void genMatch(ClassWriter cw, String owner) {
-        // match(CS, int): fresh carrier, forward to the private ladder.
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I)L" + RESULT + ";", null, null);
-        mv.visitCode();
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitTypeInsn(Opcodes.NEW, SCRATCH);
-        mv.visitInsn(Opcodes.DUP);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, SCRATCH, "<init>", "()V", false);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, owner, "matchImpl", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", false);
-        mv.visitInsn(Opcodes.ARETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
-
-        // match(CS, int, MatchScratch): shell entry, forward to the private ladder.
-        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", null, null);
-        mv.visitCode();
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, owner, "matchImpl", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", false);
-        mv.visitInsn(Opcodes.ARETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
-
-        mv = cw.visitMethod(Opcodes.ACC_PRIVATE, "matchImpl", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", null, null);
         mv.visitCode();
         // locals: 0=this, 1=input, 2=from, 3=sc, 4=s, 5=len, 6=holder,
         //         7=leftmost/idx, 8=p, 9=fails, 10=c, 11=bits
@@ -1945,20 +1912,7 @@ public final class TdfaAsmBackend {
         mv.visitMaxs(0, 0); mv.visitEnd();
     }
     private static void genDelegateMatch(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I)L" + RESULT + ";", null, null);
-        mv.visitCode();
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "match", "(" + CS_D + "I)L" + RESULT + ";", false);
-        mv.visitInsn(Opcodes.ARETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
-
-        // Carrier-aware overload: matcher-driven calls pool their buffers in
-        // the caller's MatchScratch (see RegexEngine.match(CS, I, MatchScratch)).
-        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
@@ -1978,18 +1932,7 @@ public final class TdfaAsmBackend {
      * classes ({@link #genMatchWholeInlined}) emit the walk itself.
      */
     private static void genMatchWhole(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + ")L" + RESULT + ";", null, null);
-        mv.visitCode();
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "matchWhole", "(" + CS_D + ")L" + RESULT + ";", false);
-        mv.visitInsn(Opcodes.ARETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
-
-        // Carrier-aware overload (see RegexEngine.matchWhole(CS, MatchScratch)).
-        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
@@ -2001,42 +1944,16 @@ public final class TdfaAsmBackend {
         mv.visitEnd();
     }
     /**
-     * INLINED-mode {@code matchWhole}: String inputs run the emitted
-     * whole-walk leaf ({@link #genWholeOne} — same per-state dispatch and
-     * register machinery as {@code extractOne}, whole protocol: no stop
+     * INLINED-mode {@code matchWhole}, emitted AS the interface's carrier-
+     * aware {@code matchWhole(CS, MatchScratch)}: String inputs run the
+     * emitted whole-walk leaf ({@link #genWholeOne} — same per-state dispatch
+     * and register machinery as {@code extractOne}, whole protocol: no stop
      * table, accept gate + φ exactly at EOF); non-Strings delegate to the
      * runner's generic walk. Traces ANCHORED/GENERIC at the same points
-     * {@code TdfaRunner.matchWhole} does (strategy conformance). The walk
-     * lives in a private {@code matchWholeImpl(CS, MatchScratch)} reached by
-     * {@code INVOKESPECIAL} from both public entries (one-arg interface
-     * method with a fresh carrier, carrier-aware overload for matcher-driven
-     * calls) — same devirtualization-policy shape as {@link #genMatch}.
+     * {@code TdfaRunner.matchWhole} does (strategy conformance).
      */
     private static void genMatchWholeInlined(ClassWriter cw, String owner) {
-        // matchWhole(CS): fresh carrier, forward to the private walk.
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + ")L" + RESULT + ";", null, null);
-        mv.visitCode();
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitTypeInsn(Opcodes.NEW, SCRATCH);
-        mv.visitInsn(Opcodes.DUP);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, SCRATCH, "<init>", "()V", false);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, owner, "matchWholeImpl", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", false);
-        mv.visitInsn(Opcodes.ARETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
-
-        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", null, null);
-        mv.visitCode();
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitVarInsn(Opcodes.ALOAD, 2);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, owner, "matchWholeImpl", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", false);
-        mv.visitInsn(Opcodes.ARETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
-
-        mv = cw.visitMethod(Opcodes.ACC_PRIVATE, "matchWholeImpl", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", null, null);
         mv.visitCode();
         // locals: 1 = input, 2 = sc
         Label isStr = new Label();

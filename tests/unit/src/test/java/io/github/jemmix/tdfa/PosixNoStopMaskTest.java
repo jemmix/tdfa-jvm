@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.tdfa.Tdfa;
+import io.github.jemmix.tdfa.core.MatchScratch;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
 import org.junit.jupiter.api.AfterEach;
@@ -32,8 +33,8 @@ class PosixNoStopMaskTest {
         Tdfa t = posix("(a|ab)(c|bcd)");
         assertThat(t.stopOnAcceptMask()).as("POSIX artifact must not materialize a stop tier").isNull();
         TdfaRunner r = new TdfaRunner(t);
-        assertThat(r.match("abcd", 0)).as("POSIX (a|ab)(c|bcd) matches 'abcd'").isNotNull();
-        assertThat(r.match("abcd", 0).end(0)).isEqualTo(4); // leftmost-LONGEST: a+bcd spans "abcd"
+        assertThat(r.match("abcd", 0, new MatchScratch())).as("POSIX (a|ab)(c|bcd) matches 'abcd'").isNotNull();
+        assertThat(r.match("abcd", 0, new MatchScratch()).end(0)).isEqualTo(4); // leftmost-LONGEST: a+bcd spans "abcd"
     }
 
     @Test
@@ -42,8 +43,8 @@ class PosixNoStopMaskTest {
         Tdfa t = posix("(a|ab)");
         assertThat(t.stopOnAcceptMask()).isNull();
         TdfaRunner r = new TdfaRunner(t);
-        assertThat(r.match("ab", 0)).isNotNull();
-        assertThat(r.match("ab", 0).end(0)).isEqualTo(2);
+        assertThat(r.match("ab", 0, new MatchScratch())).isNotNull();
+        assertThat(r.match("ab", 0, new MatchScratch()).end(0)).isEqualTo(2);
     }
 
     @Test
@@ -51,7 +52,7 @@ class PosixNoStopMaskTest {
         Tdfa t = Tdfa.compile(Tnfa.compile("(a|ab)"));
         assertThat(t.stopOnAcceptMask()).as("Perl artifact keeps its stop tier").isNotNull();
         TdfaRunner r = new TdfaRunner(t);
-        assertThat(r.match("ab", 0)).isNotNull();
-        assertThat(r.match("ab", 0).end(0)).isEqualTo(1); // leftmost-FIRST: "a"
+        assertThat(r.match("ab", 0, new MatchScratch())).isNotNull();
+        assertThat(r.match("ab", 0, new MatchScratch()).end(0)).isEqualTo(1); // leftmost-FIRST: "a"
     }
 }
