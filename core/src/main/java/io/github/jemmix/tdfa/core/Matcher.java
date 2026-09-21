@@ -44,18 +44,23 @@ public class Matcher {
      * This matcher's scratch carrier (register file + simulation buffers),
      * reused across every match operation on this matcher and freed with it
      * — the re2j {@code Matcher} shape: the stateful matcher owns the
-     * mutable buffers, the engine stays immutable and thread-safe. Passed
-     * down the ladder through the carrier-aware {@link RegexEngine}
-     * overloads; engines without internal pooling ignore it.
+     * mutable buffers, the engine stays immutable and thread-safe. Allocated
+     * only when one of this matcher's engines {@link RegexEngine#wantsScratch()
+     * wants} a carrier; otherwise {@code null}, and the engines allocate on
+     * demand at their (cold) carrier-consuming fallbacks — carrier-free
+     * engines then run this matcher's whole ladder without a single scratch
+     * allocation.
      */
     @EmittedSurface  // emitted shells read this field (carrier-aware engine calls)
-    protected final MatchScratch scratch = new MatchScratch();
+    protected MatchScratch scratch;
 
     public Matcher(RegexEngine engine, RegexEngine wholeEngine, CharSequence input) {
         this.engine = engine;
         this.wholeEngine = wholeEngine;
         this.input = input;
         this.inputLength = input.length();
+        this.scratch = engine.wantsScratch() || wholeEngine.wantsScratch()
+                ? new MatchScratch() : null;
     }
 
     public Matcher reset() {

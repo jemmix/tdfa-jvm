@@ -153,6 +153,20 @@ public final class TdfaAsmBackend {
                 genIsWordAt(cw, owner);
             }
             genMetadataMethods(cw, owner);
+            // Carrier-free INLINED classes (stack-register or zero-register
+            // leaves): hot paths never take carrier buffers, so tell
+            // core.Matcher not to allocate one at all. The cold fallbacks
+            // (origin sim / trigger scan / restart / non-String delegate)
+            // pass the possibly-null carrier into TdfaRunner, which
+            // allocates on demand at those entries.
+            if (stackRegs || tdfa.registerCount() == 0) {
+                MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "wantsScratch", "()Z", null, null);
+                mv.visitCode();
+                mv.visitInsn(Opcodes.ICONST_0);
+                mv.visitInsn(Opcodes.IRETURN);
+                mv.visitMaxs(0, 0);
+                mv.visitEnd();
+            }
         }
         cw.visitEnd();
         return cw.toByteArray();
@@ -2288,13 +2302,8 @@ public final class TdfaAsmBackend {
      *       the byMask table (array-shaped {@code phiMasked}); stack leaves
      *       inline the plain state-keyed φ instead.</li>
      * </ul>
-     *
-     * <p>{@code -Dtdfa.asm.stackregs=false} is the kill switch (A/B
-     * benchmarking + emergency fallback to the carrier-array leaves; read
-     * per generate, like {@code tdfa.asm.dump}).
      */
     private static boolean stackRegsEligible(Tdfa tdfa) {
-        if (!Boolean.parseBoolean(System.getProperty("tdfa.asm.stackregs", "true"))) return false;
         int n = tdfa.registerCount();
         if (n <= 0 || n > STACK_REGS_MAX) return false;
         return tdfa.stateFinalOpsByMask() == null;
