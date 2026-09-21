@@ -12,10 +12,13 @@ package io.github.jemmix.tdfa.core;
  * design kept ~2 MB of grown scratch alive per thread after one 234 K-state
  * DFA; virtual threads paid a fresh Scratch + ThreadLocal entry each).
  *
- * <p><b>Lifecycle.</b> One carrier per {@link Matcher}; direct engine calls
- * without a matcher allocate a fresh carrier per top-level call. Either way
- * the carrier is single-threaded, non-reentrant, and its contents are
- * undefined between operations.
+ * <p><b>Lifecycle.</b> One carrier per {@link Matcher} whose engines want
+ * one (see {@code RegexEngine.wantsScratch()}) — carrier-free engines get a
+ * {@code null} field and run their whole ladder without a scratch
+ * allocation, the carrier-consuming fallbacks allocating a fresh carrier on
+ * demand. Callers without a matcher may pass {@code null} down the engine
+ * entries for the same effect. Either way the carrier is single-threaded,
+ * non-reentrant, and its contents are undefined between operations.
  *
  * <p><b>Correctness contract.</b> Contents are undefined on take — callers
  * fill {@code [0, n)} before reading — and callers must clone before an

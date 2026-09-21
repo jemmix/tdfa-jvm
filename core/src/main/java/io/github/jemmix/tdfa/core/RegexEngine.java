@@ -57,8 +57,10 @@ public interface RegexEngine {
      * <p>The caller's {@link MatchScratch} holds the reusable per-match
      * buffers (register file, simulation sets), so a {@link Matcher}
      * iterating {@code find()} over one input pools them across calls
-     * instead of allocating per call; callers without a matcher pass a
-     * fresh carrier. The carrier must be non-null, is never retained
+     * instead of allocating per call. {@code null} is allowed — engines
+     * allocate a carrier on demand at the (cold) points that consume one,
+     * so carrier-free engines ({@link #wantsScratch()} {@code false}) pay
+     * nothing on their hot paths. A non-null carrier is never retained
      * beyond the call, and is a pure reuse hint — never semantic.
      */
     MatchResult match(CharSequence input, int from, MatchScratch scratch);
@@ -95,6 +97,18 @@ public interface RegexEngine {
     int programSize();
 
     /**
+     * Whether this engine's hot paths consume the caller's {@link MatchScratch}
+     * carrier. Used by {@link Matcher} to skip carrier allocation entirely for
+     * engines that don't want one (the ASM tier's stack-register and
+     * zero-register leaves borrow nothing on their hot paths — only cold
+     * fallback strategies need a carrier, and those allocate on demand).
+     * A pure hint for allocation: the carrier is never semantic either way.
+     */
+    default boolean wantsScratch() {
+        return true;
+    }
+
+    /**
      * Iterate all non-overlapping matches, advancing past each; zero-width
      * matches advance by one position. The returned iterable is lazy and
      * single-use per {@code iterator()} call; each element is an independent
@@ -107,7 +121,7 @@ public interface RegexEngine {
 
             private MatchResult advance() {
                 if (from > input.length()) return null;
-                MatchResult m = match(input, from, new MatchScratch());
+                MatchResult m = match(input, from, null);
                 if (m == null) return null;
                 from = (m.end(0) == m.start(0)) ? m.end(0) + 1 : m.end(0);
                 return m;

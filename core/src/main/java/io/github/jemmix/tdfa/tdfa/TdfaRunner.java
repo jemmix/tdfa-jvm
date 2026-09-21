@@ -342,7 +342,10 @@ public final class TdfaRunner implements RegexEngine {
      */
     @EmittedSurface
     public static int[] takeRegs(int n, MatchScratch sc) {
-        return sc.takeRegs(n);
+        // sc may be null from carrier-free engines' direct callers; a fresh
+        // carrier per call is exactly what those callers had before the
+        // nullable-carrier contract (CompiledRegex/findAll shape).
+        return (sc != null ? sc : new MatchScratch()).takeRegs(n);
     }
 
     /**
@@ -464,7 +467,7 @@ public final class TdfaRunner implements RegexEngine {
      * Carrier-aware match: {@code sc} holds this call's reusable buffers
      * (see {@link MatchScratch}); a {@link io.github.jemmix.tdfa.core.Matcher}
      * passes its own carrier so iteration pools across calls, carrier-less
-     * callers pass a fresh one.
+     * callers may pass null (a fresh carrier is allocated on demand).
      */
     @EmittedSurface
     @Override
@@ -473,6 +476,7 @@ public final class TdfaRunner implements RegexEngine {
         // never the walk's raw StringIndexOutOfBoundsException.
         if (from < 0 || from > input.length())
             throw new IndexOutOfBoundsException("from: " + from + ", length: " + input.length());
+        if (sc == null) sc = new MatchScratch();
         MatchHolder h;
         if (input instanceof String) {
             String s = (String) input;
@@ -510,6 +514,7 @@ public final class TdfaRunner implements RegexEngine {
     @Override
     public MatchResult matchWhole(CharSequence input, MatchScratch sc) {
         trace(input instanceof String ? Strategy.ANCHORED : Strategy.GENERIC);
+        if (sc == null) sc = new MatchScratch();
         MatchHolder h = wholeWalk(input, 0, input.length(), sc);
         if (h == null) return null;
         if (tdfa.fixedBase != null) {
@@ -1039,9 +1044,11 @@ public final class TdfaRunner implements RegexEngine {
      * per-unit scan from {@code fromStart} with the pair-interior guard and
      * an exact extract at each position. Public: the ASM-emitted ladder
      * delegates here instead of emitting its own loop — one definition.
+     * {@code sc} may be null (carrier-free engines' cold fallback).
      */
     @EmittedSurface
     public MatchHolder restartExtract(String input, int fromStart, int to, int from0, MatchScratch sc) {
+        if (sc == null) sc = new MatchScratch();
         for (int s = fromStart; s <= to; s++) {
             if (Alphabet.pairInterior(input, s)) continue;
             MatchHolder h = tryStartFast(input, s, to, sc);
@@ -1076,18 +1083,20 @@ public final class TdfaRunner implements RegexEngine {
 
     /**
      * Origin-sim leftmost start; {@link #LSS_BUDGET} = budget exhausted.
+     * {@code sc} may be null (carrier-free engines' cold fallback).
      */
     @EmittedSurface
     public int originSimLeftmost(CharSequence input, int from, int to, int budget, MatchScratch sc) {
-        return multiStateLeftmostStart(input, from, to, budget, sc);
+        return multiStateLeftmostStart(input, from, to, budget, sc != null ? sc : new MatchScratch());
     }
 
     /**
      * Memoized search-DFA trigger scan: window start W, or -1 = no match.
+     * {@code sc} may be null (carrier-free engines' cold fallback).
      */
     @EmittedSurface
     public int triggerScanTop(String input, int from, int to, MatchScratch sc) {
-        return triggerScan(input, from, to, sc);
+        return triggerScan(input, from, to, sc != null ? sc : new MatchScratch());
     }
 
     /**

@@ -117,6 +117,11 @@ public final class TdfaAsmBackend {
         boolean delegate = mode == DispatchMode.DELEGATE
                 || TdfaRunner.detectLiteralNeedle(tdfa) != null;
         boolean fastPath = mode == DispatchMode.INLINED;   // pickMode only INLINES fastPath-eligible DFAs
+        // Stack-register mode: for small-register DFAs the walk leaves hold
+        // the register file in JVM local slots (ILOAD/ISTORE) instead of the
+        // carrier-pooled array (takeRegs + fill + IALOAD/IASTORE + clone).
+        // INLINED-only; thresholds and kill switch in stackRegsEligible().
+        boolean stackRegs = fastPath && stackRegsEligible(tdfa);
         FrameClassWriter cw = new FrameClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, owner, null, "java/lang/Object", new String[]{ENGINE});
         if (delegate) {
@@ -135,12 +140,12 @@ public final class TdfaAsmBackend {
             genFind(cw, owner);
             genMatch(cw, owner);
             genMatchWholeInlined(cw, owner);
-            genWholeOne(cw, tdfa, owner);
-            genExtractOne(cw, tdfa, owner);
+            genWholeOne(cw, tdfa, owner, stackRegs);
+            genExtractOne(cw, tdfa, owner, stackRegs);
             genToResult(cw, tdfa, owner);
             genEntryOkC(cw, owner);
             if (tdfa.stateFinalOpsByMask() != null) genPhiMasked(cw, tdfa);
-            if (tdfa.registerCount() > 0) genPhi(cw, tdfa);
+            if (tdfa.registerCount() > 0 && !stackRegs) genPhi(cw, tdfa);
             genPositionFlagsC(cw, owner, true, tdfa.unicodeWordBoundary());
             if (tdfa.unicodeWordBoundary()) {
                 genIsUnicodeWordChar(cw, owner);
@@ -148,6 +153,20 @@ public final class TdfaAsmBackend {
                 genIsWordAt(cw, owner);
             }
             genMetadataMethods(cw, owner);
+            // Carrier-free INLINED classes (stack-register or zero-register
+            // leaves): hot paths never take carrier buffers, so tell
+            // core.Matcher not to allocate one at all. The cold fallbacks
+            // (origin sim / trigger scan / restart / non-String delegate)
+            // pass the possibly-null carrier into TdfaRunner, which
+            // allocates on demand at those entries.
+            if (stackRegs || tdfa.registerCount() == 0) {
+                MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "wantsScratch", "()Z", null, null);
+                mv.visitCode();
+                mv.visitInsn(Opcodes.ICONST_0);
+                mv.visitInsn(Opcodes.IRETURN);
+                mv.visitMaxs(0, 0);
+                mv.visitEnd();
+            }
         }
         cw.visitEnd();
         return cw.toByteArray();
@@ -662,11 +681,11 @@ public final class TdfaAsmBackend {
      * register ops; reads via String.charAt. The caller's MatchScratch
      * carrier supplies the pooled register file ({@code takeRegs(n, sc)}).
      */
-    private static void genExtractOne(ClassWriter cw, Tdfa tdfa, String owner) {
+    private static void genExtractOne(ClassWriter cw, Tdfa tdfa, String owner, boolean stackRegs) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
                 "extractOne", "(Ljava/lang/String;II" + SCRATCH_D + ")L" + HOLDER + ";", null, null);
         mv.visitCode();
-        emitRunCore(mv, tdfa, owner);
+        emitRunCore(mv, tdfa, owner, stackRegs);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
@@ -910,7 +929,7 @@ public final class TdfaAsmBackend {
 
     // ===== shared core: DFA walk + search loop =====
 
-    private static void emitRunCore(MethodVisitor mv, Tdfa tdfa, String owner) {
+    private static void emitRunCore(MethodVisitor mv, Tdfa tdfa, String owner, boolean stackRegs) {
         final boolean perl = !tdfa.longestMatch();
         final int[] op = tdfa.ops();
 
@@ -927,6 +946,11 @@ public final class TdfaAsmBackend {
         final int MS=4, ST=5, STATE=6, POS=7, HA=8, LAP=9;
         final int REGS = 10, LAS = 11, PF = 12, C_LV = 13;
         final int T1 = 14, T2 = 15, PF2 = 16, T3 = 17, R = 18;
+        // Stack-register mode: register file in local slots [REGBASE,
+        // REGBASE+n) — takeRegs/fill/IALOAD/IASTORE/clone all disappear
+        // from the walk; the result array is materialized once on success.
+        // (The sc carrier param stays: cold delegated paths still use it.)
+        final int REGBASE = 19;
 
         // Single start: the emitted ladder in genMatch positions every call;
         // the walk itself never restarts (MS = ST = from).
@@ -958,8 +982,16 @@ public final class TdfaAsmBackend {
         // fill(-1): the pooled array may be longer than n (grown by a
         // capture-heavier pattern on this carrier); success paths clone
         // before returning, so the pool never escapes.
+        // Stack-register mode: the same initialization as plain locals
+        // (single-start leaf — the loop body runs exactly once, so the
+        // in-loop placement is parity with the per-start take+fill).
         {
-            if (tdfa.registerCount() == 0) {
+            if (stackRegs) {
+                for (int k = 0; k < tdfa.registerCount(); k++) {
+                    mv.visitInsn(Opcodes.ICONST_M1);
+                    mv.visitVarInsn(Opcodes.ISTORE, REGBASE + k);
+                }
+            } else if (tdfa.registerCount() == 0) {
                 mv.visitInsn(Opcodes.ACONST_NULL);
                 mv.visitVarInsn(Opcodes.ASTORE, REGS);
             } else {
@@ -1052,10 +1084,14 @@ public final class TdfaAsmBackend {
         // carries the last accept's finals. Parity with TdfaRunner. (Table
         // mode: phiMasked above already applied the per-mask winner's ops.)
         if (byMask == null && tdfa.registerCount() > 0) {
-            mv.visitVarInsn(Opcodes.ILOAD, STATE);
-            mv.visitVarInsn(Opcodes.ALOAD, REGS);
-            mv.visitVarInsn(Opcodes.ILOAD, POS);
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phi", "(I[II)V", false);
+            if (stackRegs) {
+                emitPhiInline(mv, tdfa, STATE, POS, REGBASE);
+            } else {
+                mv.visitVarInsn(Opcodes.ILOAD, STATE);
+                mv.visitVarInsn(Opcodes.ALOAD, REGS);
+                mv.visitVarInsn(Opcodes.ILOAD, POS);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phi", "(I[II)V", false);
+            }
         }
         if (perl) {
             mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "STOP_MASK", "[I");
@@ -1088,7 +1124,7 @@ public final class TdfaAsmBackend {
         // ===== DFA DISPATCH (TABLESWITCH) =====
         emitDfaDispatch(mv, tdfa, owner,
                 IN, STATE, POS, LEN, PF, C_LV, REGS,
-                dfaLoop, dfaEnd, op);
+                dfaLoop, dfaEnd, op, stackRegs, REGBASE);
 
         mv.visitLabel(dfaEnd);
 
@@ -1099,8 +1135,10 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ILOAD, HA);
             mv.visitJumpInsn(Opcodes.IFEQ, noResult);
 
-            // r = regs == null ? new int[0] : regs.clone()
-            if (tdfa.registerCount() == 0) {
+            // r = stackRegs ? materialize(REGBASE..REGBASE+n) : (regs == null ? new int[0] : regs.clone())
+            if (stackRegs) {
+                emitMaterializeRegs(mv, tdfa.registerCount(), REGBASE);
+            } else if (tdfa.registerCount() == 0) {
                 mv.visitInsn(Opcodes.ICONST_0);
                 mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
             } else {
@@ -1141,7 +1179,8 @@ public final class TdfaAsmBackend {
 
     private static void emitDfaDispatch(MethodVisitor mv, Tdfa tdfa, String owner,
                                         int IN, int STATE, int POS, int LEN, int PF, int C_LV,
-                                        int REGS, Label dfaLoop, Label dfaEnd, int[] op) {
+                                        int REGS, Label dfaLoop, Label dfaEnd, int[] op,
+                                        boolean stackRegs, int REGBASE) {
         int nStates = tdfa.stateCount();
         // Hoisted locals: accessors are defensive copies (Tdfa policy) —
         // never call one inside the per-state/per-range emit loops below.
@@ -1237,8 +1276,10 @@ public final class TdfaAsmBackend {
                 }
 
                 // register ops (extract only)
-                if (opsOff != 0)
-                    emitOpsInline(mv, op, opsOff, REGS, POS);
+                if (opsOff != 0) {
+                    if (stackRegs) emitOpsLocal(mv, op, opsOff, POS, REGBASE);
+                    else emitOpsInline(mv, op, opsOff, REGS, POS);
+                }
 
                 // state = target
                 ic(mv, target);
@@ -1855,6 +1896,74 @@ public final class TdfaAsmBackend {
     // ===== register ops (inline, final — uses lastAcceptPos) =====
     // (Retired: final ops are applied eagerly via genPhi; see there.)
 
+    /**
+     * Stack-register twin of {@link #emitOpsInline}: the register file is
+     * local slots {@code [REGBASE, REGBASE+n)} — every op is a bare
+     * ILOAD/ISTORE pair, no array, no bounds check, no pool. Ops semantics
+     * and evaluation order are identical to the array twin (parity with
+     * TdfaRunner.applyOps).
+     */
+    private static void emitOpsLocal(MethodVisitor mv, int[] op, int off, int POS, int REGBASE) {
+        int j = off;
+        while (op[j] != Tdfa.OP_END) {
+            int opc = op[j], dst = op[j + 1], src = op[j + 2];
+            if (opc == Tdfa.OP_SET_POS) {
+                mv.visitVarInsn(Opcodes.ILOAD, POS);
+                mv.visitVarInsn(Opcodes.ISTORE, REGBASE + dst);
+            } else if (opc == Tdfa.OP_SET_NIL) {
+                mv.visitInsn(Opcodes.ICONST_M1);
+                mv.visitVarInsn(Opcodes.ISTORE, REGBASE + dst);
+            } else if (opc == Tdfa.OP_COPY) {
+                mv.visitVarInsn(Opcodes.ILOAD, REGBASE + src);
+                mv.visitVarInsn(Opcodes.ISTORE, REGBASE + dst);
+            }
+            j += 3;
+        }
+    }
+
+    /**
+     * Inline φ for stack-register leaves: LOOKUPSWITCH over accepting
+     * states with final ops, each arm applying the state's final ops into
+     * the register locals — the same eager-at-accept-record semantics as
+     * the generated {@code phi(I[II)V} helper, minus the array. No-op
+     * (emits nothing) when no accepting state has final ops.
+     */
+    private static void emitPhiInline(MethodVisitor mv, Tdfa tdfa, int STATE, int POS, int REGBASE) {
+        int[] op = tdfa.ops(), sfo = tdfa.stateFinalOpsOff(), sm = tdfa.stateMeta();
+        List<int[]> finals = new ArrayList<>();
+        for (int s = 0; s < sm.length; s++)
+            if ((sm[s] & 1) != 0 && sfo[s] != 0) finals.add(new int[]{s, sfo[s]});
+        if (finals.isEmpty()) return;
+        int nf = finals.size();
+        int[] keys = new int[nf];
+        Label[] fl = new Label[nf];
+        Label fDef = new Label(), fDone = new Label();
+        for (int k = 0; k < nf; k++) { keys[k] = finals.get(k)[0]; fl[k] = new Label(); }
+        mv.visitVarInsn(Opcodes.ILOAD, STATE);
+        mv.visitLookupSwitchInsn(fDef, keys, fl);
+        for (int k = 0; k < nf; k++) {
+            mv.visitLabel(fl[k]);
+            emitOpsLocal(mv, op, finals.get(k)[1], POS, REGBASE);
+            mv.visitJumpInsn(Opcodes.GOTO, fDone);
+        }
+        mv.visitLabel(fDef);
+        mv.visitLabel(fDone);
+    }
+
+    /** Materialize the register file from local slots into a fresh
+     *  {@code int[n]} (stack-register twin of {@code regs.clone()}); the
+     *  array is left on the operand stack. */
+    private static void emitMaterializeRegs(MethodVisitor mv, int n, int REGBASE) {
+        ic(mv, n);
+        mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
+        for (int k = 0; k < n; k++) {
+            mv.visitInsn(Opcodes.DUP);
+            ic(mv, k);
+            mv.visitVarInsn(Opcodes.ILOAD, REGBASE + k);
+            mv.visitInsn(Opcodes.IASTORE);
+        }
+    }
+
     // ===== small helpers =====
 
 
@@ -1995,20 +2104,28 @@ public final class TdfaAsmBackend {
      * Tdfa.tableDeps}). A dead step (no transition) means the input is not
      * a whole match — null.
      */
-    private static void genWholeOne(ClassWriter cw, Tdfa tdfa, String owner) {
+    private static void genWholeOne(ClassWriter cw, Tdfa tdfa, String owner, boolean stackRegs) {
         final int[] op = tdfa.ops();
         final int[] byMask = tdfa.stateFinalOpsByMask();
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
                 "wholeOne", "(Ljava/lang/String;" + SCRATCH_D + ")L" + HOLDER + ";", null, null);
         mv.visitCode();
         // locals: 0=s, 1=sc, 2=len, 3=state, 4=pos, 5=regs, 6=c, 7=pf/t1, 8=r
+        // stackRegs: register file in [REGBASE, REGBASE+n) instead of local 5
         final int IN = 0, LEN = 2, STATE = 3, POS = 4, REGS = 5, C_LV = 6, PF = 7;
+        final int REGBASE = 9;
         mv.visitVarInsn(Opcodes.ALOAD, IN);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "length", "()I", false);
         mv.visitVarInsn(Opcodes.ISTORE, LEN);
         // regs from the caller's carrier pool (clone-before-return, as
-        // extractOne); ranged fill — pooled array may exceed n
-        if (tdfa.registerCount() == 0) {
+        // extractOne); ranged fill — pooled array may exceed n. Stack-register
+        // mode: plain -1-initialized locals (no pool, no fill call).
+        if (stackRegs) {
+            for (int k = 0; k < tdfa.registerCount(); k++) {
+                mv.visitInsn(Opcodes.ICONST_M1);
+                mv.visitVarInsn(Opcodes.ISTORE, REGBASE + k);
+            }
+        } else if (tdfa.registerCount() == 0) {
             mv.visitInsn(Opcodes.ACONST_NULL);
             mv.visitVarInsn(Opcodes.ASTORE, REGS);
         } else {
@@ -2040,7 +2157,7 @@ public final class TdfaAsmBackend {
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
         mv.visitVarInsn(Opcodes.ISTORE, C_LV);
         emitCodePointDecode(mv, IN, C_LV, POS, LEN, PF);   // PF slot doubles as scratch t1
-        emitDfaDispatch(mv, tdfa, owner, IN, STATE, POS, LEN, PF, C_LV, REGS, loop, dead, op);
+        emitDfaDispatch(mv, tdfa, owner, IN, STATE, POS, LEN, PF, C_LV, REGS, loop, dead, op, stackRegs, REGBASE);
         mv.visitLabel(dead);
         mv.visitInsn(Opcodes.ACONST_NULL);
         mv.visitInsn(Opcodes.ARETURN);
@@ -2068,13 +2185,19 @@ public final class TdfaAsmBackend {
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phiMasked", "(I[III)Z", false);
             mv.visitJumpInsn(Opcodes.IFEQ, noAcc);
         } else if (tdfa.registerCount() > 0) {
-            mv.visitVarInsn(Opcodes.ILOAD, STATE);
-            mv.visitVarInsn(Opcodes.ALOAD, REGS);
-            mv.visitVarInsn(Opcodes.ILOAD, LEN);
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phi", "(I[II)V", false);
+            if (stackRegs) emitPhiInline(mv, tdfa, STATE, LEN, REGBASE);
+            else {
+                mv.visitVarInsn(Opcodes.ILOAD, STATE);
+                mv.visitVarInsn(Opcodes.ALOAD, REGS);
+                mv.visitVarInsn(Opcodes.ILOAD, LEN);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phi", "(I[II)V", false);
+            }
         }
-        // r = regs == null ? new int[0] : regs.clone(); return new MatchHolder(0, len, r)
-        if (tdfa.registerCount() == 0) {
+        // r = stackRegs ? materialize(locals) : (regs == null ? new int[0] : regs.clone());
+        // return new MatchHolder(0, len, r)
+        if (stackRegs) {
+            emitMaterializeRegs(mv, tdfa.registerCount(), REGBASE);
+        } else if (tdfa.registerCount() == 0) {
             mv.visitInsn(Opcodes.ICONST_0);
             mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
         } else {
@@ -2157,6 +2280,39 @@ public final class TdfaAsmBackend {
         return DispatchMode.DELEGATE;
     }
 
+    /**
+     * Stack-register eligibility for INLINED classes: the register file
+     * lives in JVM local slots ({@code extractOne} slots 19+, {@code
+     * wholeOne} slots 9+) instead of the carrier-pooled array — no
+     * takeRegs, no Arrays.fill, no IALOAD/IASTORE bounds checks in the
+     * walk, no clone on success (the result array is materialized from
+     * locals once, per successful match). Thresholds:
+     *
+     * <ul>
+     *   <li>{@code 1 <= registerCount <= STACK_REGS_MAX} — same-JVM A/B
+     *       sweep over {@code (\w+ )+} shapes (min-of-7 alternating
+     *       batches, against the carrier-array leaves): −18 % (4 regs),
+     *       −10 % (8), −9..−19 % (12–16), −10..−15 % (24), −5..−9 % (32),
+     *       parity at 40+, noise beyond. 32 is the last size class with a
+     *       consistent win; beyond it the wider frames and the success-path
+     *       materialization (one IASTORE per register) eat the array
+     *       savings. extractOne's frame stays ≤ 51 slots — far under the
+     *       256-slot WIDE prefix boundary.</li>
+     *   <li>{@code stateFinalOpsByMask() == null} — φ-variant accepts need
+     *       the byMask table (array-shaped {@code phiMasked}); stack leaves
+     *       inline the plain state-keyed φ instead.</li>
+     * </ul>
+     */
+    private static boolean stackRegsEligible(Tdfa tdfa) {
+        int n = tdfa.registerCount();
+        if (n <= 0 || n > STACK_REGS_MAX) return false;
+        return tdfa.stateFinalOpsByMask() == null;
+    }
+
+    /** Register-file size ceiling for the stack-register leaves (see
+     *  {@link #stackRegsEligible}): 32 = last consistently-winning size
+     *  class; parity is at 40+ regs. */
+    private static final int STACK_REGS_MAX = 32;
 
     /** Soft budget for {@code runExtract} bytecode under INLINED mode. 65 KB
      *  is the JVM hard cap; the per-range cost estimate (~25 B/range) is a
@@ -2178,6 +2334,10 @@ public final class TdfaAsmBackend {
     private static int estimateInlinedBytes(Tdfa tdfa) {
         int[] sm = tdfa.stateMeta(), sb = tdfa.stateBase(), rg = tdfa.ranges(), op = tdfa.ops();
         int[] sfo = tdfa.stateFinalOpsOff();
+        // Stack-register leaves inline φ at the accept sites of BOTH
+        // extractOne and wholeOne (no separate phi helper), so their final
+        // ops count twice against the same per-method budget.
+        int finalMul = stackRegsEligible(tdfa) ? 2 : 1;
         int total = 0;
         for (int s = 0; s < tdfa.stateCount(); s++) {
             int meta = sm[s];
@@ -2193,10 +2353,12 @@ public final class TdfaAsmBackend {
                     while (j < op.length && op[j] != Tdfa.OP_END) { total += 7; j += 3; }
                 }
             }
-            // Final-ops per accept state (emitFinalOps inlines each)
+            // Final-ops per accept state (×2 under stack regs — extractOne
+            // and wholeOne each embed one inline copy)
             if (sfo[s] != 0) {
-                int j = sfo[s];
-                while (j < op.length && op[j] != Tdfa.OP_END) { total += 7; j += 3; }
+                int j = sfo[s], ops = 0;
+                while (j < op.length && op[j] != Tdfa.OP_END) { ops += 7; j += 3; }
+                total += ops * finalMul;
             }
         }
         return total;
