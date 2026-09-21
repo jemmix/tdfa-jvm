@@ -16,7 +16,7 @@ import java.lang.annotation.Target;
  * production.
  *
  * <p>Roughly 30 members across {@code TdfaRunner}, {@code MatchHolder},
- * {@code RegPool}, {@code MatchResult}, {@code core.Matcher},
+ * {@code MatchResult}, {@code core.Matcher},
  * {@code TDFAPattern}, {@code PatternMatcher} and {@code Pattern.Utf8}
  * carry this marker. If a marked member must change, the emitters'
  * descriptor constants must change in the same commit, and the parity

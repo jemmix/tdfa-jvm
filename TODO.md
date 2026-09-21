@@ -1593,3 +1593,24 @@ PR #8). Two design questions the round deliberately did NOT decide:
       re2j-parity contract, proven by the 2026-08-18 soak); resurrect from git history
       (tag pre-cleanup) + the BT19 paper if this is ever taken up.
 - [ ] Streaming input (match against `InputStream` / `ByteBuffer` without materializing)
+- [ ] Per-matcher scratch carrier to retire the match-time ThreadLocals — the
+      java.util.regex/re2j shape: a stateful carrier (regs + sim buffers +
+      trace buffer) owned by `PatternMatcher` (already per-call and
+      single-threaded) and passed down the ladder, replacing
+      `TdfaRunner.SCRATCH` and `TRACE_BUF` (both documented retention
+      trade-offs, review r10 P2: SCRATCH keeps ~2 MB/thread alive after one
+      234 K-state DFA, TRACE_BUF grows until drained; every virtual thread
+      pays its own Scratch + ThreadLocal entry). Payoff is lifetime/vthread
+      semantics, NOT throughput — a pooled take is a few ns against ~120 ns
+      finds, and full pooling removal was measured at +43% on the dense
+      extract-restart scan (ThreadLocal round, PR #10, 2026-09-21; see the
+      `Scratch` doc-comment in TdfaRunner for the numbers). Cost: an
+      internals redesign, not a local patch — `RegexEngine` is a public BYO
+      surface (carrier-aware overloads with default delegations), every
+      `@EmittedSurface` hook (`restartExtract`, `originSimLeftmost`,
+      `triggerScanTop`, `booleanMatchFrom`, the static walk leaves
+      `extractOne`/`wholeOne`) grows a carrier param, and the
+      conformance/bytecode-policy tables re-pin. Bundles naturally with a
+      revived observer/event API (the retired "internals access" item — the
+      trace instrument would ride the same carrier). Consider when vthread
+      deployments or the retention wart become real.

@@ -323,6 +323,34 @@ public final class TdfaRunner implements RegexEngine {
     }
 
     /**
+     * Per-thread pooled register file for walk leaves: grow-only reuse of
+     * {@code Scratch.regs} — the same pool the interpreter's walks use —
+     * shared with the ASM-generated tier, whose {@code extractOne}/
+     * {@code wholeOne} leaves call this hook by name (INVOKESTATIC, no
+     * receiver: monomorphic by construction). One cached array per thread
+     * across ALL engines; this replaced the former per-generated-class
+     * {@code RegPool} (one array per pattern per thread).
+     *
+     * <p>Correctness contract: contents are undefined on take — callers fill
+     * {@code [0, n)} before reading — and callers must clone before the
+     * array escapes (walks clone into their result holder on success). The
+     * returned array may be longer than {@code n} (grown by a
+     * capture-heavier pattern on this thread); only {@code [0, n)} is
+     * meaningful, and downstream consumers (MatchHolder/MatchResult) index
+     * within the pattern's register count, never the array length.
+     */
+    @EmittedSurface
+    public static int[] takeRegs(int n) {
+        Scratch sc = SCRATCH.get();
+        int[] r = sc.regs;
+        if (r == null || r.length < n) {
+            r = new int[n];
+            sc.regs = r;
+        }
+        return r;
+    }
+
+    /**
      * Set state {@code s} in {@code next} (if absent) with origin {@code o} in
      * {@code originNext}; min-merge if already present. {@code originNext} is
      * only read for states whose bit is set in {@code next} (implying a
@@ -495,17 +523,12 @@ public final class TdfaRunner implements RegexEngine {
         final int[] sam = this.stateAcceptMask;
         final int[] arf = this.asciiRangeFlat;   // non-null iff rangesDisjoint
         final int limit = this.latinLimit;
-        Scratch sc = SCRATCH.get();
         final int[] regs;
         if (regSize == 0) {
             regs = null;
-        } else if (sc.regs != null && sc.regs.length >= regSize) {
-            regs = sc.regs;
-            Arrays.fill(regs, 0, regSize, -1);
         } else {
-            regs = new int[regSize];
-            java.util.Arrays.fill(regs, -1);
-            sc.regs = regs;
+            regs = takeRegs(regSize);
+            Arrays.fill(regs, 0, regSize, -1);
         }
         int state = startState;
         int pos = from;
@@ -684,17 +707,12 @@ public final class TdfaRunner implements RegexEngine {
         // per candidate and most walks fail — no allocation on that path. The
         // success path clones (line below) before returning, so the pool is
         // never handed out.
-        Scratch sc = SCRATCH.get();
         final int[] regs;
         if (regSize == 0) {
             regs = null;
-        } else if (sc.regs != null && sc.regs.length >= regSize) {
-            regs = sc.regs;
-            Arrays.fill(regs, 0, regSize, -1);
         } else {
-            regs = new int[regSize];
-            java.util.Arrays.fill(regs, -1);
-            sc.regs = regs;
+            regs = takeRegs(regSize);
+            Arrays.fill(regs, 0, regSize, -1);
         }
         int state = startState;
         int lastAcceptPos = -1;
@@ -1413,18 +1431,14 @@ public final class TdfaRunner implements RegexEngine {
         // failed-walk path. On success the array is cloned into the MatchHolder
         // before returning, so the pool is never handed out. NOTE: the
         // non-ASCII fallback below re-enters the generic extract path, which
-        // allocates its own regs — no pool aliasing.
-        Scratch sc = SCRATCH.get();
+        // refills the same pool — safe: it never aliases a live caller's
+        // [0, regSize) window (each taker refills before use).
         final int[] regs;
         if (regSize == 0) {
             regs = null;
-        } else if (sc.regs != null && sc.regs.length >= regSize) {
-            regs = sc.regs;
-            Arrays.fill(regs, 0, regSize, -1);
         } else {
-            regs = new int[regSize];
-            java.util.Arrays.fill(regs, -1);
-            sc.regs = regs;
+            regs = takeRegs(regSize);
+            Arrays.fill(regs, 0, regSize, -1);
         }
         int state = startState;
         int lastAcceptPos = -1;
@@ -1811,19 +1825,14 @@ public final class TdfaRunner implements RegexEngine {
         // Scratch-regs reuse across restarts (the wholeWalk idiom): failed
         // restarts pay only the -1 refill, not a fresh allocation per start;
         // successful escapes clone into the MatchHolder, so reuse is safe.
-        Scratch sc = SCRATCH.get();
         int startSearch = from;
         while (true) {
             final int[] regs;
             if (regSize == 0) {
                 regs = null;
-            } else if (sc.regs != null && sc.regs.length >= regSize) {
-                regs = sc.regs;
-                Arrays.fill(regs, 0, regSize, -1);
             } else {
-                regs = new int[regSize];
-                java.util.Arrays.fill(regs, -1);
-                sc.regs = regs;
+                regs = takeRegs(regSize);
+                Arrays.fill(regs, 0, regSize, -1);
             }
             int state = startState;
             int lastAcceptPos = -1;
@@ -2118,6 +2127,14 @@ public final class TdfaRunner implements RegexEngine {
     // (O(stateWords + stateCount) each — significant for dictionary-scale DFAs)
     // and the regs[] allocation on failed single-start walks. Successful walks
     // still clone regs into the returned MatchHolder (it escapes the runner).
+    // regs is also the pool behind the ASM tier's walk leaves ({@link
+    // #takeRegs}) — pooling removal was measured at +43 % on the dense
+    // extract-restart scan (asmFindAllDense, 2026-09-21), so it stays.
+    //
+    // No nested aliasing: a holder of pooled regs never calls another taker
+    // while reading its own [0, regSize) window — the one re-entry
+    // (tryStartFast → extractFrom on a non-ASCII char) returns the callee's
+    // result immediately, and every taker refills [0, n) before use.
     //
     // RETENTION (documented trade-off, review P2): SCRATCH (and TRACE_BUF
     // when -Dtdfa.trace.strategy is enabled) are never evicted — a thread
@@ -2125,7 +2142,9 @@ public final class TdfaRunner implements RegexEngine {
     // lifetime; TRACE_BUF grows unboundedly until traceSnapshot() drains it.
     // Deliberate: eviction hooks on match paths cost more than the retention;
     // bounded deployments can call traceSnapshot() periodically or pool
-    // matcher threads. Static, so they do not pin any Tdfa/Pattern.
+    // matcher threads. Static, so they do not pin any Tdfa/Pattern (regs
+    // grows to the largest register count seen on the thread — one array,
+    // shared with the generated tier, NOT one per pattern).
     private static final class Scratch {
         int[] regs;
         int[] live, next, origin, originNext;
