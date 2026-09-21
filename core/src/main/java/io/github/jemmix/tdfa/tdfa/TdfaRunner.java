@@ -3,6 +3,7 @@ package io.github.jemmix.tdfa.tdfa;
 import io.github.jemmix.tdfa.ast.Alphabet;
 import io.github.jemmix.tdfa.core.EmittedSurface;
 import io.github.jemmix.tdfa.core.MatchResult;
+import io.github.jemmix.tdfa.core.MatchScratch;
 import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
 
@@ -75,7 +76,6 @@ public final class TdfaRunner implements RegexEngine {
      * see the policy note in {@link Tdfa}.)
      */
     private static final boolean WTRACE = Boolean.getBoolean("tdfa.trace");
-    private static final ThreadLocal<Scratch> SCRATCH = ThreadLocal.withInitial(Scratch::new);
     /**
      * DFAs at or below this state count get 256-entry (Latin-1) lookup tables; larger stay 128.
      */
@@ -323,31 +323,26 @@ public final class TdfaRunner implements RegexEngine {
     }
 
     /**
-     * Per-thread pooled register file for walk leaves: grow-only reuse of
-     * {@code Scratch.regs} — the same pool the interpreter's walks use —
-     * shared with the ASM-generated tier, whose {@code extractOne}/
+     * Pooled register file for walk leaves: grow-only reuse of
+     * {@code MatchScratch.regs} — the same carrier the interpreter's walks
+     * use — shared with the ASM-generated tier, whose {@code extractOne}/
      * {@code wholeOne} leaves call this hook by name (INVOKESTATIC, no
-     * receiver: monomorphic by construction). One cached array per thread
-     * across ALL engines; this replaced the former per-generated-class
-     * {@code RegPool} (one array per pattern per thread).
+     * receiver: monomorphic by construction). One carrier per
+     * {@link io.github.jemmix.tdfa.core.Matcher} (the caller owns the
+     * lifetime); this replaced the former per-thread ThreadLocal pool
+     * (and before that the per-generated-class {@code RegPool}).
      *
      * <p>Correctness contract: contents are undefined on take — callers fill
      * {@code [0, n)} before reading — and callers must clone before the
      * array escapes (walks clone into their result holder on success). The
      * returned array may be longer than {@code n} (grown by a
-     * capture-heavier pattern on this thread); only {@code [0, n)} is
+     * capture-heavier pattern on this carrier); only {@code [0, n)} is
      * meaningful, and downstream consumers (MatchHolder/MatchResult) index
      * within the pattern's register count, never the array length.
      */
     @EmittedSurface
-    public static int[] takeRegs(int n) {
-        Scratch sc = SCRATCH.get();
-        int[] r = sc.regs;
-        if (r == null || r.length < n) {
-            r = new int[n];
-            sc.regs = r;
-        }
-        return r;
+    public static int[] takeRegs(int n, MatchScratch sc) {
+        return sc.takeRegs(n);
     }
 
     /**
@@ -414,7 +409,7 @@ public final class TdfaRunner implements RegexEngine {
             return runStringAnchored(s) >= 0;
         }
         trace(Strategy.GENERIC);
-        return runGeneric(input, 0, input.length(), true) != null;
+        return runGeneric(input, 0, input.length(), true, new MatchScratch()) != null;
     }
 
     @EmittedSurface
@@ -427,7 +422,8 @@ public final class TdfaRunner implements RegexEngine {
                 trace(Strategy.LITERAL);
                 return RunnerTables.literalIndexOf(s, literalNeedle, 0) >= 0;
             }
-            if (fastPath) return runStringFindFast(s, len);
+            MatchScratch sc = new MatchScratch();
+            if (fastPath) return runStringFindFast(s, len, sc);
             int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? 0 : len;
             if (maxStart > 0) {
                 // One exact walk from 0 first: for prefix-chain DFAs (e.g.
@@ -447,7 +443,7 @@ public final class TdfaRunner implements RegexEngine {
                     }
                     return false;
                 }
-                int w = triggerScan(s, 0, len);
+                int w = triggerScan(s, 0, len, sc);
                 if (w < 0) return false;
                 trace(Strategy.WALK_RESTART);
                 for (int from = Math.max(w, 1); from <= maxStart; from++) {
@@ -461,12 +457,25 @@ public final class TdfaRunner implements RegexEngine {
             return runStringMatchFrom(s, 0, len) >= 0;
         }
         trace(Strategy.GENERIC);
-        return runGeneric(input, 0, input.length(), false) != null;
+        return runGeneric(input, 0, input.length(), false, new MatchScratch()) != null;
     }
 
     @EmittedSurface
     @Override
     public MatchResult match(CharSequence input, int from) {
+        return match(input, from, new MatchScratch());
+    }
+
+    /**
+     * Carrier-aware match: {@code sc} holds this call's reusable buffers
+     * (see {@link MatchScratch}); a {@link io.github.jemmix.tdfa.core.Matcher}
+     * passes its own carrier so iteration pools across calls. The default
+     * {@link RegexEngine#match(CharSequence, int, MatchScratch)} delegates
+     * here with a fresh carrier.
+     */
+    @EmittedSurface
+    @Override
+    public MatchResult match(CharSequence input, int from, MatchScratch sc) {
         // Interface contract (see RegexEngine.match): clean bounds failure,
         // never the walk's raw StringIndexOutOfBoundsException.
         if (from < 0 || from > input.length())
@@ -474,10 +483,10 @@ public final class TdfaRunner implements RegexEngine {
         MatchHolder h;
         if (input instanceof String) {
             String s = (String) input;
-            h = fastPath ? runStringExtractFast(s, from, s.length()) : runStringExtract(s, from, s.length());
+            h = fastPath ? runStringExtractFast(s, from, s.length(), sc) : runStringExtract(s, from, s.length(), sc);
         } else {
             trace(Strategy.GENERIC);
-            h = runGeneric(input, from, input.length(), false);
+            h = runGeneric(input, from, input.length(), false, sc);
         }
         if (h == null) return null;
         if (tdfa.fixedBase != null) {
@@ -503,8 +512,18 @@ public final class TdfaRunner implements RegexEngine {
     @EmittedSurface
     @Override
     public MatchResult matchWhole(CharSequence input) {
+        return matchWhole(input, new MatchScratch());
+    }
+
+    /**
+     * Carrier-aware whole match — see {@link #match(CharSequence, int, MatchScratch)}
+     * for the reuse contract.
+     */
+    @EmittedSurface
+    @Override
+    public MatchResult matchWhole(CharSequence input, MatchScratch sc) {
         trace(input instanceof String ? Strategy.ANCHORED : Strategy.GENERIC);
-        MatchHolder h = wholeWalk(input, 0, input.length());
+        MatchHolder h = wholeWalk(input, 0, input.length(), sc);
         if (h == null) return null;
         if (tdfa.fixedBase != null) {
             MatchResult.reconstructFixed(h.regs, tdfa.finalRegBase, tdfa.fixedBase, tdfa.fixedOffset);
@@ -515,7 +534,7 @@ public final class TdfaRunner implements RegexEngine {
     /**
      * Whole-walk (String and generic CharSequence); null = not a full match. See {@link #matchWhole}.
      */
-    private MatchHolder wholeWalk(CharSequence input, int from, int to) {
+    private MatchHolder wholeWalk(CharSequence input, int from, int to, MatchScratch sc) {
         final int[] sm = this.stateMeta;
         final int[] rg = this.ranges;
         final int[] op = this.ops;
@@ -527,7 +546,7 @@ public final class TdfaRunner implements RegexEngine {
         if (regSize == 0) {
             regs = null;
         } else {
-            regs = takeRegs(regSize);
+            regs = takeRegs(regSize, sc);
             Arrays.fill(regs, 0, regSize, -1);
         }
         int state = startState;
@@ -644,13 +663,13 @@ public final class TdfaRunner implements RegexEngine {
     /**
      * String find with anchor enforcement and register extraction.
      */
-    private MatchHolder runStringExtract(String input, int from, int to) {
+    private MatchHolder runStringExtract(String input, int from, int to, MatchScratch sc) {
         int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? 0 : to;
         // One exact walk from `from` first (match at/near from is the common
         // case and answers in O(len) — cheaper than any pre-check; see find()).
         {
             trace(Strategy.EXACT_FROM);
-            MatchHolder direct = extractFrom(input, from, to);
+            MatchHolder direct = extractFrom(input, from, to, sc);
             if (direct != null) return direct;
         }
         // Short inputs: first-char-set candidate scan with exact (mask-aware)
@@ -668,7 +687,7 @@ public final class TdfaRunner implements RegexEngine {
                 if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) continue;
                 if (c >= 0xDC00 && Alphabet.pairInterior(input, p)) continue;
                 if (fails >= ADAPTIVE_PREFILTER_AFTER && runStringMatchFrom(input, p, to) < 0) continue;
-                MatchHolder h = extractFrom(input, p, to);
+                MatchHolder h = extractFrom(input, p, to, sc);
                 if (h != null) return h;
                 fails++;
             }
@@ -678,7 +697,7 @@ public final class TdfaRunner implements RegexEngine {
         // bounds the restart loop to the kill-point window (no configuration
         // alive before W can produce a match — see SearchDfa).
         if (maxStart > 0) {
-            int w = triggerScan(input, from, to);
+            int w = triggerScan(input, from, to, sc);
             if (w < 0) return null;
             if (w > from + 1) from = w - 1;
         }
@@ -686,7 +705,7 @@ public final class TdfaRunner implements RegexEngine {
         for (int startSearch = from + 1; startSearch <= maxStart; startSearch++) {
             if (Alphabet.pairInterior(input, startSearch)) continue;
             if (WTRACE) System.err.println("[walk] === start " + startSearch);
-            MatchHolder h = extractFrom(input, startSearch, to);
+            MatchHolder h = extractFrom(input, startSearch, to, sc);
             if (h != null) return h;
         }
         return null;
@@ -695,7 +714,7 @@ public final class TdfaRunner implements RegexEngine {
     /**
      * One exact single-start walk; null = no match starting at startSearch.
      */
-    private MatchHolder extractFrom(String input, int startSearch, int to) {
+    private MatchHolder extractFrom(String input, int startSearch, int to, MatchScratch sc) {
         final int[] sm = this.stateMeta;
         final int[] rg = this.ranges;
         final int[] op = this.ops;
@@ -703,7 +722,7 @@ public final class TdfaRunner implements RegexEngine {
         final int[] sam = this.stateAcceptMask;
         final int[] arf = this.asciiRangeFlat;   // non-null iff rangesDisjoint
         final int limit = this.latinLimit;
-        // Pooled regs (per-thread scratch): the candidate-scan loops call this
+        // Pooled regs (per-call carrier): the candidate-scan loops call this
         // per candidate and most walks fail — no allocation on that path. The
         // success path clones (line below) before returning, so the pool is
         // never handed out.
@@ -711,7 +730,7 @@ public final class TdfaRunner implements RegexEngine {
         if (regSize == 0) {
             regs = null;
         } else {
-            regs = takeRegs(regSize);
+            regs = takeRegs(regSize, sc);
             Arrays.fill(regs, 0, regSize, -1);
         }
         int state = startState;
@@ -921,14 +940,14 @@ public final class TdfaRunner implements RegexEngine {
      * surviving configuration started at or after {@code W}, so the exact leftmost
      * match lies in {@code [W, to]}. Returns -1 when no accept can fire at all.
      */
-    private int triggerScan(String input, int from, int to) {
+    private int triggerScan(String input, int from, int to, MatchScratch sc) {
         // Short scans never amortize the memo (block build = 512 interned steps);
         // short-lived runners would allocate-and-die fat instead. Raw scan keeps
         // the kill-point window either way.
         SearchDfa sd = searchDfa;
         if (to - from < SDFA_MIN_WINDOW || sd.capped) {
             trace(Strategy.RAW_SCAN);
-            return rawScan(input, from, to, from, null);
+            return rawScan(input, from, to, from, null, sc);
         }
         trace(Strategy.TRIGGER);
         sd.ensureSeed();   // pure-seed row 0, interned once, race-safe
@@ -944,7 +963,7 @@ public final class TdfaRunner implements RegexEngine {
                 // restarting from a bare seed would drop configurations started
                 // in [W, pos) that are still alive (and may accept later),
                 // masking real matches (seen as skipped leipzig matches).
-                return rawScan(input, pos, to, W, sd.rowWordsOf(cur));
+                return rawScan(input, pos, to, W, sd.rowWordsOf(cur), sc);
             }
             if (v == SDFA_KILL) {
                 W = pos + adv;
@@ -959,13 +978,10 @@ public final class TdfaRunner implements RegexEngine {
      * Uncapped fallback: the original multi-state simulation with kill-point
      * tracking (kill = the pre-seed step set is empty). Returns W or -1.
      */
-    private int rawScan(String input, int from, int to, int wIn, int[] liveIn) {
+    private int rawScan(String input, int from, int to, int wIn, int[] liveIn, MatchScratch sc) {
         final int nwords = stateWords;
-        Scratch sc = SCRATCH.get();
-        int[] live = sc.live != null && sc.live.length >= nwords ? sc.live : new int[nwords];
-        int[] next = sc.next != null && sc.next.length >= nwords ? sc.next : new int[nwords];
-        sc.live = live;
-        sc.next = next;
+        int[] live = sc.takeLive(nwords);
+        int[] next = sc.takeNext(nwords);
         if (liveIn != null) {
             System.arraycopy(liveIn, 0, live, 0, nwords);   // exact continuation
         } else {
@@ -1038,10 +1054,10 @@ public final class TdfaRunner implements RegexEngine {
      * delegates here instead of emitting its own loop — one definition.
      */
     @EmittedSurface
-    public MatchHolder restartExtract(String input, int fromStart, int to, int from0) {
+    public MatchHolder restartExtract(String input, int fromStart, int to, int from0, MatchScratch sc) {
         for (int s = fromStart; s <= to; s++) {
             if (Alphabet.pairInterior(input, s)) continue;
-            MatchHolder h = tryStartFast(input, s, to);
+            MatchHolder h = tryStartFast(input, s, to, sc);
             if (h != null) return h;
         }
         return null;
@@ -1075,16 +1091,16 @@ public final class TdfaRunner implements RegexEngine {
      * Origin-sim leftmost start; {@link #LSS_BUDGET} = budget exhausted.
      */
     @EmittedSurface
-    public int originSimLeftmost(CharSequence input, int from, int to, int budget) {
-        return multiStateLeftmostStart(input, from, to, budget);
+    public int originSimLeftmost(CharSequence input, int from, int to, int budget, MatchScratch sc) {
+        return multiStateLeftmostStart(input, from, to, budget, sc);
     }
 
     /**
      * Memoized search-DFA trigger scan: window start W, or -1 = no match.
      */
     @EmittedSurface
-    public int triggerScanTop(String input, int from, int to) {
-        return triggerScan(input, from, to);
+    public int triggerScanTop(String input, int from, int to, MatchScratch sc) {
+        return triggerScan(input, from, to, sc);
     }
 
     /**
@@ -1113,8 +1129,8 @@ public final class TdfaRunner implements RegexEngine {
      * identifies re-reachable states (origin = min) vs first-arrival (origin = set).
      */
 
-    private int multiStateLeftmostStart(CharSequence input, int from, int to) {
-        return multiStateLeftmostStart(input, from, to, -1);
+    private int multiStateLeftmostStart(CharSequence input, int from, int to, MatchScratch sc) {
+        return multiStateLeftmostStart(input, from, to, -1, sc);
     }
 
     /**
@@ -1123,7 +1139,7 @@ public final class TdfaRunner implements RegexEngine {
      * or absent match is better served by the memoized trigger scan, so the
      * caller falls back to it instead of bitset-scanning the whole tail).
      */
-    private int multiStateLeftmostStart(CharSequence input, int from, int to, int budget) {
+    private int multiStateLeftmostStart(CharSequence input, int from, int to, int budget, MatchScratch sc) {
         final int nwords = stateWords;
         if (nwords == 0) return -1;
         final int[] sm = stateMeta;
@@ -1132,24 +1148,10 @@ public final class TdfaRunner implements RegexEngine {
         final int[] ab = acceptBits;
         final int ss = startState;
 
-        int[] live, next, origin, originNext;
-        Scratch sc = SCRATCH.get();
-        if (sc.live != null && sc.live.length >= nwords && sc.next.length >= nwords
-            && sc.origin != null && sc.origin.length >= stateCount && sc.originNext.length >= stateCount) {
-            live = sc.live;
-            next = sc.next;
-            origin = sc.origin;
-            originNext = sc.originNext;
-        } else {
-            live = new int[nwords];
-            next = new int[nwords];
-            origin = new int[stateCount];
-            originNext = new int[stateCount];
-            sc.live = live;
-            sc.next = next;
-            sc.origin = origin;
-            sc.originNext = originNext;
-        }
+        int[] live = sc.takeLive(nwords);
+        int[] next = sc.takeNext(nwords);
+        int[] origin = sc.takeOrigin(stateCount);
+        int[] originNext = sc.takeOriginNext(stateCount);
         // Origins are DOUBLE-BUFFERED with the state sets: origin[] pairs with
         // live[], originNext[] with next[]. All arrivals in a step write to
         // originNext (bit test against next), while old-live origins in origin[]
@@ -1198,7 +1200,7 @@ public final class TdfaRunner implements RegexEngine {
             int c = Alphabet.decode(input, pos, to);
             int adv = Alphabet.width(c);
 
-            Arrays.fill(next, 0, nwords, 0);   // grown Scratch: zero only our prefix
+            Arrays.fill(next, 0, nwords, 0);   // grown carrier: zero only our prefix
             if (at != null && c < 128) {
                 for (int w = 0; w < nwords; w++) {
                     int bits = live[w];
@@ -1278,7 +1280,7 @@ public final class TdfaRunner implements RegexEngine {
     /**
      * Unanchored boolean search via single-pass multi-state simulation. O(n × |states|).
      */
-    private boolean runStringFindFast(String input, int to) {
+    private boolean runStringFindFast(String input, int to, MatchScratch sc) {
         // Short inputs: first-char-set candidate scan (one bit test per char,
         // exact walk per candidate) beats the raw-scan live-set simulation.
         if (startBits != null && to <= CAND_SCAN_MAX) {
@@ -1291,7 +1293,7 @@ public final class TdfaRunner implements RegexEngine {
             }
             return false;
         }
-        return triggerScan(input, 0, to) >= 0;
+        return triggerScan(input, 0, to, sc) >= 0;
     }
 
     /**
@@ -1354,7 +1356,7 @@ public final class TdfaRunner implements RegexEngine {
     /**
      * Fast extract with register updates.
      */
-    private MatchHolder runStringExtractFast(String input, int from, int to) {
+    private MatchHolder runStringExtractFast(String input, int from, int to, MatchScratch sc) {
         if (literalNeedle != null) {
             trace(Strategy.LITERAL);
             int idx = RunnerTables.literalIndexOf(input, literalNeedle, from);
@@ -1363,7 +1365,7 @@ public final class TdfaRunner implements RegexEngine {
         // 1) Try ONE single-start walk from `from` — the common short-input case
         //    (match at/near the start) never needs the simulation at all.
         trace(Strategy.EXACT_FROM);
-        MatchHolder h = tryStartFast(input, from, to);
+        MatchHolder h = tryStartFast(input, from, to, sc);
         if (h != null) return h;
         // 1b) Short inputs: first-char-set candidate scan. Coverage is exact
         //     (start state not accepting — else startBits is null — so every
@@ -1381,7 +1383,7 @@ public final class TdfaRunner implements RegexEngine {
                 if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) continue;
                 if (c >= 0xDC00 && Alphabet.pairInterior(input, p)) continue;
                 if (fails >= ADAPTIVE_PREFILTER_AFTER && !matchFromFast(input, p, to)) continue;
-                h = tryStartFast(input, p, to);
+                h = tryStartFast(input, p, to, sc);
                 if (h != null) return h;
                 fails++;
             }
@@ -1396,20 +1398,20 @@ public final class TdfaRunner implements RegexEngine {
         //    retried every failed start with a full walk: O(n) restarts × O(n)
         //    walk = O(n²) on dense-match regexes like [a-zA-Z]+ing.
         trace(Strategy.ORIGIN_SIM);
-        int leftmost = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS);
+        int leftmost = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS, sc);
         if (leftmost == LSS_BUDGET) {
-            int w = triggerScan(input, from, to);
+            int w = triggerScan(input, from, to, sc);
             if (w < 0) return null;
-            leftmost = multiStateLeftmostStart(input, w, to);
+            leftmost = multiStateLeftmostStart(input, w, to, sc);
         }
         if (leftmost < 0) return null;
-        h = tryStartFast(input, leftmost, to);
+        h = tryStartFast(input, leftmost, to, sc);
         if (h != null) return h;
         // 3) Defensive: the sim and the walk must agree on fast-path DFAs; if
         //    they ever don't, fall back to the old restart shape rather than
         //    return a wrong null.
         trace(Strategy.WALK_RESTART);
-        return restartExtract(input, leftmost + 1, to, from);
+        return restartExtract(input, leftmost + 1, to, from, sc);
     }
 
     /**
@@ -1418,7 +1420,7 @@ public final class TdfaRunner implements RegexEngine {
      * the generic exact walk from the SAME start (single-start semantics —
      * callers treat null as "no match here", not "no match anywhere").
      */
-    private MatchHolder tryStartFast(String input, int start, int to) {
+    private MatchHolder tryStartFast(String input, int start, int to, MatchScratch sc) {
         final int[] sm = this.stateMeta;
         final int[] arf = this.asciiRangeFlat;
         final int[] rg = this.ranges;
@@ -1427,17 +1429,17 @@ public final class TdfaRunner implements RegexEngine {
         // longest-match mode so the inner loop can short-circuit on first
         // accepting state (matching the slow path).
         final boolean pm = !this.longestMatch;
-        // Pooled regs (per-thread scratch): no allocation on the (frequent)
+        // Pooled regs (caller's carrier): no allocation on the (frequent)
         // failed-walk path. On success the array is cloned into the MatchHolder
         // before returning, so the pool is never handed out. NOTE: the
         // non-ASCII fallback below re-enters the generic extract path, which
-        // refills the same pool — safe: it never aliases a live caller's
+        // refills the same carrier — safe: it never aliases a live caller's
         // [0, regSize) window (each taker refills before use).
         final int[] regs;
         if (regSize == 0) {
             regs = null;
         } else {
-            regs = takeRegs(regSize);
+            regs = takeRegs(regSize, sc);
             Arrays.fill(regs, 0, regSize, -1);
         }
         int state = startState;
@@ -1474,7 +1476,7 @@ public final class TdfaRunner implements RegexEngine {
             }
             if (pos == to) break;
             char c = input.charAt(pos);
-            if (c >= latinLimit) return extractFrom(input, start, to);
+            if (c >= latinLimit) return extractFrom(input, start, to, sc);
             int ri = arf[state * latinLimit + c];
             if (ri < 0) break;
             int mo = (stateBase[state] + ri) * 5;
@@ -1821,8 +1823,8 @@ public final class TdfaRunner implements RegexEngine {
         return haveAccept ? lastAcceptPos : -1;
     }
 
-    private MatchHolder runGeneric(CharSequence input, int from, int to, boolean anchored) {
-        // Scratch-regs reuse across restarts (the wholeWalk idiom): failed
+    private MatchHolder runGeneric(CharSequence input, int from, int to, boolean anchored, MatchScratch sc) {
+        // Carrier-regs reuse across restarts (the wholeWalk idiom): failed
         // restarts pay only the -1 refill, not a fresh allocation per start;
         // successful escapes clone into the MatchHolder, so reuse is safe.
         int startSearch = from;
@@ -1831,7 +1833,7 @@ public final class TdfaRunner implements RegexEngine {
             if (regSize == 0) {
                 regs = null;
             } else {
-                regs = takeRegs(regSize);
+                regs = takeRegs(regSize, sc);
                 Arrays.fill(regs, 0, regSize, -1);
             }
             int state = startState;
@@ -2117,36 +2119,34 @@ public final class TdfaRunner implements RegexEngine {
         GENERIC         // CharSequence (non-String) fallback
     }
 
-    // ===== per-thread scratch (P2: hot-path allocation removal) =====
+    // ===== per-call scratch (P2: hot-path allocation removal) =====
     //
-    // A runner is shared when its Pattern is used from several threads (re2j
-    // semantics: Pattern thread-safe, Matcher not), so scratch buffers are
-    // ThreadLocal, not instance fields. Sizes are re-validated on every use —
-    // a single Scratch object serves all runners on the thread, growing to the
-    // largest DFA seen. Eliminates the 4 sim allocations per find()/match()
-    // (O(stateWords + stateCount) each — significant for dictionary-scale DFAs)
-    // and the regs[] allocation on failed single-start walks. Successful walks
-    // still clone regs into the returned MatchHolder (it escapes the runner).
-    // regs is also the pool behind the ASM tier's walk leaves ({@link
-    // #takeRegs}) — pooling removal was measured at +43 % on the dense
-    // extract-restart scan (asmFindAllDense, 2026-09-21), so it stays.
+    // Scratch buffers live on the caller's MatchScratch carrier — the re2j /
+    // java.util.regex shape: the stateful Matcher owns its buffers for its
+    // lifetime and passes them down the ladder, so a runner stays immutable
+    // and shareable across threads (re2j semantics: Pattern thread-safe,
+    // Matcher not) with no match-path ThreadLocal: nothing is retained past
+    // the last live Matcher, and virtual threads don't pay a Scratch +
+    // ThreadLocal entry each. Callers without a Matcher (direct engine use)
+    // get a fresh carrier per top-level call — within-call pooling is
+    // preserved either way. Sizes are re-validated on every take; one
+    // carrier grows to the largest need seen and is collected with its
+    // matcher. This eliminates the 4 sim allocations per find()/match()
+    // (O(stateWords + stateCount) each — significant for dictionary-scale
+    // DFAs) and the regs[] allocation on failed single-start walks;
+    // successful walks still clone regs into the returned MatchHolder (it
+    // escapes the runner). regs is also the pool behind the ASM tier's walk
+    // leaves ({@link #takeRegs}) — pooling removal was measured at +43 % on
+    // the dense extract-restart scan (asmFindAllDense, 2026-09-21), so it
+    // stays.
     //
     // No nested aliasing: a holder of pooled regs never calls another taker
     // while reading its own [0, regSize) window — the one re-entry
     // (tryStartFast → extractFrom on a non-ASCII char) returns the callee's
     // result immediately, and every taker refills [0, n) before use.
     //
-    // RETENTION (documented trade-off, review P2): SCRATCH (and TRACE_BUF
-    // when -Dtdfa.trace.strategy is enabled) are never evicted — a thread
-    // that once matched a 234 K-state DFA retains ~2 MB of scratch for its
-    // lifetime; TRACE_BUF grows unboundedly until traceSnapshot() drains it.
-    // Deliberate: eviction hooks on match paths cost more than the retention;
-    // bounded deployments can call traceSnapshot() periodically or pool
-    // matcher threads. Static, so they do not pin any Tdfa/Pattern (regs
-    // grows to the largest register count seen on the thread — one array,
-    // shared with the generated tier, NOT one per pattern).
-    private static final class Scratch {
-        int[] regs;
-        int[] live, next, origin, originNext;
-    }
+    // The one remaining static, TRACE_BUF (strategy tracing), is only
+    // populated when -Dtdfa.trace.strategy is enabled (a test instrument):
+    // its ThreadLocal entry allocates on the first traced call, never on
+    // normal matching paths.
 }

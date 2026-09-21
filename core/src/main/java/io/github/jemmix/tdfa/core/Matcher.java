@@ -13,7 +13,10 @@ package io.github.jemmix.tdfa.core;
  * subclass inlines the bookkeeping and calls its engine directly with a
  * statically-known receiver type, so the call chain devirtualizes
  * end-to-end; all cold machinery is inherited unchanged (one brain, thin
- * generated hot paths).
+ * generated hot paths). This matcher also owns the {@link #scratch}
+ * carrier the generated shells hand to their carrier-aware engine calls
+ * (register/buffer reuse across find iterations, released with the
+ * matcher).
  */
 public class Matcher {
 
@@ -36,6 +39,17 @@ public class Matcher {
     protected int lastMatchEnd;
     @EmittedSurface
     protected int appendPos;
+
+    /**
+     * This matcher's scratch carrier (register file + simulation buffers),
+     * reused across every match operation on this matcher and freed with it
+     * — the re2j {@code Matcher} shape: the stateful matcher owns the
+     * mutable buffers, the engine stays immutable and thread-safe. Passed
+     * down the ladder through the carrier-aware {@link RegexEngine}
+     * overloads; engines without internal pooling ignore it.
+     */
+    @EmittedSurface  // emitted shells read this field (carrier-aware engine calls)
+    protected final MatchScratch scratch = new MatchScratch();
 
     public Matcher(RegexEngine engine, RegexEngine wholeEngine, CharSequence input) {
         this.engine = engine;
@@ -65,7 +79,7 @@ public class Matcher {
     // ---- match operations ----
 
     public boolean matches() {
-        MatchResult m = wholeEngine.matchWhole(input);
+        MatchResult m = wholeEngine.matchWhole(input, scratch);
         hasMatch = m != null;
         if (hasMatch) {
             match = m;
@@ -76,7 +90,7 @@ public class Matcher {
     }
 
     public boolean lookingAt() {
-        MatchResult m = engine.match(input, 0);
+        MatchResult m = engine.match(input, 0, scratch);
         if (m != null && m.start(0) == 0) {
             match = m;
             hasMatch = true;
@@ -100,7 +114,7 @@ public class Matcher {
             hasMatch = false;
             return false;
         }
-        MatchResult m = engine.match(input, start);
+        MatchResult m = engine.match(input, start, scratch);
         if (m == null) {
             hasMatch = false;
             return false;

@@ -35,9 +35,9 @@ import org.objectweb.asm.Opcodes;
  * }
  * final class GenNNNMatcher extends PatternMatcher {
  *     private final GenNNNPattern p;
- *     {@literal @Override} public boolean find()      { ... p.eng.match(input, start) ... }
- *     {@literal @Override} public boolean matches()   { ... p.wholeEngine().match(input, 0) ... }
- *     {@literal @Override} public boolean lookingAt() { ... p.eng.match(input, 0) ... }
+ *     {@literal @Override} public boolean find()      { ... p.eng.match(input, start, scratch) ... }
+ *     {@literal @Override} public boolean matches()   { ... p.wholeEngine().matchWhole(input, scratch) ... }
+ *     {@literal @Override} public boolean lookingAt() { ... p.eng.match(input, 0, scratch) ... }
  * }
  * </pre>
  */
@@ -57,6 +57,8 @@ public final class ShellEmitter {
     private static final String ENGINE_ITF = "io/github/jemmix/tdfa/core/RegexEngine";
     private static final String CORE_MATCHER = "io/github/jemmix/tdfa/core/Matcher";
     private static final String RESULT = "io/github/jemmix/tdfa/core/MatchResult";
+    private static final String SCRATCH = "io/github/jemmix/tdfa/core/MatchScratch";
+    private static final String SCRATCH_D = "L" + SCRATCH + ";";
     private static final String CS = "Ljava/lang/CharSequence;";
 
     /** Shell emission spec. All core/reflection types — no facade linkage.
@@ -186,14 +188,18 @@ public final class ShellEmitter {
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitLabel(notPast);
-        // m = p.eng.match(input, start)
+        // m = p.eng.match(input, start, this.scratch)  — carrier-aware: the
+        // matcher's buffers pool across find() iterations (BYO engines hit
+        // the interface default, which ignores the carrier).
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, matOwner, "p", patDesc);
         mv.visitFieldInsn(Opcodes.GETFIELD, patOwner, "eng", engDesc);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "input", CS);
         mv.visitVarInsn(Opcodes.ILOAD, 1);
-        mv.visitMethodInsn(concrete ? Opcodes.INVOKEVIRTUAL : Opcodes.INVOKEINTERFACE, engOwner, "match", "(" + CS + "I)L" + RESULT + ";", !concrete);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "scratch", SCRATCH_D);
+        mv.visitMethodInsn(concrete ? Opcodes.INVOKEVIRTUAL : Opcodes.INVOKEINTERFACE, engOwner, "match", "(" + CS + "I" + SCRATCH_D + ")L" + RESULT + ";", !concrete);
         mv.visitVarInsn(Opcodes.ASTORE, 2);
         emitAcceptTail(mv);
         mv.visitMaxs(0, 0);
@@ -203,13 +209,15 @@ public final class ShellEmitter {
         mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matches", "()Z", null, null);
         mv.visitCode();
         // locals: 1 = m
-        // RegexEngine w = p.wholeEngine(); m = w.matchWhole(input)
+        // RegexEngine w = p.wholeEngine(); m = w.matchWhole(input, this.scratch)
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, matOwner, "p", patDesc);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFAPATTERN, "wholeEngine", "()L" + ENGINE_ITF + ";", false);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "input", CS);
-        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, ENGINE_ITF, "matchWhole", "(" + CS + ")L" + RESULT + ";", true);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "scratch", SCRATCH_D);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, ENGINE_ITF, "matchWhole", "(" + CS + SCRATCH_D + ")L" + RESULT + ";", true);
         mv.visitVarInsn(Opcodes.ASTORE, 1);
         // hasMatch = m != null; if (m != null) { match=m; lms=m.start(0); lme=m.end(0); } return hasMatch;
         Label mNull = new Label(), hasMatchSet = new Label();
@@ -248,14 +256,16 @@ public final class ShellEmitter {
         // public boolean lookingAt()
         mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "lookingAt", "()Z", null, null);
         mv.visitCode();
-        // m = p.eng.match(input, 0); if (m != null && m.start(0) == 0) accept else false
+        // m = p.eng.match(input, 0, this.scratch); if (m != null && m.start(0) == 0) accept else false
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, matOwner, "p", patDesc);
         mv.visitFieldInsn(Opcodes.GETFIELD, patOwner, "eng", engDesc);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "input", CS);
         mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitMethodInsn(concrete ? Opcodes.INVOKEVIRTUAL : Opcodes.INVOKEINTERFACE, engOwner, "match", "(" + CS + "I)L" + RESULT + ";", !concrete);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "scratch", SCRATCH_D);
+        mv.visitMethodInsn(concrete ? Opcodes.INVOKEVIRTUAL : Opcodes.INVOKEINTERFACE, engOwner, "match", "(" + CS + "I" + SCRATCH_D + ")L" + RESULT + ";", !concrete);
         mv.visitVarInsn(Opcodes.ASTORE, 1);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         Label laNull = new Label();

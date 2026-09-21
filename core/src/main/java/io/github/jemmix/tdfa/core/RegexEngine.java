@@ -16,7 +16,8 @@ import java.util.NoSuchElementException;
  *
  * <p>Implementations must be effectively immutable and safe for concurrent
  * use from multiple threads (per-match state lives in the returned
- * {@link MatchResult}, not in the engine).
+ * {@link MatchResult} and the caller's {@link MatchScratch} carrier, not in
+ * the engine).
  */
 public interface RegexEngine {
 
@@ -56,6 +57,20 @@ public interface RegexEngine {
     MatchResult match(CharSequence input, int from);
 
     /**
+     * Carrier-aware variant of {@link #match(CharSequence, int)}: the
+     * caller's {@link MatchScratch} holds the reusable per-match buffers
+     * (register file, simulation sets), so a {@link Matcher} iterating
+     * {@code find()} over one input pools them across calls instead of
+     * allocating per call. Engines with their own buffering (or third-party
+     * implementations) ignore the carrier — the default just delegates —
+     * so this is a pure reuse hint, never a semantic input. The carrier
+     * must be non-null and is never retained beyond the call.
+     */
+    default MatchResult match(CharSequence input, int from, MatchScratch scratch) {
+        return match(input, from);
+    }
+
+    /**
      * Match the ENTIRE input, returning capture registers, or {@code null} if
      * the input is not a whole match. Unlike {@link #match(CharSequence, int)}
      * a mid-input accept never satisfies this — the walk runs to end-of-input
@@ -74,6 +89,16 @@ public interface RegexEngine {
      * {@link #matches}).
      */
     default MatchResult matchWhole(CharSequence input) { return match(input, 0); }
+
+    /**
+     * Carrier-aware variant of {@link #matchWhole(CharSequence)} — same
+     * reuse contract as {@link #match(CharSequence, int, MatchScratch)}:
+     * pooling-capable engines reuse the caller's buffers, the default
+     * delegates. Non-null carrier, never retained beyond the call.
+     */
+    default MatchResult matchWhole(CharSequence input, MatchScratch scratch) {
+        return matchWhole(input);
+    }
 
     /** Number of capturing groups (excluding group 0). */
     int groupCount();
