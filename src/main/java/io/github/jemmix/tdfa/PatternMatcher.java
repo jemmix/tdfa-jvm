@@ -28,6 +28,10 @@ public class PatternMatcher extends io.github.jemmix.tdfa.core.Matcher {
         this.pattern = pattern;
     }
 
-    /** Returns this matcher's {@link Pattern}. */
-    public Pattern pattern() { return pattern; }
+    /**
+     * Returns this matcher's {@link Pattern}.
+     */
+    public Pattern pattern() {
+        return pattern;
+    }
 }

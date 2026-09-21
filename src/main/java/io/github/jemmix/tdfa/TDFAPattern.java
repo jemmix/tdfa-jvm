@@ -40,17 +40,19 @@ public class TDFAPattern implements Pattern {
     // leftmost-first DFA would have pruned — e.g. (a|ab) against "ab" must
     // retain the `ab` path — survives in the cut-free build).
     private transient RegexEngine wholeEngine;
-    /** The Unicode tables this pattern was compiled against ({@code null} =
-     *  the process default). Retained only for serialization round-trips —
-     *  recompiles inside this process go through the engines. Transient:
-     *  providers need not be Serializable; the proxy carries the class name
-     *  and resolves per the UnicodeDataProvider serialization convention. */
+    /**
+     * The Unicode tables this pattern was compiled against ({@code null} =
+     * the process default). Retained only for serialization round-trips —
+     * recompiles inside this process go through the engines. Transient:
+     * providers need not be Serializable; the proxy carries the class name
+     * and resolves per the UnicodeDataProvider serialization convention.
+     */
     private transient UnicodeDataProvider provider;
 
     @EmittedSurface  // shells super-ctor call: signature feeds ShellEmitter descriptor
-public TDFAPattern(String pattern, int flags, int programSize,
-                        RegexEngine engine, RegexEngine wholeEngine,
-                        UnicodeDataProvider provider) {
+    public TDFAPattern(String pattern, int flags, int programSize,
+                       RegexEngine engine, RegexEngine wholeEngine,
+                       UnicodeDataProvider provider) {
         this.pattern = pattern;
         this.flags = flags;
         this.programSize = programSize;
@@ -59,39 +61,55 @@ public TDFAPattern(String pattern, int flags, int programSize,
         this.provider = provider;
     }
 
-    /** The main (unanchored) engine. */
-    public RegexEngine engine() { return engine; }
+    /**
+     * The main (unanchored) engine.
+     */
+    public RegexEngine engine() {
+        return engine;
+    }
 
-    /** The pinned Unicode tables this pattern compiles against ({@code null} = process default). */
-    public UnicodeDataProvider unicodeProvider() { return provider; }
+    /**
+     * The pinned Unicode tables this pattern compiles against ({@code null} = process default).
+     */
+    public UnicodeDataProvider unicodeProvider() {
+        return provider;
+    }
 
-    /** Engine for {@code matches()}: cut-free whole-match artifact, compiled eagerly. */
+    /**
+     * Engine for {@code matches()}: cut-free whole-match artifact, compiled eagerly.
+     */
     @EmittedSurface
     public RegexEngine wholeEngine() {
         return wholeEngine;
     }
 
-    @Override public PatternMatcher matcher(CharSequence input) {
+    @Override
+    public PatternMatcher matcher(CharSequence input) {
         return new PatternMatcher(this, input);
     }
 
-    @Override public PatternMatcher matcher(byte[] input) {
+    @Override
+    public PatternMatcher matcher(byte[] input) {
         return new PatternMatcher(this, Pattern.Utf8.decode(input));
     }
 
-    @Override public boolean matches(String input) {
+    @Override
+    public boolean matches(String input) {
         return matcher(input).matches();
     }
 
-    @Override public boolean matches(byte[] input) {
+    @Override
+    public boolean matches(byte[] input) {
         return matches(Pattern.Utf8.decode(input));
     }
 
-    @Override public String[] split(String input) {
+    @Override
+    public String[] split(String input) {
         return split(input, 0);
     }
 
-    @Override public String[] split(String input, int limit) {
+    @Override
+    public String[] split(String input, int limit) {
         PatternMatcher m = matcher(input);
         List<String> result = new ArrayList<>();
         int emptiesSkipped = 0;
@@ -135,7 +153,9 @@ public TDFAPattern(String pattern, int flags, int programSize,
         return result.toArray(new String[0]);
     }
 
-    @Override public void reset() { }
+    @Override
+    public void reset() {
+    }
 
     /**
      * Serialize as the {@link SerialProxy} — pattern+flags+provider identity,
@@ -155,12 +175,14 @@ public TDFAPattern(String pattern, int flags, int programSize,
     // first round-trip test (PatternSerializationTest, 2026-09).
     public Object writeReplace() {
         return new SerialProxy(pattern, flags,
-                provider == null ? null : provider.getClass().getName());
+            provider == null ? null : provider.getClass().getName());
     }
 
-    /** Recompile the (transient) engines after deserialization, from {@code pattern}+{@code flags}. */
+    /**
+     * Recompile the (transient) engines after deserialization, from {@code pattern}+{@code flags}.
+     */
     private void readObject(java.io.ObjectInputStream in)
-            throws java.io.IOException, ClassNotFoundException {
+        throws java.io.IOException, ClassNotFoundException {
         in.defaultReadObject();
         TDFAPattern tmp = (TDFAPattern) Pattern.compile(pattern, flags, null, provider);
         this.engine = tmp.engine;
@@ -168,19 +190,38 @@ public TDFAPattern(String pattern, int flags, int programSize,
         this.provider = tmp.provider;
     }
 
-    @Override public int programSize() { return programSize; }
+    @Override
+    public int programSize() {
+        return programSize;
+    }
 
-    @Override public String pattern() { return pattern; }
+    @Override
+    public String pattern() {
+        return pattern;
+    }
 
-    @Override public int flags() { return flags; }
+    @Override
+    public int flags() {
+        return flags;
+    }
 
-    @Override public int groupCount() { return engine.groupCount(); }
+    @Override
+    public int groupCount() {
+        return engine.groupCount();
+    }
 
-    @Override public Map<String, Integer> namedGroups() { return engine.namedGroups(); }
+    @Override
+    public Map<String, Integer> namedGroups() {
+        return engine.namedGroups();
+    }
 
-    @Override public String toString() { return pattern; }
+    @Override
+    public String toString() {
+        return pattern;
+    }
 
-    @Override public boolean equals(Object o) {
+    @Override
+    public boolean equals(Object o) {
         // State-based equality across implementations (shared and generated):
         // re2j semantics — same pattern string + same flags.
         if (this == o) return true;
@@ -189,7 +230,8 @@ public TDFAPattern(String pattern, int flags, int programSize,
         return flags == p.flags() && pattern.equals(p.pattern());
     }
 
-    @Override public int hashCode() {
+    @Override
+    public int hashCode() {
         return 31 * pattern.hashCode() + flags;
     }
 }

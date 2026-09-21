@@ -32,7 +32,9 @@ final class SerialProxy implements Serializable {
 
     private final String pattern;
     private final int flags;
-    /** FQCN of the pinned UnicodeDataProvider, or {@code null} = process default. */
+    /**
+     * FQCN of the pinned UnicodeDataProvider, or {@code null} = process default.
+     */
     private final String providerClass;
 
     SerialProxy(String pattern, int flags, String providerClass) {
@@ -41,21 +43,13 @@ final class SerialProxy implements Serializable {
         this.providerClass = providerClass;
     }
 
-    private Object readResolve() throws ObjectStreamException {
-        io.github.jemmix.tdfa.unicode.UnicodeDataProvider p = null;
-        if (providerClass != null) {
-            p = resolveProvider(providerClass);
-        }
-        return Pattern.compile(pattern, flags, null, p);
-    }
-
     private static io.github.jemmix.tdfa.unicode.UnicodeDataProvider resolveProvider(
-            String cls) throws ObjectStreamException {
+        String cls) throws ObjectStreamException {
         try {
             Class<?> c = Class.forName(cls);
             if (!io.github.jemmix.tdfa.unicode.UnicodeDataProvider.class.isAssignableFrom(c)) {
                 throw new InvalidObjectException(
-                        "serialized provider " + cls + " does not implement UnicodeDataProvider");
+                    "serialized provider " + cls + " does not implement UnicodeDataProvider");
             }
             // Convention 1: static UnicodeDataProvider provider() (the shape
             // of the shipped pinned-table providers, which are singletons;
@@ -63,7 +57,7 @@ final class SerialProxy implements Serializable {
             try {
                 java.lang.reflect.Method m = c.getMethod("provider");
                 if (io.github.jemmix.tdfa.unicode.UnicodeDataProvider.class.isAssignableFrom(m.getReturnType())
-                        && java.lang.reflect.Modifier.isStatic(m.getModifiers())) {
+                    && java.lang.reflect.Modifier.isStatic(m.getModifiers())) {
                     m.setAccessible(true);
                     return (io.github.jemmix.tdfa.unicode.UnicodeDataProvider) m.invoke(null);
                 }
@@ -78,9 +72,17 @@ final class SerialProxy implements Serializable {
             throw e;
         } catch (ReflectiveOperationException | RuntimeException e) {
             throw new InvalidObjectException(
-                    "cannot resolve serialized Unicode provider " + cls
-                            + " (needs a static provider() method or a public no-arg constructor;"
-                            + " see UnicodeDataProvider's serialization convention): " + e);
+                "cannot resolve serialized Unicode provider " + cls
+                    + " (needs a static provider() method or a public no-arg constructor;"
+                    + " see UnicodeDataProvider's serialization convention): " + e);
         }
+    }
+
+    private Object readResolve() throws ObjectStreamException {
+        io.github.jemmix.tdfa.unicode.UnicodeDataProvider p = null;
+        if (providerClass != null) {
+            p = resolveProvider(providerClass);
+        }
+        return Pattern.compile(pattern, flags, null, p);
     }
 }

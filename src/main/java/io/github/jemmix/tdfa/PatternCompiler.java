@@ -54,7 +54,12 @@ import io.github.jemmix.tdfa.unicode.UnicodeProviders;
  */
 final class PatternCompiler {
 
-    private PatternCompiler() { }
+    private static final int VALID_FLAGS = Pattern.CASE_INSENSITIVE | Pattern.DOTALL
+        | Pattern.MULTILINE | Pattern.DISABLE_UNICODE_GROUPS | Pattern.LONGEST_MATCH
+        | Pattern.UNICODE_CHARACTER_CLASS | Pattern.DEFER_WHOLE_REJECTION;
+
+    private PatternCompiler() {
+    }
 
     static Pattern compile(String regex, int flags, RegexEngineFactory factory,
                            UnicodeDataProvider provider) {
@@ -67,12 +72,12 @@ final class PatternCompiler {
         if (regex == null) throw new NullPointerException("pattern is null");
         if ((flags & ~VALID_FLAGS) != 0) {
             throw new IllegalArgumentException(
-                    "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS, LONGEST_MATCH, UNICODE_CHARACTER_CLASS, DEFER_WHOLE_REJECTION");
+                "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS, LONGEST_MATCH, UNICODE_CHARACTER_CLASS, DEFER_WHOLE_REJECTION");
         }
         String flregex = regex;
         if ((flags & Pattern.CASE_INSENSITIVE) != 0) flregex = "(?i)" + flregex;
-        if ((flags & Pattern.DOTALL) != 0)          flregex = "(?s)" + flregex;
-        if ((flags & Pattern.MULTILINE) != 0)       flregex = "(?m)" + flregex;
+        if ((flags & Pattern.DOTALL) != 0) flregex = "(?s)" + flregex;
+        if ((flags & Pattern.MULTILINE) != 0) flregex = "(?m)" + flregex;
         if ((flags & Pattern.UNICODE_CHARACTER_CLASS) != 0) flregex = "(?u)" + flregex;
         boolean longest = (flags & Pattern.LONGEST_MATCH) != 0;
         boolean disableUnicodeGroups = (flags & Pattern.DISABLE_UNICODE_GROUPS) != 0;
@@ -80,7 +85,7 @@ final class PatternCompiler {
         final UnicodeDataProvider prov = provider != null ? provider : UnicodeProviders.get();
         final String fl = flregex;
         final io.github.jemmix.tdfa.core.CompileObserver obs = observer != null
-                ? observer : io.github.jemmix.tdfa.core.CompileObserver.NONE;
+            ? observer : io.github.jemmix.tdfa.core.CompileObserver.NONE;
         try {
             // One CPU ledger for the WHOLE compile: the front-end parse/TNFA
             // build and every shipped ladder attempt (succeeded unpruned
@@ -90,8 +95,8 @@ final class PatternCompiler {
             // (The unpruned whole attempt itself is a fraction-capped
             // probe, charged only on success — see SingleCompile.)
             io.github.jemmix.tdfa.tdfa.WorkMeter ledger =
-                    new io.github.jemmix.tdfa.tdfa.WorkMeter(
-                            io.github.jemmix.tdfa.tdfa.Budgets.compileComputeTicks());
+                new io.github.jemmix.tdfa.tdfa.WorkMeter(
+                    io.github.jemmix.tdfa.tdfa.Budgets.compileComputeTicks());
             Tnfa nfa = Tnfa.compile(fl, disableUnicodeGroups, false, prov, obs, ledger);
 
             // Single-compile ladder (one brain, every tier — core.SingleCompile):
@@ -103,7 +108,7 @@ final class PatternCompiler {
             // acceptance then stays the find artifact's alone). NOTHING ever
             // compiles at match time (no-lazy-compiles rule).
             io.github.jemmix.tdfa.core.SingleCompile.Artifacts art =
-                    io.github.jemmix.tdfa.core.SingleCompile.artifacts(nfa, longest, obs, ledger);
+                io.github.jemmix.tdfa.core.SingleCompile.artifacts(nfa, longest, obs, ledger);
             Tdfa findTdfa = art.find;
             int ps = findTdfa.stateCount();
             // Per-pattern runtime RAM split: a pattern keeping a SECOND
@@ -111,14 +116,14 @@ final class PatternCompiler {
             // lazy-memo budget so the pattern's combined memos stay within
             // one tdfa.budget.runtime.memory.
             long findMemoBudget = art.shared()
-                    ? io.github.jemmix.tdfa.tdfa.Budgets.runtimeMemoryBytes()
-                    : io.github.jemmix.tdfa.tdfa.Budgets.runtimeMemoryBytes() / 2;
+                ? io.github.jemmix.tdfa.tdfa.Budgets.runtimeMemoryBytes()
+                : io.github.jemmix.tdfa.tdfa.Budgets.runtimeMemoryBytes() / 2;
 
             if (vmSwitched()) {
                 obs.note("engine", "shared-interpreter (tdfa.engine=VM)");
                 RegexEngine eng = new TdfaRunner(findTdfa, findMemoBudget);
                 return new TDFAPattern(regex, flags, ps, eng,
-                        whole(fl, disableUnicodeGroups, longest, deferWhole, prov, regex, art, eng, ledger), provider);
+                    whole(fl, disableUnicodeGroups, longest, deferWhole, prov, regex, art, eng, ledger), provider);
             }
 
             if (factory != null) {
@@ -135,11 +140,11 @@ final class PatternCompiler {
                 // (the memo split applies to the facade's own runners).
                 RegexEngine whole = whole(fl, disableUnicodeGroups, longest, deferWhole, prov, regex, art, eng, ledger);
                 obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.ENGINE,
-                        System.nanoTime() - t0, 0);
+                    System.nanoTime() - t0, 0);
                 try {
                     Pattern p = (Pattern) io.github.jemmix.tdfa.asm.ShellEmitter.emit(
-                            new io.github.jemmix.tdfa.asm.ShellEmitter.Spec(
-                                    regex, flags, ps, eng, whole, null, provider));
+                        new io.github.jemmix.tdfa.asm.ShellEmitter.Spec(
+                            regex, flags, ps, eng, whole, null, provider));
                     obs.note("engine", "byo-shell");
                     return p;
                 } catch (RuntimeException ex) {
@@ -166,14 +171,14 @@ final class PatternCompiler {
                 return new TDFAPattern(regex, flags, ps, eng, whole(fl, disableUnicodeGroups, longest, deferWhole, prov, regex, art, eng, ledger), provider);
             }
             obs.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.ENGINE,
-                    System.nanoTime() - t1, 0);
+                System.nanoTime() - t1, 0);
             try {
                 Pattern p = (Pattern) io.github.jemmix.tdfa.asm.ShellEmitter.emit(
-                        new io.github.jemmix.tdfa.asm.ShellEmitter.Spec(
-                                regex, flags, ps, gen.engine(),
-                                whole(fl, disableUnicodeGroups, longest, deferWhole,
-                                        prov, regex, art, gen.engine(), ledger),
-                                gen.owner(), provider));
+                    new io.github.jemmix.tdfa.asm.ShellEmitter.Spec(
+                        regex, flags, ps, gen.engine(),
+                        whole(fl, disableUnicodeGroups, longest, deferWhole,
+                            prov, regex, art, gen.engine(), ledger),
+                        gen.owner(), provider));
                 obs.note("engine", "generated");
                 return p;
             } catch (RuntimeException | LinkageError ex) {
@@ -186,10 +191,6 @@ final class PatternCompiler {
             throw io.github.jemmix.tdfa.core.CompiledRegex.translate(e, regex);
         }
     }
-
-    private static final int VALID_FLAGS = Pattern.CASE_INSENSITIVE | Pattern.DOTALL
-            | Pattern.MULTILINE | Pattern.DISABLE_UNICODE_GROUPS | Pattern.LONGEST_MATCH
-            | Pattern.UNICODE_CHARACTER_CLASS | Pattern.DEFER_WHOLE_REJECTION;
 
     /**
      * Facade wrapper over the shared single-compile whole resolver (core
@@ -208,10 +209,12 @@ final class PatternCompiler {
                                      RegexEngine findEngine,
                                      io.github.jemmix.tdfa.tdfa.WorkMeter ledger) {
         return io.github.jemmix.tdfa.core.SingleCompile.wholeEngine(
-                art, findEngine, fl, regex, disableUnicodeGroups, longest, deferWhole, prov, ledger);
+            art, findEngine, fl, regex, disableUnicodeGroups, longest, deferWhole, prov, ledger);
     }
 
-    /** {@code -Dtdfa.engine=VM}: global no-codegen switch, read per compile. */
+    /**
+     * {@code -Dtdfa.engine=VM}: global no-codegen switch, read per compile.
+     */
     private static boolean vmSwitched() {
         return "VM".equalsIgnoreCase(System.getProperty("tdfa.engine"));
     }

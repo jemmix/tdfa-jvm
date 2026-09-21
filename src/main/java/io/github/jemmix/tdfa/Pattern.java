@@ -1,7 +1,7 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.EmittedSurface;
 import io.github.jemmix.tdfa.core.CompileOptions;
+import io.github.jemmix.tdfa.core.EmittedSurface;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 
 import java.util.Map;
@@ -40,16 +40,24 @@ import java.util.Map;
  */
 public interface Pattern extends java.io.Serializable {
 
-    /** Flag: case insensitive matching. */
+    /**
+     * Flag: case insensitive matching.
+     */
     int CASE_INSENSITIVE = 1;
 
-    /** Flag: dot ({@code .}) matches all characters, including newline. */
+    /**
+     * Flag: dot ({@code .}) matches all characters, including newline.
+     */
     int DOTALL = 2;
 
-    /** Flag: multiline matching ({@code ^}/{@code $} at line boundaries). */
+    /**
+     * Flag: multiline matching ({@code ^}/{@code $} at line boundaries).
+     */
     int MULTILINE = 4;
 
-    /** Flag: matches longest possible string (leftmost-longest). */
+    /**
+     * Flag: matches longest possible string (leftmost-longest).
+     */
     int LONGEST_MATCH = 16;
 
     /**
@@ -64,7 +72,9 @@ public interface Pattern extends java.io.Serializable {
      */
     int UNICODE_CHARACTER_CLASS = 32;
 
-    /** Flag: disable Unicode groups ({@code \p{...}} / {@code \P{...}} rejected at compile time, like re2j). */
+    /**
+     * Flag: disable Unicode groups ({@code \p{...}} / {@code \P{...}} rejected at compile time, like re2j).
+     */
     int DISABLE_UNICODE_GROUPS = 8;
 
     /**
@@ -83,13 +93,17 @@ public interface Pattern extends java.io.Serializable {
      */
     int DEFER_WHOLE_REJECTION = 64;
 
-    /** Compile {@code regex} with default flags (leftmost-first, generated engine). */
+    /**
+     * Compile {@code regex} with default flags (leftmost-first, generated engine).
+     */
     static Pattern compile(String regex) {
         if (regex == null) throw new NullPointerException("pattern is null");
         return compile(regex, 0);
     }
 
-    /** Compile {@code regex} with the given {@code flags} (bitwise OR of the flag constants). */
+    /**
+     * Compile {@code regex} with the given {@code flags} (bitwise OR of the flag constants).
+     */
     static Pattern compile(String regex, int flags) {
         return compile(regex, flags, null, null);
     }
@@ -115,7 +129,9 @@ public interface Pattern extends java.io.Serializable {
         return PatternCompiler.compile(regex, flags, factory, unicodeProvider);
     }
 
-    /** Compile with explicit options (semantics, tables, observer). */
+    /**
+     * Compile with explicit options (semantics, tables, observer).
+     */
     static Pattern compile(String regex, CompileOptions options) {
         if (options == null) throw new NullPointerException("options is null");
         int flags = 0;
@@ -123,10 +139,12 @@ public interface Pattern extends java.io.Serializable {
         if (options.isDisableUnicodeGroups()) flags |= DISABLE_UNICODE_GROUPS;
         if (options.isDeferWholeRejection()) flags |= DEFER_WHOLE_REJECTION;
         return PatternCompiler.compile(regex, flags, null,
-                options.unicodeProvider(), options.observer());
+            options.unicodeProvider(), options.observer());
     }
 
-    /** Convenience: compile and match the entire input. */
+    /**
+     * Convenience: compile and match the entire input.
+     */
     static boolean matches(String regex, CharSequence input) {
         return compile(regex).matcher(input).matches();
     }
@@ -140,25 +158,9 @@ public interface Pattern extends java.io.Serializable {
         return matches(regex, Utf8.decode(input));
     }
 
-    /** Match the entire input against this pattern. */
-    boolean matches(String input);
-
-    /** Match the entire input against this pattern (UTF-8 bytes decoded to a String). */
-    boolean matches(byte[] input);
-
-    /** Create a {@link PatternMatcher} for this pattern against {@code input}. */
-    PatternMatcher matcher(CharSequence input);
-
-    /** Create a {@link PatternMatcher} for this pattern against UTF-8-decoded {@code input}. */
-    PatternMatcher matcher(byte[] input);
-
-    /** Split {@code input} around matches of this pattern. Trailing empty strings are omitted. */
-    String[] split(String input);
-
-    /** Split {@code input} with a limit on the number of result strings. */
-    String[] split(String input, int limit);
-
-    /** Quote regexp metacharacters in {@code s}. */
+    /**
+     * Quote regexp metacharacters in {@code s}.
+     */
     static String quote(String s) {
         if (s.isEmpty()) return "";
         StringBuilder out = new StringBuilder(s.length() << 1);
@@ -171,7 +173,39 @@ public interface Pattern extends java.io.Serializable {
         return out.toString();
     }
 
-    /** Releases internal caches (no-op for this engine). */
+    /**
+     * Match the entire input against this pattern.
+     */
+    boolean matches(String input);
+
+    /**
+     * Match the entire input against this pattern (UTF-8 bytes decoded to a String).
+     */
+    boolean matches(byte[] input);
+
+    /**
+     * Create a {@link PatternMatcher} for this pattern against {@code input}.
+     */
+    PatternMatcher matcher(CharSequence input);
+
+    /**
+     * Create a {@link PatternMatcher} for this pattern against UTF-8-decoded {@code input}.
+     */
+    PatternMatcher matcher(byte[] input);
+
+    /**
+     * Split {@code input} around matches of this pattern. Trailing empty strings are omitted.
+     */
+    String[] split(String input);
+
+    /**
+     * Split {@code input} with a limit on the number of result strings.
+     */
+    String[] split(String input, int limit);
+
+    /**
+     * Releases internal caches (no-op for this engine).
+     */
     void reset();
 
     /**
@@ -182,22 +216,34 @@ public interface Pattern extends java.io.Serializable {
      */
     int programSize();
 
-    /** Returns the pattern string. */
+    /**
+     * Returns the pattern string.
+     */
     String pattern();
 
-    /** Returns the flags. */
+    /**
+     * Returns the flags.
+     */
     int flags();
 
-    /** Number of capturing groups (excluding group 0). */
+    /**
+     * Number of capturing groups (excluding group 0).
+     */
     int groupCount();
 
-    /** Unmodifiable name&rarr;index map for named capturing groups. */
+    /**
+     * Unmodifiable name&rarr;index map for named capturing groups.
+     */
     Map<String, Integer> namedGroups();
 
-    /** UTF-8 decode shared by the byte[] overloads (re2j's {@code MatcherInput.utf8}). */
+    /**
+     * UTF-8 decode shared by the byte[] overloads (re2j's {@code MatcherInput.utf8}).
+     */
     @EmittedSurface
     final class Utf8 {
-        private Utf8() { }
+        private Utf8() {
+        }
+
         public static String decode(byte[] bytes) {
             return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
         }
