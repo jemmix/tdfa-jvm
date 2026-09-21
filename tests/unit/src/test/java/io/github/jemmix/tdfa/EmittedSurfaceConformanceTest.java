@@ -6,7 +6,6 @@ import io.github.jemmix.tdfa.core.EmittedSurface;
 import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.Matcher;
 import io.github.jemmix.tdfa.tdfa.MatchHolder;
-import io.github.jemmix.tdfa.tdfa.RegPool;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
@@ -88,6 +87,7 @@ class EmittedSurfaceConformanceTest {
         hookM(TdfaRunner.class, "namedGroups");
         hookM(TdfaRunner.class, "programSize");
         hookM(TdfaRunner.class, "trace", TdfaRunner.Strategy.class);
+        hookM(TdfaRunner.class, "takeRegs", int.class);
         hookF(TdfaRunner.class, "ADAPTIVE_PREFILTER_AFTER");
     }
 
@@ -97,7 +97,6 @@ class EmittedSurfaceConformanceTest {
         hookF(MatchHolder.class, "matchStart");
         hookF(MatchHolder.class, "matchEnd");
         hookF(MatchHolder.class, "regs");
-        hookM(RegPool.class, "take", int.class);
         hookC(MatchResult.class, int[].class, int.class, int.class, int.class, int.class);
         hookM(MatchResult.class, "reconstructFixed", int[].class, int.class, int[].class, int[].class);
         hookM(MatchResult.class, "start", int.class);

@@ -24,13 +24,11 @@ public final class TdfaAsmBackend {
     private static final String CS_D = "Ljava/lang/CharSequence;";
     private static final String ARRAYS = "java/util/Arrays";
     private static final String RUNNER = "io/github/jemmix/tdfa/tdfa/TdfaRunner";
-    private static final String REGS_POOL_C = "io/github/jemmix/tdfa/tdfa/RegPool";
     /** Shared alphabet: the emitted ladder guards restarts with the same one
      *  definition the interpreter uses (pair-interior positions are not
      *  codepoint boundaries and cannot start a match). */
     private static final String ALPHABET = "io/github/jemmix/tdfa/ast/Alphabet";
     private static final String RUNNER_D = "L" + RUNNER + ";";
-    private static final String REGS_POOL_D = "L" + REGS_POOL_C + ";";
     private static final String TDFA = "io/github/jemmix/tdfa/tdfa/Tdfa";
     private static final String TDFA_D = "L" + TDFA + ";";
 
@@ -195,13 +193,6 @@ public final class TdfaAsmBackend {
         // (ladder hooks are monomorphic final-class calls) and the full
         // delegate path for everything the generated class doesn't own.
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "runner", RUNNER_D, null, null).visitEnd();
-        // Per-thread regs pool for extractOne: the walk leaf fires once per
-        // candidate start in scan ladders — a fresh int[]+fill per probe is the
-        // top allocation cost on capture-heavy patterns (the VM pools the same
-        // way via its ThreadLocal Scratch). RegPool is final → the emitted
-        // INVOKEVIRTUAL is monomorphic (EmittedBytecodePolicyTest enforces
-        // receiver finality on the generated tier).
-        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "REGS_POOL", REGS_POOL_D, null, null).visitEnd();
         if (tdfa.unicodeWordBoundary()) {
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "WORD_RANGES", "[I", null, null).visitEnd();
         }
@@ -209,12 +200,6 @@ public final class TdfaAsmBackend {
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
-        // REGS_POOL = new RegPool();   (unconditional; per-class field, set at
-        // engine construction — swapping only loses a cached array, never data)
-        mv.visitTypeInsn(Opcodes.NEW, REGS_POOL_C);
-        mv.visitInsn(Opcodes.DUP);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, REGS_POOL_C, "<init>", "()V", false);
-        mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "REGS_POOL", REGS_POOL_D);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitTypeInsn(Opcodes.NEW, RUNNER);
         mv.visitInsn(Opcodes.DUP);
@@ -953,22 +938,26 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, MS);
         mv.visitJumpInsn(Opcodes.IF_ICMPGT, searchEnd);
 
-        // Per-start: fetch regs from the per-thread pool (resize once, reuse
-        // across every extractOne probe — success paths clone before returning,
-        // so the pool never escapes). Fill(-1) stays: unmatched groups.
+        // Per-start: fetch regs from the runner's shared per-thread pool
+        // (TdfaRunner.takeRegs — the same Scratch.regs the interpreter uses;
+        // one array per thread across all engines). Ranged fill(-1): the
+        // pooled array may be longer than n (grown by a capture-heavier
+        // pattern on this thread); success paths clone before returning, so
+        // the pool never escapes.
         {
             if (tdfa.registerCount() == 0) {
                 mv.visitInsn(Opcodes.ACONST_NULL);
                 mv.visitVarInsn(Opcodes.ASTORE, REGS);
             } else {
-                // REGS = REGS_POOL.take(n); Arrays.fill(REGS, -1);
-                mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "REGS_POOL", REGS_POOL_D);
+                // REGS = TdfaRunner.takeRegs(n); Arrays.fill(REGS, 0, n, -1);
                 ic(mv, tdfa.registerCount());
-                mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, REGS_POOL_C, "take", "(I)[I", false);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "takeRegs", "(I)[I", false);
                 mv.visitVarInsn(Opcodes.ASTORE, REGS);
                 mv.visitVarInsn(Opcodes.ALOAD, REGS);
+                mv.visitInsn(Opcodes.ICONST_0);
+                ic(mv, tdfa.registerCount());
                 mv.visitInsn(Opcodes.ICONST_M1);
-                mv.visitMethodInsn(Opcodes.INVOKESTATIC, ARRAYS, "fill", "([II)V", false);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, ARRAYS, "fill", "([IIII)V", false);
             }
         }
 
@@ -1997,18 +1986,21 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, IN);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "length", "()I", false);
         mv.visitVarInsn(Opcodes.ISTORE, LEN);
-        // regs from the per-thread pool (clone-before-return, as extractOne)
+        // regs from the shared per-thread pool (clone-before-return, as
+        // extractOne); ranged fill — pooled array may exceed n
         if (tdfa.registerCount() == 0) {
             mv.visitInsn(Opcodes.ACONST_NULL);
             mv.visitVarInsn(Opcodes.ASTORE, REGS);
         } else {
-            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "REGS_POOL", REGS_POOL_D);
+            // REGS = TdfaRunner.takeRegs(n); Arrays.fill(REGS, 0, n, -1);
             ic(mv, tdfa.registerCount());
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, REGS_POOL_C, "take", "(I)[I", false);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "takeRegs", "(I)[I", false);
             mv.visitVarInsn(Opcodes.ASTORE, REGS);
             mv.visitVarInsn(Opcodes.ALOAD, REGS);
+            mv.visitInsn(Opcodes.ICONST_0);
+            ic(mv, tdfa.registerCount());
             mv.visitInsn(Opcodes.ICONST_M1);
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, ARRAYS, "fill", "([II)V", false);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, ARRAYS, "fill", "([IIII)V", false);
         }
         // fastPath ⇒ ENTRY_MASK[0] == 0: no start-entry check to emit
         mv.visitInsn(Opcodes.ICONST_0);
