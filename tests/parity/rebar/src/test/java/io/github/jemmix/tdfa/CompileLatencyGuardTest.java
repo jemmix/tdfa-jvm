@@ -26,14 +26,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       alternation"; now ~1-3 s);</li>
  *   <li>{@code curated/09-aws-keys/full} — 191-char nested bounded/greedy
  *       alternation (was: AST bomb rule "variable bounded repeat of
- *       wide-unbounded repeat"; ~0.4 s through the find compile, ~2 s with
- *       the eager whole ladder — the cut-heavy unpruned attempt rejects at
- *       the ⅓-of-CPU-budget whole cap ({@code Budgets.wholeWorkCap()}),
- *       and the anchored last-chance build under the ⅔ cap
- *       ({@code Budgets.anchoredWorkCap()}) churns without
- *       converging, so its rejection is recorded; compiled with
- *       {@code DEFER_WHOLE_REJECTION} accordingly — this guard times the
- *       full eager ladder either way, and matches() is out of its scope);</li>
+ *       wide-unbounded repeat"). The find artifact compiles (~0.4 s); the
+ *       pattern's pike cut bit, and its cut-free whole artifact churns
+ *       without converging — the one shared CPU ledger bounds the doomed
+ *       attempt, so compile() rejects in ~2 s. The guard pins that
+ *       bounded-rejection wall.</li>
  *   <li>{@code curated/12-dictionary/single} — 2 663-branch literal
  *       alternation, 45 KB regex (legitimately slow-but-finishing;
  *       19.5 K states, minimizes to 6.8 K; ~1.5 s — guards the stateIndex
@@ -53,16 +50,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * count verification on both backends — far outside this guard's 5 s
  * scope by design.
  *
- * <p>Budget: 10 s per compile. The single-compile facade made compile()
- * eagerly build the whole-match artifact (and, for pike-cut-divergent
- * patterns like datefinder, the second pruned find artifact) — datefinder
- * went from ~1 s (find only; the anchored engine compiled lazily and this
- * test never called matches()) to ~1.5 s locally / up to ~6 s on a slow CI
- * runner. 10 s keeps the guard's purpose — catching superlinear
- * regressions, not micro-optimizing — with headroom over the CI worst
- * measured, while aws-keys' whole ladder burns its caps inside compile()
- * (unpruned rejects at the 2^27 cap, anchored churns to the 2^28
- * last-chance cap, rejection recorded under the defer flag).
+ * <p>Budget: 10 s per compile. Datefinder (pike-cut-hazardous: it keeps a
+ * find artifact plus a cut-free whole artifact) went from ~1 s (find only)
+ * to ~1.5 s locally / up to ~6 s on a slow CI runner when the whole
+ * artifact became eager. 10 s keeps the guard's purpose — catching
+ * superlinear regressions, not micro-optimizing — with headroom over the
+ * CI worst measured, while aws-keys' doomed whole attempt burns at most
+ * the one CPU budget inside compile() before rejecting.
  */
 class CompileLatencyGuardTest {
 
@@ -90,12 +84,15 @@ class CompileLatencyGuardTest {
 
     static Stream<Arguments> bombs() {
         return Stream.of(
-                Arguments.of("datefinder-ascii", "curated/03-date", "ascii", io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE),
+                Arguments.of("datefinder-ascii", "curated/03-date", "ascii",
+                        io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE, /*expectRejection=*/ false),
                 Arguments.of("datefinder-unicode", "curated/03-date", "unicode",
-                        io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE | io.github.jemmix.tdfa.Pattern.UNICODE_CHARACTER_CLASS),
+                        io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE | io.github.jemmix.tdfa.Pattern.UNICODE_CHARACTER_CLASS,
+                        /*expectRejection=*/ false),
                 Arguments.of("aws-keys-full", "curated/09-aws-keys", "full",
-                        io.github.jemmix.tdfa.Pattern.DEFER_WHOLE_REJECTION),
-                Arguments.of("dictionary-single", "curated/12-dictionary", "single", 0));
+                        0, /*expectRejection=*/ true),
+                Arguments.of("dictionary-single", "curated/12-dictionary", "single",
+                        0, /*expectRejection=*/ false));
     }
 
     private static String regexOf(String group, String name) {
@@ -107,10 +104,17 @@ class CompileLatencyGuardTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("bombs")
-    void compilesWithinBudget(String label, String group, String name, int flags) {
+    void compilesWithinBudget(String label, String group, String name, int flags, boolean expectRejection) {
         String regex = regexOf(group, name);
         long t0 = System.nanoTime();
-        io.github.jemmix.tdfa.Pattern.compile(regex, flags);
+        if (expectRejection) {
+            org.assertj.core.api.Assertions.assertThatCode(
+                            () -> io.github.jemmix.tdfa.Pattern.compile(regex, flags))
+                    .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
+                    .hasMessageContaining("pattern too large");
+        } else {
+            io.github.jemmix.tdfa.Pattern.compile(regex, flags);
+        }
         long ms = (System.nanoTime() - t0) / 1_000_000;
         assertThat(ms).as("compile wall for %s (%d-char regex, flags=%d)", label, regex.length(), flags)
                 .isLessThan(BUDGET_MS);

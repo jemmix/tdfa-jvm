@@ -67,8 +67,8 @@ public final class ShellEmitter {
      * the serialization proxy); {@code flags} the facade flag bits;
      * {@code programSize} the states in the compiled DFA (cost estimate);
      * {@code engine} the per-pattern engine instance; {@code wholeEngine}
-     * the eagerly-compiled whole-match engine for matches() (cut-free
-     * artifact, or an anchored engine on the over-budget corner);
+     * the whole-match engine for matches() (the engine itself when the
+     * artifacts are shared, else a runner over the cut-free artifact);
      * {@code engineInternalName} the slashed internal name of a per-pattern
      * generated engine class for concrete-type wiring, or {@code null} to
      * type the shell's engine field as {@link RegexEngine}.

@@ -9,10 +9,12 @@ import io.github.jemmix.tdfa.tdfa.Tdfa;
  * <p>Bring-your-own-engine hook. Implementations must be stateless (or
  * externally synchronized): a single factory may be asked to create engines
  * for many patterns. Per pattern the facade asks exactly ONCE — for the
- * find engine; whole matching ({@code matches()}) runs the facade's own
- * native whole-match engine over the cut-free artifact, since a custom
- * engine's {@code matchWhole} would be the interface default
- * ({@code match(input, 0)}), whole-exact only over anchored artifacts.
+ * find engine. When the compile's pike cut never bit, that same engine
+ * also serves whole matching, and its {@code matchWhole}/{@code matches}
+ * implementation defines the whole-match semantics (the interface default
+ * {@code match(input, 0)} is whole-exact only over both-ends-anchored
+ * artifacts); otherwise the facade pairs the custom find engine with its
+ * own runner over the cut-free whole artifact.
  *
  * <pre>
  *   Pattern p = Pattern.compile(regex, flags, TdfaRunner::new);

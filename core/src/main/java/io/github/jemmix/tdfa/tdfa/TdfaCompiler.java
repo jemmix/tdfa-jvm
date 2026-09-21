@@ -191,7 +191,8 @@ final class TdfaCompiler {
      */
     long boxedRangeBytes = 0;
     /**
-     * Set by the stop-table pass on unpruned compiles (see the predicate comment there).
+     * Set by the stop-table pass on pruned Perl-mode compiles (see the
+     * hazard comment there).
      */
     boolean pikeCutMatters;
     /**
@@ -214,32 +215,14 @@ final class TdfaCompiler {
     }
 
     TdfaCompiler(Tnfa nfa, boolean longestMatch, boolean unpruned) {
-        this(nfa, longestMatch, unpruned, -1L);
+        this(nfa, longestMatch, unpruned, new WorkMeter(Budgets.compileComputeTicks()));
     }
 
     /**
-     * @param workCap upper bound on the compile work budget (ticks);
-     *                {@code <= 0} uses the {@code tdfa.budget.compile.compute}
-     *                budget verbatim; a positive value is applied as
-     *                {@code min(budget, cap)} so user-lowered budgets win and
-     *                only deliberate raises are tightened. Used by the facade's
-     *                whole-match ladder ({@link Budgets#wholeWorkCap()} /
-     *                {@link Budgets#anchoredWorkCap()}) to bound how long an
-     *                over-budget unpruned build may burn before rejecting (the
-     *                cut-free build of a cut-heavy pattern can churn orders of
-     *                magnitude past its pruned cost).
-     */
-    TdfaCompiler(Tnfa nfa, boolean longestMatch, boolean unpruned, long workCap) {
-        this(nfa, longestMatch, unpruned,
-            new WorkMeter(Math.min(Budgets.compileComputeTicks(),
-                workCap > 0 ? workCap : Long.MAX_VALUE)));
-    }
-
-    /**
-     * Ledger variant: the caller (the facade's single-compile ladder)
-     * hands a METER FORKED from the compile's root meter — its budget is
-     * already the per-attempt cap, and its ticks debit the shared ledger
-     * so the whole {@code Pattern.compile} stays within one CPU budget.
+     * Ledger variant: the caller hands a METER FORKED from the compile's
+     * root meter — its budget is already the per-attempt cap, and its
+     * ticks debit the shared ledger so the whole {@code compile()} stays
+     * within one CPU budget.
      */
     TdfaCompiler(Tnfa nfa, boolean longestMatch, boolean unpruned, WorkMeter sharedMeter) {
         this.nfa = nfa;
@@ -795,25 +778,23 @@ final class TdfaCompiler {
                     }
                     stateStopOnAcceptMask[s * 64 + M] = higherPriSym ? NEVER_STOP : 0;
                 }
-                if (unpruned) {
-                    // Pike-cut divergence predicate (feeds Tdfa.pikeCutMatters).
-                    // Sufficiency argument for "no hazard ⇒ unpruned walk ≡
-                    // pruned walk": the cut deletes below-accept configs from a
-                    // state's stepping input only when an accept is alive in
-                    // that context, and the walk steps from a state without
-                    // breaking only while stopNow says extend (NEVER_STOP) —
-                    // at a STOP record both walks break identically. So a cut
-                    // transition is taken only at (S, M) with an alive accept
-                    // AND a NEVER_STOP cell; if additionally no alive config
-                    // below the first alive accept can step, the cut removes
-                    // only non-steppable configs, which never contribute to
-                    // target kernels — every stepped set, hence every state
-                    // and accept reached, is identical in both builds.
+                if (!unpruned) {
+                    // Pike-cut hazard predicate (feeds Tdfa.pikeCutMatters).
+                    // The cut deletes every config below the first accept
+                    // alive in a stepping context, so an alive AND steppable
+                    // config below an alive accept under some posFlags M
+                    // means the cut deleted a real continuation: a
+                    // whole-input walk on this artifact could then miss
+                    // accepts ((a|ab) on "ab" — the b-continuation sits
+                    // below the accept and is cut). With no hazard in any
+                    // state, every cut removed only non-steppable configs,
+                    // which contribute nothing to target kernels, so this
+                    // artifact is identical to the cut-free build and whole
+                    // walks on it are exact.
                     // (Conservative: kernel masks approximate the runner's
-                    // fm/sam record gates from above, so this flags a superset
-                    // of the real divergence positions.)
+                    // fm/sam record gates from above, so this flags a
+                    // superset of the real hazard positions.)
                     for (int M = 0; M < 64 && !pikeCutMatters; M++) {
-                        if (stateStopOnAcceptMask[s * 64 + M] != NEVER_STOP) continue;
                         int firstAliveAccept = -1;
                         for (int i = 0; i < cnt; i++) {
                             int st = pk != null ? pk[i * 2] : cfgs.get(i).state;
@@ -1252,8 +1233,7 @@ final class TdfaCompiler {
                 nfa.unicodeWordBoundary, nfa.wordRanges,
                 hasFixed(nfa.fixedBase) ? nfa.fixedBase : null,
                 hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null,
-                unpruned && pikeCutMatters);
-            result.compileWorkTicks = meter.spent();
+                pikeCutMatters);
             return result;
         }
     }

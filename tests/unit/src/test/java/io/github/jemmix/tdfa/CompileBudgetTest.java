@@ -102,16 +102,20 @@ class CompileBudgetTest {
     /** The classic nested-counted shape's FIND artifact now compiles under
      *  default budgets — the right-nested suffix collapsed the determinization
      *  ~90x in kernel total ((a{1,100}){1,100}: 19.6 M kernels -> 148 K,
-     *  10001 states). Its whole builds still reject (pinned in
-     *  SingleCompileWholeTest), so the lenient flag carries the pin. */
+     *  10001 states). Its cut-free whole artifact still rejects (pinned in
+     *  WholeMatchTest), so the facade compile fails; the find-artifact pin
+     *  runs on the core Tdfa API where the whole attempt doesn't interfere. */
     @Test
     void nestedCountedNowCompiles() {
         long t0 = System.nanoTime();
-        io.github.jemmix.tdfa.Pattern p = Pattern.compile("(a{1,100}){1,100}",
-                io.github.jemmix.tdfa.Pattern.DEFER_WHOLE_REJECTION);
-        assertThat(p.matcher("a".repeat(120)).find()).isTrue();
+        io.github.jemmix.tdfa.tdfa.Tdfa find = io.github.jemmix.tdfa.tdfa.Tdfa.compile(
+                io.github.jemmix.tdfa.tnfa.Tnfa.compile("(a{1,100}){1,100}"), false);
+        assertThat(new io.github.jemmix.tdfa.tdfa.TdfaRunner(find).find("a".repeat(120))).isTrue();
         assertThat((System.nanoTime() - t0) / 1_000_000)
-                .as("nested-counted compile wall").isLessThan(15_000);
+                .as("nested-counted find-artifact compile wall").isLessThan(15_000);
+        assertThatCode(() -> Pattern.compile("(a{1,100}){1,100}"))
+                .isInstanceOf(PatternSyntaxException.class)
+                .hasMessageContaining("pattern too large");
     }
 
     /** Fuzz round 24 (caseSeed 727613823329836856): a 287-state DFA whose
@@ -159,63 +163,36 @@ class CompileBudgetTest {
     }
 
     /** Fuzz round 27's spin family (caseSeeds 4496606199222982303,
-     * 917334682215128318), under the no-lazy-compiles contract and the
-     * opt-in defer policy ({@code DEFER_WHOLE_REJECTION}): a bomb whose
-     * whole builds (unpruned AND anchored) exceed the budget runs each
-     * doomed attempt exactly ONCE — inside compile() — and every matches()
-     * call rethrows the recorded rejection; nothing recompiles at match
-     * time (the former LazyEngine corner re-burned the 8 M-tick rejection
-     * ~16× per batch and crossed the fuzz watchdog as a spin). Without the
-     * flag, compile() itself fails with the same clean rejection (the
-     * default since 2026-09-15 — pinned in SingleCompileWholeTest). The
-     * bounded-gap family ([\s\S]{0,60}x[\s\S]{0,60}: find compiles, the
-     * whole DFA is an intrinsically-huge counter cross-product) is
-     * pinned below. Pinned with \x{...}/escapes per CFG_EDGE_BOMB above. */
+     * 917334682215128318): a bomb whose whole artifact exceeds the budget
+     * fails compile() exactly once, eagerly, with the clean rejection —
+     * the find determinization and the one doomed cut-free attempt all run
+     * inside compile() on the shared CPU ledger (nothing recompiles at
+     * match time). Pinned with \x{...}/escapes per CFG_EDGE_BOMB above. */
     @Test
-    void bombWholeOverBudgetRecordsRejectionOnceEagerly() {
+    void bombWholeOverBudgetFailsCompileEagerly() {
         String bomb = "(?:(?m:\u00e9)(?:\\w[^\u03a9z\\-]{0,}|\ud835\udd04\udfff){1,4}){1,5}";
         System.setProperty("tdfa.budget.compile.compute", "8388608");
         try {
             long t0 = System.nanoTime();
-            io.github.jemmix.tdfa.Pattern p = Pattern.compile(bomb,
-                    io.github.jemmix.tdfa.Pattern.DEFER_WHOLE_REJECTION);   // find artifact accepted
+            assertThatCode(() -> Pattern.compile(bomb))
+                    .isInstanceOf(PatternSyntaxException.class)
+                    .hasMessageContaining("pattern too large");
             assertThat((System.nanoTime() - t0) / 1_000_000)
-                    .as("wall of the eager ladder (two bounded doomed whole builds)")
+                    .as("wall of the budgeted compile (find + one doomed whole attempt)")
                     .isLessThan(10_000);
-            RuntimeException[] recorded = new RuntimeException[1];
-            assertThatCode(() -> p.matcher("\u00e9zz").matches())
-                    .isInstanceOf(PatternSyntaxException.class)
-                    .hasMessageContaining("pattern too large")
-                    .satisfies(ex -> recorded[0] = (RuntimeException) ex);
-            long t1 = System.nanoTime();
-            assertThatCode(() -> p.matcher("\u00e9zz").matches())
-                    .isInstanceOf(PatternSyntaxException.class)
-                    .satisfies(ex -> assertThat((RuntimeException) ex).isSameAs(recorded[0]));
-            assertThat((System.nanoTime() - t1) / 1_000_000)
-                    .as("wall of the recorded-rethrow matches()").isLessThan(5);
         } finally {
             System.clearProperty("tdfa.budget.compile.compute");
         }
     }
 
     @Test
-    void boundedGapWholeBombKeepsFind() {
-        // The corpus-impact decision made concrete — and REVERSED
-        // (2026-09-15): find compiles (~28 K kernels under the RAM-derived
-        // cap), both whole builds reject (anchored: 100 001+ states — the
-        // counter cross-product is the MINIMAL whole DFA). Default:
-        // compile() fails — shipping a Pattern whose matches() is
-        // permanently broken behind a successful compile is the trap; the
-        // lenient find-only acceptance (find() works, matches() rethrows
-        // the recorded rejection) is the explicit opt-in.
+    void boundedGapWholeBombFailsCompile() {
+        // Find compiles (~28 K kernels under the RAM-derived cap); the
+        // pike cut bit, and the cut-free whole DFA is an intrinsically
+        // huge counter cross-product (100 001+ states minimal) — over the
+        // budget, so compile() fails rather than shipping a Pattern whose
+        // matches() would be broken.
         assertThatCode(() -> Pattern.compile("[\\s\\S]{0,60}x[\\s\\S]{0,60}"))
-                .isInstanceOf(PatternSyntaxException.class)
-                .hasMessageContaining("pattern too large");
-        io.github.jemmix.tdfa.Pattern p = Pattern.compile(
-                "[\\s\\S]{0,60}x[\\s\\S]{0,60}", io.github.jemmix.tdfa.Pattern.DEFER_WHOLE_REJECTION);
-        assertThat(p.matcher("aaaxbbb").find()).isTrue();
-        assertThat(p.matcher("nothing to find in this line at all").find()).isFalse();
-        assertThatCode(() -> p.matcher("aaaxbbb").matches())
                 .isInstanceOf(PatternSyntaxException.class)
                 .hasMessageContaining("pattern too large");
     }
@@ -240,20 +217,18 @@ class CompileBudgetTest {
     void budgetOverrideRaisesTheCeiling() {
         // The budgets are per-compile reads of the system properties, so a
         // lowered RAM budget rejects patterns the default admits (and a
-        // raised one admits more). 1.6 MB derives a ~20 K kernel cap (the
-        // {0,60} × 2 shape totals ~28 K kernel entries across its states —
-        // the right-nested suffix shrank the flat tail's 220 K). The DEFER
-        // flag carries the find-only acceptance: the whole side rejects
-        // regardless of the caps (see boundedGapWholeBombKeepsFind).
+        // raised one admits more). 1.6 MB derives a ~20 K kernel cap; the
+        // {0,10} × 2 bounded-gap shape fits the default caps but not that
+        // one (its {0,60} sibling is over-budget at ANY cap — see
+        // boundedGapWholeBombFailsCompile).
         System.setProperty("tdfa.budget.compile.memory", "1600000");
         try {
             assertThatCode(() -> Pattern.compile(
-                    "[\\s\\S]{0,60}x[\\s\\S]{0,60}")).isInstanceOf(PatternSyntaxException.class);
+                    "[\\s\\S]{0,10}x[\\s\\S]{0,10}")).isInstanceOf(PatternSyntaxException.class);
         } finally {
             System.clearProperty("tdfa.budget.compile.memory");
         }
-        assertThatCode(() -> Pattern.compile("[\\s\\S]{0,60}x[\\s\\S]{0,60}",
-                io.github.jemmix.tdfa.Pattern.DEFER_WHOLE_REJECTION))
+        assertThatCode(() -> Pattern.compile("[\\s\\S]{0,10}x[\\s\\S]{0,10}"))
                 .doesNotThrowAnyException();
     }
 }

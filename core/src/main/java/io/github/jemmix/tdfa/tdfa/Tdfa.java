@@ -71,17 +71,16 @@ public final class Tdfa {
      */
     final boolean longestMatch;
     /**
-     * Pike-cut divergence flag, meaningful only for {@linkplain
-     * #compileUnpruned unpruned} Perl-mode compiles: true iff some accepting
-     * state under some position-flags admits an alive accept that the runner
-     * would EXTEND past (stop cell {@link #NEVER_STOP}) while a lower-priority
-     * steppable config sits below it in the kernel — the exact condition under
-     * which the compile-time pike cut changes find() behavior (it deletes those
-     * configs' continuations, and the pruned walk cannot reach accepts that the
-     * unpruned walk can). When false, the unpruned artifact is walk-identical
-     * to the pruned one and may serve find(); when true, find() needs a
-     * pruned compile ({@link #compile}). Always false for pruned and POSIX
-     * compiles (the cut never applies there).
+     * Pike-cut hazard flag, meaningful only for pruned Perl-mode compiles
+     * ({@link #compile(Tnfa, boolean)}): true iff the compile-time pike
+     * cut deleted a steppable continuation below an alive accept under
+     * some position-flags — the exact condition under which a whole-input
+     * walk on this artifact could miss accepts ((a|ab) on {@code "ab"}:
+     * the {@code b}-continuation sits below the accept and is cut). When
+     * false, every cut removed only non-steppable configs and this
+     * artifact is identical to the cut-free build, so whole walks on it
+     * are exact. Always false for POSIX and cut-free
+     * ({@linkplain #compileUnpruned unpruned}) compiles.
      */
     final boolean pikeCutMatters;
     final boolean multiline;
@@ -191,12 +190,6 @@ public final class Tdfa {
      * Flat ops: [op, dst, src, ...] blocks terminated by OP_END=0. Transition ops + final ops share this array.
      */
     final int[] ops;
-    /**
-     * Work ticks this artifact's determinization burned (set by the
-     * compiler at the end of {@code compile()}); the facade's CPU ledger
-     * charges it when the artifact ships.
-     */
-    long compileWorkTicks;
     /**
      * Lazily-materialized 2D expansion of {@link #stopMaskUniform}. Volatile so
      * the filled array is safely published to racing readers (a plain field
@@ -450,6 +443,48 @@ public final class Tdfa {
         return new TdfaCompiler(nfa, longestMatch, false).compile(observer);
     }
 
+    /**
+     * Ledger variant of {@link #compile(Tnfa, boolean, CompileObserver)}:
+     * the meter comes from the caller's compile ledger ({@link
+     * WorkMeter#fork(long)}) — its budget is the per-attempt cap and its
+     * ticks debit the shared pool, so a compile's determinization attempts
+     * stay within one compile CPU budget.
+     */
+    public static Tdfa compile(Tnfa nfa, boolean longestMatch,
+                               io.github.jemmix.tdfa.core.CompileObserver observer,
+                               WorkMeter sharedMeter) {
+        return new TdfaCompiler(nfa, longestMatch, false, sharedMeter).compile(observer);
+    }
+
+    /**
+     * Compile WITHOUT the Perl pike cut: transitions follow every alive
+     * config, including lower-priority continuations past an accept, so the
+     * artifact supports whole-input walks ({@code matchWhole}) — an accept
+     * config alive at end-of-input is a full match even when a
+     * higher-priority alternative accepted earlier (e.g. {@code (a|ab)} on
+     * {@code "ab"}).
+     *
+     * <p>Use {@link #pikeCutMatters()} on the PRUNED artifact of the same
+     * NFA to decide whether this cut-free form is needed: false means the
+     * pruned artifact is identical to this build and may serve whole
+     * matching; true means whole matching needs this form.
+     */
+    public static Tdfa compileUnpruned(Tnfa nfa, boolean longestMatch,
+                                       io.github.jemmix.tdfa.core.CompileObserver observer) {
+        return compileUnpruned(nfa, longestMatch, observer,
+            new WorkMeter(Budgets.compileComputeTicks()));
+    }
+
+    /**
+     * Ledger variant of {@link #compileUnpruned(Tnfa, boolean, CompileObserver)}
+     * (see {@link #compile(Tnfa, boolean, CompileObserver, WorkMeter)}).
+     */
+    public static Tdfa compileUnpruned(Tnfa nfa, boolean longestMatch,
+                                       io.github.jemmix.tdfa.core.CompileObserver observer,
+                                       WorkMeter sharedMeter) {
+        return new TdfaCompiler(nfa, longestMatch, true, sharedMeter).compile(observer);
+    }
+
     // ===== public read accessors (fields are package-private; asm generation
     // and external consumers read through these) =====
     //
@@ -463,81 +498,6 @@ public final class Tdfa {
     // and each runs once per compile. The accessors marked
     // {@code @EmittedSurface} are additionally invoked by name from
     // generated engine <init>s (see EmittedSurfaceConformanceTest).
-
-    /**
-     * Work-bounded variant of {@link #compile(Tnfa, boolean, CompileObserver)}
-     * (same cap semantics as {@link #compileUnpruned(Tnfa, boolean, CompileObserver, long)}):
-     * {@code workCap > 0} clamps the compile work budget to
-     * {@code min(tdfa.budget.compile.compute, workCap)} ticks. The facade's over-budget
-     * whole corner uses this to bound its anchored attempt
-     * ({@link Budgets#anchoredWorkCap()}).
-     */
-    public static Tdfa compile(Tnfa nfa, boolean longestMatch,
-                               io.github.jemmix.tdfa.core.CompileObserver observer,
-                               long workCap) {
-        return new TdfaCompiler(nfa, longestMatch, false, workCap).compile(observer);
-    }
-
-    /**
-     * Compile WITHOUT the Perl pike cut: transitions follow every alive
-     * config, including lower-priority continuations past an accept, so the
-     * artifact supports whole-input walks ({@code matchWhole}) — an accept
-     * config alive at end-of-input is a full match even when a
-     * higher-priority alternative accepted earlier (e.g. {@code (a|ab)} on
-     * {@code "ab"}). POSIX-mode and pruned compiles also support whole walks
-     * only when their transitions happen to be cut-free — this factory is the
-     * guaranteed-cut-free form.
-     *
-     * <p>Use {@link #pikeCutMatters()} on the result to decide whether the
-     * artifact may also serve find(): false means the cut would have deleted
-     * only configs that no walk ever steps (the pruned and unpruned walks are
-     * identical); true means find() needs the pruned {@link #compile}.
-     */
-    public static Tdfa compileUnpruned(Tnfa nfa, boolean longestMatch,
-                                       io.github.jemmix.tdfa.core.CompileObserver observer) {
-        return compileUnpruned(nfa, longestMatch, observer, -1L);
-    }
-
-    /**
-     * Work-bounded variant of {@link #compileUnpruned(Tnfa, boolean, CompileObserver)}
-     * (same cap semantics as {@link #compile(Tnfa, boolean, CompileObserver, long)}):
-     * {@code workCap > 0} clamps the compile work budget to
-     * {@code min(tdfa.budget.compile.compute, workCap)} ticks (positive caps
-     * only tighten — a user-lowered budget still wins). The facade uses this
-     * to bound its whole-match attempt
-     * ({@link Budgets#wholeWorkCap()}): a cut-heavy pattern's cut-free
-     * build can churn orders of magnitude past its pruned cost before the
-     * output caps trip, and a bounded rejection degrades to the historical
-     * lazy whole engine instead of stalling compile().
-     */
-    public static Tdfa compileUnpruned(Tnfa nfa, boolean longestMatch,
-                                       io.github.jemmix.tdfa.core.CompileObserver observer,
-                                       long workCap) {
-        return new TdfaCompiler(nfa, longestMatch, true, workCap).compile(observer);
-    }
-
-    /**
-     * Ledger variant of {@link #compile(Tnfa, boolean, CompileObserver)}:
-     * the meter comes from the caller's compile ledger ({@link
-     * WorkMeter#fork(long)}) — its budget is the per-attempt cap and its
-     * ticks debit the shared pool, so the facade's whole ladder stays
-     * within one compile CPU budget.
-     */
-    public static Tdfa compile(Tnfa nfa, boolean longestMatch,
-                               io.github.jemmix.tdfa.core.CompileObserver observer,
-                               WorkMeter sharedMeter) {
-        return new TdfaCompiler(nfa, longestMatch, false, sharedMeter).compile(observer);
-    }
-
-    /**
-     * Ledger variant of {@link #compileUnpruned(Tnfa, boolean, CompileObserver, long)}
-     * (see {@link #compile(Tnfa, boolean, CompileObserver, WorkMeter)}).
-     */
-    public static Tdfa compileUnpruned(Tnfa nfa, boolean longestMatch,
-                                       io.github.jemmix.tdfa.core.CompileObserver observer,
-                                       WorkMeter sharedMeter) {
-        return new TdfaCompiler(nfa, longestMatch, true, sharedMeter).compile(observer);
-    }
 
     /**
      * Full 2D stop table for external consumers. Materializes (once) from the
@@ -741,20 +701,13 @@ public final class Tdfa {
     }
 
     /**
-     * For unpruned Perl-mode compiles: whether the pike cut would change
-     * find() behavior on this artifact (see {@link #compileUnpruned}); false
-     * means find() may run on it. Constant false otherwise.
+     * For pruned Perl-mode compiles: whether the pike cut deleted a
+     * steppable continuation (see {@link Tdfa#pikeCutMatters}); false
+     * means whole-input walks on this artifact are exact. Constant false
+     * otherwise.
      */
     public boolean pikeCutMatters() {
         return pikeCutMatters;
-    }
-
-    /**
-     * Work ticks this artifact's determinization burned (see the field
-     * doc — the facade's CPU-ledger settlement reads it).
-     */
-    public long compileWorkTicks() {
-        return compileWorkTicks;
     }
 
     // ===== compile-knob policy =====
@@ -770,7 +723,7 @@ public final class Tdfa {
     //   tdfa.debug, tdfa.debug.closure, tdfa.debug.finals          (compile)
     //   tdfa.engine, tdfa.gen.debug                                 (facade, per compile)
     // The derived determinization caps (states/kernels/closure/cfg-edges/
-    // norm-cells, the whole-ladder work caps, the search-DFA memo caps) are
+    // norm-cells, the search-DFA memo caps) are
     // all linear functions of the two compile budgets / the runtime budget
     // through the weight model (BudgetWeights) — the former direct cap
     // properties (tdfa.max.*) are gone. The only frozen reads left are

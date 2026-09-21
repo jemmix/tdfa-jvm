@@ -114,7 +114,7 @@ class RebarScenarioParityTest {
 
     /**
      * Total-skip ceiling (review P2: the gray-skip path could silently shrink
-     * the green set). Recorded baseline 2026-09-17: 2 total, both
+     * the green set). Recorded baseline 2026-09-21: 4 total, all
      * {@code bomb:over-budget-by-design}; every other reason family
      * (unsupported-model, no-scalar-count, regex-null, haystack-resolve-failed,
      * compile-failed) is at 0 — a compile-exception bug appearing at scale
@@ -161,8 +161,8 @@ class RebarScenarioParityTest {
     }
 
     /**
-     * In-scope scenarios whose minimal DFA exceeds the engine's determinization
-     * budget <em>by design</em> — the suite skips them (visibly) unless
+     * In-scope scenarios whose determinization exceeds the engine's budget
+     * <em>by design</em> — the suite skips them (visibly) unless
      * explicitly opted in. Rationale (2026-08-20): running these adds ~40 s of
      * rejected determinization per backend plus a multi-GB raised-budget retry
      * to every suite run, to verify one shape family that is already covered
@@ -182,18 +182,17 @@ class RebarScenarioParityTest {
      *       budget after the 2026-08-20 memory work: ~21 s compile, fits
      *       -Xmx1g, ~82 MB retained, count=53 verified on both backends
      *       (TODO.md "budget").
+     *   <li>{@code curated/09-aws-keys/full} — the find artifact compiles,
+     *       but the pattern's pike cut bit and its cut-free whole artifact
+     *       (the counter cross-product of the two alternation arms) churns
+     *       past the compile CPU budget, so {@code compile()} rejects.
+     *       Find-only acceptance was removed with the defer-flag ladder
+     *       (2026-09-21); at a raised compute budget the whole artifact
+     *       still churns without converging, so raising won't admit it.
      * </ul>
      */
-    static final Set<String> BOMB_SCENARIOS = Set.of("curated/10-bounded-repeat/context");
-
-    /** Find-only scenarios whose whole-match ladder churns without
-     *  converging (aws-keys' anchored build rejects at ANY work cap — its
-     *  "cap+1 ticks" report is meter granularity, not a knife edge). These
-     *  models (count/grep) never call matches(), so they compile with
-     *  {@code DEFER_WHOLE_REJECTION}: find() on the find artifact, the
-     *  whole rejection recorded. Not in this set + "pattern too large" =
-     *  FAILURE, as ever. */
-    static final Set<String> DEFER_WHOLE_SCENARIOS = Set.of("curated/09-aws-keys/full");
+    static final Set<String> BOMB_SCENARIOS =
+            Set.of("curated/10-bounded-repeat/context", "curated/09-aws-keys/full");
 
     /** Default true; set {@code -Dtdfa.test.rebar.skipBombs=false} to run the bombs for real. */
     static final boolean SKIP_BOMBS =
@@ -262,7 +261,6 @@ class RebarScenarioParityTest {
         int flags = 0;
         if (s.caseInsensitive()) flags |= Pattern.CASE_INSENSITIVE;
         if (s.unicode()) flags |= Pattern.UNICODE_CHARACTER_CLASS;
-        if (DEFER_WHOLE_SCENARIOS.contains(s.fullName())) flags |= Pattern.DEFER_WHOLE_REJECTION;
         long compileStart = System.nanoTime();
         Pattern compiled;
         try {
