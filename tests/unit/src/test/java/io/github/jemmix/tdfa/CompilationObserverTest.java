@@ -31,8 +31,8 @@ class CompilationObserverTest {
     @Test void facadeRecordsGeneratedEngineDecision() {
         CompilationReport r = new CompilationReport();
         Pattern.compile("(a|b)*c", CompileOptions.of().observer(r));
-        assertThat(r.notes().get("engine")).isIn("generated", "shared-interpreter (shell emission failed)",
-                "shared-interpreter (engine emission failed)", "shared-interpreter (tdfa.engine=VM)");
+        assertThat(r.notes().get("engine")).isIn("generated", "shared (shell emission failed)",
+                "shared-interpreter (tdfa.engine=VM)");
         if ("generated".equals(r.notes().get("engine"))) {
             assertThat(r.nanos(CompileObserver.Stage.ENGINE)).isGreaterThanOrEqualTo(0L);
         }

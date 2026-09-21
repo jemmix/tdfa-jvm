@@ -142,8 +142,7 @@ class WholeMatchTest {
 
     @Test
     void interpreterFactory() {
-        // BYO factory: whole is the facade's whole engine over the shared
-        // unpruned artifact (native matchWhole); find is the factory engine.
+        // BYO factory: one engine per artifact through the same translation.
         Pattern p = Pattern.compile("(a|ab)", 0, io.github.jemmix.tdfa.tdfa.TdfaRunner::new);
         PatternMatcher m = p.matcher("ab");
         assertThat(m.matches()).isTrue();
@@ -152,6 +151,37 @@ class WholeMatchTest {
         PatternMatcher mbf = p.matcher("ab");
         assertThat(mbf.find()).isTrue();
         assertThat(mbf.group()).isEqualTo("a");
+    }
+
+    /**
+     * One engine source serves EVERY artifact of a compile: a factory is
+     * called once per artifact (twice when the pike cut bit — find plus
+     * cut-free whole — once when the artifacts are shared), and on the
+     * default tier the whole engine is generated just like the find engine
+     * (its native {@code wholeOne} walk backs {@code matches()}).
+     */
+    @Test
+    void engineSourceServesEveryArtifact() {
+        java.util.List<io.github.jemmix.tdfa.tdfa.Tdfa> seen = new java.util.ArrayList<>();
+        Pattern p = Pattern.compile("(a|ab)", 0, t -> {
+            seen.add(t);
+            return new io.github.jemmix.tdfa.tdfa.TdfaRunner(t);
+        });
+        assertThat(seen).as("hazardous pattern: find + whole artifacts").hasSize(2);
+        assertThat(p.matcher("ab").matches()).isTrue();
+
+        java.util.List<io.github.jemmix.tdfa.tdfa.Tdfa> seenOnce = new java.util.ArrayList<>();
+        Pattern q = Pattern.compile("a*", 0, t -> {
+            seenOnce.add(t);
+            return new io.github.jemmix.tdfa.tdfa.TdfaRunner(t);
+        });
+        assertThat(seenOnce).as("hazard-free pattern: one shared artifact").hasSize(1);
+        assertThat(q.matcher("aaa").matches()).isTrue();
+
+        Pattern asm = Pattern.compile("(a|ab)");
+        assertThat(((TDFAPattern) asm).wholeEngine().getClass().getSimpleName())
+                .as("default tier whole engine is generated, not the interpreter")
+                .startsWith("Gen");
     }
 
     /**

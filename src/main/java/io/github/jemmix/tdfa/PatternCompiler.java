@@ -17,10 +17,11 @@ import io.github.jemmix.tdfa.unicode.UnicodeProviders;
 /**
  * {@link Pattern} compilation: fold the flags into an inline-flag prefix,
  * parse to a TNFA, determinize, compile a cut-free whole-match artifact
- * when the pike cut deleted continuations, and resolve the engine source
- * ({@code -Dtdfa.engine=VM}, a custom {@link RegexEngineFactory}, or
- * per-pattern ASM generation). Everything builds inside {@code compile()};
- * any budget rejection fails the compile as a translated
+ * when the pike cut deleted continuations, and translate each artifact to
+ * an engine through one source ({@code -Dtdfa.engine=VM} interpreter, a
+ * custom {@link RegexEngineFactory}, or per-pattern ASM generation).
+ * Everything builds inside {@code compile()}; any budget rejection fails
+ * the compile as a translated
  * {@link io.github.jemmix.tdfa.core.PatternSyntaxException}.
  */
 final class PatternCompiler {
@@ -66,73 +67,56 @@ final class PatternCompiler {
                 obs.note("pikeCut", "cut-free whole artifact compiled");
                 whole = Tdfa.compileUnpruned(nfa, longest, obs, ledger.fork(0));
             }
+            boolean shared = whole == find;
             int ps = find.stateCount();
             // A pattern keeping a second (whole) engine splits the runtime
             // memo budget so the pattern's combined memos stay within one budget.
-            long memoBudget = Budgets.runtimeMemoryBytes() / (whole == find ? 1 : 2);
+            long memoBudget = Budgets.runtimeMemoryBytes() / (shared ? 1 : 2);
+
+            // One engine translation for both artifacts.
+            long t0 = System.nanoTime();
+            RegexEngine eng = engineOf(find, factory, memoBudget);
+            RegexEngine wholeEng = shared ? eng : engineOf(whole, factory, memoBudget);
+            obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
 
             if (vmSwitched()) {
                 obs.note("engine", "shared-interpreter (tdfa.engine=VM)");
-                RegexEngine eng = new TdfaRunner(find, memoBudget);
-                return new TDFAPattern(regex, flags, ps, eng,
-                    whole == find ? eng : new TdfaRunner(whole, memoBudget), provider);
+                return new TDFAPattern(regex, flags, ps, eng, wholeEng, provider);
             }
 
-            if (factory != null) {
-                // One factory call (the find engine). Whole matching runs
-                // the facade's own engine over the whole artifact; when the
-                // artifacts are shared that is the custom engine itself
-                // (its own matchWhole contract applies).
-                long t0 = System.nanoTime();
-                RegexEngine eng = factory.create(find);
-                RegexEngine wholeEng = whole == find ? eng : new TdfaRunner(whole, memoBudget);
-                obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
-                try {
-                    Pattern p = (Pattern) ShellEmitter.emit(
-                        new ShellEmitter.Spec(regex, flags, ps, eng, wholeEng, null, provider));
-                    obs.note("engine", "byo-shell");
-                    return p;
-                } catch (RuntimeException ex) {
-                    if (Boolean.getBoolean("tdfa.gen.debug")) ex.printStackTrace();
-                    obs.note("engine", "shared (byo-shell emission failed)");
-                    return new TDFAPattern(regex, flags, ps, eng, wholeEng, provider);
-                }
-            }
-
-            // Default: ASM per-pattern engine + concrete-typed shell.
-            // LinkageError is caught alongside RuntimeException: generated
-            // bytecode failures (VerifyError from defineClass, lazy shell
-            // linkage) degrade to the interpreter instead of escaping
-            // Pattern.compile as raw Errors.
-            TdfaAsmBackend.Generated gen;
-            long t1 = System.nanoTime();
+            // Shell around the engines — concrete-typed for generated ones
+            // (the engine's own class names the shell's field type and
+            // classes). A shell emission problem degrades to the shared
+            // Pattern implementation with the same engines.
             try {
-                gen = TdfaAsmBackend.generate(find, memoBudget);
-            } catch (RuntimeException | LinkageError genFailure) {
-                if (Boolean.getBoolean("tdfa.gen.debug")) genFailure.printStackTrace();
-                obs.note("engine", "shared-interpreter (engine emission failed)");
-                RegexEngine eng = new TdfaRunner(find, memoBudget);
-                return new TDFAPattern(regex, flags, ps, eng,
-                    whole == find ? eng : new TdfaRunner(whole, memoBudget), provider);
-            }
-            obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t1, 0);
-            try {
+                String owner = factory == null
+                    ? eng.getClass().getName().replace('.', '/') : null;
                 Pattern p = (Pattern) ShellEmitter.emit(
-                    new ShellEmitter.Spec(regex, flags, ps, gen.engine(),
-                        whole == find ? gen.engine() : new TdfaRunner(whole, memoBudget),
-                        gen.owner(), provider));
-                obs.note("engine", "generated");
+                    new ShellEmitter.Spec(regex, flags, ps, eng, wholeEng, owner, provider));
+                obs.note("engine", factory == null ? "generated" : "byo-shell");
                 return p;
-            } catch (RuntimeException | LinkageError ex) {
+            } catch (RuntimeException ex) {
                 if (Boolean.getBoolean("tdfa.gen.debug")) ex.printStackTrace();
-                obs.note("engine", "shared-interpreter (shell emission failed)");
-                RegexEngine eng = new TdfaRunner(find, memoBudget);
-                return new TDFAPattern(regex, flags, ps, eng,
-                    whole == find ? eng : new TdfaRunner(whole, memoBudget), provider);
+                obs.note("engine", factory == null
+                    ? "shared (shell emission failed)" : "shared (byo-shell emission failed)");
+                return new TDFAPattern(regex, flags, ps, eng, wholeEng, provider);
             }
         } catch (RuntimeException e) {
             throw CompiledRegex.translate(e, regex);
         }
+    }
+
+    /**
+     * The compile's engine source, applied to every artifact of the compile:
+     * the shared interpreter under {@code -Dtdfa.engine=VM}, the custom
+     * factory's engine, or a generated per-pattern class. Emission failures
+     * (IllegalStateException, LinkageError from broken generated bytecode)
+     * propagate — they are bugs, not shapes to route around.
+     */
+    private static RegexEngine engineOf(Tdfa tdfa, RegexEngineFactory factory, long memoBudget) {
+        if (vmSwitched()) return new TdfaRunner(tdfa, memoBudget);
+        if (factory != null) return factory.create(tdfa);
+        return TdfaAsmBackend.generate(tdfa, memoBudget);
     }
 
     /**
