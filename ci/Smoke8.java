@@ -44,7 +44,7 @@ public class Smoke8 {
         smoke(new TdfaRunner(tdfa), "interp");
 
         // --- ASM tier: generated per-pattern class on a JDK 8 runtime ---
-        RegexEngine generated = TdfaAsmBackend.generate(tdfa).engine();
+        RegexEngine generated = TdfaAsmBackend.generate(tdfa);
         smoke(generated, "asm");
 
         // --- case folding path ((?i) inline-flag prefix, core tables) ---

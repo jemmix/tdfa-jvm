@@ -75,7 +75,7 @@ class StrategyConformanceTest {
 
     /** Generated engine over the same DFA. */
     private static RegexEngine asm(String pattern) {
-        return TdfaAsmBackend.generate(tdfa(pattern)).engine();
+        return TdfaAsmBackend.generate(tdfa(pattern));
     }
 
     private static Tdfa tdfa(String pattern) {

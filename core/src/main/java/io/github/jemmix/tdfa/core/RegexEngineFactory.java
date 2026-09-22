@@ -8,11 +8,13 @@ import io.github.jemmix.tdfa.tdfa.Tdfa;
  *
  * <p>Bring-your-own-engine hook. Implementations must be stateless (or
  * externally synchronized): a single factory may be asked to create engines
- * for many patterns. Per pattern the facade asks exactly ONCE — for the
- * find engine; whole matching ({@code matches()}) runs the facade's own
- * native whole-match engine over the cut-free artifact, since a custom
- * engine's {@code matchWhole} would be the interface default
- * ({@code match(input, 0)}), whole-exact only over anchored artifacts.
+ * for many patterns. Per pattern the facade calls it once per compiled
+ * artifact — for the find TDFA, and (when the compile's pike cut deleted
+ * continuations) again for the cut-free whole TDFA. Each returned engine's
+ * {@code matchWhole}/{@code matches} implementation defines its whole-match
+ * semantics (the interface default {@code match(input, 0)} is whole-exact
+ * only over both-ends-anchored artifacts; {@code TdfaRunner}-like engines
+ * override it).
  *
  * <pre>
  *   Pattern p = Pattern.compile(regex, flags, TdfaRunner::new);
@@ -22,10 +24,9 @@ import io.github.jemmix.tdfa.tdfa.Tdfa;
 public interface RegexEngineFactory {
 
     /**
-     * Create an engine executing {@code tdfa}. Called at most a handful of
-     * times per compiled pattern (once per pattern in the current facade —
-     * the find engine); the returned engine must be effectively immutable
-     * and thread-safe.
+     * Create an engine executing {@code tdfa}. Called once per compiled
+     * artifact (find, and — when the pike cut bit — whole); the returned
+     * engine must be effectively immutable and thread-safe.
      *
      * <p>Representation note: {@link Tdfa}'s array accessors return defensive
      * copies — an engine built through them cannot be corrupted by a later

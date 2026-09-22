@@ -34,23 +34,10 @@ public final class TdfaAsmBackend {
     private static final String TDFA = "io/github/jemmix/tdfa/tdfa/Tdfa";
     private static final String TDFA_D = "L" + TDFA + ";";
 
-    /** A per-pattern generation result: the engine instance plus the internal
-     *  name of its generated class. The defining classloader stays reachable
-     *  through the engine's own Class, so all of a pattern's generated
-     *  classes unload together once the engine is garbage. */
-    // Java 8 floor: records are 16+; plain carrier class with record-shaped accessors.
-    public static final class Generated {
-        public final RegexEngine engine;
-        public final String owner;
-
-        public Generated(RegexEngine engine, String owner) {
-            this.engine = engine; this.owner = owner;
-        }
-        public RegexEngine engine() { return engine; }
-        public String owner() { return owner; }
-    }
-
-    /** Child loader that can define any number of registered classes for one pattern. */
+    /** Child loader that can define any number of registered classes for one
+     *  pattern. Stays reachable through the generated engine's own Class, so
+     *  all of a pattern's generated classes unload together once the engine
+     *  is garbage. */
     public static final class GenClassLoader extends ClassLoader {
         private final java.util.Map<String, byte[]> classes = new java.util.HashMap<>();
         GenClassLoader(ClassLoader parent) { super(parent); }
@@ -70,20 +57,20 @@ public final class TdfaAsmBackend {
         }
     }
 
-    public static Generated generate(Tdfa tdfa) {
+    public static RegexEngine generate(Tdfa tdfa) {
         return generate(tdfa, io.github.jemmix.tdfa.tdfa.Budgets.runtimeMemoryBytes());
     }
 
     /**
      * Generate with an explicit lazy-memo budget for the embedded runner
      * (the facade hands HALF the runtime RAM budget when the pattern keeps
-     * a second, dedicated whole/anchored engine beside this one — the
-     * per-pattern runtime split; see {@code TdfaRunner(Tdfa, long)}). The
+     * a second, dedicated whole engine beside this one — the per-pattern
+     * runtime split; see {@code TdfaRunner(Tdfa, long)}). The
      * emitted class's constructor signature is unchanged: the budget is
      * burned in as a long constant on the embedded {@code new
      * TdfaRunner(tdfa, budget)} call.
      */
-    public static Generated generate(Tdfa tdfa, long memoBudgetBytes) {
+    public static RegexEngine generate(Tdfa tdfa, long memoBudgetBytes) {
         try {
             long id = COUNTER.incrementAndGet();
             String cn = "io.github.jemmix.tdfa.gen.Gen" + id;
@@ -92,10 +79,10 @@ public final class TdfaAsmBackend {
             if (Boolean.getBoolean("tdfa.asm.dump")) dumpClass(owner, bc);
             GenClassLoader cl = new GenClassLoader(TdfaAsmBackend.class.getClassLoader());
             cl.register(cn, bc);
-            RegexEngine engine = Class.forName(cn, true, cl)
+            return Class.forName(cn, true, cl)
                     .asSubclass(RegexEngine.class)
-                    .getDeclaredConstructor(Tdfa.class).newInstance(tdfa);
-            return new Generated(engine, owner);
+                    .getDeclaredConstructor(Tdfa.class)
+                    .newInstance(tdfa);
         } catch (Exception e) {
             throw new IllegalStateException("ASM backend failed", e);
         }

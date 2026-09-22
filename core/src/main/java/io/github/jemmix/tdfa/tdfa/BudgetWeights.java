@@ -61,16 +61,6 @@ public final class BudgetWeights {
      */
     public static final int FOLD_SCAN_CODEPOINT_TICKS = 2;
     /**
-     * Fractional caps for the whole-match ladder's eager attempts,
-     * relative to the compile CPU budget: the unpruned whole build gets
-     * one third, the anchored last-chance build two thirds (the historical
-     * 2&times; relation). Only tighten: a user-lowered budget always wins.
-     * These are PER-ATTEMPT caps — the facade debits every attempt against
-     * one shared ledger (see {@link WorkMeter#fork(long)}), so the ladder's
-     * total stays within the single compile CPU budget.
-     */
-    public static final int WHOLE_LADDER_DENOMINATOR = 3;
-    /**
      * A minted TNFA state is assumed to weigh this much (per-state slices
      * of the builder's adjacency arrays and the determinizer's masks).
      */

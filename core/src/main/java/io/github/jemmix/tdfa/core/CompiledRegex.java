@@ -9,14 +9,14 @@ import io.github.jemmix.tdfa.unicode.UnicodeProviders;
  * Core-tier compiled pattern: compile once, match many, interpreter-only.
  *
  * <p>Holds the find engine (a {@link RegexEngine} over the compiled TDFA)
- * and, by the single-compile ladder ({@link SingleCompile}), the eagerly
- * compiled whole-match engine backing {@link #matches} — one parse, at most
- * two artifacts, everything built inside {@code compile()}. The facade tier
- * ({@code Pattern.compile}) builds the same shape on top of generated or
- * custom engines and layers the stateful {@code Matcher} (find iteration,
- * group access, replacement); this class is the evergreen, zero-dependency
- * variant with the match/iterate surface and tag-level capture access via
- * {@link MatchResult}.
+ * and the whole-match engine backing {@link #matches} — the same engine
+ * whenever the compile's pike cut never bit, else a second engine over
+ * the cut-free determinization of the same parse. Both are built inside
+ * {@code compile()}. The facade tier ({@code Pattern.compile}) builds the
+ * same shape on top of generated or custom engines and layers the stateful
+ * {@code Matcher} (find iteration, group access, replacement); this class
+ * is the evergreen, zero-dependency variant with the match/iterate surface
+ * and tag-level capture access via {@link MatchResult}.
  *
  * <p><b>Thread safety:</b> safe for concurrent use — instances are
  * immutable; the input CharSequence must not be mutated during matching.
@@ -53,24 +53,27 @@ public final class CompiledRegex {
                 ? options.unicodeProvider() : UnicodeProviders.get();
         CompileObserver obs = options.observer() != null ? options.observer() : CompileObserver.NONE;
         try {
-            // One CPU ledger for the whole compile (front-end + every
-            // shipped ladder attempt), and the per-engine runtime-memo
-            // split when the pattern keeps a dedicated whole runner —
-            // see PatternCompiler for the same wiring.
+            // One CPU ledger for the whole compile: the front-end, the find
+            // determinization and — when the pike cut bit — the cut-free
+            // whole determinization all debit the same pool. A pattern
+            // keeping a second (whole) engine splits the runtime memo
+            // budget so its combined memos stay within one budget.
             io.github.jemmix.tdfa.tdfa.WorkMeter ledger = new io.github.jemmix.tdfa.tdfa.WorkMeter(
                     io.github.jemmix.tdfa.tdfa.Budgets.compileComputeTicks());
             Tnfa nfa = Tnfa.compile(pattern, options.isDisableUnicodeGroups(), false, provider, obs, ledger);
-            SingleCompile.Artifacts a = SingleCompile.artifacts(nfa, options.isLongestMatch(), obs, ledger);
-            long t0 = System.nanoTime();
+            Tdfa find = Tdfa.compile(nfa, options.isLongestMatch(), obs, ledger.fork(0));
+            Tdfa whole = find.pikeCutMatters()
+                    ? Tdfa.compileUnpruned(nfa, options.isLongestMatch(), obs, ledger.fork(0))
+                    : find;
             long memoBudget = io.github.jemmix.tdfa.tdfa.Budgets.runtimeMemoryBytes()
-                    / (a.shared() ? 1 : 2);
-            RegexEngine engine = new io.github.jemmix.tdfa.tdfa.TdfaRunner(a.find, memoBudget);
-            RegexEngine whole = SingleCompile.wholeEngine(a, engine, pattern, pattern,
-                    options.isDisableUnicodeGroups(), options.isLongestMatch(),
-                    options.isDeferWholeRejection(), provider, ledger);
+                    / (whole == find ? 1 : 2);
+            long t0 = System.nanoTime();
+            RegexEngine engine = new io.github.jemmix.tdfa.tdfa.TdfaRunner(find, memoBudget);
+            RegexEngine wholeEngine = whole == find
+                    ? engine : new io.github.jemmix.tdfa.tdfa.TdfaRunner(whole, memoBudget);
             obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
             obs.note("engine", "interpreter");
-            return new CompiledRegex(pattern, engine, whole);
+            return new CompiledRegex(pattern, engine, wholeEngine);
         } catch (PatternSyntaxException e) {
             throw e;
         } catch (RuntimeException e) {
@@ -99,15 +102,13 @@ public final class CompiledRegex {
         return pse;
     }
 
-    /** Whole-input match ({@code matches()} semantics) through the eagerly
-     *  compiled whole engine — exact for whole-match continuations the
-     *  leftmost-first find artifact would have pruned (e.g. {@code (a|ab)}
-     *  whole-matches {@code "ab"}). For both-builds-over-budget patterns
-     *  compiled with {@link CompileOptions#deferWholeRejection()}, rethrows
-     *  the compile-time-recorded rejection (without the option, such
-     *  patterns fail {@code compile()} instead). The null carrier lets
-     *  carrier-free engines run without a scratch allocation; the
-     *  interpreter allocates on demand at its entry. */
+    /** Whole-input match ({@code matches()} semantics): exact for
+     *  whole-match continuations a leftmost-first find artifact would have
+     *  pruned (e.g. {@code (a|ab)} whole-matches {@code "ab"}). A pattern
+     *  whose cut-free whole artifact exceeds the compile budget fails
+     *  {@code compile()} with the standard "pattern too large" rejection.
+     *  The null carrier lets carrier-free engines run without a scratch
+     *  allocation; the interpreter allocates on demand at its entry. */
     public boolean matches(CharSequence input) { return wholeEngine.matchWhole(input, null) != null; }
 
     public boolean find(CharSequence input) { return engine.find(input); }

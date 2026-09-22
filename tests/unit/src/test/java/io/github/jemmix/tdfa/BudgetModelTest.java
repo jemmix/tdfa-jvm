@@ -45,8 +45,8 @@ class BudgetModelTest {
      *  (128 MiB / 256 B = 524 288 states — Perl mode / 512 B = 262 144,
      *  / 80 B = 1 677 721 kernels, / 16 / 80 B = 104 857 closure configs,
      *  / 32 B = 4 194 304 CFG edges, / 4 B = 33 554 432 norm cells;
-     *  500 M / 3 and 2/3 for the whole ladder; 16 MiB partitioned 4/8 rows,
-     *  3/8 search blocks, 1/8 walk memo — see BudgetWeights.) */
+     *  16 MiB partitioned 4/8 rows, 3/8 search blocks, 1/8 walk memo —
+     *  see BudgetWeights.) */
     @Test
     void derivedCapsPinTheWeightModel() {
         assertThat(BudgetWeights.TNFA_BUILD_ACTION_TICKS).isEqualTo(5);
@@ -59,8 +59,6 @@ class BudgetModelTest {
         assertThat(Budgets.maxClosureConfigs()).isEqualTo(104_857);
         assertThat(Budgets.maxCfgEdges()).isEqualTo(4_194_304L);
         assertThat(Budgets.maxMinimizeNormCells()).isEqualTo(33_554_432L);
-        assertThat(Budgets.wholeWorkCap()).isEqualTo(166_666_666L);
-        assertThat(Budgets.anchoredWorkCap()).isEqualTo(333_333_333L);
         // 8 MiB row share (4/8) in weighted rows: fixed 640 B + 8 B/state-word,
         // floored.
         assertThat(Budgets.sdfaMaxRows(1)).isEqualTo(12_945);
@@ -82,7 +80,7 @@ class BudgetModelTest {
         System.setProperty(Budgets.COMPILE_MEMORY_PROP, "4096");   // 16 states
         assertThat(Budgets.maxDfaStates()).isEqualTo(16);
         System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "7777");
-        assertThat(Budgets.wholeWorkCap()).isEqualTo(2_592);       // 7777/3
+        assertThat(Budgets.compileComputeTicks()).isEqualTo(7_777L);
         System.setProperty(Budgets.RUNTIME_MEMORY_PROP, "217600"); // ~37 blocks
         assertThat(Budgets.sdfaMaxBlocks()).isEqualTo(37);
         // and the pipeline sees it on the very next compile:
@@ -150,10 +148,9 @@ class BudgetModelTest {
         Tdfa t2 = Tdfa.compile(Tnfa.compile(suffixChain), false, rec);
         assertThat(notes.get("minimize")).isNull();
         assertThat(t2.stateCount()).isEqualTo(902);   // chain is already minimal
-        // and the artifact is correct through the full facade, at the default
-        // budgets (the whole-match ladder's eager attempts are capped at
-        // fractions of the CPU budget, so the budgeted legs above stay on
-        // the Tdfa API where the caps don't interfere):
+        // and the artifact is correct through the full facade, at the
+        // default budgets (the budgeted legs above stay on the Tdfa API
+        // where the scoped caps don't interfere):
         System.clearProperty(Budgets.COMPILE_COMPUTE_PROP);
         io.github.jemmix.tdfa.Pattern p = Pattern.compile(suffixChain);
         assertThat(p.matcher("a".repeat(900) + "b").find()).isTrue();
@@ -264,32 +261,23 @@ class BudgetModelTest {
         }
     }
 
-    /** One Pattern.compile's shipped work stays within ONE compile CPU
-     *  budget: the ladder's attempts (front-end, succeeded unpruned whole,
-     *  pruned find, anchored re-parse + determinize) share a ledger; the
-     *  doomed unpruned probe is the only uncharged spend (its fraction
-     *  cap bounds it). */
+    /** One compile's work stays within ONE compile CPU budget: the
+     *  attempts (front-end, find determinization, cut-free whole
+     *  determinization) share a ledger, so a bomb whose whole artifact
+     *  overruns it rejects after at most the scoped budget of work. */
     @Test
-    void ladderTotalIsOneCpuBudget() {
-        // A bomb whose doomed attempts burn their caps: the compile must
-        // finish (reject or defer) having spent at most the scoped budget —
-        // wall-clock bounded well under what 2x would allow, and the
-        // deferred find artifact still works.
+    void compileTotalIsOneCpuBudget() {
         System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "6000000");
         try {
             long t0 = System.nanoTime();
-            io.github.jemmix.tdfa.Pattern p = Pattern.compile(
-                    "(?:(?m:\u00e9)(?:\\w[^\u03a9z\\-]{0,}|\ud835\udd04\udfff){1,4}){1,5}",
-                    io.github.jemmix.tdfa.Pattern.DEFER_WHOLE_REJECTION);
-            assertThat(p.matcher("\u00e9zz").find()).isTrue();
-            assertThatCode(() -> p.matcher("\u00e9zz").matches())
+            assertThatCode(() -> Pattern.compile(
+                    "(?:(?m:\u00e9)(?:\\w[^\u03a9z\\-]{0,}|\ud835\udd04\udfff){1,4}){1,5}"))
                     .isInstanceOf(PatternSyntaxException.class)
                     .hasMessageContaining("pattern too large");
-            // 6 M ticks ≈ tens of ms of rejection work per attempt; the
-            // ledger keeps the total near the scoped budget. Generous
-            // upper bound for CI variance.
+            // 6 M ticks ≈ tens of ms of work; the ledger keeps the total
+            // near the scoped budget. Generous upper bound for CI variance.
             assertThat((System.nanoTime() - t0) / 1_000_000)
-                    .as("wall of the fully-ledgered ladder").isLessThan(15_000);
+                    .as("wall of the fully-ledgered compile").isLessThan(15_000);
         } finally {
             System.clearProperty(Budgets.COMPILE_COMPUTE_PROP);
         }

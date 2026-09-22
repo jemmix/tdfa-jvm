@@ -25,13 +25,13 @@ public interface RegexEngine {
      * Match the entire input (anchored both ends).
      *
      * <p><b>Artifact contract.</b> Exact over artifacts whose transitions
-     * keep whole-match continuations: both-ends-anchored artifacts (what the
-     * facade hands out on the over-budget corner), cut-free (unpruned)
-     * artifacts, and any pruned artifact whose compile-time pike cut never
-     * fired. Over a pruned UNANCHORED artifact where the cut deleted
-     * continuations (e.g. find compiles of {@code (a|ab)}-class patterns),
-     * this may reject an input the pattern whole-matches — the boolean walk
-     * shares {@link #matchWhole}'s artifact requirement; use the facade's
+     * keep whole-match continuations: both-ends-anchored artifacts,
+     * cut-free (unpruned) artifacts, and any pruned artifact whose
+     * compile-time pike cut never fired. Over a pruned UNANCHORED artifact
+     * where the cut deleted continuations (e.g. find compiles of
+     * {@code (a|ab)}-class patterns), this may reject an input the pattern
+     * whole-matches — the boolean walk shares {@link #matchWhole}'s
+     * artifact requirement; use the facade's
      * {@code Pattern.matcher().matches()}, which always carries a
      * whole-exact engine.
      */
@@ -74,8 +74,7 @@ public interface RegexEngine {
      * {@code "a"}).
      *
      * <p>The default {@code match(input, 0, scratch)} is whole-exact only for
-     * engines compiled anchored at both ends (what the facade hands custom
-     * {@code RegexEngineFactory}s for whole matching). Engines over unanchored
+     * engines compiled anchored at both ends. Engines over unanchored
      * or cut-free artifacts must override — {@code TdfaRunner} and the
      * generated classes do (a single cut-free walk; see {@code Tdfa.compileUnpruned}).
      * The overridden walk is exact over unpruned and anchored artifacts

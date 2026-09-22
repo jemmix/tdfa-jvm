@@ -78,22 +78,6 @@ public interface Pattern extends java.io.Serializable {
     int DISABLE_UNICODE_GROUPS = 8;
 
     /**
-     * Flag: accept a pattern whose whole-match ({@code matches()}) artifact
-     * exceeds the determinization budget — the rejection is recorded at
-     * compile time and rethrown by the first and every later
-     * {@code matches()} call, while {@code find()} and friends keep working
-     * on the find artifact. Without this flag (the default), such patterns
-     * fail {@code compile()} with the standard {@code "pattern too large"}
-     * {@link io.github.jemmix.tdfa.core.PatternSyntaxException} — the same
-     * compile-time budget contract the find artifact has always had.
-     *
-     * <p>tdfa extension (no re2j/java.util.regex analogue): re2j has no
-     * eager whole-match artifact to price; java.util.regex has no
-     * determinization budget.
-     */
-    int DEFER_WHOLE_REJECTION = 64;
-
-    /**
      * Compile {@code regex} with default flags (leftmost-first, generated engine).
      */
     static Pattern compile(String regex) {
@@ -137,7 +121,6 @@ public interface Pattern extends java.io.Serializable {
         int flags = 0;
         if (options.isLongestMatch()) flags |= LONGEST_MATCH;
         if (options.isDisableUnicodeGroups()) flags |= DISABLE_UNICODE_GROUPS;
-        if (options.isDeferWholeRejection()) flags |= DEFER_WHOLE_REJECTION;
         return PatternCompiler.compile(regex, flags, null,
             options.unicodeProvider(), options.observer());
     }

@@ -24,17 +24,17 @@ package io.github.jemmix.tdfa.tdfa;
  *
  * <p>The derived caps (max DFA states, kernel totals, &epsilon;-closure
  * spike, active-set precompute, boxed transition ranges, CFG edges,
- * minimizer normalization cells, tag-history tables, whole-ladder work
- * caps, search-DFA memo rows/blocks, walk-memo blocks/per-state tables)
- * are all linear functions of the two compile budgets / the runtime budget
- * through the weight model (BudgetWeights) — there is deliberately no way
- * to set them directly anymore. Raise the budget, not the cap.
+ * minimizer normalization cells, tag-history tables, search-DFA memo
+ * rows/blocks, walk-memo blocks/per-state tables) are all linear
+ * functions of the two compile budgets / the runtime budget through the
+ * weight model (BudgetWeights) — there is deliberately no way to set them
+ * directly anymore. Raise the budget, not the cap.
  *
- * <p><b>Ledger.</b> The compile CPU budget bounds one whole facade compile:
- * the eager ladder's attempts (front-end, unpruned whole, pruned find,
- * anchored re-parse + determinize) each get a fractional per-attempt cap
- * but all debit one shared ledger ({@link WorkMeter#fork(long)}), so a
- * single {@code Pattern.compile} can never burn more than the budget.
+ * <p><b>Ledger.</b> The compile CPU budget bounds one whole compile: the
+ * attempts (front-end, find determinization, and — when the pike cut bit
+ * — the cut-free whole determinization) each draw from one shared ledger
+ * ({@link WorkMeter#fork(long)}), so a single compile can never burn more
+ * than the budget.
  *
  * <p><b>Per-pattern runtime split.</b> The runtime RAM budget bounds the
  * lazy match-time memos of the pattern's engines. A pattern retaining TWO
@@ -155,24 +155,6 @@ public final class Budgets {
      */
     public static long maxMinimizeNormCells() {
         return compileMemoryBytes() / BudgetWeights.MINIMIZE_CELL_BYTES;
-    }
-
-    // ===== compile CPU-derived caps =====
-
-    /**
-     * Work cap for the eager unpruned whole-match attempt: 1/3 of the
-     * compile CPU budget. Only tightens — a user-lowered budget wins.
-     */
-    public static long wholeWorkCap() {
-        return compileComputeTicks() / BudgetWeights.WHOLE_LADDER_DENOMINATOR;
-    }
-
-    /**
-     * Work cap for the eager anchored last-chance whole attempt: 2/3 of
-     * the compile CPU budget (2&times; {@link #wholeWorkCap()}).
-     */
-    public static long anchoredWorkCap() {
-        return (2 * compileComputeTicks()) / BudgetWeights.WHOLE_LADDER_DENOMINATOR;
     }
 
     // ===== runtime RAM-derived caps (lazy per-pattern memos) =====

@@ -8,16 +8,17 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Single-compile whole/find semantics: one parse, at most two artifacts.
- * matches() runs a cut-free walk to EOF (an accept alive at end-of-input is
- * a full match) while find() keeps leftmost-first — the two answer the same
- * input differently by design ({@code (a|ab)} whole-matches "ab" while find
- * stops at "a"), and the divergence-class alternations ({@code ab|a|ac},
- * where the pike cut is load-bearing for find) keep both answers correct via
- * the pruned find artifact. Pinned on BOTH tiers (default ASM shells and
- * {@code -Dtdfa.engine=VM}).
+ * Whole/find semantics: matches() runs a cut-free walk to EOF (an accept
+ * alive at end-of-input is a full match) while find() keeps leftmost-first
+ * — the two answer the same input differently by design ({@code (a|ab)}
+ * whole-matches "ab" while find stops at "a"). When the compile's pike cut
+ * deleted continuations, a second cut-free artifact backs matches();
+ * otherwise both run on the one find artifact. A pattern whose cut-free
+ * whole artifact exceeds the compile budget fails {@code compile()} with
+ * the standard "pattern too large" rejection. Pinned on BOTH tiers
+ * (default ASM shells and {@code -Dtdfa.engine=VM}).
  */
-class SingleCompileWholeTest {
+class WholeMatchTest {
 
     @AfterEach
     void clearVmSwitch() {
@@ -113,10 +114,9 @@ class SingleCompileWholeTest {
 
     /**
      * The evergreen core tier ({@code CompiledRegex}) runs the same
-     * single-compile ladder: matches() through the eagerly compiled whole
-     * engine, find() leftmost-first, and the bomb corner fails compile()
-     * by default (lenient acceptance under
-     * {@code CompileOptions.deferWholeRejection()}).
+     * pipeline: matches() through the whole engine, find() leftmost-first,
+     * and a bomb whose cut-free whole artifact exceeds the budget fails
+     * compile().
      */
     @Test
     void evergreenTier() {
@@ -133,24 +133,16 @@ class SingleCompileWholeTest {
                 io.github.jemmix.tdfa.core.CompiledRegex.compile("a$");
         assertThat(m.matches("a")).isTrue();
         assertThat(m.matches("a\nb")).isFalse();
-        // Bomb corner: DEFAULT fails compile(); the opt-in keeps the
-        // historical lenient acceptance (find works, matches rethrows).
+        // Bomb corner: the cut-free whole artifact exceeds the compile
+        // budget, so compile() fails with the standard rejection.
         assertThatThrownBy(() -> io.github.jemmix.tdfa.core.CompiledRegex.compile("(a{1,100}){1,100}"))
-                .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
-                .hasMessageContaining("pattern too large");
-        io.github.jemmix.tdfa.core.CompiledRegex bomb =
-                io.github.jemmix.tdfa.core.CompiledRegex.compile("(a{1,100}){1,100}",
-                        io.github.jemmix.tdfa.core.CompileOptions.of().deferWholeRejection());
-        assertThat(bomb.find("a".repeat(120))).isTrue();
-        assertThatThrownBy(() -> bomb.matches("a".repeat(50)))
                 .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
                 .hasMessageContaining("pattern too large");
     }
 
     @Test
     void interpreterFactory() {
-        // BYO factory: whole is the facade's whole engine over the shared
-        // unpruned artifact (native matchWhole); find is the factory engine.
+        // BYO factory: one engine per artifact through the same translation.
         Pattern p = Pattern.compile("(a|ab)", 0, io.github.jemmix.tdfa.tdfa.TdfaRunner::new);
         PatternMatcher m = p.matcher("ab");
         assertThat(m.matches()).isTrue();
@@ -162,18 +154,44 @@ class SingleCompileWholeTest {
     }
 
     /**
-     * The over-budget corner's whole engine: a {@code TdfaRunner} over the
-     * eagerly compiled BOTH-ENDS-ANCHORED artifact, answering through the
-     * cut-free whole walk. Exactness argument: every accept in an anchored
-     * build is end-of-input-gated, so the compile-time pike cut never fires
-     * mid-walk and the cut-free whole walk is exact over the (pruned)
-     * artifact. Pinned as full equivalence with the facade's whole engine
-     * (the unpruned artifact — whole span AND group spans; the oracle-free
-     * invariant), plus whole-boolean agreement with java.util.regex (whose
+     * One engine source serves EVERY artifact of a compile: a factory is
+     * called once per artifact (twice when the pike cut bit — find plus
+     * cut-free whole — once when the artifacts are shared), and on the
+     * default tier the whole engine is generated just like the find engine
+     * (its native {@code wholeOne} walk backs {@code matches()}).
+     */
+    @Test
+    void engineSourceServesEveryArtifact() {
+        java.util.List<io.github.jemmix.tdfa.tdfa.Tdfa> seen = new java.util.ArrayList<>();
+        Pattern p = Pattern.compile("(a|ab)", 0, t -> {
+            seen.add(t);
+            return new io.github.jemmix.tdfa.tdfa.TdfaRunner(t);
+        });
+        assertThat(seen).as("hazardous pattern: find + whole artifacts").hasSize(2);
+        assertThat(p.matcher("ab").matches()).isTrue();
+
+        java.util.List<io.github.jemmix.tdfa.tdfa.Tdfa> seenOnce = new java.util.ArrayList<>();
+        Pattern q = Pattern.compile("a*", 0, t -> {
+            seenOnce.add(t);
+            return new io.github.jemmix.tdfa.tdfa.TdfaRunner(t);
+        });
+        assertThat(seenOnce).as("hazard-free pattern: one shared artifact").hasSize(1);
+        assertThat(q.matcher("aaa").matches()).isTrue();
+
+        Pattern asm = Pattern.compile("(a|ab)");
+        assertThat(((TDFAPattern) asm).wholeEngine().getClass().getSimpleName())
+                .as("default tier whole engine is generated, not the interpreter")
+                .startsWith("Gen");
+    }
+
+    /**
+     * Anchored builds answer whole matches through the same cut-free walk:
+     * every accept in a both-ends-anchored build is end-of-input-gated, so
+     * the compile-time pike cut never fires mid-walk. Pinned as full
+     * equivalence with the facade's whole engine (whole span AND group
+     * spans), plus whole-boolean agreement with java.util.regex (whose
      * nested-star capture spans intentionally differ from our re2j charter
      * — e.g. {@code (a*)*} — so only the boolean is compared there).
-     * Randomized at landing time: 18 k anchored-vs-unpruned pairs over a
-     * generator battery, both longest modes, 0 diffs.
      */
     @Test
     void anchoredArtifactWholeWalkIsExact() {
@@ -278,54 +296,23 @@ class SingleCompileWholeTest {
     }
 
     /**
-     * Nested-counted bomb: BOTH whole builds (unpruned and anchored) exceed
-     * the determinization caps. DEFAULT (2026-09-15): compile() FAILS with
-     * the clean "pattern too large" rejection — a pattern is accepted only
-     * when every artifact it ships built, the same compile-time budget
-     * contract the find artifact has always had. OPT-IN
-     * ({@code DEFER_WHOLE_REJECTION}, foldable from
-     * {@code CompileOptions.deferWholeRejection()}): the historical lenient
-     * acceptance — find() keeps working and matches() rethrows the rejection
-     * RECORDED AT COMPILE TIME, same instance on every call, no recompile
-     * (the no-lazy-compiles rule: nothing materializes at match time; the
-     * former LazyEngine corner re-burned its doomed build per call — fuzz
-     * round 27's spins). The flag travels in the flags int, so the lenient
-     * acceptance survives the serialization round-trip (pattern+flags).
+     * Nested-counted bomb: the find artifact compiles, the pike cut bit, and
+     * the cut-free whole artifact exceeds the determinization caps — so
+     * compile() FAILS with the clean "pattern too large" rejection on both
+     * tiers (the same compile-time budget contract the find artifact has
+     * always had; nothing materializes at match time).
      */
     @Test
-    void wholeBombFailsCompileByDefaultDeferFlagRecordsRejection() {
+    void wholeBombFailsCompile() {
         String bomb = "(a{1,100}){1,100}";
         assertThatThrownBy(() -> Pattern.compile(bomb))
                 .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
                 .hasMessageContaining("pattern too large");
-        Pattern p = Pattern.compile(bomb, Pattern.DEFER_WHOLE_REJECTION);
-        assertThat(p.matcher("a".repeat(120)).find()).isTrue();
-        RuntimeException[] recorded = new RuntimeException[1];
-        assertThatThrownBy(() -> p.matcher("a".repeat(50)).matches())
+        assertThatThrownBy(() -> Pattern.compile(bomb, 0, io.github.jemmix.tdfa.tdfa.TdfaRunner::new))
                 .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
-                .hasMessageContaining("pattern too large")
-                .satisfies(ex -> recorded[0] = (RuntimeException) ex);
-        assertThatThrownBy(() -> p.matcher("a".repeat(50)).matches()).isSameAs(recorded[0]);
-
-        // Options route folds to the same flag (flags() shows it)...
-        Pattern o = Pattern.compile(bomb,
-                io.github.jemmix.tdfa.core.CompileOptions.of().deferWholeRejection());
-        assertThat(o.flags() & Pattern.DEFER_WHOLE_REJECTION).isNotZero();
-        assertThat(o.matcher("a".repeat(120)).find()).isTrue();
-        // ...and the round-trip recompiles leniently on the reader's side.
-        assertThatCode(() -> {
-            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
-            try (java.io.ObjectOutputStream oos = new java.io.ObjectOutputStream(bos)) {
-                oos.writeObject(o);
-            }
-            try (java.io.ObjectInputStream ois = new java.io.ObjectInputStream(
-                    new java.io.ByteArrayInputStream(bos.toByteArray()))) {
-                Pattern r = (Pattern) ois.readObject();
-                assertThat(r.matcher("a".repeat(120)).find()).isTrue();
-                assertThatThrownBy(() -> r.matcher("a".repeat(50)).matches())
-                        .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
-                        .hasMessageContaining("pattern too large");
-            }
-        }).doesNotThrowAnyException();
+                .hasMessageContaining("pattern too large");
+        assertThatThrownBy(() -> io.github.jemmix.tdfa.core.CompiledRegex.compile(bomb))
+                .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
+                .hasMessageContaining("pattern too large");
     }
 }
