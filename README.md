@@ -3,7 +3,8 @@
 A regex engine for the JVM that compiles every accepted pattern to a tagged
 deterministic finite automaton, then to JVM bytecode. **No backtracking — ever.**
 
-An implementation of Borsotti–Trofimovich 2022 ([*A closer look at TDFA*](https://github.com/skvadrik/re2c/blob/master/doc/papers/2022_a_closer_look_at_tdfa/2022_borsotti_trofimovich_a_closer_look_at_tdfa.pdf)).
+An implementation of Borsotti–Trofimovich 2022, [*A closer look at TDFA*](https://arxiv.org/abs/2206.01398)
+([TeX source](https://github.com/skvadrik/re2c/tree/master/doc/papers/2022_a_closer_look_at_tdfa)).
 Apache 2.0.
 
 ## Why
