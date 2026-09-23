@@ -290,7 +290,8 @@ public final class TdfaRunner implements RegexEngine {
         // they distinguish (see Tdfa.posFlagDeps) — no per-consumer model to keep in sync.
         this.needsWordFlags = (tdfa.posFlagDeps() & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY)) != 0;
         this.wordBits = RunnerTables.buildWordBits(tdfa.unicodeWordBoundary ? tdfa.wordRanges : null);
-        this.startBits = (literalNeedle == null && (tdfa.stateMeta[tdfa.startState] & 1) == 0) ? buildStartBits() : null;
+        this.startBits =
+            (literalNeedle == null && (tdfa.stateMeta[tdfa.startState] & 1) == 0) ? buildStartBits() : null;
         this.walkIdx = new WalkIndex(this, memoBudgetBytes);
     }
 
@@ -459,7 +460,8 @@ public final class TdfaRunner implements RegexEngine {
                     final long[] sb = this.startBits;
                     for (int p = 1; p < len; p++) {
                         char c = s.charAt(p);
-                        if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && (c < 0xDC00 || !Alphabet.pairInterior(s, p)) && runStringMatchFrom(s, p, len) >= 0) {
+                        if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && (c < 0xDC00 || !Alphabet.pairInterior(s, p))
+                            && runStringMatchFrom(s, p, len) >= 0) {
                             return true;
                         }
                     }
@@ -877,7 +879,8 @@ public final class TdfaRunner implements RegexEngine {
                         }
                         if ((posFlags & acceptMask) == acceptMask) {
                             if (WTRACE) {
-                                System.err.println("[walk]   sam accept M=" + Integer.toBinaryString(posFlags) + " stop=" + stopNow(state, posFlags));
+                                System.err.println("[walk]   sam accept M=" + Integer.toBinaryString(posFlags)
+                                    + " stop=" + stopNow(state, posFlags));
                             }
                             lastAcceptPos = pos;
                             haveAccept = true;
@@ -966,12 +969,15 @@ public final class TdfaRunner implements RegexEngine {
                         // no continuation exists under this posFlags — lower-
                         // specificity ranges belong to contexts not alive here.
                         if (WTRACE) {
-                            System.err.println("[walk]   c=" + Integer.toHexString(c) + " DEAD idx " + best + " mask=" + Integer.toBinaryString(rg[o + 4]) + " (M=" + Integer.toBinaryString(posFlags) + ")");
+                            System.err.println("[walk]   c=" + Integer.toHexString(c) + " DEAD idx " + best + " mask="
+                                + Integer.toBinaryString(rg[o + 4]) + " (M=" + Integer.toBinaryString(posFlags) + ")");
                         }
                         break;
                     }
                     if (WTRACE) {
-                        System.err.println("[walk]   c=" + Integer.toHexString(c) + " pick idx " + best + " lo=" + Integer.toHexString(rg[o]) + " mask=" + Integer.toBinaryString(rg[o + 4]) + " -> " + target + " (M=" + Integer.toBinaryString(posFlags) + ")");
+                        System.err.println("[walk]   c=" + Integer.toHexString(c) + " pick idx " + best + " lo="
+                            + Integer.toHexString(rg[o]) + " mask=" + Integer.toBinaryString(rg[o + 4]) + " -> "
+                            + target + " (M=" + Integer.toBinaryString(posFlags) + ")");
                     }
                     chosen = o;
                     chosenTarget = target;
@@ -1463,7 +1469,8 @@ public final class TdfaRunner implements RegexEngine {
             final long[] sb = this.startBits;
             for (int p = 0; p < to; p++) {
                 char c = input.charAt(p);
-                if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && (c < 0xDC00 || !Alphabet.pairInterior(input, p)) && matchFromFast(input, p, to)) {
+                if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && (c < 0xDC00 || !Alphabet.pairInterior(input, p))
+                    && matchFromFast(input, p, to)) {
                     return true;
                 }
             }
@@ -2481,7 +2488,8 @@ public final class TdfaRunner implements RegexEngine {
             return false;
         }
         char c = s.charAt(pos);
-        if (unicodeWordBoundary && c >= Character.MIN_HIGH_SURROGATE && c <= Character.MAX_HIGH_SURROGATE && pos + 1 < len) {
+        if (unicodeWordBoundary && c >= Character.MIN_HIGH_SURROGATE && c <= Character.MAX_HIGH_SURROGATE
+            && pos + 1 < len) {
             char l = s.charAt(pos + 1);
             if (l >= Character.MIN_LOW_SURROGATE && l <= Character.MAX_LOW_SURROGATE) {
                 return isUnicodeWordCodepoint(((c - 0xD800) << 10) + (l - 0xDC00) + 0x10000);

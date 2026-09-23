@@ -35,15 +35,15 @@ public final class ParseResult {
     private final Map<String, Integer> namedGroups;
 
     public ParseResult(Ast ast, int tagCount, int groupCount, boolean multiline, boolean unicodeShorthand,
-                    int[] unicodeWordRanges, Map<String, Integer> namedGroups) {
+        int[] unicodeWordRanges, Map<String, Integer> namedGroups) {
         this.ast = ast;
         this.tagCount = tagCount;
         this.groupCount = groupCount;
         this.multiline = multiline;
         this.unicodeShorthand = unicodeShorthand;
         // Unmodifiable copy on construction.
-        this.namedGroups = namedGroups != null ? Collections.unmodifiableMap(new LinkedHashMap<>(
-                        namedGroups)) : Collections.emptyMap();
+        this.namedGroups = namedGroups != null ? Collections.unmodifiableMap(new LinkedHashMap<>(namedGroups))
+            : Collections.emptyMap();
         // Defensive copy: an array field is otherwise only as immutable as
         // the caller's discipline.
         this.unicodeWordRanges = unicodeWordRanges != null ? unicodeWordRanges.clone() : null;

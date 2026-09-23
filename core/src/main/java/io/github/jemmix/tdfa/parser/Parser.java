@@ -71,16 +71,16 @@ public final class Parser {
 
     // Unicode IsWhite_Space property (java.util.regex \s with UNICODE_CHARACTER_CLASS).
     private static final int[] R_UNICODE_SPACE = {'\t', '\r', // U+0009-U+000D (HT, LF, VT, FF, CR)
-                                                  0x1C, 0x1F, // FS, GS, RS, US
-                                                  ' ', ' ', // Space
-                                                  0x85, 0x85, // NEL
-                                                  0xA0, 0xA0, // NBSP
-                                                  0x1680, 0x1680, // Ogham Space
-                                                  0x2000, 0x200A, // En–Hair Space
-                                                  0x2028, 0x2029, // LS, PS
-                                                  0x202F, 0x202F, // Narrow NBSP
-                                                  0x205F, 0x205F, // Medium Math Space
-                                                  0x3000, 0x3000 // Ideographic Space
+        0x1C, 0x1F, // FS, GS, RS, US
+        ' ', ' ', // Space
+        0x85, 0x85, // NEL
+        0xA0, 0xA0, // NBSP
+        0x1680, 0x1680, // Ogham Space
+        0x2000, 0x200A, // En–Hair Space
+        0x2028, 0x2029, // LS, PS
+        0x202F, 0x202F, // Narrow NBSP
+        0x205F, 0x205F, // Medium Math Space
+        0x3000, 0x3000 // Ideographic Space
     };
 
     // POSIX character classes — ASCII-only, matching re2j's CharGroup tables.
@@ -144,14 +144,16 @@ public final class Parser {
     /** Parse and return the full result: AST plus tag/group counters, effective
      *  flags, and named-group metadata (the composable-pipeline entry point).
      *  Meters against a fresh compile CPU budget. */
-    public static ParseResult parseResult(String src, boolean disableUnicodeGroups, boolean anchorBoth, UnicodeDataProvider provider) {
-        return parseResult(src, disableUnicodeGroups, anchorBoth, provider, new WorkMeter(
-                        Budgets.compileComputeTicks()));
+    public static ParseResult parseResult(String src, boolean disableUnicodeGroups, boolean anchorBoth,
+        UnicodeDataProvider provider) {
+        return parseResult(src, disableUnicodeGroups, anchorBoth, provider,
+            new WorkMeter(Budgets.compileComputeTicks()));
     }
 
     /** Metered variant: the caller (Tnfa.compile) shares one CPU budget
      *  across parse and TNFA construction. */
-    public static ParseResult parseResult(String src, boolean disableUnicodeGroups, boolean anchorBoth, UnicodeDataProvider provider, WorkMeter meter) {
+    public static ParseResult parseResult(String src, boolean disableUnicodeGroups, boolean anchorBoth,
+        UnicodeDataProvider provider, WorkMeter meter) {
         Parser p = new Parser(src, disableUnicodeGroups, provider, meter);
         Ast e = p.parseAlt();
         if (p.pos != p.src.length()) {
@@ -159,7 +161,7 @@ public final class Parser {
         }
         e = anchorBoth ? anchorBoth(e) : e;
         return new ParseResult(e, p.tagCount(), p.groupCount(), p.multiline(), p.unicodeShorthand(),
-                        p.unicodeWordRanges(), p.namedGroups());
+            p.unicodeWordRanges(), p.namedGroups());
     }
 
     /** Wrap a parsed body in start/end-text anchors (matches() = anchored both ends).
@@ -167,8 +169,8 @@ public final class Parser {
      *  and the trailing anchor supplies context that prevents the Perl leftmost-first
      *  DFA from pruning a longer alternative's continuation. */
     private static Ast anchorBoth(Ast e) {
-        return new Ast.Concat(Collections.unmodifiableList(Arrays.asList(new Ast.StartAnchor(
-                        true), e, new Ast.EndAnchor(true))));
+        return new Ast.Concat(
+            Collections.unmodifiableList(Arrays.asList(new Ast.StartAnchor(true), e, new Ast.EndAnchor(true))));
     }
 
     /** alt := concat ('|' concat)* — the outer parse loop. The stack holds
@@ -566,8 +568,11 @@ public final class Parser {
         multiline = f.savedMl;
         unicodeShorthand = f.savedUs;
         ungreedy = f.savedUg;
-        Ast group = f.capturing ? new Ast.Concat(Collections.unmodifiableList(Arrays.asList(new Ast.Tag(
-                        f.open), body, new Ast.Tag(f.close)))) : body;
+        Ast group =
+            f.capturing
+                ? new Ast.Concat(
+                    Collections.unmodifiableList(Arrays.asList(new Ast.Tag(f.open), body, new Ast.Tag(f.close))))
+                : body;
         stack.peek().parts.add(applyQuantifier(group));
     }
 
@@ -1367,7 +1372,7 @@ public final class Parser {
         }
         if (val > MAX_REPEAT_COUNT) {
             throw new IllegalArgumentException(
-                            "Parse error at index " + start + ": invalid repeat count (in \"" + s + "\")");
+                "Parse error at index " + start + ": invalid repeat count (in \"" + s + "\")");
         }
         return val;
     }
@@ -1439,7 +1444,8 @@ public final class Parser {
         }
         for (int i = 0; i < name.length(); i++) {
             char ch = name.charAt(i);
-            boolean word = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+            boolean word =
+                (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
             if (!word) {
                 throw fail(this, "invalid named capture");
             }

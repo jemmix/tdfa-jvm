@@ -77,8 +77,9 @@ final class HistTable {
      */
     private void charge(long bytes) {
         if ((chargedBytes += bytes) > memBudget) {
-            throw new IllegalStateException(
-                            "pattern too large: tag histories exceed the compile memory budget (" + chargedBytes + " weighted bytes over " + next + " interned sequences — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
+            throw new IllegalStateException("pattern too large: tag histories exceed the compile memory budget ("
+                + chargedBytes + " weighted bytes over " + next + " interned sequences — raise -D"
+                + Budgets.COMPILE_MEMORY_PROP + ")");
         }
     }
 

@@ -44,7 +44,8 @@ class UnicodePropertyClassTest {
     @ParameterizedTest
     @MethodSource("factories")
     void letterClassRepeat25Compiles(RegexEngineFactory f) {
-        assertThatCode(() -> Pattern.compile("\\p{L}{25}", 0, f)).as("\\p{L}{25} should compile without stateBase overflow").doesNotThrowAnyException();
+        assertThatCode(() -> Pattern.compile("\\p{L}{25}", 0, f))
+            .as("\\p{L}{25} should compile without stateBase overflow").doesNotThrowAnyException();
     }
 
     @ParameterizedTest
@@ -81,7 +82,8 @@ class UnicodePropertyClassTest {
 
     @Test
     void asmDelegateModeCompilesWideDfa() {
-        assertThatCode(() -> Pattern.compile("\\p{L}+", 0, null)).as("\\p{L}+ should compile on ASM (DELEGATE dispatch)").doesNotThrowAnyException();
+        assertThatCode(() -> Pattern.compile("\\p{L}+", 0, null))
+            .as("\\p{L}+ should compile on ASM (DELEGATE dispatch)").doesNotThrowAnyException();
     }
 
     @Test
@@ -95,7 +97,9 @@ class UnicodePropertyClassTest {
 
     @Test
     void asmLargeAlternationCompilesAndMatches() {
-        String[] branches = {"(cat)", "(dog)", "(bird)", "(fish)", "(frog)", "(bear)", "(wolf)", "(deer)", "(lion)", "(tiger)", "(eagle)", "(shark)", "(whale)", "(snake)", "(turtle)", "(duck)", "(goose)", "(horse)", "(mouse)", "(rabbit)"};
+        String[] branches = {"(cat)", "(dog)", "(bird)", "(fish)", "(frog)", "(bear)", "(wolf)", "(deer)", "(lion)",
+            "(tiger)", "(eagle)", "(shark)", "(whale)", "(snake)", "(turtle)", "(duck)", "(goose)", "(horse)",
+            "(mouse)", "(rabbit)"};
         String regex = String.join("|", branches);
         Pattern r = Pattern.compile(regex, 0, null);
         Matcher m = match(r, "have a tiger here");

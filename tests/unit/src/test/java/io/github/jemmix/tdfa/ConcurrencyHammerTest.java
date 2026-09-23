@@ -97,7 +97,8 @@ class ConcurrencyHammerTest {
                 }));
             }
             for (Future<Long> f : fs) {
-                assertThat(f.get(60, TimeUnit.SECONDS)).as(name + ": concurrent results identical to single-threaded").isEqualTo(expect);
+                assertThat(f.get(60, TimeUnit.SECONDS)).as(name + ": concurrent results identical to single-threaded")
+                    .isEqualTo(expect);
             }
         } finally {
             pool.shutdownNow();

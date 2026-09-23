@@ -89,8 +89,11 @@ class CaseSensitivityParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void caseInsensitiveFlag(RegexEngineFactory factory) {
-        int[] expected = com.google.re2j.Pattern.compile("abc", com.google.re2j.Pattern.CASE_INSENSITIVE).matcher("ABC").matches() ? new int[]{0, 3} : null;
-        boolean actual = io.github.jemmix.tdfa.Pattern.compile("abc", io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE, factory).matcher("ABC").matches();
+        int[] expected =
+            com.google.re2j.Pattern.compile("abc", com.google.re2j.Pattern.CASE_INSENSITIVE).matcher("ABC").matches()
+                ? new int[]{0, 3} : null;
+        boolean actual = io.github.jemmix.tdfa.Pattern
+            .compile("abc", io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE, factory).matcher("ABC").matches();
         assertThat(actual).isEqualTo(expected != null);
     }
 

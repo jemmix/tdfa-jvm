@@ -53,14 +53,15 @@ final class SerialProxy implements Serializable {
             Class<?> c = Class.forName(cls);
             if (!UnicodeDataProvider.class.isAssignableFrom(c)) {
                 throw new InvalidObjectException(
-                                "serialized provider " + cls + " does not implement UnicodeDataProvider");
+                    "serialized provider " + cls + " does not implement UnicodeDataProvider");
             }
             // Convention 1: static UnicodeDataProvider provider() (the shape
             // of the shipped pinned-table providers, which are singletons;
             // may be private — same module, opened for reflection).
             try {
                 Method m = c.getMethod("provider");
-                if (UnicodeDataProvider.class.isAssignableFrom(m.getReturnType()) && Modifier.isStatic(m.getModifiers())) {
+                if (UnicodeDataProvider.class.isAssignableFrom(m.getReturnType())
+                    && Modifier.isStatic(m.getModifiers())) {
                     m.setAccessible(true);
                     return (UnicodeDataProvider) m.invoke(null);
                 }
@@ -74,8 +75,9 @@ final class SerialProxy implements Serializable {
         } catch (InvalidObjectException e) {
             throw e;
         } catch (ReflectiveOperationException | RuntimeException e) {
-            throw new InvalidObjectException(
-                            "cannot resolve serialized Unicode provider " + cls + " (needs a static provider() method or a public no-arg constructor;" + " see UnicodeDataProvider's serialization convention): " + e);
+            throw new InvalidObjectException("cannot resolve serialized Unicode provider " + cls
+                + " (needs a static provider() method or a public no-arg constructor;"
+                + " see UnicodeDataProvider's serialization convention): " + e);
         }
     }
 

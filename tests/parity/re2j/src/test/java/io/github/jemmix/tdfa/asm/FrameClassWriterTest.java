@@ -27,7 +27,8 @@ class FrameClassWriterTest {
     @Test
     void identicalTypesResolveToThemselves() {
         // Covers every merge involving generated (child-loader) types.
-        assertThat(w.common("io/github/jemmix/tdfa/gen/Engine42", "io/github/jemmix/tdfa/gen/Engine42")).isEqualTo("io/github/jemmix/tdfa/gen/Engine42");
+        assertThat(w.common("io/github/jemmix/tdfa/gen/Engine42", "io/github/jemmix/tdfa/gen/Engine42"))
+            .isEqualTo("io/github/jemmix/tdfa/gen/Engine42");
         assertThat(w.common("[I", "[I")).isEqualTo("[I");
     }
 
@@ -49,7 +50,8 @@ class FrameClassWriterTest {
     void unresolvablePairsDegradeToObjectInsteadOfThrowing() {
         // Default ClassWriter throws TypeNotPresentException here; emission
         // of any class referencing two such types would crash compile.
-        assertThat(w.common("io/github/jemmix/tdfa/gen/Absent1", "io/github/jemmix/tdfa/gen/Absent2")).isEqualTo("java/lang/Object");
+        assertThat(w.common("io/github/jemmix/tdfa/gen/Absent1", "io/github/jemmix/tdfa/gen/Absent2"))
+            .isEqualTo("java/lang/Object");
         // Unresolvable vs loadable: same conservative answer.
         assertThat(w.common("io/github/jemmix/tdfa/gen/Absent1", "java/lang/String")).isEqualTo("java/lang/Object");
     }

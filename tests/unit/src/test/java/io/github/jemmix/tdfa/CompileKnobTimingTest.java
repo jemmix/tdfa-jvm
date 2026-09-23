@@ -74,7 +74,8 @@ class CompileKnobTimingTest {
         Tdfa.compile(Tnfa.compile("ab|cd"), false, recording()); // warm classes
         System.setProperty(Budgets.COMPILE_MEMORY_PROP, "4096");
         try {
-            assertThatThrownBy(() -> Tdfa.compile(Tnfa.compile("ab|cd|ef|gh|ij"), false, recording())).isInstanceOf(IllegalStateException.class).hasMessageContaining("pattern too large");
+            assertThatThrownBy(() -> Tdfa.compile(Tnfa.compile("ab|cd|ef|gh|ij"), false, recording()))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("pattern too large");
         } finally {
             System.clearProperty(Budgets.COMPILE_MEMORY_PROP);
         }

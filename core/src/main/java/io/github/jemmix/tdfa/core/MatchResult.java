@@ -149,7 +149,8 @@ public final class MatchResult {
             return false;
         }
         MatchResult m = (MatchResult) o;
-        return finalRegBase == m.finalRegBase && groupCount == m.groupCount && matchStart == m.matchStart && matchEnd == m.matchEnd && Arrays.equals(regs, m.regs);
+        return finalRegBase == m.finalRegBase && groupCount == m.groupCount && matchStart == m.matchStart
+            && matchEnd == m.matchEnd && Arrays.equals(regs, m.regs);
     }
 
     @Override

@@ -58,11 +58,13 @@ class FinalOpsParityTest {
     private static void assertSameGroups(String pattern, String input, RegexEngineFactory factory) {
         try {
 
-            assertThat(tdfaProtocol(pattern, input, factory)).as("pattern=\"%s\" input-encoded=\"%s\" [%s]", pattern, escape(input), factory).isEqualTo(re2jProtocol(pattern, input));
+            assertThat(tdfaProtocol(pattern, input, factory))
+                .as("pattern=\"%s\" input-encoded=\"%s\" [%s]", pattern, escape(input), factory)
+                .isEqualTo(re2jProtocol(pattern, input));
         } catch (AssertionError e) {
             // failure-time layer attribution (zero cost on the green path)
-            throw new AssertionError(e.getMessage() + "\n  " + new LayeredComparator(
-                            Re2jUnicodeProvider.INSTANCE).compare(pattern, input).attribution(), e);
+            throw new AssertionError(e.getMessage() + "\n  "
+                + new LayeredComparator(Re2jUnicodeProvider.INSTANCE).compare(pattern, input).attribution(), e);
         }
     }
 

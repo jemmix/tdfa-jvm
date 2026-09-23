@@ -25,7 +25,7 @@ public final class CompileOptions {
     private final CompileObserver observer;
 
     private CompileOptions(boolean longestMatch, boolean disableUnicodeGroups, UnicodeDataProvider unicodeProvider,
-                    CompileObserver observer) {
+        CompileObserver observer) {
         this.longestMatch = longestMatch;
         this.disableUnicodeGroups = disableUnicodeGroups;
         this.unicodeProvider = unicodeProvider;
@@ -87,11 +87,12 @@ public final class CompileOptions {
             return false;
         }
         CompileOptions c = (CompileOptions) o;
-        return longestMatch == c.longestMatch && disableUnicodeGroups == c.disableUnicodeGroups && Objects.equals(unicodeProvider, c.unicodeProvider)
-        // Identity is intentional: the observer is a push hook, not a
-        // value — two different hook instances with equal state are
-        // still different options (they observe different people).
-               && observer == c.observer;
+        return longestMatch == c.longestMatch && disableUnicodeGroups == c.disableUnicodeGroups
+            && Objects.equals(unicodeProvider, c.unicodeProvider)
+            // Identity is intentional: the observer is a push hook, not a
+            // value — two different hook instances with equal state are
+            // still different options (they observe different people).
+            && observer == c.observer;
     }
 
     @Override

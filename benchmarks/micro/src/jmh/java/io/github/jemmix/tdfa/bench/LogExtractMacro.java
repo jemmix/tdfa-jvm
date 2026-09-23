@@ -32,9 +32,9 @@ public final class LogExtractMacro {
     record Row(String name, String regex, int groupCount) {
     }
 
-    static final List<Row> ROWS = List.of(new Row("ip", "ip=(\\d+\\.\\d+\\.\\d+\\.\\d+)", 1), new Row("user-status",
-                    "user_id=(\\d+).*?status=(\\d+)",
-                    2), new Row("path", "path=(/[a-z0-9/]+)", 1), new Row("no-match", "[a-z]+@[a-z]+\\.[a-z]{3}", 1));
+    static final List<Row> ROWS = List.of(new Row("ip", "ip=(\\d+\\.\\d+\\.\\d+\\.\\d+)", 1),
+        new Row("user-status", "user_id=(\\d+).*?status=(\\d+)", 2), new Row("path", "path=(/[a-z0-9/]+)", 1),
+        new Row("no-match", "[a-z]+@[a-z]+\\.[a-z]{3}", 1));
 
     private LogExtractMacro() {
     }
@@ -42,7 +42,8 @@ public final class LogExtractMacro {
     public static void main(String[] args) {
         List<String> lines = genLines(LINES);
         String[] engines = {"jur", "re2j", "vm", "asm"};
-        System.out.println(LogExtractMacro.class.getSimpleName() + ": " + LINES + " lines, cold = first " + COLD + " calls, warm = min-of-5 x " + WARM_BATCH);
+        System.out.println(LogExtractMacro.class.getSimpleName() + ": " + LINES + " lines, cold = first " + COLD
+            + " calls, warm = min-of-5 x " + WARM_BATCH);
         System.out.printf("%-14s %-6s %10s %14s   %s%n", "row", "eng", "cold", "warm", "ns/line(warm)");
         for (Row row : ROWS) {
             long jurCount = 0;
@@ -76,7 +77,8 @@ public final class LogExtractMacro {
                 } else if (warmCount != jurCount) {
                     throw new AssertionError(row.name() + "/" + eng + ": count " + warmCount + " != jur " + jurCount);
                 }
-                System.out.printf("%-14s %-6s %8.1f ms %12.1f ms   %8.1f%n", row.name(), eng, coldNs / 1e6, best / 1e6, (double) best / WARM_BATCH);
+                System.out.printf("%-14s %-6s %8.1f ms %12.1f ms   %8.1f%n", row.name(), eng, coldNs / 1e6, best / 1e6,
+                    (double) best / WARM_BATCH);
             }
         }
     }
@@ -152,7 +154,12 @@ public final class LogExtractMacro {
         Random rnd = new Random(42);
         String[] levels = {"INFO", "WARN", "ERROR", "DEBUG"};
         for (int i = 0; i < n; i++) {
-            out.add(String.format("2026-08-15T12:%02d:%02d.%03d %s [worker-%d] user_id=%d path=/api/v%d/items/list page=%d status=%d dur=%dms ip=192.168.%d.%d", rnd.nextInt(60), rnd.nextInt(60), rnd.nextInt(1000), levels[rnd.nextInt(levels.length)], rnd.nextInt(16), 1000 + rnd.nextInt(9000), 1 + rnd.nextInt(3), 1 + rnd.nextInt(50), rnd.nextBoolean() ? 200 : rnd.nextBoolean() ? 404 : 500, rnd.nextInt(500), rnd.nextInt(256), rnd.nextInt(256)));
+            out.add(String.format(
+                "2026-08-15T12:%02d:%02d.%03d %s [worker-%d] user_id=%d path=/api/v%d/items/list page=%d status=%d dur=%dms ip=192.168.%d.%d",
+                rnd.nextInt(60), rnd.nextInt(60), rnd.nextInt(1000), levels[rnd.nextInt(levels.length)],
+                rnd.nextInt(16), 1000 + rnd.nextInt(9000), 1 + rnd.nextInt(3), 1 + rnd.nextInt(50),
+                rnd.nextBoolean() ? 200 : rnd.nextBoolean() ? 404 : 500, rnd.nextInt(500), rnd.nextInt(256),
+                rnd.nextInt(256)));
         }
         return out;
     }

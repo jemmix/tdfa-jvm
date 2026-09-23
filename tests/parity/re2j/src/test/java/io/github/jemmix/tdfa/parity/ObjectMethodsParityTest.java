@@ -19,7 +19,8 @@ class ObjectMethodsParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void toStringMatches(RegexEngineFactory factory) {
-        assertThat(io.github.jemmix.tdfa.Pattern.compile("abc", 0, factory).toString()).isEqualTo(com.google.re2j.Pattern.compile("abc").toString());
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("abc", 0, factory).toString())
+            .isEqualTo(com.google.re2j.Pattern.compile("abc").toString());
     }
 
     @ParameterizedTest
@@ -69,7 +70,9 @@ class ObjectMethodsParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void flagsAccessor(RegexEngineFactory factory) {
-        assertThat(io.github.jemmix.tdfa.Pattern.compile("abc", io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE | io.github.jemmix.tdfa.Pattern.DOTALL, factory).flags()).isEqualTo(io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE | io.github.jemmix.tdfa.Pattern.DOTALL);
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("abc",
+            io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE | io.github.jemmix.tdfa.Pattern.DOTALL, factory).flags())
+            .isEqualTo(io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE | io.github.jemmix.tdfa.Pattern.DOTALL);
     }
 
     @Test
@@ -104,7 +107,8 @@ class ObjectMethodsParityTest {
 
     @Test
     void quoteNonAscii() {
-        assertThat(io.github.jemmix.tdfa.Pattern.quote("caf\u00E9.")).isEqualTo(com.google.re2j.Pattern.quote("caf\u00E9."));
+        assertThat(io.github.jemmix.tdfa.Pattern.quote("caf\u00E9."))
+            .isEqualTo(com.google.re2j.Pattern.quote("caf\u00E9."));
     }
 
     @Test
@@ -128,7 +132,8 @@ class ObjectMethodsParityTest {
         // A meaningful, positive cost metric; same value on repeat compile (deterministic).
         int tdfaSize = io.github.jemmix.tdfa.Pattern.compile("abc").programSize();
         assertThat(tdfaSize).isPositive();
-        assertThat(io.github.jemmix.tdfa.Pattern.compile("abc").programSize()).isEqualTo(io.github.jemmix.tdfa.Pattern.compile("abc").programSize());
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("abc").programSize())
+            .isEqualTo(io.github.jemmix.tdfa.Pattern.compile("abc").programSize());
         // More complex patterns cost more than simple ones.
         assertThat(io.github.jemmix.tdfa.Pattern.compile("(a|b)*c(d|e)+f").programSize()).isGreaterThan(tdfaSize);
     }

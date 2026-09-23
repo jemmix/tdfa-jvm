@@ -51,11 +51,11 @@ class BytecodeFloorTest {
 
     /** One anchor + ceiling per shipped module — compile-time presence guarantee. */
     private static final Object[][] ANCHORS = {{Pattern.class, MAJOR_JAVA_8}, // facade
-                                               {Tdfa.class, MAJOR_JAVA_8}, // core
-                                               {TdfaAsmBackend.class, MAJOR_JAVA_8}, // asm
-                                               {PikeSim.class, MAJOR_JAVA_25}, // lib:pikesim
-                                               {Unicode6_0.class, MAJOR_JAVA_25}, // unicode:v6_0
-                                               {Unicode17_0.class, MAJOR_JAVA_25}, // unicode:v17_0
+        {Tdfa.class, MAJOR_JAVA_8}, // core
+        {TdfaAsmBackend.class, MAJOR_JAVA_8}, // asm
+        {PikeSim.class, MAJOR_JAVA_25}, // lib:pikesim
+        {Unicode6_0.class, MAJOR_JAVA_25}, // unicode:v6_0
+        {Unicode17_0.class, MAJOR_JAVA_25}, // unicode:v17_0
     };
 
     @Test
@@ -97,7 +97,8 @@ class BytecodeFloorTest {
             }
             // Vacuous-success guard per module: an empty/ relocated output
             // directory must fail loudly, not silently pass.
-            assertThat(checked[0] - before).as("class files under %s (output layout change?)", root).isGreaterThanOrEqualTo(3);
+            assertThat(checked[0] - before).as("class files under %s (output layout change?)", root)
+                .isGreaterThanOrEqualTo(3);
         }
         assertThat(checked[0]).isGreaterThanOrEqualTo(60);
         assertThat(offenders).as("classes above their module's floor major").isEmpty();

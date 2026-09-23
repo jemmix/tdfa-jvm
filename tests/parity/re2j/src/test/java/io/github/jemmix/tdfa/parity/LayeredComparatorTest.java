@@ -29,14 +29,22 @@ class LayeredComparatorTest {
     @Test
     void verdictTableIsExact() {
         // r, s, v, a -> expected layer
-        assertThat(LayeredComparator.classify(new String[]{"1", "1", "1", "1"})).isEqualTo(LayeredComparator.Layer.PASS);
-        assertThat(LayeredComparator.classify(new String[]{"1", "1", "2", "1"})).isEqualTo(LayeredComparator.Layer.TIER); // v != a
-        assertThat(LayeredComparator.classify(new String[]{"1", "1", "2", "3"})).isEqualTo(LayeredComparator.Layer.TIER); // v != a, both != r/s
-        assertThat(LayeredComparator.classify(new String[]{"2", "2", "1", "1"})).isEqualTo(LayeredComparator.Layer.CONSTRUCTION); // v==a != s; s==r
-        assertThat(LayeredComparator.classify(new String[]{"1", "3", "1", "1"})).isEqualTo(LayeredComparator.Layer.SIM_SUSPECT); // v==r != s
-        assertThat(LayeredComparator.classify(new String[]{"2", "1", "1", "1"})).isEqualTo(LayeredComparator.Layer.PARSER); // v==a==s != r
-        assertThat(LayeredComparator.classify(new String[]{"3", "2", "1", "1"})).isEqualTo(LayeredComparator.Layer.CHAOS); // three answers
-        assertThat(LayeredComparator.classify(new String[]{"1", "2", "3", "3"})).isEqualTo(LayeredComparator.Layer.CHAOS);
+        assertThat(LayeredComparator.classify(new String[]{"1", "1", "1", "1"}))
+            .isEqualTo(LayeredComparator.Layer.PASS);
+        assertThat(LayeredComparator.classify(new String[]{"1", "1", "2", "1"}))
+            .isEqualTo(LayeredComparator.Layer.TIER); // v != a
+        assertThat(LayeredComparator.classify(new String[]{"1", "1", "2", "3"}))
+            .isEqualTo(LayeredComparator.Layer.TIER); // v != a, both != r/s
+        assertThat(LayeredComparator.classify(new String[]{"2", "2", "1", "1"}))
+            .isEqualTo(LayeredComparator.Layer.CONSTRUCTION); // v==a != s; s==r
+        assertThat(LayeredComparator.classify(new String[]{"1", "3", "1", "1"}))
+            .isEqualTo(LayeredComparator.Layer.SIM_SUSPECT); // v==r != s
+        assertThat(LayeredComparator.classify(new String[]{"2", "1", "1", "1"}))
+            .isEqualTo(LayeredComparator.Layer.PARSER); // v==a==s != r
+        assertThat(LayeredComparator.classify(new String[]{"3", "2", "1", "1"}))
+            .isEqualTo(LayeredComparator.Layer.CHAOS); // three answers
+        assertThat(LayeredComparator.classify(new String[]{"1", "2", "3", "3"}))
+            .isEqualTo(LayeredComparator.Layer.CHAOS);
     }
 
     @Test

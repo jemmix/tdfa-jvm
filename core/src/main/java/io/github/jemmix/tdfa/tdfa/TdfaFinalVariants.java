@@ -176,7 +176,8 @@ final class TdfaFinalVariants {
                 StringBuilder h = new StringBuilder("cfg[" + i + "] mask=" + c.emptyMask + " l:");
                 int[] last = owner.hist.lastSign(c.l, owner.tags);
                 for (int t = 1; t <= owner.tags; t++) {
-                    h.append(" t").append(t).append(last[t - 1] == 0 ? "Ø" : (last[t - 1] == TdfaCompiler.TAG_POS ? "P" : "N"));
+                    h.append(" t").append(t)
+                        .append(last[t - 1] == 0 ? "Ø" : (last[t - 1] == TdfaCompiler.TAG_POS ? "P" : "N"));
                 }
                 System.err.println("  [finals] " + h + "  winner(M63)=" + winner[63] + " winner(M0)=" + winner[0]);
             }

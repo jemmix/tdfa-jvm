@@ -250,7 +250,8 @@ final class TdfaStateIndex {
                 // Ragged: every row is replaced by a hist-cache ref right
                 // below, so new long[rows][words] allocated words*rows junk
                 // longs per growth. words is constant for this compile.
-                hasHistShared = new long[Math.max(configs.size(), (hasHistShared == null ? 16 : hasHistShared.length) * 2)][];
+                hasHistShared =
+                    new long[Math.max(configs.size(), (hasHistShared == null ? 16 : hasHistShared.length) * 2)][];
             }
             for (int i = 0; i < configs.size(); i++) {
                 // Per-history-id cached bitsets (HistTable.bits): no fill,
@@ -293,7 +294,8 @@ final class TdfaStateIndex {
                     // canon-equal members was the residual quadratic.
                     int cand = compatibles[0];
                     int[] stored = stateClassIds.get(cand);
-                    if (stored != null && stored.length == canon.length && rangeEquals(canon, 0, canon.length, stored, 0, stored.length)) {
+                    if (stored != null && stored.length == canon.length
+                        && rangeEquals(canon, 0, canon.length, stored, 0, stored.length)) {
                         int[] mapped = tryMap(configs, owner.states.get(cand), owner.packedKernels.get(cand), ops);
                         if (mapped != null) {
                             return new AddResult(cand, mapped);
@@ -360,8 +362,11 @@ final class TdfaStateIndex {
         owner.kernelsTotal += configs.size();
         owner.kernelsWeighted += (long) configs.size() * owner.kernelConfigBytes;
         if (owner.states.size() > owner.maxStates || owner.kernelsWeighted > Budgets.compileMemoryBytes()) {
-            throw new IllegalStateException(
-                            "pattern too large: TDFA determinization budget exceeded (" + owner.states.size() + " states, kernel total " + owner.kernelsTotal + " (" + owner.kernelsWeighted + " weighted bytes), ticks " + owner.meter.spent() + "; caps " + owner.maxStates + " states / " + Budgets.compileMemoryBytes() + " weighted kernel bytes (" + owner.maxKernelsTotal + " tagless-equivalent configs) — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
+            throw new IllegalStateException("pattern too large: TDFA determinization budget exceeded ("
+                + owner.states.size() + " states, kernel total " + owner.kernelsTotal + " (" + owner.kernelsWeighted
+                + " weighted bytes), ticks " + owner.meter.spent() + "; caps " + owner.maxStates + " states / "
+                + Budgets.compileMemoryBytes() + " weighted kernel bytes (" + owner.maxKernelsTotal
+                + " tagless-equivalent configs) — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
         }
         return new AddResult(id, ops);
     }

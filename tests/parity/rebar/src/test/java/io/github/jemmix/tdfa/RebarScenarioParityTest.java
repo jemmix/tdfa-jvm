@@ -184,7 +184,11 @@ class RebarScenarioParityTest {
      * out of scope for a Java regex library and don't appear as test cases.
      */
     static Stream<Arguments> scenariosProvider() {
-        return scenarios.stream().filter(RebarScenarioParityTest::enginesIncludeJava).flatMap(s -> Stream.of((RegexEngineFactory) null, (RegexEngineFactory) TdfaRunner::new).map(f -> Arguments.of(/*displayName=*/ s.fullName() + "  corpus-want=" + s.expectedCount() + (s.unicode() ? " (unicode: corpus stands)" : " (non-unicode: live re2j)") + "  /" + abbrev(s.regex(), 60) + "/  [" + labelFor(f) + "]", /*scenario=*/ s, /*factory=*/ f)));
+        return scenarios.stream().filter(RebarScenarioParityTest::enginesIncludeJava)
+            .flatMap(s -> Stream.of((RegexEngineFactory) null, (RegexEngineFactory) TdfaRunner::new)
+                .map(f -> Arguments.of(/*displayName=*/ s.fullName() + "  corpus-want=" + s.expectedCount()
+                    + (s.unicode() ? " (unicode: corpus stands)" : " (non-unicode: live re2j)") + "  /"
+                    + abbrev(s.regex(), 60) + "/  [" + labelFor(f) + "]", /*scenario=*/ s, /*factory=*/ f)));
     }
 
     static String labelFor(RegexEngineFactory f) {
@@ -388,18 +392,24 @@ class RebarScenarioParityTest {
     static void printSummary() {
         System.out.println();
         System.out.println("╔══════════════════════════════════════════════════════════════════════╗");
-        System.out.printf("║ rebar parity: pass=%-4d  fail=%-4d  skip=%-4d   total=%-4d%n", passCount.get(), failCount.get(), skipCount.get(), passCount.get() + failCount.get() + skipCount.get());
+        System.out.printf("║ rebar parity: pass=%-4d  fail=%-4d  skip=%-4d   total=%-4d%n", passCount.get(),
+            failCount.get(), skipCount.get(), passCount.get() + failCount.get() + skipCount.get());
         System.out.println("╚══════════════════════════════════════════════════════════════════════╝");
         // Gray-skip cap (see MAX_TOTAL_SKIPS): a skip is only legitimate for a
         // recorded reason; an unexpected compile-exception family shrinking the
         // green set must FAIL the gate, not vanish into the histogram.
-        Assertions.assertTrue(skipCount.get() <= MAX_TOTAL_SKIPS, "rebar parity skipped " + skipCount.get() + " scenarios (cap " + MAX_TOTAL_SKIPS + ", recorded baseline 2) — the green set shrank; see the skip histogram");
+        Assertions.assertTrue(skipCount.get() <= MAX_TOTAL_SKIPS,
+            "rebar parity skipped " + skipCount.get() + " scenarios (cap " + MAX_TOTAL_SKIPS
+                + ", recorded baseline 2) — the green set shrank; see the skip histogram");
 
         // Skip-reason histogram
         if (!skipBuckets.isEmpty()) {
             System.out.println();
             System.out.println("── Skip reasons ──────────────────────────────────────────────");
-            skipBuckets.entrySet().stream().sorted(Map.Entry.<String, AtomicInteger>comparingByValue(Comparator.comparingInt(AtomicInteger::get)).reversed()).forEach(e -> System.out.printf("  %5d  %s%n", e.getValue().get(), e.getKey()));
+            skipBuckets
+                .entrySet().stream().sorted(Map.Entry
+                    .<String, AtomicInteger>comparingByValue(Comparator.comparingInt(AtomicInteger::get)).reversed())
+                .forEach(e -> System.out.printf("  %5d  %s%n", e.getValue().get(), e.getKey()));
         }
 
         // Top-20 slowest tests by compile+run
@@ -409,7 +419,8 @@ class RebarScenarioParityTest {
         System.out.println("── Top 20 slowest (compile + run, ms) ─────────────────────────");
         for (int i = 0; i < Math.min(20, sorted.size()); i++) {
             Timing t = sorted.get(i);
-            System.out.printf("  %4dms  c=%-5d r=%-6d  %-50s  [%s]%n", t.totalMs(), t.compileMs(), t.runMs(), abbrev(t.name(), 50), t.outcome());
+            System.out.printf("  %4dms  c=%-5d r=%-6d  %-50s  [%s]%n", t.totalMs(), t.compileMs(), t.runMs(),
+                abbrev(t.name(), 50), t.outcome());
         }
 
         // Histogram of total time (compile + run)
@@ -431,7 +442,8 @@ class RebarScenarioParityTest {
         long totalMs = sorted.stream().mapToLong(Timing::totalMs).sum();
         long compileMs = sorted.stream().mapToLong(Timing::compileMs).sum();
         long runMs = sorted.stream().mapToLong(Timing::runMs).sum();
-        System.out.printf("  total: compile=%dms (%.1fs), run=%dms (%.1fs), wall=%dms (%.1fs)%n", compileMs, compileMs / 1000.0, runMs, runMs / 1000.0, totalMs, totalMs / 1000.0);
+        System.out.printf("  total: compile=%dms (%.1fs), run=%dms (%.1fs), wall=%dms (%.1fs)%n", compileMs,
+            compileMs / 1000.0, runMs, runMs / 1000.0, totalMs, totalMs / 1000.0);
     }
 
     /**

@@ -88,8 +88,8 @@ final class DfaMinimizer {
     boolean useNormalized;
 
     DfaMinimizer(int n, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] ranges, int[] ops,
-                    int[] stateEntryMask, int[] stateAcceptMask, int[] stateStopOnAcceptMask, int[] stateFinalOpsByMask,
-                    boolean longest, WorkMeter meter) {
+        int[] stateEntryMask, int[] stateAcceptMask, int[] stateStopOnAcceptMask, int[] stateFinalOpsByMask,
+        boolean longest, WorkMeter meter) {
         this.n = n;
         this.stateMeta = stateMeta;
         this.stateBase = stateBase;

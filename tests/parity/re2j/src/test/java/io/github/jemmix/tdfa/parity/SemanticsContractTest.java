@@ -54,12 +54,14 @@ class SemanticsContractTest {
 
     private static void assertMatchesRe2j(String pattern, String input, RegexEngineFactory factory) {
         try {
-            assertThat(tdfaProtocol(pattern, input, factory)).as("pattern=\"%s\" input-encoded=\"%s\" [%s]", pattern, escape(input), factory).isEqualTo(re2jProtocol(pattern, input));
+            assertThat(tdfaProtocol(pattern, input, factory))
+                .as("pattern=\"%s\" input-encoded=\"%s\" [%s]", pattern, escape(input), factory)
+                .isEqualTo(re2jProtocol(pattern, input));
         } catch (AssertionError e) {
             // failure-time layer attribution (zero cost on the green path):
             // re2j/sim/vm/asm vote, the verdict names the failing layer
-            throw new AssertionError(e.getMessage() + "\n  " + new LayeredComparator(
-                            Re2jUnicodeProvider.INSTANCE).compare(pattern, input).attribution(), e);
+            throw new AssertionError(e.getMessage() + "\n  "
+                + new LayeredComparator(Re2jUnicodeProvider.INSTANCE).compare(pattern, input).attribution(), e);
         }
     }
 
@@ -79,10 +81,13 @@ class SemanticsContractTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void foldingMatrix(RegexEngineFactory factory) {
-        String[][] m = {{"(?i)s", "ſ"}, {"(?i)s", "S"}, {"(?i:S)", "aſb"}, {"(?i:ſ)", "s"}, {"(?i)k", "\u212a"}, {"(?i)[s]", "ſ"}, {"(?i)[a-z]", "ſ"}, {"(?i)[a-z]", "\u212a"}, {"(?i)[^s]", "ſ"}, {"(?i)[^S]", "ſ"}, {"(?i)\\w+", "aſb"}, {"(?i)\\w", "\u212a"}, {"(?i)\\W", "ſ"}, {"(?i:\\W+)", "aſb"}, {"(?i)[\\W]", "ſ"}, {"(?i)[^\\w]", "ſ"}, {"(?i)s\\b", "aſ"}, {"(?i)\\w\\b", "ſ"}, // \b wordness UNFOLDED
-                        {"(?i)\\d", "9"}, {"(?i)\\s", " "}, // no orbits: (?i) no-op
-                        {"(?i)\ud801\udc21", "\ud801\udc01"}, // supplementary letters fold
-                        {"\\w+", "aſb"}, {"\\W", "ſ"}, // bare classes unchanged
+        String[][] m = {{"(?i)s", "ſ"}, {"(?i)s", "S"}, {"(?i:S)", "aſb"}, {"(?i:ſ)", "s"}, {"(?i)k", "\u212a"},
+            {"(?i)[s]", "ſ"}, {"(?i)[a-z]", "ſ"}, {"(?i)[a-z]", "\u212a"}, {"(?i)[^s]", "ſ"}, {"(?i)[^S]", "ſ"},
+            {"(?i)\\w+", "aſb"}, {"(?i)\\w", "\u212a"}, {"(?i)\\W", "ſ"}, {"(?i:\\W+)", "aſb"}, {"(?i)[\\W]", "ſ"},
+            {"(?i)[^\\w]", "ſ"}, {"(?i)s\\b", "aſ"}, {"(?i)\\w\\b", "ſ"}, // \b wordness UNFOLDED
+            {"(?i)\\d", "9"}, {"(?i)\\s", " "}, // no orbits: (?i) no-op
+            {"(?i)\ud801\udc21", "\ud801\udc01"}, // supplementary letters fold
+            {"\\w+", "aſb"}, {"\\W", "ſ"}, // bare classes unchanged
         };
         for (String[] c : m) {
             assertMatchesRe2j(c[0], c[1], factory);
@@ -98,9 +103,12 @@ class SemanticsContractTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void anchorMatrix(RegexEngineFactory factory) {
-        String[][] m = {{"(?m:$)", "ab\ncd"}, {"(?m:\\S.$)", "ab\ncd"}, {"\\S(?m:$)", "ab\ncd"}, {"\\D(?m:\\S.$)", "ab\ncd"}, {"(?m:^\\w)", "ab\ncd"}, {"(?m:^)", "ab\ncd"}, {"^\\w", "ab\ncd"}, {"\\w$", "ab\ncd"}, // bare: absolute only
-                        {"\\A\\w", "ab"}, {"\\w\\z", "ab"}, {"(?m:\\w$)", "ab\ncd"}, {"(?:(?m:$)|x)", "ab\nx"}, {"(?:(?:^)|(?:$))+$", "a"}, {"(?:^|$)+$", "a"}, // multi-branch nullable loop + anchors
-        };
+        String[][] m =
+            {{"(?m:$)", "ab\ncd"}, {"(?m:\\S.$)", "ab\ncd"}, {"\\S(?m:$)", "ab\ncd"}, {"\\D(?m:\\S.$)", "ab\ncd"},
+                {"(?m:^\\w)", "ab\ncd"}, {"(?m:^)", "ab\ncd"}, {"^\\w", "ab\ncd"}, {"\\w$", "ab\ncd"}, // bare: absolute only
+                {"\\A\\w", "ab"}, {"\\w\\z", "ab"}, {"(?m:\\w$)", "ab\ncd"}, {"(?:(?m:$)|x)", "ab\nx"},
+                {"(?:(?:^)|(?:$))+$", "a"}, {"(?:^|$)+$", "a"}, // multi-branch nullable loop + anchors
+            };
         for (String[] c : m) {
             assertMatchesRe2j(c[0], c[1], factory);
         }
@@ -115,7 +123,11 @@ class SemanticsContractTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void loopDisciplineMatrix(RegexEngineFactory factory) {
-        String[][] m = {{"(?:.*?9{0,}\\b){1,}", "99x"}, {"(?:.*?9*\\b){1,}", "99x"}, {"(?:.*?\\b){1,}", "99x"}, {"(?:9*\\b){1,}", "99x"}, {"(\\B)*\\z", "!"}, {"(\\B)*\\z", "a!"}, {"(\\b)*\\z", "a"}, {"(\\B)*$", "!"}, {"((\\B))*\\z", "!"}, {"(\\B)*?", "!"}, {"(\\B)*?\\z", "!"}, {"(\\B)(\\B)*\\z", "!"}, {"(\\B|)*\\z", "!"}, {"(?:(\\B)x|y)\\z", "y"}, {"(?:(\\B)x|y)\\z", "yx"}, {"(?:\\b)+$", "a b"}, {"(?:a{0,}){1,}b", "ab"}, {"(?:x?){1,}y", "y"},};
+        String[][] m = {{"(?:.*?9{0,}\\b){1,}", "99x"}, {"(?:.*?9*\\b){1,}", "99x"}, {"(?:.*?\\b){1,}", "99x"},
+            {"(?:9*\\b){1,}", "99x"}, {"(\\B)*\\z", "!"}, {"(\\B)*\\z", "a!"}, {"(\\b)*\\z", "a"}, {"(\\B)*$", "!"},
+            {"((\\B))*\\z", "!"}, {"(\\B)*?", "!"}, {"(\\B)*?\\z", "!"}, {"(\\B)(\\B)*\\z", "!"}, {"(\\B|)*\\z", "!"},
+            {"(?:(\\B)x|y)\\z", "y"}, {"(?:(\\B)x|y)\\z", "yx"}, {"(?:\\b)+$", "a b"}, {"(?:a{0,}){1,}b", "ab"},
+            {"(?:x?){1,}y", "y"},};
         for (String[] c : m) {
             assertMatchesRe2j(c[0], c[1], factory);
         }

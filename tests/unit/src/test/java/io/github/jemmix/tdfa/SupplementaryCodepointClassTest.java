@@ -43,9 +43,12 @@ class SupplementaryCodepointClassTest {
 
     @Test
     void distinctAssignedSupplementaryLuMatches() {
-        for (String re : new String[]{"\\p{Lu}{1}", "\\p{Lu}{2}", "\\p{Lu}{3}", "\\p{Lu}+", "\\p{L}{3}", "[\\x{1D504}\\x{1D505}\\x{1D507}]{3}"}) {
+        for (String re : new String[]{"\\p{Lu}{1}", "\\p{Lu}{2}", "\\p{Lu}{3}", "\\p{Lu}+", "\\p{L}{3}",
+            "[\\x{1D504}\\x{1D505}\\x{1D507}]{3}"}) {
             CompiledRegex r = CompiledRegex.compile(re);
-            assertThat(r.matches(re.endsWith("{1}") || re.endsWith("{2}") ? FRAKTUR_ABD.substring(0, re.endsWith("{1}") ? 2 : 4) : FRAKTUR_ABD)).as("%s on assigned Fraktur capitals", re).isTrue();
+            assertThat(r.matches(re.endsWith("{1}") || re.endsWith("{2}")
+                ? FRAKTUR_ABD.substring(0, re.endsWith("{1}") ? 2 : 4) : FRAKTUR_ABD))
+                .as("%s on assigned Fraktur capitals", re).isTrue();
         }
         assertThat(CompiledRegex.compile("\\p{Lu}{5}").matches(FRAKTUR_5)).isTrue();
     }
