@@ -1,16 +1,15 @@
 package io.github.jemmix.tdfa;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import io.github.jemmix.tdfa.core.Matcher;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.unicode.CaseFoldTable;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
-
-import java.util.stream.Stream;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Case-insensitive matching: literal char folding, character-class folding,
@@ -156,10 +155,14 @@ class CaseInsensitiveTest {
         assertThat(match("(?i)i", "\u0130", f)).as("(?i)i must not match İ").isNull();
         assertThat(match("(?i)i", "\u0131", f)).as("(?i)i must not match ı").isNull();
         assertThat(match("(?i)\u0130", "i", f)).as("(?i)İ must not match i").isNull();
-        assertThat(match("(?i)\u0130", "\u0131", f)).as("(?i)İ must not match ı").isNull();
+        assertThat(match("(?i)\u0130", "\u0131", f))
+                .as("(?i)İ must not match ı")
+                .isNull();
         assertThat(match("(?i)\u0131", "\u0131", f)).as("(?i)ı matches itself").isNotNull();
         assertThat(match("(?i)[i\u0131]", "\u0131", f)).isNotNull();
-        assertThat(match("(?i)[i\u0131]", "\u0130", f)).as("class fold must not pull in İ").isNull();
+        assertThat(match("(?i)[i\u0131]", "\u0130", f))
+                .as("class fold must not pull in İ")
+                .isNull();
     }
 
     /** Cyrillic historic letters fold with their partners under plain (?i),
@@ -256,8 +259,8 @@ class CaseInsensitiveTest {
     void rangeClassShouldIncludeFoldEquivalent(RegexEngineFactory f) {
         Matcher m = match("(?iu)[r-t]", "\u017F", f);
         assertThat(m)
-                        .as("(?iu)[r-t] should match ſ (fold-equiv of s in range) — BUG: returns null")
-                        .isNotNull();
+                .as("(?iu)[r-t] should match ſ (fold-equiv of s in range) — BUG: returns null")
+                .isNotNull();
     }
 
     @ParameterizedTest
@@ -279,9 +282,7 @@ class CaseInsensitiveTest {
     @MethodSource("factories")
     void negatedClassShouldExcludeFoldEquivalent(RegexEngineFactory f) {
         Matcher m = match("(?iu)[^s]", "\u017F", f);
-        assertThat(m)
-                        .as("(?iu)[^s] should NOT match ſ — BUG: returns non-null")
-                        .isNull();
+        assertThat(m).as("(?iu)[^s] should NOT match ſ — BUG: returns non-null").isNull();
     }
 
     @ParameterizedTest
@@ -341,7 +342,7 @@ class CaseInsensitiveTest {
         Pattern r = Pattern.compile("(?iu)s", 0, f);
         String input = "s S \u017F s";
         int count = 0;
-        for (Matcher m = r.matcher(input); m.find();) {
+        for (Matcher m = r.matcher(input); m.find(); ) {
             count++;
         }
         assertThat(count).isEqualTo(4);

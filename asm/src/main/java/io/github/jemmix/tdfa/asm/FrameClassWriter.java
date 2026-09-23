@@ -74,8 +74,7 @@ class FrameClassWriter extends ClassWriter {
     /** Resolve without initializing; {@code null} = not visible to this loader. */
     private static Class<?> probe(String internalName) {
         try {
-            return Class.forName(internalName.replace('/', '.'), false,
-                            FrameClassWriter.class.getClassLoader());
+            return Class.forName(internalName.replace('/', '.'), false, FrameClassWriter.class.getClassLoader());
         } catch (ClassNotFoundException e) {
             return null;
         }

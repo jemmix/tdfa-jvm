@@ -1,11 +1,11 @@
 package io.github.jemmix.tdfa;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import io.github.jemmix.tdfa.core.CompileOptions;
 import io.github.jemmix.tdfa.core.CompiledRegex;
 import io.github.jemmix.tdfa.core.MatchResult;
 import org.junit.jupiter.api.Test;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * BT22 §6.4 fixed-tags optimization: tags within a fixed character-distance are

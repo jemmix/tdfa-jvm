@@ -1,8 +1,8 @@
 package io.github.jemmix.tdfa;
 
-import org.junit.jupiter.api.Test;
-
 import static org.assertj.core.api.Assertions.assertThat;
+
+import org.junit.jupiter.api.Test;
 
 /**
  * Verifies the {@code tdfa.engine} system-property wiring of
@@ -19,8 +19,10 @@ class DefaultEngineSelectionTest {
         try {
             System.clearProperty("tdfa.engine");
             Pattern p = Pattern.compile("abc");
-            assertThat(p.getClass().getSimpleName()).as("generated shell expected")
-                            .startsWith("Gen").endsWith("Pattern");
+            assertThat(p.getClass().getSimpleName())
+                    .as("generated shell expected")
+                    .startsWith("Gen")
+                    .endsWith("Pattern");
             assertThat(p.matcher("abc").matches()).isTrue();
             assertThat(p.matcher("abcd").matches()).isFalse();
         } finally {

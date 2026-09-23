@@ -1,15 +1,16 @@
 package io.github.jemmix.tdfa.parity;
 
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
-
-import java.util.random.RandomGenerator;
-
 import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFindPosix;
 import static io.github.jemmix.tdfa.parity.Re2jOracle.re2jFindPosix;
 import static io.github.jemmix.tdfa.parity.Re2jOracle.tdfaFindPosix;
 import static org.assertj.core.api.Assertions.assertThat;
+
+import com.google.re2j.Pattern;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import java.util.random.RandomGenerator;
+import java.util.random.RandomGeneratorFactory;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Leftmost-longest ({@code LONGEST_MATCH}) CAPTURE parity vs re2j — the
@@ -227,7 +228,7 @@ class LongestMatchParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void randomizedDifferential(RegexEngineFactory factory) {
-        java.util.random.RandomGeneratorFactory<RandomGenerator> rf = java.util.random.RandomGeneratorFactory.of("L64X256MixRandom");
+        RandomGeneratorFactory<RandomGenerator> rf = RandomGeneratorFactory.of("L64X256MixRandom");
         RandomGenerator rnd = rf.create(20260818L);
         for (int i = 0; i < 3_000; i++) {
             String pattern = randomPattern(rnd);
@@ -236,12 +237,12 @@ class LongestMatchParityTest {
                 int[] expected = re2jFindPosix(pattern, input);
                 int[] actual = tdfaFindPosix(pattern, input, factory);
                 assertThat(actual)
-                                .as("seed-case #%d pattern=\"%s\" input=\"%s\"", i, pattern, input)
-                                .isEqualTo(expected);
+                        .as("seed-case #%d pattern=\"%s\" input=\"%s\"", i, pattern, input)
+                        .isEqualTo(expected);
             } catch (RuntimeException e) {
                 // both engines must agree on rejection too; anything else is a bug
                 try {
-                    com.google.re2j.Pattern.compile(pattern, com.google.re2j.Pattern.LONGEST_MATCH);
+                    Pattern.compile(pattern, Pattern.LONGEST_MATCH);
                 } catch (RuntimeException expectedToo) {
                     continue; // both reject — fine
                 }
@@ -258,16 +259,39 @@ class LongestMatchParityTest {
         for (int p = 0; p < parts; p++) {
             switch (rnd.nextInt(8)) {
                 case 0 -> sb.append(atom(rnd));
-                case 1 -> sb.append('(').append(atom(rnd)).append('|').append(atom(rnd)).append(')');
+                case 1 ->
+                    sb.append('(')
+                            .append(atom(rnd))
+                            .append('|')
+                            .append(atom(rnd))
+                            .append(')');
                 case 2 -> sb.append('(').append(atom(rnd)).append(')').append(quant(rnd));
-                case 3 -> sb.append('(').append(atom(rnd)).append('|').append(atom(rnd)).append(')').append(quant(rnd));
+                case 3 ->
+                    sb.append('(')
+                            .append(atom(rnd))
+                            .append('|')
+                            .append(atom(rnd))
+                            .append(')')
+                            .append(quant(rnd));
                 case 4 -> sb.append(atom(rnd)).append(quant(rnd));
                 case 5 -> sb.append('(').append(atom(rnd)).append(quant(rnd)).append(')');
                 // nested quantifiers: quantified group whose body is itself quantified —
                 // nullable-body stars, the (a*?)*? submatch-disambiguation family
-                case 6 -> sb.append('(').append(atom(rnd)).append(quant(rnd)).append(')').append(quant(rnd));
-                case 7 -> sb.append("((").append(atom(rnd)).append(quant(rnd)).append(")|(")
-                                .append(atom(rnd)).append(quant(rnd)).append("))").append(quant(rnd));
+                case 6 ->
+                    sb.append('(')
+                            .append(atom(rnd))
+                            .append(quant(rnd))
+                            .append(')')
+                            .append(quant(rnd));
+                case 7 ->
+                    sb.append("((")
+                            .append(atom(rnd))
+                            .append(quant(rnd))
+                            .append(")|(")
+                            .append(atom(rnd))
+                            .append(quant(rnd))
+                            .append("))")
+                            .append(quant(rnd));
             }
         }
         return sb.toString();

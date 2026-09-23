@@ -1,9 +1,10 @@
 package io.github.jemmix.tdfa.bench;
 
+import com.datadoghq.reggie.Reggie;
 import io.github.jemmix.tdfa.Pattern;
-import io.github.jemmix.tdfa.core.RegexEngine;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -18,9 +19,6 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
-
-import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
 
 /**
  * Tight-loop short-input benchmark. Uses @OperationsPerInvocation(10_000) so JMH reports
@@ -51,14 +49,15 @@ public class ParameterizedShortInputBench {
 
         @Setup(Level.Trial)
         public void setUp() {
-            String regex = switch (regexSlug) {
-                case "alt" -> "(a|b)*c";
-                case "two" -> "(\\w+)\\s+(\\w+)";
-                case "ip" -> "(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)";
-                case "lit" -> "abc";
-                case "redos" -> "(a+)+b";
-                default -> throw new UnsupportedOperationException("unknown regexSlug: " + regexSlug);
-            };
+            String regex =
+                    switch (regexSlug) {
+                        case "alt" -> "(a|b)*c";
+                        case "two" -> "(\\w+)\\s+(\\w+)";
+                        case "ip" -> "(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)";
+                        case "lit" -> "abc";
+                        case "redos" -> "(a+)+b";
+                        default -> throw new UnsupportedOperationException("unknown regexSlug: " + regexSlug);
+                    };
 
             in = switch (regexSlug) {
                 case "alt" -> "aabbc";
@@ -80,7 +79,7 @@ public class ParameterizedShortInputBench {
                     var pattern = com.google.re2j.Pattern.compile(regex);
                     matches = s -> pattern.matcher(s).matches();
                 }
-                case "reggie" -> matches = com.datadoghq.reggie.Reggie.compile(regex)::matches;
+                case "reggie" -> matches = Reggie.compile(regex)::matches;
                 default -> throw new UnsupportedOperationException("unknown engine: " + engine);
             }
         }

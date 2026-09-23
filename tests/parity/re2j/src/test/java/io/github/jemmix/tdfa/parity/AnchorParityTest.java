@@ -1,14 +1,11 @@
 package io.github.jemmix.tdfa.parity;
 
-import io.github.jemmix.tdfa.core.Matcher;
-import io.github.jemmix.tdfa.core.PatternSyntaxException;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
-
 import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameAllMatches;
 import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
+
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Anchor parity: ^ $ \A \z \b \B, multiline behavior.

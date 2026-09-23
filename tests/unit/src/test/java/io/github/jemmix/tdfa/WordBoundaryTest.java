@@ -1,15 +1,13 @@
 package io.github.jemmix.tdfa;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import io.github.jemmix.tdfa.core.Matcher;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import org.junit.jupiter.api.Test;
+import java.util.stream.Stream;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
-
-import java.util.stream.Stream;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Word boundary {@code \b} / {@code \B} semantics: zero-width assertion mask
@@ -33,6 +31,7 @@ class WordBoundaryTest {
 
     /** Mathematical Fraktur A (U+1D504) is a Unicode letter; under (?u) \w it's a word char. */
     private static final String SUP_LETTER_A = "\uD835\uDD04"; // 𝔄
+
     private static final String SUP_LETTER_B = "\uD835\uDD05"; // 𝔅
 
     private static Stream<RegexEngineFactory> factories() {
@@ -51,7 +50,7 @@ class WordBoundaryTest {
 
     private static int countMatches(Pattern p, String input) {
         int count = 0;
-        for (Matcher m = p.matcher(input); m.find();) {
+        for (Matcher m = p.matcher(input); m.find(); ) {
             count++;
         }
         return count;
@@ -92,7 +91,7 @@ class WordBoundaryTest {
     @MethodSource("factories")
     void manyKeywordPrefixCharsAllMatch(RegexEngineFactory f) {
         Pattern r = Pattern.compile("(\\bcat\\b)|(\\bdog\\b)|(\\bbird\\b)|([a-z]+)", 0, f);
-        for (String input : new String[]{"c", "d", "b", "ca", "do", "bi"}) {
+        for (String input : new String[] {"c", "d", "b", "ca", "do", "bi"}) {
             Matcher m = match(r, input);
             assertThat(m).as("'%s' should match", input).isNotNull();
             assertThat(m.end(0)).isEqualTo(input.length());
@@ -118,7 +117,7 @@ class WordBoundaryTest {
         int[] expectedEnds = {1, 4, 11, 13};
         String input = "a as always b";
         int idx = 0;
-        for (Matcher m = r.matcher(input); m.find();) {
+        for (Matcher m = r.matcher(input); m.find(); ) {
             assertThat(m.end(0)).as("token %d end", idx).isEqualTo(expectedEnds[idx]);
             idx++;
         }
@@ -161,8 +160,8 @@ class WordBoundaryTest {
     void noBoundaryBetweenBmpAndSupplementaryWordChar(RegexEngineFactory f) {
         Matcher m = find("(?u).\\b.", "a" + SUP_LETTER_A + "b", f);
         assertThat(m)
-                        .as(".\b. on a𝔄b — \b should not fire between two word chars (BUG: returns non-null)")
-                        .isNull();
+                .as(".\b. on a𝔄b — \b should not fire between two word chars (BUG: returns non-null)")
+                .isNull();
     }
 
     /**
@@ -174,8 +173,8 @@ class WordBoundaryTest {
     void boundaryAtStartOfSupplementaryWordChars(RegexEngineFactory f) {
         Matcher m = find("(?u)\\b\\w", SUP_LETTER_A + SUP_LETTER_B, f);
         assertThat(m)
-                        .as("\\b\\w on 𝔄𝔅 — \b should fire at start (BUG: returns null)")
-                        .isNotNull();
+                .as("\\b\\w on 𝔄𝔅 — \b should fire at start (BUG: returns null)")
+                .isNotNull();
     }
 
     // ===== BMP non-ASCII word chars under (?u) =====

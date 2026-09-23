@@ -1,9 +1,10 @@
 package io.github.jemmix.tdfa.bench;
 
+import com.datadoghq.reggie.Reggie;
+import com.datadoghq.reggie.runtime.ReggieMatcher;
 import io.github.jemmix.tdfa.Pattern;
-import io.github.jemmix.tdfa.core.RegexEngine;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import java.util.concurrent.TimeUnit;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -14,8 +15,6 @@ import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
-
-import java.util.concurrent.TimeUnit;
 
 /**
  * JMH: tdfa-jvm vs java.util.regex on capture-heavy patterns (the profit cases).
@@ -41,14 +40,14 @@ public class CaptureBench {
     static final Pattern TDFA_LONG;
     static final Pattern ASMC_LONG;
     static final java.util.regex.Pattern JUR_LONG;
-    static final com.datadoghq.reggie.runtime.ReggieMatcher REGGIE_LONG;
+    static final ReggieMatcher REGGIE_LONG;
 
     // ---- short alternation-capture: (a|b)*c on "aabbc" ----
     static final Pattern TDFA_ALT_STAR = Pattern.compile("(a|b)*c", 0, TdfaRunner::new);
     static final Pattern ASMC_ALT_STAR = Pattern.compile("(a|b)*c");
     static final java.util.regex.Pattern JUR_ALT_STAR = java.util.regex.Pattern.compile("(a|b)*c");
     static final com.google.re2j.Pattern RE2J_ALT_STAR = com.google.re2j.Pattern.compile("(a|b)*c");
-    static final com.datadoghq.reggie.runtime.ReggieMatcher REGGIE_ALT_STAR = com.datadoghq.reggie.Reggie.compile("(a|b)*c");
+    static final ReggieMatcher REGGIE_ALT_STAR = Reggie.compile("(a|b)*c");
     static final String IN_ALT_STAR = "aabbc";
 
     // ---- two groups, single space ----
@@ -56,7 +55,7 @@ public class CaptureBench {
     static final Pattern ASMC_TWO = Pattern.compile("(\\w+)\\s+(\\w+)");
     static final java.util.regex.Pattern JUR_TWO = java.util.regex.Pattern.compile("(\\w+)\\s+(\\w+)");
     static final com.google.re2j.Pattern RE2J_TWO = com.google.re2j.Pattern.compile("(\\w+)\\s+(\\w+)");
-    static final com.datadoghq.reggie.runtime.ReggieMatcher REGGIE_TWO = com.datadoghq.reggie.Reggie.compile("(\\w+)\\s+(\\w+)");
+    static final ReggieMatcher REGGIE_TWO = Reggie.compile("(\\w+)\\s+(\\w+)");
     static final String IN_TWO = "hello world";
 
     // ---- IPv4 with 4 capture groups ----
@@ -64,8 +63,7 @@ public class CaptureBench {
     static final Pattern ASMC_IP = Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)");
     static final java.util.regex.Pattern JUR_IP = java.util.regex.Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)");
     static final com.google.re2j.Pattern RE2J_IP = com.google.re2j.Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)");
-    static final com.datadoghq.reggie.runtime.ReggieMatcher REGGIE_IP = com.datadoghq.reggie.Reggie
-                    .compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)");
+    static final ReggieMatcher REGGIE_IP = Reggie.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)");
     static final String IN_IP = "192.168.1.1";
 
     // ---- (a+)+b on a long non-matching input (catastrophic for backtracking) ----
@@ -73,7 +71,7 @@ public class CaptureBench {
     static final Pattern ASMC_NESTED = Pattern.compile("(a+)+b");
     static final java.util.regex.Pattern JUR_NESTED = java.util.regex.Pattern.compile("(a+)+b");
     static final com.google.re2j.Pattern RE2J_NESTED = com.google.re2j.Pattern.compile("(a+)+b");
-    static final com.datadoghq.reggie.runtime.ReggieMatcher REGGIE_NESTED = com.datadoghq.reggie.Reggie.compile("(a+)+b");
+    static final ReggieMatcher REGGIE_NESTED = Reggie.compile("(a+)+b");
     static final String IN_NESTED = "aaaaaaaaaaaaaaaaaaaac"; // 20 'a's + 'c', no 'b'
 
     // ============ boolean match (no group extraction) ============
@@ -187,7 +185,7 @@ public class CaptureBench {
         TDFA_LONG = Pattern.compile(longPat, 0, TdfaRunner::new);
         ASMC_LONG = Pattern.compile(longPat);
         JUR_LONG = java.util.regex.Pattern.compile(longPat);
-        REGGIE_LONG = com.datadoghq.reggie.Reggie.compile(longPat);
+        REGGIE_LONG = Reggie.compile(longPat);
     }
 
     /** find() on a 1000-char all-letter input where the pattern requires a digit. Both engines

@@ -1,13 +1,13 @@
 package io.github.jemmix.tdfa;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import io.github.jemmix.tdfa.core.CompiledRegex;
 import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.PatternSyntaxException;
 import org.junit.jupiter.api.Test;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Crash-hardening guarantees of the parser (2026-09 pre-freeze review):
@@ -24,8 +24,8 @@ class ParserHardeningTest {
         // unclosed groups: the iterative parser walks all 2000 '(' without
         // touching the JVM stack and reports the EOF like any syntax error
         assertThatThrownBy(() -> CompiledRegex.compile("(".repeat(2000) + "a"))
-                        .isInstanceOf(PatternSyntaxException.class)
-                        .hasMessageContaining("expected ')'");
+                .isInstanceOf(PatternSyntaxException.class)
+                .hasMessageContaining("expected ')'");
     }
 
     @Test
@@ -54,9 +54,9 @@ class ParserHardeningTest {
         try {
             String re = "(".repeat(600) + "a" + ")".repeat(600);
             assertThatThrownBy(() -> CompiledRegex.compile(re))
-                            .isInstanceOf(PatternSyntaxException.class)
-                            .hasMessageContaining("pattern too large")
-                            .hasMessageContaining("tdfa.budget.compile.memory");
+                    .isInstanceOf(PatternSyntaxException.class)
+                    .hasMessageContaining("pattern too large")
+                    .hasMessageContaining("tdfa.budget.compile.memory");
         } finally {
             System.clearProperty("tdfa.budget.compile.memory");
         }
@@ -74,8 +74,8 @@ class ParserHardeningTest {
         System.setProperty("tdfa.budget.compile.memory", "100000");
         try {
             assertThatThrownBy(() -> CompiledRegex.compile("(?:(?:a{2,1000}))"))
-                            .isInstanceOf(PatternSyntaxException.class)
-                            .hasMessageContaining("pattern too large");
+                    .isInstanceOf(PatternSyntaxException.class)
+                    .hasMessageContaining("pattern too large");
         } finally {
             System.clearProperty("tdfa.budget.compile.memory");
         }
@@ -85,14 +85,14 @@ class ParserHardeningTest {
     void deepEscapeFreeNestingStillCleanError() {
         // the per-group frame is pushed regardless of body shape
         assertThatThrownBy(() -> CompiledRegex.compile("(?:".repeat(2000) + "a"))
-                        .isInstanceOf(PatternSyntaxException.class);
+                .isInstanceOf(PatternSyntaxException.class);
     }
 
     @Test
     void repeatOverflowIsCleanParseError() {
         assertThatThrownBy(() -> CompiledRegex.compile("a{2147483648}"))
-                        .isInstanceOf(PatternSyntaxException.class)
-                        .hasMessageContaining("invalid repeat count");
+                .isInstanceOf(PatternSyntaxException.class)
+                .hasMessageContaining("invalid repeat count");
     }
 
     @Test
@@ -100,27 +100,25 @@ class ParserHardeningTest {
         // previously: eager {n} desugaring OOM'd the TNFA builder before any
         // determinization budget could fire
         assertThatThrownBy(() -> CompiledRegex.compile("a{500000000}"))
-                        .isInstanceOf(PatternSyntaxException.class)
-                        .hasMessageContaining("invalid repeat count");
+                .isInstanceOf(PatternSyntaxException.class)
+                .hasMessageContaining("invalid repeat count");
     }
 
     @Test
     void repeatCapBoundary() {
         assertThatCode(() -> CompiledRegex.compile("a{1000}")).doesNotThrowAnyException();
         assertThatThrownBy(() -> CompiledRegex.compile("a{1001}"))
-                        .isInstanceOf(PatternSyntaxException.class)
-                        .hasMessageContaining("invalid repeat count");
+                .isInstanceOf(PatternSyntaxException.class)
+                .hasMessageContaining("invalid repeat count");
         assertThatThrownBy(() -> CompiledRegex.compile("a{0,1001}"))
-                        .isInstanceOf(PatternSyntaxException.class)
-                        .hasMessageContaining("invalid repeat count");
+                .isInstanceOf(PatternSyntaxException.class)
+                .hasMessageContaining("invalid repeat count");
     }
 
     @Test
     void hexOverflowIsCleanParseError() {
-        assertThatThrownBy(() -> CompiledRegex.compile("\\x{1100000}"))
-                        .isInstanceOf(PatternSyntaxException.class);
-        assertThatThrownBy(() -> CompiledRegex.compile("\\x{110000}"))
-                        .isInstanceOf(PatternSyntaxException.class);
+        assertThatThrownBy(() -> CompiledRegex.compile("\\x{1100000}")).isInstanceOf(PatternSyntaxException.class);
+        assertThatThrownBy(() -> CompiledRegex.compile("\\x{110000}")).isInstanceOf(PatternSyntaxException.class);
         assertThatCode(() -> CompiledRegex.compile("\\x{10FFFF}")).doesNotThrowAnyException();
     }
 
@@ -142,11 +140,11 @@ class ParserHardeningTest {
     @Test
     void quantifierWithoutAtomIsErrorNotLiteral() {
         assertThatThrownBy(() -> CompiledRegex.compile("*a"))
-                        .isInstanceOf(PatternSyntaxException.class)
-                        .hasMessageContaining("missing argument");
+                .isInstanceOf(PatternSyntaxException.class)
+                .hasMessageContaining("missing argument");
         assertThatThrownBy(() -> CompiledRegex.compile("a*{2}"))
-                        .isInstanceOf(PatternSyntaxException.class)
-                        .hasMessageContaining("invalid nested repetition");
+                .isInstanceOf(PatternSyntaxException.class)
+                .hasMessageContaining("invalid nested repetition");
         // previously a*{2} parsed as a* + literal "{2}" and MATCHED "aa{2}"
         assertThat(CompiledRegex.compile("a*").find("aa{2}")).isTrue();
     }
@@ -154,8 +152,8 @@ class ParserHardeningTest {
     @Test
     void groupNameValidated() {
         assertThatThrownBy(() -> CompiledRegex.compile("(?<a b>x)"))
-                        .isInstanceOf(PatternSyntaxException.class)
-                        .hasMessageContaining("invalid named capture");
+                .isInstanceOf(PatternSyntaxException.class)
+                .hasMessageContaining("invalid named capture");
         assertThatCode(() -> CompiledRegex.compile("(?<a_1>x)y")).doesNotThrowAnyException();
     }
 }

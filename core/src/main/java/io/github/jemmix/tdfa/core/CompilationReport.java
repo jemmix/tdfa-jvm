@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.core;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -65,8 +66,11 @@ public final class CompilationReport implements CompileObserver {
                 if (!first) {
                     sb.append(", ");
                 }
-                sb.append(s.name().toLowerCase(java.util.Locale.ROOT)).append("=").append(nanos.get(s)).append("ns/")
-                                .append(details.get(s));
+                sb.append(s.name().toLowerCase(Locale.ROOT))
+                        .append("=")
+                        .append(nanos.get(s))
+                        .append("ns/")
+                        .append(details.get(s));
                 first = false;
             }
         }

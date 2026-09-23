@@ -1,9 +1,9 @@
 package io.github.jemmix.tdfa.regopt;
 
-import org.junit.jupiter.api.Test;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import org.junit.jupiter.api.Test;
 
 /**
  * rename() fail-fast contract: every op-referenced register must be mapped by
@@ -26,23 +26,23 @@ class OptimizeRenameTest {
     @Test
     void failsFastOnOutOfRangeRegister() {
         Cfg cfg = cfgWithOp(Cfg.Op.copy(0, 2)); // vmap below covers 0..1 only
-        assertThatThrownBy(() -> Optimize.rename(cfg, new int[]{5, -1}))
-                        .isInstanceOf(IllegalStateException.class)
-                        .hasMessageContaining("unmapped register 2");
+        assertThatThrownBy(() -> Optimize.rename(cfg, new int[] {5, -1}))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("unmapped register 2");
     }
 
     @Test
     void failsFastOnUnusedRegister() {
         Cfg cfg = cfgWithOp(Cfg.Op.setPos(1)); // vmap[1] = -1 (unused sentinel)
-        assertThatThrownBy(() -> Optimize.rename(cfg, new int[]{0, -1}))
-                        .isInstanceOf(IllegalStateException.class)
-                        .hasMessageContaining("unmapped register 1");
+        assertThatThrownBy(() -> Optimize.rename(cfg, new int[] {0, -1}))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("unmapped register 1");
     }
 
     @Test
     void renamesMappedRegistersBothSides() {
         Cfg cfg = cfgWithOp(Cfg.Op.copy(0, 1));
-        Optimize.rename(cfg, new int[]{5, 7, -1});
+        Optimize.rename(cfg, new int[] {5, 7, -1});
         Cfg.Op op = cfg.blocks.get(0).ops.get(0);
         assertThat(op.dst).isEqualTo(5);
         assertThat(op.src).isEqualTo(7);
@@ -51,7 +51,7 @@ class OptimizeRenameTest {
     @Test
     void setOpsLeaveSrcUntouched() {
         Cfg cfg = cfgWithOp(Cfg.Op.setNil(0));
-        Optimize.rename(cfg, new int[]{4, -1, -1});
+        Optimize.rename(cfg, new int[] {4, -1, -1});
         assertThat(cfg.blocks.get(0).ops.get(0).dst).isEqualTo(4);
     }
 }

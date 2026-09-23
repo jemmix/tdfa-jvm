@@ -36,8 +36,7 @@ public final class CaseFoldTable {
     /** Published index (built once; volatile for safe lazy publication). */
     private static volatile FoldIndex index;
 
-    private CaseFoldTable() {
-    }
+    private CaseFoldTable() {}
 
     /**
      * Primitive open-addressed fold-key → ranges index (linear probing,
@@ -152,7 +151,7 @@ public final class CaseFoldTable {
                         continue;
                     }
                 }
-                merged.add(new int[]{cp, cp});
+                merged.add(new int[] {cp, cp});
             }
             int[] flat = new int[merged.size() * 2];
             for (int i = 0; i < merged.size(); i++) {

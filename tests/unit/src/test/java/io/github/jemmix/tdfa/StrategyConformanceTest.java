@@ -1,5 +1,7 @@
 package io.github.jemmix.tdfa;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.MatchScratch;
@@ -8,13 +10,10 @@ import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
 import io.github.jemmix.tdfa.unicode.UnicodeProviders;
+import java.util.List;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-
-import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Strategy conformance: the interpreter and the ASM backend must not only
@@ -34,29 +33,30 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class StrategyConformanceTest {
 
-    private static final List<String[]> SHAPES = List.of(new String[][]{
-                    {"Twain", "The adventures of Tom Sawyer and Huckleberry Finn, by Mark Twain."},
-                    {"zzqqxv", "The adventures of Tom Sawyer and Huckleberry Finn, by Mark."},
-                    {"(?i)sherlock", "Mr Sherlock Holmes, the consulting detective, walked in."},
-                    {"\\bword\\b", "a short sentence with word inside the text here"},
-                    {"\\p{L}{2,}", "Привет мир, вот тестовое предложение короткое"},
-                    {"[а-яА-ЯёЁ]{4,}", "Привет мир, вот тестовое предложение короткое"},
-                    {"\"[^\"]{5,20}\"", "He said \"hello world\" today and left quite quietly"},
-                    {"(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "connecting from ip=192.168.1.77 port 443 ok"},
-                    {"(a|b)*c", "aabbaabbc"},
-                    {"\\w+@\\w+\\.(com|org|net)", "no addresses anywhere in this particular line at all"},
-                    {"[a-z]+qrst", "the quick brown fox jumps over the lazy dog qrstxx"},
-                    {"(?m)^line", "first\nline two\nline three\nline four\nline five"},
-                    // φ-variant accepting states (stateFinalOpsByMask on a fastPath
-                    // DFA): wholeOne's EOF gate/φ selection is compared span-exact
-                    // against wholeWalk via matchWhole (fuzz round 28 family).
-                    {"(?:.)((?:\\B)?)", "\ud800\udfff"},
-                    {"(\\b)?", "word words"},
-                    {".(?<n0>(\\z)*)", "_"},
+    private static final List<String[]> SHAPES = List.of(new String[][] {
+        {"Twain", "The adventures of Tom Sawyer and Huckleberry Finn, by Mark Twain."},
+        {"zzqqxv", "The adventures of Tom Sawyer and Huckleberry Finn, by Mark."},
+        {"(?i)sherlock", "Mr Sherlock Holmes, the consulting detective, walked in."},
+        {"\\bword\\b", "a short sentence with word inside the text here"},
+        {"\\p{L}{2,}", "Привет мир, вот тестовое предложение короткое"},
+        {"[а-яА-ЯёЁ]{4,}", "Привет мир, вот тестовое предложение короткое"},
+        {"\"[^\"]{5,20}\"", "He said \"hello world\" today and left quite quietly"},
+        {"(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "connecting from ip=192.168.1.77 port 443 ok"},
+        {"(a|b)*c", "aabbaabbc"},
+        {"\\w+@\\w+\\.(com|org|net)", "no addresses anywhere in this particular line at all"},
+        {"[a-z]+qrst", "the quick brown fox jumps over the lazy dog qrstxx"},
+        {"(?m)^line", "first\nline two\nline three\nline four\nline five"},
+        // φ-variant accepting states (stateFinalOpsByMask on a fastPath
+        // DFA): wholeOne's EOF gate/φ selection is compared span-exact
+        // against wholeWalk via matchWhole (fuzz round 28 family).
+        {"(?:.)((?:\\B)?)", "\ud800\udfff"},
+        {"(\\b)?", "word words"},
+        {".(?<n0>(\\z)*)", "_"},
     });
 
-    private static final int[] LENGTHS = {1, 2, 3, 15, 40, 63, 64, 65, 100, 127, 128, 129,
-                    255, 256, 257, 300, 2047, 2048, 2049, 4100};
+    private static final int[] LENGTHS = {
+        1, 2, 3, 15, 40, 63, 64, 65, 100, 127, 128, 129, 255, 256, 257, 300, 2047, 2048, 2049, 4100
+    };
 
     @BeforeAll
     static void enableTracing() {
@@ -173,8 +173,9 @@ class StrategyConformanceTest {
         assertThat(t2).as("%s: matchWhole strategy trace (vm=%s)", ctx, t1).isEqualTo(t1);
         // CharSequence input: both must take the GENERIC delegation path
         CharSequence cs = new StringBuilder(in);
-        assertThat(asm.matchWhole(cs, new MatchScratch()) == null).as("%s: matchWhole(CharSequence) nullity", ctx)
-                        .isEqualTo(vm.matchWhole(cs, new MatchScratch()) == null);
+        assertThat(asm.matchWhole(cs, new MatchScratch()) == null)
+                .as("%s: matchWhole(CharSequence) nullity", ctx)
+                .isEqualTo(vm.matchWhole(cs, new MatchScratch()) == null);
         return 9;
     }
 

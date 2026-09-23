@@ -1,15 +1,14 @@
 package io.github.jemmix.tdfa;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0;
-import org.junit.jupiter.api.Test;
-
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Test;
 
 /**
  * Serialization round-trips of the facade Pattern (review Phase C / P1 #17):
@@ -66,8 +65,7 @@ class PatternSerializationTest {
         // The pin survived: same provider class, resolvable by the proxy's
         // convention (static provider()), and semantics follow the pinned
         // tables.
-        assertThat(((TDFAPattern) copy).unicodeProvider())
-                        .isEqualTo(Unicode6_0.provider());
+        assertThat(((TDFAPattern) copy).unicodeProvider()).isEqualTo(Unicode6_0.provider());
         assertThat(copy.matcher("Gr\u00fc\u00dfe").matches()).isTrue();
         assertThat(copy.matcher("abc1").matches()).isFalse();
     }

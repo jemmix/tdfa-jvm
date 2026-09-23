@@ -1,5 +1,7 @@
 package io.github.jemmix.tdfa.core;
 
+import java.nio.charset.StandardCharsets;
+
 /**
  * Stateful matcher over one input: find-iteration, group access, and the
  * full replacement machinery ({@code replaceAll}/{@code replaceFirst}/
@@ -25,18 +27,22 @@ public class Matcher {
 
     @EmittedSurface // the 7 fields below are linked by name from generated shells
     protected CharSequence input;
+
     @EmittedSurface
     protected int inputLength;
 
     @EmittedSurface
     protected MatchResult match;
+
     @EmittedSurface
     protected boolean hasMatch;
 
     @EmittedSurface
     protected int lastMatchStart;
+
     @EmittedSurface
     protected int lastMatchEnd;
+
     @EmittedSurface
     protected int appendPos;
 
@@ -59,9 +65,7 @@ public class Matcher {
         this.wholeEngine = wholeEngine;
         this.input = input;
         this.inputLength = input.length();
-        this.scratch = engine.wantsScratch() || wholeEngine.wantsScratch()
-                        ? new MatchScratch()
-                        : null;
+        this.scratch = engine.wantsScratch() || wholeEngine.wantsScratch() ? new MatchScratch() : null;
     }
 
     public Matcher reset() {
@@ -79,7 +83,7 @@ public class Matcher {
 
     /** Reset with UTF-8-decoded bytes as the new input (re2j's {@code MatcherInput.utf8}). */
     public Matcher reset(byte[] bytes) {
-        return reset(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
+        return reset(new String(bytes, StandardCharsets.UTF_8));
     }
 
     // ---- match operations ----

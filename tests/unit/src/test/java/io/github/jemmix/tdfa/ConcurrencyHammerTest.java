@@ -1,8 +1,10 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.MatchResult;
-import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.assertThat;
 
+import io.github.jemmix.tdfa.core.CompiledRegex;
+import io.github.jemmix.tdfa.core.MatchResult;
+import io.github.jemmix.tdfa.core.Matcher;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -11,8 +13,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Test;
 
 /**
  * Conformance of the RegexEngine thread-safety contract ("effectively
@@ -51,7 +52,7 @@ class ConcurrencyHammerTest {
     /** Deterministic result digest of find()-iteration over the text. */
     private static long digest(Pattern p, String input) {
         long h = 17;
-        io.github.jemmix.tdfa.core.Matcher m = p.matcher(input);
+        Matcher m = p.matcher(input);
         int n = 0;
         while (m.find()) {
             h = h * 1000003L + m.start();
@@ -65,7 +66,7 @@ class ConcurrencyHammerTest {
         return h * 1000003L + n;
     }
 
-    private static long digestCore(io.github.jemmix.tdfa.core.CompiledRegex r, String input) {
+    private static long digestCore(CompiledRegex r, String input) {
         long h = 29;
         for (MatchResult m : r.findAll(input)) {
             h = h * 1000003L + m.start(0);
@@ -96,8 +97,8 @@ class ConcurrencyHammerTest {
             }
             for (Future<Long> f : fs) {
                 assertThat(f.get(60, TimeUnit.SECONDS))
-                                .as(name + ": concurrent results identical to single-threaded")
-                                .isEqualTo(expect);
+                        .as(name + ": concurrent results identical to single-threaded")
+                        .isEqualTo(expect);
             }
         } finally {
             pool.shutdownNow();
@@ -128,7 +129,7 @@ class ConcurrencyHammerTest {
     @Test
     void coreTierConcurrentFindAll() throws Exception {
         String input = text("core", 25);
-        io.github.jemmix.tdfa.core.CompiledRegex r = io.github.jemmix.tdfa.core.CompiledRegex.compile("[\\x{400}-\\x{4FF}]{2,}|\\w+ing");
+        CompiledRegex r = CompiledRegex.compile("[\\x{400}-\\x{4FF}]{2,}|\\w+ing");
         hammer("core", () -> digestCore(r, input), () -> digestCore(r, input));
     }
 

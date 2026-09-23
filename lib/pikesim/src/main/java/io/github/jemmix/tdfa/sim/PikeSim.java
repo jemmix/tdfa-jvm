@@ -3,8 +3,10 @@ package io.github.jemmix.tdfa.sim;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
 import io.github.jemmix.tdfa.unicode.UnicodeProviders;
-
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -334,7 +336,7 @@ public final class PikeSim {
 
         private int[] freshCaps() {
             int[] cap = new int[sim.nfa.tagCount + 1];
-            java.util.Arrays.fill(cap, -1);
+            Arrays.fill(cap, -1);
             return cap;
         }
 
@@ -464,8 +466,7 @@ public final class PikeSim {
             if (wr == null) {
                 // plain mode: \w is ASCII [0-9A-Za-z_] (mirrors the engine's
                 // null-ranges fallback, implemented independently)
-                return cp == '_' || (cp >= '0' && cp <= '9')
-                                || (cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z');
+                return cp == '_' || (cp >= '0' && cp <= '9') || (cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z');
             }
             int lo = 0, hi = wr.length / 2 - 1;
             while (lo <= hi) {
@@ -501,6 +502,7 @@ public final class PikeSim {
     private static final class Parked {
         final int state;
         final int[] cap;
+
         Parked(int state, int[] cap) {
             this.state = state;
             this.cap = cap;
@@ -523,7 +525,7 @@ public final class PikeSim {
             runLine(sim, args[1]);
             return;
         }
-        java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(System.in));
+        BufferedReader r = new BufferedReader(new InputStreamReader(System.in));
         String line;
         while ((line = r.readLine()) != null) {
             runLine(sim, line);

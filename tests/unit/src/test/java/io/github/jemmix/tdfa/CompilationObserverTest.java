@@ -1,11 +1,12 @@
 package io.github.jemmix.tdfa;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import io.github.jemmix.tdfa.core.CompilationReport;
 import io.github.jemmix.tdfa.core.CompileObserver;
 import io.github.jemmix.tdfa.core.CompileOptions;
+import io.github.jemmix.tdfa.core.CompiledRegex;
 import org.junit.jupiter.api.Test;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Compilation transparency: a {@link CompilationReport} attached via
@@ -17,8 +18,7 @@ class CompilationObserverTest {
     @Test
     void coreTierRecordsAllStages() {
         CompilationReport r = new CompilationReport();
-        io.github.jemmix.tdfa.core.CompiledRegex.compile("(\\w+)@(\\w+)\\.(com|org)",
-                        CompileOptions.of().observer(r));
+        CompiledRegex.compile("(\\w+)@(\\w+)\\.(com|org)", CompileOptions.of().observer(r));
         assertThat(r.detail(CompileObserver.Stage.PARSE)).isEqualTo(6); // 3 groups -> 6 tags
         assertThat(r.detail(CompileObserver.Stage.TNFA)).isPositive();
         assertThat(r.detail(CompileObserver.Stage.DETERMINIZE)).isPositive();
@@ -33,8 +33,8 @@ class CompilationObserverTest {
     void facadeRecordsGeneratedEngineDecision() {
         CompilationReport r = new CompilationReport();
         Pattern.compile("(a|b)*c", CompileOptions.of().observer(r));
-        assertThat(r.notes().get("engine")).isIn("generated", "shared (shell emission failed)",
-                        "shared-interpreter (tdfa.engine=VM)");
+        assertThat(r.notes().get("engine"))
+                .isIn("generated", "shared (shell emission failed)", "shared-interpreter (tdfa.engine=VM)");
         if ("generated".equals(r.notes().get("engine"))) {
             assertThat(r.nanos(CompileObserver.Stage.ENGINE)).isGreaterThanOrEqualTo(0L);
         }
@@ -53,6 +53,6 @@ class CompilationObserverTest {
     void noObserverIsDefaultAndCheap() {
         // smoke: compiles fine with no observer attached
         assertThat(Pattern.compile("x+").matcher("xx").find()).isTrue();
-        assertThat(io.github.jemmix.tdfa.core.CompiledRegex.compile("x+").find("xx")).isTrue();
+        assertThat(CompiledRegex.compile("x+").find("xx")).isTrue();
     }
 }

@@ -39,7 +39,8 @@ public abstract class Ast {
                 }
             } else if (e instanceof Repeat) {
                 Repeat r = (Repeat) e;
-                tokens.push("{" + r.min + "," + (r.max == Integer.MAX_VALUE ? "" : r.max) + "}" + (r.greedy ? "" : "?"));
+                tokens.push(
+                        "{" + r.min + "," + (r.max == Integer.MAX_VALUE ? "" : r.max) + "}" + (r.greedy ? "" : "?"));
                 tokens.push(r.body);
             } else {
                 sb.append(e.toString());
@@ -56,6 +57,7 @@ public abstract class Ast {
 
     public static final class Symbol extends Ast {
         public final char c;
+
         public Symbol(char c) {
             this.c = c;
         }
@@ -76,6 +78,7 @@ public abstract class Ast {
         public final int tag;
         public int fixedOn;
         public int fixedOffset;
+
         public Tag(int tag) {
             this.tag = tag;
         }
@@ -88,6 +91,7 @@ public abstract class Ast {
 
     public static final class Concat extends Ast {
         public final List<Ast> children;
+
         public Concat(List<Ast> children) {
             this.children = children;
         }
@@ -102,6 +106,7 @@ public abstract class Ast {
 
     public static final class Alt extends Ast {
         public final List<Ast> children;
+
         public Alt(List<Ast> children) {
             this.children = children;
         }
@@ -119,6 +124,7 @@ public abstract class Ast {
         public final Ast body;
         public final int min, max;
         public final boolean greedy;
+
         public Repeat(Ast body, int min, int max, boolean greedy) {
             this.body = body;
             this.min = min;
@@ -142,6 +148,7 @@ public abstract class Ast {
         public final boolean absolute;
         /** Parse-time (?m) flavor: line-begin (^ under m) vs text-begin. */
         public final boolean multiline;
+
         public StartAnchor() {
             this(false, false);
         }
@@ -169,6 +176,7 @@ public abstract class Ast {
         public final boolean absolute;
         /** Parse-time (?m) flavor: line-end ($ under m) vs text-end. */
         public final boolean multiline;
+
         public EndAnchor() {
             this(false, false);
         }

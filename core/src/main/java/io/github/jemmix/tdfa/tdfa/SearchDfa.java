@@ -1,8 +1,9 @@
 package io.github.jemmix.tdfa.tdfa;
 
-import java.util.HashMap;
-
 import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_KILL;
+
+import java.util.Arrays;
+import java.util.HashMap;
 
 /**
  * Extracted verbatim from TdfaRunner (2026-09 god-file split); the
@@ -45,6 +46,7 @@ final class SearchDfa {
      * Block cap — RAM-budget-derived (see class doc).
      */
     final int maxBlocks;
+
     final Object lock = new Object();
     // ---- writer-confined (all accesses under lock) ----
     private final HashMap<Wrapper, Integer> rowById = new HashMap<>(); // bitset -> row id
@@ -55,6 +57,7 @@ final class SearchDfa {
      * path only).
      */
     private final Wrapper probe = new Wrapper(new int[0]);
+
     volatile boolean capped;
 
     // ---- immutable snapshots; volatile-published on growth (copy-on-write) ----
@@ -73,6 +76,7 @@ final class SearchDfa {
      * block id -> int[512] encoded transitions.
      */
     private volatile int[][] blocksArr = {};
+
     SearchDfa(TdfaRunner r, long memoBudgetBytes) {
         this.r = r;
         this.nw = r.stateWords;
@@ -105,7 +109,7 @@ final class SearchDfa {
      */
     private int internRowLocked(int[] words) {
         probe.a = words;
-        probe.hash = java.util.Arrays.hashCode(words);
+        probe.hash = Arrays.hashCode(words);
         Integer id = rowById.get(probe);
         if (id != null) {
             return id;
@@ -117,12 +121,12 @@ final class SearchDfa {
         int[] key = words.clone();
         int nid = rowWordsArr.length;
         rowById.put(new Wrapper(key), nid);
-        int[][] rw = java.util.Arrays.copyOf(rowWordsArr, nid + 1);
+        int[][] rw = Arrays.copyOf(rowWordsArr, nid + 1);
         rw[nid] = key;
         rowWordsArr = rw; // volatile publish
-        int[][] rb = java.util.Arrays.copyOf(rowBlockIdsArr, nid + 1);
+        int[][] rb = Arrays.copyOf(rowBlockIdsArr, nid + 1);
         int[] cells = new int[128];
-        java.util.Arrays.fill(cells, -1);
+        Arrays.fill(cells, -1);
         rb[nid] = cells;
         rowBlockIdsArr = rb; // volatile publish (cells still all -1)
         return nid;
@@ -242,7 +246,7 @@ final class SearchDfa {
                     return -2;
                 }
                 int n = blocksArr.length;
-                int[][] nb = java.util.Arrays.copyOf(blocksArr, n + 1);
+                int[][] nb = Arrays.copyOf(blocksArr, n + 1);
                 nb[n] = cells;
                 blocksArr = nb; // volatile publish BEFORE the cell can point at it
                 blockId = n;
@@ -337,7 +341,7 @@ final class SearchDfa {
 
         Wrapper(int[] a) {
             this.a = a;
-            hash = java.util.Arrays.hashCode(a);
+            hash = Arrays.hashCode(a);
         }
 
         @Override
@@ -347,7 +351,7 @@ final class SearchDfa {
 
         @Override
         public boolean equals(Object o) {
-            return o instanceof Wrapper && java.util.Arrays.equals(a, ((Wrapper) o).a);
+            return o instanceof Wrapper && Arrays.equals(a, ((Wrapper) o).a);
         }
     }
 }

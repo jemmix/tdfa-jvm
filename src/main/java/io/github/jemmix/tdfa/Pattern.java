@@ -3,7 +3,9 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.core.CompileOptions;
 import io.github.jemmix.tdfa.core.EmittedSurface;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
-
+import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+import java.io.Serializable;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 /**
@@ -38,7 +40,7 @@ import java.util.Map;
  * convention; a pattern compiled against the process default recompiles
  * against the READER's default tables.
  */
-public interface Pattern extends java.io.Serializable {
+public interface Pattern extends Serializable {
 
     /**
      * Flag: case insensitive matching.
@@ -110,8 +112,7 @@ public interface Pattern extends java.io.Serializable {
      * for resolving {@code \p{...}} / {@code \P{...}} property classes — e.g. a
      * pinned-Unicode-version provider for reproducible matching across JVMs.
      */
-    static Pattern compile(String regex, int flags, RegexEngineFactory factory,
-                    io.github.jemmix.tdfa.unicode.UnicodeDataProvider unicodeProvider) {
+    static Pattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider unicodeProvider) {
         return PatternCompiler.compile(regex, flags, factory, unicodeProvider);
     }
 
@@ -129,8 +130,7 @@ public interface Pattern extends java.io.Serializable {
         if (options.isDisableUnicodeGroups()) {
             flags |= DISABLE_UNICODE_GROUPS;
         }
-        return PatternCompiler.compile(regex, flags, null,
-                        options.unicodeProvider(), options.observer());
+        return PatternCompiler.compile(regex, flags, null, options.unicodeProvider(), options.observer());
     }
 
     /**
@@ -157,7 +157,7 @@ public interface Pattern extends java.io.Serializable {
             return "";
         }
         StringBuilder out = new StringBuilder(s.length() << 1);
-        for (int i = 0; i < s.length();) {
+        for (int i = 0; i < s.length(); ) {
             int c = s.codePointAt(i);
             i += Character.charCount(c);
             if ("\\.+*?()|[]{}^$".indexOf(c) >= 0) {
@@ -236,11 +236,10 @@ public interface Pattern extends java.io.Serializable {
      */
     @EmittedSurface
     final class Utf8 {
-        private Utf8() {
-        }
+        private Utf8() {}
 
         public static String decode(byte[] bytes) {
-            return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+            return new String(bytes, StandardCharsets.UTF_8);
         }
     }
 }

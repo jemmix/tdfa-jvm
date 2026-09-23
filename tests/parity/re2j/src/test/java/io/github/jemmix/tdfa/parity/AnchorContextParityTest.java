@@ -1,10 +1,10 @@
 package io.github.jemmix.tdfa.parity;
 
+import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
+
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
-
-import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
 
 /**
  * Assertion-context conformance for zero-width anchors under optional /

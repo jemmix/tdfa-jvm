@@ -1,7 +1,12 @@
 package io.github.jemmix.tdfa;
 
-import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.assertThat;
 
+import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
+import io.github.jemmix.tdfa.sim.PikeSim;
+import io.github.jemmix.tdfa.tdfa.Tdfa;
+import io.github.jemmix.tdfa.unicode.v17_0.Unicode17_0;
+import io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -10,11 +15,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+import org.junit.jupiter.api.Test;
 
 /**
  * Bytecode floor per shipped module (docs/REVIEW-2026-09.md §1d): core,
@@ -43,12 +50,12 @@ class BytecodeFloorTest {
 
     /** One anchor + ceiling per shipped module — compile-time presence guarantee. */
     private static final Object[][] ANCHORS = {
-                    {io.github.jemmix.tdfa.Pattern.class, MAJOR_JAVA_8}, // facade
-                    {io.github.jemmix.tdfa.tdfa.Tdfa.class, MAJOR_JAVA_8}, // core
-                    {io.github.jemmix.tdfa.asm.TdfaAsmBackend.class, MAJOR_JAVA_8}, // asm
-                    {io.github.jemmix.tdfa.sim.PikeSim.class, MAJOR_JAVA_25}, // lib:pikesim
-                    {io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0.class, MAJOR_JAVA_25}, // unicode:v6_0
-                    {io.github.jemmix.tdfa.unicode.v17_0.Unicode17_0.class, MAJOR_JAVA_25}, // unicode:v17_0
+        {Pattern.class, MAJOR_JAVA_8}, // facade
+        {Tdfa.class, MAJOR_JAVA_8}, // core
+        {TdfaAsmBackend.class, MAJOR_JAVA_8}, // asm
+        {PikeSim.class, MAJOR_JAVA_25}, // lib:pikesim
+        {Unicode6_0.class, MAJOR_JAVA_25}, // unicode:v6_0
+        {Unicode17_0.class, MAJOR_JAVA_25}, // unicode:v17_0
     };
 
     @Test
@@ -75,15 +82,15 @@ class BytecodeFloorTest {
             } else if (root.toString().endsWith(".jar")) {
                 // Gradle may place a project dependency as its packaged jar
                 // (the -PagainstJars CI pipeline always does).
-                try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(root.toFile())) {
-                    java.util.Enumeration<? extends java.util.zip.ZipEntry> entries = zip.entries();
+                try (ZipFile zip = new ZipFile(root.toFile())) {
+                    Enumeration<? extends ZipEntry> entries = zip.entries();
                     while (entries.hasMoreElements()) {
-                        java.util.zip.ZipEntry e = entries.nextElement();
+                        ZipEntry e = entries.nextElement();
                         if (!e.getName().endsWith(".class")) {
                             continue;
                         }
                         checked[0]++;
-                        java.util.zip.ZipEntry entry = e;
+                        ZipEntry entry = e;
                         checkOne(root + "!" + e.getName(), limit, offenders, () -> zip.getInputStream(entry));
                     }
                 }
@@ -91,20 +98,21 @@ class BytecodeFloorTest {
             // Vacuous-success guard per module: an empty/ relocated output
             // directory must fail loudly, not silently pass.
             assertThat(checked[0] - before)
-                            .as("class files under %s (output layout change?)", root)
-                            .isGreaterThanOrEqualTo(3);
+                    .as("class files under %s (output layout change?)", root)
+                    .isGreaterThanOrEqualTo(3);
         }
         assertThat(checked[0]).isGreaterThanOrEqualTo(60);
-        assertThat(offenders)
-                        .as("classes above their module's floor major")
-                        .isEmpty();
+        assertThat(offenders).as("classes above their module's floor major").isEmpty();
     }
 
     /** The compiled-output directory backing {@code clazz}. */
     private static Path codeSourceDir(Class<?> clazz) {
         try {
             if (clazz.getProtectionDomain().getCodeSource() != null) {
-                return Paths.get(clazz.getProtectionDomain().getCodeSource().getLocation().toURI());
+                return Paths.get(clazz.getProtectionDomain()
+                        .getCodeSource()
+                        .getLocation()
+                        .toURI());
             }
         } catch (Exception expected) {
             // fall through to the resource-based lookup
@@ -118,7 +126,8 @@ class BytecodeFloorTest {
     }
 
     private static void checkOne(String name, int limit, List<String> offenders, IOSupplier<InputStream> open) {
-        try (InputStream in = open.get(); DataInputStream data = new DataInputStream(in)) {
+        try (InputStream in = open.get();
+                DataInputStream data = new DataInputStream(in)) {
             int magic = data.readInt();
             if (magic != 0xCAFEBABE) {
                 throw new IOException("not a class file: " + name);

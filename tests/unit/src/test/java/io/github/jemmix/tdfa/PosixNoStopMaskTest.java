@@ -1,13 +1,13 @@
 package io.github.jemmix.tdfa;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import io.github.jemmix.tdfa.core.MatchScratch;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * POSIX (leftmost-longest) compiles allocate no stop-on-accept table at all:
@@ -31,9 +31,13 @@ class PosixNoStopMaskTest {
     @Test
     void minimizedPosixCompileHasNoStopTable() {
         Tdfa t = posix("(a|ab)(c|bcd)");
-        assertThat(t.stopOnAcceptMask()).as("POSIX artifact must not materialize a stop tier").isNull();
+        assertThat(t.stopOnAcceptMask())
+                .as("POSIX artifact must not materialize a stop tier")
+                .isNull();
         TdfaRunner r = new TdfaRunner(t);
-        assertThat(r.match("abcd", 0, new MatchScratch())).as("POSIX (a|ab)(c|bcd) matches 'abcd'").isNotNull();
+        assertThat(r.match("abcd", 0, new MatchScratch()))
+                .as("POSIX (a|ab)(c|bcd) matches 'abcd'")
+                .isNotNull();
         assertThat(r.match("abcd", 0, new MatchScratch()).end(0)).isEqualTo(4); // leftmost-LONGEST: a+bcd spans "abcd"
     }
 

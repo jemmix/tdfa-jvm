@@ -1,15 +1,35 @@
 package io.github.jemmix.tdfa.fuzz;
 
 import com.google.re2j.Re2jUnicodeProvider;
-
+import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.parity.LayeredComparator;
+import io.github.jemmix.tdfa.parity.LayeredComparator.Layer;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.lang.management.ManagementFactory;
+import java.lang.management.RuntimeMXBean;
+import java.lang.management.ThreadMXBean;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.SplittableRandom;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
+import jdk.jfr.Configuration;
+import jdk.jfr.Recording;
 
 /**
  * Differential fuzzer: random patterns over the supported grammar, random
@@ -35,24 +55,24 @@ import java.util.SplittableRandom;
  *   <li>{@code failures.ndjson} — one line per recorded divergence: caseSeed,
  *       escaped pattern/input, oracle and both engines' results, kind. Every
  *       line is independently reproducible via {@code -Dfuzz.one=<caseSeed>}.</li>
-     *   <li>{@code summary.txt} — counts, rate, deduped failure signatures.
-     *       Rewritten periodically and at exit: killing the run keeps the data.</li>
-     *   <li>{@code progress.log} — heartbeat every 15 s.</li>
-     * </ul>
-     *
-     * <p>{@code -Dfuzz.append=true} (Gradle: {@code -Pfuzz.append=true}) appends
-     * {@code failures.ndjson}/{@code progress.log} instead of truncating, so a
-     * chunked soak ({@code scripts/fuzz-soak.sh}: many short JVMs, so threads
-     * leaked by hang watchdogs die with their process) shares one out dir.
-     *
-     * <p>Known, documented divergences are avoided by construction rather than
-     * filtered after the fact: case-insensitive + supplementary/lone-surrogate
-     * combinations are not generated (tdfa has no supplementary simple-fold
-     * table yet; re2j folds fully — TODO.md tracks the gap), and {@code (?i)}
-     * class ranges are generated ASCII-narrow only (re2j's own parser expands
-     * case folds over every codepoint in a range — wide {@code (?i)} ranges
-     * hung the ORACLE in 44 of the first ~50 soak hangs). Everything else
-     * must agree with re2j or it is a finding.
+ *   <li>{@code summary.txt} — counts, rate, deduped failure signatures.
+ *       Rewritten periodically and at exit: killing the run keeps the data.</li>
+ *   <li>{@code progress.log} — heartbeat every 15 s.</li>
+ * </ul>
+ *
+ * <p>{@code -Dfuzz.append=true} (Gradle: {@code -Pfuzz.append=true}) appends
+ * {@code failures.ndjson}/{@code progress.log} instead of truncating, so a
+ * chunked soak ({@code scripts/fuzz-soak.sh}: many short JVMs, so threads
+ * leaked by hang watchdogs die with their process) shares one out dir.
+ *
+ * <p>Known, documented divergences are avoided by construction rather than
+ * filtered after the fact: case-insensitive + supplementary/lone-surrogate
+ * combinations are not generated (tdfa has no supplementary simple-fold
+ * table yet; re2j folds fully — TODO.md tracks the gap), and {@code (?i)}
+ * class ranges are generated ASCII-narrow only (re2j's own parser expands
+ * case folds over every codepoint in a range — wide {@code (?i)} ranges
+ * hung the ORACLE in 44 of the first ~50 soak hangs). Everything else
+ * must agree with re2j or it is a finding.
  */
 public final class DifferentialFuzzer {
 
@@ -61,8 +81,7 @@ public final class DifferentialFuzzer {
     static final long CASE_TIMEOUT_MS = Long.getLong("fuzz.caseTimeoutMs", 10_000);
 
     /** Layered comparator (re2j/sim/vm/asm vote) for failure attribution. */
-    private static final io.github.jemmix.tdfa.parity.LayeredComparator LAYERED = new io.github.jemmix.tdfa.parity.LayeredComparator(
-                    com.google.re2j.Re2jUnicodeProvider.INSTANCE);
+    private static final LayeredComparator LAYERED = new LayeredComparator(Re2jUnicodeProvider.INSTANCE);
 
     /** Which re2j is on the classpath — our patched fork (the DEFAULT
      *  oracle, vendor/re2j-jemmix/) or released 1.8
@@ -84,13 +103,14 @@ public final class DifferentialFuzzer {
      *  and their partners) exercise the case-fold universes where engines
      *  historically disagreed. */
     static final int[] POOL_ASCII = "abz09ZY_-.#@ ~".chars().toArray();
+
     static final int[] POOL_EDGE = {'\n', '\t', '\r', ' ', '\u0000'};
     static final int[] POOL_UNICODE = {
-                    0xE9, 0xDF, 0x17F, 0x3042, 0x6F22, 0x4E00, 0x03A9, 0x20AC,
-                    0x130, 0x131, // Turkic İ/ı — fold-inert pair
-                    0x442, // т — plain partner of the historic orbits
-                    0x1C80, 0x1C84, 0x1C85, 0x1C88, // Cyrillic historic letters (Unicode 9.0)
-                    0xA64A}; // Ԫ — orbit partner beyond re2j 1.8's table range
+        0xE9, 0xDF, 0x17F, 0x3042, 0x6F22, 0x4E00, 0x03A9, 0x20AC, 0x130, 0x131, // Turkic İ/ı — fold-inert pair
+        0x442, // т — plain partner of the historic orbits
+        0x1C80, 0x1C84, 0x1C85, 0x1C88, // Cyrillic historic letters (Unicode 9.0)
+        0xA64A
+    }; // Ԫ — orbit partner beyond re2j 1.8's table range
     static final int[] POOL_SUPP = {0x10421, 0x10402, 0x10000, 0x1F4A9, 0x1D504, 0x11C07, 0x103FF};
     static final int[] POOL_LONE = {0xD800, 0xDBFF, 0xDC00, 0xDC21, 0xDFFF};
 
@@ -111,6 +131,7 @@ public final class DifferentialFuzzer {
      *  both engines only differ on \p{} acceptance, which the generator never
      *  emits — dead entropy today, revisit with the \p{} generator round). */
     static final int FLAG_CI = io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE;
+
     static final int FLAG_DOTALL = io.github.jemmix.tdfa.Pattern.DOTALL;
     static final int FLAG_MULTILINE = io.github.jemmix.tdfa.Pattern.MULTILINE;
     static final int FLAG_LONGEST = io.github.jemmix.tdfa.Pattern.LONGEST_MATCH;
@@ -135,9 +156,8 @@ public final class DifferentialFuzzer {
             // replay got labeled "clean"). -Dfuzz.max.work=0 restores the
             // library budget.
             long fuzzWork = fuzzWorkBudget();
-            String prevWork = fuzzWork > 0
-                            ? System.setProperty("tdfa.budget.compile.compute", Long.toString(fuzzWork))
-                            : null;
+            String prevWork =
+                    fuzzWork > 0 ? System.setProperty("tdfa.budget.compile.compute", Long.toString(fuzzWork)) : null;
             try {
                 Case c = generate(one);
                 System.out.println("pattern: " + escape(c.pattern()));
@@ -161,15 +181,13 @@ public final class DifferentialFuzzer {
             }
             return;
         }
-        long masterSeed = Long.getLong("fuzz.seed", 0) != 0
-                        ? Long.getLong("fuzz.seed", 0)
-                        : System.currentTimeMillis();
+        long masterSeed = Long.getLong("fuzz.seed", 0) != 0 ? Long.getLong("fuzz.seed", 0) : System.currentTimeMillis();
         long minutes = Long.getLong("fuzz.minutes", 5);
         long maxCases = Long.getLong("fuzz.cases", 0);
         Path outDir = Path.of(System.getProperty("fuzz.out", "build/fuzz"));
         Results r = run(masterSeed, minutes, maxCases, outDir);
-        System.out.printf("%n==== fuzz done: %d cases, %d failures (%.1f/min) ====%n",
-                        r.cases, r.failures, r.casesPerMinute);
+        System.out.printf(
+                "%n==== fuzz done: %d cases, %d failures (%.1f/min) ====%n", r.cases, r.failures, r.casesPerMinute);
         if (r.failures > 0) {
             System.out.println("see failures.ndjson / summary.txt in " + outDir);
         }
@@ -178,7 +196,9 @@ public final class DifferentialFuzzer {
 
     static boolean releasedOracle() {
         try {
-            return com.google.re2j.Pattern.compile("\uDC21").matcher("a\uD801\uDC21zz").find();
+            return com.google.re2j.Pattern.compile("\uDC21")
+                    .matcher("a\uD801\uDC21zz")
+                    .find();
         } catch (RuntimeException e) {
             return true; // cannot happen for this constant; fail loud in the soak instead of silently
         }
@@ -191,18 +211,21 @@ public final class DifferentialFuzzer {
      *  the main thread records them normally and attributes the hang to the exact
      *  caseSeed (batch*K + prog). Returns false on timeout; the sacrificed worker
      *  is handed back via {@code workerOut} for the post-mortem stack. */
-    static boolean runBatchWatched(String pattern, int flags, String[] inputs, Outcome[] os,
-                    java.util.concurrent.atomic.AtomicInteger prog, Thread[] workerOut) throws InterruptedException {
-        Thread worker = new Thread(() -> {
-            Prepared pr = prepare(pattern, flags);
-            for (int i = 0; i < inputs.length; i++) {
-                prog.set(i);
-                os[i] = matchCase(pr, new Case(pattern, inputs[i], flags));
-            }
-        }, "fuzz-case");
+    static boolean runBatchWatched(
+            String pattern, int flags, String[] inputs, Outcome[] os, AtomicInteger prog, Thread[] workerOut)
+            throws InterruptedException {
+        Thread worker = new Thread(
+                () -> {
+                    Prepared pr = prepare(pattern, flags);
+                    for (int i = 0; i < inputs.length; i++) {
+                        prog.set(i);
+                        os[i] = matchCase(pr, new Case(pattern, inputs[i], flags));
+                    }
+                },
+                "fuzz-case");
         worker.setDaemon(true);
         workerOut[0] = worker;
-        java.lang.management.ThreadMXBean tmx = java.lang.management.ManagementFactory.getThreadMXBean();
+        ThreadMXBean tmx = ManagementFactory.getThreadMXBean();
         worker.start();
         worker.join(CASE_TIMEOUT_MS);
         if (!worker.isAlive()) {
@@ -238,10 +261,15 @@ public final class DifferentialFuzzer {
     }
 
     /** One in-flight batch. */
-    private record BatchJob(long batch, int flags, String pattern, String[] inputs, Outcome[] os,
-                    java.util.concurrent.atomic.AtomicInteger prog, Thread[] worker,
-                    java.util.concurrent.Future<Boolean> done) {
-    }
+    private record BatchJob(
+            long batch,
+            int flags,
+            String pattern,
+            String[] inputs,
+            Outcome[] os,
+            AtomicInteger prog,
+            Thread[] worker,
+            Future<Boolean> done) {}
 
     /** Fuzz-scoped compile work budget (ticks, wall-clock-free: the same
      *  pattern rejects after the same tick count however the machine is
@@ -263,9 +291,8 @@ public final class DifferentialFuzzer {
     public static Results run(long masterSeed, long minutes, long maxCases, Path outDir) throws IOException {
         Files.createDirectories(outDir);
         long fuzzWork = fuzzWorkBudget();
-        String prevWork = fuzzWork > 0
-                        ? System.setProperty("tdfa.budget.compile.compute", Long.toString(fuzzWork))
-                        : null;
+        String prevWork =
+                fuzzWork > 0 ? System.setProperty("tdfa.budget.compile.compute", Long.toString(fuzzWork)) : null;
         try (Logs logs = new Logs(outDir)) {
             SplittableRandom master = new SplittableRandom(masterSeed);
             long deadline = System.nanoTime() + minutes * 60_000_000_000L;
@@ -277,15 +304,16 @@ public final class DifferentialFuzzer {
                 logs.flush();
             }));
             int threads = threads();
-            java.util.concurrent.ExecutorService pool = threads > 1 ? java.util.concurrent.Executors.newFixedThreadPool(threads) : null;
-            java.util.ArrayDeque<BatchJob> inFlight = new java.util.ArrayDeque<>();
+            ExecutorService pool = threads > 1 ? Executors.newFixedThreadPool(threads) : null;
+            ArrayDeque<BatchJob> inFlight = new ArrayDeque<>();
             try {
                 while ((maxCases <= 0 || r.cases < maxCases) && System.nanoTime() < deadline) {
                     // Fill the in-flight window (main-thread generation keeps
                     // the case sequence deterministic regardless of threads).
-                    while (pool != null && inFlight.size() < threads * 2
-                                    && (maxCases <= 0 || r.cases + countQueued(inFlight) < maxCases)
-                                    && System.nanoTime() < deadline) {
+                    while (pool != null
+                            && inFlight.size() < threads * 2
+                            && (maxCases <= 0 || r.cases + countQueued(inFlight) < maxCases)
+                            && System.nanoTime() < deadline) {
                         BatchJob job = submit(pool, master, r);
                         if (job == null) {
                             break;
@@ -304,7 +332,7 @@ public final class DifferentialFuzzer {
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
                             break;
-                        } catch (java.util.concurrent.ExecutionException e) {
+                        } catch (ExecutionException e) {
                             throw new IllegalStateException("fuzz batch failed", e.getCause());
                         }
                         handleBatch(job, done, r, logs, maxCases);
@@ -315,7 +343,8 @@ public final class DifferentialFuzzer {
                         }
                         boolean done;
                         try {
-                            done = runBatchWatched(job.pattern(), job.flags(), job.inputs(), job.os(), job.prog(), job.worker());
+                            done = runBatchWatched(
+                                    job.pattern(), job.flags(), job.inputs(), job.os(), job.prog(), job.worker());
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
                             break;
@@ -352,13 +381,13 @@ public final class DifferentialFuzzer {
         }
     }
 
-    private static long countQueued(java.util.ArrayDeque<BatchJob> q) {
+    private static long countQueued(ArrayDeque<BatchJob> q) {
         return q.size() * BATCH_K;
     }
 
     /** Draw one batch from the master stream, generate on THIS thread, and
      *  either submit to the pool or return the job for sequential execution. */
-    private static BatchJob submit(java.util.concurrent.ExecutorService pool, SplittableRandom master, Results r) {
+    private static BatchJob submit(ExecutorService pool, SplittableRandom master, Results r) {
         // >>> 4 keeps batch*8+i < 2^63 (>>> 3 was wrong: batches ≥ 2^60
         // wrapped negative — bijective and replayable, but confusing in logs).
         long batch = master.nextLong() >>> 4;
@@ -372,11 +401,10 @@ public final class DifferentialFuzzer {
             inputs[i] = genInput(batch, i, flags);
         }
         Outcome[] os = new Outcome[BATCH_K];
-        java.util.concurrent.atomic.AtomicInteger prog = new java.util.concurrent.atomic.AtomicInteger(-1);
+        AtomicInteger prog = new AtomicInteger(-1);
         Thread[] worker = new Thread[1];
         if (pool != null) {
-            java.util.concurrent.Future<Boolean> fut = pool.submit(
-                            () -> runBatchWatched(pattern, flags, inputs, os, prog, worker));
+            Future<Boolean> fut = pool.submit(() -> runBatchWatched(pattern, flags, inputs, os, prog, worker));
             return new BatchJob(batch, flags, pattern, inputs, os, prog, worker, fut);
         }
         return new BatchJob(batch, flags, pattern, inputs, os, prog, worker, null);
@@ -395,7 +423,11 @@ public final class DifferentialFuzzer {
             int victim = k < 0 ? 0 : k; // -1 = compile hang: replay head case (fuzz.one recompiles)
             if (r.cases < maxCases || maxCases <= 0) {
                 r.hangs++;
-                logs.hang(batch * BATCH_K + victim, new Case(job.pattern(), job.inputs()[victim], job.flags()), r, job.worker()[0]);
+                logs.hang(
+                        batch * BATCH_K + victim,
+                        new Case(job.pattern(), job.inputs()[victim], job.flags()),
+                        r,
+                        job.worker()[0]);
                 r.cases++;
             }
         }
@@ -403,8 +435,7 @@ public final class DifferentialFuzzer {
 
     // ---- one case ----
 
-    record Case(String pattern, String input, int flags) {
-    }
+    record Case(String pattern, String input, int flags) {}
 
     /** Engines compiled once per batch. A non-null tag means the compile
      *  path produced that protocol string for EVERY input (rejection, or a
@@ -434,16 +465,15 @@ public final class DifferentialFuzzer {
         }
         try {
             p.asm = io.github.jemmix.tdfa.Pattern.compile(pattern, flags, null, Re2jUnicodeProvider.INSTANCE);
-        } catch (io.github.jemmix.tdfa.core.PatternSyntaxException e) {
+        } catch (PatternSyntaxException e) {
             p.asmTag = "<reject:" + firstLine(e.getMessage()) + ">";
         } catch (RuntimeException e) {
             p.asmTag = "<exception:" + e.getClass().getSimpleName() + ">";
             p.asmExc = "asm " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage());
         }
         try {
-            p.vm = io.github.jemmix.tdfa.Pattern.compile(pattern, flags, io.github.jemmix.tdfa.tdfa.TdfaRunner::new,
-                            Re2jUnicodeProvider.INSTANCE);
-        } catch (io.github.jemmix.tdfa.core.PatternSyntaxException e) {
+            p.vm = io.github.jemmix.tdfa.Pattern.compile(pattern, flags, TdfaRunner::new, Re2jUnicodeProvider.INSTANCE);
+        } catch (PatternSyntaxException e) {
             p.vmTag = "<reject:" + firstLine(e.getMessage()) + ">";
         } catch (RuntimeException e) {
             p.vmTag = "<exception:" + e.getClass().getSimpleName() + ">";
@@ -729,17 +759,19 @@ public final class DifferentialFuzzer {
                 in.insert(0, ' ');
                 in.append(' ');
             } // \b at both ends
-            case 3 -> in.insert(in.length() / 2, (char) POOL_LONE[rnd.nextInt(POOL_LONE.length)]); // lone surrogate mid-string
-            case 4 -> in.appendCodePoint(POOL_SUPP[rnd.nextInt(POOL_SUPP.length)])
-                            .append((char) POOL_ASCII[rnd.nextInt(POOL_ASCII.length)]); // pair adjacent to ASCII
+            case 3 ->
+                in.insert(
+                        in.length() / 2, (char) POOL_LONE[rnd.nextInt(POOL_LONE.length)]); // lone surrogate mid-string
+            case 4 ->
+                in.appendCodePoint(POOL_SUPP[rnd.nextInt(POOL_SUPP.length)])
+                        .append((char) POOL_ASCII[rnd.nextInt(POOL_ASCII.length)]); // pair adjacent to ASCII
             case 5 -> in.setLength(rnd.nextInt(0, 4)); // near-empty (may split a pair — deliberate)
             case 6 -> {
-                for (int[] pool : new int[][]{POOL_ASCII, POOL_EDGE, POOL_UNICODE, POOL_SUPP, POOL_LONE}) {
+                for (int[] pool : new int[][] {POOL_ASCII, POOL_EDGE, POOL_UNICODE, POOL_SUPP, POOL_LONE}) {
                     in.appendCodePoint(pool[rnd.nextInt(pool.length)]);
                 }
             } // one of every pool
-            default -> {
-            } // idx 0, 7: plain random
+            default -> {} // idx 0, 7: plain random
         }
         if ((flags & FLAG_MULTILINE) != 0) {
             int extra = 1 + rnd.nextInt(2);
@@ -818,14 +850,15 @@ public final class DifferentialFuzzer {
 
     static String quant(SplittableRandom rnd, int depth, boolean ci) {
         String body = quantable(rnd, depth, ci);
-        String q = switch (rnd.nextInt(6)) {
-            case 0 -> "*";
-            case 1 -> "+";
-            case 2 -> "?";
-            case 3 -> "{" + rnd.nextInt(0, 4) + "," + Math.max(rnd.nextInt(0, 7), 1) + "}";
-            case 4 -> "{" + rnd.nextInt(0, 5) + ",}";
-            default -> "{" + rnd.nextInt(1, 4) + "}";
-        };
+        String q =
+                switch (rnd.nextInt(6)) {
+                    case 0 -> "*";
+                    case 1 -> "+";
+                    case 2 -> "?";
+                    case 3 -> "{" + rnd.nextInt(0, 4) + "," + Math.max(rnd.nextInt(0, 7), 1) + "}";
+                    case 4 -> "{" + rnd.nextInt(0, 5) + ",}";
+                    default -> "{" + rnd.nextInt(1, 4) + "}";
+                };
         return body + q + (rnd.nextInt(4) == 0 ? "?" : "");
     }
 
@@ -909,12 +942,14 @@ public final class DifferentialFuzzer {
                 } // keep ranges legal (re2j rejects inverted)
                 sb.append(classMember(lo)).append('-').append(classMember(hi));
             } else if (roll < 5) {
-                sb.append("\\").append(switch (rnd.nextInt(4)) {
-                    case 0 -> "d";
-                    case 1 -> "w";
-                    case 2 -> "s";
-                    default -> "n";
-                });
+                sb.append("\\")
+                        .append(
+                                switch (rnd.nextInt(4)) {
+                                    case 0 -> "d";
+                                    case 1 -> "w";
+                                    case 2 -> "s";
+                                    default -> "n";
+                                });
             } else {
                 sb.append(classMember(pickClassCp(rnd, ci)));
             }
@@ -946,13 +981,14 @@ public final class DifferentialFuzzer {
 
     /** Literal for pattern context, specials escaped. */
     static String patternLiteral(SplittableRandom rnd, boolean ci) {
-        int cp = switch (rnd.nextInt(8)) {
-            case 0, 1, 2, 3 -> POOL_ASCII[rnd.nextInt(POOL_ASCII.length)];
-            case 4 -> unicodeCp(rnd, ci);
-            case 5 -> POOL_SUPP[rnd.nextInt(POOL_SUPP.length)];
-            case 6 -> POOL_LONE[rnd.nextInt(POOL_LONE.length)];
-            default -> 'a' + rnd.nextInt(26);
-        };
+        int cp =
+                switch (rnd.nextInt(8)) {
+                    case 0, 1, 2, 3 -> POOL_ASCII[rnd.nextInt(POOL_ASCII.length)];
+                    case 4 -> unicodeCp(rnd, ci);
+                    case 5 -> POOL_SUPP[rnd.nextInt(POOL_SUPP.length)];
+                    case 6 -> POOL_LONE[rnd.nextInt(POOL_LONE.length)];
+                    default -> 'a' + rnd.nextInt(26);
+                };
         StringBuilder sb = new StringBuilder();
         if (cp < 128 && ".[]()*+?{}|^$\\-#~".indexOf(cp) >= 0) {
             sb.append('\\');
@@ -976,7 +1012,8 @@ public final class DifferentialFuzzer {
     static final class Outcome {
         final Case c;
         String oracle = "?", asm = "?", vm = "?";
-        final java.util.List<String> exceptions = new java.util.ArrayList<>();
+        final List<String> exceptions = new ArrayList<>();
+
         Outcome(Case c) {
             this.c = c;
         }
@@ -995,11 +1032,11 @@ public final class DifferentialFuzzer {
     static final class Results {
         final long masterSeed;
         long cases, failures, bothReject, flagged, ciSuppAvoidedTotal, ciRangeAvoidedTotal, knownDivergence;
-        final java.util.Map<io.github.jemmix.tdfa.parity.LayeredComparator.Layer, Integer> layerCounts = new java.util.EnumMap<>(
-                        io.github.jemmix.tdfa.parity.LayeredComparator.Layer.class);
+        final Map<Layer, Integer> layerCounts = new EnumMap<>(Layer.class);
         long hangs, hangsOurs, hangsOracle;
         double casesPerMinute;
         final Map<String, Sig> signatures = new LinkedHashMap<>();
+
         Results(long masterSeed) {
             this.masterSeed = masterSeed;
         }
@@ -1031,7 +1068,7 @@ public final class DifferentialFuzzer {
                     var report = LAYERED.compare(o.c.pattern(), o.c.input());
                     layerStr = report.layer().name();
                     layerCounts.merge(report.layer(), 1, Integer::sum);
-                    if (known != null && report.layer() == io.github.jemmix.tdfa.parity.LayeredComparator.Layer.PARSER) {
+                    if (known != null && report.layer() == LayeredComparator.Layer.PARSER) {
                         // The known divergence is a PARSER-boundary semantics
                         // difference (whole stack self-consistent, oracle alone
                         // differs). Any other layer with a lone-surrogate pattern
@@ -1043,9 +1080,12 @@ public final class DifferentialFuzzer {
                         return;
                     }
                 }
-                if (known != null && o.c.flags() != 0
-                                && o.exceptions.isEmpty() && !o.oracle.startsWith("<")
-                                && o.asm.equals(o.vm) && !o.asm.equals(o.oracle)) {
+                if (known != null
+                        && o.c.flags() != 0
+                        && o.exceptions.isEmpty()
+                        && !o.oracle.startsWith("<")
+                        && o.asm.equals(o.vm)
+                        && !o.asm.equals(o.oracle)) {
                     // flags≠0 carries no layer attribution (the comparator's
                     // four columns have no flag plumbing), so the PARSER
                     // standard degrades to stack self-consistency: both
@@ -1087,22 +1127,22 @@ public final class DifferentialFuzzer {
          *       fast path entirely (no single-rune prefix). We keep
          *       codepoint-boundary semantics either way.
          *   <li><b>lone-low surrogate patterns</b> — re2j's literal-prefix
-          *       fast path lands on pair interiors; we keep
-          *       codepoint-boundary semantics either way. Applies when both
-          *       our engines agree with each other and the pattern contains
-          *       a lone low surrogate.</li>
-          * </ul>
-          *
-          * Fold divergences have NO entry — under any oracle: tdfa is
-          * compiled with {@code Re2jUnicodeProvider}, whose fold universe
-          * IS the oracle's own ({@code Unicode.simpleFold} walk, live), so
-          * the two cannot disagree on folding. (The former stale-orbit
-          * entry covered the days when tdfa folded a JDK-modern universe
-          * against the oracle's 6.0-era one.) The patched oracle's guard
-          * patch additionally makes the asymmetric-orbit family
-          * fold-inert there; the released oracle still cannot compile
-          * those literals — see {@code releasedFoldHang}.
-          */
+         *       fast path lands on pair interiors; we keep
+         *       codepoint-boundary semantics either way. Applies when both
+         *       our engines agree with each other and the pattern contains
+         *       a lone low surrogate.</li>
+         * </ul>
+         *
+         * Fold divergences have NO entry — under any oracle: tdfa is
+         * compiled with {@code Re2jUnicodeProvider}, whose fold universe
+         * IS the oracle's own ({@code Unicode.simpleFold} walk, live), so
+         * the two cannot disagree on folding. (The former stale-orbit
+         * entry covered the days when tdfa folded a JDK-modern universe
+         * against the oracle's 6.0-era one.) The patched oracle's guard
+         * patch additionally makes the asymmetric-orbit family
+         * fold-inert there; the released oracle still cannot compile
+         * those literals — see {@code releasedFoldHang}.
+         */
         static String knownDivergence(Outcome o) {
             String p = o.c.pattern();
             for (int i = 0; i < p.length(); i++) {
@@ -1195,6 +1235,7 @@ public final class DifferentialFuzzer {
     static final class Sig {
         final String kind;
         int total, recorded;
+
         Sig(String kind) {
             this.kind = kind;
         }
@@ -1209,17 +1250,18 @@ public final class DifferentialFuzzer {
          *  circular, ~1%) dumped to out/hang-<caseSeed>.jfr when a hang is
          *  recorded — the sacrificed thread's method-sample profile ships
          *  WITH the record, no re-run needed. -Dfuzz.jfr=false opts out. */
-        private final jdk.jfr.Recording hangWatch;
-        private static final java.lang.management.RuntimeMXBean RUNTIME_MX = java.lang.management.ManagementFactory.getRuntimeMXBean();
-        private static final java.time.format.DateTimeFormatter TS_FMT = java.time.format.DateTimeFormatter
-                        .ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS").withZone(java.time.ZoneId.systemDefault());
+        private final Recording hangWatch;
+
+        private static final RuntimeMXBean RUNTIME_MX = ManagementFactory.getRuntimeMXBean();
+        private static final DateTimeFormatter TS_FMT =
+                DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS").withZone(ZoneId.systemDefault());
 
         Logs(Path dir) throws IOException {
             this.dir = dir;
-            jdk.jfr.Recording watch = null;
+            Recording watch = null;
             if (Boolean.parseBoolean(System.getProperty("fuzz.jfr", "true"))) {
                 try {
-                    watch = new jdk.jfr.Recording(jdk.jfr.Configuration.getConfiguration("default"));
+                    watch = new Recording(Configuration.getConfiguration("default"));
                     watch.setName("fuzz-hang-watch");
                     watch.setMaxSize(64L << 20); // circular, in-memory
                     watch.start();
@@ -1232,8 +1274,8 @@ public final class DifferentialFuzzer {
             // soak runs (scripts/fuzz-soak.sh); summary.txt always reflects
             // the latest chunk.
             StandardOpenOption[] opts = Boolean.getBoolean("fuzz.append")
-                            ? new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.APPEND}
-                            : new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING};
+                    ? new StandardOpenOption[] {StandardOpenOption.CREATE, StandardOpenOption.APPEND}
+                    : new StandardOpenOption[] {StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING};
             failures = new PrintWriter(Files.newBufferedWriter(dir.resolve("failures.ndjson"), opts), false);
             progress = new PrintWriter(Files.newBufferedWriter(dir.resolve("progress.log"), opts), true);
         }
@@ -1243,19 +1285,21 @@ public final class DifferentialFuzzer {
             // ([574,404s] prefixes) and makes intra-chunk clustering (the
             // humongous-GC hang signature) visible without progress.log
             // cross-referencing.
-            failures.println("{\"caseSeed\":" + caseSeed + ",\"ts\":\"" + TS_FMT.format(java.time.Instant.now())
-                            + "\",\"upMs\":" + RUNTIME_MX.getUptime()
-                            + ",\"flags\":" + o.c.flags()
-                            + ",\"kind\":\"" + kind.replace('"', '\'')
-                            + "\",\"layer\":\"" + layer + "\""
-                            + ",\"pattern\":\"" + escape(o.c.pattern()) + "\",\"input\":\"" + escape(o.c.input())
-                            + "\",\"oracle\":\"" + escape(o.oracle) + "\",\"asm\":\"" + escape(o.asm)
-                            + "\",\"vm\":\"" + escape(o.vm) + "\""
-                            + (o.exceptions.isEmpty()
-                                            ? ""
-                                            : ",\"ex\":" + o.exceptions.stream()
-                                                            .map(e -> "\"" + escape(e) + "\"").toList())
-                            + "}");
+            failures.println("{\"caseSeed\":" + caseSeed + ",\"ts\":\"" + TS_FMT.format(Instant.now())
+                    + "\",\"upMs\":" + RUNTIME_MX.getUptime()
+                    + ",\"flags\":" + o.c.flags()
+                    + ",\"kind\":\"" + kind.replace('"', '\'')
+                    + "\",\"layer\":\"" + layer + "\""
+                    + ",\"pattern\":\"" + escape(o.c.pattern()) + "\",\"input\":\"" + escape(o.c.input())
+                    + "\",\"oracle\":\"" + escape(o.oracle) + "\",\"asm\":\"" + escape(o.asm)
+                    + "\",\"vm\":\"" + escape(o.vm) + "\""
+                    + (o.exceptions.isEmpty()
+                            ? ""
+                            : ",\"ex\":"
+                                    + o.exceptions.stream()
+                                            .map(e -> "\"" + escape(e) + "\"")
+                                            .toList())
+                    + "}");
             failures.flush();
         }
 
@@ -1289,27 +1333,24 @@ public final class DifferentialFuzzer {
             long cpuMs = -1;
             if (w != null) {
                 try {
-                    cpuMs = java.lang.management.ManagementFactory.getThreadMXBean()
-                                    .getThreadCpuTime(w.getId()) / 1_000_000;
+                    cpuMs = ManagementFactory.getThreadMXBean().getThreadCpuTime(w.getId()) / 1_000_000;
                 } catch (Throwable ignore) {
                     /* thread died already */ }
             }
-            String verdict = cpuMs < 0
-                            ? "unknown"
-                            : cpuMs >= CASE_TIMEOUT_MS / 2 ? "spin" : "stalled";
+            String verdict = cpuMs < 0 ? "unknown" : cpuMs >= CASE_TIMEOUT_MS / 2 ? "spin" : "stalled";
             if (hangWatch != null) {
                 try {
                     hangWatch.dump(dir.resolve("hang-" + caseSeed + ".jfr"));
                 } catch (Throwable ignore) {
                 }
             }
-            failures.println("{\"caseSeed\":" + caseSeed + ",\"ts\":\"" + TS_FMT.format(java.time.Instant.now())
-                            + "\",\"upMs\":" + RUNTIME_MX.getUptime()
-                            + ",\"flags\":" + c.flags()
-                            + ",\"kind\":\"HANG_" + (ours ? "ENGINE" : "ORACLE")
-                            + "\",\"cpuMs\":" + cpuMs + ",\"verdict\":\"" + verdict + "\""
-                            + ",\"pattern\":\"" + escape(c.pattern()) + "\",\"input\":\"" + escape(c.input())
-                            + "\",\"stack\":\"" + escape(st.toString()) + "\"}");
+            failures.println("{\"caseSeed\":" + caseSeed + ",\"ts\":\"" + TS_FMT.format(Instant.now())
+                    + "\",\"upMs\":" + RUNTIME_MX.getUptime()
+                    + ",\"flags\":" + c.flags()
+                    + ",\"kind\":\"HANG_" + (ours ? "ENGINE" : "ORACLE")
+                    + "\",\"cpuMs\":" + cpuMs + ",\"verdict\":\"" + verdict + "\""
+                    + ",\"pattern\":\"" + escape(c.pattern()) + "\",\"input\":\"" + escape(c.input())
+                    + "\",\"stack\":\"" + escape(st.toString()) + "\"}");
             failures.flush();
         }
 
@@ -1328,13 +1369,16 @@ public final class DifferentialFuzzer {
         void summary(Results r) {
             try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(dir.resolve("summary.txt")))) {
                 w.println("masterSeed: " + r.masterSeed);
-                w.println("oracle: " + (RELEASED_ORACLE ? "re2j 1.8 released" : "re2j 1.8 patched fork (known-divergence classifier off)"));
+                w.println("oracle: "
+                        + (RELEASED_ORACLE
+                                ? "re2j 1.8 released"
+                                : "re2j 1.8 patched fork (known-divergence classifier off)"));
                 w.println("cases: " + r.cases + "  failures: " + r.failures + "  bothReject: " + r.bothReject
-                                + "  flagged: " + r.flagged + "  knownDivergence: " + r.knownDivergence
-                                + "  hangsEngine: " + r.hangsOurs + "  hangsOracle: " + r.hangsOracle);
+                        + "  flagged: " + r.flagged + "  knownDivergence: " + r.knownDivergence
+                        + "  hangsEngine: " + r.hangsOurs + "  hangsOracle: " + r.hangsOracle);
                 w.printf("rate: %.1f cases/min%n", r.casesPerMinute);
                 w.println("ciSuppAvoided (known-gap constructs not generated): " + r.ciSuppAvoidedTotal
-                                + "  ciWideRangeAvoided (oracle-hang guard): " + r.ciRangeAvoidedTotal);
+                        + "  ciWideRangeAvoided (oracle-hang guard): " + r.ciRangeAvoidedTotal);
                 if (!r.layerCounts.isEmpty()) {
                     w.println();
                     w.println("failure layers (attributed):");
@@ -1348,8 +1392,16 @@ public final class DifferentialFuzzer {
         }
 
         void progress(Results r, double mins) {
-            progress.printf("t=%6.1fmin cases=%d failures=%d known=%d flagged=%d hangE=%d hangO=%d sigs=%d%n",
-                            mins, r.cases, r.failures, r.knownDivergence, r.flagged, r.hangsOurs, r.hangsOracle, r.signatures.size());
+            progress.printf(
+                    "t=%6.1fmin cases=%d failures=%d known=%d flagged=%d hangE=%d hangO=%d sigs=%d%n",
+                    mins,
+                    r.cases,
+                    r.failures,
+                    r.knownDivergence,
+                    r.flagged,
+                    r.hangsOurs,
+                    r.hangsOracle,
+                    r.signatures.size());
         }
 
         void flush() {

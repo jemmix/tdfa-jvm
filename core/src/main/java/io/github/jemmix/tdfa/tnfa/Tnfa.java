@@ -2,12 +2,21 @@ package io.github.jemmix.tdfa.tnfa;
 
 import io.github.jemmix.tdfa.ast.Ast;
 import io.github.jemmix.tdfa.ast.CharClass;
+import io.github.jemmix.tdfa.ast.FixedTags;
+import io.github.jemmix.tdfa.core.CompileObserver;
+import io.github.jemmix.tdfa.parser.ParseResult;
 import io.github.jemmix.tdfa.parser.Parser;
+import io.github.jemmix.tdfa.tdfa.BudgetWeights;
+import io.github.jemmix.tdfa.tdfa.Budgets;
 import io.github.jemmix.tdfa.tdfa.FrameBudget;
-
+import io.github.jemmix.tdfa.tdfa.WorkMeter;
+import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.unicode.UnicodeProviders;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
+import java.util.Arrays;
+import java.util.BitSet;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -61,6 +70,7 @@ public final class Tnfa {
      * Built by {@link io.github.jemmix.tdfa.ast.FixedTags} (BT22 §6.4).
      */
     public final int[] fixedBase;
+
     public final int[] fixedOffset;
 
     // Zero-width assertion bits. BEGIN_TEXT/END_TEXT are LINE boundaries
@@ -74,12 +84,26 @@ public final class Tnfa {
     public static final int ABS_BEGIN = 16;
     public static final int ABS_END = 32;
 
-    public Tnfa(int stateCount,
-                    int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
-                    int[] symFrom, int[] symTo, CharClass[] symClass,
-                    int start, int accept, int tagCount, int groupCount, boolean multiline,
-                    boolean unicodeWordBoundary, int[] wordRanges,
-                    Map<String, Integer> namedGroups, int[] fixedBase, int[] fixedOffset) {
+    public Tnfa(
+            int stateCount,
+            int[] epsFrom,
+            int[] epsTo,
+            int[] epsPri,
+            int[] epsTag,
+            int[] epsEmptyMask,
+            int[] symFrom,
+            int[] symTo,
+            CharClass[] symClass,
+            int start,
+            int accept,
+            int tagCount,
+            int groupCount,
+            boolean multiline,
+            boolean unicodeWordBoundary,
+            int[] wordRanges,
+            Map<String, Integer> namedGroups,
+            int[] fixedBase,
+            int[] fixedOffset) {
         this.stateCount = stateCount;
         this.epsFrom = epsFrom;
         this.epsTo = epsTo;
@@ -104,20 +128,27 @@ public final class Tnfa {
     // ====== Builder / construction ======
 
     public static Tnfa compile(String pattern) {
-        return compile(pattern, false, false, io.github.jemmix.tdfa.unicode.UnicodeProviders.get());
+        return compile(pattern, false, false, UnicodeProviders.get());
     }
 
-    public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
-                    io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
+    public static Tnfa compile(
+            String pattern, boolean disableUnicodeGroups, boolean anchorBoth, UnicodeDataProvider provider) {
         return compile(pattern, disableUnicodeGroups, anchorBoth, provider, null);
     }
 
-    public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
-                    io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider,
-                    io.github.jemmix.tdfa.core.CompileObserver observer) {
-        return compile(pattern, disableUnicodeGroups, anchorBoth, provider, observer,
-                        new io.github.jemmix.tdfa.tdfa.WorkMeter(
-                                        io.github.jemmix.tdfa.tdfa.Budgets.compileComputeTicks()));
+    public static Tnfa compile(
+            String pattern,
+            boolean disableUnicodeGroups,
+            boolean anchorBoth,
+            UnicodeDataProvider provider,
+            CompileObserver observer) {
+        return compile(
+                pattern,
+                disableUnicodeGroups,
+                anchorBoth,
+                provider,
+                observer,
+                new WorkMeter(Budgets.compileComputeTicks()));
     }
 
     /**
@@ -126,10 +157,13 @@ public final class Tnfa {
      * WorkMeter#fork}), so front-end work is debited against the same CPU
      * budget as every determinization attempt of the same compile.
      */
-    public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
-                    io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider,
-                    io.github.jemmix.tdfa.core.CompileObserver observer,
-                    io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
+    public static Tnfa compile(
+            String pattern,
+            boolean disableUnicodeGroups,
+            boolean anchorBoth,
+            UnicodeDataProvider provider,
+            CompileObserver observer,
+            WorkMeter meter) {
         long t0 = System.nanoTime();
         // Front-end budget: ONE work meter (CPU, ticks) spans parse + TNFA
         // build so the pre-determinization surface is bounded too — the
@@ -140,14 +174,13 @@ public final class Tnfa {
         // determinization cap could fire — ((a{300}){300}){300} is a clean
         // "pattern too large" rejection now). Determinization constructs
         // its own meter per attempt (TdfaCompiler).
-        io.github.jemmix.tdfa.parser.ParseResult parsed = Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth, provider, meter);
+        ParseResult parsed = Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth, provider, meter);
         if (observer != null) {
-            observer.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.PARSE,
-                            System.nanoTime() - t0, parsed.tagCount());
+            observer.stage(CompileObserver.Stage.PARSE, System.nanoTime() - t0, parsed.tagCount());
         }
         long t1 = System.nanoTime();
         Ast ast = parsed.ast();
-        io.github.jemmix.tdfa.ast.FixedTags.apply(ast);
+        FixedTags.apply(ast);
         int tagCount = parsed.tagCount();
         int[] fixedBase = new int[tagCount + 1];
         int[] fixedOffset = new int[tagCount + 1];
@@ -166,12 +199,19 @@ public final class Tnfa {
         Builder b = new Builder(meter);
         int accept = b.fresh();
         int start = b.build(ast, accept);
-        Tnfa nfa = b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(),
-                        parsed.unicodeShorthand(), parsed.unicodeWordRanges(), parsed.namedGroups(),
-                        fixedBase, fixedOffset);
+        Tnfa nfa = b.build(
+                start,
+                accept,
+                tagCount,
+                parsed.groupCount(),
+                parsed.multiline(),
+                parsed.unicodeShorthand(),
+                parsed.unicodeWordRanges(),
+                parsed.namedGroups(),
+                fixedBase,
+                fixedOffset);
         if (observer != null) {
-            observer.stage(io.github.jemmix.tdfa.core.CompileObserver.Stage.TNFA,
-                            System.nanoTime() - t1, nfa.stateCount);
+            observer.stage(CompileObserver.Stage.TNFA, System.nanoTime() - t1, nfa.stateCount);
         }
         return nfa;
     }
@@ -208,53 +248,55 @@ public final class Tnfa {
         int counter = 0;
         /** Shared with the parser (see Tnfa.compile): one CPU budget for
          *  the whole front-end; every builder action ticks it. */
-        final io.github.jemmix.tdfa.tdfa.WorkMeter meter;
+        final WorkMeter meter;
         /** Weighted bytes of everything minted so far (states + edges,
          *  through BudgetWeights) against the compile RAM budget. */
         long weightedBytes = 0;
+
         final long memBudget;
 
-        Builder(io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
+        Builder(WorkMeter meter) {
             this.meter = meter;
-            this.memBudget = io.github.jemmix.tdfa.tdfa.Budgets.compileMemoryBytes();
+            this.memBudget = Budgets.compileMemoryBytes();
         }
 
         private void charge(int bytes) {
             if ((weightedBytes += bytes) > memBudget) {
-                throw new IllegalStateException("pattern too large: TNFA construction exceeds the compile memory budget ("
+                throw new IllegalStateException(
+                        "pattern too large: TNFA construction exceeds the compile memory budget ("
                                 + weightedBytes + " weighted bytes for " + counter + " states — raise -D"
-                                + io.github.jemmix.tdfa.tdfa.Budgets.COMPILE_MEMORY_PROP + ")");
+                                + Budgets.COMPILE_MEMORY_PROP + ")");
             }
         }
 
         int fresh() {
-            meter.tick(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_BUILD_ACTION_TICKS);
-            charge(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_STATE_BYTES);
+            meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(BudgetWeights.TNFA_STATE_BYTES);
             return counter++;
         }
 
         void eps(int from, int to, int pri) {
-            meter.tick(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_BUILD_ACTION_TICKS);
-            charge(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_EPS_EDGE_BYTES);
-            eps.add(new int[]{from, to, pri, NO_TAG, 0});
+            meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(BudgetWeights.TNFA_EPS_EDGE_BYTES);
+            eps.add(new int[] {from, to, pri, NO_TAG, 0});
         }
 
         void taggedEps(int from, int to, int pri, int tag) {
-            meter.tick(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_BUILD_ACTION_TICKS);
-            charge(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_EPS_EDGE_BYTES);
-            eps.add(new int[]{from, to, pri, tag, 0});
+            meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(BudgetWeights.TNFA_EPS_EDGE_BYTES);
+            eps.add(new int[] {from, to, pri, tag, 0});
         }
 
         void anchorEps(int from, int to, int pri, int emptyMask) {
-            meter.tick(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_BUILD_ACTION_TICKS);
-            charge(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_EPS_EDGE_BYTES);
-            eps.add(new int[]{from, to, pri, NO_TAG, emptyMask});
+            meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(BudgetWeights.TNFA_EPS_EDGE_BYTES);
+            eps.add(new int[] {from, to, pri, NO_TAG, emptyMask});
         }
 
         void sym(int from, int to, CharClass cc) {
-            meter.tick(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_BUILD_ACTION_TICKS);
-            charge(io.github.jemmix.tdfa.tdfa.BudgetWeights.TNFA_SYM_EDGE_BYTES);
-            syms.add(new int[]{from, to});
+            meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(BudgetWeights.TNFA_SYM_EDGE_BYTES);
+            syms.add(new int[] {from, to});
             symClasses.add(cc);
         }
 
@@ -283,8 +325,8 @@ public final class Tnfa {
             int cur;
             // ALT scratch
             int newStart;
-            List<java.util.BitSet> branchGroups;
-            java.util.BitSet union;
+            List<BitSet> branchGroups;
+            BitSet union;
         }
 
         /** Returns entry state of sub-NFA that flows into {@code entryTo}.
@@ -334,10 +376,10 @@ public final class Tnfa {
                         List<Ast> ch = ((Ast.Alt) e).children;
                         int newStart = fresh();
                         // Compute groups per branch and union.
-                        List<java.util.BitSet> branchGroups = new ArrayList<>();
-                        java.util.BitSet union = new java.util.BitSet();
+                        List<BitSet> branchGroups = new ArrayList<>();
+                        BitSet union = new BitSet();
                         for (Ast child : ch) {
-                            java.util.BitSet g = new java.util.BitSet();
+                            BitSet g = new BitSet();
                             collectGroups(child, g);
                             branchGroups.add(g);
                             union.or(g);
@@ -448,8 +490,8 @@ public final class Tnfa {
                         mandatory.add(body);
                     }
                     Ast mandatoryAst = mandatory.isEmpty()
-                                    ? new Ast.Empty()
-                                    : (mandatory.size() == 1 ? mandatory.get(0) : new Ast.Concat(mandatory));
+                            ? new Ast.Empty()
+                            : (mandatory.size() == 1 ? mandatory.get(0) : new Ast.Concat(mandatory));
                     Ast desugared = mandatoryAst;
                     // {0,0} falls through as bare Empty: neither the body's tags nor
                     // its ntags are emitted. Sound because a group's tags are
@@ -472,9 +514,11 @@ public final class Tnfa {
                         for (int i = 0; i < min - 1; i++) {
                             copies.add(body);
                         }
-                        Ast copiesAst = copies.isEmpty() ? new Ast.Empty() : (copies.size() == 1 ? copies.get(0) : new Ast.Concat(copies));
-                        desugared = new Ast.Concat(java.util.Collections.unmodifiableList(
-                                        java.util.Arrays.asList(copiesAst, new Ast.Repeat(body, 1, Integer.MAX_VALUE, r.greedy))));
+                        Ast copiesAst = copies.isEmpty()
+                                ? new Ast.Empty()
+                                : (copies.size() == 1 ? copies.get(0) : new Ast.Concat(copies));
+                        desugared = new Ast.Concat(Collections.unmodifiableList(
+                                Arrays.asList(copiesAst, new Ast.Repeat(body, 1, Integer.MAX_VALUE, r.greedy))));
                     } else if (max > min) {
                         // {n,m} = mandatory + RIGHT-NESTED optional suffix (x(x(x)?)?)?,
                         // exactly re2j Simplify's shape ("x{2,5} = xx(x(x(x)?)?)?").
@@ -488,10 +532,12 @@ public final class Tnfa {
                         Ast suffix = new Ast.Repeat(body, 0, 1, r.greedy);
                         for (int i = min + 1; i < max; i++) {
                             suffix = new Ast.Repeat(
-                                            new Ast.Concat(java.util.Collections.unmodifiableList(java.util.Arrays.asList(body, suffix))),
-                                            0, 1, r.greedy);
+                                    new Ast.Concat(Collections.unmodifiableList(Arrays.asList(body, suffix))),
+                                    0,
+                                    1,
+                                    r.greedy);
                         }
-                        desugared = new Ast.Concat(java.util.Collections.unmodifiableList(java.util.Arrays.asList(mandatoryAst, suffix)));
+                        desugared = new Ast.Concat(Collections.unmodifiableList(Arrays.asList(mandatoryAst, suffix)));
                     }
                     // build the desugared form directly into entryTo — pass-through,
                     // no continuation frame for the Repeat itself.
@@ -515,9 +561,9 @@ public final class Tnfa {
                 if (f.kind == BuildFrame.ALT) {
                     int altStart = result;
                     // Prepend ntags for missing groups (in union but not in this branch).
-                    java.util.BitSet missing = (java.util.BitSet) f.union.clone();
+                    BitSet missing = (BitSet) f.union.clone();
                     missing.andNot(f.branchGroups.get(f.idx));
-                    for (int g = missing.length(); (g = missing.previousSetBit(g - 1)) >= 0;) {
+                    for (int g = missing.length(); (g = missing.previousSetBit(g - 1)) >= 0; ) {
                         int ntagState = fresh();
                         int closeTag = 2 * g; // close tag of group g (positive number)
                         taggedEps(ntagState, altStart, 1, -closeTag); // negative = nil
@@ -592,7 +638,7 @@ public final class Tnfa {
             }
             if (e instanceof Ast.Symbol) {
                 int s = fresh();
-                sym(s, entryTo, new CharClass(new int[]{((Ast.Symbol) e).c, ((Ast.Symbol) e).c}, false));
+                sym(s, entryTo, new CharClass(new int[] {((Ast.Symbol) e).c, ((Ast.Symbol) e).c}, false));
                 return s;
             }
             if (e instanceof CharClass) {
@@ -655,9 +701,9 @@ public final class Tnfa {
          *  no-match marker sits closer to the body it belongs to — and
          *  return the new chain head. */
         private int ntagChain(Ast body, int target) {
-            java.util.BitSet bodyGroups = new java.util.BitSet();
+            BitSet bodyGroups = new BitSet();
             collectGroups(body, bodyGroups);
-            for (int g = bodyGroups.length(); (g = bodyGroups.previousSetBit(g - 1)) >= 0;) {
+            for (int g = bodyGroups.length(); (g = bodyGroups.previousSetBit(g - 1)) >= 0; ) {
                 int ntagState = fresh();
                 taggedEps(ntagState, target, 1, -(2 * g));
                 target = ntagState;
@@ -667,7 +713,7 @@ public final class Tnfa {
 
         /** Collect group numbers (1-based) used anywhere in the AST subtree.
          *  Iterative worklist — visitation order is irrelevant (set union). */
-        private static void collectGroups(Ast root, java.util.BitSet out) {
+        private static void collectGroups(Ast root, BitSet out) {
             ArrayDeque<Ast> work = new ArrayDeque<>();
             work.push(root);
             while (!work.isEmpty()) {
@@ -780,9 +826,17 @@ public final class Tnfa {
             return result;
         }
 
-        Tnfa build(int start, int accept, int tagCount, int groupCount, boolean multiline,
-                        boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
-                        int[] fixedBase, int[] fixedOffset) {
+        Tnfa build(
+                int start,
+                int accept,
+                int tagCount,
+                int groupCount,
+                boolean multiline,
+                boolean unicodeWordBoundary,
+                int[] wordRanges,
+                Map<String, Integer> namedGroups,
+                int[] fixedBase,
+                int[] fixedOffset) {
             int n = eps.size();
             int[] eFrom = new int[n], eTo = new int[n], ePri = new int[n], eTag = new int[n], eEmpty = new int[n];
             for (int i = 0; i < n; i++) {
@@ -796,9 +850,26 @@ public final class Tnfa {
             int[] sFrom = syms.stream().mapToInt(a -> a[0]).toArray();
             int[] sTo = syms.stream().mapToInt(a -> a[1]).toArray();
             CharClass[] sClass = symClasses.toArray(new CharClass[0]);
-            return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, sFrom, sTo, sClass, start, accept,
-                            tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups,
-                            fixedBase, fixedOffset);
+            return new Tnfa(
+                    counter,
+                    eFrom,
+                    eTo,
+                    ePri,
+                    eTag,
+                    eEmpty,
+                    sFrom,
+                    sTo,
+                    sClass,
+                    start,
+                    accept,
+                    tagCount,
+                    groupCount,
+                    multiline,
+                    unicodeWordBoundary,
+                    wordRanges,
+                    namedGroups,
+                    fixedBase,
+                    fixedOffset);
         }
     }
 }

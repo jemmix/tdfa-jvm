@@ -1,5 +1,7 @@
 package io.github.jemmix.tdfa.core;
 
+import java.util.Arrays;
+
 /**
  * A successful match: an immutable snapshot of the whole-match bounds and
  * every capture tag's offsets. Per-tag offsets are stored in the
@@ -28,6 +30,7 @@ public final class MatchResult {
      *  registers [0..T-1], final registers [T..2T-1]); may differ after BT22 §6.3
      *  register optimizations consolidate the working space. */
     private final int finalRegBase;
+
     private final int groupCount;
     private final int matchStart;
     private final int matchEnd;
@@ -129,7 +132,8 @@ public final class MatchResult {
      */
     @Override
     public String toString() {
-        StringBuilder sb = new StringBuilder("Match[0]=").append(matchStart).append(',').append(matchEnd);
+        StringBuilder sb =
+                new StringBuilder("Match[0]=").append(matchStart).append(',').append(matchEnd);
         for (int g = 1; g <= groupCount; g++) {
             sb.append(" [").append(g).append("]=").append(start(g)).append(',').append(end(g));
         }
@@ -146,14 +150,16 @@ public final class MatchResult {
             return false;
         }
         MatchResult m = (MatchResult) o;
-        return finalRegBase == m.finalRegBase && groupCount == m.groupCount
-                        && matchStart == m.matchStart && matchEnd == m.matchEnd
-                        && java.util.Arrays.equals(regs, m.regs);
+        return finalRegBase == m.finalRegBase
+                && groupCount == m.groupCount
+                && matchStart == m.matchStart
+                && matchEnd == m.matchEnd
+                && Arrays.equals(regs, m.regs);
     }
 
     @Override
     public int hashCode() {
         int h = 31 * (31 * (31 * matchStart + matchEnd) + groupCount) + finalRegBase;
-        return 31 * h + java.util.Arrays.hashCode(regs);
+        return 31 * h + Arrays.hashCode(regs);
     }
 }

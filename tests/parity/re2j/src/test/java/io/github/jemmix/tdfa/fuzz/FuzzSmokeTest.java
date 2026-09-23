@@ -1,11 +1,10 @@
 package io.github.jemmix.tdfa.fuzz;
 
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * The fuzzer's own gate: a fixed-seed slice must be clean, so the generator,
@@ -21,7 +20,7 @@ class FuzzSmokeTest {
         DifferentialFuzzer.Results r = DifferentialFuzzer.run(0xC0FFEE, 1, 500, tmp);
         assertThat(r.cases).as("cases executed").isEqualTo(500);
         assertThat(r.failures)
-                        .as("failures (inspect %s/failures.ndjson; reproduce any line with -Dfuzz.one=<caseSeed>)", tmp)
-                        .isZero();
+                .as("failures (inspect %s/failures.ndjson; reproduce any line with -Dfuzz.one=<caseSeed>)", tmp)
+                .isZero();
     }
 }

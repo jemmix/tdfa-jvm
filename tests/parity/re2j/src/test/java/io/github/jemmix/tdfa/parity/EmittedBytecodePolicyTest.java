@@ -1,13 +1,10 @@
 package io.github.jemmix.tdfa.parity;
 
-import com.google.re2j.Re2jUnicodeProvider;
-import org.junit.jupiter.api.Test;
-import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.ClassVisitor;
-import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
-import org.objectweb.asm.util.CheckClassAdapter;
+import static org.assertj.core.api.Assertions.assertThat;
 
+import com.google.re2j.Re2jUnicodeProvider;
+import io.github.jemmix.tdfa.Pattern;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.reflect.Modifier;
@@ -16,8 +13,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import java.util.stream.Collectors;
+import org.junit.jupiter.api.Test;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.util.CheckClassAdapter;
 
 /**
  * Devirtualization policy AND bytecode correctness of the ASM-generated
@@ -50,16 +52,17 @@ class EmittedBytecodePolicyTest {
      *  candidate scan with extract kernel, bare kernel. All fastPath/INLINED
      *  tier (no zero-width masks), per the emitter's pickMode. */
     private static final String[] PATTERNS = {
-                    "needle42hash", // pure literal -> LITERAL short-circuit
-                    "[a-z]+ing", // candidate scan -> extractOne kernel
-                    "(\\d{3})-(\\d{4})", // tagged kernel + register ops
-                    "\\w+@(\\w+)\\.[a-z]{2,4}",
+        "needle42hash", // pure literal -> LITERAL short-circuit
+        "[a-z]+ing", // candidate scan -> extractOne kernel
+        "(\\d{3})-(\\d{4})", // tagged kernel + register ops
+        "\\w+@(\\w+)\\.[a-z]{2,4}",
     };
 
     private static final class Calls {
         final String file, method;
         final int opcode;
         final String owner, name, desc;
+
         Calls(String file, String method, int opcode, String owner, String name, String desc) {
             this.file = file;
             this.method = method;
@@ -73,12 +76,36 @@ class EmittedBytecodePolicyTest {
         public String toString() {
             // OPCODES is indexed relative to INVOKEVIRTUAL (182): storing the
             // names at absolute opcode indices would need a 187-slot array.
-            return file + "." + method + ": " + OPCODES[opcode - Opcodes.INVOKEVIRTUAL] + " " + owner + "." + name + desc;
+            return file + "." + method + ": " + OPCODES[opcode - Opcodes.INVOKEVIRTUAL] + " " + owner + "." + name
+                    + desc;
         }
     }
 
-    private static final String[] OPCODES = {"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
-                    "INVOKEVIRTUAL", "INVOKESPECIAL", "INVOKESTATIC", "INVOKEINTERFACE", "INVOKEDYNAMIC"};
+    private static final String[] OPCODES = {
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "INVOKEVIRTUAL",
+        "INVOKESPECIAL",
+        "INVOKESTATIC",
+        "INVOKEINTERFACE",
+        "INVOKEDYNAMIC"
+    };
 
     @Test
     void generatedEngineClassesAreDevirtualizable() throws Exception {
@@ -91,39 +118,49 @@ class EmittedBytecodePolicyTest {
         for (Path classFile : dumped) {
             byte[] bytes = Files.readAllBytes(classFile);
             String fileName = classFile.getFileName().toString();
-            new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
-                String method = "<clinit>";
-                @Override
-                public MethodVisitor visitMethod(int access, String name, String d, String sig, String[] ex) {
-                    method = name + d;
-                    return new MethodVisitor(Opcodes.ASM9) {
-                        @Override
-                        public void visitMethodInsn(int opcode, String owner, String name, String desc, boolean itf) {
-                            switch (opcode) {
-                                case Opcodes.INVOKEVIRTUAL -> {
-                                    counts[0]++;
-                                    if (!receiverIsFinal(owner)) {
-                                        violations.add(new Calls(fileName, method, opcode, owner, name, desc));
-                                    }
+            new ClassReader(bytes)
+                    .accept(
+                            new ClassVisitor(Opcodes.ASM9) {
+                                String method = "<clinit>";
+
+                                @Override
+                                public MethodVisitor visitMethod(
+                                        int access, String name, String d, String sig, String[] ex) {
+                                    method = name + d;
+                                    return new MethodVisitor(Opcodes.ASM9) {
+                                        @Override
+                                        public void visitMethodInsn(
+                                                int opcode, String owner, String name, String desc, boolean itf) {
+                                            switch (opcode) {
+                                                case Opcodes.INVOKEVIRTUAL -> {
+                                                    counts[0]++;
+                                                    if (!receiverIsFinal(owner)) {
+                                                        violations.add(
+                                                                new Calls(fileName, method, opcode, owner, name, desc));
+                                                    }
+                                                }
+                                                case Opcodes.INVOKESTATIC -> counts[1]++;
+                                                case Opcodes.INVOKESPECIAL -> counts[2]++;
+                                                case Opcodes.INVOKEINTERFACE, Opcodes.INVOKEDYNAMIC ->
+                                                    violations.add(
+                                                            new Calls(fileName, method, opcode, owner, name, desc));
+                                                default -> {}
+                                            }
+                                        }
+                                    };
                                 }
-                                case Opcodes.INVOKESTATIC -> counts[1]++;
-                                case Opcodes.INVOKESPECIAL -> counts[2]++;
-                                case Opcodes.INVOKEINTERFACE, Opcodes.INVOKEDYNAMIC ->
-                                    violations.add(new Calls(fileName, method, opcode, owner, name, desc));
-                                default -> {
-                                }
-                            }
-                        }
-                    };
-                }
-            }, 0);
+                            },
+                            0);
         }
         // There must be real code under test, not empty shells.
-        assertThat(counts[0] + counts[1] + counts[2]).as("call sites in generated classes").isGreaterThan(20);
+        assertThat(counts[0] + counts[1] + counts[2])
+                .as("call sites in generated classes")
+                .isGreaterThan(20);
         assertThat(violations)
-                        .as("every call in the generated tier must be direct or monomorphic:\n%s",
-                                        violations.stream().map(Object::toString).collect(java.util.stream.Collectors.joining("\n")))
-                        .isEmpty();
+                .as(
+                        "every call in the generated tier must be direct or monomorphic:\n%s",
+                        violations.stream().map(Object::toString).collect(Collectors.joining("\n")))
+                .isEmpty();
     }
 
     /**
@@ -145,8 +182,10 @@ class EmittedBytecodePolicyTest {
             StringWriter sw = new StringWriter();
             try {
                 CheckClassAdapter.verify(
-                                new ClassReader(Files.readAllBytes(classFile)),
-                                getClass().getClassLoader(), false, new PrintWriter(sw));
+                        new ClassReader(Files.readAllBytes(classFile)),
+                        getClass().getClassLoader(),
+                        false,
+                        new PrintWriter(sw));
             } catch (Exception e) {
                 problems.add(classFile.getFileName() + ": threw " + e);
                 continue;
@@ -156,8 +195,8 @@ class EmittedBytecodePolicyTest {
             }
         }
         assertThat(problems)
-                        .as("ASM CheckClassAdapter verification of emitted classes")
-                        .isEmpty();
+                .as("ASM CheckClassAdapter verification of emitted classes")
+                .isEmpty();
     }
 
     /** Compile the shapes with dumping enabled; return the dumped class files.
@@ -178,8 +217,7 @@ class EmittedBytecodePolicyTest {
         System.setProperty("java.io.tmpdir", dir.toString());
         try {
             for (String re : PATTERNS) {
-                io.github.jemmix.tdfa.Pattern.compile(re, 0,
-                                (io.github.jemmix.tdfa.core.RegexEngineFactory) null, Re2jUnicodeProvider.INSTANCE);
+                Pattern.compile(re, 0, (RegexEngineFactory) null, Re2jUnicodeProvider.INSTANCE);
             }
         } finally {
             if (prevDump == null) {
@@ -213,8 +251,8 @@ class EmittedBytecodePolicyTest {
      *  per JLS; everything else must declare (or be) final. */
     private static boolean receiverIsFinal(String owner) {
         try {
-            Class<?> c = Class.forName(owner.replace('/', '.'), false,
-                            EmittedBytecodePolicyTest.class.getClassLoader());
+            Class<?> c =
+                    Class.forName(owner.replace('/', '.'), false, EmittedBytecodePolicyTest.class.getClassLoader());
             return c.isArray() || Modifier.isFinal(c.getModifiers());
         } catch (ClassNotFoundException e) {
             return false; // unloadable receiver: definitely not verifiable

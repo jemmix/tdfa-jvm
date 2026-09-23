@@ -1,6 +1,8 @@
 package io.github.jemmix.tdfa.regopt;
 
+import io.github.jemmix.tdfa.tdfa.WorkMeter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 
@@ -25,8 +27,7 @@ import java.util.List;
  * <p>Public entry point: {@link #optimize(Cfg)}.
  */
 public final class Optimize {
-    private Optimize() {
-    }
+    private Optimize() {}
 
     /** Run the full pipeline on {@code cfg} (in place). */
     public static void optimize(Cfg cfg) {
@@ -34,15 +35,16 @@ public final class Optimize {
     }
 
     /** Full pipeline with a compile work budget (see tdfa.WorkMeter). */
-    public static void optimize(Cfg cfg, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
+    public static void optimize(Cfg cfg, WorkMeter meter) {
         if (Boolean.getBoolean("tdfa.debug")) {
             int edges = 0, ops = 0;
             for (Cfg.Block b : cfg.blocks) {
                 edges += b.successors.size();
                 ops += b.ops.size();
             }
-            System.err.printf("[cfg] blocks=%d edges=%d ops=%d regs=%d tags=%d%n",
-                            cfg.blocks.size(), edges, ops, cfg.initialRegCount, cfg.tagCount);
+            System.err.printf(
+                    "[cfg] blocks=%d edges=%d ops=%d regs=%d tags=%d%n",
+                    cfg.blocks.size(), edges, ops, cfg.initialRegCount, cfg.tagCount);
         }
         // Stage 1: compaction (renumber survivors into a contiguous range).
         int[] vmap = compaction(cfg);
@@ -119,7 +121,7 @@ public final class Optimize {
         // Two-pass renumbering: working registers first (lowest indices), then
         // final registers (highest). This keeps the final block contiguous at the top.
         int[] vmap = new int[n];
-        java.util.Arrays.fill(vmap, -1);
+        Arrays.fill(vmap, -1);
         int nextWorking = 0;
         // Pass 1: working registers = used regs in [0..tagCount-1] and [2*tagCount..n-1].
         for (int i = 0; i < tagCount; i++) {
@@ -162,8 +164,8 @@ public final class Optimize {
 
     private static int mapped(int r, int[] vmap) {
         if (r < 0 || r >= vmap.length || vmap[r] < 0) {
-            throw new IllegalStateException("regopt: rename: op references unmapped register " + r
-                            + " (vmap covers " + vmap.length + " registers) — compaction invariant broken");
+            throw new IllegalStateException("regopt: rename: op references unmapped register " + r + " (vmap covers "
+                    + vmap.length + " registers) — compaction invariant broken");
         }
         return vmap[r];
     }
@@ -204,7 +206,7 @@ public final class Optimize {
      * <p>Fallback-block handling (last 4 lines of the paper's pseudocode) is
      * deferred until M3 (we have no fallback blocks yet).
      */
-    static boolean[][] livenessAnalysis(Cfg cfg, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
+    static boolean[][] livenessAnalysis(Cfg cfg, WorkMeter meter) {
         int nb = cfg.blocks.size();
         int nr = cfg.regCount;
         int w = (nr + 63) >>> 6;
@@ -256,7 +258,7 @@ public final class Optimize {
         // converges in the fewest re-enqueues).
         int[] postOrder = computePostOrder(cfg);
         int[] queue = new int[nb + 1];
-        java.util.BitSet queued = new java.util.BitSet(nb);
+        BitSet queued = new BitSet(nb);
         int head = 0, tail = 0;
         for (int bi : postOrder) {
             if (cfg.blocks.get(bi).kind != Cfg.BLOCK_BASIC) {
@@ -277,7 +279,7 @@ public final class Optimize {
             head++;
             queued.clear(bi);
             Cfg.Block b = cfg.blocks.get(bi);
-            java.util.Arrays.fill(scratch, 0L);
+            Arrays.fill(scratch, 0L);
             boolean any = false;
             for (int si : b.successors) {
                 Cfg.Block s = cfg.blocks.get(si);
@@ -293,7 +295,7 @@ public final class Optimize {
             if (!any) {
                 continue;
             } // no successors: row stays (seed or empty)
-            if (!java.util.Arrays.equals(scratch, rows[bi])) {
+            if (!Arrays.equals(scratch, rows[bi])) {
                 // Zero-allocation row store: write into the spare buffer and
                 // recycle the displaced row as the next spare (this churn was
                 // ~25% of wall on liveness-heavy compiles).
@@ -336,8 +338,7 @@ public final class Optimize {
      *  word) ticks, ops-heavy blocks inflated wall-per-tick ~40x and the
      *  8M budget took 6+s to trip (fuzz round 20 hang: liveness on a
      *  1389-state DFA burning 17s at library budget). */
-    private static long[] propagateBackwardW(long[] liveOut, List<Cfg.Op> ops, int nr,
-                    io.github.jemmix.tdfa.tdfa.WorkMeter meter, long[] buf) {
+    private static long[] propagateBackwardW(long[] liveOut, List<Cfg.Op> ops, int nr, WorkMeter meter, long[] buf) {
         System.arraycopy(liveOut, 0, buf, 0, buf.length);
         long[] live = buf;
         for (int oi = ops.size() - 1; oi >= 0; oi--) {
@@ -349,10 +350,10 @@ public final class Optimize {
                 continue;
             }
             switch (op.kind) {
-                case Cfg.KIND_SET :
+                case Cfg.KIND_SET:
                     live[op.dst >>> 6] &= ~(1L << op.dst);
                     break;
-                case Cfg.KIND_COPY :
+                case Cfg.KIND_COPY:
                     if ((live[op.dst >>> 6] & (1L << op.dst)) != 0) {
                         live[op.dst >>> 6] &= ~(1L << op.dst);
                         if (op.src < nr) {
@@ -360,7 +361,7 @@ public final class Optimize {
                         }
                     }
                     break;
-                default :
+                default:
                     break; // KIND_APPEND: multi-valued tags unmodeled
             }
         }
@@ -495,7 +496,7 @@ public final class Optimize {
      * <p>APPEND-vs-non-APPEND cross-interference is skipped: we have no APPEND ops
      * (single-valued tags only).
      */
-    static boolean[][] interferenceAnalysis(Cfg cfg, boolean[][] L, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
+    static boolean[][] interferenceAnalysis(Cfg cfg, boolean[][] L, WorkMeter meter) {
         int nr = cfg.regCount;
         boolean[][] I = new boolean[nr][nr];
         final int NO_VALUE = -1;
@@ -510,7 +511,7 @@ public final class Optimize {
 
             // Forward pre-pass: compute V at each op position (V_after[i] = V just after op i).
             int[] V = new int[nr];
-            java.util.Arrays.fill(V, NO_VALUE);
+            Arrays.fill(V, NO_VALUE);
             // Seed V for COPY sources: V[src] = src, so COPY A <- B gives V[A] = B.
             for (Cfg.Op op : b.ops) {
                 if ((op.kind == Cfg.KIND_COPY || op.kind == Cfg.KIND_APPEND) && op.src < nr) {
@@ -524,15 +525,15 @@ public final class Optimize {
                 Cfg.Op op = b.ops.get(oi);
                 if (op.dst < nr) {
                     switch (op.kind) {
-                        case Cfg.KIND_SET :
+                        case Cfg.KIND_SET:
                             V[op.dst] = (op.value == Cfg.VAL_POS) ? POS_VALUE : NIL_VALUE;
                             break;
-                        case Cfg.KIND_COPY :
+                        case Cfg.KIND_COPY:
                             if (op.src < nr) {
                                 V[op.dst] = V[op.src];
                             }
                             break;
-                        default :
+                        default:
                             break;
                     }
                 }
@@ -596,12 +597,12 @@ public final class Optimize {
      *
      * @return V[old] = new register index (0-based)
      */
-    static int[] registerAllocation(Cfg cfg, boolean[][] I, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
+    static int[] registerAllocation(Cfg cfg, boolean[][] I, WorkMeter meter) {
         int nr = cfg.regCount;
         int nw = cfg.finalRegBase; // working registers: [0..nw); finals: [nw..nr)
         int[] B = new int[nr];
         List<BitSet> S = new ArrayList<>(nr);
-        java.util.Arrays.fill(B, -1);
+        Arrays.fill(B, -1);
         for (int i = 0; i < nr; i++) {
             S.add(new BitSet());
         }
@@ -642,7 +643,9 @@ public final class Optimize {
                 } else if (x != y) {
                     // Both in classes; merge if possible (paper omits this case).
                     if (noInterfereCross(S.get(x), S.get(y), I)) {
-                        for (int m = S.get(y).nextSetBit(0); m >= 0; m = S.get(y).nextSetBit(m + 1)) {
+                        for (int m = S.get(y).nextSetBit(0);
+                                m >= 0;
+                                m = S.get(y).nextSetBit(m + 1)) {
                             B[m] = x;
                             S.get(x).set(m);
                         }
@@ -707,7 +710,7 @@ public final class Optimize {
         // registers then get dedicated consecutive slots on top, in tag order —
         // guaranteeing the contiguous final block the readout protocol needs.
         int[] V = new int[nr];
-        java.util.Arrays.fill(V, -1);
+        Arrays.fill(V, -1);
         int n = 0;
         for (int i = 0; i < nw; i++) {
             if (B[i] == i) {
@@ -754,7 +757,7 @@ public final class Optimize {
      * writes i or j). Duplicates after normalization indicate redundant work and can
      * be removed.
      */
-    static void normalization(Cfg cfg, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
+    static void normalization(Cfg cfg, WorkMeter meter) {
         for (Cfg.Block b : cfg.blocks) {
             if (b.ops.isEmpty()) {
                 continue;
@@ -777,7 +780,7 @@ public final class Optimize {
         }
     }
 
-    private static void normalizeRun(List<Cfg.Op> run, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
+    private static void normalizeRun(List<Cfg.Op> run, WorkMeter meter) {
         // Dedup.
         for (int a = run.size() - 1; a >= 0; a--) {
             for (int b2 = a - 1; b2 >= 0; b2--) {
@@ -816,7 +819,7 @@ public final class Optimize {
      * {@code nontrivial_cycle} flag (true if any non-self cycle exists); we
      * don't currently surface it.
      */
-    private static void topoSortCopy(List<Cfg.Op> run, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
+    private static void topoSortCopy(List<Cfg.Op> run, WorkMeter meter) {
         int n = run.size();
         if (n < 2) {
             return;

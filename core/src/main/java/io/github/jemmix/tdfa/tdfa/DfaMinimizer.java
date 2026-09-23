@@ -1,7 +1,9 @@
 package io.github.jemmix.tdfa.tdfa;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.TreeSet;
 
 /**
  * Register-aware Moore's algorithm for tagged-DFA minimization (paper §6.2.2).
@@ -85,10 +87,19 @@ final class DfaMinimizer {
      */
     boolean useNormalized;
 
-    DfaMinimizer(int n, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
-                    int[] ranges, int[] ops, int[] stateEntryMask, int[] stateAcceptMask,
-                    int[] stateStopOnAcceptMask, int[] stateFinalOpsByMask, boolean longest,
-                    WorkMeter meter) {
+    DfaMinimizer(
+            int n,
+            int[] stateMeta,
+            int[] stateBase,
+            int[] stateFinalOpsOff,
+            int[] ranges,
+            int[] ops,
+            int[] stateEntryMask,
+            int[] stateAcceptMask,
+            int[] stateStopOnAcceptMask,
+            int[] stateFinalOpsByMask,
+            boolean longest,
+            WorkMeter meter) {
         this.n = n;
         this.stateMeta = stateMeta;
         this.stateBase = stateBase;
@@ -103,7 +114,7 @@ final class DfaMinimizer {
         this.meter = meter;
         this.maxNormCells = Budgets.maxMinimizeNormCells();
         this.opsIdAt = new int[ops.length];
-        java.util.Arrays.fill(this.opsIdAt, -1);
+        Arrays.fill(this.opsIdAt, -1);
         detectOverlapsAndInit();
     }
 
@@ -112,7 +123,8 @@ final class DfaMinimizer {
      */
     private void detectOverlapsAndInit() {
         useNormalized = true;
-        outer : for (int s = 0; s < n; s++) {
+        outer:
+        for (int s = 0; s < n; s++) {
             int base = stateBase[s];
             int count = Tdfa.rangeCount(stateMeta[s]);
             int prevHi = -1;
@@ -134,7 +146,7 @@ final class DfaMinimizer {
     }
 
     private void computeGlobalBreakpoints() {
-        java.util.TreeSet<Integer> bps = new java.util.TreeSet<>();
+        TreeSet<Integer> bps = new TreeSet<>();
         bps.add(0);
         bps.add(0x110000); // sentinel upper bound (exclusive)
         for (int s = 0; s < n; s++) {
@@ -256,7 +268,7 @@ final class DfaMinimizer {
                 }
                 newPartition[s] = g;
             }
-            if (!java.util.Arrays.equals(partition, newPartition)) {
+            if (!Arrays.equals(partition, newPartition)) {
                 changed = true;
                 partition = newPartition;
             }

@@ -1,13 +1,15 @@
 package io.github.jemmix.tdfa.tdfa;
 
+import io.github.jemmix.tdfa.ast.Alphabet;
+import java.util.Arrays;
+
 /**
  * Construction-time table builders + literal-needle analysis for
  * TdfaRunner — extracted verbatim (2026-09 god-file split; statics, no
  * instance state).
  */
 final class RunnerTables {
-    private RunnerTables() {
-    }
+    private RunnerTables() {}
 
     /**
      * Build flat per-state range-index lookup: {@code [state * limit + c] → range index} (-1 = dead).
@@ -15,7 +17,7 @@ final class RunnerTables {
     static int[] buildAsciiRangeFlat(Tdfa tdfa, int limit) {
         int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
         int[] flat = new int[tdfa.stateCount * limit];
-        java.util.Arrays.fill(flat, -1);
+        Arrays.fill(flat, -1);
         for (int s = 0; s < tdfa.stateCount; s++) {
             int meta = sm[s];
             int base = tdfa.stateBase[s], cnt = (meta >>> 1) & 0xFFFF;
@@ -40,7 +42,7 @@ final class RunnerTables {
     static int[] buildAsciiTarget(Tdfa tdfa, int limit) {
         int[] sm = tdfa.stateMeta, rg = tdfa.ranges;
         int[] flat = new int[tdfa.stateCount * limit];
-        java.util.Arrays.fill(flat, -1);
+        Arrays.fill(flat, -1);
         for (int s = 0; s < tdfa.stateCount; s++) {
             int meta = sm[s];
             int base = tdfa.stateBase[s], cnt = (meta >>> 1) & 0xFFFF;
@@ -105,7 +107,7 @@ final class RunnerTables {
                     int o = (base + i) * 5;
                     sortBuf[i] = ((long) rg[o] << 32) | (rg[o + 1] & 0xFFFFFFFFL);
                 }
-                java.util.Arrays.sort(sortBuf, 0, cnt);
+                Arrays.sort(sortBuf, 0, cnt);
                 int maxHi = (int) sortBuf[0];
                 for (int i = 1; i < cnt; i++) {
                     int lo = (int) (sortBuf[i] >>> 32);
@@ -154,8 +156,7 @@ final class RunnerTables {
     static int literalIndexOf(String s, String needle, int from) {
         int idx = s.indexOf(needle, from);
         while (idx >= 0
-                        && (needleEndOverlapsPair(s, idx, needle.length())
-                                        || (idx > from && io.github.jemmix.tdfa.ast.Alphabet.pairInterior(s, idx)))) {
+                && (needleEndOverlapsPair(s, idx, needle.length()) || (idx > from && Alphabet.pairInterior(s, idx)))) {
             idx = s.indexOf(needle, idx + 1);
         }
         return idx;
@@ -174,8 +175,7 @@ final class RunnerTables {
             return false;
         }
         int end = idx + needleLen;
-        return end < s.length()
-                        && s.charAt(end) >= 0xDC00 && s.charAt(end) <= 0xDFFF;
+        return end < s.length() && s.charAt(end) >= 0xDC00 && s.charAt(end) <= 0xDFFF;
     }
 
     static void setBit(long[] bits, int c) {

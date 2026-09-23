@@ -1,15 +1,15 @@
 package io.github.jemmix.tdfa.rebar;
 
-import org.tomlj.Toml;
-import org.tomlj.TomlArray;
-import org.tomlj.TomlParseResult;
-import org.tomlj.TomlTable;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
+import org.tomlj.Toml;
+import org.tomlj.TomlArray;
+import org.tomlj.TomlParseResult;
+import org.tomlj.TomlTable;
 
 /**
  * Loads rebar benchmark scenarios from a {@code benchmarks/} directory tree
@@ -53,15 +53,15 @@ public final class ScenarioLoader {
         }
         try (var walk = Files.walk(definitionsDir)) {
             walk.filter(p -> p.toString().endsWith(".toml"))
-                            .filter(Files::isRegularFile)
-                            .sorted()
-                            .forEach(toml -> {
-                                try {
-                                    loadFile(definitionsDir, toml, out);
-                                } catch (IOException e) {
-                                    // Skip files we can't read; surfaced as missing scenarios.
-                                }
-                            });
+                    .filter(Files::isRegularFile)
+                    .sorted()
+                    .forEach(toml -> {
+                        try {
+                            loadFile(definitionsDir, toml, out);
+                        } catch (IOException e) {
+                            // Skip files we can't read; surfaced as missing scenarios.
+                        }
+                    });
         }
         return List.copyOf(out);
     }
@@ -123,9 +123,7 @@ public final class ScenarioLoader {
             }
         }
         return new Scenario(
-                        fullName, group, name, model, regex,
-                        caseInsensitive, unicode, hsSpec, count,
-                        List.copyOf(engines));
+                fullName, group, name, model, regex, caseInsensitive, unicode, hsSpec, count, List.copyOf(engines));
     }
 
     /**
@@ -170,8 +168,7 @@ public final class ScenarioLoader {
             String perLine = t.getString("per-line");
 
             if (t.isString("patterns")) {
-                patterns = transform(List.of(t.getString("patterns")),
-                                literal, prepend, append);
+                patterns = transform(List.of(t.getString("patterns")), literal, prepend, append);
             } else if (t.isArray("patterns")) {
                 TomlArray arr = t.getArray("patterns");
                 List<String> ps = new ArrayList<>(arr.size());
@@ -216,8 +213,7 @@ public final class ScenarioLoader {
      * {@code literal} (regex-escape), {@code prepend}, {@code append} to each
      * pattern.
      */
-    private static List<String> transform(List<String> patterns,
-                    boolean literal, String prepend, String append) {
+    private static List<String> transform(List<String> patterns, boolean literal, String prepend, String append) {
         List<String> out = new ArrayList<>(patterns.size());
         for (String p : patterns) {
             if (p == null) {
@@ -306,8 +302,7 @@ public final class ScenarioLoader {
             String prepend = t.getString("prepend");
             String append = t.getString("append");
             if (t.isString("contents")) {
-                return new Scenario.HaystackSpec.Inline(
-                                t.getString("contents"), repeat, prepend, append);
+                return new Scenario.HaystackSpec.Inline(t.getString("contents"), repeat, prepend, append);
             }
             if (t.isString("path")) {
                 boolean trim = boolOr(t.getBoolean("trim"), false);
@@ -315,9 +310,14 @@ public final class ScenarioLoader {
                 Long ls = t.getLong("line-start");
                 Long le = t.getLong("line-end");
                 return new Scenario.HaystackSpec.FromPath(
-                                t.getString("path"), trim, utf8Lossy, repeat, prepend, append,
-                                ls != null ? ls.intValue() : null,
-                                le != null ? le.intValue() : null);
+                        t.getString("path"),
+                        trim,
+                        utf8Lossy,
+                        repeat,
+                        prepend,
+                        append,
+                        ls != null ? ls.intValue() : null,
+                        le != null ? le.intValue() : null);
             }
         }
         return null;
@@ -351,7 +351,7 @@ public final class ScenarioLoader {
             // (codepoint vs byte spans, etc.). A few scenarios where re2j
             // intentionally diverges from j.u.r (e.g. . matches \r, $ doesn't
             // match before final line terminator) are patched in vendor/patches.
-            String[] identities = new String[]{"java/hotspot", "re2", ".*"};
+            String[] identities = new String[] {"java/hotspot", "re2", ".*"};
             for (String identity : identities) {
                 for (int i = 0; i < arr.size(); i++) {
                     TomlTable t = arr.getTable(i);
@@ -362,9 +362,9 @@ public final class ScenarioLoader {
                     if (engRegex == null) {
                         continue;
                     }
-                    java.util.regex.Pattern r;
+                    Pattern r;
                     try {
-                        r = java.util.regex.Pattern.compile("^(" + engRegex + ")$");
+                        r = Pattern.compile("^(" + engRegex + ")$");
                     } catch (Exception e) {
                         continue;
                     }

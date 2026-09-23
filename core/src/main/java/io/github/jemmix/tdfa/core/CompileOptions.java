@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.core;
 
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+import java.util.Objects;
 
 /**
  * Immutable compilation options for the TDFA pipeline. Builder-style:
@@ -22,8 +23,11 @@ public final class CompileOptions {
     private final UnicodeDataProvider unicodeProvider;
     private final CompileObserver observer;
 
-    private CompileOptions(boolean longestMatch, boolean disableUnicodeGroups,
-                    UnicodeDataProvider unicodeProvider, CompileObserver observer) {
+    private CompileOptions(
+            boolean longestMatch,
+            boolean disableUnicodeGroups,
+            UnicodeDataProvider unicodeProvider,
+            CompileObserver observer) {
         this.longestMatch = longestMatch;
         this.disableUnicodeGroups = disableUnicodeGroups;
         this.unicodeProvider = unicodeProvider;
@@ -86,12 +90,12 @@ public final class CompileOptions {
         }
         CompileOptions c = (CompileOptions) o;
         return longestMatch == c.longestMatch
-                        && disableUnicodeGroups == c.disableUnicodeGroups
-                        && java.util.Objects.equals(unicodeProvider, c.unicodeProvider)
-                        // Identity is intentional: the observer is a push hook, not a
-                        // value — two different hook instances with equal state are
-                        // still different options (they observe different people).
-                        && observer == c.observer;
+                && disableUnicodeGroups == c.disableUnicodeGroups
+                && Objects.equals(unicodeProvider, c.unicodeProvider)
+                // Identity is intentional: the observer is a push hook, not a
+                // value — two different hook instances with equal state are
+                // still different options (they observe different people).
+                && observer == c.observer;
     }
 
     @Override

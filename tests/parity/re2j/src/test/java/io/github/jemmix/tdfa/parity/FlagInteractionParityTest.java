@@ -1,17 +1,15 @@
 package io.github.jemmix.tdfa.parity;
 
-import io.github.jemmix.tdfa.core.Matcher;
-import io.github.jemmix.tdfa.core.PatternSyntaxException;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
-
 import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameAllMatches;
 import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
 import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFindPosix;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Flag interaction parity: combined flags, unknown flag rejection,
@@ -53,36 +51,37 @@ class FlagInteractionParityTest {
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void unknownFlagRejects(RegexEngineFactory factory) {
         assertThatThrownBy(() -> io.github.jemmix.tdfa.Pattern.compile("abc", 0x100, factory))
-                        .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> com.google.re2j.Pattern.compile("abc", 0x100))
-                        .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void disableUnicodeGroupsBehavior(RegexEngineFactory factory) {
         // Both re2j and our shim reject \p{L} when DISABLE_UNICODE_GROUPS is set.
-        assertThatThrownBy(() -> com.google.re2j.Pattern.compile("\\p{L}", com.google.re2j.Pattern.DISABLE_UNICODE_GROUPS))
-                        .isInstanceOf(Exception.class);
-        assertThatThrownBy(() -> io.github.jemmix.tdfa.Pattern.compile("\\p{L}",
-                        io.github.jemmix.tdfa.Pattern.DISABLE_UNICODE_GROUPS, factory))
-                        .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class);
+        assertThatThrownBy(
+                        () -> com.google.re2j.Pattern.compile("\\p{L}", com.google.re2j.Pattern.DISABLE_UNICODE_GROUPS))
+                .isInstanceOf(Exception.class);
+        assertThatThrownBy(() -> io.github.jemmix.tdfa.Pattern.compile(
+                        "\\p{L}", io.github.jemmix.tdfa.Pattern.DISABLE_UNICODE_GROUPS, factory))
+                .isInstanceOf(PatternSyntaxException.class);
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void disableUnicodeGroupsRejectsProperty(RegexEngineFactory factory) {
-        assertThatThrownBy(() -> io.github.jemmix.tdfa.Pattern.compile("\\p{L}",
-                        io.github.jemmix.tdfa.Pattern.DISABLE_UNICODE_GROUPS, factory))
-                        .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class);
+        assertThatThrownBy(() -> io.github.jemmix.tdfa.Pattern.compile(
+                        "\\p{L}", io.github.jemmix.tdfa.Pattern.DISABLE_UNICODE_GROUPS, factory))
+                .isInstanceOf(PatternSyntaxException.class);
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void flagRoundTrip(RegexEngineFactory factory) {
         int flags = io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE
-                        | io.github.jemmix.tdfa.Pattern.MULTILINE
-                        | io.github.jemmix.tdfa.Pattern.DOTALL;
+                | io.github.jemmix.tdfa.Pattern.MULTILINE
+                | io.github.jemmix.tdfa.Pattern.DOTALL;
         var p = io.github.jemmix.tdfa.Pattern.compile("abc", flags, factory);
         assertThat(p.flags()).isEqualTo(flags);
     }

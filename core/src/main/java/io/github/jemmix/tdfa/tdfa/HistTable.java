@@ -31,6 +31,7 @@ final class HistTable {
      * id 0 is the canonical empty sequence.
      */
     static final int EMPTY_ID = 0;
+
     private final long memBudget;
     private int[][] contents = new int[16][];
     /**
@@ -39,6 +40,7 @@ final class HistTable {
      * append-heavy compiles.
      */
     private long[] idHash = new long[16];
+
     private int[] hFirst = new int[32];
     private int[] hNext = new int[16];
     private int hMask = 31;
@@ -47,6 +49,7 @@ final class HistTable {
      * Per-id caches, null until first requested.
      */
     private long[][] bitsCache;
+
     private int[][] lastSignCache;
     private int cachedWords = -1;
     private int cachedTags = -1;
@@ -75,8 +78,8 @@ final class HistTable {
     private void charge(long bytes) {
         if ((chargedBytes += bytes) > memBudget) {
             throw new IllegalStateException("pattern too large: tag histories exceed the compile memory budget ("
-                            + chargedBytes + " weighted bytes over " + next + " interned sequences — raise -D"
-                            + Budgets.COMPILE_MEMORY_PROP + ")");
+                    + chargedBytes + " weighted bytes over " + next + " interned sequences — raise -D"
+                    + Budgets.COMPILE_MEMORY_PROP + ")");
         }
     }
 
@@ -152,10 +155,8 @@ final class HistTable {
             cachedWords = words;
         }
         if (bitsCache == null || bitsCache.length < contents.length) {
-            int newLen = Math.max(contents.length,
-                            (bitsCache == null ? 16 : bitsCache.length) * 2);
-            bitsCache = Arrays.copyOf(
-                            bitsCache == null ? new long[16][] : bitsCache, newLen);
+            int newLen = Math.max(contents.length, (bitsCache == null ? 16 : bitsCache.length) * 2);
+            bitsCache = Arrays.copyOf(bitsCache == null ? new long[16][] : bitsCache, newLen);
         }
         long[] bits = bitsCache[id];
         if (bits == null) {
@@ -184,10 +185,8 @@ final class HistTable {
             cachedTags = tags;
         }
         if (lastSignCache == null || lastSignCache.length < contents.length) {
-            int newLen = Math.max(contents.length,
-                            (lastSignCache == null ? 16 : lastSignCache.length) * 2);
-            lastSignCache = Arrays.copyOf(
-                            lastSignCache == null ? new int[16][] : lastSignCache, newLen);
+            int newLen = Math.max(contents.length, (lastSignCache == null ? 16 : lastSignCache.length) * 2);
+            lastSignCache = Arrays.copyOf(lastSignCache == null ? new int[16][] : lastSignCache, newLen);
         }
         int[] last = lastSignCache[id];
         if (last == null) {

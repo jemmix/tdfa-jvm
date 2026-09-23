@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa.tdfa;
 
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
@@ -23,6 +24,7 @@ final class WalkIndex {
      * allowance: every lookup takes the binary-search fallback.
      */
     private static final int[] CAP_MARKER = new int[128];
+
     private final TdfaRunner r;
     /**
      * Lazy per-state block-id tables, one volatile cell per state (see
@@ -31,7 +33,7 @@ final class WalkIndex {
      * own, benignly duplicated) or a fully-initialized array — never a
      * default-0 cell misread as block id 0.
      */
-    private final java.util.concurrent.atomic.AtomicReferenceArray<int[]> walkBlockIdx;
+    private final AtomicReferenceArray<int[]> walkBlockIdx;
     /**
      * This memo's byte allowance (runner's share of the runtime budget;
      * see the class doc) and the weighted bytes committed so far
@@ -47,14 +49,13 @@ final class WalkIndex {
      * and double-checked, so races only cost a redundant lock).
      */
     private volatile int[][] walkBlocksArr = EMPTY_BLOCKS;
+
     private int walkBlockCount; // guarded by this
     private long chargedBytes;
 
     WalkIndex(TdfaRunner r, long memoBudgetBytes) {
         this.r = r;
-        this.walkBlockIdx = r.rangesDisjoint
-                        ? new AtomicReferenceArray<>(r.stateCount)
-                        : null;
+        this.walkBlockIdx = r.rangesDisjoint ? new AtomicReferenceArray<>(r.stateCount) : null;
         this.maxBytes = Budgets.walkMaxBytes(memoBudgetBytes);
     }
 
@@ -85,7 +86,7 @@ final class WalkIndex {
             // search (cell pinned to the -2 sentinel via a shared marker).
             if (tryCharge(BudgetWeights.WALK_STATE_TABLE_BYTES)) {
                 idx = new int[128];
-                java.util.Arrays.fill(idx, -1);
+                Arrays.fill(idx, -1);
                 walkBlockIdx.set(state, idx); // volatile publish of the filled array
                 idx = walkBlockIdx.get(state); // adopt the winner if we lost the race
             } else {
@@ -134,7 +135,7 @@ final class WalkIndex {
             return -2;
         }
         int[] cells = new int[512];
-        java.util.Arrays.fill(cells, -1);
+        Arrays.fill(cells, -1);
         int lo = b << 9, hi = lo + 511;
         int base = r.stateBase[state], cnt = (r.stateMeta[state] >>> 1) & 0xFFFF;
         final int[] rg = r.ranges;
@@ -146,7 +147,7 @@ final class WalkIndex {
             }
         }
         int n = walkBlockCount++;
-        int[][] next = java.util.Arrays.copyOf(walkBlocksArr, n + 1);
+        int[][] next = Arrays.copyOf(walkBlocksArr, n + 1);
         next[n] = cells;
         walkBlocksArr = next; // volatile publish: cells contents visible to readers
         if (pub != null) {

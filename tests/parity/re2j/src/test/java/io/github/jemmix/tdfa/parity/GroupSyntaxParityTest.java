@@ -1,17 +1,14 @@
 package io.github.jemmix.tdfa.parity;
 
-import io.github.jemmix.tdfa.core.Matcher;
-import io.github.jemmix.tdfa.core.PatternSyntaxException;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
-
 import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameCompileReject;
 import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
 import static io.github.jemmix.tdfa.parity.Re2jOracle.re2jFind;
 import static io.github.jemmix.tdfa.parity.Re2jOracle.tdfaFind;
 import static org.assertj.core.api.Assertions.assertThat;
+
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Group syntax parity: non-capturing, named groups, atomic groups,
@@ -145,7 +142,8 @@ class GroupSyntaxParityTest {
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void namedGroupQuery(RegexEngineFactory factory) {
         var r = com.google.re2j.Pattern.compile("(?<word>\\w+)").matcher("hello");
-        var t = io.github.jemmix.tdfa.Pattern.compile("(?<word>\\w+)", 0, factory).matcher("hello");
+        var t = io.github.jemmix.tdfa.Pattern.compile("(?<word>\\w+)", 0, factory)
+                .matcher("hello");
         r.find();
         t.find();
         assertThat(t.group("word")).isEqualTo(r.group("word"));
@@ -157,7 +155,8 @@ class GroupSyntaxParityTest {
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void namedGroupMixedWithNumbered(RegexEngineFactory factory) {
         var r = com.google.re2j.Pattern.compile("(a)(?P<x>b)(c)").matcher("abc");
-        var t = io.github.jemmix.tdfa.Pattern.compile("(a)(?P<x>b)(c)", 0, factory).matcher("abc");
+        var t = io.github.jemmix.tdfa.Pattern.compile("(a)(?P<x>b)(c)", 0, factory)
+                .matcher("abc");
         r.find();
         t.find();
         assertThat(t.group("x")).isEqualTo(r.group("x"));

@@ -3,11 +3,17 @@ package io.github.jemmix.tdfa.parser;
 import io.github.jemmix.tdfa.ast.Alphabet;
 import io.github.jemmix.tdfa.ast.Ast;
 import io.github.jemmix.tdfa.ast.CharClass;
+import io.github.jemmix.tdfa.tdfa.BudgetWeights;
+import io.github.jemmix.tdfa.tdfa.Budgets;
 import io.github.jemmix.tdfa.tdfa.FrameBudget;
+import io.github.jemmix.tdfa.tdfa.WorkMeter;
 import io.github.jemmix.tdfa.unicode.CaseFoldTable;
-
+import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.unicode.UnicodeProviders;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -64,17 +70,28 @@ public final class Parser {
 
     // Unicode IsWhite_Space property (java.util.regex \s with UNICODE_CHARACTER_CLASS).
     private static final int[] R_UNICODE_SPACE = {
-                    '\t', '\r', // U+0009-U+000D (HT, LF, VT, FF, CR)
-                    0x1C, 0x1F, // FS, GS, RS, US
-                    ' ', ' ', // Space
-                    0x85, 0x85, // NEL
-                    0xA0, 0xA0, // NBSP
-                    0x1680, 0x1680, // Ogham Space
-                    0x2000, 0x200A, // En–Hair Space
-                    0x2028, 0x2029, // LS, PS
-                    0x202F, 0x202F, // Narrow NBSP
-                    0x205F, 0x205F, // Medium Math Space
-                    0x3000, 0x3000 // Ideographic Space
+        '\t',
+        '\r', // U+0009-U+000D (HT, LF, VT, FF, CR)
+        0x1C,
+        0x1F, // FS, GS, RS, US
+        ' ',
+        ' ', // Space
+        0x85,
+        0x85, // NEL
+        0xA0,
+        0xA0, // NBSP
+        0x1680,
+        0x1680, // Ogham Space
+        0x2000,
+        0x200A, // En–Hair Space
+        0x2028,
+        0x2029, // LS, PS
+        0x202F,
+        0x202F, // Narrow NBSP
+        0x205F,
+        0x205F, // Medium Math Space
+        0x3000,
+        0x3000 // Ideographic Space
     };
 
     // POSIX character classes — ASCII-only, matching re2j's CharGroup tables.
@@ -94,8 +111,8 @@ public final class Parser {
     private static final int[] R_POSIX_WORD = {'0', '9', 'A', 'Z', '_', '_', 'a', 'z'};
     private static final int[] R_POSIX_XDIGIT = {'0', '9', 'A', 'F', 'a', 'f'};
 
-    static final CharClass DOT = new CharClass(new int[]{0, '\n' - 1, '\n' + 1, 0x10FFFF}, false);
-    static final CharClass DOTALL = new CharClass(new int[]{0, 0x10FFFF}, false);
+    static final CharClass DOT = new CharClass(new int[] {0, '\n' - 1, '\n' + 1, 0x10FFFF}, false);
+    static final CharClass DOTALL = new CharClass(new int[] {0, 0x10FFFF}, false);
     static final CharClass DIGIT = new CharClass(R_DIGIT, false);
     static final CharClass NOT_DIGIT = new CharClass(R_DIGIT, true);
     static final CharClass WORD = new CharClass(R_WORD, false);
@@ -113,18 +130,18 @@ public final class Parser {
     boolean multiline = false;
     /** re2j's U flag: quantifiers default to lazy, a trailing ? makes them greedy. */
     boolean ungreedy = false;
+
     boolean disableUnicodeGroups = false;
     boolean unicodeShorthand = false;
-    io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider;
+    UnicodeDataProvider provider;
     /** Front-end work meter shared with the TNFA builder (see
      *  {@code Tnfa.compile}); meters the O(universe) fold-range scan. */
-    final io.github.jemmix.tdfa.tdfa.WorkMeter meter;
+    final WorkMeter meter;
     // Lazily-merged Unicode class caches (see unicodeWordRanges()/unicodeDigitRanges()).
     private int[] cachedUnicodeWord;
     private int[] cachedUnicodeDigit;
 
-    private Parser(String src, boolean disableUnicodeGroups, io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider,
-                    io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
+    private Parser(String src, boolean disableUnicodeGroups, UnicodeDataProvider provider, WorkMeter meter) {
         this.src = src;
         this.disableUnicodeGroups = disableUnicodeGroups;
         this.provider = provider;
@@ -132,32 +149,40 @@ public final class Parser {
     }
 
     public static Ast parse(String src) {
-        return parseResult(src, false, false, io.github.jemmix.tdfa.unicode.UnicodeProviders.get()).ast();
+        return parseResult(src, false, false, UnicodeProviders.get()).ast();
     }
 
     /** Parse and return the full result: AST plus tag/group counters, effective
      *  flags, and named-group metadata (the composable-pipeline entry point).
      *  Meters against a fresh compile CPU budget. */
-    public static ParseResult parseResult(String src, boolean disableUnicodeGroups, boolean anchorBoth,
-                    io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
-        return parseResult(src, disableUnicodeGroups, anchorBoth, provider,
-                        new io.github.jemmix.tdfa.tdfa.WorkMeter(
-                                        io.github.jemmix.tdfa.tdfa.Budgets.compileComputeTicks()));
+    public static ParseResult parseResult(
+            String src, boolean disableUnicodeGroups, boolean anchorBoth, UnicodeDataProvider provider) {
+        return parseResult(
+                src, disableUnicodeGroups, anchorBoth, provider, new WorkMeter(Budgets.compileComputeTicks()));
     }
 
     /** Metered variant: the caller (Tnfa.compile) shares one CPU budget
      *  across parse and TNFA construction. */
-    public static ParseResult parseResult(String src, boolean disableUnicodeGroups, boolean anchorBoth,
-                    io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider,
-                    io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
+    public static ParseResult parseResult(
+            String src,
+            boolean disableUnicodeGroups,
+            boolean anchorBoth,
+            UnicodeDataProvider provider,
+            WorkMeter meter) {
         Parser p = new Parser(src, disableUnicodeGroups, provider, meter);
         Ast e = p.parseAlt();
         if (p.pos != p.src.length()) {
             throw fail(p, "unexpected '" + p.cur() + "'");
         }
         e = anchorBoth ? anchorBoth(e) : e;
-        return new ParseResult(e, p.tagCount(), p.groupCount(), p.multiline(),
-                        p.unicodeShorthand(), p.unicodeWordRanges(), p.namedGroups());
+        return new ParseResult(
+                e,
+                p.tagCount(),
+                p.groupCount(),
+                p.multiline(),
+                p.unicodeShorthand(),
+                p.unicodeWordRanges(),
+                p.namedGroups());
     }
 
     /** Wrap a parsed body in start/end-text anchors (matches() = anchored both ends).
@@ -165,8 +190,8 @@ public final class Parser {
      *  and the trailing anchor supplies context that prevents the Perl leftmost-first
      *  DFA from pruning a longer alternative's continuation. */
     private static Ast anchorBoth(Ast e) {
-        return new Ast.Concat(java.util.Collections
-                        .unmodifiableList(java.util.Arrays.asList(new Ast.StartAnchor(true), e, new Ast.EndAnchor(true))));
+        return new Ast.Concat(
+                Collections.unmodifiableList(Arrays.asList(new Ast.StartAnchor(true), e, new Ast.EndAnchor(true))));
     }
 
     /** alt := concat ('|' concat)* — the outer parse loop. The stack holds
@@ -319,7 +344,7 @@ public final class Parser {
      *  the same shape {@code \x{...}} produces, because the engine's alphabet
      *  is codepoints — one transition consumes exactly one. */
     private static Ast literalAtom(int cp) {
-        return cp <= 0xFFFF ? new Ast.Symbol((char) cp) : new CharClass(new int[]{cp, cp}, false);
+        return cp <= 0xFFFF ? new Ast.Symbol((char) cp) : new CharClass(new int[] {cp, cp}, false);
     }
 
     /** atom := class | dot | anchor | escape | literal — groups are handled
@@ -447,27 +472,27 @@ public final class Parser {
                         continue;
                     }
                     switch (f) {
-                        case 'i' :
+                        case 'i':
                             ci = !neg;
                             ciSet = true;
                             break;
-                        case 's' :
+                        case 's':
                             ds = !neg;
                             dsSet = true;
                             break;
-                        case 'm' :
+                        case 'm':
                             ml = !neg;
                             mlSet = true;
                             break;
-                        case 'u' :
+                        case 'u':
                             us = !neg;
                             usSet = true;
                             break;
-                        case 'U' :
+                        case 'U':
                             ug = !neg;
                             ugSet = true;
                             break;
-                        default :
+                        default:
                             throw fail(this, "invalid or unsupported Perl syntax: (?+" + f);
                     }
                     neg = false;
@@ -565,9 +590,9 @@ public final class Parser {
         unicodeShorthand = f.savedUs;
         ungreedy = f.savedUg;
         Ast group = f.capturing
-                        ? new Ast.Concat(java.util.Collections
-                                        .unmodifiableList(java.util.Arrays.asList(new Ast.Tag(f.open), body, new Ast.Tag(f.close))))
-                        : body;
+                ? new Ast.Concat(
+                        Collections.unmodifiableList(Arrays.asList(new Ast.Tag(f.open), body, new Ast.Tag(f.close))))
+                : body;
         stack.peek().parts.add(applyQuantifier(group));
     }
 
@@ -650,13 +675,13 @@ public final class Parser {
         List<int[]> ivs = new ArrayList<>(arr.length);
         for (int i = 0; i < arr.length; i += 2) {
             int lo = arr[i], hi = arr[i + 1];
-            ivs.add(new int[]{lo, hi});
+            ivs.add(new int[] {lo, hi});
             for (int cp = lo; cp <= hi; cp++) {
-                meter.tick(io.github.jemmix.tdfa.tdfa.BudgetWeights.FOLD_SCAN_CODEPOINT_TICKS);
+                meter.tick(BudgetWeights.FOLD_SCAN_CODEPOINT_TICKS);
                 int[] fr = foldUniverse(cp);
                 if (fr != null) {
                     for (int v : fr) {
-                        ivs.add(new int[]{v, v});
+                        ivs.add(new int[] {v, v});
                     }
                 }
             }
@@ -693,36 +718,36 @@ public final class Parser {
         boolean ci = caseInsensitive;
         if (!unicodeShorthand) {
             switch (c) {
-                case 'd' :
+                case 'd':
                     return R_DIGIT;
-                case 'D' :
+                case 'D':
                     return R_NOT_DIGIT;
-                case 'w' :
+                case 'w':
                     return R_WORD;
-                case 'W' :
+                case 'W':
                     return ci ? complementRanges(foldExpandRanges(R_WORD)) : R_NOT_WORD;
-                case 's' :
+                case 's':
                     return R_SPACE;
-                case 'S' :
+                case 'S':
                     return R_NOT_SPACE;
-                default :
+                default:
                     return null;
             }
         }
         switch (c) {
-            case 'd' :
+            case 'd':
                 return unicodeDigitRanges();
-            case 'D' :
+            case 'D':
                 return complementRanges(unicodeDigitRanges());
-            case 'w' :
+            case 'w':
                 return computeUnicodeWordRanges();
-            case 'W' :
+            case 'W':
                 return complementRanges(ci ? foldExpandRanges(computeUnicodeWordRanges()) : computeUnicodeWordRanges());
-            case 's' :
+            case 's':
                 return R_UNICODE_SPACE;
-            case 'S' :
+            case 'S':
                 return complementRanges(R_UNICODE_SPACE);
-            default :
+            default:
                 return null;
         }
     }
@@ -740,19 +765,19 @@ public final class Parser {
         }
         if (!unicodeShorthand) {
             switch (c) {
-                case 'd' :
+                case 'd':
                     return DIGIT;
-                case 'D' :
+                case 'D':
                     return NOT_DIGIT;
-                case 'w' :
+                case 'w':
                     return WORD;
-                case 'W' :
+                case 'W':
                     return NOT_WORD;
-                case 's' :
+                case 's':
                     return WHITESPACE;
-                case 'S' :
+                case 'S':
                     return NOT_WHITESPACE;
-                default :
+                default:
                     throw new IllegalStateException("not a shorthand: \\" + c);
             }
         }
@@ -787,7 +812,7 @@ public final class Parser {
     private int[] computeUnicodeWordRanges() {
         if (cachedUnicodeWord == null) {
             int[] merged = null;
-            for (String cat : new String[]{"L", "N", "Mn", "Me", "Pc", "Sc", "Sk"}) {
+            for (String cat : new String[] {"L", "N", "Mn", "Me", "Pc", "Sc", "Sk"}) {
                 int[] t = provider.tableFor(cat);
                 if (t != null) {
                     merged = (merged == null) ? t : mergeRanges(merged, t);
@@ -836,35 +861,35 @@ public final class Parser {
     /** ASCII-only POSIX class ranges, matching re2j's CharClass tables. */
     private static int[] posixClassRanges(String name) {
         switch (name) {
-            case "alnum" :
+            case "alnum":
                 return R_POSIX_ALNUM;
-            case "alpha" :
+            case "alpha":
                 return R_POSIX_ALPHA;
-            case "ascii" :
+            case "ascii":
                 return R_POSIX_ASCII;
-            case "blank" :
+            case "blank":
                 return R_POSIX_BLANK;
-            case "cntrl" :
+            case "cntrl":
                 return R_POSIX_CNTRL;
-            case "digit" :
+            case "digit":
                 return R_POSIX_DIGIT;
-            case "graph" :
+            case "graph":
                 return R_POSIX_GRAPH;
-            case "lower" :
+            case "lower":
                 return R_POSIX_LOWER;
-            case "print" :
+            case "print":
                 return R_POSIX_PRINT;
-            case "punct" :
+            case "punct":
                 return R_POSIX_PUNCT;
-            case "space" :
+            case "space":
                 return R_POSIX_SPACE; // POSIX [:space:] INCLUDES \v (unlike Perl \s)
-            case "upper" :
+            case "upper":
                 return R_POSIX_UPPER;
-            case "word" :
+            case "word":
                 return R_POSIX_WORD;
-            case "xdigit" :
+            case "xdigit":
                 return R_POSIX_XDIGIT;
-            default :
+            default:
                 return null;
         }
     }
@@ -897,23 +922,23 @@ public final class Parser {
                 return val;
             }
             switch (e) {
-                case 'n' :
+                case 'n':
                     return '\n';
-                case 't' :
+                case 't':
                     return '\t';
-                case 'r' :
+                case 'r':
                     return '\r';
-                case 'f' :
+                case 'f':
                     return '\f';
-                case 'a' :
+                case 'a':
                     return (char) 7;
-                case 'v' :
+                case 'v':
                     return (char) 11;
-                case '\\' :
+                case '\\':
                     return '\\';
-                case 'x' :
+                case 'x':
                     return parseHexChar();
-                default :
+                default:
                     // re2j rejects unknown ASCII alphanumeric escapes in class
                     // context (notably [\b] — backspace is unsupported); a
                     // non-ASCII letter or digit is an identity escape there.
@@ -981,58 +1006,58 @@ public final class Parser {
             return new Ast.Symbol((char) val);
         }
         switch (c) {
-            case 'n' :
+            case 'n':
                 return new Ast.Symbol('\n');
-            case 't' :
+            case 't':
                 return new Ast.Symbol('\t');
-            case 'r' :
+            case 'r':
                 return new Ast.Symbol('\r');
-            case 'f' :
+            case 'f':
                 return new Ast.Symbol('\f');
-            case 'a' :
+            case 'a':
                 return new Ast.Symbol((char) 7); // alarm/bell, like re2j
-            case 'v' :
+            case 'v':
                 return new Ast.Symbol((char) 11); // vertical tab, like re2j
-            case '\\' :
+            case '\\':
                 return new Ast.Symbol('\\');
-            case 'x' :
+            case 'x':
                 return parseHexEscape();
-            case 'd' :
+            case 'd':
                 return shorthandEscape('d');
-            case 'D' :
+            case 'D':
                 return shorthandEscape('D');
-            case 'w' :
+            case 'w':
                 return shorthandEscape('w');
-            case 'W' :
+            case 'W':
                 return shorthandEscape('W');
-            case 's' :
+            case 's':
                 return shorthandEscape('s');
-            case 'S' :
+            case 'S':
                 return shorthandEscape('S');
             // RE2 (and re2j) reject \C as "any byte" — see re2j Parser.java:913.
             // We don't support it either; reject at parse time so silent misparse
             // (treating \C as literal C) doesn't yield wrong matches.
-            case 'C' :
+            case 'C':
                 throw new IllegalArgumentException("invalid escape sequence: \\C");
             // Zero-width assertions — RE2/re2j implement these fully.
-            case 'A' :
+            case 'A':
                 return new Ast.StartAnchor(true); // \A = absolute start of text (immune to (?m))
-            case 'z' :
+            case 'z':
                 return new Ast.EndAnchor(true); // \z = absolute end of text (immune to (?m))
-            case 'b' :
+            case 'b':
                 return new Ast.WordBoundary(); // \b = word boundary
-            case 'B' :
+            case 'B':
                 return new Ast.NoWordBoundary(); // \B = not a word boundary
             // Unicode property classes \p{X} \pX \P{X} \PX \p{^X}.
             // Outside a char class, build a CharClass directly (the table's
             // own negation flag carries the \P sign; no complement materialisation).
-            case 'p' :
+            case 'p':
                 return parseUnicodeEscape(true);
-            case 'P' :
+            case 'P':
                 return parseUnicodeEscape(false);
-            case 'Q' :
+            case 'Q':
                 return parseQuotedLiteral();
-            default : {
+            default: {
                 // re2j rejects unknown ASCII alphanumeric escapes (\E, \K, \R,
                 // \e, \N, ...). Non-ASCII letters/digits (\䑄, \Ω) and any
                 // non-alphanumeric escape (\. \- \_ ...) are identity escapes.
@@ -1079,7 +1104,7 @@ public final class Parser {
             return new Ast.Symbol(ch);
         }
         List<Ast> parts = new ArrayList<>();
-        for (int i = 0; i < literal.length();) {
+        for (int i = 0; i < literal.length(); ) {
             int cp = Alphabet.decode(literal, i, literal.length());
             i += Alphabet.width(cp);
             if (caseInsensitive) {
@@ -1215,10 +1240,10 @@ public final class Parser {
     private static int[] mergeRanges(int[] a, int[] b) {
         List<int[]> all = new ArrayList<>();
         for (int i = 0; i < a.length; i += 2) {
-            all.add(new int[]{a[i], a[i + 1]});
+            all.add(new int[] {a[i], a[i + 1]});
         }
         for (int i = 0; i < b.length; i += 2) {
-            all.add(new int[]{b[i], b[i + 1]});
+            all.add(new int[] {b[i], b[i + 1]});
         }
         all.sort((x, y) -> Integer.compare(x[0], y[0]));
         List<int[]> merged = new ArrayList<>();
@@ -1226,7 +1251,7 @@ public final class Parser {
             if (!merged.isEmpty() && r[0] <= merged.get(merged.size() - 1)[1] + 1) {
                 merged.get(merged.size() - 1)[1] = Math.max(merged.get(merged.size() - 1)[1], r[1]);
             } else {
-                merged.add(new int[]{r[0], r[1]});
+                merged.add(new int[] {r[0], r[1]});
             }
         }
         int[] out = new int[merged.size() * 2];
@@ -1268,7 +1293,7 @@ public final class Parser {
                 throw fail(this, "invalid escape sequence");
             }
             if (val > 0xFFFF) {
-                return new CharClass(new int[]{val, val}, false);
+                return new CharClass(new int[] {val, val}, false);
             }
         } else {
             if (pos + 1 >= src.length() || !isHex(src.charAt(pos)) || !isHex(src.charAt(pos + 1))) {
@@ -1351,7 +1376,7 @@ public final class Parser {
         if (max < min) {
             throw fail(this, "min > max in {" + min + "," + max + "}");
         }
-        return new int[]{min, max};
+        return new int[] {min, max};
     }
 
     /** Bounded repeat count: ASCII digits in [start, end), ≤ MAX_REPEAT_COUNT
@@ -1366,8 +1391,8 @@ public final class Parser {
             } // further digits cannot help
         }
         if (val > MAX_REPEAT_COUNT) {
-            throw new IllegalArgumentException("Parse error at index " + start
-                            + ": invalid repeat count (in \"" + s + "\")");
+            throw new IllegalArgumentException(
+                    "Parse error at index " + start + ": invalid repeat count (in \"" + s + "\")");
         }
         return val;
     }
@@ -1439,8 +1464,8 @@ public final class Parser {
         }
         for (int i = 0; i < name.length(); i++) {
             char ch = name.charAt(i);
-            boolean word = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
-                            || (ch >= '0' && ch <= '9') || ch == '_';
+            boolean word =
+                    (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
             if (!word) {
                 throw fail(this, "invalid named capture");
             }

@@ -214,6 +214,5 @@ public final class BudgetWeights {
      */
     public static final int WALK_MIN_BLOCKS = 64;
 
-    private BudgetWeights() {
-    }
+    private BudgetWeights() {}
 }

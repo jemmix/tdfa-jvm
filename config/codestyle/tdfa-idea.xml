@@ -7,18 +7,22 @@
      code that passes the CI gates (spotless + checkstyle, wired in the
      root build.gradle from config/codestyle/).
 
-     Rules encoded here mirror config/codestyle/eclipse-formatter.properties
-     (the machine reformatter) and config/codestyle/checkstyle.xml (the CI
-     checks for what formatters cannot rewrite). Change all three together.
+     The machine formatter is palantir-java-format (spotless, no knobs);
+     checkstyle.xml enforces what formatters cannot rewrite. Change all
+     artifacts together.
 
      Core rules:
        - no star imports (single-name imports only, on-demand threshold 999)
+       - imports, not qualified names — except same-simple-name collisions
+         (spotless shortenFullyQualifiedTypes mirrors this, skipping them)
        - import layout: others | blank | javax, java | blank | static
        - member order: static fields, static init, instance fields, instance
          init, constructors, methods, nested types last
        - mandatory braces for if/else/for/while/do-while bodies
-       - 4-space continuation indent (4-space indent, spaces only)
-       - right margin 140, never join already-wrapped lines
+       - 4-space indent AND 4-space continuation indent (flat, never
+         depth-multiplied — that is why the formatter engine is
+         palantir-java-format, not eclipse JDT)
+       - right margin 120, wraps that fit are joined
 -->
 <code_scheme name="tdfa">
   <option name="CLASS_COUNT_TO_USE_IMPORT_ON_DEMAND" value="999" />
@@ -37,14 +41,10 @@
         <package name="" withSubpackages="true" static="true" />
       </value>
     </option>
-    <!-- The eclipse formatter step never reflows comments; match that here
-         so IDE reformat and scripts/format.sh agree byte-for-byte. -->
-    <option name="ENABLE_JAVADOC_FORMATTING" value="false" />
-    <option name="ENABLE_JAVADOC_PARAMETER_FORMATTING" value="false" />
   </JavaCodeStyleSettings>
   <codeStyleSettings language="JAVA">
-    <option name="RIGHT_MARGIN" value="140" />
-    <option name="KEEP_LINE_BREAKS" value="true" />
+    <option name="RIGHT_MARGIN" value="120" />
+    <option name="KEEP_LINE_BREAKS" value="false" />
     <option name="KEEP_BLANK_LINES_IN_CODE" value="2" />
     <option name="KEEP_BLANK_LINES_BEFORE_RBRACE" value="2" />
     <option name="KEEP_CONTROL_STATEMENT_IN_ONE_LINE" value="false" />

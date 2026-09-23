@@ -3,7 +3,8 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.core.EmittedSurface;
 import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
-
+import java.io.IOException;
+import java.io.ObjectInputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -50,9 +51,13 @@ public class TDFAPattern implements Pattern {
     private transient UnicodeDataProvider provider;
 
     @EmittedSurface // shells super-ctor call: signature feeds ShellEmitter descriptor
-    public TDFAPattern(String pattern, int flags, int programSize,
-                    RegexEngine engine, RegexEngine wholeEngine,
-                    UnicodeDataProvider provider) {
+    public TDFAPattern(
+            String pattern,
+            int flags,
+            int programSize,
+            RegexEngine engine,
+            RegexEngine wholeEngine,
+            UnicodeDataProvider provider) {
         this.pattern = pattern;
         this.flags = flags;
         this.programSize = programSize;
@@ -156,8 +161,7 @@ public class TDFAPattern implements Pattern {
     }
 
     @Override
-    public void reset() {
-    }
+    public void reset() {}
 
     /**
      * Serialize as the {@link SerialProxy} — pattern+flags+provider identity,
@@ -176,15 +180,14 @@ public class TDFAPattern implements Pattern {
     // serialization throws NotSerializableException — a latent bug until the
     // first round-trip test (PatternSerializationTest, 2026-09).
     public Object writeReplace() {
-        return new SerialProxy(pattern, flags,
-                        provider == null ? null : provider.getClass().getName());
+        return new SerialProxy(
+                pattern, flags, provider == null ? null : provider.getClass().getName());
     }
 
     /**
      * Recompile the (transient) engines after deserialization, from {@code pattern}+{@code flags}.
      */
-    private void readObject(java.io.ObjectInputStream in)
-                    throws java.io.IOException, ClassNotFoundException {
+    private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
         in.defaultReadObject();
         TDFAPattern tmp = (TDFAPattern) Pattern.compile(pattern, flags, null, provider);
         this.engine = tmp.engine;

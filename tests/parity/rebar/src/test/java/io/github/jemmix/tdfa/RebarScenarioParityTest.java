@@ -1,28 +1,24 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.Pattern;
 import io.github.jemmix.tdfa.core.Matcher;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import io.github.jemmix.tdfa.rebar.Scenario;
 import io.github.jemmix.tdfa.rebar.ScenarioLoader;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
-
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.params.provider.Arguments;
 
 /**
  * Parameterized parity test against rebar's benchmark scenario corpus.
@@ -104,10 +100,10 @@ class RebarScenarioParityTest {
     }
 
     /** All timings; synchronized because parameterized tests can run in parallel. */
-    static final List<Timing> timings = java.util.Collections.synchronizedList(new ArrayList<>());
+    static final List<Timing> timings = Collections.synchronizedList(new ArrayList<>());
 
     /** Skip-reason counters for the summary. */
-    static final java.util.concurrent.ConcurrentHashMap<String, AtomicInteger> skipBuckets = new java.util.concurrent.ConcurrentHashMap<>();
+    static final ConcurrentHashMap<String, AtomicInteger> skipBuckets = new ConcurrentHashMap<>();
 
     /**
      * Total-skip ceiling (review P2: the gray-skip path could silently shrink
@@ -188,13 +184,14 @@ class RebarScenarioParityTest {
      */
     static Stream<Arguments> scenariosProvider() {
         return scenarios.stream()
-                        .filter(RebarScenarioParityTest::enginesIncludeJava)
-                        .flatMap(s -> Stream.of((RegexEngineFactory) null, (RegexEngineFactory) TdfaRunner::new).map(f -> Arguments.of(
-                                        /*displayName=*/ s.fullName() + "  corpus-want=" + s.expectedCount()
-                                                        + (s.unicode() ? " (unicode: corpus stands)" : " (non-unicode: live re2j)")
-                                                        + "  /" + abbrev(s.regex(), 60) + "/  [" + labelFor(f) + "]",
-                                        /*scenario=*/ s,
-                                        /*factory=*/ f)));
+                .filter(RebarScenarioParityTest::enginesIncludeJava)
+                .flatMap(s -> Stream.of((RegexEngineFactory) null, (RegexEngineFactory) TdfaRunner::new)
+                        .map(f -> Arguments.of(
+                                /*displayName=*/ s.fullName() + "  corpus-want=" + s.expectedCount()
+                                        + (s.unicode() ? " (unicode: corpus stands)" : " (non-unicode: live re2j)")
+                                        + "  /" + abbrev(s.regex(), 60) + "/  [" + labelFor(f) + "]",
+                                /*scenario=*/ s,
+                                /*factory=*/ f)));
     }
 
     static String labelFor(RegexEngineFactory f) {
@@ -223,174 +220,174 @@ class RebarScenarioParityTest {
      *       budget after the 2026-08-20 memory work: ~21 s compile, fits
      *       -Xmx1g, ~82 MB retained, count=53 verified on both backends
      *       (TODO.md "budget").
-    
-    
-    @ParameterizedTest(name = "[{index}] {0}")
-    @MethodSource("scenariosProvider")
-    void runScenarioThroughTdfa(String displayName, Scenario s, RegexEngineFactory factory) throws Exception {
-        // Models we run; regex-redux is the only intentionally-skipped model
-        // (bespoke embedded-regex harness, ~1–2 scenarios — see PARITY-PLAN §4.3).
-        Set<String> supportedModels = Set.of("count", "count-spans", "count-captures",
-                        "grep", "compile", "grep-captures");
-        //
-        // No numeric time/size gates (2026-08-20): the engine's own
-        // determinization budgets (RAM + CPU, weight-model-derived caps)
-        // are the only watchdog. A compile rejected with
-        // "pattern too large" on any scenario NOT in BOMB_SCENARIOS is a
-        // FAILURE (surfaced, not skipped); the named bombs skip visibly and
-        // are opt-in via -Dtdfa.test.rebar.skipBombs=false. Compile-latency
-        // regressions are pinned separately by CompileLatencyGuardTest.
-    
-        // --- Named over-budget bombs: skip visibly unless opted in ---
-        if (SKIP_BOMBS && BOMB_SCENARIOS.contains(s.fullName())) {
-            countSkip("bomb:over-budget-by-design");
-            skipCount.incrementAndGet();
-            timings.add(new Timing(s.fullName(), 0, 0, "SKIP:bomb"));
-            assumeTrue(false, "over-budget bomb (skipped by default; see BOMB_SCENARIOS javadoc). "
-                            + "Run with -Dtdfa.test.rebar.skipBombs=false -Dtdfa.budget.compile.memory=4000000000 "
-                            + "-Dtdfa.budget.compile.compute=4000000000 (heap >= 1g) to verify it for real.");
-            return;
-        }
-    
-        // --- Filter: skip cleanly via assumeTrue so IDE shows gray "skipped" ---
-    
-        if (!supportedModels.contains(s.model())) {
-            countSkip("unsupported-model:" + s.model());
-            skipCount.incrementAndGet();
-            timings.add(new Timing(s.fullName(), 0, 0, "SKIP:model:" + s.model()));
-            assumeTrue(false, "unsupported model: " + s.model());
-            return;
-        }
-        if (s.expectedCount() == Long.MIN_VALUE) {
-            countSkip("no-scalar-count");
-            skipCount.incrementAndGet();
-            timings.add(new Timing(s.fullName(), 0, 0, "SKIP:no-scalar-count"));
-            assumeTrue(false, "no scalar expected count (per-engine overrides only)");
-            return;
-        }
-        if (s.regex() == null) {
-            countSkip("regex-null");
-            skipCount.incrementAndGet();
-            timings.add(new Timing(s.fullName(), 0, 0, "SKIP:regex-null"));
-            assumeTrue(false, "no regex (unrepresentable input spec)");
-            return;
-        }
-    
-        // --- Compile via the re2j-compat API (Pattern/Matcher). Flags are
-        //     translated to inline prefixes by Pattern.compile — (?i) for
-        //     caseInsensitive, (?u) for unicode (UNICODE_CHARACTER_CLASS).
-        //     PERL disambiguation is the default (matches re2/re2j semantics).
-        //     The ASM backend handles every in-scope pattern (DispatchMode.
-        //     DELEGATE for arbitrary DFA sizes — see TdfaAsmBackend.pickMode),
-        //     so each parameter value runs its own backend independently and a
-        //     divergence shows up as a real test failure.
-    
-        int flags = 0;
-        if (s.caseInsensitive()) {
-            flags |= Pattern.CASE_INSENSITIVE;
-        }
-        if (s.unicode()) {
-            flags |= Pattern.UNICODE_CHARACTER_CLASS;
-        }
-        long compileStart = System.nanoTime();
-        Pattern compiled;
-        try {
-            compiled = Pattern.compile(s.regex(), flags, factory);
-        } catch (Exception e) {
-            String msg = e.getMessage() != null ? e.getMessage() : "";
-            // Budget rejection on a non-listed scenario is a FAILURE — the
-            // engine must handle every in-scope shape within the default caps
-            // (only BOMB_SCENARIOS are known over-budget, and those skip above).
-            if (msg.contains("pattern too large")) {
-                failCount.incrementAndGet();
-                timings.add(new Timing(s.fullName(),
-                                (System.nanoTime() - compileStart) / 1_000_000, 0,
-                                "FAIL:budget-exceeded"));
-                throw e;
-            }
-            countSkip("compile-failed:" + labelFor(factory) + ":" + e.getClass().getSimpleName());
-            skipCount.incrementAndGet();
-            timings.add(new Timing(s.fullName(),
-                            (System.nanoTime() - compileStart) / 1_000_000, 0,
-                            "SKIP:compile-failed:" + labelFor(factory) + ":" + e.getClass().getSimpleName()));
-            assumeTrue(false, "compile failed (" + labelFor(factory) + "): " + e.getClass().getSimpleName()
-                            + (msg.isEmpty() ? "" : ": " + msg));
-            return;
-        }
-        final Pattern p = compiled;
-        long compileMs = (System.nanoTime() - compileStart) / 1_000_000;
-    
-        // --- Resolve haystack (I/O only) ---
-    
-        String haystack;
-        try {
-            haystack = s.resolveHaystack(benchmarksDir);
-        } catch (Exception e) {
-            countSkip("haystack-resolve-failed");
-            skipCount.incrementAndGet();
-            timings.add(new Timing(s.fullName(), compileMs, 0, "SKIP:haystack-resolve"));
-            assumeTrue(false, "haystack resolve failed: " + e.getMessage());
-            return;
-        }
-    
-        // --- Run (no wall-clock gate; a hang shows up in the suite timeout) ---
-    
-        final long runStart = System.nanoTime();
-        final long actual = runModel(s, p, haystack);
-        long runMs = (System.nanoTime() - runStart) / 1_000_000;
-    
-        if (compileMs > 50 || runMs > 50) {
-            System.out.printf("SLOW     %-50s [%s] compile=%dms  run=%dms  /%s/%n",
-                            s.fullName(), labelFor(factory), compileMs, runMs, abbrev(s.regex(), 50));
-        }
-    
-        // --- Resolve expected count: live patched-re2j oracle by default ---
-        // The corpus's static per-engine counts were recorded by other
-        // engines at other times (JDK Unicode-DB drift, java/hotspot's
-        // ASCII-only (?i), UTF-8-vs-UTF-16 units) — every re2j-compat
-        // divergence needed a hand-patched count. We are a re2j drop-in:
-        // for scenarios whose flags re2j can represent (unicode=false —
-        // re2j has no UNICODE_CHARACTER_CLASS; \w\d\s are ASCII there),
-        // the vendored patched re2j (fix1/fix2) computes `want` LIVE with
-        // the same model loops. Falls back to the corpus when re2j rejects
-        // the regex (backrefs/lookaround: j.u.r runs them, re2j doesn't) or
-        // on any oracle-side exception. -Dtdfa.test.rebar.oracle=corpus
-        // restores the pure static resolution.
-        long want;
-        String wantSource;
-        if (!CORPUS_ORACLE && !s.unicode()) {
-            Long live = liveRe2jCount(s, haystack);
-            if (live != null) {
-                want = live;
-                wantSource = "re2j-live";
-            } else {
-                want = s.expectedCount();
-                wantSource = "corpus(re2j-unrunnable)";
-            }
-        } else {
-            want = s.expectedCount();
-            wantSource = s.unicode() ? "corpus(unicode=java-semantics)" : "corpus";
-        }
-    
-        // --- Assert ---
-    
-        boolean passed = actual == want;
-        if (passed) {
-            passCount.incrementAndGet();
-        } else {
-            failCount.incrementAndGet();
-        }
-        timings.add(new Timing(s.fullName(), compileMs, runMs,
-                        passed ? "PASS" : "FAIL:want=" + want + ",got=" + actual));
-        assertThat(actual)
-                        .as("match count for /%s/ on %d-byte haystack (model=%s, want=%s:%d); compile=%dms run=%dms; hs contains regex? %s; first 40 chars: %s",
-                                        s.regex(), haystack.length(), s.model(), wantSource, want, compileMs, runMs,
-                                        haystack.contains(s.regex().length() <= 100 ? s.regex() : s.regex().substring(0, 50)),
-                                        haystack.substring(0, Math.min(40, haystack.length())).replace("\n", "\\n").replace("\r", "\\r"))
-                        .isEqualTo(want);
-    }
-    
-    /**
+     *
+     *
+     * @ParameterizedTest(name = "[{index}] {0}")
+     * @MethodSource("scenariosProvider")
+     * void runScenarioThroughTdfa(String displayName, Scenario s, RegexEngineFactory factory) throws Exception {
+     * // Models we run; regex-redux is the only intentionally-skipped model
+     * // (bespoke embedded-regex harness, ~1–2 scenarios — see PARITY-PLAN §4.3).
+     * Set<String> supportedModels = Set.of("count", "count-spans", "count-captures",
+     * "grep", "compile", "grep-captures");
+     * //
+     * // No numeric time/size gates (2026-08-20): the engine's own
+     * // determinization budgets (RAM + CPU, weight-model-derived caps)
+     * // are the only watchdog. A compile rejected with
+     * // "pattern too large" on any scenario NOT in BOMB_SCENARIOS is a
+     * // FAILURE (surfaced, not skipped); the named bombs skip visibly and
+     * // are opt-in via -Dtdfa.test.rebar.skipBombs=false. Compile-latency
+     * // regressions are pinned separately by CompileLatencyGuardTest.
+     *
+     * // --- Named over-budget bombs: skip visibly unless opted in ---
+     * if (SKIP_BOMBS && BOMB_SCENARIOS.contains(s.fullName())) {
+     * countSkip("bomb:over-budget-by-design");
+     * skipCount.incrementAndGet();
+     * timings.add(new Timing(s.fullName(), 0, 0, "SKIP:bomb"));
+     * assumeTrue(false, "over-budget bomb (skipped by default; see BOMB_SCENARIOS javadoc). "
+     * + "Run with -Dtdfa.test.rebar.skipBombs=false -Dtdfa.budget.compile.memory=4000000000 "
+     * + "-Dtdfa.budget.compile.compute=4000000000 (heap >= 1g) to verify it for real.");
+     * return;
+     * }
+     *
+     * // --- Filter: skip cleanly via assumeTrue so IDE shows gray "skipped" ---
+     *
+     * if (!supportedModels.contains(s.model())) {
+     * countSkip("unsupported-model:" + s.model());
+     * skipCount.incrementAndGet();
+     * timings.add(new Timing(s.fullName(), 0, 0, "SKIP:model:" + s.model()));
+     * assumeTrue(false, "unsupported model: " + s.model());
+     * return;
+     * }
+     * if (s.expectedCount() == Long.MIN_VALUE) {
+     * countSkip("no-scalar-count");
+     * skipCount.incrementAndGet();
+     * timings.add(new Timing(s.fullName(), 0, 0, "SKIP:no-scalar-count"));
+     * assumeTrue(false, "no scalar expected count (per-engine overrides only)");
+     * return;
+     * }
+     * if (s.regex() == null) {
+     * countSkip("regex-null");
+     * skipCount.incrementAndGet();
+     * timings.add(new Timing(s.fullName(), 0, 0, "SKIP:regex-null"));
+     * assumeTrue(false, "no regex (unrepresentable input spec)");
+     * return;
+     * }
+     *
+     * // --- Compile via the re2j-compat API (Pattern/Matcher). Flags are
+     * //     translated to inline prefixes by Pattern.compile — (?i) for
+     * //     caseInsensitive, (?u) for unicode (UNICODE_CHARACTER_CLASS).
+     * //     PERL disambiguation is the default (matches re2/re2j semantics).
+     * //     The ASM backend handles every in-scope pattern (DispatchMode.
+     * //     DELEGATE for arbitrary DFA sizes — see TdfaAsmBackend.pickMode),
+     * //     so each parameter value runs its own backend independently and a
+     * //     divergence shows up as a real test failure.
+     *
+     * int flags = 0;
+     * if (s.caseInsensitive()) {
+     * flags |= Pattern.CASE_INSENSITIVE;
+     * }
+     * if (s.unicode()) {
+     * flags |= Pattern.UNICODE_CHARACTER_CLASS;
+     * }
+     * long compileStart = System.nanoTime();
+     * Pattern compiled;
+     * try {
+     * compiled = Pattern.compile(s.regex(), flags, factory);
+     * } catch (Exception e) {
+     * String msg = e.getMessage() != null ? e.getMessage() : "";
+     * // Budget rejection on a non-listed scenario is a FAILURE — the
+     * // engine must handle every in-scope shape within the default caps
+     * // (only BOMB_SCENARIOS are known over-budget, and those skip above).
+     * if (msg.contains("pattern too large")) {
+     * failCount.incrementAndGet();
+     * timings.add(new Timing(s.fullName(),
+     * (System.nanoTime() - compileStart) / 1_000_000, 0,
+     * "FAIL:budget-exceeded"));
+     * throw e;
+     * }
+     * countSkip("compile-failed:" + labelFor(factory) + ":" + e.getClass().getSimpleName());
+     * skipCount.incrementAndGet();
+     * timings.add(new Timing(s.fullName(),
+     * (System.nanoTime() - compileStart) / 1_000_000, 0,
+     * "SKIP:compile-failed:" + labelFor(factory) + ":" + e.getClass().getSimpleName()));
+     * assumeTrue(false, "compile failed (" + labelFor(factory) + "): " + e.getClass().getSimpleName()
+     * + (msg.isEmpty() ? "" : ": " + msg));
+     * return;
+     * }
+     * final Pattern p = compiled;
+     * long compileMs = (System.nanoTime() - compileStart) / 1_000_000;
+     *
+     * // --- Resolve haystack (I/O only) ---
+     *
+     * String haystack;
+     * try {
+     * haystack = s.resolveHaystack(benchmarksDir);
+     * } catch (Exception e) {
+     * countSkip("haystack-resolve-failed");
+     * skipCount.incrementAndGet();
+     * timings.add(new Timing(s.fullName(), compileMs, 0, "SKIP:haystack-resolve"));
+     * assumeTrue(false, "haystack resolve failed: " + e.getMessage());
+     * return;
+     * }
+     *
+     * // --- Run (no wall-clock gate; a hang shows up in the suite timeout) ---
+     *
+     * final long runStart = System.nanoTime();
+     * final long actual = runModel(s, p, haystack);
+     * long runMs = (System.nanoTime() - runStart) / 1_000_000;
+     *
+     * if (compileMs > 50 || runMs > 50) {
+     * System.out.printf("SLOW     %-50s [%s] compile=%dms  run=%dms  /%s/%n",
+     * s.fullName(), labelFor(factory), compileMs, runMs, abbrev(s.regex(), 50));
+     * }
+     *
+     * // --- Resolve expected count: live patched-re2j oracle by default ---
+     * // The corpus's static per-engine counts were recorded by other
+     * // engines at other times (JDK Unicode-DB drift, java/hotspot's
+     * // ASCII-only (?i), UTF-8-vs-UTF-16 units) — every re2j-compat
+     * // divergence needed a hand-patched count. We are a re2j drop-in:
+     * // for scenarios whose flags re2j can represent (unicode=false —
+     * // re2j has no UNICODE_CHARACTER_CLASS; \w\d\s are ASCII there),
+     * // the vendored patched re2j (fix1/fix2) computes `want` LIVE with
+     * // the same model loops. Falls back to the corpus when re2j rejects
+     * // the regex (backrefs/lookaround: j.u.r runs them, re2j doesn't) or
+     * // on any oracle-side exception. -Dtdfa.test.rebar.oracle=corpus
+     * // restores the pure static resolution.
+     * long want;
+     * String wantSource;
+     * if (!CORPUS_ORACLE && !s.unicode()) {
+     * Long live = liveRe2jCount(s, haystack);
+     * if (live != null) {
+     * want = live;
+     * wantSource = "re2j-live";
+     * } else {
+     * want = s.expectedCount();
+     * wantSource = "corpus(re2j-unrunnable)";
+     * }
+     * } else {
+     * want = s.expectedCount();
+     * wantSource = s.unicode() ? "corpus(unicode=java-semantics)" : "corpus";
+     * }
+     *
+     * // --- Assert ---
+     *
+     * boolean passed = actual == want;
+     * if (passed) {
+     * passCount.incrementAndGet();
+     * } else {
+     * failCount.incrementAndGet();
+     * }
+     * timings.add(new Timing(s.fullName(), compileMs, runMs,
+     * passed ? "PASS" : "FAIL:want=" + want + ",got=" + actual));
+     * assertThat(actual)
+     * .as("match count for /%s/ on %d-byte haystack (model=%s, want=%s:%d); compile=%dms run=%dms; hs contains regex? %s; first 40 chars: %s",
+     * s.regex(), haystack.length(), s.model(), wantSource, want, compileMs, runMs,
+     * haystack.contains(s.regex().length() <= 100 ? s.regex() : s.regex().substring(0, 50)),
+     * haystack.substring(0, Math.min(40, haystack.length())).replace("\n", "\\n").replace("\r", "\\r"))
+     * .isEqualTo(want);
+     * }
+     *
+     * /**
      * End-of-suite summary printed once all parameterized invocations finish.
      * Surfaces the slowest tests and the skip-reason histogram for triage.
      */
@@ -398,25 +395,27 @@ class RebarScenarioParityTest {
     static void printSummary() {
         System.out.println();
         System.out.println("╔══════════════════════════════════════════════════════════════════════╗");
-        System.out.printf("║ rebar parity: pass=%-4d  fail=%-4d  skip=%-4d   total=%-4d%n",
-                        passCount.get(), failCount.get(), skipCount.get(),
-                        passCount.get() + failCount.get() + skipCount.get());
+        System.out.printf(
+                "║ rebar parity: pass=%-4d  fail=%-4d  skip=%-4d   total=%-4d%n",
+                passCount.get(), failCount.get(), skipCount.get(), passCount.get() + failCount.get() + skipCount.get());
         System.out.println("╚══════════════════════════════════════════════════════════════════════╝");
         // Gray-skip cap (see MAX_TOTAL_SKIPS): a skip is only legitimate for a
         // recorded reason; an unexpected compile-exception family shrinking the
         // green set must FAIL the gate, not vanish into the histogram.
-        org.junit.jupiter.api.Assertions.assertTrue(skipCount.get() <= MAX_TOTAL_SKIPS,
-                        "rebar parity skipped " + skipCount.get() + " scenarios (cap " + MAX_TOTAL_SKIPS
-                                        + ", recorded baseline 2) — the green set shrank; see the skip histogram");
+        Assertions.assertTrue(
+                skipCount.get() <= MAX_TOTAL_SKIPS,
+                "rebar parity skipped " + skipCount.get() + " scenarios (cap " + MAX_TOTAL_SKIPS
+                        + ", recorded baseline 2) — the green set shrank; see the skip histogram");
 
         // Skip-reason histogram
         if (!skipBuckets.isEmpty()) {
             System.out.println();
             System.out.println("── Skip reasons ──────────────────────────────────────────────");
             skipBuckets.entrySet().stream()
-                            .sorted(java.util.Map.Entry.<String, AtomicInteger>comparingByValue(
-                                            java.util.Comparator.comparingInt(AtomicInteger::get)).reversed())
-                            .forEach(e -> System.out.printf("  %5d  %s%n", e.getValue().get(), e.getKey()));
+                    .sorted(Map.Entry.<String, AtomicInteger>comparingByValue(
+                                    Comparator.comparingInt(AtomicInteger::get))
+                            .reversed())
+                    .forEach(e -> System.out.printf("  %5d  %s%n", e.getValue().get(), e.getKey()));
         }
 
         // Top-20 slowest tests by compile+run
@@ -426,9 +425,9 @@ class RebarScenarioParityTest {
         System.out.println("── Top 20 slowest (compile + run, ms) ─────────────────────────");
         for (int i = 0; i < Math.min(20, sorted.size()); i++) {
             Timing t = sorted.get(i);
-            System.out.printf("  %4dms  c=%-5d r=%-6d  %-50s  [%s]%n",
-                            t.totalMs(), t.compileMs(), t.runMs(),
-                            abbrev(t.name(), 50), t.outcome());
+            System.out.printf(
+                    "  %4dms  c=%-5d r=%-6d  %-50s  [%s]%n",
+                    t.totalMs(), t.compileMs(), t.runMs(), abbrev(t.name(), 50), t.outcome());
         }
 
         // Histogram of total time (compile + run)
@@ -438,15 +437,7 @@ class RebarScenarioParityTest {
         int[][] counts = new int[buckets.length][2]; // [bucket][pass/rest]
         for (Timing t : sorted) {
             long ms = t.totalMs();
-            int b = ms < 1
-                            ? 0
-                            : ms < 10
-                                            ? 1
-                                            : ms < 100
-                                                            ? 2
-                                                            : ms < 1000
-                                                                            ? 3
-                                                                            : ms < 10_000 ? 4 : ms < 60_000 ? 5 : 6;
+            int b = ms < 1 ? 0 : ms < 10 ? 1 : ms < 100 ? 2 : ms < 1000 ? 3 : ms < 10_000 ? 4 : ms < 60_000 ? 5 : 6;
             counts[b]["PASS".equals(t.outcome()) ? 0 : 1]++;
         }
         System.out.printf("  %-12s  %6s  %6s%n", "bucket", "PASS", "other");
@@ -458,8 +449,9 @@ class RebarScenarioParityTest {
         long totalMs = sorted.stream().mapToLong(Timing::totalMs).sum();
         long compileMs = sorted.stream().mapToLong(Timing::compileMs).sum();
         long runMs = sorted.stream().mapToLong(Timing::runMs).sum();
-        System.out.printf("  total: compile=%dms (%.1fs), run=%dms (%.1fs), wall=%dms (%.1fs)%n",
-                        compileMs, compileMs / 1000.0, runMs, runMs / 1000.0, totalMs, totalMs / 1000.0);
+        System.out.printf(
+                "  total: compile=%dms (%.1fs), run=%dms (%.1fs), wall=%dms (%.1fs)%n",
+                compileMs, compileMs / 1000.0, runMs, runMs / 1000.0, totalMs, totalMs / 1000.0);
     }
 
     /**
@@ -476,24 +468,24 @@ class RebarScenarioParityTest {
     /** Dispatch to the right model implementation. */
     private static long runModel(Scenario s, Pattern p, String haystack) {
         switch (s.model()) {
-            case "count" :
+            case "count":
                 return countMatches(p, haystack);
-            case "count-spans" :
+            case "count-spans":
                 return countSpans(p, haystack);
-            case "count-captures" :
+            case "count-captures":
                 return countCaptures(p, haystack);
-            case "grep" :
+            case "grep":
                 return grepLines(p, haystack);
             // compile model: per rebar, "like count, but uses the compile model to
             // ensure the count is correct" (test/model.toml §compile). We've already
             // compiled by this point, so the verification IS the count.
-            case "compile" :
+            case "compile":
                 return countMatches(p, haystack);
             // grep-captures model: count all captures across all non-overlapping
             // matches, line-oriented with \r stripped (test/model.toml §grep-captures).
-            case "grep-captures" :
+            case "grep-captures":
                 return grepCaptureCounts(p, haystack);
-            default :
+            default:
                 throw new IllegalStateException("unsupported model: " + s.model());
         }
     }
@@ -506,18 +498,18 @@ class RebarScenarioParityTest {
             }
             com.google.re2j.Pattern p = com.google.re2j.Pattern.compile(s.regex(), rflags);
             switch (s.model()) {
-                case "count" :
-                case "compile" :
+                case "count":
+                case "compile":
                     return re2jCount(p, haystack);
-                case "count-spans" :
+                case "count-spans":
                     return re2jSpans(p, haystack);
-                case "count-captures" :
+                case "count-captures":
                     return re2jCaptures(p, haystack);
-                case "grep" :
+                case "grep":
                     return re2jGrep(p, haystack);
-                case "grep-captures" :
+                case "grep-captures":
                     return re2jGrepCaptures(p, haystack);
-                default :
+                default:
                     return null; // unsupported model: corpus value stands
             }
         } catch (Throwable t) {
@@ -527,7 +519,7 @@ class RebarScenarioParityTest {
 
     private static long re2jCount(com.google.re2j.Pattern p, String hs) {
         long n = 0;
-        for (com.google.re2j.Matcher m = p.matcher(hs); m.find();) {
+        for (com.google.re2j.Matcher m = p.matcher(hs); m.find(); ) {
             n++;
         }
         return n;
@@ -617,7 +609,7 @@ class RebarScenarioParityTest {
 
     private static long countMatches(Pattern p, String hs) {
         long n = 0;
-        for (Matcher m = p.matcher(hs); m.find();) {
+        for (Matcher m = p.matcher(hs); m.find(); ) {
             n++;
         }
         return n;
