@@ -1,6 +1,8 @@
 package io.github.jemmix.tdfa;
 
+import io.github.jemmix.tdfa.core.CompiledRegex;
 import io.github.jemmix.tdfa.core.MatchResult;
+import io.github.jemmix.tdfa.core.Matcher;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -37,10 +39,10 @@ class ConcurrencyHammerTest {
             switch (r & 7) {
                 case 0 -> sb.append("word").append(r % 100).append(' ');
                 case 1 -> sb.append("setting ");
-                case 2 -> sb.append("лttesпословица").append(r % 10).append(' ');   // Cyrillic: walk blocks
+                case 2 -> sb.append("лttesпословица").append(r % 10).append(' '); // Cyrillic: walk blocks
                 case 3 -> sb.append("ing ".repeat(1 + (r % 3)));
                 case 4 -> sb.append('\n');
-                case 5 -> sb.append("Λγώ").append(r % 7);                             // Greek: non-Latin-1
+                case 5 -> sb.append("Λγώ").append(r % 7); // Greek: non-Latin-1
                 case 6 -> sb.append((char) ('a' + (r % 26)));
                 default -> sb.append("email").append(r % 1000).append("@host\n");
             }
@@ -51,7 +53,7 @@ class ConcurrencyHammerTest {
     /** Deterministic result digest of find()-iteration over the text. */
     private static long digest(Pattern p, String input) {
         long h = 17;
-        io.github.jemmix.tdfa.core.Matcher m = p.matcher(input);
+        Matcher m = p.matcher(input);
         int n = 0;
         while (m.find()) {
             h = h * 1000003L + m.start();
@@ -65,7 +67,7 @@ class ConcurrencyHammerTest {
         return h * 1000003L + n;
     }
 
-    private static long digestCore(io.github.jemmix.tdfa.core.CompiledRegex r, String input) {
+    private static long digestCore(CompiledRegex r, String input) {
         long h = 29;
         for (MatchResult m : r.findAll(input)) {
             h = h * 1000003L + m.start(0);
@@ -76,7 +78,9 @@ class ConcurrencyHammerTest {
 
     private static void hammer(String name, Callable<Long> reference, Callable<Long> worker) throws Exception {
         long expect = 17;
-        for (int rep = 0; rep < 3; rep++) expect = expect * 31 + reference.call();
+        for (int rep = 0; rep < 3; rep++) {
+            expect = expect * 31 + reference.call();
+        }
         assertThat(expect).as(name + ": reference found at least one match").isNotZero();
         ExecutorService pool = Executors.newFixedThreadPool(THREADS);
         try {
@@ -84,48 +88,52 @@ class ConcurrencyHammerTest {
             List<Future<Long>> fs = new ArrayList<>();
             for (int t = 0; t < THREADS; t++) {
                 fs.add(pool.submit(() -> {
-                    start.await();                       // maximize simultaneous cold-start
+                    start.await(); // maximize simultaneous cold-start
                     long h = 17;
-                    for (int rep = 0; rep < 3; rep++) h = h * 31 + worker.call();
+                    for (int rep = 0; rep < 3; rep++) {
+                        h = h * 31 + worker.call();
+                    }
                     return h;
                 }));
             }
             for (Future<Long> f : fs) {
-                assertThat(f.get(60, TimeUnit.SECONDS))
-                        .as(name + ": concurrent results identical to single-threaded")
-                        .isEqualTo(expect);
+                assertThat(f.get(60, TimeUnit.SECONDS)).as(name + ": concurrent results identical to single-threaded").isEqualTo(expect);
             }
         } finally {
             pool.shutdownNow();
         }
     }
 
-    @Test void searchDfaMemoConcurrentFind() throws Exception {
-        String input = text("sdfa", 40);   // 40 KB: well past the 2048-char trigger window
+    @Test
+    void searchDfaMemoConcurrentFind() throws Exception {
+        String input = text("sdfa", 40); // 40 KB: well past the 2048-char trigger window
         Pattern p = Pattern.compile("\\w+ing\\b|email\\d+@host");
         hammer("searchDfa", () -> digest(p, input), () -> digest(p, input));
     }
 
-    @Test void walkBlocksConcurrentWideClassScan() throws Exception {
-        String input = text("walk", 30);   // Cyrillic/Greek mix builds per-state walk blocks
+    @Test
+    void walkBlocksConcurrentWideClassScan() throws Exception {
+        String input = text("walk", 30); // Cyrillic/Greek mix builds per-state walk blocks
         Pattern p = Pattern.compile("\\p{L}{3,}\\d");
         hammer("walkBlocks", () -> digest(p, input), () -> digest(p, input));
     }
 
-    @Test void anchoredMatchesConcurrent() throws Exception {
+    @Test
+    void anchoredMatchesConcurrent() throws Exception {
         String input = text("anch", 20);
         Pattern p = Pattern.compile("(\\w+)@(\\w+)");
         hammer("anchored", () -> digest(p, input), () -> digest(p, input));
     }
 
-    @Test void coreTierConcurrentFindAll() throws Exception {
+    @Test
+    void coreTierConcurrentFindAll() throws Exception {
         String input = text("core", 25);
-        io.github.jemmix.tdfa.core.CompiledRegex r =
-                io.github.jemmix.tdfa.core.CompiledRegex.compile("[\\x{400}-\\x{4FF}]{2,}|\\w+ing");
+        CompiledRegex r = CompiledRegex.compile("[\\x{400}-\\x{4FF}]{2,}|\\w+ing");
         hammer("core", () -> digestCore(r, input), () -> digestCore(r, input));
     }
 
-    @Test void lazyQuantifierTriggerScanConcurrent() throws Exception {
+    @Test
+    void lazyQuantifierTriggerScanConcurrent() throws Exception {
         String input = text("lazy", 30);
         Pattern p = Pattern.compile(".*?-ing|Л{2}");
         hammer("lazyTrigger", () -> digest(p, input), () -> digest(p, input));

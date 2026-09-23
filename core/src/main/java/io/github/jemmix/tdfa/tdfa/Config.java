@@ -1,5 +1,7 @@
 package io.github.jemmix.tdfa.tdfa;
 
+import java.util.Arrays;
+
 /**
  * Subset-construction config: TNFA state + registers + history ids + assertion/priority context.
  */
@@ -12,6 +14,7 @@ final class Config {
      * ε-history. Id 0 = empty sequence.
      */
     final int h;
+
     final int l;
     /**
      * Worst (highest) priority ε-edge taken to reach this config in the closure.
@@ -51,12 +54,12 @@ final class DfaStateKey {
 
     DfaStateKey(int[] sig) {
         this.sig = sig;
-        this.hash = java.util.Arrays.hashCode(sig);
+        this.hash = Arrays.hashCode(sig);
     }
 
     @Override
     public boolean equals(Object o) {
-        return o instanceof DfaStateKey && java.util.Arrays.equals(sig, ((DfaStateKey) o).sig);
+        return o instanceof DfaStateKey && Arrays.equals(sig, ((DfaStateKey) o).sig);
     }
 
     @Override

@@ -1,10 +1,21 @@
 package io.github.jemmix.tdfa.bench;
 
-import io.github.jemmix.tdfa.core.RegexEngine;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import com.datadoghq.reggie.Reggie;
 import io.github.jemmix.tdfa.Pattern;
-import org.openjdk.jmh.annotations.*;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OperationsPerInvocation;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
 import java.util.concurrent.TimeUnit;
@@ -68,13 +79,14 @@ public class ParameterizedShortInputBench {
                     var pattern = com.google.re2j.Pattern.compile(regex);
                     matches = s -> pattern.matcher(s).matches();
                 }
-                case "reggie" -> matches = com.datadoghq.reggie.Reggie.compile(regex)::matches;
+                case "reggie" -> matches = Reggie.compile(regex)::matches;
                 default -> throw new UnsupportedOperationException("unknown engine: " + engine);
             }
         }
     }
 
-    @Benchmark public void bench(BenchState bs, Blackhole bh) {
+    @Benchmark
+    public void bench(BenchState bs, Blackhole bh) {
         for (int i = 0; i < ITERS; i++) {
             bh.consume(bs.matches.apply(bs.in));
         }

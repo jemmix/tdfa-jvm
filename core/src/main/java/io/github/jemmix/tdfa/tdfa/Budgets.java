@@ -75,8 +75,8 @@ public final class Budgets {
      * Default compile CPU budget: {@link BudgetWeights#DEFAULT_COMPILE_COMPUTE_SECONDS}
      * seconds at the assumed tick rate.
      */
-    public static final long DEFAULT_COMPILE_COMPUTE =
-        BudgetWeights.DEFAULT_COMPILE_COMPUTE_SECONDS * BudgetWeights.TICKS_PER_SECOND;
+    public static final long DEFAULT_COMPILE_COMPUTE = BudgetWeights.DEFAULT_COMPILE_COMPUTE_SECONDS * BudgetWeights.TICKS_PER_SECOND;
+
     private Budgets() {
     }
 
@@ -119,8 +119,7 @@ public final class Budgets {
      * {@code int[n*64]} allocation the base weight never included).
      */
     public static int maxDfaStates(int extraPerStateBytes) {
-        return clampInt(compileMemoryBytes()
-            / (BudgetWeights.DFA_STATE_BYTES + extraPerStateBytes));
+        return clampInt(compileMemoryBytes() / (BudgetWeights.DFA_STATE_BYTES + extraPerStateBytes));
     }
 
     /**
@@ -137,8 +136,7 @@ public final class Budgets {
      * of the RAM budget in configs.
      */
     public static int maxClosureConfigs() {
-        return clampInt(compileMemoryBytes()
-            / (BudgetWeights.CLOSURE_SPIKE_DIVISOR * BudgetWeights.KERNEL_CONFIG_BYTES));
+        return clampInt(compileMemoryBytes() / (BudgetWeights.CLOSURE_SPIKE_DIVISOR * BudgetWeights.KERNEL_CONFIG_BYTES));
     }
 
     /**
@@ -176,8 +174,7 @@ public final class Budgets {
      * runtime split, see the class doc).
      */
     public static int sdfaMaxRows(int stateWords, long budgetBytes) {
-        long rowBytes = BudgetWeights.RUNTIME_ROW_FIXED_BYTES
-            + (long) stateWords * BudgetWeights.RUNTIME_ROW_STATE_BYTES;
+        long rowBytes = BudgetWeights.RUNTIME_ROW_FIXED_BYTES + (long) stateWords * BudgetWeights.RUNTIME_ROW_STATE_BYTES;
         long rows = (budgetBytes / 2) / rowBytes;
         return (int) Math.max(BudgetWeights.RUNTIME_MIN_ROWS, Math.min(rows, Integer.MAX_VALUE));
     }
@@ -214,8 +211,7 @@ public final class Budgets {
      * always fits.
      */
     public static long walkMaxBytes(long budgetBytes) {
-        return Math.max((long) BudgetWeights.WALK_MIN_BLOCKS * BudgetWeights.WALK_BLOCK_BYTES,
-            budgetBytes / BudgetWeights.RUNTIME_WALK_DIVISOR);
+        return Math.max((long) BudgetWeights.WALK_MIN_BLOCKS * BudgetWeights.WALK_BLOCK_BYTES, budgetBytes / BudgetWeights.RUNTIME_WALK_DIVISOR);
     }
 
     private static int clampInt(long v) {

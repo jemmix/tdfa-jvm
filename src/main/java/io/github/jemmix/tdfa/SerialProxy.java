@@ -1,8 +1,13 @@
 package io.github.jemmix.tdfa;
 
+import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+
 import java.io.InvalidObjectException;
 import java.io.ObjectStreamException;
 import java.io.Serializable;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 
 /**
  * Serialization proxy for Pattern implementations: serializes {@code pattern
@@ -43,43 +48,39 @@ final class SerialProxy implements Serializable {
         this.providerClass = providerClass;
     }
 
-    private static io.github.jemmix.tdfa.unicode.UnicodeDataProvider resolveProvider(
-        String cls) throws ObjectStreamException {
+    private static UnicodeDataProvider resolveProvider(String cls) throws ObjectStreamException {
         try {
             Class<?> c = Class.forName(cls);
-            if (!io.github.jemmix.tdfa.unicode.UnicodeDataProvider.class.isAssignableFrom(c)) {
+            if (!UnicodeDataProvider.class.isAssignableFrom(c)) {
                 throw new InvalidObjectException(
-                    "serialized provider " + cls + " does not implement UnicodeDataProvider");
+                                "serialized provider " + cls + " does not implement UnicodeDataProvider");
             }
             // Convention 1: static UnicodeDataProvider provider() (the shape
             // of the shipped pinned-table providers, which are singletons;
             // may be private — same module, opened for reflection).
             try {
-                java.lang.reflect.Method m = c.getMethod("provider");
-                if (io.github.jemmix.tdfa.unicode.UnicodeDataProvider.class.isAssignableFrom(m.getReturnType())
-                    && java.lang.reflect.Modifier.isStatic(m.getModifiers())) {
+                Method m = c.getMethod("provider");
+                if (UnicodeDataProvider.class.isAssignableFrom(m.getReturnType()) && Modifier.isStatic(m.getModifiers())) {
                     m.setAccessible(true);
-                    return (io.github.jemmix.tdfa.unicode.UnicodeDataProvider) m.invoke(null);
+                    return (UnicodeDataProvider) m.invoke(null);
                 }
             } catch (NoSuchMethodException expected) {
                 // fall through to convention 2
             }
             // Convention 2: no-arg constructor (may be private for singletons).
-            java.lang.reflect.Constructor<?> ctor = c.getDeclaredConstructor();
+            Constructor<?> ctor = c.getDeclaredConstructor();
             ctor.setAccessible(true);
-            return (io.github.jemmix.tdfa.unicode.UnicodeDataProvider) ctor.newInstance();
+            return (UnicodeDataProvider) ctor.newInstance();
         } catch (InvalidObjectException e) {
             throw e;
         } catch (ReflectiveOperationException | RuntimeException e) {
             throw new InvalidObjectException(
-                "cannot resolve serialized Unicode provider " + cls
-                    + " (needs a static provider() method or a public no-arg constructor;"
-                    + " see UnicodeDataProvider's serialization convention): " + e);
+                            "cannot resolve serialized Unicode provider " + cls + " (needs a static provider() method or a public no-arg constructor;" + " see UnicodeDataProvider's serialization convention): " + e);
         }
     }
 
     private Object readResolve() throws ObjectStreamException {
-        io.github.jemmix.tdfa.unicode.UnicodeDataProvider p = null;
+        UnicodeDataProvider p = null;
         if (providerClass != null) {
             p = resolveProvider(providerClass);
         }

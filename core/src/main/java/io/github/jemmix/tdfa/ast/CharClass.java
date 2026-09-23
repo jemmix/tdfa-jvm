@@ -12,7 +12,8 @@ public final class CharClass extends Ast {
     public final boolean negated;
 
     public CharClass(int[] ranges, boolean negated) {
-        this.ranges = normalize(ranges); this.negated = negated;
+        this.ranges = normalize(ranges);
+        this.negated = negated;
     }
 
     /**
@@ -26,12 +27,19 @@ public final class CharClass extends Ast {
      */
     private static int[] normalize(int[] ranges) {
         int n = ranges.length / 2;
-        if (n <= 1) return ranges;
+        if (n <= 1) {
+            return ranges;
+        }
         boolean sortedDisjoint = true;
         for (int i = 1; i < n; i++) {
-            if (ranges[2 * i] <= ranges[2 * (i - 1) + 1]) { sortedDisjoint = false; break; }
+            if (ranges[2 * i] <= ranges[2 * (i - 1) + 1]) {
+                sortedDisjoint = false;
+                break;
+            }
         }
-        if (sortedDisjoint) return ranges;
+        if (sortedDisjoint) {
+            return ranges;
+        }
         long[] pairs = new long[n];
         for (int i = 0; i < n; i++) {
             pairs[i] = ((long) ranges[2 * i] << 32) | (ranges[2 * i + 1] & 0xFFFFFFFFL);
@@ -44,14 +52,19 @@ public final class CharClass extends Ast {
         for (int i = 1; i < n; i++) {
             int nlo = (int) (pairs[i] >>> 32);
             int nhi = (int) pairs[i];
-            if (nlo <= hi + 1) {           // overlapping or adjacent: extend
-                if (nhi > hi) hi = nhi;
+            if (nlo <= hi + 1) { // overlapping or adjacent: extend
+                if (nhi > hi) {
+                    hi = nhi;
+                }
             } else {
-                out[w++] = lo; out[w++] = hi;
-                lo = nlo; hi = nhi;
+                out[w++] = lo;
+                out[w++] = hi;
+                lo = nlo;
+                hi = nhi;
             }
         }
-        out[w++] = lo; out[w++] = hi;
+        out[w++] = lo;
+        out[w++] = hi;
         return w == ranges.length ? out : Arrays.copyOf(out, w);
     }
 
@@ -61,14 +74,20 @@ public final class CharClass extends Ast {
             int lo = 0, hi = ranges.length / 2 - 1;
             while (lo <= hi) {
                 int mid = (lo + hi) >>> 1;
-                if (ranges[2 * mid] <= c) lo = mid + 1; else hi = mid - 1;
+                if (ranges[2 * mid] <= c) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid - 1;
+                }
             }
             // hi = index of last range with lo <= c (or -1)
             boolean in = hi >= 0 && c <= ranges[2 * hi + 1];
             return in != negated;
         }
         for (int i = 0; i < ranges.length; i += 2) {
-            if (c >= ranges[i] && c <= ranges[i + 1]) return !negated;
+            if (c >= ranges[i] && c <= ranges[i + 1]) {
+                return !negated;
+            }
         }
         return negated;
     }
@@ -80,17 +99,28 @@ public final class CharClass extends Ast {
      * arithmetic runs in UTF-16 units, so it must poison on -1.
      */
     public int fixedUtf16Width() {
-        if (ranges.length == 0) return -1;
-        if (negated) return -1;  // match set is the complement: spans BMP and supplementary
-        if (ranges[ranges.length - 1] <= 0xFFFF) return 1;
-        if (ranges[0] >= 0x10000) return 2;
+        if (ranges.length == 0) {
+            return -1;
+        }
+        if (negated) {
+            return -1;
+        } // match set is the complement: spans BMP and supplementary
+        if (ranges[ranges.length - 1] <= 0xFFFF) {
+            return 1;
+        }
+        if (ranges[0] >= 0x10000) {
+            return 2;
+        }
         return -1;
     }
 
-    @Override public String toString() {
+    @Override
+    public String toString() {
         StringBuilder sb = new StringBuilder(negated ? "[^" : "[");
         for (int i = 0; i < ranges.length; i += 2) {
-            if (i > 0) sb.append(',');
+            if (i > 0) {
+                sb.append(',');
+            }
             sb.append((char) ranges[i]).append('-').append((char) ranges[i + 1]);
         }
         return sb.append(']').toString();

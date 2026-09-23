@@ -1,9 +1,20 @@
 package io.github.jemmix.tdfa.bench;
 
-import io.github.jemmix.tdfa.core.RegexEngine;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import com.datadoghq.reggie.Reggie;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OperationsPerInvocation;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
 import java.util.concurrent.TimeUnit;
@@ -40,8 +51,7 @@ public class ShortFindBench {
         @Param({"jur", "re2j", "reggie", "vm", "asm"})
         public String engine;
 
-        @Param({"litFind", "caseiLit", "wordB", "wordUnicodeCls", "lettersRu",
-                "boundedSpan", "ipExtract", "alternation", "emailNoMatch", "litNoMatch"})
+        @Param({"litFind", "caseiLit", "wordB", "wordUnicodeCls", "lettersRu", "boundedSpan", "ipExtract", "alternation", "emailNoMatch", "litNoMatch"})
         public String slug;
 
         String input;
@@ -50,52 +60,64 @@ public class ShortFindBench {
         @Setup(Level.Trial)
         public void setUp() {
             String regex = switch (slug) {
-                case "litFind"       -> "Twain";
-                case "caseiLit"      -> "(?i)sherlock";
-                case "wordB"         -> "\\bword\\b";
-                case "wordUnicodeCls"   -> "\\p{L}{2,}";
-                case "lettersRu"     -> "[а-яА-ЯёЁ]{4,}";
-                case "boundedSpan"   -> "\"[^\"]{5,20}\"";
-                case "ipExtract"     -> "(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)";
-                case "alternation"   -> "(a|b)*c";
-                case "emailNoMatch"  -> "\\w+@\\w+\\.(com|org|net)";
-                case "litNoMatch"    -> "zzqqxv";
+                case "litFind" -> "Twain";
+                case "caseiLit" -> "(?i)sherlock";
+                case "wordB" -> "\\bword\\b";
+                case "wordUnicodeCls" -> "\\p{L}{2,}";
+                case "lettersRu" -> "[а-яА-ЯёЁ]{4,}";
+                case "boundedSpan" -> "\"[^\"]{5,20}\"";
+                case "ipExtract" -> "(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)";
+                case "alternation" -> "(a|b)*c";
+                case "emailNoMatch" -> "\\w+@\\w+\\.(com|org|net)";
+                case "litNoMatch" -> "zzqqxv";
                 default -> throw new UnsupportedOperationException(slug);
             };
             input = switch (slug) {
-                case "litFind"       -> "The adventures of Tom Sawyer and Huckleberry Finn, by Mark Twain.";
-                case "caseiLit"      -> "Mr Sherlock Holmes, the consulting detective, walked in.";
-                case "wordB"         -> "a short sentence with word inside the text here";
-                case "wordUnicodeCls"   -> "Привет мир, вот тестовое предложение короткое";
-                case "lettersRu"     -> "Привет мир, вот тестовое предложение короткое";
-                case "boundedSpan"   -> "He said \"hello world\" today and left quite quietly";
-                case "ipExtract"     -> "connecting from ip=192.168.1.77 port 443 ok";
-                case "alternation"   -> "aabbaabbc";
-                case "emailNoMatch"  -> "no addresses anywhere in this particular line at all";
-                case "litNoMatch"    -> "The adventures of Tom Sawyer and Huckleberry Finn, by Mark.";
+                case "litFind" -> "The adventures of Tom Sawyer and Huckleberry Finn, by Mark Twain.";
+                case "caseiLit" -> "Mr Sherlock Holmes, the consulting detective, walked in.";
+                case "wordB" -> "a short sentence with word inside the text here";
+                case "wordUnicodeCls" -> "Привет мир, вот тестовое предложение короткое";
+                case "lettersRu" -> "Привет мир, вот тестовое предложение короткое";
+                case "boundedSpan" -> "He said \"hello world\" today and left quite quietly";
+                case "ipExtract" -> "connecting from ip=192.168.1.77 port 443 ok";
+                case "alternation" -> "aabbaabbc";
+                case "emailNoMatch" -> "no addresses anywhere in this particular line at all";
+                case "litNoMatch" -> "The adventures of Tom Sawyer and Huckleberry Finn, by Mark.";
                 default -> throw new UnsupportedOperationException(slug);
             };
             final String in = input;
             switch (engine) {
                 case "jur" -> {
                     var p = java.util.regex.Pattern.compile(regex);
-                    findOnce = s -> { var m = p.matcher(s); return m.find(); };
+                    findOnce = s -> {
+                        var m = p.matcher(s);
+                        return m.find();
+                    };
                 }
                 case "re2j" -> {
                     var p = com.google.re2j.Pattern.compile(regex);
-                    findOnce = s -> { var m = p.matcher(s); return m.find(); };
+                    findOnce = s -> {
+                        var m = p.matcher(s);
+                        return m.find();
+                    };
                 }
                 case "reggie" -> {
-                    var p = com.datadoghq.reggie.Reggie.compile(regex);
+                    var p = Reggie.compile(regex);
                     findOnce = s -> p.find(s);
                 }
                 case "vm" -> {
                     var p = io.github.jemmix.tdfa.Pattern.compile(regex, 0, TdfaRunner::new);
-                    findOnce = s -> { var m = p.matcher(s); return m.find(); };
+                    findOnce = s -> {
+                        var m = p.matcher(s);
+                        return m.find();
+                    };
                 }
                 case "asm" -> {
                     var p = io.github.jemmix.tdfa.Pattern.compile(regex);
-                    findOnce = s -> { var m = p.matcher(s); return m.find(); };
+                    findOnce = s -> {
+                        var m = p.matcher(s);
+                        return m.find();
+                    };
                 }
                 default -> throw new UnsupportedOperationException(engine);
             }
@@ -103,12 +125,14 @@ public class ShortFindBench {
                 case "emailNoMatch", "litNoMatch" -> false;
                 default -> true;
             };
-            if (findOnce.test(in) != expect)
+            if (findOnce.test(in) != expect) {
                 throw new IllegalStateException("count mismatch for " + engine + "/" + slug);
+            }
         }
     }
 
-    @Benchmark public void bench(BenchState bs, Blackhole bh) {
+    @Benchmark
+    public void bench(BenchState bs, Blackhole bh) {
         for (int i = 0; i < ITERS; i++) {
             bh.consume(bs.findOnce.test(bs.input));
         }

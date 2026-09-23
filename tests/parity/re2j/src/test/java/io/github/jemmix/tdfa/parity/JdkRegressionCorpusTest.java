@@ -1,5 +1,10 @@
 package io.github.jemmix.tdfa.parity;
 
+import com.google.re2j.Re2jUnicodeProvider;
+import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -39,8 +44,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class JdkRegressionCorpusTest {
 
-    private static final io.github.jemmix.tdfa.unicode.UnicodeDataProvider UNICODE =
-            com.google.re2j.Re2jUnicodeProvider.INSTANCE;
+    private static final UnicodeDataProvider UNICODE = Re2jUnicodeProvider.INSTANCE;
 
     private static final int FLAG_I = 1; // facade/re2j CASE_INSENSITIVE
     private static final int FLAG_M = 4; // facade/re2j MULTILINE
@@ -49,7 +53,10 @@ class JdkRegressionCorpusTest {
     private static final int JUR_M = java.util.regex.Pattern.MULTILINE;
 
     record Case(String file, int lineNo, String pattern, int flags, String input, String expected) {
-        @Override public String toString() { return file + ":" + lineNo + " `" + pattern + "`"; }
+        @Override
+        public String toString() {
+            return file + ":" + lineNo + " `" + pattern + "`";
+        }
     }
 
     // ---- aggregation for the end-of-run summary ----
@@ -83,8 +90,7 @@ class JdkRegressionCorpusTest {
     /** Documented by-design divergence: the {@code (?u)} inline flag (unicode
      *  shorthand opt-in) is a tdfa extension; re2j has no u flag and rejects. */
     private static boolean hasInlineU(String pattern) {
-        return java.util.regex.Pattern.compile("\\(\\?[a-zA-Z]*u[a-zA-Z]*[):]")
-                .matcher(pattern).find();
+        return java.util.regex.Pattern.compile("\\(\\?[a-zA-Z]*u[a-zA-Z]*[):]").matcher(pattern).find();
     }
 
     // ---- corpus parsing (port of RegExTest.grabLine / compileTestPattern) ----
@@ -94,7 +100,9 @@ class JdkRegressionCorpusTest {
         private final BufferedReader r;
         private int lineNo;
 
-        CorpusReader(BufferedReader r) { this.r = r; }
+        CorpusReader(BufferedReader r) {
+            this.r = r;
+        }
 
         /** Next non-empty non-comment line with \\n / \\uXXXX unescaped, or null at EOF. */
         String next() throws IOException {
@@ -103,23 +111,26 @@ class JdkRegressionCorpusTest {
                 lineNo++;
                 line = r.readLine();
             }
-            if (line == null) return null;
+            if (line == null) {
+                return null;
+            }
             lineNo++;
             int index;
-            while ((index = line.indexOf("\\n")) != -1)
+            while ((index = line.indexOf("\\n")) != -1) {
                 line = line.substring(0, index) + "\n" + line.substring(index + 2);
-            while ((index = line.indexOf("\\u")) != -1)
-                line = line.substring(0, index)
-                        + (char) Integer.parseInt(line.substring(index + 2, index + 6), 16)
-                        + line.substring(index + 6);
+            }
+            while ((index = line.indexOf("\\u")) != -1) {
+                line = line.substring(0, index) + (char) Integer.parseInt(line.substring(index + 2, index + 6), 16) + line.substring(index + 6);
+            }
             return line;
         }
     }
 
     /** Port of RegExTest.compileTestPattern quoting: {@code 'pattern'f} with f in {i, m}. */
     private static Case toCase(String file, int lineNo, String patternString, String input, String expected) {
-        if (!patternString.startsWith("'"))
+        if (!patternString.startsWith("'")) {
             return new Case(file, lineNo, patternString, 0, input, expected);
+        }
         int break1 = patternString.lastIndexOf("'");
         String flagString = patternString.substring(break1 + 1);
         String pattern = patternString.substring(1, break1);
@@ -135,8 +146,7 @@ class JdkRegressionCorpusTest {
         List<Case> cases = new ArrayList<>();
         try (InputStream in = JdkRegressionCorpusTest.class.getClassLoader().getResourceAsStream(resource)) {
             assertThat(in).as("resource %s (run ./gradlew prepareVendor)", resource).isNotNull();
-            CorpusReader r = new CorpusReader(new BufferedReader(
-                    new InputStreamReader(in, StandardCharsets.UTF_8)));
+            CorpusReader r = new CorpusReader(new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8)));
             String patternString;
             while ((patternString = r.next()) != null) {
                 String input = r.next();
@@ -153,14 +163,12 @@ class JdkRegressionCorpusTest {
 
     static Stream<Arguments> allCases() {
         List<Arguments> out = new ArrayList<>();
-        List<io.github.jemmix.tdfa.core.RegexEngineFactory> factories =
-                Stream.<io.github.jemmix.tdfa.core.RegexEngineFactory>of(null,
-                        io.github.jemmix.tdfa.tdfa.TdfaRunner::new).toList();
-        for (io.github.jemmix.tdfa.core.RegexEngineFactory factory : factories) {
-            for (String file : List.of("openjdk-regex/TestCases.txt",
-                    "openjdk-regex/BMPTestCases.txt",
-                    "openjdk-regex/SupplementaryTestCases.txt")) {
-                for (Case c : parseFile(file)) out.add(Arguments.of(c, factory));
+        List<RegexEngineFactory> factories = Stream.<RegexEngineFactory>of(null, TdfaRunner::new).toList();
+        for (RegexEngineFactory factory : factories) {
+            for (String file : List.of("openjdk-regex/TestCases.txt", "openjdk-regex/BMPTestCases.txt", "openjdk-regex/SupplementaryTestCases.txt")) {
+                for (Case c : parseFile(file)) {
+                    out.add(Arguments.of(c, factory));
+                }
             }
         }
         return out.stream();
@@ -171,56 +179,82 @@ class JdkRegressionCorpusTest {
     private static String compute(com.google.re2j.Matcher m) {
         StringBuilder sb = new StringBuilder();
         boolean found = m.find();
-        if (found) sb.append("true ").append(m.group());
-        else sb.append("false");
+        if (found) {
+            sb.append("true ").append(m.group());
+        } else {
+            sb.append("false");
+        }
         sb.append(' ').append(m.groupCount());
-        if (found)
+        if (found) {
             for (int i = 1; i <= m.groupCount(); i++) {
                 String g = m.group(i);
-                if (g != null) sb.append(' ').append(g);
+                if (g != null) {
+                    sb.append(' ').append(g);
+                }
             }
+        }
         return sb.toString();
     }
 
     private static String compute(java.util.regex.Matcher m) {
         StringBuilder sb = new StringBuilder();
         boolean found = m.find();
-        if (found) sb.append("true ").append(m.group());
-        else sb.append("false");
+        if (found) {
+            sb.append("true ").append(m.group());
+        } else {
+            sb.append("false");
+        }
         sb.append(' ').append(m.groupCount());
-        if (found)
+        if (found) {
             for (int i = 1; i <= m.groupCount(); i++) {
                 String g = m.group(i);
-                if (g != null) sb.append(' ').append(g);
+                if (g != null) {
+                    sb.append(' ').append(g);
+                }
             }
+        }
         return sb.toString();
     }
 
     private static String compute(io.github.jemmix.tdfa.core.Matcher m) {
         StringBuilder sb = new StringBuilder();
         boolean found = m.find();
-        if (found) sb.append("true ").append(m.group());
-        else sb.append("false");
+        if (found) {
+            sb.append("true ").append(m.group());
+        } else {
+            sb.append("false");
+        }
         sb.append(' ').append(m.groupCount());
-        if (found)
+        if (found) {
             for (int i = 1; i <= m.groupCount(); i++) {
                 String g = m.group(i);
-                if (g != null) sb.append(' ').append(g);
+                if (g != null) {
+                    sb.append(' ').append(g);
+                }
             }
+        }
         return sb.toString();
     }
 
     private static int jurFlags(int flags) {
         int out = 0;
-        if ((flags & FLAG_I) != 0) out |= JUR_I;
-        if ((flags & FLAG_M) != 0) out |= JUR_M;
+        if ((flags & FLAG_I) != 0) {
+            out |= JUR_I;
+        }
+        if ((flags & FLAG_M) != 0) {
+            out |= JUR_M;
+        }
         return out;
     }
 
     private static int re2jFlags(int flags) {
         int out = 0;
-        if ((flags & FLAG_I) != 0) out |= com.google.re2j.Pattern.CASE_INSENSITIVE;
-        if ((flags & FLAG_M) != 0) out |= com.google.re2j.Pattern.MULTILINE;
+        if ((flags & FLAG_I) != 0) {
+            out |= com.google.re2j.Pattern.CASE_INSENSITIVE;
+        }
+        if ((flags & FLAG_M) != 0) {
+            out |= com.google.re2j.Pattern.MULTILINE;
+        }
         return out;
     }
 
@@ -228,16 +262,19 @@ class JdkRegressionCorpusTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("allCases")
-    void parity(Case c, io.github.jemmix.tdfa.core.RegexEngineFactory factory) {
+    void parity(Case c, RegexEngineFactory factory) {
         com.google.re2j.Pattern re2jPattern;
         try {
             re2jPattern = com.google.re2j.Pattern.compile(c.pattern(), re2jFlags(c.flags()));
         } catch (Exception rejectedByContract) {
-            if (hasInlineU(c.pattern())) { byDesign++; return; } // (?u) extension: re2j has no u flag
+            if (hasInlineU(c.pattern())) {
+                byDesign++;
+                return;
+            } // (?u) extension: re2j has no u flag
             try {
                 io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.flags(), factory, UNICODE);
                 record(c, "tdfa accepts but re2j (contract) rejects", null);
-            } catch (io.github.jemmix.tdfa.core.PatternSyntaxException e) {
+            } catch (PatternSyntaxException e) {
                 bothReject++;
             }
             return;
@@ -246,7 +283,7 @@ class JdkRegressionCorpusTest {
         io.github.jemmix.tdfa.Pattern tdfaPattern;
         try {
             tdfaPattern = io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.flags(), factory, UNICODE);
-        } catch (io.github.jemmix.tdfa.core.PatternSyntaxException e) {
+        } catch (PatternSyntaxException e) {
             record(c, "tdfa rejects but re2j (contract) compiles", "reason: " + e.getMessage());
             return;
         } catch (RuntimeException e) {
@@ -265,18 +302,17 @@ class JdkRegressionCorpusTest {
         // informational: live jur vs the contract pair
         String jurResult;
         try {
-            jurResult = compute(java.util.regex.Pattern
-                    .compile(c.pattern(), jurFlags(c.flags())).matcher(c.input()));
+            jurResult = compute(java.util.regex.Pattern.compile(c.pattern(), jurFlags(c.flags())).matcher(c.input()));
         } catch (Exception e) {
             jurResult = "<jur-rejects>";
         }
-        if (!jurResult.equals(oracle))
-            JurOnlySyntax.add(c + " input=`" + c.input().replace("\n", "\\n")
-                    + "` re2j/tdfa=`" + oracle + "` jur=`" + jurResult + "`");
+        if (!jurResult.equals(oracle)) {
+            JurOnlySyntax.add(c + " input=`" + c.input().replace("\n", "\\n") + "` re2j/tdfa=`" + oracle + "` jur=`" + jurResult + "`");
+        }
 
-        if (!oracle.equals(c.expected()))
-            RecordedDrift.add(c + " input=`" + c.input().replace("\n", "\\n")
-                    + "` recorded=`" + c.expected() + "` live=`" + oracle + "`");
+        if (!oracle.equals(c.expected())) {
+            RecordedDrift.add(c + " input=`" + c.input().replace("\n", "\\n") + "` recorded=`" + c.expected() + "` live=`" + oracle + "`");
+        }
     }
 
     /** Divergence from the contract oracle: always a hard failure. */
@@ -285,18 +321,18 @@ class JdkRegressionCorpusTest {
     }
 
     private static String detail(Case c, String oracle, String actual) {
-        return String.format("%n  input = `%s`%n  re2j  = `%s`%n  tdfa  = `%s`%n  rec   = `%s`",
-                c.input().replace("\n", "\\n"), oracle, actual, c.expected());
+        return String.format("%n  input = `%s`%n  re2j  = `%s`%n  tdfa  = `%s`%n  rec   = `%s`", c.input().replace("\n", "\\n"), oracle, actual, c.expected());
     }
 
     @AfterAll
     static void summary() {
         System.out.println("---- JDK regression corpus summary ----");
-        System.out.println("compared (re2j+tdfa compiled): " + compared
-                + ", both reject: " + bothReject + ", by-design (?u): " + byDesign);
+        System.out.println("compared (re2j+tdfa compiled): " + compared + ", both reject: " + bothReject + ", by-design (?u): " + byDesign);
         System.out.println("jur-only syntax divergences (informational): " + JurOnlySyntax.size());
         System.out.println("recorded-expectation drift vs live engines: " + RecordedDrift.size());
         RecordedDrift.stream().limit(20).forEach(s -> System.out.println("  DRIFT " + s));
-        if (RecordedDrift.size() > 20) System.out.println("  ... +" + (RecordedDrift.size() - 20) + " more");
+        if (RecordedDrift.size() > 20) {
+            System.out.println("  ... +" + (RecordedDrift.size() - 20) + " more");
+        }
     }
 }

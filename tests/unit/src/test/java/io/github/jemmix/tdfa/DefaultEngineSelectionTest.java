@@ -13,13 +13,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class DefaultEngineSelectionTest {
 
-    @Test void defaultCompileUsesGeneration() {
+    @Test
+    void defaultCompileUsesGeneration() {
         String prev = System.getProperty("tdfa.engine");
         try {
             System.clearProperty("tdfa.engine");
             Pattern p = Pattern.compile("abc");
-            assertThat(p.getClass().getSimpleName()).as("generated shell expected")
-                    .startsWith("Gen").endsWith("Pattern");
+            assertThat(p.getClass().getSimpleName()).as("generated shell expected").startsWith("Gen").endsWith("Pattern");
             assertThat(p.matcher("abc").matches()).isTrue();
             assertThat(p.matcher("abcd").matches()).isFalse();
         } finally {
@@ -27,7 +27,8 @@ class DefaultEngineSelectionTest {
         }
     }
 
-    @Test void vmSwitchForcesSharedImplementation() {
+    @Test
+    void vmSwitchForcesSharedImplementation() {
         String prev = System.getProperty("tdfa.engine");
         try {
             System.setProperty("tdfa.engine", "VM");
@@ -40,18 +41,23 @@ class DefaultEngineSelectionTest {
         }
     }
 
-    @Test void staticMatchesUsesDefault() {
+    @Test
+    void staticMatchesUsesDefault() {
         assertThat(Pattern.matches("abc", "abc")).isTrue();
         assertThat(Pattern.matches("abc", "abd")).isFalse();
     }
 
-    @Test void flagsCompileUsesDefault() {
+    @Test
+    void flagsCompileUsesDefault() {
         Pattern p = Pattern.compile("ABC", Pattern.CASE_INSENSITIVE);
         assertThat(p.matcher("abc").matches()).isTrue();
     }
 
     private static void restore(String prev) {
-        if (prev == null) System.clearProperty("tdfa.engine");
-        else System.setProperty("tdfa.engine", prev);
+        if (prev == null) {
+            System.clearProperty("tdfa.engine");
+        } else {
+            System.setProperty("tdfa.engine", prev);
+        }
     }
 }

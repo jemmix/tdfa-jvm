@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.asm;
 
 import io.github.jemmix.tdfa.core.RegexEngine;
+import io.github.jemmix.tdfa.tdfa.Budgets;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import org.objectweb.asm.ClassWriter;
@@ -8,18 +9,38 @@ import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class TdfaAsmBackend {
 
     private static final AtomicLong COUNTER = new AtomicLong();
     private static final String ENGINE = "io/github/jemmix/tdfa/core/RegexEngine";
-    private static final String HOLDER = "io/github/jemmix/tdfa/tdfa/MatchHolder";  // moved out of TdfaRunner (2026-09 split)
+    private static final String HOLDER = "io/github/jemmix/tdfa/tdfa/MatchHolder"; // moved out of TdfaRunner (2026-09 split)
     private static final String RESULT = "io/github/jemmix/tdfa/core/MatchResult";
+
+    /** Register-file size ceiling for the stack-register leaves (see
+     *  {@link #stackRegsEligible}): 32 = last consistently-winning size
+     *  class; parity is at 40+ regs. */
+    private static final int STACK_REGS_MAX = 32;
+
+    /** Soft budget for {@code runExtract} bytecode under INLINED mode. 65 KB
+     *  is the JVM hard cap; the per-range cost estimate (~25 B/range) is a
+     *  lower bound — Unicode-word-boundary patterns like {@code \b\w+\b} add
+     *  ~15 B for codepoint-advance checks on surrogate-crossing ranges, and
+     *  per-state mask/entry checks add fixed overhead. Budget of 30 KB
+     *  leaves comfortable headroom for the under-estimate. */
+    private static final int INLINE_BUDGET_BYTES = 30_000;
+
     private static final String SCRATCH = "io/github/jemmix/tdfa/core/MatchScratch";
     private static final String SCRATCH_D = "L" + SCRATCH + ";";
     private static final String STR = "java/lang/String";
@@ -30,6 +51,7 @@ public final class TdfaAsmBackend {
      *  definition the interpreter uses (pair-interior positions are not
      *  codepoint boundaries and cannot start a match). */
     private static final String ALPHABET = "io/github/jemmix/tdfa/ast/Alphabet";
+
     private static final String RUNNER_D = "L" + RUNNER + ";";
     private static final String TDFA = "io/github/jemmix/tdfa/tdfa/Tdfa";
     private static final String TDFA_D = "L" + TDFA + ";";
@@ -39,10 +61,17 @@ public final class TdfaAsmBackend {
      *  all of a pattern's generated classes unload together once the engine
      *  is garbage. */
     public static final class GenClassLoader extends ClassLoader {
-        private final java.util.Map<String, byte[]> classes = new java.util.HashMap<>();
-        GenClassLoader(ClassLoader parent) { super(parent); }
+        private final Map<String, byte[]> classes = new HashMap<>();
+
+        GenClassLoader(ClassLoader parent) {
+            super(parent);
+        }
+
         /** Register another class to be defined by this loader (same pattern). */
-        public void register(String name, byte[] bytes) { classes.put(name, bytes); }
+        public void register(String name, byte[] bytes) {
+            classes.put(name, bytes);
+        }
+
         /**
          * Bytes stay registered after definition: removing them on first lookup
          * turned a transient LinkageError during {@code defineClass} into a
@@ -50,15 +79,18 @@ public final class TdfaAsmBackend {
          * failure. Retention is bounded by the loader's own lifetime (one
          * pattern, unloaded with its classes).
          */
-        @Override protected Class<?> findClass(String n) throws ClassNotFoundException {
+        @Override
+        protected Class<?> findClass(String n) throws ClassNotFoundException {
             byte[] b = classes.get(n);
-            if (b != null) return defineClass(n, b, 0, b.length);
+            if (b != null) {
+                return defineClass(n, b, 0, b.length);
+            }
             return super.findClass(n);
         }
     }
 
     public static RegexEngine generate(Tdfa tdfa) {
-        return generate(tdfa, io.github.jemmix.tdfa.tdfa.Budgets.runtimeMemoryBytes());
+        return generate(tdfa, Budgets.runtimeMemoryBytes());
     }
 
     /**
@@ -76,20 +108,21 @@ public final class TdfaAsmBackend {
             String cn = "io.github.jemmix.tdfa.gen.Gen" + id;
             String owner = cn.replace('.', '/');
             byte[] bc = generateBytes(tdfa, owner, memoBudgetBytes);
-            if (Boolean.getBoolean("tdfa.asm.dump")) dumpClass(owner, bc);
+            if (Boolean.getBoolean("tdfa.asm.dump")) {
+                dumpClass(owner, bc);
+            }
             GenClassLoader cl = new GenClassLoader(TdfaAsmBackend.class.getClassLoader());
             cl.register(cn, bc);
-            return Class.forName(cn, true, cl)
-                    .asSubclass(RegexEngine.class)
-                    .getDeclaredConstructor(Tdfa.class)
-                    .newInstance(tdfa);
+            return Class.forName(cn, true, cl).asSubclass(RegexEngine.class).getDeclaredConstructor(Tdfa.class).newInstance(tdfa);
         } catch (Exception e) {
             throw new IllegalStateException("ASM backend failed", e);
         }
     }
 
     /** Dispatch mode picked at class-emit time, see {@link #pickMode}. */
-    enum DispatchMode { INLINED, DELEGATE }
+    enum DispatchMode {
+        INLINED, DELEGATE
+    }
 
     private static byte[] generateBytes(Tdfa tdfa, String owner, long memoBudgetBytes) {
         // One brain, one ladder: the search strategy (literal / candidate
@@ -101,9 +134,8 @@ public final class TdfaAsmBackend {
         // genMatch is a transcription of runStringExtractFast; the
         // strategy-conformance test asserts trace equality with the VM.
         DispatchMode mode = pickMode(tdfa);
-        boolean delegate = mode == DispatchMode.DELEGATE
-                || TdfaRunner.detectLiteralNeedle(tdfa) != null;
-        boolean fastPath = mode == DispatchMode.INLINED;   // pickMode only INLINES fastPath-eligible DFAs
+        boolean delegate = mode == DispatchMode.DELEGATE || TdfaRunner.detectLiteralNeedle(tdfa) != null;
+        boolean fastPath = mode == DispatchMode.INLINED; // pickMode only INLINES fastPath-eligible DFAs
         // Stack-register mode: for small-register DFAs the walk leaves hold
         // the register file in JVM local slots (ILOAD/ISTORE) instead of the
         // carrier-pooled array (takeRegs + fill + IALOAD/IASTORE + clone).
@@ -131,8 +163,12 @@ public final class TdfaAsmBackend {
             genExtractOne(cw, tdfa, owner, stackRegs);
             genToResult(cw, tdfa, owner);
             genEntryOkC(cw, owner);
-            if (tdfa.stateFinalOpsByMask() != null) genPhiMasked(cw, tdfa);
-            if (tdfa.registerCount() > 0 && !stackRegs) genPhi(cw, tdfa);
+            if (tdfa.stateFinalOpsByMask() != null) {
+                genPhiMasked(cw, tdfa);
+            }
+            if (tdfa.registerCount() > 0 && !stackRegs) {
+                genPhi(cw, tdfa);
+            }
             genPositionFlagsC(cw, owner, true, tdfa.unicodeWordBoundary());
             if (tdfa.unicodeWordBoundary()) {
                 genIsUnicodeWordChar(cw, owner);
@@ -164,7 +200,10 @@ public final class TdfaAsmBackend {
     @SuppressWarnings("EmptyCatch")
     private static void dumpClass(String owner, byte[] bc) {
         String dp = System.getProperty("java.io.tmpdir") + "/" + owner.replace('/', '.') + ".class";
-        try { java.nio.file.Files.write(java.nio.file.Paths.get(dp), bc); } catch (Exception ignored) {}
+        try {
+            Files.write(Paths.get(dp), bc);
+        } catch (Exception ignored) {
+        }
     }
 
     // ===== <clinit> =====
@@ -176,10 +215,12 @@ public final class TdfaAsmBackend {
         // method-size limit on DFAs with many states (e.g. dictionary alternation,
         // 21 K states × 64 STOP_MASK slots = 1.36 M entries; or fastPath-eligible
         // wide-ASCII-class patterns like [^u-z]{80}x with 16 K ASCII_TARGET IASTOREs).
-        for (String f : new String[]{"ENTRY_MASK", "ACCEPT_MASK", "STOP_MASK", "IS_ACCEPT"})
+        for (String f : new String[]{"ENTRY_MASK", "ACCEPT_MASK", "STOP_MASK", "IS_ACCEPT"}) {
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, f, "[I", null, null).visitEnd();
-        if (fastPath)
+        }
+        if (fastPath) {
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "ASCII_TARGET", "[I", null, null).visitEnd();
+        }
         boolean hasFixed = tdfa.fixedBase() != null;
         if (hasFixed) {
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "FIXED_BASE", "[I", null, null).visitEnd();
@@ -191,7 +232,8 @@ public final class TdfaAsmBackend {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
         mv.visitCode();
         mv.visitInsn(Opcodes.RETURN);
-        mv.visitMaxs(0, 0); mv.visitEnd();
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 
     // ===== <init> =====
@@ -238,7 +280,7 @@ public final class TdfaAsmBackend {
         int n = tdfa.stateCount();
         ic(mv, n);
         mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
-        mv.visitVarInsn(Opcodes.ASTORE, 2);  // local 2 = IS_ACCEPT temp
+        mv.visitVarInsn(Opcodes.ASTORE, 2); // local 2 = IS_ACCEPT temp
         // local 3 = loop counter
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitVarInsn(Opcodes.ISTORE, 3);
@@ -289,7 +331,7 @@ public final class TdfaAsmBackend {
             int tableSize = tdfa.stateCount() * 128;
             ic(mv, tableSize);
             mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
-            mv.visitVarInsn(Opcodes.ASTORE, 4);  // local 4 = ASCII_TARGET
+            mv.visitVarInsn(Opcodes.ASTORE, 4); // local 4 = ASCII_TARGET
             mv.visitVarInsn(Opcodes.ALOAD, 4);
             mv.visitInsn(Opcodes.ICONST_M1);
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, ARRAYS, "fill", "([II)V", false);
@@ -318,7 +360,7 @@ public final class TdfaAsmBackend {
             mv.visitInsn(Opcodes.IALOAD);
             mv.visitVarInsn(Opcodes.ISTORE, 7);
             mv.visitInsn(Opcodes.ICONST_0);
-            mv.visitVarInsn(Opcodes.ISTORE, 8);  // i = 0
+            mv.visitVarInsn(Opcodes.ISTORE, 8); // i = 0
             Label iLoop = new Label(), iDone = new Label();
             mv.visitLabel(iLoop);
             mv.visitVarInsn(Opcodes.ILOAD, 8);
@@ -412,7 +454,8 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "matches", "(" + CS_D + ")Z", false);
         mv.visitInsn(Opcodes.IRETURN);
-        mv.visitMaxs(0, 0); mv.visitEnd();
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 
     private static void genFind(ClassWriter cw, String owner) {
@@ -428,7 +471,8 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "find", "(" + CS_D + ")Z", false);
         mv.visitInsn(Opcodes.IRETURN);
-        mv.visitMaxs(0, 0); mv.visitEnd();
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 
     /**
@@ -502,11 +546,11 @@ public final class TdfaAsmBackend {
         mv.visitJumpInsn(Opcodes.IF_ICMPGT, skipCand);
         emitTrace(mv, "CAND_SCAN");
         mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitVarInsn(Opcodes.ISTORE, 9);                       // fails = 0
+        mv.visitVarInsn(Opcodes.ISTORE, 9); // fails = 0
         mv.visitVarInsn(Opcodes.ILOAD, 2);
         mv.visitInsn(Opcodes.ICONST_1);
         mv.visitInsn(Opcodes.IADD);
-        mv.visitVarInsn(Opcodes.ISTORE, 8);                       // p = from + 1
+        mv.visitVarInsn(Opcodes.ISTORE, 8); // p = from + 1
         Label candLoop = new Label(), candDone = new Label(), candNext = new Label(), candWalk = new Label();
         mv.visitLabel(candLoop);
         mv.visitVarInsn(Opcodes.ILOAD, 8);
@@ -555,7 +599,7 @@ public final class TdfaAsmBackend {
         mv.visitLabel(candWalk);
         emitExtractOne(mv, owner, 4, 8, 5, 6, 3);
         emitReturnToResult(mv, owner, 6);
-        mv.visitIincInsn(9, 1);                                   // fails++
+        mv.visitIincInsn(9, 1); // fails++
         mv.visitLabel(candNext);
         mv.visitIincInsn(8, 1);
         mv.visitJumpInsn(Opcodes.GOTO, candLoop);
@@ -619,8 +663,7 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, 5);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
         mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "restartExtract",
-                "(Ljava/lang/String;III" + SCRATCH_D + ")L" + HOLDER + ";", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "restartExtract", "(Ljava/lang/String;III" + SCRATCH_D + ")L" + HOLDER + ";", false);
         mv.visitVarInsn(Opcodes.ASTORE, 6);
         mv.visitVarInsn(Opcodes.ALOAD, 6);
         mv.visitJumpInsn(Opcodes.IFNULL, noMatch1);
@@ -669,8 +712,7 @@ public final class TdfaAsmBackend {
      * carrier supplies the pooled register file ({@code takeRegs(n, sc)}).
      */
     private static void genExtractOne(ClassWriter cw, Tdfa tdfa, String owner, boolean stackRegs) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "extractOne", "(Ljava/lang/String;II" + SCRATCH_D + ")L" + HOLDER + ";", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "extractOne", "(Ljava/lang/String;II" + SCRATCH_D + ")L" + HOLDER + ";", null, null);
         mv.visitCode();
         emitRunCore(mv, tdfa, owner, stackRegs);
         mv.visitMaxs(0, 0);
@@ -679,8 +721,7 @@ public final class TdfaAsmBackend {
 
     /** Shared result epilogue: holder → MatchResult (fixed-tag rewrite + ctor). */
     private static void genToResult(ClassWriter cw, Tdfa tdfa, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "toResult", "(L" + HOLDER + ";)L" + RESULT + ";", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "toResult", "(L" + HOLDER + ";)L" + RESULT + ";", null, null);
         mv.visitCode();
         // local 0 = h
         mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -711,14 +752,14 @@ public final class TdfaAsmBackend {
         mv.visitLabel(ret);
         mv.visitInsn(Opcodes.ACONST_NULL);
         mv.visitInsn(Opcodes.ARETURN);
-        mv.visitMaxs(0, 0); mv.visitEnd();
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 
     // ===== entryOkC — entry mask check over String (helper for DFA dispatch) =====
 
     private static void genEntryOkC(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "entryOkC", "(IIILjava/lang/String;)Z", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "entryOkC", "(IIILjava/lang/String;)Z", null, null);
         mv.visitCode();
         // locals: 0=state, 1=pos, 2=len, 3=input, 4=required
         mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ENTRY_MASK", "[I");
@@ -751,8 +792,7 @@ public final class TdfaAsmBackend {
     // ===== positionFlagsC — position flags over String (helper) =====
 
     private static void genPositionFlagsC(ClassWriter cw, String owner, boolean multiline, boolean unicodeWord) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "positionFlagsC", "(IILjava/lang/String;)I", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "positionFlagsC", "(IILjava/lang/String;)I", null, null);
         mv.visitCode();
         // locals: 0=pos, 1=len, 2=input, 3=flags, 4=t1, 5=t2
         mv.visitInsn(Opcodes.ICONST_0);
@@ -929,8 +969,8 @@ public final class TdfaAsmBackend {
         final int[] byMask = tdfa.stateFinalOpsByMask();
 
         // Locals: 0=input(String), 1=from, 2=len, 3=sc(MatchScratch); 4..9 search/accept state
-        final int IN=0, FROM=1, LEN=2;
-        final int MS=4, ST=5, STATE=6, POS=7, HA=8, LAP=9;
+        final int IN = 0, FROM = 1, LEN = 2;
+        final int MS = 4, ST = 5, STATE = 6, POS = 7, HA = 8, LAP = 9;
         final int REGS = 10, LAS = 11, PF = 12, C_LV = 13;
         final int T1 = 14, T2 = 15, PF2 = 16, T3 = 17, R = 18;
         // Stack-register mode: register file in local slots [REGBASE,
@@ -949,12 +989,18 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ISTORE, ST);
 
         // Pre-initialize locals to satisfy verifier at search-loop merge point
-        mv.visitInsn(Opcodes.ICONST_0); mv.visitVarInsn(Opcodes.ISTORE, STATE);
-        mv.visitVarInsn(Opcodes.ILOAD, FROM); mv.visitVarInsn(Opcodes.ISTORE, POS);
-        mv.visitInsn(Opcodes.ICONST_0); mv.visitVarInsn(Opcodes.ISTORE, HA);
-        mv.visitInsn(Opcodes.ICONST_M1); mv.visitVarInsn(Opcodes.ISTORE, LAP);
-        mv.visitInsn(Opcodes.ACONST_NULL); mv.visitVarInsn(Opcodes.ASTORE, REGS);
-        mv.visitInsn(Opcodes.ICONST_M1); mv.visitVarInsn(Opcodes.ISTORE, LAS);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitVarInsn(Opcodes.ISTORE, STATE);
+        mv.visitVarInsn(Opcodes.ILOAD, FROM);
+        mv.visitVarInsn(Opcodes.ISTORE, POS);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitVarInsn(Opcodes.ISTORE, HA);
+        mv.visitInsn(Opcodes.ICONST_M1);
+        mv.visitVarInsn(Opcodes.ISTORE, LAP);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitVarInsn(Opcodes.ASTORE, REGS);
+        mv.visitInsn(Opcodes.ICONST_M1);
+        mv.visitVarInsn(Opcodes.ISTORE, LAS);
 
         // ===== SEARCH LOOP (single pass: MS == from) =====
         Label searchLoop = new Label(), searchEnd = new Label(), searchNext = new Label();
@@ -984,7 +1030,7 @@ public final class TdfaAsmBackend {
             } else {
                 // REGS = TdfaRunner.takeRegs(n, sc); Arrays.fill(REGS, 0, n, -1);
                 ic(mv, tdfa.registerCount());
-                mv.visitVarInsn(Opcodes.ALOAD, 3);   // sc (4th param)
+                mv.visitVarInsn(Opcodes.ALOAD, 3); // sc (4th param)
                 mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "takeRegs", "(I" + SCRATCH_D + ")[I", false);
                 mv.visitVarInsn(Opcodes.ASTORE, REGS);
                 mv.visitVarInsn(Opcodes.ALOAD, REGS);
@@ -1014,19 +1060,23 @@ public final class TdfaAsmBackend {
         }
 
         // state=0, pos=start, haveAccept=false, lastAcceptPos=-1
-        mv.visitInsn(Opcodes.ICONST_0); mv.visitVarInsn(Opcodes.ISTORE, STATE);
-        mv.visitVarInsn(Opcodes.ILOAD, ST); mv.visitVarInsn(Opcodes.ISTORE, POS);
-        mv.visitInsn(Opcodes.ICONST_0); mv.visitVarInsn(Opcodes.ISTORE, HA);
-        mv.visitInsn(Opcodes.ICONST_M1); mv.visitVarInsn(Opcodes.ISTORE, LAP);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitVarInsn(Opcodes.ISTORE, STATE);
+        mv.visitVarInsn(Opcodes.ILOAD, ST);
+        mv.visitVarInsn(Opcodes.ISTORE, POS);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitVarInsn(Opcodes.ISTORE, HA);
+        mv.visitInsn(Opcodes.ICONST_M1);
+        mv.visitVarInsn(Opcodes.ISTORE, LAP);
 
         // ===== DFA LOOP =====
         Label dfaLoop = new Label(), dfaEnd = new Label();
         mv.visitLabel(dfaLoop);
 
         // pf = positionFlags(pos, len, input) — skip when never needed
-        if (pfNeeded)
+        if (pfNeeded) {
             emitPFInline(mv, owner, IN, POS, LEN, PF, T1, T2, true, tdfa.unicodeWordBoundary());
-        else {
+        } else {
             mv.visitInsn(Opcodes.ICONST_0);
             mv.visitVarInsn(Opcodes.ISTORE, PF);
         }
@@ -1062,9 +1112,12 @@ public final class TdfaAsmBackend {
             mv.visitJumpInsn(Opcodes.IF_ICMPNE, skipAccept);
             mv.visitLabel(doAccept);
         }
-        mv.visitInsn(Opcodes.ICONST_1); mv.visitVarInsn(Opcodes.ISTORE, HA);
-        mv.visitVarInsn(Opcodes.ILOAD, POS); mv.visitVarInsn(Opcodes.ISTORE, LAP);
-        mv.visitVarInsn(Opcodes.ILOAD, STATE); mv.visitVarInsn(Opcodes.ISTORE, LAS);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitVarInsn(Opcodes.ISTORE, HA);
+        mv.visitVarInsn(Opcodes.ILOAD, POS);
+        mv.visitVarInsn(Opcodes.ISTORE, LAP);
+        mv.visitVarInsn(Opcodes.ILOAD, STATE);
+        mv.visitVarInsn(Opcodes.ISTORE, LAS);
         // Eager φ at accept-record time (BT22 declaration semantics): the
         // final ops read accept-time working-register values into the final
         // block. Later accepts overwrite earlier ones; the end-of-walk clone
@@ -1109,9 +1162,7 @@ public final class TdfaAsmBackend {
         emitCodePointDecode(mv, IN, C_LV, POS, LEN, T1);
 
         // ===== DFA DISPATCH (TABLESWITCH) =====
-        emitDfaDispatch(mv, tdfa, owner,
-                IN, STATE, POS, LEN, PF, C_LV, REGS,
-                dfaLoop, dfaEnd, op, stackRegs, REGBASE);
+        emitDfaDispatch(mv, tdfa, owner, IN, STATE, POS, LEN, PF, C_LV, REGS, dfaLoop, dfaEnd, op, stackRegs, REGBASE);
 
         mv.visitLabel(dfaEnd);
 
@@ -1164,10 +1215,7 @@ public final class TdfaAsmBackend {
 
     // ===== DFA TABLESWITCH + range checks =====
 
-    private static void emitDfaDispatch(MethodVisitor mv, Tdfa tdfa, String owner,
-                                        int IN, int STATE, int POS, int LEN, int PF, int C_LV,
-                                        int REGS, Label dfaLoop, Label dfaEnd, int[] op,
-                                        boolean stackRegs, int REGBASE) {
+    private static void emitDfaDispatch(MethodVisitor mv, Tdfa tdfa, String owner, int IN, int STATE, int POS, int LEN, int PF, int C_LV, int REGS, Label dfaLoop, Label dfaEnd, int[] op, boolean stackRegs, int REGBASE) {
         int nStates = tdfa.stateCount();
         // Hoisted locals: accessors are defensive copies (Tdfa policy) —
         // never call one inside the per-state/per-range emit loops below.
@@ -1175,7 +1223,9 @@ public final class TdfaAsmBackend {
 
         Label[] sl = new Label[nStates];
         Label def = new Label();
-        for (int s = 0; s < nStates; s++) sl[s] = new Label();
+        for (int s = 0; s < nStates; s++) {
+            sl[s] = new Label();
+        }
         mv.visitVarInsn(Opcodes.ILOAD, STATE);
         mv.visitTableSwitchInsn(0, nStates - 1, def, sl);
 
@@ -1197,7 +1247,7 @@ public final class TdfaAsmBackend {
                 live.add(new int[]{rg[o], rg[o + 1], rg[o + 2], rg[o + 3], rg[o + 4], Integer.bitCount(rg[o + 4])});
             }
             live.sort((x, y) -> {
-                return Integer.compare(y[5], x[5]);    // specificity desc; equal keeps list order (stable)
+                return Integer.compare(y[5], x[5]); // specificity desc; equal keeps list order (stable)
             });
             Label stateDead = new Label();
             int nLive = live.size();
@@ -1229,7 +1279,9 @@ public final class TdfaAsmBackend {
                 // keeping the recorded accept (parity with the VM's break).
                 if (target < 0) {
                     mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
-                    if (!isLast) mv.visitLabel(nextRange);
+                    if (!isLast) {
+                        mv.visitLabel(nextRange);
+                    }
                     continue;
                 }
 
@@ -1254,8 +1306,7 @@ public final class TdfaAsmBackend {
                     mv.visitInsn(Opcodes.IADD);
                     mv.visitVarInsn(Opcodes.ILOAD, LEN);
                     mv.visitVarInsn(Opcodes.ALOAD, IN);
-                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "entryOkC",
-                            "(IIILjava/lang/String;)Z", false);
+                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "entryOkC", "(IIILjava/lang/String;)Z", false);
                     Label entryOk = new Label();
                     mv.visitJumpInsn(Opcodes.IFNE, entryOk);
                     mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
@@ -1264,8 +1315,11 @@ public final class TdfaAsmBackend {
 
                 // register ops (extract only)
                 if (opsOff != 0) {
-                    if (stackRegs) emitOpsLocal(mv, op, opsOff, POS, REGBASE);
-                    else emitOpsInline(mv, op, opsOff, REGS, POS);
+                    if (stackRegs) {
+                        emitOpsLocal(mv, op, opsOff, POS, REGBASE);
+                    } else {
+                        emitOpsInline(mv, op, opsOff, REGS, POS);
+                    }
                 }
 
                 // state = target
@@ -1286,7 +1340,9 @@ public final class TdfaAsmBackend {
                 mv.visitIincInsn(POS, 1);
                 mv.visitJumpInsn(Opcodes.GOTO, dfaLoop);
 
-                if (!isLast) mv.visitLabel(nextRange);
+                if (!isLast) {
+                    mv.visitLabel(nextRange);
+                }
             }
             mv.visitLabel(stateDead);
             mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
@@ -1310,17 +1366,22 @@ public final class TdfaAsmBackend {
     private static void genPhi(ClassWriter cw, Tdfa tdfa) {
         int[] op = tdfa.ops(), sfo = tdfa.stateFinalOpsOff(), sm = tdfa.stateMeta();
         List<int[]> finals = new ArrayList<>();
-        for (int s = 0; s < sm.length; s++)
-            if ((sm[s] & 1) != 0 && sfo[s] != 0) finals.add(new int[]{s, sfo[s]});
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "phi", "(I[II)V", null, null);
+        for (int s = 0; s < sm.length; s++) {
+            if ((sm[s] & 1) != 0 && sfo[s] != 0) {
+                finals.add(new int[]{s, sfo[s]});
+            }
+        }
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "phi", "(I[II)V", null, null);
         mv.visitCode();
         if (!finals.isEmpty()) {
             int nf = finals.size();
             int[] keys = new int[nf];
             Label[] fl = new Label[nf];
             Label fDef = new Label();
-            for (int k = 0; k < nf; k++) { keys[k] = finals.get(k)[0]; fl[k] = new Label(); }
+            for (int k = 0; k < nf; k++) {
+                keys[k] = finals.get(k)[0];
+                fl[k] = new Label();
+            }
             // locals: 0=state, 1=regs, 2=pos
             mv.visitVarInsn(Opcodes.ILOAD, 0);
             mv.visitLookupSwitchInsn(fDef, keys, fl);
@@ -1348,16 +1409,22 @@ public final class TdfaAsmBackend {
     private static void genPhiMasked(ClassWriter cw, Tdfa tdfa) {
         int[] op = tdfa.ops(), sm = tdfa.stateMeta(), byMask = tdfa.stateFinalOpsByMask();
         List<Integer> accStates = new ArrayList<>();
-        for (int s = 0; s < sm.length; s++) if ((sm[s] & 1) != 0) accStates.add(s);
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "phiMasked", "(I[III)Z", null, null);
+        for (int s = 0; s < sm.length; s++) {
+            if ((sm[s] & 1) != 0) {
+                accStates.add(s);
+            }
+        }
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "phiMasked", "(I[III)Z", null, null);
         mv.visitCode();
         if (!accStates.isEmpty()) {
             int nf = accStates.size();
             int[] keys = new int[nf];
             Label[] fl = new Label[nf];
             Label fDef = new Label();
-            for (int k = 0; k < nf; k++) { keys[k] = accStates.get(k); fl[k] = new Label(); }
+            for (int k = 0; k < nf; k++) {
+                keys[k] = accStates.get(k);
+                fl[k] = new Label();
+            }
             // locals: 0=state, 1=regs, 2=pos, 3=pf
             mv.visitVarInsn(Opcodes.ILOAD, 0);
             mv.visitLookupSwitchInsn(fDef, keys, fl);
@@ -1366,18 +1433,22 @@ public final class TdfaAsmBackend {
                 int s = accStates.get(k);
                 // Dedup cells → one block per distinct value.
                 Map<Integer, Label> cellLabels = new LinkedHashMap<>();
-                for (int M = 0; M < 64; M++) cellLabels.computeIfAbsent(byMask[s * 64 + M], x -> new Label());
+                for (int M = 0; M < 64; M++) {
+                    cellLabels.computeIfAbsent(byMask[s * 64 + M], x -> new Label());
+                }
                 Label[] ml = new Label[64];
-                for (int M = 0; M < 64; M++) ml[M] = cellLabels.get(byMask[s * 64 + M]);
-                Label defL = cellLabels.containsKey(-1)
-                        ? cellLabels.get(-1)
-                        : cellLabels.values().iterator().next();  // default unreachable
+                for (int M = 0; M < 64; M++) {
+                    ml[M] = cellLabels.get(byMask[s * 64 + M]);
+                }
+                Label defL = cellLabels.containsKey(-1) ? cellLabels.get(-1) : cellLabels.values().iterator().next(); // default unreachable
                 mv.visitVarInsn(Opcodes.ILOAD, 3);
                 mv.visitTableSwitchInsn(0, 63, defL, ml);
                 for (Map.Entry<Integer, Label> e : cellLabels.entrySet()) {
                     mv.visitLabel(e.getValue());
                     int cell = e.getKey();
-                    if (cell > 0) emitOpsInline(mv, op, cell, 1, 2);
+                    if (cell > 0) {
+                        emitOpsInline(mv, op, cell, 1, 2);
+                    }
                     mv.visitInsn(cell < 0 ? Opcodes.ICONST_0 : Opcodes.ICONST_1);
                     mv.visitInsn(Opcodes.IRETURN);
                 }
@@ -1392,9 +1463,7 @@ public final class TdfaAsmBackend {
 
     // ===== position flags (inline) =====
 
-    private static void emitPFInline(MethodVisitor mv, String owner,
-                                     int IN, int POS, int LEN, int RESULT, int T1, int T2,
-                                     boolean multiline, boolean unicodeWord) {
+    private static void emitPFInline(MethodVisitor mv, String owner, int IN, int POS, int LEN, int RESULT, int T1, int T2, boolean multiline, boolean unicodeWord) {
         // pf = 0
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitVarInsn(Opcodes.ISTORE, RESULT);
@@ -1550,8 +1619,7 @@ public final class TdfaAsmBackend {
 
     // ===== isWord (branch to notWord if false) =====
 
-    private static void emitIsWordBranch(MethodVisitor mv, int lvChar, Label notWord,
-                                         boolean unicodeWord, String owner) {
+    private static void emitIsWordBranch(MethodVisitor mv, int lvChar, Label notWord, boolean unicodeWord, String owner) {
         if (unicodeWord) {
             mv.visitVarInsn(Opcodes.ILOAD, lvChar);
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isUnicodeWordChar", "(I)Z", false);
@@ -1633,8 +1701,7 @@ public final class TdfaAsmBackend {
     // ===== isUnicodeWordChar: binary-search WORD_RANGES for \b under (?u) =====
 
     private static void genIsUnicodeWordChar(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "isUnicodeWordChar", "(I)Z", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "isUnicodeWordChar", "(I)Z", null, null);
         mv.visitCode();
         // locals: 0 = c, 1 = lo, 2 = hi
         mv.visitInsn(Opcodes.ICONST_0);
@@ -1718,8 +1785,7 @@ public final class TdfaAsmBackend {
      * {@code \b} adjacent to supplementary word chars (e.g. U+1D504) is computed correctly.
      */
     private static void genIsWordBefore(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "isWordBefore", "(IILjava/lang/String;)Z", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "isWordBefore", "(IILjava/lang/String;)Z", null, null);
         mv.visitCode();
         // locals: 0=pos, 1=len, 2=input, 3=c, 4=h
         Label notPos = new Label();
@@ -1791,8 +1857,7 @@ public final class TdfaAsmBackend {
      * {@code pos} paired with a low surrogate at {@code pos+1} is decoded first.
      */
     private static void genIsWordAt(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "isWordAt", "(IILjava/lang/String;)Z", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "isWordAt", "(IILjava/lang/String;)Z", null, null);
         mv.visitCode();
         // locals: 0=pos, 1=len, 2=input, 3=c, 4=l
         Label notPos = new Label();
@@ -1866,15 +1931,22 @@ public final class TdfaAsmBackend {
         while (op[j] != Tdfa.OP_END) {
             int opc = op[j], dst = op[j + 1], src = op[j + 2];
             if (opc == Tdfa.OP_SET_POS) {
-                mv.visitVarInsn(Opcodes.ALOAD, REGS); ic(mv, dst);
-                mv.visitVarInsn(Opcodes.ILOAD, POS); mv.visitInsn(Opcodes.IASTORE);
+                mv.visitVarInsn(Opcodes.ALOAD, REGS);
+                ic(mv, dst);
+                mv.visitVarInsn(Opcodes.ILOAD, POS);
+                mv.visitInsn(Opcodes.IASTORE);
             } else if (opc == Tdfa.OP_SET_NIL) {
-                mv.visitVarInsn(Opcodes.ALOAD, REGS); ic(mv, dst);
-                mv.visitInsn(Opcodes.ICONST_M1); mv.visitInsn(Opcodes.IASTORE);
+                mv.visitVarInsn(Opcodes.ALOAD, REGS);
+                ic(mv, dst);
+                mv.visitInsn(Opcodes.ICONST_M1);
+                mv.visitInsn(Opcodes.IASTORE);
             } else if (opc == Tdfa.OP_COPY) {
-                mv.visitVarInsn(Opcodes.ALOAD, REGS); ic(mv, dst);
-                mv.visitVarInsn(Opcodes.ALOAD, REGS); ic(mv, src);
-                mv.visitInsn(Opcodes.IALOAD); mv.visitInsn(Opcodes.IASTORE);
+                mv.visitVarInsn(Opcodes.ALOAD, REGS);
+                ic(mv, dst);
+                mv.visitVarInsn(Opcodes.ALOAD, REGS);
+                ic(mv, src);
+                mv.visitInsn(Opcodes.IALOAD);
+                mv.visitInsn(Opcodes.IASTORE);
             }
             j += 3;
         }
@@ -1918,14 +1990,22 @@ public final class TdfaAsmBackend {
     private static void emitPhiInline(MethodVisitor mv, Tdfa tdfa, int STATE, int POS, int REGBASE) {
         int[] op = tdfa.ops(), sfo = tdfa.stateFinalOpsOff(), sm = tdfa.stateMeta();
         List<int[]> finals = new ArrayList<>();
-        for (int s = 0; s < sm.length; s++)
-            if ((sm[s] & 1) != 0 && sfo[s] != 0) finals.add(new int[]{s, sfo[s]});
-        if (finals.isEmpty()) return;
+        for (int s = 0; s < sm.length; s++) {
+            if ((sm[s] & 1) != 0 && sfo[s] != 0) {
+                finals.add(new int[]{s, sfo[s]});
+            }
+        }
+        if (finals.isEmpty()) {
+            return;
+        }
         int nf = finals.size();
         int[] keys = new int[nf];
         Label[] fl = new Label[nf];
         Label fDef = new Label(), fDone = new Label();
-        for (int k = 0; k < nf; k++) { keys[k] = finals.get(k)[0]; fl[k] = new Label(); }
+        for (int k = 0; k < nf; k++) {
+            keys[k] = finals.get(k)[0];
+            fl[k] = new Label();
+        }
         mv.visitVarInsn(Opcodes.ILOAD, STATE);
         mv.visitLookupSwitchInsn(fDef, keys, fl);
         for (int k = 0; k < nf; k++) {
@@ -1953,12 +2033,16 @@ public final class TdfaAsmBackend {
 
     // ===== small helpers =====
 
-
     private static void ic(MethodVisitor mv, int v) {
-        if (v >= -1 && v <= 5) mv.visitInsn(Opcodes.ICONST_0 + v);
-        else if (v >= Byte.MIN_VALUE && v <= Byte.MAX_VALUE) mv.visitIntInsn(Opcodes.BIPUSH, v);
-        else if (v >= Short.MIN_VALUE && v <= Short.MAX_VALUE) mv.visitIntInsn(Opcodes.SIPUSH, v);
-        else mv.visitLdcInsn(v);
+        if (v >= -1 && v <= 5) {
+            mv.visitInsn(Opcodes.ICONST_0 + v);
+        } else if (v >= Byte.MIN_VALUE && v <= Byte.MAX_VALUE) {
+            mv.visitIntInsn(Opcodes.BIPUSH, v);
+        } else if (v >= Short.MIN_VALUE && v <= Short.MAX_VALUE) {
+            mv.visitIntInsn(Opcodes.SIPUSH, v);
+        } else {
+            mv.visitLdcInsn(v);
+        }
     }
 
     // ===== DELEGATE-mode emitters (forward every hot method to the embedded runner) =====
@@ -1983,7 +2067,8 @@ public final class TdfaAsmBackend {
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, RUNNER, "<init>", "(" + TDFA_D + "J)V", false);
         mv.visitFieldInsn(Opcodes.PUTFIELD, owner, "runner", RUNNER_D);
         mv.visitInsn(Opcodes.RETURN);
-        mv.visitMaxs(0, 0); mv.visitEnd();
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 
     private static void genDelegateMatches(ClassWriter cw, String owner) {
@@ -1994,7 +2079,8 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "matches", "(" + CS_D + ")Z", false);
         mv.visitInsn(Opcodes.IRETURN);
-        mv.visitMaxs(0, 0); mv.visitEnd();
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 
     private static void genDelegateFind(ClassWriter cw, String owner) {
@@ -2005,8 +2091,10 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "find", "(" + CS_D + ")Z", false);
         mv.visitInsn(Opcodes.IRETURN);
-        mv.visitMaxs(0, 0); mv.visitEnd();
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
+
     private static void genDelegateMatch(ClassWriter cw, String owner) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", null, null);
         mv.visitCode();
@@ -2039,6 +2127,7 @@ public final class TdfaAsmBackend {
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
+
     /**
      * INLINED-mode {@code matchWhole}, emitted AS the interface's carrier-
      * aware {@code matchWhole(CS, MatchScratch)}: String inputs run the
@@ -2071,7 +2160,8 @@ public final class TdfaAsmBackend {
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "wholeOne", "(Ljava/lang/String;" + SCRATCH_D + ")L" + HOLDER + ";", false);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "toResult", "(L" + HOLDER + ";)L" + RESULT + ";", false);
         mv.visitInsn(Opcodes.ARETURN);
-        mv.visitMaxs(0, 0); mv.visitEnd();
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 
     /**
@@ -2094,8 +2184,7 @@ public final class TdfaAsmBackend {
     private static void genWholeOne(ClassWriter cw, Tdfa tdfa, String owner, boolean stackRegs) {
         final int[] op = tdfa.ops();
         final int[] byMask = tdfa.stateFinalOpsByMask();
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "wholeOne", "(Ljava/lang/String;" + SCRATCH_D + ")L" + HOLDER + ";", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "wholeOne", "(Ljava/lang/String;" + SCRATCH_D + ")L" + HOLDER + ";", null, null);
         mv.visitCode();
         // locals: 0=s, 1=sc, 2=len, 3=state, 4=pos, 5=regs, 6=c, 7=pf/t1, 8=r
         // stackRegs: register file in [REGBASE, REGBASE+n) instead of local 5
@@ -2118,7 +2207,7 @@ public final class TdfaAsmBackend {
         } else {
             // REGS = TdfaRunner.takeRegs(n, sc); Arrays.fill(REGS, 0, n, -1);
             ic(mv, tdfa.registerCount());
-            mv.visitVarInsn(Opcodes.ALOAD, 1);   // sc
+            mv.visitVarInsn(Opcodes.ALOAD, 1); // sc
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "takeRegs", "(I" + SCRATCH_D + ")[I", false);
             mv.visitVarInsn(Opcodes.ASTORE, REGS);
             mv.visitVarInsn(Opcodes.ALOAD, REGS);
@@ -2143,7 +2232,7 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, POS);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
         mv.visitVarInsn(Opcodes.ISTORE, C_LV);
-        emitCodePointDecode(mv, IN, C_LV, POS, LEN, PF);   // PF slot doubles as scratch t1
+        emitCodePointDecode(mv, IN, C_LV, POS, LEN, PF); // PF slot doubles as scratch t1
         emitDfaDispatch(mv, tdfa, owner, IN, STATE, POS, LEN, PF, C_LV, REGS, loop, dead, op, stackRegs, REGBASE);
         mv.visitLabel(dead);
         mv.visitInsn(Opcodes.ACONST_NULL);
@@ -2172,8 +2261,9 @@ public final class TdfaAsmBackend {
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phiMasked", "(I[III)Z", false);
             mv.visitJumpInsn(Opcodes.IFEQ, noAcc);
         } else if (tdfa.registerCount() > 0) {
-            if (stackRegs) emitPhiInline(mv, tdfa, STATE, LEN, REGBASE);
-            else {
+            if (stackRegs) {
+                emitPhiInline(mv, tdfa, STATE, LEN, REGBASE);
+            } else {
                 mv.visitVarInsn(Opcodes.ILOAD, STATE);
                 mv.visitVarInsn(Opcodes.ALOAD, REGS);
                 mv.visitVarInsn(Opcodes.ILOAD, LEN);
@@ -2192,7 +2282,7 @@ public final class TdfaAsmBackend {
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "[I", "clone", "()Ljava/lang/Object;", false);
             mv.visitTypeInsn(Opcodes.CHECKCAST, "[I");
         }
-        mv.visitVarInsn(Opcodes.ASTORE, 8);   // r
+        mv.visitVarInsn(Opcodes.ASTORE, 8); // r
         mv.visitTypeInsn(Opcodes.NEW, HOLDER);
         mv.visitInsn(Opcodes.DUP);
         mv.visitInsn(Opcodes.ICONST_0);
@@ -2206,6 +2296,7 @@ public final class TdfaAsmBackend {
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
+
     /** RegexEngine metadata (groupCount/namedGroups/programSize), delegating to
      *  the final {@code runner} field — monomorphic. Needed by both dispatch
      *  modes since the generated class implements RegexEngine directly. */
@@ -2261,9 +2352,12 @@ public final class TdfaAsmBackend {
     private static DispatchMode pickMode(Tdfa tdfa) {
         // INLINED only pays for fastPath DFAs (the emitted leaf + ladder are
         // fastPath-shaped); everything else delegates to the runner ladder.
-        if (!computeFastPath(tdfa)) return DispatchMode.DELEGATE;
-        if (estimateInlinedBytes(tdfa) <= INLINE_BUDGET_BYTES
-                && estimatePhiMaskedBytes(tdfa) <= INLINE_BUDGET_BYTES) return DispatchMode.INLINED;
+        if (!computeFastPath(tdfa)) {
+            return DispatchMode.DELEGATE;
+        }
+        if (estimateInlinedBytes(tdfa) <= INLINE_BUDGET_BYTES && estimatePhiMaskedBytes(tdfa) <= INLINE_BUDGET_BYTES) {
+            return DispatchMode.INLINED;
+        }
         return DispatchMode.DELEGATE;
     }
 
@@ -2292,22 +2386,11 @@ public final class TdfaAsmBackend {
      */
     private static boolean stackRegsEligible(Tdfa tdfa) {
         int n = tdfa.registerCount();
-        if (n <= 0 || n > STACK_REGS_MAX) return false;
+        if (n <= 0 || n > STACK_REGS_MAX) {
+            return false;
+        }
         return tdfa.stateFinalOpsByMask() == null;
     }
-
-    /** Register-file size ceiling for the stack-register leaves (see
-     *  {@link #stackRegsEligible}): 32 = last consistently-winning size
-     *  class; parity is at 40+ regs. */
-    private static final int STACK_REGS_MAX = 32;
-
-    /** Soft budget for {@code runExtract} bytecode under INLINED mode. 65 KB
-     *  is the JVM hard cap; the per-range cost estimate (~25 B/range) is a
-     *  lower bound — Unicode-word-boundary patterns like {@code \b\w+\b} add
-     *  ~15 B for codepoint-advance checks on surrogate-crossing ranges, and
-     *  per-state mask/entry checks add fixed overhead. Budget of 30 KB
-     *  leaves comfortable headroom for the under-estimate. */
-    private static final int INLINE_BUDGET_BYTES = 30_000;
 
     /**
      * Rough byte-code cost estimate for INLINED {@code runExtract}. Counts
@@ -2329,22 +2412,30 @@ public final class TdfaAsmBackend {
         for (int s = 0; s < tdfa.stateCount(); s++) {
             int meta = sm[s];
             int base = sb[s], cnt = (meta >>> 1) & 0xFFFF;
-            total += 60;  // per-state fixed overhead (label, dead-state, mask check, etc.)
+            total += 60; // per-state fixed overhead (label, dead-state, mask check, etc.)
             for (int i = 0; i < cnt; i++) {
                 int o = (base + i) * 5;
-                if (rg[o + 2] < 0) continue;
-                total += 25;  // range check + transition setup
+                if (rg[o + 2] < 0) {
+                    continue;
+                }
+                total += 25; // range check + transition setup
                 int opsOff = rg[o + 3];
                 if (opsOff != 0) {
                     int j = opsOff;
-                    while (j < op.length && op[j] != Tdfa.OP_END) { total += 7; j += 3; }
+                    while (j < op.length && op[j] != Tdfa.OP_END) {
+                        total += 7;
+                        j += 3;
+                    }
                 }
             }
             // Final-ops per accept state (×2 under stack regs — extractOne
             // and wholeOne each embed one inline copy)
             if (sfo[s] != 0) {
                 int j = sfo[s], ops = 0;
-                while (j < op.length && op[j] != Tdfa.OP_END) { ops += 7; j += 3; }
+                while (j < op.length && op[j] != Tdfa.OP_END) {
+                    ops += 7;
+                    j += 3;
+                }
                 total += ops * finalMul;
             }
         }
@@ -2370,34 +2461,61 @@ public final class TdfaAsmBackend {
      */
     private static int estimatePhiMaskedBytes(Tdfa tdfa) {
         int[] byMask = tdfa.stateFinalOpsByMask();
-        if (byMask == null) return 0;
+        if (byMask == null) {
+            return 0;
+        }
         int[] sm = tdfa.stateMeta(), op = tdfa.ops();
-        java.util.Set<Integer> cells = new java.util.HashSet<>();
+        Set<Integer> cells = new HashSet<>();
         int total = 16;
         for (int s = 0; s < sm.length; s++) {
-            if ((sm[s] & 1) == 0) continue;
+            if ((sm[s] & 1) == 0) {
+                continue;
+            }
             cells.clear();
-            for (int m = 0; m < 64; m++) cells.add(byMask[s * 64 + m]);
-            total += 340;  // lookupswitch key + 64-case tableswitch + return glue
+            for (int m = 0; m < 64; m++) {
+                cells.add(byMask[s * 64 + m]);
+            }
+            total += 340; // lookupswitch key + 64-case tableswitch + return glue
             for (int c : cells) {
-                if (c <= 0) { total += 4; continue; }  // dead or ops-less cell
+                if (c <= 0) {
+                    total += 4;
+                    continue;
+                } // dead or ops-less cell
                 int j = c;
-                while (j < op.length && op[j] != Tdfa.OP_END) { total += 7; j += 3; }
+                while (j < op.length && op[j] != Tdfa.OP_END) {
+                    total += 7;
+                    j += 3;
+                }
                 total += 8;
             }
         }
         return total;
     }
 
-
     private static boolean computeFastPath(Tdfa tdfa) {
-        if (tdfa.multiline()) return false;
-        if (!checkRangesDisjoint(tdfa)) return false;
-        for (int mask : tdfa.stateEntryMask()) if (mask != 0) return false;
-        for (int mask : tdfa.stateAcceptMask()) if (mask != 0) return false;
+        if (tdfa.multiline()) {
+            return false;
+        }
+        if (!checkRangesDisjoint(tdfa)) {
+            return false;
+        }
+        for (int mask : tdfa.stateEntryMask()) {
+            if (mask != 0) {
+                return false;
+            }
+        }
+        for (int mask : tdfa.stateAcceptMask()) {
+            if (mask != 0) {
+                return false;
+            }
+        }
         // Hoisted: accessors clone — one call per array, never inside the loop.
         int[] rgq = tdfa.ranges();
-        for (int i = 4; i < rgq.length; i += 5) if (rgq[i] != 0) return false;
+        for (int i = 4; i < rgq.length; i += 5) {
+            if (rgq[i] != 0) {
+                return false;
+            }
+        }
         return true;
     }
 
@@ -2407,34 +2525,49 @@ public final class TdfaAsmBackend {
         for (int s = 0; s < tdfa.stateCount(); s++) {
             int meta = sm[s];
             int base = sb[s], cnt = (meta >>> 1) & 0xFFFF;
-            if (cnt < 2) continue;
+            if (cnt < 2) {
+                continue;
+            }
             // Fast path (sorted by lo, the materialization default): O(cnt) scan
             // with running max-hi. Reordered states (sortByMaskSpecificity) take
             // the pack-and-sort path — O(cnt log cnt) vs the old O(cnt²) pairwise.
             boolean sortedByLo = true;
             for (int i = 1; i < cnt; i++) {
-                if (rg[(base + i) * 5] < rg[(base + i - 1) * 5]) { sortedByLo = false; break; }
+                if (rg[(base + i) * 5] < rg[(base + i - 1) * 5]) {
+                    sortedByLo = false;
+                    break;
+                }
             }
             if (!sortedByLo) {
-                if (sortBuf == null || sortBuf.length < cnt) sortBuf = new long[Math.max(cnt, 64)];
+                if (sortBuf == null || sortBuf.length < cnt) {
+                    sortBuf = new long[Math.max(cnt, 64)];
+                }
                 for (int i = 0; i < cnt; i++) {
                     int o = (base + i) * 5;
                     sortBuf[i] = ((long) rg[o] << 32) | (rg[o + 1] & 0xFFFFFFFFL);
                 }
-                java.util.Arrays.sort(sortBuf, 0, cnt);
+                Arrays.sort(sortBuf, 0, cnt);
                 int maxHi = (int) sortBuf[0];
                 for (int i = 1; i < cnt; i++) {
-                    if ((int) (sortBuf[i] >>> 32) <= maxHi) return false;
+                    if ((int) (sortBuf[i] >>> 32) <= maxHi) {
+                        return false;
+                    }
                     int hi = (int) sortBuf[i];
-                    if (hi > maxHi) maxHi = hi;
+                    if (hi > maxHi) {
+                        maxHi = hi;
+                    }
                 }
                 continue;
             }
             int maxHi = rg[base * 5 + 1];
             for (int i = 1; i < cnt; i++) {
                 int o = (base + i) * 5;
-                if (rg[o] <= maxHi) return false;
-                if (rg[o + 1] > maxHi) maxHi = rg[o + 1];
+                if (rg[o] <= maxHi) {
+                    return false;
+                }
+                if (rg[o + 1] > maxHi) {
+                    maxHi = rg[o + 1];
+                }
             }
         }
         return true;

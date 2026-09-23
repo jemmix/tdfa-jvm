@@ -1,14 +1,16 @@
 package io.github.jemmix.tdfa.parity;
 
+import io.github.jemmix.tdfa.core.Matcher;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
-import io.github.jemmix.tdfa.core.Matcher;
-import io.github.jemmix.tdfa.core.PatternSyntaxException;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
 
-import static org.assertj.core.api.Assertions.*;
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Matcher API parity: matches(), lookingAt(), find(), find(int), group(int),
@@ -45,15 +47,13 @@ class MatcherApiParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void lookingAtTrue(RegexEngineFactory factory) {
-        assertThat(tdfaM("abc", "abcdef", factory).lookingAt())
-                .isEqualTo(re2jM("abc", "abcdef").lookingAt());
+        assertThat(tdfaM("abc", "abcdef", factory).lookingAt()).isEqualTo(re2jM("abc", "abcdef").lookingAt());
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void lookingAtFalse(RegexEngineFactory factory) {
-        assertThat(tdfaM("abc", "xabc", factory).lookingAt())
-                .isEqualTo(re2jM("abc", "xabc").lookingAt());
+        assertThat(tdfaM("abc", "xabc", factory).lookingAt()).isEqualTo(re2jM("abc", "xabc").lookingAt());
     }
 
     @ParameterizedTest
@@ -93,7 +93,8 @@ class MatcherApiParityTest {
     void groupExtraction(RegexEngineFactory factory) {
         var r = re2jM("(\\w+)@(\\w+)", "user@host");
         var t = tdfaM("(\\w+)@(\\w+)", "user@host", factory);
-        r.find(); t.find();
+        r.find();
+        t.find();
         assertThat(t.group(1)).isEqualTo(r.group(1));
         assertThat(t.group(2)).isEqualTo(r.group(2));
     }
@@ -101,8 +102,7 @@ class MatcherApiParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void groupCount(RegexEngineFactory factory) {
-        assertThat(tdfaM("(a)(b)(c)", "abc", factory).groupCount())
-                .isEqualTo(re2jM("(a)(b)(c)", "abc").groupCount());
+        assertThat(tdfaM("(a)(b)(c)", "abc", factory).groupCount()).isEqualTo(re2jM("(a)(b)(c)", "abc").groupCount());
     }
 
     @ParameterizedTest
@@ -132,10 +132,14 @@ class MatcherApiParityTest {
     void zeroWidthFindAdvance(RegexEngineFactory factory) {
         var r = re2jM("a*", "aaabbb");
         var t = tdfaM("a*", "aaabbb", factory);
-        java.util.List<String> rMatches = new java.util.ArrayList<>();
-        java.util.List<String> tMatches = new java.util.ArrayList<>();
-        while (r.find()) rMatches.add(r.group());
-        while (t.find()) tMatches.add(t.group());
+        List<String> rMatches = new ArrayList<>();
+        List<String> tMatches = new ArrayList<>();
+        while (r.find()) {
+            rMatches.add(r.group());
+        }
+        while (t.find()) {
+            tMatches.add(t.group());
+        }
         assertThat(tMatches).isEqualTo(rMatches);
     }
 
@@ -150,7 +154,8 @@ class MatcherApiParityTest {
     void optionalGroupNull(RegexEngineFactory factory) {
         var r = re2jM("a(b)?c", "ac");
         var t = tdfaM("a(b)?c", "ac", factory);
-        r.find(); t.find();
+        r.find();
+        t.find();
         assertThat(t.group(1)).isEqualTo(r.group(1));
     }
 
@@ -159,34 +164,33 @@ class MatcherApiParityTest {
     void optionalGroupPresent(RegexEngineFactory factory) {
         var r = re2jM("a(b)?c", "abc");
         var t = tdfaM("a(b)?c", "abc", factory);
-        r.find(); t.find();
+        r.find();
+        t.find();
         assertThat(t.group(1)).isEqualTo(r.group(1));
     }
 
     // ---- static / instance convenience ----
 
-    @Test void staticMatchesTrue() {
-        assertThat(io.github.jemmix.tdfa.Pattern.matches("abc", "abc"))
-                .isEqualTo(com.google.re2j.Pattern.matches("abc", "abc"));
+    @Test
+    void staticMatchesTrue() {
+        assertThat(io.github.jemmix.tdfa.Pattern.matches("abc", "abc")).isEqualTo(com.google.re2j.Pattern.matches("abc", "abc"));
     }
 
-    @Test void staticMatchesFalse() {
-        assertThat(io.github.jemmix.tdfa.Pattern.matches("abc", "abcd"))
-                .isEqualTo(com.google.re2j.Pattern.matches("abc", "abcd"));
+    @Test
+    void staticMatchesFalse() {
+        assertThat(io.github.jemmix.tdfa.Pattern.matches("abc", "abcd")).isEqualTo(com.google.re2j.Pattern.matches("abc", "abcd"));
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void instanceMatchesTrue(RegexEngineFactory factory) {
-        assertThat(io.github.jemmix.tdfa.Pattern.compile("abc", 0, factory).matches("abc"))
-                .isEqualTo(com.google.re2j.Pattern.compile("abc").matches("abc"));
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("abc", 0, factory).matches("abc")).isEqualTo(com.google.re2j.Pattern.compile("abc").matches("abc"));
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void patternAccessor(RegexEngineFactory factory) {
-        assertThat(io.github.jemmix.tdfa.Pattern.compile("a(b)c", 0, factory).pattern())
-                .isEqualTo(com.google.re2j.Pattern.compile("a(b)c").pattern());
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("a(b)c", 0, factory).pattern()).isEqualTo(com.google.re2j.Pattern.compile("a(b)c").pattern());
     }
 
     // ---- runtime exceptions ----
@@ -194,55 +198,59 @@ class MatcherApiParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void findNegativeStart(RegexEngineFactory factory) {
-        assertThatThrownBy(() -> tdfaM("a", "abc", factory).find(-1))
-                .isInstanceOf(IndexOutOfBoundsException.class);
-        assertThatThrownBy(() -> re2jM("a", "abc").find(-1))
-                .isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> tdfaM("a", "abc", factory).find(-1)).isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> re2jM("a", "abc").find(-1)).isInstanceOf(IndexOutOfBoundsException.class);
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void findTooLargeStart(RegexEngineFactory factory) {
-        assertThatThrownBy(() -> tdfaM("a", "abc", factory).find(10))
-                .isInstanceOf(IndexOutOfBoundsException.class);
-        assertThatThrownBy(() -> re2jM("a", "abc").find(10))
-                .isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> tdfaM("a", "abc", factory).find(10)).isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> re2jM("a", "abc").find(10)).isInstanceOf(IndexOutOfBoundsException.class);
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void startBeforeMatch(RegexEngineFactory factory) {
-        assertThatThrownBy(() -> tdfaM("a", "abc", factory).start())
-                .isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> re2jM("a", "abc").start())
-                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> tdfaM("a", "abc", factory).start()).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> re2jM("a", "abc").start()).isInstanceOf(IllegalStateException.class);
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void groupBeforeMatch(RegexEngineFactory factory) {
-        assertThatThrownBy(() -> tdfaM("a", "abc", factory).group())
-                .isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> re2jM("a", "abc").group())
-                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> tdfaM("a", "abc", factory).group()).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> re2jM("a", "abc").group()).isInstanceOf(IllegalStateException.class);
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void groupIndexTooHigh(RegexEngineFactory factory) {
-        assertThatThrownBy(() -> { var m = tdfaM("(a)", "a", factory); m.find(); m.group(99); })
-                .isInstanceOf(IndexOutOfBoundsException.class);
-        assertThatThrownBy(() -> { var m = re2jM("(a)", "a"); m.find(); m.group(99); })
-                .isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> {
+            var m = tdfaM("(a)", "a", factory);
+            m.find();
+            m.group(99);
+        }).isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> {
+            var m = re2jM("(a)", "a");
+            m.find();
+            m.group(99);
+        }).isInstanceOf(IndexOutOfBoundsException.class);
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void groupUnknownName(RegexEngineFactory factory) {
-        assertThatThrownBy(() -> { var m = tdfaM("(?<x>a)", "a", factory); m.find(); m.group("y"); })
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> { var m = re2jM("(?<x>a)", "a"); m.find(); m.group("y"); })
-                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> {
+            var m = tdfaM("(?<x>a)", "a", factory);
+            m.find();
+            m.group("y");
+        }).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> {
+            var m = re2jM("(?<x>a)", "a");
+            m.find();
+            m.group("y");
+        }).isInstanceOf(IllegalArgumentException.class);
     }
 
     // ---- stateful interactions ----
@@ -252,9 +260,11 @@ class MatcherApiParityTest {
     void lookingAtThenFind(RegexEngineFactory factory) {
         var r = re2jM("\\w+", "hello world");
         var t = tdfaM("\\w+", "hello world", factory);
-        r.lookingAt(); t.lookingAt();
+        r.lookingAt();
+        t.lookingAt();
         assertThat(t.group()).isEqualTo(r.group());
-        r.find(); t.find();
+        r.find();
+        t.find();
         assertThat(t.group()).isEqualTo(r.group());
     }
 
@@ -275,9 +285,11 @@ class MatcherApiParityTest {
     void findFromThenFind(RegexEngineFactory factory) {
         var r = re2jM("\\w", "abcd");
         var t = tdfaM("\\w", "abcd", factory);
-        r.find(2); t.find(2);
+        r.find(2);
+        t.find(2);
         assertThat(t.group()).isEqualTo(r.group());
-        r.find(); t.find();
+        r.find();
+        t.find();
         assertThat(t.group()).isEqualTo(r.group());
     }
 
@@ -289,9 +301,11 @@ class MatcherApiParityTest {
         String pat = "(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)";
         var r = re2jM(pat, "abcdefghij");
         var t = tdfaM(pat, "abcdefghij", factory);
-        r.find(); t.find();
-        for (int i = 0; i <= 10; i++)
+        r.find();
+        t.find();
+        for (int i = 0; i <= 10; i++) {
             assertThat(t.group(i)).as("group " + i).isEqualTo(r.group(i));
+        }
     }
 
     @ParameterizedTest
@@ -337,17 +351,14 @@ class MatcherApiParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void findPastInputLength(RegexEngineFactory factory) {
-        assertThatThrownBy(() -> tdfaM("a", "xyz", factory).find(4))
-                .isInstanceOf(IndexOutOfBoundsException.class);
-        assertThatThrownBy(() -> re2jM("a", "xyz").find(4))
-                .isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> tdfaM("a", "xyz", factory).find(4)).isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> re2jM("a", "xyz").find(4)).isInstanceOf(IndexOutOfBoundsException.class);
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void instanceMatchesFalse(RegexEngineFactory factory) {
-        assertThat(io.github.jemmix.tdfa.Pattern.compile("abc", 0, factory).matches("abcd"))
-                .isEqualTo(com.google.re2j.Pattern.compile("abc").matches("abcd"));
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("abc", 0, factory).matches("abcd")).isEqualTo(com.google.re2j.Pattern.compile("abc").matches("abcd"));
     }
 
     @ParameterizedTest
@@ -355,7 +366,8 @@ class MatcherApiParityTest {
     void matchesThenGroup(RegexEngineFactory factory) {
         var r = re2jM("(a)(b)(c)", "abc");
         var t = tdfaM("(a)(b)(c)", "abc", factory);
-        r.matches(); t.matches();
+        r.matches();
+        t.matches();
         assertThat(t.group(0)).isEqualTo(r.group(0));
         assertThat(t.group(1)).isEqualTo(r.group(1));
         assertThat(t.group(3)).isEqualTo(r.group(3));
@@ -380,26 +392,27 @@ class MatcherApiParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void emptyInputMatches(RegexEngineFactory factory) {
-        assertThat(tdfaM("a*", "", factory).matches())
-                .isEqualTo(re2jM("a*", "").matches());
+        assertThat(tdfaM("a*", "", factory).matches()).isEqualTo(re2jM("a*", "").matches());
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void emptyInputLookingAt(RegexEngineFactory factory) {
-        assertThat(tdfaM("a*", "", factory).lookingAt())
-                .isEqualTo(re2jM("a*", "").lookingAt());
+        assertThat(tdfaM("a*", "", factory).lookingAt()).isEqualTo(re2jM("a*", "").lookingAt());
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void deeplyNestedGroups(RegexEngineFactory factory) {
         StringBuilder pat = new StringBuilder("a");
-        for (int i = 0; i < 50; i++) pat.insert(0, "(").append(")");
+        for (int i = 0; i < 50; i++) {
+            pat.insert(0, "(").append(")");
+        }
         String p = pat.toString();
         var r = re2jM(p, "a");
         var t = tdfaM(p, "a", factory);
-        r.find(); t.find();
+        r.find();
+        t.find();
         assertThat(t.group(0)).isEqualTo(r.group(0));
         assertThat(t.groupCount()).isEqualTo(r.groupCount());
     }
@@ -424,7 +437,8 @@ class MatcherApiParityTest {
         assertThat(t.matches()).isEqualTo(r.matches());
         assertThat(t.group()).isEqualTo(r.group());
         assertThat(t.group()).isEqualTo("ab");
-        r.reset(); t.reset();
+        r.reset();
+        t.reset();
         assertThat(t.find()).isEqualTo(r.find());
         assertThat(t.group()).isEqualTo(r.group());
     }
@@ -434,7 +448,8 @@ class MatcherApiParityTest {
     void lookingAtWithAlternation(RegexEngineFactory factory) {
         var r = re2jM("(a|ab)", "ab");
         var t = tdfaM("(a|ab)", "ab", factory);
-        r.lookingAt(); t.lookingAt();
+        r.lookingAt();
+        t.lookingAt();
         assertThat(t.group(0)).isEqualTo(r.group(0));
         assertThat(t.group(1)).isEqualTo(r.group(1));
     }
@@ -442,10 +457,16 @@ class MatcherApiParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void groupNegativeIndex(RegexEngineFactory factory) {
-        assertThatThrownBy(() -> { var m = tdfaM("(a)", "a", factory); m.find(); m.group(-1); })
-                .isInstanceOf(IndexOutOfBoundsException.class);
-        assertThatThrownBy(() -> { var m = re2jM("(a)", "a"); m.find(); m.group(-1); })
-                .isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> {
+            var m = tdfaM("(a)", "a", factory);
+            m.find();
+            m.group(-1);
+        }).isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> {
+            var m = re2jM("(a)", "a");
+            m.find();
+            m.group(-1);
+        }).isInstanceOf(IndexOutOfBoundsException.class);
     }
 
     /**
@@ -460,7 +481,7 @@ class MatcherApiParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void explicitPairInteriorStartIsHonored(RegexEngineFactory factory) {
-        String pair = "\uD800\uDC00";   // U+10000; unit 1 is the pair's low half
+        String pair = "\uD800\uDC00"; // U+10000; unit 1 is the pair's low half
         String[] shapes = {"\uDC00", "[\uDC00]", "(\uDC00)", "(?U:\uDC00)", "\uDC00|\uDC22"};
         for (String p : shapes) {
             Matcher m = tdfaM(p, pair, factory);
@@ -469,8 +490,9 @@ class MatcherApiParityTest {
             assertThat(m.end()).as(p).isEqualTo(2);
         }
         // scanning from a boundary still skips the interior (codepoint semantics)
-        for (String p : shapes)
+        for (String p : shapes) {
             assertThat(tdfaM(p, pair, factory).find()).as("find() from 0: %s", p).isFalse();
+        }
         // end-overlap is rejected at every start, explicit included — the
         // walk decodes forward, so a needle ending on a high half paired with
         // the next unit never matches (needle and general walk agree)

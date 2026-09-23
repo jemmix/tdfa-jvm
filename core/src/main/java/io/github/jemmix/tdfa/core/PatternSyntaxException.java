@@ -28,7 +28,15 @@ public class PatternSyntaxException extends RuntimeException {
         this.pattern = "";
     }
 
-    public String getDescription() { return description; }
-    public String getPattern() { return pattern; }
-    public int getIndex() { return -1; }
+    public String getDescription() {
+        return description;
+    }
+
+    public String getPattern() {
+        return pattern;
+    }
+
+    public int getIndex() {
+        return -1;
+    }
 }

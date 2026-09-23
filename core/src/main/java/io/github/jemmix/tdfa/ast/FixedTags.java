@@ -1,6 +1,5 @@
 package io.github.jemmix.tdfa.ast;
 
-
 import io.github.jemmix.tdfa.tdfa.FrameBudget;
 
 import java.util.ArrayDeque;
@@ -47,7 +46,8 @@ public final class FixedTags {
      *  real value (which is always {@code >= 0}). */
     private static final int NAN = Integer.MIN_VALUE;
 
-    private FixedTags() {}
+    private FixedTags() {
+    }
 
     /** Walk {@code root}, annotating each fixable {@link Ast.Tag} in place. */
     public static void apply(Ast root) {
@@ -81,8 +81,8 @@ public final class FixedTags {
 
         private static final class Frame {
             Ast node;
-            int inB, inD, inL;          // inherited attributes
-            boolean resumed;           // false = entering, true = a child just completed
+            int inB, inD, inL; // inherited attributes
+            boolean resumed; // false = entering, true = a child just completed
             // Concat scratch: children right-to-left with the threading triple
             List<Ast> ch;
             int idx;
@@ -106,15 +106,21 @@ public final class FixedTags {
                         f.ld = f.inL;
                         f.idx = ch.size() - 1;
                         f.resumed = true;
-                        if (f.idx >= 0) visit(ch.get(f.idx), f.bt, f.d, f.ld);
-                        else complete(f.bt, f.d, f.ld);
+                        if (f.idx >= 0) {
+                            visit(ch.get(f.idx), f.bt, f.d, f.ld);
+                        } else {
+                            complete(f.bt, f.d, f.ld);
+                        }
                     } else if (e instanceof Ast.Alt) {
                         List<Ast> ch = ((Ast.Alt) e).children;
                         f.ch = ch;
                         f.idx = 0;
                         f.resumed = true;
-                        if (!ch.isEmpty()) visit(ch.get(0), NO_BASE, NAN, 0);
-                        else complete(f.inB, add(f.inD, f.agreed), add(f.inL, f.agreed));
+                        if (!ch.isEmpty()) {
+                            visit(ch.get(0), NO_BASE, NAN, 0);
+                        } else {
+                            complete(f.inB, add(f.inD, f.agreed), add(f.inL, f.agreed));
+                        }
                     } else if (e instanceof Ast.Repeat) {
                         f.resumed = true;
                         visit(((Ast.Repeat) e).body, NO_BASE, NAN, 0);
@@ -126,8 +132,11 @@ public final class FixedTags {
                     f.d = rd;
                     f.ld = rl;
                     f.idx--;
-                    if (f.idx >= 0) visit(f.ch.get(f.idx), f.bt, f.d, f.ld);
-                    else complete(f.bt, f.d, f.ld);
+                    if (f.idx >= 0) {
+                        visit(f.ch.get(f.idx), f.bt, f.d, f.ld);
+                    } else {
+                        complete(f.bt, f.d, f.ld);
+                    }
                 } else if (e instanceof Ast.Alt) {
                     // Branch agreement uses the paper's eq semantics: NaN != NaN and NaN != k.
                     // A branch whose levelDist is NaN (e.g. it contains an unbounded repeat —
@@ -148,9 +157,13 @@ public final class FixedTags {
                         }
                     }
                     f.idx++;
-                    if (f.idx < f.ch.size()) visit(f.ch.get(f.idx), NO_BASE, NAN, 0);
-                    else if (f.allAgree) complete(f.inB, add(f.inD, f.agreed), add(f.inL, f.agreed));
-                    else complete(f.inB, NAN, NAN);
+                    if (f.idx < f.ch.size()) {
+                        visit(f.ch.get(f.idx), NO_BASE, NAN, 0);
+                    } else if (f.allAgree) {
+                        complete(f.inB, add(f.inD, f.agreed), add(f.inL, f.agreed));
+                    } else {
+                        complete(f.inB, NAN, NAN);
+                    }
                 } else if (e instanceof Ast.Repeat) {
                     Ast.Repeat r = (Ast.Repeat) e;
                     int k1 = rl;
@@ -213,8 +226,7 @@ public final class FixedTags {
                 rl = levelDist;
                 return;
             }
-            if (e instanceof Ast.Empty || e instanceof Ast.StartAnchor || e instanceof Ast.EndAnchor
-                    || e instanceof Ast.WordBoundary || e instanceof Ast.NoWordBoundary) {
+            if (e instanceof Ast.Empty || e instanceof Ast.StartAnchor || e instanceof Ast.EndAnchor || e instanceof Ast.WordBoundary || e instanceof Ast.NoWordBoundary) {
                 rb = baseTag;
                 rd = dist;
                 rl = levelDist;
@@ -238,16 +250,24 @@ public final class FixedTags {
     // silently mis-derive capture positions (large {n} × multi-char bodies).
     // Poisoning only forgoes the fixed-tag optimization for that tag — sound.
     private static int add(int a, int b) {
-        if (a == NAN || b == NAN) return NAN;
+        if (a == NAN || b == NAN) {
+            return NAN;
+        }
         int r = a + b;
-        if (((a ^ r) & (b ^ r)) < 0) return NAN;
+        if (((a ^ r) & (b ^ r)) < 0) {
+            return NAN;
+        }
         return r;
     }
 
     private static int mul(int n, int k) {
-        if (k == NAN) return NAN;
+        if (k == NAN) {
+            return NAN;
+        }
         long r = (long) n * k;
-        if (r != (int) r) return NAN;
+        if (r != (int) r) {
+            return NAN;
+        }
         return (int) r;
     }
 }

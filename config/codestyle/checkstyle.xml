@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+        "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+        "https://checkstyle.org/dtds/configuration_1_3.dtd">
+<!-- tdfa codestyle CI checks — the rules formatters cannot rewrite.
+
+     Wired into every Gradle module from the root build.gradle (checkstyle
+     tasks bind into `check`, so the CI `check` job enforces these). The
+     reformatter counterpart is ./gradlew spotlessApply (scripts/format.sh);
+     the IDE counterpart is config/codestyle/tdfa-idea.xml. Change all
+     three together.
+
+     Deliberately minimal: only the four codestyle pillars that need a
+     checker rather than a formatter (formatting itself — indent,
+     continuation indent, import order, margin — is enforced by
+     spotlessCheck comparing against the eclipse formatter config). -->
+<module name="Checker">
+    <property name="charset" value="UTF-8"/>
+    <property name="severity" value="error"/>
+    <!-- 4. Spaces only, never tabs (indent size/continuation indent are
+         enforced by the formatter via spotlessCheck). -->
+    <module name="FileTabCharacter"/>
+    <module name="TreeWalker">
+        <!-- 1. No star imports — single-name imports only. -->
+        <module name="AvoidStarImport"/>
+
+        <!-- 2. Mandatory braces for if/else/for/while/do-while bodies
+             (default token set is exactly those five). -->
+        <module name="NeedBraces"/>
+
+        <!-- 3. Class member order: static fields, static init, instance
+              fields, instance init, constructors, then methods.
+              ignoreModifiers=true: no public/private ordering within a
+              category (the codebase mixes visibility freely by design). -->
+        <module name="DeclarationOrder">
+            <property name="ignoreModifiers" value="true"/>
+        </module>
+        <!-- ...and constructors must stay grouped, not scattered between
+             methods (companion to DeclarationOrder). -->
+        <module name="ConstructorsDeclarationGrouping"/>
+    </module>
+</module>

@@ -1,20 +1,22 @@
 package io.github.jemmix.tdfa;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import io.github.jemmix.tdfa.core.EmittedSurface;
 import io.github.jemmix.tdfa.core.MatchResult;
-import io.github.jemmix.tdfa.core.Matcher;
 import io.github.jemmix.tdfa.core.MatchScratch;
+import io.github.jemmix.tdfa.core.Matcher;
+import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.tdfa.MatchHolder;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+import org.junit.jupiter.api.Test;
+
 import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * The ASM hook surface, enforced. The emitters (TdfaAsmBackend,
@@ -31,11 +33,7 @@ import org.junit.jupiter.api.Test;
 class EmittedSurfaceConformanceTest {
 
     private static void assertMarked(AnnotatedElement m, Class<?> owner, String what) {
-        assertThat(m.isAnnotationPresent(EmittedSurface.class)
-                || owner.isAnnotationPresent(EmittedSurface.class))
-                .as("%s.%s is linked by name from emitted bytecode but carries no @EmittedSurface",
-                        owner.getSimpleName(), what)
-                .isTrue();
+        assertThat(m.isAnnotationPresent(EmittedSurface.class) || owner.isAnnotationPresent(EmittedSurface.class)).as("%s.%s is linked by name from emitted bytecode but carries no @EmittedSurface", owner.getSimpleName(), what).isTrue();
     }
 
     private static void hookM(Class<?> owner, String name, Class<?>... params) {
@@ -44,8 +42,9 @@ class EmittedSurfaceConformanceTest {
             m.setAccessible(true);
             assertMarked(m, owner, name);
         } catch (NoSuchMethodException e) {
-            throw new AssertionError("emitted-code hook missing: " + owner.getName()
-                    + "." + name + " — an emitter's descriptor constant is now stale", e);
+            throw new AssertionError(
+                            "emitted-code hook missing: " + owner.getName() + "." + name + " — an emitter's descriptor constant is now stale",
+                            e);
         }
     }
 
@@ -55,8 +54,9 @@ class EmittedSurfaceConformanceTest {
             c.setAccessible(true);
             assertMarked(c, owner, "<init>");
         } catch (NoSuchMethodException e) {
-            throw new AssertionError("emitted-code hook missing: " + owner.getName()
-                    + "<init> — an emitter's descriptor constant is now stale", e);
+            throw new AssertionError(
+                            "emitted-code hook missing: " + owner.getName() + "<init> — an emitter's descriptor constant is now stale",
+                            e);
         }
     }
 
@@ -66,8 +66,9 @@ class EmittedSurfaceConformanceTest {
             f.setAccessible(true);
             assertMarked(f, owner, name);
         } catch (NoSuchFieldException e) {
-            throw new AssertionError("emitted-code hook missing: " + owner.getName()
-                    + "." + name + " — an emitter's descriptor constant is now stale", e);
+            throw new AssertionError(
+                            "emitted-code hook missing: " + owner.getName() + "." + name + " — an emitter's descriptor constant is now stale",
+                            e);
         }
     }
 
@@ -110,17 +111,14 @@ class EmittedSurfaceConformanceTest {
         // core.Matcher's protected fields, linked from emitted shells (the 7
         // bookkeeping fields + the scratch carrier handed to carrier-aware
         // engine calls).
-        for (String f : new String[]{"input", "inputLength", "match", "hasMatch",
-                "lastMatchStart", "lastMatchEnd", "appendPos", "scratch"}) {
+        for (String f : new String[]{"input", "inputLength", "match", "hasMatch", "lastMatchStart", "lastMatchEnd", "appendPos", "scratch"}) {
             hookF(Matcher.class, f);
         }
         // Carrier itself: its name is baked into the emitters' method
         // descriptors (match/matchWhole/takeRegs/extractOne/wholeOne).
         hookC(MatchScratch.class);
         // Facade ctors linked by descriptor from ShellEmitter.
-        hookC(TDFAPattern.class, String.class, int.class, int.class,
-                io.github.jemmix.tdfa.core.RegexEngine.class, io.github.jemmix.tdfa.core.RegexEngine.class,
-                UnicodeDataProvider.class);
+        hookC(TDFAPattern.class, String.class, int.class, int.class, RegexEngine.class, RegexEngine.class, UnicodeDataProvider.class);
         hookC(PatternMatcher.class, TDFAPattern.class, CharSequence.class);
         hookM(Class.forName("io.github.jemmix.tdfa.Pattern$Utf8"), "decode", byte[].class);
     }

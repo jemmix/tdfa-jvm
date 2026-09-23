@@ -2,14 +2,15 @@ package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.CompileObserver;
 import io.github.jemmix.tdfa.core.PatternSyntaxException;
-import io.github.jemmix.tdfa.tdfa.Budgets;
 import io.github.jemmix.tdfa.tdfa.BudgetWeights;
+import io.github.jemmix.tdfa.tdfa.Budgets;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
-import java.util.HashMap;
-import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+
+import java.util.HashMap;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -77,17 +78,14 @@ class BudgetModelTest {
      *  budgets are fresh per compile / per runner, never class-frozen. */
     @Test
     void propertiesOverrideAndAreReadFresh() {
-        System.setProperty(Budgets.COMPILE_MEMORY_PROP, "4096");   // 16 states
+        System.setProperty(Budgets.COMPILE_MEMORY_PROP, "4096"); // 16 states
         assertThat(Budgets.maxDfaStates()).isEqualTo(16);
         System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "7777");
         assertThat(Budgets.compileComputeTicks()).isEqualTo(7_777L);
         System.setProperty(Budgets.RUNTIME_MEMORY_PROP, "217600"); // ~37 blocks
         assertThat(Budgets.sdfaMaxBlocks()).isEqualTo(37);
         // and the pipeline sees it on the very next compile:
-        assertThatCode(() -> Pattern.compile("ab|cd|ef|gh|ij"))
-                .isInstanceOf(PatternSyntaxException.class)
-                .hasMessageContaining("pattern too large")
-                .hasMessageContaining(Budgets.COMPILE_MEMORY_PROP);
+        assertThatCode(() -> Pattern.compile("ab|cd|ef|gh|ij")).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large").hasMessageContaining(Budgets.COMPILE_MEMORY_PROP);
     }
 
     /** Review r10 P0-1: nested counted repeats used to OOM the JVM in
@@ -98,13 +96,8 @@ class BudgetModelTest {
     @Test
     void nestedRepeatBombRejectsBeforeDeterminization() {
         long t0 = System.nanoTime();
-        assertThatCode(() -> Pattern.compile("((a{300}){300}){300}"))
-                .isInstanceOf(PatternSyntaxException.class)
-                .hasMessageContaining("pattern too large")
-                .hasMessageContaining("TNFA construction")
-                .hasMessageContaining(Budgets.COMPILE_MEMORY_PROP);
-        assertThat((System.nanoTime() - t0) / 1_000_000)
-                .as("wall to the front-end rejection").isLessThan(10_000);
+        assertThatCode(() -> Pattern.compile("((a{300}){300}){300}")).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large").hasMessageContaining("TNFA construction").hasMessageContaining(Budgets.COMPILE_MEMORY_PROP);
+        assertThat((System.nanoTime() - t0) / 1_000_000).as("wall to the front-end rejection").isLessThan(10_000);
     }
 
     /** Review r10 P1-1: the parser's O(universe) fold-range scan under
@@ -113,10 +106,7 @@ class BudgetModelTest {
     @Test
     void foldRangeScanIsBudgetVisible() {
         System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "100000");
-        assertThatCode(() -> Pattern.compile("(?i)[\\x{0}-\\x{10FFFF}]"))
-                .isInstanceOf(PatternSyntaxException.class)
-                .hasMessageContaining("pattern too large")
-                .hasMessageContaining(Budgets.COMPILE_COMPUTE_PROP);
+        assertThatCode(() -> Pattern.compile("(?i)[\\x{0}-\\x{10FFFF}]")).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large").hasMessageContaining(Budgets.COMPILE_COMPUTE_PROP);
     }
 
     /** Review r10 P1-4: the Moore fixpoint is metered, and because the
@@ -131,12 +121,17 @@ class BudgetModelTest {
     @Test
     void minimizerFixpointDegradesInsteadOfRejecting() {
         StringBuilder chain = new StringBuilder();
-        for (int i = 0; i < 900; i++) chain.append("a?");
+        for (int i = 0; i < 900; i++) {
+            chain.append("a?");
+        }
         chain.append('b');
         String suffixChain = chain.toString();
         Map<String, String> notes = new HashMap<>();
         CompileObserver rec = new CompileObserver() {
-            @Override public void note(String key, String value) { notes.put(key, value); }
+            @Override
+            public void note(String key, String value) {
+                notes.put(key, value);
+            }
         };
         System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "2750000");
         Tdfa t = Tdfa.compile(Tnfa.compile(suffixChain), false, rec);
@@ -147,14 +142,14 @@ class BudgetModelTest {
         notes.clear();
         Tdfa t2 = Tdfa.compile(Tnfa.compile(suffixChain), false, rec);
         assertThat(notes.get("minimize")).isNull();
-        assertThat(t2.stateCount()).isEqualTo(902);   // chain is already minimal
+        assertThat(t2.stateCount()).isEqualTo(902); // chain is already minimal
         // and the artifact is correct through the full facade, at the
         // default budgets (the budgeted legs above stay on the Tdfa API
         // where the scoped caps don't interfere):
         System.clearProperty(Budgets.COMPILE_COMPUTE_PROP);
-        io.github.jemmix.tdfa.Pattern p = Pattern.compile(suffixChain);
+        Pattern p = Pattern.compile(suffixChain);
         assertThat(p.matcher("a".repeat(900) + "b").find()).isTrue();
-        assertThat(p.matcher("a".repeat(901) + "b").find()).isTrue();   // unanchored: matches from index 1
+        assertThat(p.matcher("a".repeat(901) + "b").find()).isTrue(); // unanchored: matches from index 1
         assertThat(p.matcher("a".repeat(901) + "c").find()).isFalse();
     }
 
@@ -171,16 +166,15 @@ class BudgetModelTest {
         // ≈ 1.7 MB of active-set arrays — far over a 512 KB RAM budget.
         StringBuilder p = new StringBuilder();
         for (int i = 0; i < 2600; i++) {
-            if (i > 0) p.append('|');
+            if (i > 0) {
+                p.append('|');
+            }
             p.append('\\').append('x').append('{').append(Integer.toHexString(0x2000 + i)).append('}');
         }
         System.setProperty(Budgets.COMPILE_MEMORY_PROP, "524288");
         try {
             long t0 = System.nanoTime();
-            assertThatCode(() -> Pattern.compile(p.toString()))
-                    .isInstanceOf(PatternSyntaxException.class)
-                    .hasMessageContaining("pattern too large")
-                    .hasMessageContaining("active-set");
+            assertThatCode(() -> Pattern.compile(p.toString())).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large").hasMessageContaining("active-set");
             assertThat((System.nanoTime() - t0) / 1_000_000).as("wall to RAM rejection").isLessThan(10_000);
         } finally {
             System.clearProperty(Budgets.COMPILE_MEMORY_PROP);
@@ -188,10 +182,7 @@ class BudgetModelTest {
         // Same shape under a tiny WORK budget: the probe scan's ticks reject.
         System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "100000");
         try {
-            assertThatCode(() -> Pattern.compile(p.toString()))
-                    .isInstanceOf(PatternSyntaxException.class)
-                    .hasMessageContaining("pattern too large")
-                    .hasMessageContaining(Budgets.COMPILE_COMPUTE_PROP);
+            assertThatCode(() -> Pattern.compile(p.toString())).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large").hasMessageContaining(Budgets.COMPILE_COMPUTE_PROP);
         } finally {
             System.clearProperty(Budgets.COMPILE_COMPUTE_PROP);
         }
@@ -209,14 +200,15 @@ class BudgetModelTest {
         // carrying an int[80] regs slice on top of the 80 B base weight.
         // Scoped to 25 KB the weighted spike cap fires.
         StringBuilder p = new StringBuilder();
-        for (int i = 0; i < 20; i++) p.append("((a?)");
-        for (int i = 0; i < 20; i++) p.append(")");
+        for (int i = 0; i < 20; i++) {
+            p.append("((a?)");
+        }
+        for (int i = 0; i < 20; i++) {
+            p.append(")");
+        }
         System.setProperty(Budgets.COMPILE_MEMORY_PROP, "25600");
         try {
-            assertThatCode(() -> Pattern.compile(p.toString()))
-                    .isInstanceOf(PatternSyntaxException.class)
-                    .hasMessageContaining("pattern too large")
-                    .hasMessageContaining(Budgets.COMPILE_MEMORY_PROP);
+            assertThatCode(() -> Pattern.compile(p.toString())).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large").hasMessageContaining(Budgets.COMPILE_MEMORY_PROP);
         } finally {
             System.clearProperty(Budgets.COMPILE_MEMORY_PROP);
         }
@@ -231,12 +223,13 @@ class BudgetModelTest {
         System.setProperty(Budgets.COMPILE_MEMORY_PROP, "2097152");
         try {
             StringBuilder p = new StringBuilder();
-            for (int i = 0; i < 1000; i++) p.append("((a)");
-            for (int i = 0; i < 1000; i++) p.append(")");
-            assertThatCode(() -> Pattern.compile(p.toString()))
-                    .isInstanceOf(PatternSyntaxException.class)
-                    .hasMessageContaining("pattern too large")
-                    .hasMessageContaining(Budgets.COMPILE_MEMORY_PROP);
+            for (int i = 0; i < 1000; i++) {
+                p.append("((a)");
+            }
+            for (int i = 0; i < 1000; i++) {
+                p.append(")");
+            }
+            assertThatCode(() -> Pattern.compile(p.toString())).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large").hasMessageContaining(Budgets.COMPILE_MEMORY_PROP);
         } finally {
             System.clearProperty(Budgets.COMPILE_MEMORY_PROP);
         }
@@ -250,7 +243,7 @@ class BudgetModelTest {
     void walkMemoIsBudgetBoundedAndCorrect() {
         System.setProperty(Budgets.RUNTIME_MEMORY_PROP, "20480"); // 2 KB walk share -> floor
         try {
-            io.github.jemmix.tdfa.Pattern p = Pattern.compile("[\\x{400}-\\x{600}]{2,}");
+            Pattern p = Pattern.compile("[\\x{400}-\\x{600}]{2,}");
             // Wide-codepoint scans exercise WalkIndex; the capped memo must
             // still answer exactly (binary-search fallback).
             assertThat(p.matcher("\u0451\u04FF\u0500x").find()).isTrue();
@@ -270,14 +263,10 @@ class BudgetModelTest {
         System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "6000000");
         try {
             long t0 = System.nanoTime();
-            assertThatCode(() -> Pattern.compile(
-                    "(?:(?m:\u00e9)(?:\\w[^\u03a9z\\-]{0,}|\ud835\udd04\udfff){1,4}){1,5}"))
-                    .isInstanceOf(PatternSyntaxException.class)
-                    .hasMessageContaining("pattern too large");
+            assertThatCode(() -> Pattern.compile("(?:(?m:\u00e9)(?:\\w[^\u03a9z\\-]{0,}|\ud835\udd04\udfff){1,4}){1,5}")).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
             // 6 M ticks ≈ tens of ms of work; the ledger keeps the total
             // near the scoped budget. Generous upper bound for CI variance.
-            assertThat((System.nanoTime() - t0) / 1_000_000)
-                    .as("wall of the fully-ledgered compile").isLessThan(15_000);
+            assertThat((System.nanoTime() - t0) / 1_000_000).as("wall of the fully-ledgered compile").isLessThan(15_000);
         } finally {
             System.clearProperty(Budgets.COMPILE_COMPUTE_PROP);
         }

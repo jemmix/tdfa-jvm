@@ -45,9 +45,8 @@ public final class FrameBudget {
      */
     public void push() {
         if ((liveBytes += BudgetWeights.NESTING_FRAME_BYTES) > budget) {
-            throw new IllegalStateException("pattern too large: nesting exceeds compile memory budget ("
-                + liveBytes / BudgetWeights.NESTING_FRAME_BYTES + " live frames, "
-                + liveBytes + " weighted bytes — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
+            throw new IllegalStateException(
+                            "pattern too large: nesting exceeds compile memory budget (" + liveBytes / BudgetWeights.NESTING_FRAME_BYTES + " live frames, " + liveBytes + " weighted bytes — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
         }
     }
 

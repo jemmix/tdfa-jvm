@@ -1,6 +1,8 @@
 package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.CompiledRegex;
+import io.github.jemmix.tdfa.core.MatchResult;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -25,36 +27,38 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class SupplementaryCodepointClassTest {
 
-    private static String cps(int... cps) {
-        StringBuilder sb = new StringBuilder();
-        for (int cp : cps) sb.appendCodePoint(cp);
-        return sb.toString();
-    }
-
     /** Assigned Fraktur capitals only (A, B, D — skipping the 1D506 hole). */
     private static final String FRAKTUR_ABD = cps(0x1D504, 0x1D505, 0x1D507);
+
     private static final String FRAKTUR_5 = cps(0x1D504, 0x1D505, 0x1D507, 0x1D508, 0x1D509);
     private static final String GOTHIC_3 = cps(0x10330, 0x10331, 0x10332);
 
-    @Test void distinctAssignedSupplementaryLuMatches() {
-        for (String re : new String[]{"\\p{Lu}{1}", "\\p{Lu}{2}", "\\p{Lu}{3}",
-                "\\p{Lu}+", "\\p{L}{3}", "[\\x{1D504}\\x{1D505}\\x{1D507}]{3}"}) {
+    private static String cps(int... cps) {
+        StringBuilder sb = new StringBuilder();
+        for (int cp : cps) {
+            sb.appendCodePoint(cp);
+        }
+        return sb.toString();
+    }
+
+    @Test
+    void distinctAssignedSupplementaryLuMatches() {
+        for (String re : new String[]{"\\p{Lu}{1}", "\\p{Lu}{2}", "\\p{Lu}{3}", "\\p{Lu}+", "\\p{L}{3}", "[\\x{1D504}\\x{1D505}\\x{1D507}]{3}"}) {
             CompiledRegex r = CompiledRegex.compile(re);
-            assertThat(r.matches(re.endsWith("{1}") || re.endsWith("{2}")
-                    ? FRAKTUR_ABD.substring(0, re.endsWith("{1}") ? 2 : 4) : FRAKTUR_ABD))
-                    .as("%s on assigned Fraktur capitals", re).isTrue();
+            assertThat(r.matches(re.endsWith("{1}") || re.endsWith("{2}") ? FRAKTUR_ABD.substring(0, re.endsWith("{1}") ? 2 : 4) : FRAKTUR_ABD)).as("%s on assigned Fraktur capitals", re).isTrue();
         }
         assertThat(CompiledRegex.compile("\\p{Lu}{5}").matches(FRAKTUR_5)).isTrue();
     }
 
-    @Test void rangedAndLazyQuantifiersOnSupplementary() {
-        assertThat(CompiledRegex.compile("\\p{Lu}{2,4}")
-                .matches(cps(0x1D504, 0x1D505, 0x1D507, 0x1D508))).isTrue();  // exactly 4
+    @Test
+    void rangedAndLazyQuantifiersOnSupplementary() {
+        assertThat(CompiledRegex.compile("\\p{Lu}{2,4}").matches(cps(0x1D504, 0x1D505, 0x1D507, 0x1D508))).isTrue(); // exactly 4
         assertThat(CompiledRegex.compile("\\p{Lu}{2,4}").matches(FRAKTUR_5)).isFalse(); // 5 > max
         assertThat(CompiledRegex.compile("\\p{Lu}{2,4}?").matches(cps(0x1D504, 0x1D505))).isTrue();
     }
 
-    @Test void unassignedFrakturHoleCodepointsDoNotMatchL() {
+    @Test
+    void unassignedFrakturHoleCodepointsDoNotMatchL() {
         // 1D506 (Fraktur C slot) is unassigned — ℭ U+212D is canonical.
         // NB: inputs built via cps() — writing supplementary codepoints as
         // escaped surrogate literals in source is a trap: JLS §3.3 unicode
@@ -68,18 +72,20 @@ class SupplementaryCodepointClassTest {
         assertThat(CompiledRegex.compile("\\p{Lu}").find(cps(0x212D))).isTrue();
     }
 
-    @Test void gothicIsCaselessLoNotLu() {
+    @Test
+    void gothicIsCaselessLoNotLu() {
         assertThat(CompiledRegex.compile("\\p{Lo}{3}").matches(GOTHIC_3)).isTrue();
         assertThat(CompiledRegex.compile("\\p{L}{3}").matches(GOTHIC_3)).isTrue();
         assertThat(CompiledRegex.compile("\\p{Lu}{3}").matches(GOTHIC_3)).isFalse();
     }
 
-    @Test void extractIndicesAreUtf16OnSupplementary() {
+    @Test
+    void extractIndicesAreUtf16OnSupplementary() {
         CompiledRegex r = CompiledRegex.compile("\\p{Lu}{2}");
-        io.github.jemmix.tdfa.core.MatchResult m = r.match(cps(0x1D504, 0x1D507), 0);
+        MatchResult m = r.match(cps(0x1D504, 0x1D507), 0);
         assertThat(m).isNotNull();
         assertThat(m.start(0)).isEqualTo(0);
-        assertThat(m.end(0)).isEqualTo(4);   // 2 codepoints = 4 UTF-16 units
+        assertThat(m.end(0)).isEqualTo(4); // 2 codepoints = 4 UTF-16 units
     }
 
     /**
@@ -94,16 +100,16 @@ class SupplementaryCodepointClassTest {
      * detectLiteralNeedle now declines needles containing adjacent high+low
      * units; the DFA walk (which decodes) handles the shape correctly.
      */
-    @Test void loneSurrogateNeedleAdjacencyDoesNotMatchPairs() {
-        String loneHighThenLow = cps(0xD800, 0xDFFF);        // two LONE symbols
-        String pair = cps(0x103FF);                          // ONE codepoint, same UTF-16 units
+    @Test
+    void loneSurrogateNeedleAdjacencyDoesNotMatchPairs() {
+        String loneHighThenLow = cps(0xD800, 0xDFFF); // two LONE symbols
+        String pair = cps(0x103FF); // ONE codepoint, same UTF-16 units
         String pat = "(?i:" + loneHighThenLow.charAt(0) + ")" + loneHighThenLow.charAt(1);
-        assertThat(pat).isEqualTo("(?i:\uD800)\uDFFF");      // groups keep the symbols apart
+        assertThat(pat).isEqualTo("(?i:\uD800)\uDFFF"); // groups keep the symbols apart
         // ASM tier (facade default — exercises detectLiteralNeedle) and the
         // interpreter tier (the walk) must both decline to match the pair.
-        assertThat(io.github.jemmix.tdfa.Pattern.compile(pat).matcher(pair).find()).isFalse();
-        io.github.jemmix.tdfa.Pattern interp =
-                io.github.jemmix.tdfa.Pattern.compile(pat, 0, io.github.jemmix.tdfa.tdfa.TdfaRunner::new);
+        assertThat(Pattern.compile(pat).matcher(pair).find()).isFalse();
+        Pattern interp = Pattern.compile(pat, 0, TdfaRunner::new);
         assertThat(interp.matcher(pair).find()).isFalse();
         // The shape [lone high][lone low] is UNSATISFIABLE by the alphabet
         // contract: adjacent high+low units always decode as a pair, a lone
@@ -111,10 +117,10 @@ class SupplementaryCodepointClassTest {
         // a non-high. That unsatisfiability is what made the needle bug
         // subtle — the needle's unit text was matchable where the pattern
         // never could be. With separation the pattern IS satisfiable:
-        String sep = "(?i:\uD800)q\uDFFF";   // lone high, 'q', lone low
+        String sep = "(?i:\uD800)q\uDFFF"; // lone high, 'q', lone low
         String trueLone = "x\uD800q\uDFFFy";
-        assertThat(io.github.jemmix.tdfa.Pattern.compile(sep).matcher(trueLone).find()).isTrue();
+        assertThat(Pattern.compile(sep).matcher(trueLone).find()).isTrue();
         // and the equivalent real pair pattern still matches the pair (both tiers)
-        assertThat(io.github.jemmix.tdfa.Pattern.compile(String.valueOf(cps(0x103FF))).matcher(pair).find()).isTrue();
+        assertThat(Pattern.compile(String.valueOf(cps(0x103FF))).matcher(pair).find()).isTrue();
     }
 }

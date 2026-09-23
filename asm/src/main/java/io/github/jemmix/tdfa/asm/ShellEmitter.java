@@ -1,12 +1,16 @@
 package io.github.jemmix.tdfa.asm;
 
 import io.github.jemmix.tdfa.core.RegexEngine;
+import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
-
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Emits the per-pattern facade shell — a Pattern/PatternMatcher pair into the
@@ -46,8 +50,7 @@ public final class ShellEmitter {
     /** Monotonic BYO-shell name sequence: deterministic within a JVM,
      *  collision-free while any shell is live, and stable across runs for
      *  dumps/debuggers (identityHashCode was none of these). */
-    private static final java.util.concurrent.atomic.AtomicLong SHELL_SEQ =
-            new java.util.concurrent.atomic.AtomicLong();
+    private static final AtomicLong SHELL_SEQ = new AtomicLong();
 
     // Facade-tier types, by descriptor only (no compile-time dependency).
     private static final String TDFAPATTERN = "io/github/jemmix/tdfa/TDFAPattern";
@@ -84,24 +87,46 @@ public final class ShellEmitter {
         /** Pinned Unicode tables ({@code null} = process default) — threaded
          *  into the shell's super-ctor so serialization round-trips keep the
          *  provider identity. */
-        private final io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider;
+        private final UnicodeDataProvider provider;
 
-        public Spec(String pattern, int flags, int programSize,
-                    RegexEngine engine, RegexEngine wholeEngine,
-                    String engineInternalName,
-                    io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider) {
-            this.pattern = pattern; this.flags = flags; this.programSize = programSize;
-            this.engine = engine; this.wholeEngine = wholeEngine;
+        public Spec(String pattern, int flags, int programSize, RegexEngine engine, RegexEngine wholeEngine,
+                        String engineInternalName, UnicodeDataProvider provider) {
+            this.pattern = pattern;
+            this.flags = flags;
+            this.programSize = programSize;
+            this.engine = engine;
+            this.wholeEngine = wholeEngine;
             this.engineInternalName = engineInternalName;
             this.provider = provider;
         }
-        public String pattern() { return pattern; }
-        public int flags() { return flags; }
-        public int programSize() { return programSize; }
-        public RegexEngine engine() { return engine; }
-        public RegexEngine wholeEngine() { return wholeEngine; }
-        public String engineInternalName() { return engineInternalName; }
-        public io.github.jemmix.tdfa.unicode.UnicodeDataProvider provider() { return provider; }
+
+        public String pattern() {
+            return pattern;
+        }
+
+        public int flags() {
+            return flags;
+        }
+
+        public int programSize() {
+            return programSize;
+        }
+
+        public RegexEngine engine() {
+            return engine;
+        }
+
+        public RegexEngine wholeEngine() {
+            return wholeEngine;
+        }
+
+        public String engineInternalName() {
+            return engineInternalName;
+        }
+
+        public UnicodeDataProvider provider() {
+            return provider;
+        }
     }
 
     /**
@@ -110,10 +135,11 @@ public final class ShellEmitter {
      * Throws {@link IllegalStateException} on emission problems; the caller
      * falls back to the shared implementation.
      */
+    private ShellEmitter() {
+    }
+
     public static Object emit(Spec spec) {
-        String engOwner = spec.engineInternalName() != null
-                ? spec.engineInternalName()
-                : ENGINE_ITF;
+        String engOwner = spec.engineInternalName() != null ? spec.engineInternalName() : ENGINE_ITF;
         String engDesc = "L" + engOwner + ";";
         boolean concrete = spec.engineInternalName() != null;
         RegexEngine engInstance = spec.engine();
@@ -132,8 +158,7 @@ public final class ShellEmitter {
 
         // ---- GenNNNMatcher extends PatternMatcher ----
         FrameClassWriter cw = new FrameClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
-        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER,
-                matOwner, null, PATMAT, null);
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER, matOwner, null, PATMAT, null);
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "p", patDesc, null, null).visitEnd();
 
         // ctor(GenNNNPattern, CharSequence)
@@ -142,8 +167,7 @@ public final class ShellEmitter {
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitVarInsn(Opcodes.ALOAD, 2);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, PATMAT, "<init>",
-                "(L" + TDFAPATTERN + ";" + CS + ")V", false);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, PATMAT, "<init>", "(L" + TDFAPATTERN + ";" + CS + ")V", false);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitFieldInsn(Opcodes.PUTFIELD, matOwner, "p", patDesc);
@@ -273,7 +297,7 @@ public final class ShellEmitter {
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RESULT, "start", "(I)I", false);
         Label laFail = new Label();
-        mv.visitJumpInsn(Opcodes.IFNE, laFail);   // start != 0 → fail
+        mv.visitJumpInsn(Opcodes.IFNE, laFail); // start != 0 → fail
         // accept
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
@@ -307,13 +331,11 @@ public final class ShellEmitter {
 
         // ---- GenNNNPattern extends TDFAPattern ----
         cw = new FrameClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
-        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER,
-                patOwner, null, TDFAPATTERN, null);
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER, patOwner, null, TDFAPATTERN, null);
         cw.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, "eng", engDesc, null, null).visitEnd();
         // (String pattern, int flags, int ps, RegexEngine e, RegexEngine w, UnicodeDataProvider prov, Eng eng)
         String provDesc = "Lio/github/jemmix/tdfa/unicode/UnicodeDataProvider;";
-        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>",
-                "(Ljava/lang/String;IIL" + ENGINE_ITF + ";L" + ENGINE_ITF + ";" + provDesc + engDesc + ")V", null, null);
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(Ljava/lang/String;IIL" + ENGINE_ITF + ";L" + ENGINE_ITF + ";" + provDesc + engDesc + ")V", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
@@ -322,8 +344,7 @@ public final class ShellEmitter {
         mv.visitVarInsn(Opcodes.ALOAD, 4);
         mv.visitVarInsn(Opcodes.ALOAD, 5);
         mv.visitVarInsn(Opcodes.ALOAD, 6);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, TDFAPATTERN, "<init>",
-                "(Ljava/lang/String;IIL" + ENGINE_ITF + ";L" + ENGINE_ITF + ";" + provDesc + ")V", false);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, TDFAPATTERN, "<init>", "(Ljava/lang/String;IIL" + ENGINE_ITF + ";L" + ENGINE_ITF + ";" + provDesc + ")V", false);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitVarInsn(Opcodes.ALOAD, 7);
         mv.visitFieldInsn(Opcodes.PUTFIELD, patOwner, "eng", engDesc);
@@ -355,25 +376,19 @@ public final class ShellEmitter {
         mv.visitEnd();
         cw.visitEnd();
         byte[] patBytes = cw.toByteArray();
-        if (Boolean.getBoolean("tdfa.asm.dump")) dumpShell(matOwner, matBytes, patOwner, patBytes);
+        if (Boolean.getBoolean("tdfa.asm.dump")) {
+            dumpShell(matOwner, matBytes, patOwner, patBytes);
+        }
 
         try {
             ClassLoader cl = engInstance.getClass().getClassLoader();
-            TdfaAsmBackend.GenClassLoader gcl =
-                    cl instanceof TdfaAsmBackend.GenClassLoader
-                            ? (TdfaAsmBackend.GenClassLoader) cl
-                            : new TdfaAsmBackend.GenClassLoader(cl);
+            TdfaAsmBackend.GenClassLoader gcl = cl instanceof TdfaAsmBackend.GenClassLoader ? (TdfaAsmBackend.GenClassLoader) cl : new TdfaAsmBackend.GenClassLoader(
+                            cl);
             gcl.register(patOwner.replace('/', '.'), patBytes);
             gcl.register(matOwner.replace('/', '.'), matBytes);
             Class<?> patCls = Class.forName(patOwner.replace('/', '.'), true, gcl);
-            Class<?> engCls = concrete
-                    ? Class.forName(engOwner.replace('/', '.'), true, gcl)
-                    : RegexEngine.class;
-            return patCls.getDeclaredConstructor(
-                    String.class, int.class, int.class, RegexEngine.class, RegexEngine.class,
-                    io.github.jemmix.tdfa.unicode.UnicodeDataProvider.class, engCls
-            ).newInstance(spec.pattern(), spec.flags(), spec.programSize(),
-                    engInstance, spec.wholeEngine(), spec.provider(), engInstance);
+            Class<?> engCls = concrete ? Class.forName(engOwner.replace('/', '.'), true, gcl) : RegexEngine.class;
+            return patCls.getDeclaredConstructor(String.class, int.class, int.class, RegexEngine.class, RegexEngine.class, UnicodeDataProvider.class, engCls).newInstance(spec.pattern(), spec.flags(), spec.programSize(), engInstance, spec.wholeEngine(), spec.provider(), engInstance);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("shell emission failed", e);
         }
@@ -411,17 +426,16 @@ public final class ShellEmitter {
         mv.visitInsn(Opcodes.IRETURN);
     }
 
-    private ShellEmitter() { }
     /** Best-effort debug dump of the emitted shell pair; a failed dump must
      *  never fail compilation (tdfa.asm.dump is a diagnostic switch). */
     @SuppressWarnings("EmptyCatch")
     private static void dumpShell(String matOwner, byte[] matBytes, String patOwner, byte[] patBytes) {
         try {
-            java.nio.file.Path dir = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), "shells");
-            java.nio.file.Files.createDirectories(dir);
-            java.nio.file.Files.write(dir.resolve(matOwner.substring(matOwner.lastIndexOf('/') + 1) + ".class"), matBytes);
-            java.nio.file.Files.write(dir.resolve(patOwner.substring(patOwner.lastIndexOf('/') + 1) + ".class"), patBytes);
-        } catch (Exception ignored) { }
+            Path dir = Paths.get(System.getProperty("java.io.tmpdir"), "shells");
+            Files.createDirectories(dir);
+            Files.write(dir.resolve(matOwner.substring(matOwner.lastIndexOf('/') + 1) + ".class"), matBytes);
+            Files.write(dir.resolve(patOwner.substring(patOwner.lastIndexOf('/') + 1) + ".class"), patBytes);
+        } catch (Exception ignored) {
+        }
     }
-
 }

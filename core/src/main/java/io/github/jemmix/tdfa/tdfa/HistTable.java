@@ -31,6 +31,7 @@ final class HistTable {
      * id 0 is the canonical empty sequence.
      */
     static final int EMPTY_ID = 0;
+
     private final long memBudget;
     private int[][] contents = new int[16][];
     /**
@@ -39,6 +40,7 @@ final class HistTable {
      * append-heavy compiles.
      */
     private long[] idHash = new long[16];
+
     private int[] hFirst = new int[32];
     private int[] hNext = new int[16];
     private int hMask = 31;
@@ -47,6 +49,7 @@ final class HistTable {
      * Per-id caches, null until first requested.
      */
     private long[][] bitsCache;
+
     private int[][] lastSignCache;
     private int cachedWords = -1;
     private int cachedTags = -1;
@@ -74,9 +77,8 @@ final class HistTable {
      */
     private void charge(long bytes) {
         if ((chargedBytes += bytes) > memBudget) {
-            throw new IllegalStateException("pattern too large: tag histories exceed the compile memory budget ("
-                + chargedBytes + " weighted bytes over " + next + " interned sequences — raise -D"
-                + Budgets.COMPILE_MEMORY_PROP + ")");
+            throw new IllegalStateException(
+                            "pattern too large: tag histories exceed the compile memory budget (" + chargedBytes + " weighted bytes over " + next + " interned sequences — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
         }
     }
 
@@ -84,23 +86,37 @@ final class HistTable {
      * Intern {@code seq} (not retained — copied on first sighting).
      */
     int intern(int[] seq) {
-        if (seq == null || seq.length == 0) return EMPTY_ID;
+        if (seq == null || seq.length == 0) {
+            return EMPTY_ID;
+        }
         long h = 0x9E3779B97F4A7C15L;
-        for (int v : seq) h = h * 1000003L + v;
+        for (int v : seq) {
+            h = h * 1000003L + v;
+        }
         h ^= h >>> 29;
         int slot = (int) (mix64(h) & hMask);
         for (int id = hFirst[slot]; id != 0; id = hNext[id]) {
-            if (Arrays.equals(contents[id], seq)) return id;
+            if (Arrays.equals(contents[id], seq)) {
+                return id;
+            }
         }
         int id = next++;
-        if (id >= contents.length) contents = Arrays.copyOf(contents, Math.max(id + 1, contents.length * 2));
-        if (id >= idHash.length) idHash = Arrays.copyOf(idHash, Math.max(id + 1, idHash.length * 2));
-        if (id >= hNext.length) hNext = Arrays.copyOf(hNext, Math.max(id + 1, hNext.length * 2));
+        if (id >= contents.length) {
+            contents = Arrays.copyOf(contents, Math.max(id + 1, contents.length * 2));
+        }
+        if (id >= idHash.length) {
+            idHash = Arrays.copyOf(idHash, Math.max(id + 1, idHash.length * 2));
+        }
+        if (id >= hNext.length) {
+            hNext = Arrays.copyOf(hNext, Math.max(id + 1, hNext.length * 2));
+        }
         contents[id] = seq.clone();
         idHash[id] = h;
         hNext[id] = hFirst[slot];
         hFirst[slot] = id;
-        if ((id + 1) * 4 > hFirst.length * 3) rehash();
+        if ((id + 1) * 4 > hFirst.length * 3) {
+            rehash();
+        }
         charge(BudgetWeights.HIST_FIXED_BYTES + 4L * seq.length);
         return id;
     }
@@ -138,10 +154,8 @@ final class HistTable {
             cachedWords = words;
         }
         if (bitsCache == null || bitsCache.length < contents.length) {
-            int newLen = Math.max(contents.length,
-                (bitsCache == null ? 16 : bitsCache.length) * 2);
-            bitsCache = Arrays.copyOf(
-                bitsCache == null ? new long[16][] : bitsCache, newLen);
+            int newLen = Math.max(contents.length, (bitsCache == null ? 16 : bitsCache.length) * 2);
+            bitsCache = Arrays.copyOf(bitsCache == null ? new long[16][] : bitsCache, newLen);
         }
         long[] bits = bitsCache[id];
         if (bits == null) {
@@ -170,16 +184,16 @@ final class HistTable {
             cachedTags = tags;
         }
         if (lastSignCache == null || lastSignCache.length < contents.length) {
-            int newLen = Math.max(contents.length,
-                (lastSignCache == null ? 16 : lastSignCache.length) * 2);
-            lastSignCache = Arrays.copyOf(
-                lastSignCache == null ? new int[16][] : lastSignCache, newLen);
+            int newLen = Math.max(contents.length, (lastSignCache == null ? 16 : lastSignCache.length) * 2);
+            lastSignCache = Arrays.copyOf(lastSignCache == null ? new int[16][] : lastSignCache, newLen);
         }
         int[] last = lastSignCache[id];
         if (last == null) {
             last = new int[tags];
             int[] seq = contents[id];
-            for (int v : seq) last[Math.abs(v) - 1] = v > 0 ? 1 : -1;
+            for (int v : seq) {
+                last[Math.abs(v) - 1] = v > 0 ? 1 : -1;
+            }
             lastSignCache[id] = last;
             charge(BudgetWeights.HIST_FIXED_BYTES + 4L * tags);
         }

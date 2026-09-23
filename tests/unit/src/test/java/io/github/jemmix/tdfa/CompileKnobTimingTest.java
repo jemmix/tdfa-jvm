@@ -1,15 +1,17 @@
 package io.github.jemmix.tdfa;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
 import io.github.jemmix.tdfa.core.CompileObserver;
+import io.github.jemmix.tdfa.tdfa.Budgets;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
-import java.util.HashMap;
-import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Compile knobs are read once per compilation, never class-init frozen
@@ -26,12 +28,15 @@ class CompileKnobTimingTest {
     void cleanup() {
         System.clearProperty("tdfa.noregopt");
         System.clearProperty("tdfa.nominimize");
-        System.clearProperty(io.github.jemmix.tdfa.tdfa.Budgets.COMPILE_MEMORY_PROP);
+        System.clearProperty(Budgets.COMPILE_MEMORY_PROP);
     }
 
     private CompileObserver recording() {
         return new CompileObserver() {
-            @Override public void note(String key, String value) { notes.put(key, value); }
+            @Override
+            public void note(String key, String value) {
+                notes.put(key, value);
+            }
         };
     }
 
@@ -66,16 +71,13 @@ class CompileKnobTimingTest {
         // never class-init frozen. Set AFTER init — the very next compile
         // must see the tightened RAM budget (4096 B / 256 B per state = a
         // 16-state cap), and clearing it must re-admit the pattern.
-        Tdfa.compile(Tnfa.compile("ab|cd"), false, recording());   // warm classes
-        System.setProperty(io.github.jemmix.tdfa.tdfa.Budgets.COMPILE_MEMORY_PROP, "4096");
+        Tdfa.compile(Tnfa.compile("ab|cd"), false, recording()); // warm classes
+        System.setProperty(Budgets.COMPILE_MEMORY_PROP, "4096");
         try {
-            assertThatThrownBy(() -> Tdfa.compile(Tnfa.compile("ab|cd|ef|gh|ij"), false, recording()))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("pattern too large");
+            assertThatThrownBy(() -> Tdfa.compile(Tnfa.compile("ab|cd|ef|gh|ij"), false, recording())).isInstanceOf(IllegalStateException.class).hasMessageContaining("pattern too large");
         } finally {
-            System.clearProperty(io.github.jemmix.tdfa.tdfa.Budgets.COMPILE_MEMORY_PROP);
+            System.clearProperty(Budgets.COMPILE_MEMORY_PROP);
         }
-        assertThat(Tdfa.compile(Tnfa.compile("ab|cd|ef|gh|ij"), false, recording()).stateCount())
-                .isPositive();
+        assertThat(Tdfa.compile(Tnfa.compile("ab|cd|ef|gh|ij"), false, recording()).stateCount()).isPositive();
     }
 }

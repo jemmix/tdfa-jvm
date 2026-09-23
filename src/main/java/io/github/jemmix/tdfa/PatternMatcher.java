@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.EmittedSurface;
+import io.github.jemmix.tdfa.core.Matcher;
 
 /**
  * The stateful matcher a {@link Pattern} produces: find-iteration, groups,
@@ -18,11 +19,11 @@ import io.github.jemmix.tdfa.core.EmittedSurface;
  * <p>Public because generated per-pattern shells (defined in a child
  * classloader) extend this class and their matchers call its constructor.
  */
-public class PatternMatcher extends io.github.jemmix.tdfa.core.Matcher {
+public class PatternMatcher extends Matcher {
 
     private final Pattern pattern;
 
-    @EmittedSurface  // emitted shells super-ctor call
+    @EmittedSurface // emitted shells super-ctor call
     public PatternMatcher(TDFAPattern pattern, CharSequence input) {
         super(pattern.engine(), pattern.wholeEngine(), input);
         this.pattern = pattern;

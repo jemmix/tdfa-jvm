@@ -1,6 +1,9 @@
 package io.github.jemmix.tdfa.core;
 
+import io.github.jemmix.tdfa.tdfa.Budgets;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.tdfa.WorkMeter;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
 import io.github.jemmix.tdfa.unicode.UnicodeProviders;
@@ -48,9 +51,10 @@ public final class CompiledRegex {
 
     /** Compile with explicit options. Throws {@link PatternSyntaxException} on malformed patterns. */
     public static CompiledRegex compile(String pattern, CompileOptions options) {
-        if (pattern == null) throw new NullPointerException("pattern is null");
-        UnicodeDataProvider provider = options.unicodeProvider() != null
-                ? options.unicodeProvider() : UnicodeProviders.get();
+        if (pattern == null) {
+            throw new NullPointerException("pattern is null");
+        }
+        UnicodeDataProvider provider = options.unicodeProvider() != null ? options.unicodeProvider() : UnicodeProviders.get();
         CompileObserver obs = options.observer() != null ? options.observer() : CompileObserver.NONE;
         try {
             // One CPU ledger for the whole compile: the front-end, the find
@@ -58,19 +62,14 @@ public final class CompiledRegex {
             // whole determinization all debit the same pool. A pattern
             // keeping a second (whole) engine splits the runtime memo
             // budget so its combined memos stay within one budget.
-            io.github.jemmix.tdfa.tdfa.WorkMeter ledger = new io.github.jemmix.tdfa.tdfa.WorkMeter(
-                    io.github.jemmix.tdfa.tdfa.Budgets.compileComputeTicks());
+            WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
             Tnfa nfa = Tnfa.compile(pattern, options.isDisableUnicodeGroups(), false, provider, obs, ledger);
             Tdfa find = Tdfa.compile(nfa, options.isLongestMatch(), obs, ledger.fork(0));
-            Tdfa whole = find.pikeCutMatters()
-                    ? Tdfa.compileUnpruned(nfa, options.isLongestMatch(), obs, ledger.fork(0))
-                    : find;
-            long memoBudget = io.github.jemmix.tdfa.tdfa.Budgets.runtimeMemoryBytes()
-                    / (whole == find ? 1 : 2);
+            Tdfa whole = find.pikeCutMatters() ? Tdfa.compileUnpruned(nfa, options.isLongestMatch(), obs, ledger.fork(0)) : find;
+            long memoBudget = Budgets.runtimeMemoryBytes() / (whole == find ? 1 : 2);
             long t0 = System.nanoTime();
-            RegexEngine engine = new io.github.jemmix.tdfa.tdfa.TdfaRunner(find, memoBudget);
-            RegexEngine wholeEngine = whole == find
-                    ? engine : new io.github.jemmix.tdfa.tdfa.TdfaRunner(whole, memoBudget);
+            RegexEngine engine = new TdfaRunner(find, memoBudget);
+            RegexEngine wholeEngine = whole == find ? engine : new TdfaRunner(whole, memoBudget);
             obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
             obs.note("engine", "interpreter");
             return new CompiledRegex(pattern, engine, wholeEngine);
@@ -109,13 +108,23 @@ public final class CompiledRegex {
      *  {@code compile()} with the standard "pattern too large" rejection.
      *  The null carrier lets carrier-free engines run without a scratch
      *  allocation; the interpreter allocates on demand at its entry. */
-    public boolean matches(CharSequence input) { return wholeEngine.matchWhole(input, null) != null; }
+    public boolean matches(CharSequence input) {
+        return wholeEngine.matchWhole(input, null) != null;
+    }
 
-    public boolean find(CharSequence input) { return engine.find(input); }
+    public boolean find(CharSequence input) {
+        return engine.find(input);
+    }
 
-    public MatchResult match(CharSequence input, int from) { return engine.match(input, from, null); }
+    public MatchResult match(CharSequence input, int from) {
+        return engine.match(input, from, null);
+    }
 
-    public Iterable<MatchResult> findAll(CharSequence input) { return engine.findAll(input); }
+    public Iterable<MatchResult> findAll(CharSequence input) {
+        return engine.findAll(input);
+    }
 
-    public String pattern() { return pattern; }
+    public String pattern() {
+        return pattern;
+    }
 }

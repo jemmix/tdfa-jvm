@@ -119,18 +119,28 @@ public interface RegexEngine {
             private MatchResult next = advance();
 
             private MatchResult advance() {
-                if (from > input.length()) return null;
+                if (from > input.length()) {
+                    return null;
+                }
                 MatchResult m = match(input, from, null);
-                if (m == null) return null;
+                if (m == null) {
+                    return null;
+                }
                 from = (m.end(0) == m.start(0)) ? m.end(0) + 1 : m.end(0);
                 return m;
             }
 
-            @Override public boolean hasNext() { return next != null; }
+            @Override
+            public boolean hasNext() {
+                return next != null;
+            }
 
-            @Override public MatchResult next() {
+            @Override
+            public MatchResult next() {
                 MatchResult r = next;
-                if (r == null) throw new NoSuchElementException();
+                if (r == null) {
+                    throw new NoSuchElementException();
+                }
                 next = advance();
                 return r;
             }

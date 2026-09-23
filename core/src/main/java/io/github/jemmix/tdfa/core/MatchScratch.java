@@ -35,7 +35,7 @@ package io.github.jemmix.tdfa.core;
  * (the fast walk's non-ASCII fallback into the generic walk) returns the
  * callee's result immediately, and every taker refills before use.
  */
-@EmittedSurface  // class-level: generated wrappers link the no-arg ctor by descriptor
+@EmittedSurface // class-level: generated wrappers link the no-arg ctor by descriptor
 public final class MatchScratch {
 
     private int[] regs;

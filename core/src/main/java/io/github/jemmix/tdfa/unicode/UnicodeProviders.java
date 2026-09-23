@@ -32,25 +32,30 @@ public final class UnicodeProviders {
     @SuppressWarnings("StaticAssignmentOfThrowable")
     private static volatile Throwable failure;
 
-    private UnicodeProviders() {}
+    private UnicodeProviders() {
+    }
 
     /** Returns the resolved provider, or throws if resolution failed. */
     @SuppressWarnings("StaticAssignmentOfThrowable")
     public static UnicodeDataProvider get() {
         UnicodeDataProvider p = cached;
-        if (p != null) return p;
+        if (p != null) {
+            return p;
+        }
         if (failure != null) {
             throw new IllegalStateException(
-                "Unicode data provider initialisation failed (property " + PROPERTY_NAME + " = \""
-                + System.getProperty(PROPERTY_NAME) + "\"); see cause", failure);
+                            "Unicode data provider initialisation failed (property " + PROPERTY_NAME + " = \"" + System.getProperty(PROPERTY_NAME) + "\"); see cause",
+                            failure);
         }
         synchronized (UnicodeProviders.class) {
             p = cached;
-            if (p != null) return p;
+            if (p != null) {
+                return p;
+            }
             if (failure != null) {
                 throw new IllegalStateException(
-                    "Unicode data provider initialisation failed (property " + PROPERTY_NAME + " = \""
-                    + System.getProperty(PROPERTY_NAME) + "\"); see cause", failure);
+                                "Unicode data provider initialisation failed (property " + PROPERTY_NAME + " = \"" + System.getProperty(PROPERTY_NAME) + "\"); see cause",
+                                failure);
             }
             try {
                 p = resolve();
@@ -59,8 +64,8 @@ public final class UnicodeProviders {
             } catch (Throwable t) {
                 failure = t;
                 throw new IllegalStateException(
-                    "Unicode data provider initialisation failed (property " + PROPERTY_NAME + " = \""
-                    + System.getProperty(PROPERTY_NAME) + "\"); see cause", t);
+                                "Unicode data provider initialisation failed (property " + PROPERTY_NAME + " = \"" + System.getProperty(PROPERTY_NAME) + "\"); see cause",
+                                t);
             }
         }
     }
@@ -68,26 +73,26 @@ public final class UnicodeProviders {
     private static UnicodeDataProvider resolve() {
         String v = System.getProperty(PROPERTY_NAME, "jdk");
         switch (v) {
-            case "jdk":         return JdkUnicodeDataProvider.INSTANCE;
-            case "no-unicode":  return NoUnicodeProvider.INSTANCE;
-            default:
+            case "jdk" :
+                return JdkUnicodeDataProvider.INSTANCE;
+            case "no-unicode" :
+                return NoUnicodeProvider.INSTANCE;
+            default :
                 Class<?> cls;
                 try {
                     cls = Class.forName(v);
                 } catch (ClassNotFoundException e) {
-                    throw new IllegalArgumentException(
-                        "Unicode provider class not found on classpath: " + v, e);
+                    throw new IllegalArgumentException("Unicode provider class not found on classpath: " + v, e);
                 }
                 if (!UnicodeDataProvider.class.isAssignableFrom(cls)) {
                     throw new IllegalArgumentException(
-                        "Unicode provider class " + v + " does not implement " +
-                        UnicodeDataProvider.class.getName());
+                                    "Unicode provider class " + v + " does not implement " + UnicodeDataProvider.class.getName());
                 }
                 try {
                     return (UnicodeDataProvider) cls.getDeclaredConstructor().newInstance();
                 } catch (ReflectiveOperationException e) {
                     throw new IllegalStateException(
-                        "Unicode provider class " + v + " has no accessible no-arg constructor", e);
+                                    "Unicode provider class " + v + " has no accessible no-arg constructor", e);
                 }
         }
     }

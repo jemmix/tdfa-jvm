@@ -39,7 +39,7 @@ class PatternSerializationTest {
         // inherited from TDFAPattern — the proxy replaces the shell).
         Pattern p = Pattern.compile("(?<word>\\w+)-(\\d+)");
         Pattern copy = roundTrip(p);
-        assertThat(copy).isEqualTo(p);   // re2j semantics: pattern + flags
+        assertThat(copy).isEqualTo(p); // re2j semantics: pattern + flags
         PatternMatcher m = copy.matcher("order-77 and id-42");
         assertThat(m.find()).isTrue();
         assertThat(m.group("word")).isEqualTo("order");
@@ -66,8 +66,7 @@ class PatternSerializationTest {
         // The pin survived: same provider class, resolvable by the proxy's
         // convention (static provider()), and semantics follow the pinned
         // tables.
-        assertThat(((TDFAPattern) copy).unicodeProvider())
-                .isEqualTo(Unicode6_0.provider());
+        assertThat(((TDFAPattern) copy).unicodeProvider()).isEqualTo(Unicode6_0.provider());
         assertThat(copy.matcher("Gr\u00fc\u00dfe").matches()).isTrue();
         assertThat(copy.matcher("abc1").matches()).isFalse();
     }

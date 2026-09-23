@@ -10,8 +10,17 @@ package io.github.jemmix.tdfa.unicode;
  */
 final class NoUnicodeProvider implements UnicodeDataProvider {
     static final NoUnicodeProvider INSTANCE = new NoUnicodeProvider();
-    private NoUnicodeProvider() {}
 
-    @Override public int[] tableFor(String name) { return null; }
-    @Override public int[] foldTableFor(String name) { return null; }
+    private NoUnicodeProvider() {
+    }
+
+    @Override
+    public int[] tableFor(String name) {
+        return null;
+    }
+
+    @Override
+    public int[] foldTableFor(String name) {
+        return null;
+    }
 }

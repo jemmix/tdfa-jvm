@@ -26,31 +26,36 @@ import io.github.jemmix.tdfa.unicode.UnicodeProviders;
  */
 final class PatternCompiler {
 
-    private static final int VALID_FLAGS = Pattern.CASE_INSENSITIVE | Pattern.DOTALL
-        | Pattern.MULTILINE | Pattern.DISABLE_UNICODE_GROUPS | Pattern.LONGEST_MATCH
-        | Pattern.UNICODE_CHARACTER_CLASS;
+    private static final int VALID_FLAGS = Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.MULTILINE | Pattern.DISABLE_UNICODE_GROUPS | Pattern.LONGEST_MATCH | Pattern.UNICODE_CHARACTER_CLASS;
 
     private PatternCompiler() {
     }
 
-    static Pattern compile(String regex, int flags, RegexEngineFactory factory,
-                           UnicodeDataProvider provider) {
+    static Pattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider provider) {
         return compile(regex, flags, factory, provider, null);
     }
 
-    static Pattern compile(String regex, int flags, RegexEngineFactory factory,
-                           UnicodeDataProvider provider,
-                           CompileObserver observer) {
-        if (regex == null) throw new NullPointerException("pattern is null");
+    static Pattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider provider, CompileObserver observer) {
+        if (regex == null) {
+            throw new NullPointerException("pattern is null");
+        }
         if ((flags & ~VALID_FLAGS) != 0) {
             throw new IllegalArgumentException(
-                "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS, LONGEST_MATCH, UNICODE_CHARACTER_CLASS");
+                            "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS, LONGEST_MATCH, UNICODE_CHARACTER_CLASS");
         }
         String fl = regex;
-        if ((flags & Pattern.CASE_INSENSITIVE) != 0) fl = "(?i)" + fl;
-        if ((flags & Pattern.DOTALL) != 0) fl = "(?s)" + fl;
-        if ((flags & Pattern.MULTILINE) != 0) fl = "(?m)" + fl;
-        if ((flags & Pattern.UNICODE_CHARACTER_CLASS) != 0) fl = "(?u)" + fl;
+        if ((flags & Pattern.CASE_INSENSITIVE) != 0) {
+            fl = "(?i)" + fl;
+        }
+        if ((flags & Pattern.DOTALL) != 0) {
+            fl = "(?s)" + fl;
+        }
+        if ((flags & Pattern.MULTILINE) != 0) {
+            fl = "(?m)" + fl;
+        }
+        if ((flags & Pattern.UNICODE_CHARACTER_CLASS) != 0) {
+            fl = "(?u)" + fl;
+        }
         boolean longest = (flags & Pattern.LONGEST_MATCH) != 0;
         boolean disableUnicodeGroups = (flags & Pattern.DISABLE_UNICODE_GROUPS) != 0;
         UnicodeDataProvider prov = provider != null ? provider : UnicodeProviders.get();
@@ -89,16 +94,16 @@ final class PatternCompiler {
             // classes). A shell emission problem degrades to the shared
             // Pattern implementation with the same engines.
             try {
-                String owner = factory == null
-                    ? eng.getClass().getName().replace('.', '/') : null;
-                Pattern p = (Pattern) ShellEmitter.emit(
-                    new ShellEmitter.Spec(regex, flags, ps, eng, wholeEng, owner, provider));
+                String owner = factory == null ? eng.getClass().getName().replace('.', '/') : null;
+                Pattern p = (Pattern) ShellEmitter.emit(new ShellEmitter.Spec(regex, flags, ps, eng, wholeEng, owner,
+                                provider));
                 obs.note("engine", factory == null ? "generated" : "byo-shell");
                 return p;
             } catch (RuntimeException ex) {
-                if (Boolean.getBoolean("tdfa.gen.debug")) ex.printStackTrace();
-                obs.note("engine", factory == null
-                    ? "shared (shell emission failed)" : "shared (byo-shell emission failed)");
+                if (Boolean.getBoolean("tdfa.gen.debug")) {
+                    ex.printStackTrace();
+                }
+                obs.note("engine", factory == null ? "shared (shell emission failed)" : "shared (byo-shell emission failed)");
                 return new TDFAPattern(regex, flags, ps, eng, wholeEng, provider);
             }
         } catch (RuntimeException e) {
@@ -114,8 +119,12 @@ final class PatternCompiler {
      * propagate — they are bugs, not shapes to route around.
      */
     private static RegexEngine engineOf(Tdfa tdfa, RegexEngineFactory factory, long memoBudget) {
-        if (vmSwitched()) return new TdfaRunner(tdfa, memoBudget);
-        if (factory != null) return factory.create(tdfa);
+        if (vmSwitched()) {
+            return new TdfaRunner(tdfa, memoBudget);
+        }
+        if (factory != null) {
+            return factory.create(tdfa);
+        }
         return TdfaAsmBackend.generate(tdfa, memoBudget);
     }
 

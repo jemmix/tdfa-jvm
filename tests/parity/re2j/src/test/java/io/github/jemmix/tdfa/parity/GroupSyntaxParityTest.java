@@ -1,14 +1,14 @@
 package io.github.jemmix.tdfa.parity;
 
-import org.junit.jupiter.api.Test;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
-import io.github.jemmix.tdfa.core.Matcher;
-import io.github.jemmix.tdfa.core.PatternSyntaxException;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
 
-import static org.assertj.core.api.Assertions.*;
-import static io.github.jemmix.tdfa.parity.Re2jOracle.*;
+import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameCompileReject;
+import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
+import static io.github.jemmix.tdfa.parity.Re2jOracle.re2jFind;
+import static io.github.jemmix.tdfa.parity.Re2jOracle.tdfaFind;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Group syntax parity: non-capturing, named groups, atomic groups,
@@ -22,13 +22,22 @@ class GroupSyntaxParityTest {
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void nonCapturingGroup(RegexEngineFactory factory) { assertSameFind("(?:abc)", "abc", factory); }
+    void nonCapturingGroup(RegexEngineFactory factory) {
+        assertSameFind("(?:abc)", "abc", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void nonCapturingWithQuantifier(RegexEngineFactory factory) { assertSameFind("(?:ab)+", "ababab", factory); }
+    void nonCapturingWithQuantifier(RegexEngineFactory factory) {
+        assertSameFind("(?:ab)+", "ababab", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void capturingGroup(RegexEngineFactory factory) { assertSameFind("(abc)", "abc", factory); }
+    void capturingGroup(RegexEngineFactory factory) {
+        assertSameFind("(abc)", "abc", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void multipleGroups(RegexEngineFactory factory) {
@@ -36,6 +45,7 @@ class GroupSyntaxParityTest {
         int[] t = tdfaFind("(a)(b)(c)", "abc", factory);
         assertThat(t).isEqualTo(r);
     }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void nestedGroups(RegexEngineFactory factory) {
@@ -43,6 +53,7 @@ class GroupSyntaxParityTest {
         int[] t = tdfaFind("(a(b)c)", "abc", factory);
         assertThat(t).isEqualTo(r);
     }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void groupUnderStar(RegexEngineFactory factory) {
@@ -50,6 +61,7 @@ class GroupSyntaxParityTest {
         int[] t = tdfaFind("(a|b)*c", "ababc", factory);
         assertThat(t).isEqualTo(r);
     }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void repeatedGroupCapture(RegexEngineFactory factory) {
@@ -57,6 +69,7 @@ class GroupSyntaxParityTest {
         int[] t = tdfaFind("(\\w)(\\w)", "ab", factory);
         assertThat(t).isEqualTo(r);
     }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void groupWithAlternation(RegexEngineFactory factory) {
@@ -64,6 +77,7 @@ class GroupSyntaxParityTest {
         int[] t = tdfaFind("(cat|dog|bird)", "dog", factory);
         assertThat(t).isEqualTo(r);
     }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void nestedCaptureUnderRepetition(RegexEngineFactory factory) {
@@ -71,6 +85,7 @@ class GroupSyntaxParityTest {
         int[] t = tdfaFind("((a)(b))*", "abab", factory);
         assertThat(t).isEqualTo(r);
     }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void deeplyNestedGroups(RegexEngineFactory factory) {
@@ -78,6 +93,7 @@ class GroupSyntaxParityTest {
         int[] t = tdfaFind("(a(b(c)d)e)", "abcde", factory);
         assertThat(t).isEqualTo(r);
     }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void alternationWithGroups(RegexEngineFactory factory) {
@@ -85,6 +101,7 @@ class GroupSyntaxParityTest {
         int[] t = tdfaFind("(a)|(b)", "b", factory);
         assertThat(t).isEqualTo(r);
     }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void nonParticipatingGroup(RegexEngineFactory factory) {
@@ -97,10 +114,16 @@ class GroupSyntaxParityTest {
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void namedGroupPStyle(RegexEngineFactory factory) { assertSameFind("(?P<word>\\w+)", "hello", factory); }
+    void namedGroupPStyle(RegexEngineFactory factory) {
+        assertSameFind("(?P<word>\\w+)", "hello", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void namedGroupAngleStyle(RegexEngineFactory factory) { assertSameFind("(?<word>\\w+)", "hello", factory); }
+    void namedGroupAngleStyle(RegexEngineFactory factory) {
+        assertSameFind("(?<word>\\w+)", "hello", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void namedGroupWithOtherGroups(RegexEngineFactory factory) {
@@ -108,16 +131,20 @@ class GroupSyntaxParityTest {
         int[] t = tdfaFind("(a)(?P<x>b)(c)", "abc", factory);
         assertThat(t).isEqualTo(r);
     }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void namedGroupDuplicateRejects(RegexEngineFactory factory) { assertSameCompileReject("(?P<x>a)(?P<x>b)", factory); }
+    void namedGroupDuplicateRejects(RegexEngineFactory factory) {
+        assertSameCompileReject("(?P<x>a)(?P<x>b)", factory);
+    }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void namedGroupQuery(RegexEngineFactory factory) {
         var r = com.google.re2j.Pattern.compile("(?<word>\\w+)").matcher("hello");
         var t = io.github.jemmix.tdfa.Pattern.compile("(?<word>\\w+)", 0, factory).matcher("hello");
-        r.find(); t.find();
+        r.find();
+        t.find();
         assertThat(t.group("word")).isEqualTo(r.group("word"));
         assertThat(t.start("word")).isEqualTo(r.start("word"));
         assertThat(t.end("word")).isEqualTo(r.end("word"));
@@ -128,7 +155,8 @@ class GroupSyntaxParityTest {
     void namedGroupMixedWithNumbered(RegexEngineFactory factory) {
         var r = com.google.re2j.Pattern.compile("(a)(?P<x>b)(c)").matcher("abc");
         var t = io.github.jemmix.tdfa.Pattern.compile("(a)(?P<x>b)(c)", 0, factory).matcher("abc");
-        r.find(); t.find();
+        r.find();
+        t.find();
         assertThat(t.group("x")).isEqualTo(r.group("x"));
         assertThat(t.group(1)).isEqualTo(r.group(1));
         assertThat(t.group(3)).isEqualTo(r.group(3));
@@ -168,23 +196,43 @@ class GroupSyntaxParityTest {
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void lookaheadRejects(RegexEngineFactory factory) { assertSameCompileReject("(?=abc)abc", factory); }
+    void lookaheadRejects(RegexEngineFactory factory) {
+        assertSameCompileReject("(?=abc)abc", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void negativeLookaheadRejects(RegexEngineFactory factory) { assertSameCompileReject("a(?!b)c", factory); }
+    void negativeLookaheadRejects(RegexEngineFactory factory) {
+        assertSameCompileReject("a(?!b)c", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void lookbehindRejects(RegexEngineFactory factory) { assertSameCompileReject("(?<=a)b", factory); }
+    void lookbehindRejects(RegexEngineFactory factory) {
+        assertSameCompileReject("(?<=a)b", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void negativeLookbehindRejects(RegexEngineFactory factory) { assertSameCompileReject("(?<!a)b", factory); }
+    void negativeLookbehindRejects(RegexEngineFactory factory) {
+        assertSameCompileReject("(?<!a)b", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void atomicGroupRejects(RegexEngineFactory factory) { assertSameCompileReject("(?>a+)", factory); }
+    void atomicGroupRejects(RegexEngineFactory factory) {
+        assertSameCompileReject("(?>a+)", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void possessiveStarRejects(RegexEngineFactory factory) { assertSameCompileReject("a*+", factory); }
+    void possessiveStarRejects(RegexEngineFactory factory) {
+        assertSameCompileReject("a*+", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void backreferenceRejects(RegexEngineFactory factory) { assertSameCompileReject("(a)\\1", factory); }
+    void backreferenceRejects(RegexEngineFactory factory) {
+        assertSameCompileReject("(a)\\1", factory);
+    }
 }

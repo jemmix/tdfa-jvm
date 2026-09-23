@@ -1,8 +1,14 @@
 package io.github.jemmix.tdfa.parity;
 
 import io.github.jemmix.tdfa.sim.PikeSim;
+import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
 import io.github.jemmix.tdfa.unicode.UnicodeProviders;
+
+import java.util.function.BooleanSupplier;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /**
  * Layered differential comparator: one case, four engines, one pre-localized
@@ -39,7 +45,28 @@ import io.github.jemmix.tdfa.unicode.UnicodeProviders;
  */
 public final class LayeredComparator {
 
-    public enum Layer { PASS, TIER, CONSTRUCTION, PARSER, SIM_SUSPECT, CHAOS }
+    /**
+     * "span g1=.." protocol; exceptions as values (a crashing column counts).
+     * Compile-phase rejections normalize to {@code <reject>} — the three
+     * engines throw three different exception CLASSES for the same "bad
+     * pattern" (re2j PatternSyntaxException, the sim IllegalArgumentException),
+     * and class-name differences would masquerade as engine divergence.
+     *
+     * <p>After the first match, two more probes (span-only, mirroring the
+     * fuzzer's I/R probes so a divergence the fuzzer sees is visible in the
+     * column vote): continuation iteration on the same matcher
+     * {@code I=[s..e ...]} (empty-match advance included; {@code $} = the
+     * 64-match cap), and a restart {@code R=s..e|no} via fresh-matcher
+     * {@code find(len/2)}. Both probes run even when the first find fails:
+     * a restart from a position the scan would skip (a pair interior) can
+     * match where the boundary-respecting first find cannot, so gating
+     * them on the first find would hide exactly that class.
+     */
+    static final int ITER_CAP = 64;
+
+    public enum Layer {
+        PASS, TIER, CONSTRUCTION, PARSER, SIM_SUSPECT, CHAOS
+    }
 
     public record Report(Layer layer, String re2j, String sim, String vm, String asm) {
         /** One-line human attribution, e.g. {@code layer=CONSTRUCTION (vm==asm != sim; sim==re2j)}. */
@@ -86,32 +113,23 @@ public final class LayeredComparator {
         boolean va = v.equals(a);
         boolean vs = v.equals(s);
         boolean sr = s.equals(r);
-        if (va && vs && sr) return Layer.PASS;
-        if (!va) return Layer.TIER;
-        if (vs && !sr) return Layer.PARSER;
-        if (!vs && sr) return Layer.CONSTRUCTION;
-        if (!vs && !sr && v.equals(r)) return Layer.SIM_SUSPECT;
+        if (va && vs && sr) {
+            return Layer.PASS;
+        }
+        if (!va) {
+            return Layer.TIER;
+        }
+        if (vs && !sr) {
+            return Layer.PARSER;
+        }
+        if (!vs && sr) {
+            return Layer.CONSTRUCTION;
+        }
+        if (!vs && !sr && v.equals(r)) {
+            return Layer.SIM_SUSPECT;
+        }
         return Layer.CHAOS;
     }
-
-    /**
-     * "span g1=.." protocol; exceptions as values (a crashing column counts).
-     * Compile-phase rejections normalize to {@code <reject>} — the three
-     * engines throw three different exception CLASSES for the same "bad
-     * pattern" (re2j PatternSyntaxException, the sim IllegalArgumentException),
-     * and class-name differences would masquerade as engine divergence.
-     *
-     * <p>After the first match, two more probes (span-only, mirroring the
-     * fuzzer's I/R probes so a divergence the fuzzer sees is visible in the
-     * column vote): continuation iteration on the same matcher
-     * {@code I=[s..e ...]} (empty-match advance included; {@code $} = the
-     * 64-match cap), and a restart {@code R=s..e|no} via fresh-matcher
-     * {@code find(len/2)}. Both probes run even when the first find fails:
-     * a restart from a position the scan would skip (a pair interior) can
-     * match where the boundary-respecting first find cannot, so gating
-     * them on the first find would hide exactly that class.
-     */
-    static final int ITER_CAP = 64;
 
     static String re2jProtocol(String p, String in) {
         com.google.re2j.Pattern pat;
@@ -123,10 +141,17 @@ public final class LayeredComparator {
         try {
             StringBuilder sb = new StringBuilder();
             var m = pat.matcher(in);
-            if (m.find()) fmt(sb, m.start(), m.end(), g -> {
-                try { return m.group(g); } catch (RuntimeException e) { return null; }
-            }, m.groupCount());
-            else sb.append("no");
+            if (m.find()) {
+                fmt(sb, m.start(), m.end(), g -> {
+                    try {
+                        return m.group(g);
+                    } catch (RuntimeException e) {
+                        return null;
+                    }
+                }, m.groupCount());
+            } else {
+                sb.append("no");
+            }
             iter(sb, m::find, () -> m.start() + ".." + m.end());
             restart(sb, pat.matcher(in), mm -> mm.find(in.length() / 2), mm -> mm.start() + ".." + mm.end());
             return sb.toString();
@@ -145,8 +170,11 @@ public final class LayeredComparator {
         try {
             StringBuilder sb = new StringBuilder();
             var m = sim.matcher(in);
-            if (m.find()) fmt(sb, m.start(), m.end(), m::group, m.groupCount());
-            else sb.append("no");
+            if (m.find()) {
+                fmt(sb, m.start(), m.end(), m::group, m.groupCount());
+            } else {
+                sb.append("no");
+            }
             iter(sb, m::find, () -> m.start() + ".." + m.end());
             restart(sb, sim.matcher(in), mm -> mm.find(in.length() / 2), mm -> mm.start() + ".." + mm.end());
             return sb.toString();
@@ -158,18 +186,24 @@ public final class LayeredComparator {
     static String engineProtocol(String p, String in, boolean vm, UnicodeDataProvider provider) {
         io.github.jemmix.tdfa.Pattern pat;
         try {
-            pat = io.github.jemmix.tdfa.Pattern.compile(p, 0,
-                    vm ? io.github.jemmix.tdfa.tdfa.TdfaRunner::new : null, provider);
+            pat = io.github.jemmix.tdfa.Pattern.compile(p, 0, vm ? TdfaRunner::new : null, provider);
         } catch (Throwable t) {
             return "<reject>";
         }
         try {
             StringBuilder sb = new StringBuilder();
             var m = pat.matcher(in);
-            if (m.find()) fmt(sb, m.start(), m.end(), g -> {
-                try { return m.group(g); } catch (RuntimeException e) { return null; }
-            }, m.groupCount());
-            else sb.append("no");
+            if (m.find()) {
+                fmt(sb, m.start(), m.end(), g -> {
+                    try {
+                        return m.group(g);
+                    } catch (RuntimeException e) {
+                        return null;
+                    }
+                }, m.groupCount());
+            } else {
+                sb.append("no");
+            }
             iter(sb, m::find, () -> m.start() + ".." + m.end());
             restart(sb, pat.matcher(in), mm -> mm.find(in.length() / 2), mm -> mm.start() + ".." + mm.end());
             return sb.toString();
@@ -178,7 +212,9 @@ public final class LayeredComparator {
         }
     }
 
-    private interface GroupFn { String get(int g); }
+    private interface GroupFn {
+        String get(int g);
+    }
 
     private static void fmt(StringBuilder sb, int start, int end, GroupFn g, int groupCount) {
         sb.append(start).append("..").append(end);
@@ -191,30 +227,36 @@ public final class LayeredComparator {
     /** I probe: continue the matcher that already produced the first result
      *  (or failed to); spans only, capped. Safe after a failed find — find()
      *  stays false. */
-    private static void iter(StringBuilder sb, java.util.function.BooleanSupplier next,
-                             java.util.function.Supplier<String> span) {
+    private static void iter(StringBuilder sb, BooleanSupplier next, Supplier<String> span) {
         sb.append(" I=[");
         int n = 0;
         while (n < ITER_CAP && next.getAsBoolean()) {
-            if (n > 0) sb.append(' ');
+            if (n > 0) {
+                sb.append(' ');
+            }
             sb.append(span.get());
             n++;
         }
-        if (n == ITER_CAP) sb.append(" $");
+        if (n == ITER_CAP) {
+            sb.append(" $");
+        }
         sb.append(']');
     }
 
     /** R probe: fresh matcher, find(len/2). */
-    private static <M> void restart(StringBuilder sb, M m, java.util.function.Predicate<M> find,
-                                    java.util.function.Function<M, String> span) {
+    private static <M> void restart(StringBuilder sb, M m, Predicate<M> find, Function<M, String> span) {
         sb.append(" R=").append(find.test(m) ? span.apply(m) : "no");
     }
 
     // -- per-instance protocol shorthands (provider-threaded) --
 
-    private String simProtocol(String p, String in) { return simProtocol(p, in, provider); }
+    private String simProtocol(String p, String in) {
+        return simProtocol(p, in, provider);
+    }
 
-    private String engineProtocol(String p, String in, boolean vm) { return engineProtocol(p, in, vm, provider); }
+    private String engineProtocol(String p, String in, boolean vm) {
+        return engineProtocol(p, in, vm, provider);
+    }
 
     /**
      * CLI probe: {@code LayeredComparator <pattern> <input>} — prints the four

@@ -101,6 +101,20 @@ before opening in IntelliJ so vendored sources appear. Test JVMs want 2 GB
 heap (fuzz: 4 GB). Perf gate: `scripts/bench-regression.sh` (15% rule).
 Details: [`vendor/README.md`](vendor/README.md).
 
+## Code style
+
+One ruleset, three artifacts in `config/codestyle/` — import `tdfa-idea.xml`
+in IntelliJ (Settings → Editor → Code Style → Scheme → Import) and IDE
+reformat is CI-clean; `eclipse-formatter.properties` drives the machine
+formatter (flat 4-space continuation indent, 120 margin, joins wraps that
+fit); `checkstyle.xml` gates what formatters can't rewrite. Reformat with
+`./scripts/format.sh`. CI enforces both (`spotlessCheck` + checkstyle ride
+`./gradlew check`). Rules: 4-space indent and continuation indent, braces
+mandatory for `if`/`for`/`while`/`do`, no star imports, imports instead of
+qualified names (same-simple-name collisions stay qualified), members
+ordered fields → constructors → methods, nested types last. Generated
+(`:unicode:*`) and vendored (`re2j-suite`) code is exempt.
+
 ## Vision
 
 A **finished library** — bounded scope, all bugs fixed, then frozen. Think

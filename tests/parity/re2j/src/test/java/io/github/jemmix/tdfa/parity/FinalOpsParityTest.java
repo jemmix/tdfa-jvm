@@ -1,8 +1,9 @@
 package io.github.jemmix.tdfa.parity;
 
+import com.google.re2j.Re2jUnicodeProvider;
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -27,37 +28,41 @@ class FinalOpsParityTest {
         StringBuilder sb = new StringBuilder();
         boolean found = m.find();
         sb.append(found ? "true " + m.group() : "false").append(' ').append(m.groupCount());
-        if (found)
+        if (found) {
             for (int i = 1; i <= m.groupCount(); i++) {
                 String g = m.group(i);
-                if (g != null) sb.append(" <").append(g).append('>');
+                if (g != null) {
+                    sb.append(" <").append(g).append('>');
+                }
             }
+        }
         return sb.toString();
     }
 
     private static String tdfaProtocol(String pattern, String input, RegexEngineFactory factory) {
-        var m = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory, com.google.re2j.Re2jUnicodeProvider.INSTANCE).matcher(input);
+        var m = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory, Re2jUnicodeProvider.INSTANCE).matcher(input);
         StringBuilder sb = new StringBuilder();
         boolean found = m.find();
         sb.append(found ? "true " + m.group() : "false").append(' ').append(m.groupCount());
-        if (found)
+        if (found) {
             for (int i = 1; i <= m.groupCount(); i++) {
                 String g = m.group(i);
-                if (g != null) sb.append(" <").append(g).append('>');
+                if (g != null) {
+                    sb.append(" <").append(g).append('>');
+                }
             }
+        }
         return sb.toString();
     }
 
     private static void assertSameGroups(String pattern, String input, RegexEngineFactory factory) {
         try {
 
-        assertThat(tdfaProtocol(pattern, input, factory))
-                .as("pattern=\"%s\" input-encoded=\"%s\" [%s]", pattern, escape(input), factory)
-                .isEqualTo(re2jProtocol(pattern, input));
-            } catch (AssertionError e) {
+            assertThat(tdfaProtocol(pattern, input, factory)).as("pattern=\"%s\" input-encoded=\"%s\" [%s]", pattern, escape(input), factory).isEqualTo(re2jProtocol(pattern, input));
+        } catch (AssertionError e) {
             // failure-time layer attribution (zero cost on the green path)
-            throw new AssertionError(e.getMessage() + "\n  " + new io.github.jemmix.tdfa.parity.LayeredComparator(
-                    com.google.re2j.Re2jUnicodeProvider.INSTANCE).compare(pattern, input).attribution(), e);
+            throw new AssertionError(e.getMessage() + "\n  " + new LayeredComparator(
+                            Re2jUnicodeProvider.INSTANCE).compare(pattern, input).attribution(), e);
         }
     }
 
@@ -65,8 +70,11 @@ class FinalOpsParityTest {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);
-            if (c < 0x20 || c > 0x7E) sb.append(String.format("\\u%04x", (int) c));
-            else sb.append(c);
+            if (c < 0x20 || c > 0x7E) {
+                sb.append(String.format("\\u%04x", (int) c));
+            } else {
+                sb.append(c);
+            }
         }
         return sb.toString();
     }
@@ -79,7 +87,7 @@ class FinalOpsParityTest {
         // Before the fix: g1 = "" instead of null (dead-transition tag leak).
         assertSameGroups("((?s:\\b))?", "\udc00\ud800\r", factory);
         assertSameGroups("(\\b)?", " ", factory);
-        assertSameGroups("(\\b)?", "x", factory);   // boundary holds: group participates
+        assertSameGroups("(\\b)?", "x", factory); // boundary holds: group participates
     }
 
     @ParameterizedTest
@@ -87,7 +95,7 @@ class FinalOpsParityTest {
     void zeroIterationStarGroupIsNull(RegexEngineFactory factory) {
         assertSameGroups("(\\z)*", "b", factory);
         assertSameGroups("(a\\z)*", "b", factory);
-        assertSameGroups("(b\\z)*", "b", factory);  // one real iteration
+        assertSameGroups("(b\\z)*", "b", factory); // one real iteration
     }
 
     @ParameterizedTest

@@ -4,7 +4,10 @@ import io.github.jemmix.tdfa.tnfa.Tnfa;
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
 import io.github.jemmix.tdfa.unicode.UnicodeProviders;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -73,15 +76,24 @@ public final class PikeSim {
     private static int[][] epsOutgoing(Tnfa nfa) {
         int n = nfa.stateCount;
         int[] count = new int[n], fill = new int[n];
-        for (int f : nfa.epsFrom) count[f]++;
+        for (int f : nfa.epsFrom) {
+            count[f]++;
+        }
         int[][] idx = new int[n][];
-        for (int s = 0; s < n; s++) idx[s] = new int[count[s]];
-        for (int i = 0; i < nfa.epsFrom.length; i++) idx[nfa.epsFrom[i]][fill[nfa.epsFrom[i]]++] = i;
+        for (int s = 0; s < n; s++) {
+            idx[s] = new int[count[s]];
+        }
+        for (int i = 0; i < nfa.epsFrom.length; i++) {
+            idx[nfa.epsFrom[i]][fill[nfa.epsFrom[i]]++] = i;
+        }
         for (int s = 0; s < n; s++) {
             int[] a = idx[s];
             for (int i = 1; i < a.length; i++) {
                 int v = a[i], j = i - 1;
-                while (j >= 0 && nfa.epsPri[a[j]] > nfa.epsPri[v]) { a[j + 1] = a[j]; j--; }
+                while (j >= 0 && nfa.epsPri[a[j]] > nfa.epsPri[v]) {
+                    a[j + 1] = a[j];
+                    j--;
+                }
                 a[j + 1] = v;
             }
         }
@@ -91,17 +103,27 @@ public final class PikeSim {
     private static int[][] symOutgoing(Tnfa nfa) {
         int n = nfa.stateCount;
         int[] count = new int[n], fill = new int[n];
-        for (int f : nfa.symFrom) count[f]++;
+        for (int f : nfa.symFrom) {
+            count[f]++;
+        }
         int[][] idx = new int[n][];
-        for (int s = 0; s < n; s++) idx[s] = new int[count[s]];
-        for (int i = 0; i < nfa.symFrom.length; i++) idx[nfa.symFrom[i]][fill[nfa.symFrom[i]]++] = i;
+        for (int s = 0; s < n; s++) {
+            idx[s] = new int[count[s]];
+        }
+        for (int i = 0; i < nfa.symFrom.length; i++) {
+            idx[nfa.symFrom[i]][fill[nfa.symFrom[i]]++] = i;
+        }
         return idx;
     }
 
     /** The underlying automaton (for deeper debugging). */
-    public Tnfa nfa() { return nfa; }
+    public Tnfa nfa() {
+        return nfa;
+    }
 
-    public String pattern() { return pattern; }
+    public String pattern() {
+        return pattern;
+    }
 
     public static PikeSim compile(String pattern) {
         return compile(pattern, UnicodeProviders.get());
@@ -121,103 +143,16 @@ public final class PikeSim {
      * null-group vs empty-group distinction the engine protocols rely on.
      */
     public static final class PikeMatcher {
-         private final PikeSim sim;
-         private final CharSequence input;
-         private final int len;
-         private int matchStart = -1, matchEnd = -1;
-         private int[] matchCap;
-         private boolean found;
-         /** Next scan start: continuation state. {@code find()} iterates like
-          *  the real matchers (advance to match end; +1 UTF-16 unit on an
-          *  empty match, mirroring io.github.jemmix.tdfa.core.Matcher). */
-         private int from;
-
-         PikeMatcher(PikeSim sim, CharSequence input) {
-             this.sim = sim;
-             this.input = input;
-             this.len = input.length();
-         }
-
-         public PikeMatcher reset() {
-             from = 0;
-             found = false;
-             return this;
-         }
-
-         public boolean find() {
-             for (int s = from; s <= len; s++) {
-                 // pair interior: s is a low half preceded by a high half —
-                 // skipped while SCANNING forward, but the explicitly given
-                 // start is honored as-is (engine parity: engine.match(input,
-                 // from) matches AT from even when from is a pair interior —
-                 // the skip governs scanning, not explicit starts). The
-                 // s == len case must not read charAt(len) — input ending in
-                 // a lone high has no interior there (fuzz repro: lone-high
-                 // input).
-                 if (s > from && s > 0 && s < len && isHigh(input.charAt(s - 1)) && isLow(input.charAt(s))) continue;
-                 if (runFrom(s)) {
-                     found = true;
-                     from = matchStart == matchEnd ? matchEnd + 1 : matchEnd;
-                     return true;
-                 }
-             }
-             found = false;
-             return false;
-         }
-
-         /** Reset and find from {@code start} (matcher-API parity with
-          *  tdfa/re2j: {@code find(int)} is the restart probe in the
-          *  LayeredComparator protocol). */
-         public boolean find(int start) {
-             if (start < 0 || start > len)
-                 throw new IndexOutOfBoundsException("start index out of bounds: " + start);
-             reset();
-             from = start;
-             return find();
-         }
-
-        public int start() { require(); return matchStart; }
-        public int end() { require(); return matchEnd; }
-        public int groupCount() { return sim.nfa.groupCount; }
-        public String group() { return group0(0); }
-        /** Group text, {@code null} if the group did not participate. */
-        public String group(int g) { require(); return group0(g); }
-        public boolean participating(int g) {
-            require();
-            int[] cap = caps();
-            return cap[2 * g - 1] >= 0 && cap[2 * g] >= 0;
-        }
-        /** Raw tag values after fixed-tag reconstruction (1-based; -1 = unset). */
-        public int[] tags() { require(); return caps(); }
-
-        private String group0(int g) {
-            if (g == 0) return input.subSequence(matchStart, matchEnd).toString();   // whole match: no tags
-            int[] cap = caps();
-            int open = cap[2 * g - 1], close = cap[2 * g];
-            if (open < 0 || close < 0) return null;
-            return input.subSequence(open, close).toString();
-        }
-
-        private int[] caps() {
-            int[] cap = matchCap.clone();
-            // BT22 §6.4 fixed-tag reconstruction — deliberately its own
-            // implementation, NOT the engine's MatchResult.reconstructFixed
-            // (the reference shares no code under test).
-            int[] fb = sim.nfa.fixedBase, fo = sim.nfa.fixedOffset;
-            if (fb != null) {
-                for (int t = 1; t < fb.length; t++) {
-                    int base = fb[t];
-                    if (base != 0) cap[t] = cap[base] >= 0 ? cap[base] - fo[t] : -1;
-                }
-            }
-            return cap;
-        }
-
-        private void require() {
-            if (!found) throw new IllegalStateException("no match — call find() first");
-        }
-
-        private int start0() { return matchStart >= 0 ? matchStart : -1; }
+        private final PikeSim sim;
+        private final CharSequence input;
+        private final int len;
+        private int matchStart = -1, matchEnd = -1;
+        private int[] matchCap;
+        private boolean found;
+        /** Next scan start: continuation state. {@code find()} iterates like
+         *  the real matchers (advance to match end; +1 UTF-16 unit on an
+         *  empty match, mirroring io.github.jemmix.tdfa.core.Matcher). */
+        private int from;
 
         // ---- the machine ----
 
@@ -231,6 +166,128 @@ public final class PikeSim {
 
         private static final boolean TRACE = Boolean.getBoolean("pikesim.trace");
 
+        PikeMatcher(PikeSim sim, CharSequence input) {
+            this.sim = sim;
+            this.input = input;
+            this.len = input.length();
+        }
+
+        public PikeMatcher reset() {
+            from = 0;
+            found = false;
+            return this;
+        }
+
+        public boolean find() {
+            for (int s = from; s <= len; s++) {
+                // pair interior: s is a low half preceded by a high half —
+                // skipped while SCANNING forward, but the explicitly given
+                // start is honored as-is (engine parity: engine.match(input,
+                // from) matches AT from even when from is a pair interior —
+                // the skip governs scanning, not explicit starts). The
+                // s == len case must not read charAt(len) — input ending in
+                // a lone high has no interior there (fuzz repro: lone-high
+                // input).
+                if (s > from && s > 0 && s < len && isHigh(input.charAt(s - 1)) && isLow(input.charAt(s))) {
+                    continue;
+                }
+                if (runFrom(s)) {
+                    found = true;
+                    from = matchStart == matchEnd ? matchEnd + 1 : matchEnd;
+                    return true;
+                }
+            }
+            found = false;
+            return false;
+        }
+
+        /** Reset and find from {@code start} (matcher-API parity with
+         *  tdfa/re2j: {@code find(int)} is the restart probe in the
+         *  LayeredComparator protocol). */
+        public boolean find(int start) {
+            if (start < 0 || start > len) {
+                throw new IndexOutOfBoundsException("start index out of bounds: " + start);
+            }
+            reset();
+            from = start;
+            return find();
+        }
+
+        public int start() {
+            require();
+            return matchStart;
+        }
+
+        public int end() {
+            require();
+            return matchEnd;
+        }
+
+        public int groupCount() {
+            return sim.nfa.groupCount;
+        }
+
+        public String group() {
+            return group0(0);
+        }
+
+        /** Group text, {@code null} if the group did not participate. */
+        public String group(int g) {
+            require();
+            return group0(g);
+        }
+
+        public boolean participating(int g) {
+            require();
+            int[] cap = caps();
+            return cap[2 * g - 1] >= 0 && cap[2 * g] >= 0;
+        }
+
+        /** Raw tag values after fixed-tag reconstruction (1-based; -1 = unset). */
+        public int[] tags() {
+            require();
+            return caps();
+        }
+
+        private String group0(int g) {
+            if (g == 0) {
+                return input.subSequence(matchStart, matchEnd).toString();
+            } // whole match: no tags
+            int[] cap = caps();
+            int open = cap[2 * g - 1], close = cap[2 * g];
+            if (open < 0 || close < 0) {
+                return null;
+            }
+            return input.subSequence(open, close).toString();
+        }
+
+        private int[] caps() {
+            int[] cap = matchCap.clone();
+            // BT22 §6.4 fixed-tag reconstruction — deliberately its own
+            // implementation, NOT the engine's MatchResult.reconstructFixed
+            // (the reference shares no code under test).
+            int[] fb = sim.nfa.fixedBase, fo = sim.nfa.fixedOffset;
+            if (fb != null) {
+                for (int t = 1; t < fb.length; t++) {
+                    int base = fb[t];
+                    if (base != 0) {
+                        cap[t] = cap[base] >= 0 ? cap[base] - fo[t] : -1;
+                    }
+                }
+            }
+            return cap;
+        }
+
+        private void require() {
+            if (!found) {
+                throw new IllegalStateException("no match — call find() first");
+            }
+        }
+
+        private int start0() {
+            return matchStart >= 0 ? matchStart : -1;
+        }
+
         private boolean runFrom(int start) {
             recorded = false;
             recEnd = -1;
@@ -238,11 +295,15 @@ public final class PikeSim {
             roundCut = false;
             List<Parked> queue = new ArrayList<>();
             int[] visited = new int[sim.nfa.stateCount];
-            if (TRACE) System.err.println("[sim] === start " + start);
+            if (TRACE) {
+                System.err.println("[sim] === start " + start);
+            }
             add(queue, sim.nfa.start, start, freshCaps(), visited);
             int pos = start;
             while (!queue.isEmpty()) {
-                if (pos >= len) break;
+                if (pos >= len) {
+                    break;
+                }
                 int cp = decode(pos);
                 int width = cp > 0xFFFF ? 2 : 1;
                 int roundPos = pos + width;
@@ -250,11 +311,15 @@ public final class PikeSim {
                 int[] seen = new int[sim.nfa.stateCount];
                 roundCut = false;
                 for (Parked t : queue) {
-                    if (roundCut) break;   // pike cut: threads below the recorder die
+                    if (roundCut) {
+                        break;
+                    } // pike cut: threads below the recorder die
                     for (int e : sim.symByState[t.state]) {
                         if (sim.nfa.symClass[e].matches(cp)) {
                             add(next, sim.nfa.symTo[e], roundPos, t.cap.clone(), seen);
-                            if (roundCut) break;
+                            if (roundCut) {
+                                break;
+                            }
                         }
                     }
                 }
@@ -272,7 +337,7 @@ public final class PikeSim {
 
         private int[] freshCaps() {
             int[] cap = new int[sim.nfa.tagCount + 1];
-            java.util.Arrays.fill(cap, -1);
+            Arrays.fill(cap, -1);
             return cap;
         }
 
@@ -283,9 +348,13 @@ public final class PikeSim {
          * with its caps).
          */
         private void add(List<Parked> queue, int state, int pos, int[] cap, int[] visited) {
-            if (roundCut || visited[state] != 0) return;
+            if (roundCut || visited[state] != 0) {
+                return;
+            }
             visited[state] = 1;
-            if (TRACE) System.err.println("[sim] add state=" + state + " pos=" + pos);
+            if (TRACE) {
+                System.err.println("[sim] add state=" + state + " pos=" + pos);
+            }
             if (state == sim.nfa.accept) {
                 // overwrites are necessarily higher priority (the cut rule
                 // guarantees everything below each recorder died)
@@ -293,12 +362,16 @@ public final class PikeSim {
                 recEnd = pos;
                 recCap = cap.clone();
                 roundCut = true;
-                if (TRACE) System.err.println("[sim] RECORD " + start0() + ".." + pos);
+                if (TRACE) {
+                    System.err.println("[sim] RECORD " + start0() + ".." + pos);
+                }
                 return;
             }
             for (int e : sim.epsByState[state]) {
                 int req = sim.nfa.epsEmptyMask[e];
-                if (req != 0 && !holds(req, pos)) continue;   // assertion: direct truth, at the crossing
+                if (req != 0 && !holds(req, pos)) {
+                    continue;
+                } // assertion: direct truth, at the crossing
                 int tag = sim.nfa.epsTag[e];
                 if (tag > 0) {
                     // capture = copy-on-write path state: each write forks the
@@ -328,41 +401,63 @@ public final class PikeSim {
                 add(queue, sim.nfa.epsTo[e], pos, cap, visited);
             }
             if (sim.symByState[state].length > 0) {
-                queue.add(new Parked(state, cap));   // arrays are immutable after fork
-                if (TRACE) System.err.println("[sim] park state=" + state + " pos=" + pos);
+                queue.add(new Parked(state, cap)); // arrays are immutable after fork
+                if (TRACE) {
+                    System.err.println("[sim] park state=" + state + " pos=" + pos);
+                }
             }
         }
 
         /** Position truth for one assertion mask — the whole posFlags story, direct. */
         private boolean holds(int mask, int pos) {
-            if ((mask & 1) != 0 && !(pos == 0 || input.charAt(pos - 1) == '\n')) return false;   // BEGIN_TEXT (line)
-            if ((mask & 2) != 0 && !(pos == len || input.charAt(pos) == '\n')) return false;     // END_TEXT (line)
-            if ((mask & 16) != 0 && pos != 0) return false;                                       // ABS_BEGIN
-            if ((mask & 32) != 0 && pos != len) return false;                                     // ABS_END
+            if ((mask & 1) != 0 && !(pos == 0 || input.charAt(pos - 1) == '\n')) {
+                return false;
+            } // BEGIN_TEXT (line)
+            if ((mask & 2) != 0 && !(pos == len || input.charAt(pos) == '\n')) {
+                return false;
+            } // END_TEXT (line)
+            if ((mask & 16) != 0 && pos != 0) {
+                return false;
+            } // ABS_BEGIN
+            if ((mask & 32) != 0 && pos != len) {
+                return false;
+            } // ABS_END
             if ((mask & 12) != 0) {
                 boolean boundary = wordBefore(pos) != wordAt(pos);
-                if ((mask & 4) != 0 && !boundary) return false;                                   // \b
-                if ((mask & 8) != 0 && boundary) return false;                                    // \B
+                if ((mask & 4) != 0 && !boundary) {
+                    return false;
+                } // \b
+                if ((mask & 8) != 0 && boundary) {
+                    return false;
+                } // \B
             }
             return true;
         }
 
         private boolean wordBefore(int pos) {
-            if (pos <= 0) return false;
+            if (pos <= 0) {
+                return false;
+            }
             char c = input.charAt(pos - 1);
             if (sim.nfa.unicodeWordBoundary && isLow(c) && pos >= 2) {
                 char h = input.charAt(pos - 2);
-                if (isHigh(h)) return isWordCodepoint(((h - 0xD800) << 10) + (c - 0xDC00) + 0x10000);
+                if (isHigh(h)) {
+                    return isWordCodepoint(((h - 0xD800) << 10) + (c - 0xDC00) + 0x10000);
+                }
             }
             return isWordCodepoint(c);
         }
 
         private boolean wordAt(int pos) {
-            if (pos >= len) return false;
+            if (pos >= len) {
+                return false;
+            }
             char c = input.charAt(pos);
             if (sim.nfa.unicodeWordBoundary && isHigh(c) && pos + 1 < len) {
                 char l = input.charAt(pos + 1);
-                if (isLow(l)) return isWordCodepoint(((c - 0xD800) << 10) + (l - 0xDC00) + 0x10000);
+                if (isLow(l)) {
+                    return isWordCodepoint(((c - 0xD800) << 10) + (l - 0xDC00) + 0x10000);
+                }
             }
             return isWordCodepoint(c);
         }
@@ -372,15 +467,18 @@ public final class PikeSim {
             if (wr == null) {
                 // plain mode: \w is ASCII [0-9A-Za-z_] (mirrors the engine's
                 // null-ranges fallback, implemented independently)
-                return cp == '_' || (cp >= '0' && cp <= '9')
-                        || (cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z');
+                return cp == '_' || (cp >= '0' && cp <= '9') || (cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z');
             }
             int lo = 0, hi = wr.length / 2 - 1;
             while (lo <= hi) {
                 int mid = (lo + hi) >>> 1;
-                if (cp < wr[2 * mid]) hi = mid - 1;
-                else if (cp > wr[2 * mid + 1]) lo = mid + 1;
-                else return true;
+                if (cp < wr[2 * mid]) {
+                    hi = mid - 1;
+                } else if (cp > wr[2 * mid + 1]) {
+                    lo = mid + 1;
+                } else {
+                    return true;
+                }
             }
             return false;
         }
@@ -393,14 +491,23 @@ public final class PikeSim {
             return c;
         }
 
-        private static boolean isHigh(char c) { return c >= 0xD800 && c <= 0xDBFF; }
-        private static boolean isLow(char c) { return c >= 0xDC00 && c <= 0xDFFF; }
+        private static boolean isHigh(char c) {
+            return c >= 0xD800 && c <= 0xDBFF;
+        }
+
+        private static boolean isLow(char c) {
+            return c >= 0xDC00 && c <= 0xDFFF;
+        }
     }
 
     private static final class Parked {
         final int state;
         final int[] cap;
-        Parked(int state, int[] cap) { this.state = state; this.cap = cap; }
+
+        Parked(int state, int[] cap) {
+            this.state = state;
+            this.cap = cap;
+        }
     }
 
     /**
@@ -419,9 +526,11 @@ public final class PikeSim {
             runLine(sim, args[1]);
             return;
         }
-        java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(System.in));
+        BufferedReader r = new BufferedReader(new InputStreamReader(System.in));
         String line;
-        while ((line = r.readLine()) != null) runLine(sim, line);
+        while ((line = r.readLine()) != null) {
+            runLine(sim, line);
+        }
     }
 
     private static void runLine(PikeSim sim, String in) {

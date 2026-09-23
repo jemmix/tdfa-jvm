@@ -3,7 +3,10 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.core.CompileOptions;
 import io.github.jemmix.tdfa.core.EmittedSurface;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
 
+import java.io.Serializable;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 /**
@@ -38,7 +41,7 @@ import java.util.Map;
  * convention; a pattern compiled against the process default recompiles
  * against the READER's default tables.
  */
-public interface Pattern extends java.io.Serializable {
+public interface Pattern extends Serializable {
 
     /**
      * Flag: case insensitive matching.
@@ -81,7 +84,9 @@ public interface Pattern extends java.io.Serializable {
      * Compile {@code regex} with default flags (leftmost-first, generated engine).
      */
     static Pattern compile(String regex) {
-        if (regex == null) throw new NullPointerException("pattern is null");
+        if (regex == null) {
+            throw new NullPointerException("pattern is null");
+        }
         return compile(regex, 0);
     }
 
@@ -108,8 +113,7 @@ public interface Pattern extends java.io.Serializable {
      * for resolving {@code \p{...}} / {@code \P{...}} property classes — e.g. a
      * pinned-Unicode-version provider for reproducible matching across JVMs.
      */
-    static Pattern compile(String regex, int flags, RegexEngineFactory factory,
-                           io.github.jemmix.tdfa.unicode.UnicodeDataProvider unicodeProvider) {
+    static Pattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider unicodeProvider) {
         return PatternCompiler.compile(regex, flags, factory, unicodeProvider);
     }
 
@@ -117,12 +121,17 @@ public interface Pattern extends java.io.Serializable {
      * Compile with explicit options (semantics, tables, observer).
      */
     static Pattern compile(String regex, CompileOptions options) {
-        if (options == null) throw new NullPointerException("options is null");
+        if (options == null) {
+            throw new NullPointerException("options is null");
+        }
         int flags = 0;
-        if (options.isLongestMatch()) flags |= LONGEST_MATCH;
-        if (options.isDisableUnicodeGroups()) flags |= DISABLE_UNICODE_GROUPS;
-        return PatternCompiler.compile(regex, flags, null,
-            options.unicodeProvider(), options.observer());
+        if (options.isLongestMatch()) {
+            flags |= LONGEST_MATCH;
+        }
+        if (options.isDisableUnicodeGroups()) {
+            flags |= DISABLE_UNICODE_GROUPS;
+        }
+        return PatternCompiler.compile(regex, flags, null, options.unicodeProvider(), options.observer());
     }
 
     /**
@@ -145,12 +154,16 @@ public interface Pattern extends java.io.Serializable {
      * Quote regexp metacharacters in {@code s}.
      */
     static String quote(String s) {
-        if (s.isEmpty()) return "";
+        if (s.isEmpty()) {
+            return "";
+        }
         StringBuilder out = new StringBuilder(s.length() << 1);
-        for (int i = 0; i < s.length(); ) {
+        for (int i = 0; i < s.length();) {
             int c = s.codePointAt(i);
             i += Character.charCount(c);
-            if ("\\.+*?()|[]{}^$".indexOf(c) >= 0) out.append('\\');
+            if ("\\.+*?()|[]{}^$".indexOf(c) >= 0) {
+                out.append('\\');
+            }
             out.appendCodePoint(c);
         }
         return out.toString();
@@ -228,7 +241,7 @@ public interface Pattern extends java.io.Serializable {
         }
 
         public static String decode(byte[] bytes) {
-            return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+            return new String(bytes, StandardCharsets.UTF_8);
         }
     }
 }

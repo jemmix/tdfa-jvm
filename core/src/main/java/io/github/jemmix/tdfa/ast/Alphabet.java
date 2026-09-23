@@ -9,7 +9,8 @@ package io.github.jemmix.tdfa.ast;
  * surrogate unit is itself a codepoint.
  */
 public final class Alphabet {
-    private Alphabet() {}
+    private Alphabet() {
+    }
 
     /**
      * Codepoint at {@code pos} within {@code [pos, end)}. A high surrogate
@@ -20,8 +21,9 @@ public final class Alphabet {
         char c0 = s.charAt(pos);
         if (c0 >= 0xD800 && c0 <= 0xDBFF && pos + 1 < end) {
             char c1 = s.charAt(pos + 1);
-            if (c1 >= 0xDC00 && c1 <= 0xDFFF)
+            if (c1 >= 0xDC00 && c1 <= 0xDFFF) {
                 return ((c0 - 0xD800) << 10) + (c1 - 0xDC00) + 0x10000;
+            }
         }
         return c0;
     }
@@ -38,8 +40,6 @@ public final class Alphabet {
      * to it.
      */
     public static boolean pairInterior(CharSequence s, int pos) {
-        return pos > 0 && pos < s.length()
-                && s.charAt(pos) >= 0xDC00 && s.charAt(pos) <= 0xDFFF
-                && s.charAt(pos - 1) >= 0xD800 && s.charAt(pos - 1) <= 0xDBFF;
+        return pos > 0 && pos < s.length() && s.charAt(pos) >= 0xDC00 && s.charAt(pos) <= 0xDFFF && s.charAt(pos - 1) >= 0xD800 && s.charAt(pos - 1) <= 0xDBFF;
     }
 }

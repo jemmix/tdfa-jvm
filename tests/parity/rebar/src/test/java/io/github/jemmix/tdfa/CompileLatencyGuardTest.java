@@ -1,11 +1,13 @@
 package io.github.jemmix.tdfa;
 
+import io.github.jemmix.tdfa.core.PatternSyntaxException;
 import io.github.jemmix.tdfa.rebar.Scenario;
 import io.github.jemmix.tdfa.rebar.ScenarioLoader;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -68,14 +70,14 @@ class CompileLatencyGuardTest {
      */
     private static final long BUDGET_MS = 10_000 * ciMultiplier();
 
+    static String benchmarksDir = System.getProperty("rebar.benchmarks.dir");
+
+    private static List<Scenario> loaded;
+
     /** 4× on GitHub Actions runners, 1× elsewhere. */
     static long ciMultiplier() {
         return "true".equals(System.getenv("GITHUB_ACTIONS")) ? 4 : 1;
     }
-
-    static String benchmarksDir = System.getProperty("rebar.benchmarks.dir");
-
-    private static List<Scenario> loaded;
 
     @BeforeAll
     static void loadCorpus() throws Exception {
@@ -83,23 +85,12 @@ class CompileLatencyGuardTest {
     }
 
     static Stream<Arguments> bombs() {
-        return Stream.of(
-                Arguments.of("datefinder-ascii", "curated/03-date", "ascii",
-                        io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE, /*expectRejection=*/ false),
-                Arguments.of("datefinder-unicode", "curated/03-date", "unicode",
-                        io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE | io.github.jemmix.tdfa.Pattern.UNICODE_CHARACTER_CLASS,
-                        /*expectRejection=*/ false),
-                Arguments.of("aws-keys-full", "curated/09-aws-keys", "full",
-                        0, /*expectRejection=*/ true),
-                Arguments.of("dictionary-single", "curated/12-dictionary", "single",
-                        0, /*expectRejection=*/ false));
+        return Stream.of(Arguments.of("datefinder-ascii", "curated/03-date", "ascii", Pattern.CASE_INSENSITIVE, /*expectRejection=*/ false), Arguments.of("datefinder-unicode", "curated/03-date", "unicode", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS, /*expectRejection=*/ false), Arguments.of("aws-keys-full", "curated/09-aws-keys", "full", 0, /*expectRejection=*/ true), Arguments.of("dictionary-single", "curated/12-dictionary", "single", 0, /*expectRejection=*/ false));
     }
 
     private static String regexOf(String group, String name) {
-        return loaded.stream()
-                .filter(s -> s.fullName().equals(group + "/" + name))
-                .findFirst().orElseThrow(() -> new IllegalStateException("scenario not found: " + group + "/" + name))
-                .regex();
+        return loaded.stream().filter(s -> s.fullName().equals(group + "/" + name)).findFirst().orElseThrow(() -> new IllegalStateException(
+                        "scenario not found: " + group + "/" + name)).regex();
     }
 
     @ParameterizedTest(name = "{0}")
@@ -108,16 +99,12 @@ class CompileLatencyGuardTest {
         String regex = regexOf(group, name);
         long t0 = System.nanoTime();
         if (expectRejection) {
-            org.assertj.core.api.Assertions.assertThatCode(
-                            () -> io.github.jemmix.tdfa.Pattern.compile(regex, flags))
-                    .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
-                    .hasMessageContaining("pattern too large");
+            Assertions.assertThatCode(() -> Pattern.compile(regex, flags)).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
         } else {
-            io.github.jemmix.tdfa.Pattern.compile(regex, flags);
+            Pattern.compile(regex, flags);
         }
         long ms = (System.nanoTime() - t0) / 1_000_000;
-        assertThat(ms).as("compile wall for %s (%d-char regex, flags=%d)", label, regex.length(), flags)
-                .isLessThan(BUDGET_MS);
+        assertThat(ms).as("compile wall for %s (%d-char regex, flags=%d)", label, regex.length(), flags).isLessThan(BUDGET_MS);
     }
 
     /** i1095 has no scenario group/name — inline variant. */
@@ -125,7 +112,7 @@ class CompileLatencyGuardTest {
     @MethodSource("inlineBombs")
     void compilesInlineWithinBudget(String label, String regex) {
         long t0 = System.nanoTime();
-        io.github.jemmix.tdfa.Pattern.compile(regex, 0);
+        Pattern.compile(regex, 0);
         long ms = (System.nanoTime() - t0) / 1_000_000;
         assertThat(ms).as("compile wall for %s", label).isLessThan(BUDGET_MS);
     }

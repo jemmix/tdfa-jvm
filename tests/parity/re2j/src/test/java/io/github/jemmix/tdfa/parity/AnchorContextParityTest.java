@@ -58,10 +58,10 @@ class AnchorContextParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void disjunctiveAssertionGatedAccepts(RegexEngineFactory factory) {
-        assertSameFind("Z(?:\\A|\\B)", "Z", factory);          // over-match via needle AND accept mask
+        assertSameFind("Z(?:\\A|\\B)", "Z", factory); // over-match via needle AND accept mask
         assertSameFind("(?:(?:^|\\z))\\b", "\u03a9z", factory);
         assertSameFind("(?m:\\A.|(^))\\S", "\u00e9", factory);
-        assertSameFind("(?m:(\\A.|(^)))", " ", factory);       // alternation priority among zero-width arms
+        assertSameFind("(?m:(\\A.|(^)))", " ", factory); // alternation priority among zero-width arms
     }
 
     /**
@@ -79,7 +79,7 @@ class AnchorContextParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void lazyQuantifierWordBoundaryStopsAtFirstAccept(RegexEngineFactory factory) {
-        assertSameFind(".+?\\b[^\\d]*", "\u00df9", factory);          // [0,1) not [0,2)
+        assertSameFind(".+?\\b[^\\d]*", "\u00df9", factory); // [0,1) not [0,2)
         assertSameFind(".{0,}?\\B\\S?", " ", factory);
         assertSameFind("\\D??(?:\\b)]?", "b", factory);
         assertSameFind("\\S+?\\bW?", "\udc00_", factory);
@@ -95,5 +95,5 @@ class AnchorContextParityTest {
         assertSameFind("[d-\ud835\udd04]??\\B\ud800?", "\udc21", factory);
         assertSameFind("[0-\ud83d\udca9]{0,}?\\B\udc07*", "\udfff", factory);
         assertSameFind("(.{1,}?\\b]{0,})", "\udc00b", factory);
-}
+    }
 }

@@ -1,8 +1,8 @@
 package io.github.jemmix.tdfa;
 
+import io.github.jemmix.tdfa.core.Matcher;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import io.github.jemmix.tdfa.core.Matcher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -41,14 +41,14 @@ class UnicodePropertyClassTest {
 
     // ===== stateBase overflow =====
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void letterClassRepeat25Compiles(RegexEngineFactory f) {
-        assertThatCode(() -> Pattern.compile("\\p{L}{25}", 0, f))
-                .as("\\p{L}{25} should compile without stateBase overflow")
-                .doesNotThrowAnyException();
+        assertThatCode(() -> Pattern.compile("\\p{L}{25}", 0, f)).as("\\p{L}{25} should compile without stateBase overflow").doesNotThrowAnyException();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void letterClassRepeat25Matches(RegexEngineFactory f) {
         Pattern r = Pattern.compile("\\p{L}{25}", 0, f);
         Matcher m = match(r, "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
@@ -57,17 +57,21 @@ class UnicodePropertyClassTest {
         assertThat(m.end(0)).isEqualTo(25);
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void letterClassRepeat25NoMatch(RegexEngineFactory f) {
         Pattern r = Pattern.compile("\\p{L}{25}", 0, f);
         assertThat(match(r, "1234567890123456789012345")).isNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void letterClassRepeat50(RegexEngineFactory f) {
         Pattern r = Pattern.compile("\\p{L}{50}", 0, f);
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 50; i++) sb.append('a');
+        for (int i = 0; i < 50; i++) {
+            sb.append('a');
+        }
         Matcher m = match(r, sb.toString());
         assertThat(m).isNotNull();
         assertThat(m.end(0)).isEqualTo(50);
@@ -77,9 +81,7 @@ class UnicodePropertyClassTest {
 
     @Test
     void asmDelegateModeCompilesWideDfa() {
-        assertThatCode(() -> Pattern.compile("\\p{L}+", 0, null))
-                .as("\\p{L}+ should compile on ASM (DELEGATE dispatch)")
-                .doesNotThrowAnyException();
+        assertThatCode(() -> Pattern.compile("\\p{L}+", 0, null)).as("\\p{L}+ should compile on ASM (DELEGATE dispatch)").doesNotThrowAnyException();
     }
 
     @Test
@@ -93,12 +95,7 @@ class UnicodePropertyClassTest {
 
     @Test
     void asmLargeAlternationCompilesAndMatches() {
-        String[] branches = {
-                "(cat)", "(dog)", "(bird)", "(fish)", "(frog)",
-                "(bear)", "(wolf)", "(deer)", "(lion)", "(tiger)",
-                "(eagle)", "(shark)", "(whale)", "(snake)", "(turtle)",
-                "(duck)", "(goose)", "(horse)", "(mouse)", "(rabbit)"
-        };
+        String[] branches = {"(cat)", "(dog)", "(bird)", "(fish)", "(frog)", "(bear)", "(wolf)", "(deer)", "(lion)", "(tiger)", "(eagle)", "(shark)", "(whale)", "(snake)", "(turtle)", "(duck)", "(goose)", "(horse)", "(mouse)", "(rabbit)"};
         String regex = String.join("|", branches);
         Pattern r = Pattern.compile(regex, 0, null);
         Matcher m = match(r, "have a tiger here");
@@ -108,7 +105,9 @@ class UnicodePropertyClassTest {
         assertThat(m.end(0)).isEqualTo(12);
         assertThat(m.start(10)).isEqualTo(7);
         for (int g = 1; g <= 20; g++) {
-            if (g == 10) continue;
+            if (g == 10) {
+                continue;
+            }
             assertThat(m.start(g)).isEqualTo(-1);
         }
     }

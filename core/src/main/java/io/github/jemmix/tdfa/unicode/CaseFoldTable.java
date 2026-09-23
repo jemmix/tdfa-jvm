@@ -36,7 +36,8 @@ public final class CaseFoldTable {
     /** Published index (built once; volatile for safe lazy publication). */
     private static volatile FoldIndex index;
 
-    private CaseFoldTable() {}
+    private CaseFoldTable() {
+    }
 
     /**
      * Primitive open-addressed fold-key → ranges index (linear probing,
@@ -52,21 +53,25 @@ public final class CaseFoldTable {
         final int[][] values;
 
         FoldIndex(Map<Integer, int[]> folded) {
-            int cap = 1 << 15;   // ~4K multi-member orbits → load ≤ ~0.13
-            while (cap < folded.size() * 4) cap <<= 1;
+            int cap = 1 << 15; // ~4K multi-member orbits → load ≤ ~0.13
+            while (cap < folded.size() * 4) {
+                cap <<= 1;
+            }
             keys = new int[cap];
             values = new int[cap][];
             for (Map.Entry<Integer, int[]> e : folded.entrySet()) {
                 int k = e.getKey() + 1;
                 int i = spread(e.getKey()) & (cap - 1);
-                while (keys[i] != 0) i = (i + 1) & (cap - 1);
+                while (keys[i] != 0) {
+                    i = (i + 1) & (cap - 1);
+                }
                 keys[i] = k;
                 values[i] = e.getValue();
             }
         }
 
         private static int spread(int fk) {
-            return fk * 0x9E3779B9;   // fold keys cluster low; spread high bits
+            return fk * 0x9E3779B9; // fold keys cluster low; spread high bits
         }
 
         /** Ranges for {@code fk}, or null when the orbit is a singleton. */
@@ -75,8 +80,12 @@ public final class CaseFoldTable {
             int i = spread(fk) & mask;
             while (true) {
                 int k = keys[i];
-                if (k == 0) return null;
-                if (k == fk + 1) return values[i];
+                if (k == 0) {
+                    return null;
+                }
+                if (k == fk + 1) {
+                    return values[i];
+                }
                 i = (i + 1) & mask;
             }
         }
@@ -130,7 +139,9 @@ public final class CaseFoldTable {
         Map<Integer, int[]> out = new HashMap<>();
         for (Map.Entry<Integer, ArrayList<Integer>> e : groups.entrySet()) {
             ArrayList<Integer> cps = e.getValue();
-            if (cps.size() <= 1) continue;
+            if (cps.size() <= 1) {
+                continue;
+            }
             cps.sort(Integer::compare);
             ArrayList<int[]> merged = new ArrayList<>();
             for (int cp : cps) {

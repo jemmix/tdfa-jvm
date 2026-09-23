@@ -6,7 +6,6 @@ import io.github.jemmix.tdfa.core.MatchResult;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Correctness tests for the core compiled-regex tier. Patterns are pinned; inputs chosen to exercise
@@ -23,7 +22,8 @@ class RegexTest {
 
     // ----------------- basic recognition -----------------
 
-    @Test void literalMatches() {
+    @Test
+    void literalMatches() {
         CompiledRegex r = CompiledRegex.compile("abc");
         assertThat(r.matches("abc")).isTrue();
         assertThat(r.matches("abcd")).isFalse();
@@ -31,25 +31,29 @@ class RegexTest {
         assertThat(r.find("xxabcxx")).isTrue();
     }
 
-    @Test void charClassMatches() {
+    @Test
+    void charClassMatches() {
         CompiledRegex r = CompiledRegex.compile("[abc]+");
         assertThat(r.matches("aabcc")).isTrue();
         assertThat(r.matches("abd")).isFalse();
     }
 
-    @Test void negatedClass() {
+    @Test
+    void negatedClass() {
         CompiledRegex r = CompiledRegex.compile("[^0-9]+");
         assertThat(r.matches("abc")).isTrue();
         assertThat(r.matches("abc1")).isFalse();
     }
 
-    @Test void digitClass() {
+    @Test
+    void digitClass() {
         CompiledRegex r = CompiledRegex.compile("\\d+");
         assertThat(r.find("abc123def")).isTrue();
         assertThat(r.find("abc")).isFalse();
     }
 
-    @Test void dotClass() {
+    @Test
+    void dotClass() {
         CompiledRegex r = CompiledRegex.compile("a.c");
         assertThat(r.matches("abc")).isTrue();
         assertThat(r.matches("a c")).isTrue();
@@ -58,7 +62,8 @@ class RegexTest {
 
     // ----------------- quantifiers -----------------
 
-    @Test void starQuantifier() {
+    @Test
+    void starQuantifier() {
         CompiledRegex r = CompiledRegex.compile("ab*c");
         assertThat(r.matches("ac")).isTrue();
         assertThat(r.matches("abc")).isTrue();
@@ -66,28 +71,32 @@ class RegexTest {
         assertThat(r.matches("axc")).isFalse();
     }
 
-    @Test void plusQuantifier() {
+    @Test
+    void plusQuantifier() {
         CompiledRegex r = CompiledRegex.compile("ab+c");
         assertThat(r.matches("ac")).isFalse();
         assertThat(r.matches("abc")).isTrue();
         assertThat(r.matches("abbbbc")).isTrue();
     }
 
-    @Test void optionalQuantifier() {
+    @Test
+    void optionalQuantifier() {
         CompiledRegex r = CompiledRegex.compile("colou?r");
         assertThat(r.matches("color")).isTrue();
         assertThat(r.matches("colour")).isTrue();
         assertThat(r.matches("coloar")).isFalse();
     }
 
-    @Test void countedQuantifier() {
+    @Test
+    void countedQuantifier() {
         CompiledRegex r = CompiledRegex.compile("a{3}");
         assertThat(r.matches("aaa")).isTrue();
         assertThat(r.matches("aa")).isFalse();
         assertThat(r.matches("aaaa")).isFalse();
     }
 
-    @Test void rangeQuantifier() {
+    @Test
+    void rangeQuantifier() {
         CompiledRegex r = CompiledRegex.compile("a{2,4}");
         assertThat(r.matches("aa")).isTrue();
         assertThat(r.matches("aaaa")).isTrue();
@@ -97,7 +106,8 @@ class RegexTest {
 
     // ----------------- alternation -----------------
 
-    @Test void alternation() {
+    @Test
+    void alternation() {
         CompiledRegex r = CompiledRegex.compile("cat|dog|bird");
         assertThat(r.matches("cat")).isTrue();
         assertThat(r.matches("dog")).isTrue();
@@ -105,7 +115,8 @@ class RegexTest {
         assertThat(r.matches("fish")).isFalse();
     }
 
-    @Test void alternationWithGroups() {
+    @Test
+    void alternationWithGroups() {
         CompiledRegex r = CompiledRegex.compile("(cat|dog)");
         assertThat(r.matches("cat")).isTrue();
         int[] g = groups(r, "dog");
@@ -115,14 +126,16 @@ class RegexTest {
 
     // ----------------- capture groups (the profit case) -----------------
 
-    @Test void simpleCaptureGroup() {
+    @Test
+    void simpleCaptureGroup() {
         CompiledRegex r = CompiledRegex.compile("(abc)");
         int[] g = groups(r, "abc");
         assertThat(g[2]).isEqualTo(0);
         assertThat(g[3]).isEqualTo(3);
     }
 
-    @Test void multipleCaptureGroups() {
+    @Test
+    void multipleCaptureGroups() {
         CompiledRegex r = CompiledRegex.compile("(a)(b)(c)");
         int[] g = groups(r, "abc");
         assertThat(g[2]).isEqualTo(0); // g1 start
@@ -133,7 +146,8 @@ class RegexTest {
         assertThat(g[7]).isEqualTo(3); // g3 end
     }
 
-    @Test void captureUnderRepetition() {
+    @Test
+    void captureUnderRepetition() {
         CompiledRegex r = CompiledRegex.compile("(a)*b");
         int[] g = groups(r, "aaaab");
         // group 1 captures the last 'a' (positions 3..4)
@@ -141,7 +155,8 @@ class RegexTest {
         assertThat(g[3]).isEqualTo(4);
     }
 
-    @Test void captureUnderRepetitionLongInput() {
+    @Test
+    void captureUnderRepetitionLongInput() {
         CompiledRegex r = CompiledRegex.compile("(ab)+");
         int[] g = groups(r, "ababab");
         // last iteration: positions 4..6
@@ -149,7 +164,8 @@ class RegexTest {
         assertThat(g[3]).isEqualTo(6);
     }
 
-    @Test void alternationUnderRepetitionWithCapture() {
+    @Test
+    void alternationUnderRepetitionWithCapture() {
         // (a|b)*c — classic TDFA example pattern
         CompiledRegex r = CompiledRegex.compile("(a|b)*c");
         int[] g = groups(r, "aabbc");
@@ -162,46 +178,58 @@ class RegexTest {
         assertThat(r.matches("d")).isFalse();
     }
 
-    @Test void ipPatternWithCaptures() {
+    @Test
+    void ipPatternWithCaptures() {
         // realistic capture-heavy pattern
         CompiledRegex r = CompiledRegex.compile("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)");
         int[] g = groups(r, "192.168.1.1");
-        assertThat(g[2]).isEqualTo(0); assertThat(g[3]).isEqualTo(3);   // 192
-        assertThat(g[4]).isEqualTo(4); assertThat(g[5]).isEqualTo(7);   // 168
-        assertThat(g[6]).isEqualTo(8); assertThat(g[7]).isEqualTo(9);   // 1
-        assertThat(g[8]).isEqualTo(10); assertThat(g[9]).isEqualTo(11); // 1
+        assertThat(g[2]).isEqualTo(0);
+        assertThat(g[3]).isEqualTo(3); // 192
+        assertThat(g[4]).isEqualTo(4);
+        assertThat(g[5]).isEqualTo(7); // 168
+        assertThat(g[6]).isEqualTo(8);
+        assertThat(g[7]).isEqualTo(9); // 1
+        assertThat(g[8]).isEqualTo(10);
+        assertThat(g[9]).isEqualTo(11); // 1
     }
 
-    @Test void logLinePatternWithCaptures() {
+    @Test
+    void logLinePatternWithCaptures() {
         // Apache-log-style capture
         CompiledRegex r = CompiledRegex.compile("(\\w+) (\\w+)");
         int[] g = groups(r, "hello world");
-        assertThat(g[2]).isEqualTo(0); assertThat(g[3]).isEqualTo(5);
-        assertThat(g[4]).isEqualTo(6); assertThat(g[5]).isEqualTo(11);
+        assertThat(g[2]).isEqualTo(0);
+        assertThat(g[3]).isEqualTo(5);
+        assertThat(g[4]).isEqualTo(6);
+        assertThat(g[5]).isEqualTo(11);
     }
 
     // ----------------- anchors -----------------
 
-    @Test void startAnchor() {
+    @Test
+    void startAnchor() {
         CompiledRegex r = CompiledRegex.compile("^abc");
         assertThat(r.find("abc def")).isTrue();
         assertThat(r.find("def abc")).isFalse();
     }
 
-    @Test void endAnchor() {
+    @Test
+    void endAnchor() {
         CompiledRegex r = CompiledRegex.compile("abc$");
         assertThat(r.find("def abc")).isTrue();
         assertThat(r.find("abc def")).isFalse();
     }
 
-    @Test void bothAnchors() {
+    @Test
+    void bothAnchors() {
         CompiledRegex r = CompiledRegex.compile("^abc$");
         assertThat(r.matches("abc")).isTrue();
         assertThat(r.matches("abcd")).isFalse();
         assertThat(r.find(" abc ")).isFalse();
     }
 
-    @Test void backslashAnchors() {
+    @Test
+    void backslashAnchors() {
         // \A = start of text, \z = end of text (RE2 semantics; matches our ^ $ in default mode).
         CompiledRegex r = CompiledRegex.compile("\\Aabc\\z");
         assertThat(r.matches("abc")).isTrue();
@@ -209,7 +237,8 @@ class RegexTest {
         assertThat(r.find("x abc")).isFalse();
     }
 
-    @Test void wordBoundary() {
+    @Test
+    void wordBoundary() {
         // \b matches at any position where one side is a word char and the other isn't.
         CompiledRegex r = CompiledRegex.compile("\\bword\\b");
         assertThat(r.find("a word here")).isTrue();
@@ -217,14 +246,16 @@ class RegexTest {
         assertThat(r.find("the word.")).isTrue();
     }
 
-    @Test void noWordBoundary() {
+    @Test
+    void noWordBoundary() {
         // \B is the complement of \b.
         CompiledRegex r = CompiledRegex.compile("\\Bword");
-        assertThat(r.find("password")).isTrue();   // 'word' mid-word, \B holds before 'w'
-        assertThat(r.find("a word")).isFalse();     // 'word' preceded by space, \b holds (not \B)
+        assertThat(r.find("password")).isTrue(); // 'word' mid-word, \B holds before 'w'
+        assertThat(r.find("a word")).isFalse(); // 'word' preceded by space, \b holds (not \B)
     }
 
-    @Test void perlLeftmostFirst() {
+    @Test
+    void perlLeftmostFirst() {
         // re2j/Perl: try alternatives left-to-right, first one that match wins.
         // (a|ab) on "ab": alt 1 matches [0,1) — Perl returns [0,1); POSIX returns [0,2).
         CompiledRegex perl = CompiledRegex.compile("(a|ab)");
@@ -248,7 +279,8 @@ class RegexTest {
         assertThat(m4.end(0)).isEqualTo(1);
     }
 
-    @Test void posixLeftmostLongest() {
+    @Test
+    void posixLeftmostLongest() {
         // Sanity: LONGEST_MATCH should give leftmost-longest.
         CompiledRegex posix = CompiledRegex.compile("(a|ab)", CompileOptions.of().longestMatch());
         MatchResult m = posix.match("ab", 0);
@@ -265,10 +297,13 @@ class RegexTest {
      * end-of-input — O(n²). The multi-state fix should be a single O(n × |states|)
      * pass. 200 K chars took &gt;30 s before; should be well under 1 s now.
      */
-    @Test void unanchoredFindNoMatchOnLargeHaystackIsNotQuadratic() {
+    @Test
+    void unanchoredFindNoMatchOnLargeHaystackIsNotQuadratic() {
         CompiledRegex r = CompiledRegex.compile("[a-z]+b");
         StringBuilder sb = new StringBuilder(200_000);
-        for (int i = 0; i < 200_000; i++) sb.append('a');
+        for (int i = 0; i < 200_000; i++) {
+            sb.append('a');
+        }
         String hs = sb.toString();
 
         long start = System.nanoTime();
@@ -289,11 +324,14 @@ class RegexTest {
     }
 
     /** The multi-state pre-check must not false-negative when a match does exist. */
-    @Test void unanchoredFindMatchStillWorksAfterMultistateFix() {
+    @Test
+    void unanchoredFindMatchStillWorksAfterMultistateFix() {
         CompiledRegex r = CompiledRegex.compile("[a-z]+b");
         // Match buried deep in a large haystack.
         StringBuilder sb = new StringBuilder(100_000);
-        for (int i = 0; i < 99_990; i++) sb.append('a');
+        for (int i = 0; i < 99_990; i++) {
+            sb.append('a');
+        }
         sb.append("aab");
         String hs = sb.toString();
 
@@ -305,10 +343,13 @@ class RegexTest {
     }
 
     /** Non-fast-path regex (word boundary): multi-state pre-check should still apply. */
-    @Test void wordBoundaryFindNoMatchOnLargeHaystackIsNotQuadratic() {
+    @Test
+    void wordBoundaryFindNoMatchOnLargeHaystackIsNotQuadratic() {
         CompiledRegex r = CompiledRegex.compile("\\bword\\b");
         StringBuilder sb = new StringBuilder(200_000);
-        for (int i = 0; i < 200_000; i++) sb.append('a');
+        for (int i = 0; i < 200_000; i++) {
+            sb.append('a');
+        }
         String hs = sb.toString();
 
         long start = System.nanoTime();
@@ -320,10 +361,13 @@ class RegexTest {
     }
 
     /** countMatches loop: each find() call after the last match must fast-fail. */
-    @Test void countMatchesOnLargeNoMatchHaystackIsNotQuadratic() {
+    @Test
+    void countMatchesOnLargeNoMatchHaystackIsNotQuadratic() {
         CompiledRegex r = CompiledRegex.compile("[0-9]+");
         StringBuilder sb = new StringBuilder(200_000);
-        for (int i = 0; i < 200_000; i++) sb.append('a');
+        for (int i = 0; i < 200_000; i++) {
+            sb.append('a');
+        }
         String hs = sb.toString();
 
         long start = System.nanoTime();
@@ -331,7 +375,9 @@ class RegexTest {
         int pos = 0;
         while (pos <= hs.length()) {
             MatchResult m = r.match(hs, pos);
-            if (m == null) break;
+            if (m == null) {
+                break;
+            }
             n++;
             pos = (m.end(0) <= m.start(0)) ? m.end(0) + 1 : m.end(0);
         }
