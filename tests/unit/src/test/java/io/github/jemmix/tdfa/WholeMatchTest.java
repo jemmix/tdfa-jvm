@@ -30,12 +30,12 @@ class WholeMatchTest {
         Pattern p = Pattern.compile("(a|ab)");
         PatternMatcher m = p.matcher("ab");
         assertThat(m.matches()).isTrue();
-        assertThat(m.matches()).isTrue();              // repeat: eager engine, no lazy state
+        assertThat(m.matches()).isTrue(); // repeat: eager engine, no lazy state
         assertThat(m.group()).isEqualTo("ab");
         assertThat(p.matcher("ac").matches()).isFalse();
         PatternMatcher mf = p.matcher("ab");
         assertThat(mf.find()).isTrue();
-        assertThat(mf.group()).isEqualTo("a");   // leftmost-first
+        assertThat(mf.group()).isEqualTo("a"); // leftmost-first
 
         // Divergence class: the pike cut matters (find gets its own pruned
         // artifact); whole and find must both stay exact.
@@ -47,7 +47,7 @@ class WholeMatchTest {
         assertThat(q.matcher("ad").matches()).isFalse();
         PatternMatcher mqf = q.matcher("xac");
         assertThat(mqf.find()).isTrue();
-        assertThat(mqf.group()).isEqualTo("a");   // leftmost-first, NOT "ac"
+        assertThat(mqf.group()).isEqualTo("a"); // leftmost-first, NOT "ac"
 
         Pattern r = Pattern.compile("ax?|a.y");
         PatternMatcher mrf = r.matcher("a.y");
@@ -84,7 +84,7 @@ class WholeMatchTest {
         assertThat(lm.matcher("ab").matches()).isTrue();
         PatternMatcher mlm = lm.matcher("xxab");
         assertThat(mlm.find()).isTrue();
-        assertThat(mlm.group()).isEqualTo("ab");   // leftmost-longest
+        assertThat(mlm.group()).isEqualTo("ab"); // leftmost-longest
 
         // Pattern-level conveniences route through the same walk.
         assertThat(Pattern.matches("(a|ab)", "ab")).isTrue();
@@ -120,24 +120,21 @@ class WholeMatchTest {
      */
     @Test
     void evergreenTier() {
-        io.github.jemmix.tdfa.core.CompiledRegex p =
-                io.github.jemmix.tdfa.core.CompiledRegex.compile("(a|ab)");
+        io.github.jemmix.tdfa.core.CompiledRegex p = io.github.jemmix.tdfa.core.CompiledRegex.compile("(a|ab)");
         assertThat(p.matches("ab")).isTrue();
         assertThat(p.matches("ac")).isFalse();
         assertThat(p.find("xxab")).isTrue();
-        io.github.jemmix.tdfa.core.CompiledRegex q =
-                io.github.jemmix.tdfa.core.CompiledRegex.compile("ab|a|ac");
+        io.github.jemmix.tdfa.core.CompiledRegex q = io.github.jemmix.tdfa.core.CompiledRegex.compile("ab|a|ac");
         assertThat(q.matches("ac")).isTrue();
         assertThat(q.find("xac")).isTrue();
-        io.github.jemmix.tdfa.core.CompiledRegex m =
-                io.github.jemmix.tdfa.core.CompiledRegex.compile("a$");
+        io.github.jemmix.tdfa.core.CompiledRegex m = io.github.jemmix.tdfa.core.CompiledRegex.compile("a$");
         assertThat(m.matches("a")).isTrue();
         assertThat(m.matches("a\nb")).isFalse();
         // Bomb corner: the cut-free whole artifact exceeds the compile
         // budget, so compile() fails with the standard rejection.
         assertThatThrownBy(() -> io.github.jemmix.tdfa.core.CompiledRegex.compile("(a{1,100}){1,100}"))
-                .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
-                .hasMessageContaining("pattern too large");
+                        .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
+                        .hasMessageContaining("pattern too large");
     }
 
     @Test
@@ -180,8 +177,8 @@ class WholeMatchTest {
 
         Pattern asm = Pattern.compile("(a|ab)");
         assertThat(((TDFAPattern) asm).wholeEngine().getClass().getSimpleName())
-                .as("default tier whole engine is generated, not the interpreter")
-                .startsWith("Gen");
+                        .as("default tier whole engine is generated, not the interpreter")
+                        .startsWith("Gen");
     }
 
     /**
@@ -196,47 +193,49 @@ class WholeMatchTest {
     @Test
     void anchoredArtifactWholeWalkIsExact() {
         String[] pats = {
-                "(a|ab)", "ab|a|ac", "ax?|a.y", "(a)(b|bc)", "a*", "a+", "(a*)*", "(a?){2,}",
-                "(^|$)+", "a$", "^a", "(?m)^a$", "(?m)a$", "\\Aab\\z", "a\\z", "(?i)AbC",
-                "(ab|a)+", "(a|ab)+", "x.*y", "x.+?y", "\\bword\\b", "(?:ab|a)(?:c|bcd)",
-                "(a??b??)*", "((a)|b)+", "(a{1,3}?)b", "(\\w+)\\s+(\\w+)", "(a)|(ab)",
+                        "(a|ab)", "ab|a|ac", "ax?|a.y", "(a)(b|bc)", "a*", "a+", "(a*)*", "(a?){2,}",
+                        "(^|$)+", "a$", "^a", "(?m)^a$", "(?m)a$", "\\Aab\\z", "a\\z", "(?i)AbC",
+                        "(ab|a)+", "(a|ab)+", "x.*y", "x.+?y", "\\bword\\b", "(?:ab|a)(?:c|bcd)",
+                        "(a??b??)*", "((a)|b)+", "(a{1,3}?)b", "(\\w+)\\s+(\\w+)", "(a)|(ab)",
         };
         String[] inputs = {
-                "", "a", "ab", "abc", "ac", "ad", "ax", "a.y", "b", "abab", "ababc", "aaab",
-                "a\n", "a\nb", "xay", "xabcy", "xxy", "xy", "word", " word ", "a b",
-                "hello brave new world", "AbC", "abcd", "zz", "aab", "aaaa", "aaaaab", "\n",
+                        "", "a", "ab", "abc", "ac", "ad", "ax", "a.y", "b", "abab", "ababc", "aaab",
+                        "a\n", "a\nb", "xay", "xabcy", "xxy", "xy", "word", " word ", "a b",
+                        "hello brave new world", "AbC", "abcd", "zz", "aab", "aaaa", "aaaaab", "\n",
         };
         for (String p : pats) {
             io.github.jemmix.tdfa.tdfa.TdfaRunner anchored;
             java.util.regex.Pattern jur;
             try {
                 io.github.jemmix.tdfa.tnfa.Tnfa an = io.github.jemmix.tdfa.tnfa.Tnfa.compile(
-                        p, false, true, io.github.jemmix.tdfa.unicode.UnicodeProviders.get());
+                                p, false, true, io.github.jemmix.tdfa.unicode.UnicodeProviders.get());
                 anchored = new io.github.jemmix.tdfa.tdfa.TdfaRunner(
-                        io.github.jemmix.tdfa.tdfa.Tdfa.compile(an, false));
+                                io.github.jemmix.tdfa.tdfa.Tdfa.compile(an, false));
                 jur = java.util.regex.Pattern.compile(p);
-            } catch (RuntimeException e) { continue; }
-            io.github.jemmix.tdfa.core.RegexEngine facadeWhole =
-                    ((TDFAPattern) Pattern.compile(p)).wholeEngine();
+            } catch (RuntimeException e) {
+                continue;
+            }
+            io.github.jemmix.tdfa.core.RegexEngine facadeWhole = ((TDFAPattern) Pattern.compile(p)).wholeEngine();
             for (String s : inputs) {
                 io.github.jemmix.tdfa.core.MatchResult am = anchored.matchWhole(s, new io.github.jemmix.tdfa.core.MatchScratch());
                 io.github.jemmix.tdfa.core.MatchResult fm = facadeWhole.matchWhole(s, new io.github.jemmix.tdfa.core.MatchScratch());
                 String a = am == null ? "null" : span(am);
                 String f = fm == null ? "null" : span(fm);
                 assertThat(a)
-                        .as("anchored whole of %s on %s (spans)", p, s.replace("\n", "\\n"))
-                        .isEqualTo(f);
+                                .as("anchored whole of %s on %s (spans)", p, s.replace("\n", "\\n"))
+                                .isEqualTo(f);
                 assertThat(am != null)
-                        .as("anchored whole boolean of %s on %s vs jur", p, s.replace("\n", "\\n"))
-                        .isEqualTo(jur.matcher(s).matches());
+                                .as("anchored whole boolean of %s on %s vs jur", p, s.replace("\n", "\\n"))
+                                .isEqualTo(jur.matcher(s).matches());
             }
         }
     }
 
     private static String span(io.github.jemmix.tdfa.core.MatchResult m) {
         StringBuilder sb = new StringBuilder("[").append(m.start(0)).append(',').append(m.end(0)).append(')');
-        for (int g = 1; g <= m.groupCount(); g++)
+        for (int g = 1; g <= m.groupCount(); g++) {
             sb.append(';').append(m.start(g) < 0 ? "null" : m.start(g) + "," + m.end(g));
+        }
         return sb.toString();
     }
 
@@ -260,7 +259,7 @@ class WholeMatchTest {
             assertThat(asm.start(1)).isEqualTo(2);
             assertThat(asm.end(1)).isEqualTo(2);
             PatternMatcher vm = Pattern.compile("(?:.)((?:\\B)?)", 0,
-                    io.github.jemmix.tdfa.tdfa.TdfaRunner::new).matcher(in);
+                            io.github.jemmix.tdfa.tdfa.TdfaRunner::new).matcher(in);
             assertThat(vm.matches()).isTrue();
             assertThat(vm.start(1)).isEqualTo(2);
             assertThat(vm.end(1)).isEqualTo(2);
@@ -273,7 +272,7 @@ class WholeMatchTest {
             assertThat(asm.matches()).as("flags=%d", flags).isTrue();
             assertThat(asm.start(1)).as("flags=%d", flags).isEqualTo(-1);
             PatternMatcher vm = Pattern.compile("(\\b)?", flags,
-                    io.github.jemmix.tdfa.tdfa.TdfaRunner::new).matcher("");
+                            io.github.jemmix.tdfa.tdfa.TdfaRunner::new).matcher("");
             assertThat(vm.matches()).isTrue();
             assertThat(vm.start(1)).isEqualTo(-1);
         }
@@ -286,7 +285,7 @@ class WholeMatchTest {
             assertThat(asm.start("n0")).isEqualTo(1);
             assertThat(asm.end("n0")).isEqualTo(1);
             PatternMatcher vm = Pattern.compile(".(?<n0>(\\z)*)", 0,
-                    io.github.jemmix.tdfa.tdfa.TdfaRunner::new).matcher("_");
+                            io.github.jemmix.tdfa.tdfa.TdfaRunner::new).matcher("_");
             assertThat(vm.matches()).isTrue();
             assertThat(vm.start(1)).isEqualTo(1);
             assertThat(vm.end(1)).isEqualTo(1);
@@ -306,13 +305,13 @@ class WholeMatchTest {
     void wholeBombFailsCompile() {
         String bomb = "(a{1,100}){1,100}";
         assertThatThrownBy(() -> Pattern.compile(bomb))
-                .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
-                .hasMessageContaining("pattern too large");
+                        .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
+                        .hasMessageContaining("pattern too large");
         assertThatThrownBy(() -> Pattern.compile(bomb, 0, io.github.jemmix.tdfa.tdfa.TdfaRunner::new))
-                .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
-                .hasMessageContaining("pattern too large");
+                        .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
+                        .hasMessageContaining("pattern too large");
         assertThatThrownBy(() -> io.github.jemmix.tdfa.core.CompiledRegex.compile(bomb))
-                .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
-                .hasMessageContaining("pattern too large");
+                        .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class)
+                        .hasMessageContaining("pattern too large");
     }
 }

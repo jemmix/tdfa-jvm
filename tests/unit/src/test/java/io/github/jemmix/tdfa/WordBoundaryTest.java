@@ -31,6 +31,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class WordBoundaryTest {
 
+    /** Mathematical Fraktur A (U+1D504) is a Unicode letter; under (?u) \w it's a word char. */
+    private static final String SUP_LETTER_A = "\uD835\uDD04"; // 𝔄
+    private static final String SUP_LETTER_B = "\uD835\uDD05"; // 𝔅
+
     private static Stream<RegexEngineFactory> factories() {
         return Stream.<RegexEngineFactory>of(null, TdfaRunner::new);
     }
@@ -47,14 +51,17 @@ class WordBoundaryTest {
 
     private static int countMatches(Pattern p, String input) {
         int count = 0;
-        for (Matcher m = p.matcher(input); m.find(); ) count++;
+        for (Matcher m = p.matcher(input); m.find();) {
+            count++;
+        }
         return count;
     }
 
     // ===== Alternation dead-end (§B fix area) =====
 
     /** Minimal dead-end repro: keyword prefix that doesn't complete must fall through to identifier. */
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void keywordPrefixFallsThroughToIdentifier(RegexEngineFactory f) {
         Matcher m = find("(\\bas\\b)|(a)", "a", f);
         assertThat(m).as("should match 'a' via identifier branch").isNotNull();
@@ -62,14 +69,16 @@ class WordBoundaryTest {
         assertThat(m.end(0)).isEqualTo(1);
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void keywordBranchMatchesWhenComplete(RegexEngineFactory f) {
         Matcher m = find("(\\bas\\b)|(a)", "as", f);
         assertThat(m).isNotNull();
         assertThat(m.end(0)).isEqualTo(2);
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void lexerStylePrefixOfKeywordMatchesAsIdentifier(RegexEngineFactory f) {
         Pattern r = Pattern.compile("(\\balways\\b)|([a-zA-Z_][a-zA-Z0-9_]*)", 0, f);
         Matcher m = match(r, "alwa");
@@ -79,7 +88,8 @@ class WordBoundaryTest {
         assertThat(m.start(2)).isEqualTo(0);
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void manyKeywordPrefixCharsAllMatch(RegexEngineFactory f) {
         Pattern r = Pattern.compile("(\\bcat\\b)|(\\bdog\\b)|(\\bbird\\b)|([a-z]+)", 0, f);
         for (String input : new String[]{"c", "d", "b", "ca", "do", "bi"}) {
@@ -91,7 +101,8 @@ class WordBoundaryTest {
         }
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void keywordPrefixInLongerWordDoesNotTrigger(RegexEngineFactory f) {
         Pattern r = Pattern.compile("(\\bcat\\b)|([a-z]+)", 0, f);
         Matcher m = match(r, "catalog");
@@ -100,20 +111,22 @@ class WordBoundaryTest {
         assertThat(m.start(1)).isEqualTo(-1);
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void multiTokenStream(RegexEngineFactory f) {
         Pattern r = Pattern.compile("(\\bas\\b)|(\\balways\\b)|([a-zA-Z_]+)", 0, f);
         int[] expectedEnds = {1, 4, 11, 13};
         String input = "a as always b";
         int idx = 0;
-        for (Matcher m = r.matcher(input); m.find(); ) {
+        for (Matcher m = r.matcher(input); m.find();) {
             assertThat(m.end(0)).as("token %d end", idx).isEqualTo(expectedEnds[idx]);
             idx++;
         }
         assertThat(idx).isEqualTo(4);
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void bothBranchesHaveWordBoundary(RegexEngineFactory f) {
         // (\bfoo\b)|(\bfoobar\b) on "foobar": \bfoo\b fails (no trailing \b),
         // \bfoobar\b matches all.
@@ -125,7 +138,8 @@ class WordBoundaryTest {
 
     // ===== \B (negated word boundary) in alternation =====
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void negatedBoundaryInAlternation(RegexEngineFactory f) {
         // \Bab\B fails at word starts; [a-z]+ catches all
         Pattern r = Pattern.compile("(\\Bab\\B)|([a-z]+)", 0, f);
@@ -137,38 +151,37 @@ class WordBoundaryTest {
 
     // ===== Supplementary codepoint \b (BUG: isWordChar can't see supplementary chars) =====
 
-    /** Mathematical Fraktur A (U+1D504) is a Unicode letter; under (?u) \w it's a word char. */
-    private static final String SUP_LETTER_A = "\uD835\uDD04"; // 𝔄
-    private static final String SUP_LETTER_B = "\uD835\uDD05"; // 𝔅
-
     /**
      * {@code .\b.} on {@code "a𝔄b"} must not match: both 'a' and 𝔄 (U+1D504)
      * are word chars under (?u), so no boundary fires between them. The engine
      * decodes the surrogate pair before the word-char search.
      */
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void noBoundaryBetweenBmpAndSupplementaryWordChar(RegexEngineFactory f) {
         Matcher m = find("(?u).\\b.", "a" + SUP_LETTER_A + "b", f);
         assertThat(m)
-                .as(".\b. on a𝔄b — \b should not fire between two word chars (BUG: returns non-null)")
-                .isNull();
+                        .as(".\b. on a𝔄b — \b should not fire between two word chars (BUG: returns non-null)")
+                        .isNull();
     }
 
     /**
      * {@code \b\w} on {@code "𝔄𝔅"} matches [0,2]: the boundary holds at
      * start-of-text before a supplementary letter.
      */
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void boundaryAtStartOfSupplementaryWordChars(RegexEngineFactory f) {
         Matcher m = find("(?u)\\b\\w", SUP_LETTER_A + SUP_LETTER_B, f);
         assertThat(m)
-                .as("\\b\\w on 𝔄𝔅 — \b should fire at start (BUG: returns null)")
-                .isNotNull();
+                        .as("\\b\\w on 𝔄𝔅 — \b should fire at start (BUG: returns null)")
+                        .isNotNull();
     }
 
     // ===== BMP non-ASCII word chars under (?u) =====
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void wordBoundaryOnCyrillic(RegexEngineFactory f) {
         // Cyrillic "абв" — all word chars under (?u)
         Matcher m = find("(?u)\\b\\w+\\b", "\u0430\u0431\u0432", f);
@@ -176,7 +189,8 @@ class WordBoundaryTest {
         assertThat(m.end(0)).isEqualTo(3);
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void wordBoundaryOnCjk(RegexEngineFactory f) {
         // CJK 漢字 — word chars under (?u), BMP so isWordChar works
         assertThat(find("(?u)\\b.", "\u6F22\u5B57", f)).isNotNull();
@@ -184,34 +198,39 @@ class WordBoundaryTest {
         assertThat(find("(?u).\u005cb.", "a\u6F22", f)).isNull(); // .\. not active; test later
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void wordBoundaryAtEndOfWord(RegexEngineFactory f) {
         Matcher m = find("(\\w+)\\b", "hello", f);
         assertThat(m).isNotNull();
         assertThat(m.end(0)).isEqualTo(5);
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void noBoundaryBeforeNonWord(RegexEngineFactory f) {
         // \b. on "!!!" — position 0 is start-of-text (non-word) → non-word: no \b
         assertThat(find("\\b.", "!!!", f)).isNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void boundaryAtStartOfInput(RegexEngineFactory f) {
         Matcher m = find("(\\bas)", "as", f);
         assertThat(m).isNotNull();
         assertThat(m.end(0)).isEqualTo(2);
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void caretAndBoundaryBothHold(RegexEngineFactory f) {
         Matcher m = find("^\\bword", "word", f);
         assertThat(m).isNotNull();
         assertThat(m.end(0)).isEqualTo(4);
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void countBoundaryDelimitedWords(RegexEngineFactory f) {
         Pattern r = Pattern.compile("\\bcat\\b", 0, f);
         assertThat(countMatches(r, "cat cat cat")).isEqualTo(3);
@@ -219,7 +238,8 @@ class WordBoundaryTest {
 
     // ===== Anchors in alternation =====
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void anchorsInAlternation(RegexEngineFactory f) {
         Matcher m1 = find("(^a)|(a$)", "a", f);
         assertThat(m1).isNotNull();
@@ -232,7 +252,8 @@ class WordBoundaryTest {
         assertThat(m2.start(2)).isEqualTo(1);
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void multilineAnchorInAlternation(RegexEngineFactory f) {
         Matcher m = find("(?m)(^x)|(^y)", "y\nx", f);
         assertThat(m).isNotNull();

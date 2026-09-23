@@ -81,7 +81,9 @@ public interface Pattern extends java.io.Serializable {
      * Compile {@code regex} with default flags (leftmost-first, generated engine).
      */
     static Pattern compile(String regex) {
-        if (regex == null) throw new NullPointerException("pattern is null");
+        if (regex == null) {
+            throw new NullPointerException("pattern is null");
+        }
         return compile(regex, 0);
     }
 
@@ -109,7 +111,7 @@ public interface Pattern extends java.io.Serializable {
      * pinned-Unicode-version provider for reproducible matching across JVMs.
      */
     static Pattern compile(String regex, int flags, RegexEngineFactory factory,
-                           io.github.jemmix.tdfa.unicode.UnicodeDataProvider unicodeProvider) {
+                    io.github.jemmix.tdfa.unicode.UnicodeDataProvider unicodeProvider) {
         return PatternCompiler.compile(regex, flags, factory, unicodeProvider);
     }
 
@@ -117,12 +119,18 @@ public interface Pattern extends java.io.Serializable {
      * Compile with explicit options (semantics, tables, observer).
      */
     static Pattern compile(String regex, CompileOptions options) {
-        if (options == null) throw new NullPointerException("options is null");
+        if (options == null) {
+            throw new NullPointerException("options is null");
+        }
         int flags = 0;
-        if (options.isLongestMatch()) flags |= LONGEST_MATCH;
-        if (options.isDisableUnicodeGroups()) flags |= DISABLE_UNICODE_GROUPS;
+        if (options.isLongestMatch()) {
+            flags |= LONGEST_MATCH;
+        }
+        if (options.isDisableUnicodeGroups()) {
+            flags |= DISABLE_UNICODE_GROUPS;
+        }
         return PatternCompiler.compile(regex, flags, null,
-            options.unicodeProvider(), options.observer());
+                        options.unicodeProvider(), options.observer());
     }
 
     /**
@@ -145,12 +153,16 @@ public interface Pattern extends java.io.Serializable {
      * Quote regexp metacharacters in {@code s}.
      */
     static String quote(String s) {
-        if (s.isEmpty()) return "";
+        if (s.isEmpty()) {
+            return "";
+        }
         StringBuilder out = new StringBuilder(s.length() << 1);
-        for (int i = 0; i < s.length(); ) {
+        for (int i = 0; i < s.length();) {
             int c = s.codePointAt(i);
             i += Character.charCount(c);
-            if ("\\.+*?()|[]{}^$".indexOf(c) >= 0) out.append('\\');
+            if ("\\.+*?()|[]{}^$".indexOf(c) >= 0) {
+                out.append('\\');
+            }
             out.appendCodePoint(c);
         }
         return out.toString();

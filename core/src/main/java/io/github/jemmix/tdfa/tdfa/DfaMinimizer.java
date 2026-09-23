@@ -86,9 +86,9 @@ final class DfaMinimizer {
     boolean useNormalized;
 
     DfaMinimizer(int n, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
-                 int[] ranges, int[] ops, int[] stateEntryMask, int[] stateAcceptMask,
-                 int[] stateStopOnAcceptMask, int[] stateFinalOpsByMask, boolean longest,
-                 WorkMeter meter) {
+                    int[] ranges, int[] ops, int[] stateEntryMask, int[] stateAcceptMask,
+                    int[] stateStopOnAcceptMask, int[] stateFinalOpsByMask, boolean longest,
+                    WorkMeter meter) {
         this.n = n;
         this.stateMeta = stateMeta;
         this.stateBase = stateBase;
@@ -112,8 +112,7 @@ final class DfaMinimizer {
      */
     private void detectOverlapsAndInit() {
         useNormalized = true;
-        outer:
-        for (int s = 0; s < n; s++) {
+        outer : for (int s = 0; s < n; s++) {
             int base = stateBase[s];
             int count = Tdfa.rangeCount(stateMeta[s]);
             int prevHi = -1;
@@ -127,7 +126,9 @@ final class DfaMinimizer {
                 prevHi = ranges[o + 1];
             }
         }
-        if (!useNormalized) return;
+        if (!useNormalized) {
+            return;
+        }
         computeGlobalBreakpoints();
         computeStateRangeMapping();
     }
@@ -135,7 +136,7 @@ final class DfaMinimizer {
     private void computeGlobalBreakpoints() {
         java.util.TreeSet<Integer> bps = new java.util.TreeSet<>();
         bps.add(0);
-        bps.add(0x110000);  // sentinel upper bound (exclusive)
+        bps.add(0x110000); // sentinel upper bound (exclusive)
         for (int s = 0; s < n; s++) {
             int base = stateBase[s];
             int count = Tdfa.rangeCount(stateMeta[s]);
@@ -143,12 +144,16 @@ final class DfaMinimizer {
                 int o = (base + r) * 5;
                 bps.add(ranges[o]);
                 int hi = ranges[o + 1];
-                if (hi < 0x10FFFF) bps.add(hi + 1);
+                if (hi < 0x10FFFF) {
+                    bps.add(hi + 1);
+                }
             }
         }
         globalBps = new int[bps.size()];
         int i = 0;
-        for (int b : bps) globalBps[i++] = b;
+        for (int b : bps) {
+            globalBps[i++] = b;
+        }
     }
 
     /**
@@ -170,7 +175,7 @@ final class DfaMinimizer {
         }
         stateRangeAt = new int[n * K];
         for (int s = 0; s < n; s++) {
-            meter.tick();   // n×K merge scan — budget-visible
+            meter.tick(); // n×K merge scan — budget-visible
             int base = stateBase[s];
             int count = Tdfa.rangeCount(stateMeta[s]);
             int rangeIdx = 0;
@@ -181,7 +186,9 @@ final class DfaMinimizer {
                     stateRangeAt[rowBase + k] = -1;
                     continue;
                 }
-                while (rangeIdx < count && ranges[(base + rangeIdx) * 5 + 1] < cp) rangeIdx++;
+                while (rangeIdx < count && ranges[(base + rangeIdx) * 5 + 1] < cp) {
+                    rangeIdx++;
+                }
                 if (rangeIdx < count) {
                     int o = (base + rangeIdx) * 5;
                     stateRangeAt[rowBase + k] = (ranges[o] <= cp) ? rangeIdx : -1;
@@ -197,11 +204,17 @@ final class DfaMinimizer {
      * Two blocks with bit-identical content return the same id (paper's O(1) comparison).
      */
     int opSeqId(int off) {
-        if (off < 0 || off >= opsIdAt.length) return 0;
+        if (off < 0 || off >= opsIdAt.length) {
+            return 0;
+        }
         int cached = opsIdAt[off];
-        if (cached != -1) return cached;
+        if (cached != -1) {
+            return cached;
+        }
         int p = off;
-        while (p < ops.length && ops[p] != Tdfa.OP_END) p += 3;
+        while (p < ops.length && ops[p] != Tdfa.OP_END) {
+            p += 3;
+        }
         OpSeq key = new OpSeq(ops, off, p);
         Integer id = opSeqIds.get(key);
         if (id == null) {
@@ -216,11 +229,15 @@ final class DfaMinimizer {
      * Compute the partition (mapping old state id -> new state id) via Moore's algorithm.
      */
     int[] computePartition() {
-        meter.tick(n);   // initial partition: n attribute-signature builds
+        meter.tick(n); // initial partition: n attribute-signature builds
         int[] partition = initialPartition();
         int groups = 0;
-        for (int p : partition) groups = Math.max(groups, p + 1);
-        if (groups == n) return partition;  // every state already unique; no merging possible
+        for (int p : partition) {
+            groups = Math.max(groups, p + 1);
+        }
+        if (groups == n) {
+            return partition;
+        } // every state already unique; no merging possible
 
         boolean changed = true;
         int iter = 0;
@@ -230,7 +247,7 @@ final class DfaMinimizer {
             int[] newPartition = new int[n];
             int nextGroup = 0;
             for (int s = 0; s < n; s++) {
-                meter.tick();   // one transition-signature build per state per round
+                meter.tick(); // one transition-signature build per state per round
                 SigKey key = transSig(s, partition);
                 Integer g = newGroupMap.get(key);
                 if (g == null) {
@@ -295,16 +312,20 @@ final class DfaMinimizer {
         sig[i++] = opSeqId(stateFinalOpsOff[s]);
         sig[i++] = stateEntryMask[s];
         sig[i++] = stateAcceptMask[s];
-        sig[i++] = (stateMeta[s] >>> 1) & 0xFFFF;  // range count (structural disambiguator)
+        sig[i++] = (stateMeta[s] >>> 1) & 0xFFFF; // range count (structural disambiguator)
         if (!longest) {
             int baseSM = s * 64;
-            for (int j = 0; j < 64; j++) sig[i++] = stateStopOnAcceptMask[baseSM + j];
+            for (int j = 0; j < 64; j++) {
+                sig[i++] = stateStopOnAcceptMask[baseSM + j];
+            }
         }
         if (stateFinalOpsByMask != null) {
             // Variant rows: states with different per-mask φ selections
             // (or different accept suppression) must never merge.
             int baseFM = s * 64;
-            for (int j = 0; j < 64; j++) sig[i++] = stateFinalOpsByMask[baseFM + j];
+            for (int j = 0; j < 64; j++) {
+                sig[i++] = stateFinalOpsByMask[baseFM + j];
+            }
         }
         return i;
     }
@@ -319,7 +340,7 @@ final class DfaMinimizer {
         int[] sig;
         int i;
         if (useNormalized) {
-            int K = globalBps.length - 1;  // # of codepoint-covering ranges
+            int K = globalBps.length - 1; // # of codepoint-covering ranges
             sig = new int[5 + extra + K * 3];
             i = fillAttrs(sig, s, 0);
             int rowBase = s * globalBps.length;
@@ -344,11 +365,11 @@ final class DfaMinimizer {
             for (int r = 0; r < count; r++) {
                 int o = (base + r) * 5;
                 int t = ranges[o + 2];
-                sig[i++] = ranges[o];                                  // lo
-                sig[i++] = ranges[o + 1];                              // hi
-                sig[i++] = (t == -1) ? -1 : partition[t];              // target's current partition
-                sig[i++] = opSeqId(ranges[o + 3]);                     // transition-ops content id
-                sig[i++] = ranges[o + 4];                              // requiredMask
+                sig[i++] = ranges[o]; // lo
+                sig[i++] = ranges[o + 1]; // hi
+                sig[i++] = (t == -1) ? -1 : partition[t]; // target's current partition
+                sig[i++] = opSeqId(ranges[o + 3]); // transition-ops content id
+                sig[i++] = ranges[o + 4]; // requiredMask
             }
         }
         return new SigKey(sig);

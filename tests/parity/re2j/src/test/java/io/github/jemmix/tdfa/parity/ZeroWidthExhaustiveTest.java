@@ -1,9 +1,9 @@
 package io.github.jemmix.tdfa.parity;
 
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -33,45 +33,56 @@ class ZeroWidthExhaustiveTest {
 
     static List<String> patterns() {
         List<String> out = new ArrayList<>();
-        for (String atom : ATOMS)
-            for (String q : QUANTS)
-                for (String pre : PREFIX)
+        for (String atom : ATOMS) {
+            for (String q : QUANTS) {
+                for (String pre : PREFIX) {
                     for (String suf : SUFFIX) {
                         out.add(pre + atom + q + suf);
                         out.add(pre + "(" + atom + ")" + q + suf);
                     }
+                }
+            }
+        }
         // Multiline variants (inline (?m:) scoping).
-        for (String atom : new String[]{"^", "$"})
-            for (String q : QUANTS)
-                for (String pre : PREFIX)
-                    for (String suf : SUFFIX)
+        for (String atom : new String[]{"^", "$"}) {
+            for (String q : QUANTS) {
+                for (String pre : PREFIX) {
+                    for (String suf : SUFFIX) {
                         out.add(pre + "(?m:" + atom + ")" + q + suf);
+                    }
+                }
+            }
+        }
         return out;
     }
 
     static List<String> inputs() {
         return List.of(
-                "ab",
-                "a b",
-                "  x  ",
-                "a\nb",
-                "\na\n",
-                "Ω9\ud800\udfff",
-                "ab\udc21\ud800x",
-                "\udc00\ud800\r",
-                "aaaa bbbb aaaa",
-                "€一漢 x");
+                        "ab",
+                        "a b",
+                        "  x  ",
+                        "a\nb",
+                        "\na\n",
+                        "Ω9\ud800\udfff",
+                        "ab\udc21\ud800x",
+                        "\udc00\ud800\r",
+                        "aaaa bbbb aaaa",
+                        "€一漢 x");
     }
 
-    static record Case(String pattern, String input) {}
+    static record Case(String pattern, String input) {
+    }
 
     static Stream<Arguments> cases() {
         List<Arguments> out = new ArrayList<>();
         List<RegexEngineFactory> factories = Re2jOracle.engineFactories().toList();
-        for (String p : patterns())
-            for (String i : inputs())
-                for (RegexEngineFactory f : factories)
+        for (String p : patterns()) {
+            for (String i : inputs()) {
+                for (RegexEngineFactory f : factories) {
                     out.add(Arguments.of(new Case(p, i), f));
+                }
+            }
+        }
         return out.stream();
     }
 
@@ -81,14 +92,14 @@ class ZeroWidthExhaustiveTest {
         String expected = re2jProtocol(c.pattern(), c.input());
         String actual = tdfaProtocol(c.pattern(), c.input(), factory);
         assertThat(actual)
-                .as("pattern=\"%s\" input-encoded=\"%s\" [%s]", c.pattern(), escape(c.input()), factory)
-                .isEqualTo(expected);
+                        .as("pattern=\"%s\" input-encoded=\"%s\" [%s]", c.pattern(), escape(c.input()), factory)
+                        .isEqualTo(expected);
         // Layered audit: the PikeSim reference (over our Tnfa, no determinizer)
         // must also agree — sim-vs-DFA disagreement on any enumerated case is a
         // determinizer bug, pre-localized by construction.
         assertThat(simProtocol(c.pattern(), c.input()))
-                .as("sim-vs-re2j pattern=\"%s\" input-encoded=\"%s\"", c.pattern(), escape(c.input()))
-                .isEqualTo(expected);
+                        .as("sim-vs-re2j pattern=\"%s\" input-encoded=\"%s\"", c.pattern(), escape(c.input()))
+                        .isEqualTo(expected);
     }
 
     /** PikeSim reference in this test's protocol — the audit's fourth column. */
@@ -97,11 +108,14 @@ class ZeroWidthExhaustiveTest {
         StringBuilder sb = new StringBuilder();
         boolean found = m.find();
         sb.append(found ? "true " + m.group() : "false").append(' ').append(m.groupCount());
-        if (found)
+        if (found) {
             for (int i = 1; i <= m.groupCount(); i++) {
                 String g = m.group(i);
-                if (g != null) sb.append(" <").append(g).append('>');
+                if (g != null) {
+                    sb.append(" <").append(g).append('>');
+                }
             }
+        }
         return sb.toString();
     }
 
@@ -110,11 +124,14 @@ class ZeroWidthExhaustiveTest {
         StringBuilder sb = new StringBuilder();
         boolean found = m.find();
         sb.append(found ? "true " + m.group() : "false").append(' ').append(m.groupCount());
-        if (found)
+        if (found) {
             for (int i = 1; i <= m.groupCount(); i++) {
                 String g = m.group(i);
-                if (g != null) sb.append(" <").append(g).append('>');
+                if (g != null) {
+                    sb.append(" <").append(g).append('>');
+                }
             }
+        }
         return sb.toString();
     }
 
@@ -123,11 +140,14 @@ class ZeroWidthExhaustiveTest {
         StringBuilder sb = new StringBuilder();
         boolean found = m.find();
         sb.append(found ? "true " + m.group() : "false").append(' ').append(m.groupCount());
-        if (found)
+        if (found) {
             for (int i = 1; i <= m.groupCount(); i++) {
                 String g = m.group(i);
-                if (g != null) sb.append(" <").append(g).append('>');
+                if (g != null) {
+                    sb.append(" <").append(g).append('>');
+                }
             }
+        }
         return sb.toString();
     }
 
@@ -135,8 +155,11 @@ class ZeroWidthExhaustiveTest {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);
-            if (c < 0x20 || c > 0x7E) sb.append(String.format("\\u%04x", (int) c));
-            else sb.append(c);
+            if (c < 0x20 || c > 0x7E) {
+                sb.append(String.format("\\u%04x", (int) c));
+            } else {
+                sb.append(c);
+            }
         }
         return sb.toString();
     }

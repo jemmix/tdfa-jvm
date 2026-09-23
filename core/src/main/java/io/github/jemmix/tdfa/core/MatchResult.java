@@ -45,23 +45,30 @@ public final class MatchResult {
     }
 
     /** Number of capturing groups, excluding group 0. */
-    public int groupCount() { return groupCount; }
+    public int groupCount() {
+        return groupCount;
+    }
 
     /** Tag {@code t} (1-indexed; tag 2i-1 = open of group i, tag 2i = close of
      *  group i). Valid range {@code [1, 2*groupCount()]}; {@code -1} = unset (NIL).
      * @throws IndexOutOfBoundsException outside the valid range. */
     public int tag(int t) {
-        if (t < 1 || t > 2 * groupCount)
+        if (t < 1 || t > 2 * groupCount) {
             throw new IndexOutOfBoundsException("tag " + t + " (valid: 1.." + 2 * groupCount + ")");
+        }
         return regs[finalRegBase + (t - 1)];
     }
 
     /** Start offset (inclusive) of {@code group} (0 = whole match); {@code -1} = unset (NIL).
      * @throws IndexOutOfBoundsException outside {@code [0, groupCount()]}. */
-    @EmittedSurface  // emitted shells link start/end by name (compiled callers cannot break silently)
+    @EmittedSurface // emitted shells link start/end by name (compiled callers cannot break silently)
     public int start(int group) {
-        if (group < 0 || group > groupCount) throw new IndexOutOfBoundsException("group " + group);
-        if (group == 0) return matchStart;
+        if (group < 0 || group > groupCount) {
+            throw new IndexOutOfBoundsException("group " + group);
+        }
+        if (group == 0) {
+            return matchStart;
+        }
         return tag(2 * (group - 1) + 1);
     }
 
@@ -69,14 +76,19 @@ public final class MatchResult {
      * @throws IndexOutOfBoundsException outside {@code [0, groupCount()]}. */
     @EmittedSurface
     public int end(int group) {
-        if (group < 0 || group > groupCount) throw new IndexOutOfBoundsException("group " + group);
-        if (group == 0) return matchEnd;
+        if (group < 0 || group > groupCount) {
+            throw new IndexOutOfBoundsException("group " + group);
+        }
+        if (group == 0) {
+            return matchEnd;
+        }
         return tag(2 * group);
     }
 
     public int[] groups() {
         int[] out = new int[2 * (groupCount + 1)];
-        out[0] = matchStart; out[1] = matchEnd;
+        out[0] = matchStart;
+        out[1] = matchEnd;
         for (int g = 1; g <= groupCount; g++) {
             out[2 * g] = start(g);
             out[2 * g + 1] = end(g);
@@ -98,7 +110,9 @@ public final class MatchResult {
      */
     @EmittedSurface
     public static void reconstructFixed(int[] regs, int finalRegBase, int[] fixedBase, int[] fixedOffset) {
-        if (fixedBase == null) return;
+        if (fixedBase == null) {
+            return;
+        }
         int tagCount = fixedBase.length - 1;
         for (int t = 1; t <= tagCount; t++) {
             int base = fixedBase[t];
@@ -113,7 +127,8 @@ public final class MatchResult {
      * Debugging aid: whole-match bounds plus every group's span, NIL shown
      * as {@code -1,-1} — a tag dump without this is misery (review P2).
      */
-    @Override public String toString() {
+    @Override
+    public String toString() {
         StringBuilder sb = new StringBuilder("Match[0]=").append(matchStart).append(',').append(matchEnd);
         for (int g = 1; g <= groupCount; g++) {
             sb.append(" [").append(g).append("]=").append(start(g)).append(',').append(end(g));
@@ -122,16 +137,22 @@ public final class MatchResult {
     }
 
     /** Value equality over the snapshot (same bounds and identical tag values). */
-    @Override public boolean equals(Object o) {
-        if (this == o) return true;
-        if (!(o instanceof MatchResult)) return false;
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (!(o instanceof MatchResult)) {
+            return false;
+        }
         MatchResult m = (MatchResult) o;
         return finalRegBase == m.finalRegBase && groupCount == m.groupCount
-                && matchStart == m.matchStart && matchEnd == m.matchEnd
-                && java.util.Arrays.equals(regs, m.regs);
+                        && matchStart == m.matchStart && matchEnd == m.matchEnd
+                        && java.util.Arrays.equals(regs, m.regs);
     }
 
-    @Override public int hashCode() {
+    @Override
+    public int hashCode() {
         int h = 31 * (31 * (31 * matchStart + matchEnd) + groupCount) + finalRegBase;
         return 31 * h + java.util.Arrays.hashCode(regs);
     }

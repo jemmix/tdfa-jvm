@@ -11,13 +11,17 @@ import java.util.List;
  */
 public final class InliningDriver {
 
-    record Shape(String regex, String haystack) {}
+    record Shape(String regex, String haystack) {
+    }
 
     static final List<Shape> SHAPES = List.of(
-            new Shape("needle42hash", "noise noise needle42hash noise needle42hash x"),
-            new Shape("[a-z]+ing", "the quick brown fox matching things doing something running"),
-            new Shape("(\\d{3})-(\\d{4})", "call 555-1234 or 212-5555 or 999-0000 for more"),
-            new Shape("\\w+@(\\w+)\\.[a-z]{2,4}", "mail bob@example.com or alice@test.org now"));
+                    new Shape("needle42hash", "noise noise needle42hash noise needle42hash x"),
+                    new Shape("[a-z]+ing", "the quick brown fox matching things doing something running"),
+                    new Shape("(\\d{3})-(\\d{4})", "call 555-1234 or 212-5555 or 999-0000 for more"),
+                    new Shape("\\w+@(\\w+)\\.[a-z]{2,4}", "mail bob@example.com or alice@test.org now"));
+
+    private InliningDriver() {
+    }
 
     public static void main(String[] argv) {
         int iters = argv.length > 0 ? Integer.parseInt(argv[0]) : 200_000;
@@ -32,5 +36,4 @@ public final class InliningDriver {
         System.out.println("(sink " + sink + ")");
     }
 
-    private InliningDriver() {}
 }

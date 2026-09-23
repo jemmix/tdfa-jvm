@@ -8,7 +8,7 @@ import java.util.List;
 final class DfaStateBuilder {
     final int id;
     final List<Range> ranges = new ArrayList<>();
-    int[] finalOpsArr;  // populated during materialization
+    int[] finalOpsArr; // populated during materialization
     /**
      * Position-aware φ variants (deduped op lists); null = mask-uniform.
      */
@@ -40,7 +40,7 @@ final class DfaStateBuilder {
         if (!ranges.isEmpty()) {
             Range last = ranges.get(ranges.size() - 1);
             if (last.hi == lo - 1 && last.target == target && last.requiredMask == requiredMask
-                && java.util.Arrays.equals(last.ops, ops)) {
+                            && java.util.Arrays.equals(last.ops, ops)) {
                 ranges.set(ranges.size() - 1, new Range(last.lo, hi, target, ops, requiredMask));
                 return false;
             }
@@ -51,14 +51,16 @@ final class DfaStateBuilder {
 
     void coalesce() {
         ranges.sort(Comparator.comparingInt(r -> r.lo));
-        if (ranges.size() <= 1) return;
+        if (ranges.size() <= 1) {
+            return;
+        }
         List<Range> out = new ArrayList<>();
         Range cur = ranges.get(0);
         for (int i = 1; i < ranges.size(); i++) {
             Range next = ranges.get(i);
             if (next.lo == cur.hi + 1 && next.target == cur.target
-                && Arrays.equals(next.ops, cur.ops)
-                && next.requiredMask == cur.requiredMask) {
+                            && Arrays.equals(next.ops, cur.ops)
+                            && next.requiredMask == cur.requiredMask) {
                 cur = new Range(cur.lo, next.hi, cur.target, cur.ops, cur.requiredMask);
             } else {
                 out.add(cur);
@@ -79,9 +81,13 @@ final class DfaStateBuilder {
     void sortByMaskSpecificity() {
         ranges.sort((a, b) -> {
             int cmp = Integer.compare(a.lo, b.lo);
-            if (cmp != 0) return cmp;
+            if (cmp != 0) {
+                return cmp;
+            }
             int bc = Integer.compare(Integer.bitCount(b.requiredMask), Integer.bitCount(a.requiredMask));
-            if (bc != 0) return bc;
+            if (bc != 0) {
+                return bc;
+            }
             // dead markers precede live ranges at equal specificity: a
             // more-specific context's DEAD must block a less-specific
             // context's live range for the same symbol cell.

@@ -1,6 +1,10 @@
 package io.github.jemmix.tdfa.tdfa;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * State interning/dedup: signature probing (ProbeKey vs DfaStateKey),
@@ -71,7 +75,9 @@ final class TdfaStateIndex {
 
     private static long foldClass(int[] ids, int len) {
         long h = 1;
-        for (int i = 0; i < len; i++) h = h * 0x100000001B3L + ids[i];
+        for (int i = 0; i < len; i++) {
+            h = h * 0x100000001B3L + ids[i];
+        }
         return h;
     }
 
@@ -86,9 +92,13 @@ final class TdfaStateIndex {
      * Java 8 floor: Arrays.equals range overload is Java 9+.
      */
     static boolean rangeEquals(int[] a, int aFrom, int aTo, int[] b, int bFrom, int bTo) {
-        if (aTo - aFrom != bTo - bFrom) return false;
+        if (aTo - aFrom != bTo - bFrom) {
+            return false;
+        }
         for (int i = aFrom, j = bFrom; i < aTo; i++, j++) {
-            if (a[i] != b[j]) return false;
+            if (a[i] != b[j]) {
+                return false;
+            }
         }
         return true;
     }
@@ -111,26 +121,38 @@ final class TdfaStateIndex {
         int total = 0;
         if (owner.tags == 0) {
             // dense tagless sig: (state, emptyMask[, pri]) — l is always empty
-            for (int i = 0; i < n; i++) total += 2 + (owner.longest ? 1 : 0);
+            for (int i = 0; i < n; i++) {
+                total += 2 + (owner.longest ? 1 : 0);
+            }
         } else {
             // l enters the signature as its HASH-CONSED ID — one int per
             // config instead of the full history content (interning makes
             // id equality exact content equality).
-            for (int i = 0; i < n; i++) total += 3 + (owner.longest ? 1 : 0);
+            for (int i = 0; i < n; i++) {
+                total += 3 + (owner.longest ? 1 : 0);
+            }
         }
-        if (probeSig.length < total) probeSig = new int[Math.max(total, probeSig.length * 2)];
+        if (probeSig.length < total) {
+            probeSig = new int[Math.max(total, probeSig.length * 2)];
+        }
         int j = 0;
         for (int i = 0; i < n; i++) {
             Config c = configs.get(i);
             probeSig[j++] = c.state;
-            if (owner.tags != 0) probeSig[j++] = c.l;
+            if (owner.tags != 0) {
+                probeSig[j++] = c.l;
+            }
             probeSig[j++] = c.emptyMask;
-            if (owner.longest) probeSig[j++] = c.pri;
+            if (owner.longest) {
+                probeSig[j++] = c.pri;
+            }
         }
         probe.sig = probeSig;
         probe.len = total;
         int h = 1;
-        for (int i = 0; i < total; i++) h = 31 * h + probeSig[i];
+        for (int i = 0; i < total; i++) {
+            h = 31 * h + probeSig[i];
+        }
         probe.hash = h;
         // Work meter: sig fill/copy/hash is O(sum |l|) real work — the
         // dominant cost on history-bloated compiles. Ticking per 64 ints
@@ -173,7 +195,9 @@ final class TdfaStateIndex {
             long[] bits = hasHist[i];
             for (int t = 0; t < owner.tags; t++) {
                 owner.meter.tick();
-                if ((bits[t >>> 6] >>> (t & 63) & 1L) != 0) continue;
+                if ((bits[t >>> 6] >>> (t & 63) & 1L) != 0) {
+                    continue;
+                }
                 int r = c.regs[t];
                 if (canonKeyStamp[r] != epoch) {
                     canonKeyStamp[r] = epoch;
@@ -223,7 +247,7 @@ final class TdfaStateIndex {
                 // below, so new long[rows][words] allocated words*rows junk
                 // longs per growth. words is constant for this compile.
                 hasHistShared = new long[Math.max(configs.size(),
-                    (hasHistShared == null ? 16 : hasHistShared.length) * 2)][];
+                                (hasHistShared == null ? 16 : hasHistShared.length) * 2)][];
             }
             for (int i = 0; i < configs.size(); i++) {
                 // Per-history-id cached bitsets (HistTable.bits): no fill,
@@ -251,7 +275,9 @@ final class TdfaStateIndex {
             if (owner.tags == 0) {
                 for (int cand : candidates.members) {
                     int[] mapped = tryMap(configs, owner.states.get(cand), owner.packedKernels.get(cand), ops);
-                    if (mapped != null) return new AddResult(cand, mapped);
+                    if (mapped != null) {
+                        return new AddResult(cand, mapped);
+                    }
                 }
             } else {
                 int[] compatibles = candidates.byClass.get(canonHash);
@@ -265,9 +291,11 @@ final class TdfaStateIndex {
                     int cand = compatibles[0];
                     int[] stored = stateClassIds.get(cand);
                     if (stored != null && stored.length == canon.length
-                        && rangeEquals(canon, 0, canon.length, stored, 0, stored.length)) {
+                                    && rangeEquals(canon, 0, canon.length, stored, 0, stored.length)) {
                         int[] mapped = tryMap(configs, owner.states.get(cand), owner.packedKernels.get(cand), ops);
-                        if (mapped != null) return new AddResult(cand, mapped);
+                        if (mapped != null) {
+                            return new AddResult(cand, mapped);
+                        }
                         // ops-rewrite failed: outcome is member-independent,
                         // fall through to append a new state.
                     }
@@ -295,7 +323,9 @@ final class TdfaStateIndex {
             if (owner.tags == 0) {
                 // tagless: consumers only read the seed STATES — pack them
                 int[] seedStates = new int[seed.size()];
-                for (int i = 0; i < seed.size(); i++) seedStates[i] = seed.get(i).state;
+                for (int i = 0; i < seed.size(); i++) {
+                    seedStates[i] = seed.get(i).state;
+                }
                 owner.stateSeeds.add(seedStates);
             } else {
                 owner.stateSeeds.add(seed);
@@ -307,8 +337,11 @@ final class TdfaStateIndex {
         stateClassIds.add(canon);
         if (candidates == null) {
             StateBucket fresh = new StateBucket();
-            if (owner.tags == 0) fresh.members = new int[]{id};
-            else fresh.byClass.put(canonHash, new int[]{id});
+            if (owner.tags == 0) {
+                fresh.members = new int[]{id};
+            } else {
+                fresh.byClass.put(canonHash, new int[]{id});
+            }
             stateIndex.put(new DfaStateKey(Arrays.copyOf(probe.sig, probe.len)), fresh);
         } else if (owner.tags == 0) {
             candidates.members = appendInt(candidates.members, id);
@@ -319,16 +352,18 @@ final class TdfaStateIndex {
             b.byClass.putIfAbsent(canonHash, new int[]{id});
         }
         owner.builders.add(new DfaStateBuilder(id));
-        if (isAccept) owner.accept.set(id);
+        if (isAccept) {
+            owner.accept.set(id);
+        }
         owner.kernelsTotal += configs.size();
         owner.kernelsWeighted += (long) configs.size() * owner.kernelConfigBytes;
         if (owner.states.size() > owner.maxStates || owner.kernelsWeighted > Budgets.compileMemoryBytes()) {
             throw new IllegalStateException("pattern too large: TDFA determinization budget exceeded ("
-                + owner.states.size() + " states, kernel total " + owner.kernelsTotal + " ("
-                + owner.kernelsWeighted + " weighted bytes), ticks " + owner.meter.spent()
-                + "; caps " + owner.maxStates + " states / " + Budgets.compileMemoryBytes()
-                + " weighted kernel bytes (" + owner.maxKernelsTotal + " tagless-equivalent configs) — raise -D"
-                + Budgets.COMPILE_MEMORY_PROP + ")");
+                            + owner.states.size() + " states, kernel total " + owner.kernelsTotal + " ("
+                            + owner.kernelsWeighted + " weighted bytes), ticks " + owner.meter.spent()
+                            + "; caps " + owner.maxStates + " states / " + Budgets.compileMemoryBytes()
+                            + " weighted kernel bytes (" + owner.maxKernelsTotal + " tagless-equivalent configs) — raise -D"
+                            + Budgets.COMPILE_MEMORY_PROP + ")");
         }
         return new AddResult(id, ops);
     }
@@ -348,7 +383,9 @@ final class TdfaStateIndex {
      */
     int[] tryMap(List<Config> newConfigs, List<Config> oldConfigs, int[] oldPacked, int[] ops) {
         int size = newConfigs.size();
-        if (oldPacked != null ? oldPacked.length != size * 2 : oldConfigs.size() != size) return null;
+        if (oldPacked != null ? oldPacked.length != size * 2 : oldConfigs.size() != size) {
+            return null;
+        }
         // Tagless patterns: no registers exist, so the (empty) bijection is
         // the identity and ops rewrite is a no-op — but the element-wise
         // ORDER check below is still semantically load-bearing: two closures
@@ -359,7 +396,9 @@ final class TdfaStateIndex {
         if (owner.tags == 0) {
             for (int i = 0; i < size; i++) {
                 int oldState = oldPacked != null ? oldPacked[i * 2] : oldConfigs.get(i).state;
-                if (newConfigs.get(i).state != oldState) return null;
+                if (newConfigs.get(i).state != oldState) {
+                    return null;
+                }
             }
             return ops;
         }
@@ -379,7 +418,7 @@ final class TdfaStateIndex {
             epochOld = new int[cap];
             stamp = 0;
         }
-        stamp++;      // fresh epoch for this attempt
+        stamp++; // fresh epoch for this attempt
         int[] m = mapNewToOld, mp = mapOldToNew;
         int[] eN = epochNew, eO = epochOld;
         // Stamped new-side registers, for the O(pairs) remaining-pairs scan
@@ -403,8 +442,12 @@ final class TdfaStateIndex {
             Config cn = newConfigs.get(i), co = oldConfigs.get(i);
             long[] bits = hasHist[i];
             for (int t = 0; t < owner.tags; t++) {
-                if (owner.meter != null) owner.meter.tick();   // per (config, tag): the bijection's real unit
-                if ((bits[t >>> 6] >>> (t & 63) & 1L) != 0) continue; // tag is set by transition op
+                if (owner.meter != null) {
+                    owner.meter.tick();
+                } // per (config, tag): the bijection's real unit
+                if ((bits[t >>> 6] >>> (t & 63) & 1L) != 0) {
+                    continue;
+                } // tag is set by transition op
                 int rn = cn.regs[t], ro = co.regs[t];
                 // A register may be new-side of one tag and old-side of
                 // another, so the two sides carry separate epoch arrays.
@@ -427,9 +470,13 @@ final class TdfaStateIndex {
         for (int i = 0; i < ops.length; i += 3) {
             owner.meter.tick();
             int op = ops[i], dst = ops[i + 1], src = ops[i + 2];
-            if (eN[dst] != stamp) return null;
+            if (eN[dst] != stamp) {
+                return null;
+            }
             int mapped = m[dst];
-            if (eO[mapped] != stamp || mp[mapped] != dst) return null;
+            if (eO[mapped] != stamp || mp[mapped] != dst) {
+                return null;
+            }
             rewritten.add(new int[]{op, mapped, src});
             eN[dst] = 0;
             eO[mapped] = 0;
@@ -441,10 +488,16 @@ final class TdfaStateIndex {
         // the new state's transition just wrote them into newReg slots. Copy oldReg <- newReg.
         for (int p = 0; p < stamped; p++) {
             int newReg = stampedRegs[p];
-            if (eN[newReg] != stamp) continue;
+            if (eN[newReg] != stamp) {
+                continue;
+            }
             int oldReg = m[newReg];
-            if (eO[oldReg] != stamp) continue;
-            if (newReg != oldReg) rewritten.add(0, new int[]{Tdfa.OP_COPY, oldReg, newReg});
+            if (eO[oldReg] != stamp) {
+                continue;
+            }
+            if (newReg != oldReg) {
+                rewritten.add(0, new int[]{Tdfa.OP_COPY, oldReg, newReg});
+            }
         }
         // Topological sort: copy ops must come before any op that reads their src.
         owner.topologicalSort(rewritten);
@@ -471,7 +524,9 @@ final class TdfaStateIndex {
 
         @Override
         public boolean equals(Object o) {
-            if (!(o instanceof DfaStateKey)) return false;
+            if (!(o instanceof DfaStateKey)) {
+                return false;
+            }
             DfaStateKey k = (DfaStateKey) o;
             return k.sig.length == len && rangeEquals(sig, 0, len, k.sig, 0, len);
         }
@@ -488,7 +543,7 @@ final class TdfaStateIndex {
      * a flat list — every member is merge-equivalent.
      */
     static final class StateBucket {
-        final HashMap<Long, int[]> byClass = new HashMap<>();  // tagged
-        int[] members;                       // tagless
+        final HashMap<Long, int[]> byClass = new HashMap<>(); // tagged
+        int[] members; // tagless
     }
 }

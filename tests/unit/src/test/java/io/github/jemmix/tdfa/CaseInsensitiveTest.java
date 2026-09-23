@@ -41,7 +41,8 @@ class CaseInsensitiveTest {
 
     // ===== CaseFoldTable unit tests =====
 
-    @Test void foldTableGroupForS() {
+    @Test
+    void foldTableGroupForS() {
         int[] r = CaseFoldTable.foldRanges('s');
         assertThat(r).isNotNull();
         assertThat(containsCp(r, 's')).isTrue();
@@ -49,25 +50,29 @@ class CaseInsensitiveTest {
         assertThat(containsCp(r, 0x017F)).as("ſ (U+017F)").isTrue();
     }
 
-    @Test void foldTableGroupForK() {
+    @Test
+    void foldTableGroupForK() {
         int[] r = CaseFoldTable.foldRanges('k');
         assertThat(r).isNotNull();
         assertThat(containsCp(r, 0x212A)).as("K (U+212A Kelvin)").isTrue();
     }
 
-    @Test void foldTableGroupForOmega() {
+    @Test
+    void foldTableGroupForOmega() {
         int[] r = CaseFoldTable.foldRanges(0x03A9);
         assertThat(r).isNotNull();
         assertThat(containsCp(r, 0x03C9)).as("ω").isTrue();
         assertThat(containsCp(r, 0x2126)).as("Ω (U+2126 Ohm)").isTrue();
     }
 
-    @Test void foldTableNullForNonLetter() {
+    @Test
+    void foldTableNullForNonLetter() {
         assertThat(CaseFoldTable.foldRanges('5')).isNull();
         assertThat(CaseFoldTable.foldRanges('!')).isNull();
     }
 
-    @Test void foldTableSymmetric() {
+    @Test
+    void foldTableSymmetric() {
         int[] a = CaseFoldTable.foldRanges('s');
         assertThat(a).isEqualTo(CaseFoldTable.foldRanges('S'));
         assertThat(a).isEqualTo(CaseFoldTable.foldRanges(0x017F));
@@ -76,7 +81,8 @@ class CaseInsensitiveTest {
     /** Simple case folding keeps the Turkic İ/ı pair out of the i-orbit;
      *  re2j and Go agree. JDK case mapping alone would merge
      *  {I, i, İ, ı} — the fold table pins the pair inert. */
-    @Test void foldTableTurkicIPairInert() {
+    @Test
+    void foldTableTurkicIPairInert() {
         assertThat(CaseFoldTable.foldRanges(0x0130)).as("İ (U+0130)").isNull();
         assertThat(CaseFoldTable.foldRanges(0x0131)).as("ı (U+0131)").isNull();
         int[] i = CaseFoldTable.foldRanges('i');
@@ -89,12 +95,13 @@ class CaseInsensitiveTest {
 
     /** Cyrillic historic letters (U+1C80..U+1C88, Unicode 9.0) fold onto
      *  their partner letters — full modern orbits, both directions. */
-    @Test void foldTableHistoricCyrillicOrbits() {
-        int[] ve = CaseFoldTable.foldRanges(0x1C80);   // Ꚁ ↔ В/в
+    @Test
+    void foldTableHistoricCyrillicOrbits() {
+        int[] ve = CaseFoldTable.foldRanges(0x1C80); // Ꚁ ↔ В/в
         assertThat(containsCp(ve, 0x0412)).as("В").isTrue();
         assertThat(containsCp(ve, 0x0432)).as("в").isTrue();
         assertThat(CaseFoldTable.foldRanges(0x0432)).isEqualTo(ve);
-        int[] te = CaseFoldTable.foldRanges(0x0442);   // т ↔ Т/Ꚅ/ꚅ (4-member)
+        int[] te = CaseFoldTable.foldRanges(0x0442); // т ↔ Т/Ꚅ/ꚅ (4-member)
         assertThat(containsCp(te, 0x0422)).as("Т").isTrue();
         assertThat(containsCp(te, 0x1C84)).as("Ꚅ").isTrue();
         assertThat(containsCp(te, 0x1C85)).as("ꚅ").isTrue();
@@ -102,39 +109,47 @@ class CaseInsensitiveTest {
     }
 
     private static boolean containsCp(int[] ranges, int cp) {
-        for (int i = 0; i + 1 < ranges.length; i += 2)
-            if (cp >= ranges[i] && cp <= ranges[i + 1]) return true;
+        for (int i = 0; i + 1 < ranges.length; i += 2) {
+            if (cp >= ranges[i] && cp <= ranges[i + 1]) {
+                return true;
+            }
+        }
         return false;
     }
 
     // ===== (?iu) literal fold =====
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void unicodeFoldLiteralS(RegexEngineFactory f) {
         assertThat(match("(?iu)s", "\u017F", f)).as("(?iu)s → ſ").isNotNull();
         assertThat(match("(?iu)S", "\u017F", f)).as("(?iu)S → ſ").isNotNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void unicodeFoldLiteralK(RegexEngineFactory f) {
         assertThat(match("(?iu)k", "\u212A", f)).as("(?iu)k → K").isNotNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void unicodeFoldLiteralOmega(RegexEngineFactory f) {
         assertThat(match("(?iu)\u03A9", "\u03C9", f)).as("(?iu)Ω → ω").isNotNull();
     }
 
     /** Plain (?i) folds FULL Unicode simple folding (re2j parity — verified
      *  against re2j 1.8: (?i)s matches ſ, (?i)k matches K). */
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void plainIFoldMatchesLongS(RegexEngineFactory f) {
         assertThat(match("(?i)s", "\u017F", f)).as("(?i)s → ſ").isNotNull();
     }
 
     /** Turkic İ/ı stay out of the i-orbit under plain (?i) — simple-fold
      *  semantics, re2j and Go parity (they match themselves, nothing else). */
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void plainIFoldKeepsTurkicIPairInert(RegexEngineFactory f) {
         assertThat(match("(?i)i", "i", f)).isNotNull();
         assertThat(match("(?i)i", "I", f)).isNotNull();
@@ -155,7 +170,8 @@ class CaseInsensitiveTest {
      *  asymmetric mappings, making them fold-inert there). Oracle-parity
      *  lane: FoldCaseParityTest (bridge folds with the oracle by
      *  construction). */
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void plainIFoldHistoricCyrillic(RegexEngineFactory f) {
         assertThat(match("(?i)\u0442", "\u1C84", f)).as("(?i)т → Ꚅ").isNotNull();
         assertThat(match("(?i)\u0442", "\u1C85", f)).as("(?i)т → ꚅ").isNotNull();
@@ -165,19 +181,22 @@ class CaseInsensitiveTest {
         assertThat(match("(?i)\u0432", "\u1C80", f)).as("(?i)в → Ꚁ").isNotNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void unicodeFoldMultiCharLiteral(RegexEngineFactory f) {
         assertThat(match("(?iu)ss", "\u017Fs", f)).isNotNull();
         assertThat(match("(?iu)ss", "s\u017F", f)).isNotNull();
         assertThat(match("(?iu)ss", "\u017F\u017F", f)).isNotNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void unicodeFoldQuotedLiteral(RegexEngineFactory f) {
         assertThat(match("(?iu)\\Qs\\E", "\u017F", f)).isNotNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void unicodeFoldWithCapture(RegexEngineFactory f) {
         Matcher m = match("(?iu)(s)", "\u017F", f);
         assertThat(m).isNotNull();
@@ -185,20 +204,23 @@ class CaseInsensitiveTest {
         assertThat(m.end(1)).isEqualTo(1);
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void unicodeFoldInAlternation(RegexEngineFactory f) {
         Matcher m = match("(?iu)(s|t)", "\u017F", f);
         assertThat(m).isNotNull();
         assertThat(m.start(1)).isEqualTo(0);
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void unicodeFoldNoFalseMatch(RegexEngineFactory f) {
         assertThat(match("(?iu)s", "x", f)).isNull();
         assertThat(match("(?iu)s", "5", f)).isNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void unicodeFoldRepetition(RegexEngineFactory f) {
         Matcher m = match("(?iu)(s+)", "\u017F\u017F", f);
         assertThat(m).isNotNull();
@@ -206,13 +228,15 @@ class CaseInsensitiveTest {
         assertThat(m.end(1)).isEqualTo(2);
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void foldToggleOffMidPattern(RegexEngineFactory f) {
         assertThat(match("(?iu)s(?-i)s", "\u017Fs", f)).isNotNull();
         assertThat(match("(?iu)s(?-i)s", "\u017FS", f)).isNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void foldWithDotall(RegexEngineFactory f) {
         Matcher m = match("(?isu)s.", "\u017F\nx", f);
         assertThat(m).isNotNull();
@@ -227,15 +251,17 @@ class CaseInsensitiveTest {
      * {@code s}. Currently {@code parseClass} only adds ASCII a-z/A-z
      * counterparts. java.util.regex matches ſ here; our engine does not.
      */
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void rangeClassShouldIncludeFoldEquivalent(RegexEngineFactory f) {
         Matcher m = match("(?iu)[r-t]", "\u017F", f);
         assertThat(m)
-                .as("(?iu)[r-t] should match ſ (fold-equiv of s in range) — BUG: returns null")
-                .isNotNull();
+                        .as("(?iu)[r-t] should match ſ (fold-equiv of s in range) — BUG: returns null")
+                        .isNotNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void rangeClassAsciiFold(RegexEngineFactory f) {
         assertThat(match("(?iu)[a-z]", "G", f)).isNotNull();
         assertThat(match("(?iu)[A-Z]", "g", f)).isNotNull();
@@ -249,15 +275,17 @@ class CaseInsensitiveTest {
      * exclude all fold-equivalents. java.util.regex returns null (no match);
      * our engine incorrectly matches.
      */
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void negatedClassShouldExcludeFoldEquivalent(RegexEngineFactory f) {
         Matcher m = match("(?iu)[^s]", "\u017F", f);
         assertThat(m)
-                .as("(?iu)[^s] should NOT match ſ — BUG: returns non-null")
-                .isNull();
+                        .as("(?iu)[^s] should NOT match ſ — BUG: returns non-null")
+                        .isNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void negatedClassExcludesAsciiFold(RegexEngineFactory f) {
         // (?i)[^s] on S — should NOT match (S is fold-equiv of s)
         assertThat(match("(?i)[^s]", "S", f)).isNull();
@@ -267,46 +295,55 @@ class CaseInsensitiveTest {
 
     // ===== ASCII char-class fold (works correctly) =====
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void asciiCharClassFold(RegexEngineFactory f) {
         assertThat(match("(?iu)[sx]", "S", f)).isNotNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void foldClassSingleChar(RegexEngineFactory f) {
         assertThat(match("(?i)a", "A", f)).isNotNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void foldLiteralInConcat(RegexEngineFactory f) {
         assertThat(match("(?i)hello", "HeLLo", f)).isNotNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void scopedCaseInsensitiveNoLeak(RegexEngineFactory f) {
         assertThat(match("a(?i:bc)d", "aBCd", f)).isNotNull();
         assertThat(match("a(?i:bc)d", "abcd", f)).isNotNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void negatedClassUnderCi(RegexEngineFactory f) {
         assertThat(match("(?i)[^a-z]", "A", f)).isNull();
         assertThat(match("(?i)[^a-z]", "5", f)).isNotNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void unicodePropertyFold(RegexEngineFactory f) {
         assertThat(match("(?i)\\p{Ll}", "A", f)).isNotNull();
         assertThat(match("(?i)\\p{Lu}", "a", f)).isNotNull();
         assertThat(match("(?i)\\p{Greek}", "\u0391", f)).isNotNull();
     }
 
-    @ParameterizedTest @MethodSource("factories")
+    @ParameterizedTest
+    @MethodSource("factories")
     void findAllFoldEquivalentsInStream(RegexEngineFactory f) {
         Pattern r = Pattern.compile("(?iu)s", 0, f);
         String input = "s S \u017F s";
         int count = 0;
-        for (Matcher m = r.matcher(input); m.find(); ) count++;
+        for (Matcher m = r.matcher(input); m.find();) {
+            count++;
+        }
         assertThat(count).isEqualTo(4);
     }
 }

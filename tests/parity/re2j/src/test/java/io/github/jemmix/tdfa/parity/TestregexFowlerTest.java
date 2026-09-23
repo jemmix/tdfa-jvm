@@ -1,9 +1,9 @@
 package io.github.jemmix.tdfa.parity;
 
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
 import io.github.jemmix.tdfa.core.Matcher;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -51,20 +51,23 @@ class TestregexFowlerTest {
 
     /** RE_DUP_MAX substitution (X/Open minimum 255; re2j repeat cap 1000). */
     private static final int RE_DUP_MAX = 255;
+    /** Soft DAT-vs-ours divergence stats, printed once per JVM. */
+    static final java.util.Map<String, Integer> DAT_DIVERGENCE = new java.util.concurrent.ConcurrentHashMap<>();
+    static volatile boolean reported = false;
 
-    private static final io.github.jemmix.tdfa.unicode.UnicodeDataProvider UNICODE =
-            com.google.re2j.Re2jUnicodeProvider.INSTANCE;
+    private static final io.github.jemmix.tdfa.unicode.UnicodeDataProvider UNICODE = com.google.re2j.Re2jUnicodeProvider.INSTANCE;
 
     // ---- corpus ----
 
     record Spec(String file, int lineNo, String flags, String regex, String subject,
-                String outcome, String note) { }
+                    String outcome, String note) {
+    }
 
     static List<Spec> corpus() {
         List<Spec> specs = new ArrayList<>();
         String prevRegex = null;
         for (String file : List.of("testregex/basic.dat", "testregex/forcedassoc.dat",
-                "testregex/leftassoc.dat", "testregex/nullsubexpr.dat", "testregex/repetition.dat")) {
+                        "testregex/leftassoc.dat", "testregex/nullsubexpr.dat", "testregex/repetition.dat")) {
             try (InputStream in = TestregexFowlerTest.class.getClassLoader().getResourceAsStream(file)) {
                 assertThat(in).as("resource %s (run ./gradlew prepareVendor)", file).isNotNull();
                 BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
@@ -74,14 +77,20 @@ class TestregexFowlerTest {
                     lineNo++;
                     String trimmed = line.trim();
                     if (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith("NOTE")
-                            || trimmed.startsWith(":")) continue;
+                                    || trimmed.startsWith(":")) {
+                        continue;
+                    }
                     String[] f = line.split("\t+");
                     String flags = f[0];
                     // specs only: mode letter first, optional suffixes; no control prefixes
-                    if (flags.isEmpty() || !isSpecFlags(flags)) continue;
+                    if (flags.isEmpty() || !isSpecFlags(flags)) {
+                        continue;
+                    }
                     String regex = f.length > 1 ? f[1] : "";
                     if (regex.equals("SAME")) {
-                        if (prevRegex == null) continue;
+                        if (prevRegex == null) {
+                            continue;
+                        }
                         regex = prevRegex;
                     } else {
                         prevRegex = regex;
@@ -89,7 +98,9 @@ class TestregexFowlerTest {
                     String subject = f.length > 2 ? f[2] : "";
                     String outcome = f.length > 3 ? f[3] : "";
                     String note = f.length > 4 ? f[4] : "";
-                    if (subject.equals("NIL") || outcome.isEmpty()) continue;
+                    if (subject.equals("NIL") || outcome.isEmpty()) {
+                        continue;
+                    }
                     if (regex.contains("RE_DUP_MAX") || subject.contains("RE_DUP_MAX")) {
                         regex = regex.replace("RE_DUP_MAX", String.valueOf(RE_DUP_MAX));
                         subject = subject.replace("RE_DUP_MAX", String.valueOf(RE_DUP_MAX));
@@ -105,7 +116,9 @@ class TestregexFowlerTest {
 
     /** E-mode with supported suffixes only: {@code E [a l r y i z $]* [digit]*}. */
     static boolean isSpecFlags(String flags) {
-        if (flags.charAt(0) != 'E') return false;
+        if (flags.charAt(0) != 'E') {
+            return false;
+        }
         String rest = flags.substring(1).replaceAll("[0-9]", "");
         return rest.matches("[alryiz$]*");
     }
@@ -114,12 +127,19 @@ class TestregexFowlerTest {
 
     /** One parsed expectation; span[k] = {start,end} with -1 for '?'. */
     record Expectation(boolean match, int[][] spans, boolean isError) {
-        static Expectation noMatch() { return new Expectation(false, null, false); }
-        static Expectation error() { return new Expectation(false, null, true); }
+        static Expectation noMatch() {
+            return new Expectation(false, null, false);
+        }
+
+        static Expectation error() {
+            return new Expectation(false, null, true);
+        }
     }
 
     static Expectation parseOutcome(String outcome) {
-        if (outcome.equals("NOMATCH") || outcome.equals("NULL")) return Expectation.noMatch();
+        if (outcome.equals("NOMATCH") || outcome.equals("NULL")) {
+            return Expectation.noMatch();
+        }
         if (!outcome.startsWith("(")) {
             // POSIX error name (BADBR, ECOLLATE, ...) — possibly with |variants
             return Expectation.error();
@@ -128,16 +148,24 @@ class TestregexFowlerTest {
         int i = 0;
         while (i < outcome.length() && outcome.charAt(i) == '(') {
             int close = outcome.indexOf(')', i);
-            if (close < 0) return null;
+            if (close < 0) {
+                return null;
+            }
             String body = outcome.substring(i + 1, close);
             String[] parts = body.split(",");
-            if (parts.length != 2) return null;
+            if (parts.length != 2) {
+                return null;
+            }
             int[] span = new int[2];
             for (int k = 0; k < 2; k++) {
-                if (parts[k].equals("?")) span[k] = -1;
-                else {
-                    try { span[k] = Integer.parseInt(parts[k].trim()); }
-                    catch (NumberFormatException e) { return null; }
+                if (parts[k].equals("?")) {
+                    span[k] = -1;
+                } else {
+                    try {
+                        span[k] = Integer.parseInt(parts[k].trim());
+                    } catch (NumberFormatException e) {
+                        return null;
+                    }
                 }
             }
             spans.add(span);
@@ -162,7 +190,9 @@ class TestregexFowlerTest {
                     case 'a' -> sb.append('\u0007');
                     case 'b' -> sb.append('\b');
                     case '\\' -> sb.append('\\');
-                    default -> { return null; } // unsupported escape — skip the line
+                    default -> {
+                        return null;
+                    } // unsupported escape — skip the line
                 }
             } else {
                 sb.append(c);
@@ -173,14 +203,22 @@ class TestregexFowlerTest {
 
     /** Apply implicit-anchor and icase flags by wrapping/flagging the regex. */
     static String applyFlags(String flags, String regex, StringBuilder re2jFlagsOut) {
-        if (flags.contains("i")) re2jFlagsOut.append('i');
+        if (flags.contains("i")) {
+            re2jFlagsOut.append('i');
+        }
         String wrapped = regex;
         // a = both, l/y = left, r = right
         boolean left = flags.contains("a") || flags.contains("l") || flags.contains("y");
         boolean right = flags.contains("a") || flags.contains("r");
-        if (left) wrapped = "^(?:" + wrapped + ")";
-        if (right) wrapped = "(?:" + wrapped + ")$";
-        if (flags.contains("i")) wrapped = "(?i)" + wrapped;
+        if (left) {
+            wrapped = "^(?:" + wrapped + ")";
+        }
+        if (right) {
+            wrapped = "(?:" + wrapped + ")$";
+        }
+        if (flags.contains("i")) {
+            wrapped = "(?i)" + wrapped;
+        }
         return wrapped;
     }
 
@@ -192,9 +230,11 @@ class TestregexFowlerTest {
     /** Full span array from our engine (LONGEST_MATCH), or null on no-match. */
     static int[][] tdfaSpans(String regex, String subject, int cap, RegexEngineFactory factory) {
         io.github.jemmix.tdfa.Pattern p = io.github.jemmix.tdfa.Pattern.compile(
-                regex, io.github.jemmix.tdfa.Pattern.LONGEST_MATCH, factory, UNICODE);
+                        regex, io.github.jemmix.tdfa.Pattern.LONGEST_MATCH, factory, UNICODE);
         Matcher m = p.matcher(subject);
-        if (!m.find()) return null;
+        if (!m.find()) {
+            return null;
+        }
         int gc = Math.min(m.groupCount(), cap);
         int[][] out = new int[gc + 1][];
         for (int g = 0; g <= gc; g++) {
@@ -207,23 +247,26 @@ class TestregexFowlerTest {
     /** Full span array from re2j (LONGEST_MATCH), or null on no-match. */
     static int[][] re2jSpans(String regex, String subject, int cap, boolean icase) {
         int flags = com.google.re2j.Pattern.LONGEST_MATCH
-                | (icase ? com.google.re2j.Pattern.CASE_INSENSITIVE : 0);
+                        | (icase ? com.google.re2j.Pattern.CASE_INSENSITIVE : 0);
         com.google.re2j.Matcher m = com.google.re2j.Pattern.compile(regex, flags).matcher(subject);
-        if (!m.find()) return null;
+        if (!m.find()) {
+            return null;
+        }
         int gc = Math.min(m.groupCount(), cap);
         int[][] out = new int[gc + 1][];
         for (int g = 0; g <= gc; g++) {
             int s, e;
-            try { s = m.start(g); e = m.end(g); }
-            catch (IllegalStateException ex) { s = -1; e = -1; }
+            try {
+                s = m.start(g);
+                e = m.end(g);
+            } catch (IllegalStateException ex) {
+                s = -1;
+                e = -1;
+            }
             out[g] = s < 0 ? new int[]{-1, -1} : new int[]{s, e};
         }
         return out;
     }
-
-    /** Soft DAT-vs-ours divergence stats, printed once per JVM. */
-    static final Map<String, Integer> DAT_DIVERGENCE = new ConcurrentHashMap<>();
-    static volatile boolean reported = false;
 
     @ParameterizedTest(name = "{0}:{1}")
     @MethodSource("specsProvider")
@@ -234,8 +277,11 @@ class TestregexFowlerTest {
         if (spec.flags().contains("$")) {
             String r = expandEscapes(regex);
             String s = expandEscapes(subject);
-            if (r == null || s == null) return;
-            regex = r; subject = s;
+            if (r == null || s == null) {
+                return;
+            }
+            regex = r;
+            subject = s;
         }
         StringBuilder re2FlagStr = new StringBuilder();
         String wrapped = applyFlags(spec.flags(), regex, re2FlagStr);
@@ -246,38 +292,48 @@ class TestregexFowlerTest {
         boolean re2jThrows, oursThrows;
         try {
             int flags = com.google.re2j.Pattern.LONGEST_MATCH
-                    | (icase ? com.google.re2j.Pattern.CASE_INSENSITIVE : 0);
+                            | (icase ? com.google.re2j.Pattern.CASE_INSENSITIVE : 0);
             com.google.re2j.Pattern.compile(wrapped, flags);
             re2jThrows = false;
-        } catch (RuntimeException e) { re2jThrows = true; }
+        } catch (RuntimeException e) {
+            re2jThrows = true;
+        }
         try {
             io.github.jemmix.tdfa.Pattern.compile(wrapped,
-                    io.github.jemmix.tdfa.Pattern.LONGEST_MATCH, factory, UNICODE);
+                            io.github.jemmix.tdfa.Pattern.LONGEST_MATCH, factory, UNICODE);
             oursThrows = false;
-        } catch (RuntimeException e) { oursThrows = true; }
+        } catch (RuntimeException e) {
+            oursThrows = true;
+        }
         assertThat(oursThrows)
-                .as("%s:%d re2j-throws=%s regex=\"%s\"", file, lineNo, re2jThrows, wrapped)
-                .isEqualTo(re2jThrows);
-        if (re2jThrows) return; // both reject — parity holds; DAT error-code exactness is POSIX scope
+                        .as("%s:%d re2j-throws=%s regex=\"%s\"", file, lineNo, re2jThrows, wrapped)
+                        .isEqualTo(re2jThrows);
+        if (re2jThrows) {
+            return;
+        } // both reject — parity holds; DAT error-code exactness is POSIX scope
 
         // --- match both; span parity is the hard gate ---
         int[][] expected = re2jSpans(wrapped, subject, cap, icase);
         int[][] actual = tdfaSpans(wrapped, subject, cap, factory);
         assertThat(actual)
-                .as("%s:%d regex=\"%s\" subject=\"%s\" re2j=%s", file, lineNo, wrapped, subject,
-                        Arrays.deepToString(expected))
-                .isEqualTo(expected);
+                        .as("%s:%d regex=\"%s\" subject=\"%s\" re2j=%s", file, lineNo, wrapped, subject,
+                                        Arrays.deepToString(expected))
+                        .isEqualTo(expected);
 
         // --- soft: compare against Fowler's own POSIX expectation ---
         if (exp != null) {
             boolean datAgrees;
-            if (exp.isError()) datAgrees = oursThrows;
-            else if (!exp.match()) datAgrees = actual == null;
-            else if (actual == null) datAgrees = false;
-            else datAgrees = spansMatchDat(actual, exp.spans());
+            if (exp.isError()) {
+                datAgrees = oursThrows;
+            } else if (!exp.match()) {
+                datAgrees = actual == null;
+            } else if (actual == null) {
+                datAgrees = false;
+            } else {
+                datAgrees = spansMatchDat(actual, exp.spans());
+            }
             if (!datAgrees) {
-                DAT_DIVERGENCE.merge(spec.file() + " " + (exp.isError() ? "error" :
-                        exp.match() ? "spans" : "nomatch"), 1, Integer::sum);
+                DAT_DIVERGENCE.merge(spec.file() + " " + (exp.isError() ? "error" : exp.match() ? "spans" : "nomatch"), 1, Integer::sum);
             }
         }
     }
@@ -301,17 +357,20 @@ class TestregexFowlerTest {
 
     @SuppressWarnings("unused")
     static void printDivergenceSummary() {
-        if (reported) return;
+        if (reported) {
+            return;
+        }
         reported = true;
         if (!DAT_DIVERGENCE.isEmpty()) {
             System.out.println("[fowler] DAT-vs-ours divergences (informational; hard gate is re2j parity):");
             DAT_DIVERGENCE.entrySet().stream()
-                    .sorted(Map.Entry.comparingByValue())
-                    .forEach(e -> System.out.println("  " + e.getKey() + ": " + e.getValue()));
+                            .sorted(Map.Entry.comparingByValue())
+                            .forEach(e -> System.out.println("  " + e.getKey() + ": " + e.getValue()));
         }
     }
 
-    record SpecArg(String file, int lineNo, RegexEngineFactory factory, Spec spec) { }
+    record SpecArg(String file, int lineNo, RegexEngineFactory factory, Spec spec) {
+    }
 
     static Stream<Object[]> specsProvider() {
         List<Spec> specs = corpus();

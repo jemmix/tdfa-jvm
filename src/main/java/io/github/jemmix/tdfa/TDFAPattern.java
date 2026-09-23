@@ -49,10 +49,10 @@ public class TDFAPattern implements Pattern {
      */
     private transient UnicodeDataProvider provider;
 
-    @EmittedSurface  // shells super-ctor call: signature feeds ShellEmitter descriptor
+    @EmittedSurface // shells super-ctor call: signature feeds ShellEmitter descriptor
     public TDFAPattern(String pattern, int flags, int programSize,
-                       RegexEngine engine, RegexEngine wholeEngine,
-                       UnicodeDataProvider provider) {
+                    RegexEngine engine, RegexEngine wholeEngine,
+                    UnicodeDataProvider provider) {
         this.pattern = pattern;
         this.flags = flags;
         this.programSize = programSize;
@@ -121,7 +121,9 @@ public class TDFAPattern implements Pattern {
                 last = m.end();
                 continue;
             }
-            if (limit > 0 && result.size() == limit - 1) break;
+            if (limit > 0 && result.size() == limit - 1) {
+                break;
+            }
             if (last == m.start()) {
                 if (limit == 0) {
                     // Empty match, may or may not be trailing.
@@ -175,14 +177,14 @@ public class TDFAPattern implements Pattern {
     // first round-trip test (PatternSerializationTest, 2026-09).
     public Object writeReplace() {
         return new SerialProxy(pattern, flags,
-            provider == null ? null : provider.getClass().getName());
+                        provider == null ? null : provider.getClass().getName());
     }
 
     /**
      * Recompile the (transient) engines after deserialization, from {@code pattern}+{@code flags}.
      */
     private void readObject(java.io.ObjectInputStream in)
-        throws java.io.IOException, ClassNotFoundException {
+                    throws java.io.IOException, ClassNotFoundException {
         in.defaultReadObject();
         TDFAPattern tmp = (TDFAPattern) Pattern.compile(pattern, flags, null, provider);
         this.engine = tmp.engine;
@@ -224,8 +226,12 @@ public class TDFAPattern implements Pattern {
     public boolean equals(Object o) {
         // State-based equality across implementations (shared and generated):
         // re2j semantics — same pattern string + same flags.
-        if (this == o) return true;
-        if (!(o instanceof Pattern)) return false;
+        if (this == o) {
+            return true;
+        }
+        if (!(o instanceof Pattern)) {
+            return false;
+        }
         Pattern p = (Pattern) o;
         return flags == p.flags() && pattern.equals(p.pattern());
     }

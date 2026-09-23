@@ -31,13 +31,16 @@ record Case(String pattern, String input, boolean match, int[] groups, String la
     static Case c(String pat, String input, boolean match, String label) {
         return new Case(pat, input, match, null, label, false);
     }
+
     static Case c(String pat, String input, boolean match, int[] groups, String label) {
         return new Case(pat, input, match, groups, label, false);
     }
+
     /** Unanchored search (find). */
     static Case f(String pat, String input, boolean match, String label) {
         return new Case(pat, input, match, null, label, true);
     }
+
     static Case f(String pat, String input, boolean match, int[] groups, String label) {
         return new Case(pat, input, match, groups, label, true);
     }
@@ -64,8 +67,8 @@ class ComprehensiveTest {
         cases.add(Case.c("hello", "hello", true, "word literal"));
         cases.add(Case.c("hello", "world", false, "word literal mismatch"));
         // find() on literals
-        cases.add(Case.f("abc", "xxabcxx", true, new int[]{2,5}, "literal find"));
-        cases.add(Case.f("abc", "abc", true, new int[]{0,3}, "literal find at start"));
+        cases.add(Case.f("abc", "xxabcxx", true, new int[]{2, 5}, "literal find"));
+        cases.add(Case.f("abc", "abc", true, new int[]{0, 3}, "literal find at start"));
         cases.add(Case.f("abc", "no match here", false, "literal find no match"));
 
         // ===== 2. Char classes =====
@@ -130,67 +133,71 @@ class ComprehensiveTest {
         cases.add(Case.c("abc|def|ghi", "jkl", false, "alt multi-char no match"));
 
         // ===== 5. Capture groups =====
-        cases.add(Case.c("(abc)", "abc", true, new int[]{0,3, 0,3}, "simple capture"));
+        cases.add(Case.c("(abc)", "abc", true, new int[]{0, 3, 0, 3}, "simple capture"));
         cases.add(Case.c("(abc)", "abd", false, "simple capture no match"));
         cases.add(Case.c("(a)(b)(c)", "abc", true,
-                new int[]{0,3, 0,1, 1,2, 2,3}, "three captures"));
+                        new int[]{0, 3, 0, 1, 1, 2, 2, 3}, "three captures"));
         cases.add(Case.c("(a(b)c)", "abc", true,
-                new int[]{0,3, 0,3, 1,2}, "nested captures"));
+                        new int[]{0, 3, 0, 3, 1, 2}, "nested captures"));
         cases.add(Case.c("(ab)+", "abab", true,
-                new int[]{0,4, 2,4}, "repeated capture — last iteration"));
+                        new int[]{0, 4, 2, 4}, "repeated capture — last iteration"));
         cases.add(Case.c("(ab)+", "ababab", true,
-                new int[]{0,6, 4,6}, "repeated capture three times"));
+                        new int[]{0, 6, 4, 6}, "repeated capture three times"));
         cases.add(Case.c("(a)*b", "aaab", true,
-                new int[]{0,4, 2,3}, "star capture before literal"));
+                        new int[]{0, 4, 2, 3}, "star capture before literal"));
         cases.add(Case.c("(a|b)+", "abba", true,
-                new int[]{0,4, 3,4}, "alt under plus"));
+                        new int[]{0, 4, 3, 4}, "alt under plus"));
         cases.add(Case.c("(a|b)+c", "ababc", true,
-                new int[]{0,5, 3,4}, "alt under plus before literal"));
+                        new int[]{0, 5, 3, 4}, "alt under plus before literal"));
         cases.add(Case.c("(a|b)*c", "aabbc", true,
-                new int[]{0,5, 3,4}, "alt under star before literal"));
+                        new int[]{0, 5, 3, 4}, "alt under star before literal"));
         cases.add(Case.c("((a)(b))*", "abab", true,
-                new int[]{0,4, 2,4, 2,3, 3,4}, "nested groups under star"));
+                        new int[]{0, 4, 2, 4, 2, 3, 3, 4}, "nested groups under star"));
         cases.add(Case.c("(\\w+)", "hello", true,
-                new int[]{0,5, 0,5}, "word capture"));
+                        new int[]{0, 5, 0, 5}, "word capture"));
         cases.add(Case.c("(\\w+)\\s+(\\w+)", "hello world", true,
-                new int[]{0,11, 0,5, 6,11}, "two word captures"));
+                        new int[]{0, 11, 0, 5, 6, 11}, "two word captures"));
         cases.add(Case.c("(\\d+)", "12345", true,
-                new int[]{0,5, 0,5}, "digit capture"));
+                        new int[]{0, 5, 0, 5}, "digit capture"));
 
         // ===== 6. Realistic patterns =====
         cases.add(Case.c("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "192.168.1.1", true,
-                new int[]{0,11, 0,3, 4,7, 8,9, 10,11}, "IPv4"));
+                        new int[]{0, 11, 0, 3, 4, 7, 8, 9, 10, 11}, "IPv4"));
         cases.add(Case.c("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "192.168.1", false, "IPv4 too few octets"));
         cases.add(Case.c("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "999.999.999.999", true, "IPv4 large octets (syntactic)"));
         cases.add(Case.c("([a-fA-F0-9]{2}):([a-fA-F0-9]{2}):([a-fA-F0-9]{2}):([a-fA-F0-9]{2}):([a-fA-F0-9]{2}):([a-fA-F0-9]{2})",
-                "01:23:45:67:89:ab", true,
-                null, "MAC address")); // groups checked separately
+                        "01:23:45:67:89:ab", true,
+                        null, "MAC address")); // groups checked separately
         cases.add(Case.c("([0-9]{4})-([0-9]{2})-([0-9]{2})", "2024-01-15", true,
-                new int[]{0,10, 0,4, 5,7, 8,10}, "date"));
+                        new int[]{0, 10, 0, 4, 5, 7, 8, 10}, "date"));
         cases.add(Case.c("([0-9]{4})-([0-9]{2})-([0-9]{2})", "2024-1-15", false, "date single digit month"));
         cases.add(Case.c("(\\w+)@(\\w+)\\.(\\w+)", "user@example.com", true,
-                new int[]{0,16, 0,4, 5,12, 13,16}, "email-ish"));
+                        new int[]{0, 16, 0, 4, 5, 12, 13, 16}, "email-ish"));
         cases.add(Case.c("(\\w+)@(\\w+)\\.(\\w+)", "not-an-email", false, "email-ish no match"));
         cases.add(Case.c("#([0-9a-fA-F]{6})", "#ff0000", true,
-                new int[]{0,7, 1,7}, "hex color"));
+                        new int[]{0, 7, 1, 7}, "hex color"));
         cases.add(Case.c("#([0-9a-fA-F]{6})", "#FF00FF", true,
-                new int[]{0,7, 1,7}, "hex color upper"));
+                        new int[]{0, 7, 1, 7}, "hex color upper"));
         cases.add(Case.c("#([0-9a-fA-F]{6})", "#gggggg", false, "hex color invalid"));
 
         // ===== 7. Edge cases =====
-        cases.add(Case.c("a*", "", true, new int[]{0,0}, "star on empty input"));
-        cases.add(Case.c("a+", "a", true, new int[]{0,1, 0,1}, "plus single char with capture"));
+        cases.add(Case.c("a*", "", true, new int[]{0, 0}, "star on empty input"));
+        cases.add(Case.c("a+", "a", true, new int[]{0, 1, 0, 1}, "plus single char with capture"));
         cases.add(Case.c(".", "x", true, "dot single char"));
         cases.add(Case.c(".", "", false, "dot empty"));
         cases.add(Case.c(".*", "anything at all", true, "dot star matches all"));
         cases.add(Case.f("\\d+", "abc123def456", true, "digit find in text"));
         // Long input
         StringBuilder longInput = new StringBuilder();
-        for (int i = 0; i < 100; i++) longInput.append('a');
+        for (int i = 0; i < 100; i++) {
+            longInput.append('a');
+        }
         cases.add(Case.c("a+", longInput.toString(), true, "100 char input all a"));
         cases.add(Case.c("a+b", longInput.toString(), false, "100 char input no trailing b"));
         StringBuilder longMixed = new StringBuilder();
-        for (int i = 0; i < 50; i++) longMixed.append("ab");
+        for (int i = 0; i < 50; i++) {
+            longMixed.append("ab");
+        }
         cases.add(Case.c("(ab)+", longMixed.toString(), true, "100 char ab repeated"));
 
         // ===== 8. Dot and combined patterns =====
@@ -204,12 +211,12 @@ class ComprehensiveTest {
 
         // ===== 9. Complex mixed patterns =====
         cases.add(Case.c("(\\d+)-(\\w+)", "123-abc", true,
-                new int[]{0,7, 0,3, 4,7}, "digit-word dash"));
+                        new int[]{0, 7, 0, 3, 4, 7}, "digit-word dash"));
         cases.add(Case.c("(\\w+)\\s*=(\\w+)", "key=value", true,
-                new int[]{0,9, 0,3, 4,9}, "key=value optional spaces"));
+                        new int[]{0, 9, 0, 3, 4, 9}, "key=value optional spaces"));
         cases.add(Case.f("(\\w+)\\s*=(\\w+)", "key=value", true, "key=value no spaces"));
         cases.add(Case.c("(a+)(b+)", "aaabb", true,
-                new int[]{0,5, 0,3, 3,5}, "two quantified captures"));
+                        new int[]{0, 5, 0, 3, 3, 5}, "two quantified captures"));
         cases.add(Case.c("(a+)(b+)", "aaa", false, "two quantified captures no b"));
 
         return cases;
@@ -222,8 +229,8 @@ class ComprehensiveTest {
         Matcher mm = r.matcher(c.input());
         boolean result = c.useFind() ? mm.find() : mm.matches();
         assertThat(result)
-                .as("VM: %s (pattern=%s, input=%s)", c.label(), c.pattern(), c.input())
-                .isEqualTo(c.match());
+                        .as("VM: %s (pattern=%s, input=%s)", c.label(), c.pattern(), c.input())
+                        .isEqualTo(c.match());
 
         if (c.match() && c.groups() != null && r.groupCount() > 0) {
             Matcher m = match(r, c.input());
@@ -231,11 +238,11 @@ class ComprehensiveTest {
             int[] expected = c.groups();
             for (int g = 0; g <= r.groupCount(); g++) {
                 assertThat(m.start(g))
-                        .as("VM group %d start: %s", g, c.label())
-                        .isEqualTo(expected[g * 2]);
+                                .as("VM group %d start: %s", g, c.label())
+                                .isEqualTo(expected[g * 2]);
                 assertThat(m.end(g))
-                        .as("VM group %d end: %s", g, c.label())
-                        .isEqualTo(expected[g * 2 + 1]);
+                                .as("VM group %d end: %s", g, c.label())
+                                .isEqualTo(expected[g * 2 + 1]);
             }
         }
     }
@@ -247,8 +254,8 @@ class ComprehensiveTest {
         Matcher mm = r.matcher(c.input());
         boolean result = c.useFind() ? mm.find() : mm.matches();
         assertThat(result)
-                .as("ASM: %s (pattern=%s, input=%s)", c.label(), c.pattern(), c.input())
-                .isEqualTo(c.match());
+                        .as("ASM: %s (pattern=%s, input=%s)", c.label(), c.pattern(), c.input())
+                        .isEqualTo(c.match());
 
         if (c.match() && c.groups() != null && r.groupCount() > 0) {
             Matcher m = match(r, c.input());
@@ -256,11 +263,11 @@ class ComprehensiveTest {
             int[] expected = c.groups();
             for (int g = 0; g <= r.groupCount(); g++) {
                 assertThat(m.start(g))
-                        .as("ASM group %d start: %s", g, c.label())
-                        .isEqualTo(expected[g * 2]);
+                                .as("ASM group %d start: %s", g, c.label())
+                                .isEqualTo(expected[g * 2]);
                 assertThat(m.end(g))
-                        .as("ASM group %d end: %s", g, c.label())
-                        .isEqualTo(expected[g * 2 + 1]);
+                                .as("ASM group %d end: %s", g, c.label())
+                                .isEqualTo(expected[g * 2 + 1]);
             }
         }
     }

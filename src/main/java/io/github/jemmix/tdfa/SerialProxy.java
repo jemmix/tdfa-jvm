@@ -44,12 +44,12 @@ final class SerialProxy implements Serializable {
     }
 
     private static io.github.jemmix.tdfa.unicode.UnicodeDataProvider resolveProvider(
-        String cls) throws ObjectStreamException {
+                    String cls) throws ObjectStreamException {
         try {
             Class<?> c = Class.forName(cls);
             if (!io.github.jemmix.tdfa.unicode.UnicodeDataProvider.class.isAssignableFrom(c)) {
                 throw new InvalidObjectException(
-                    "serialized provider " + cls + " does not implement UnicodeDataProvider");
+                                "serialized provider " + cls + " does not implement UnicodeDataProvider");
             }
             // Convention 1: static UnicodeDataProvider provider() (the shape
             // of the shipped pinned-table providers, which are singletons;
@@ -57,7 +57,7 @@ final class SerialProxy implements Serializable {
             try {
                 java.lang.reflect.Method m = c.getMethod("provider");
                 if (io.github.jemmix.tdfa.unicode.UnicodeDataProvider.class.isAssignableFrom(m.getReturnType())
-                    && java.lang.reflect.Modifier.isStatic(m.getModifiers())) {
+                                && java.lang.reflect.Modifier.isStatic(m.getModifiers())) {
                     m.setAccessible(true);
                     return (io.github.jemmix.tdfa.unicode.UnicodeDataProvider) m.invoke(null);
                 }
@@ -72,9 +72,9 @@ final class SerialProxy implements Serializable {
             throw e;
         } catch (ReflectiveOperationException | RuntimeException e) {
             throw new InvalidObjectException(
-                "cannot resolve serialized Unicode provider " + cls
-                    + " (needs a static provider() method or a public no-arg constructor;"
-                    + " see UnicodeDataProvider's serialization convention): " + e);
+                            "cannot resolve serialized Unicode provider " + cls
+                                            + " (needs a static provider() method or a public no-arg constructor;"
+                                            + " see UnicodeDataProvider's serialization convention): " + e);
         }
     }
 

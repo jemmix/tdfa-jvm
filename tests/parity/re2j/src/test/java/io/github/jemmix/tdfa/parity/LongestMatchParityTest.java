@@ -1,12 +1,14 @@
 package io.github.jemmix.tdfa.parity;
 
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
 
 import java.util.random.RandomGenerator;
 
-import static io.github.jemmix.tdfa.parity.Re2jOracle.*;
+import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFindPosix;
+import static io.github.jemmix.tdfa.parity.Re2jOracle.re2jFindPosix;
+import static io.github.jemmix.tdfa.parity.Re2jOracle.tdfaFindPosix;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -30,108 +32,202 @@ class LongestMatchParityTest {
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void re2DocsSubmatch(RegexEngineFactory factory) { assertSameFindPosix("-|(a)", "aa", factory); }
+    void re2DocsSubmatch(RegexEngineFactory factory) {
+        assertSameFindPosix("-|(a)", "aa", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void re2DocsSubmatch2(RegexEngineFactory factory) { assertSameFindPosix("(a)(-|b)", "ab", factory); }
+    void re2DocsSubmatch2(RegexEngineFactory factory) {
+        assertSameFindPosix("(a)(-|b)", "ab", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void re2DocsSubmatch3(RegexEngineFactory factory) { assertSameFindPosix("-|(a)(b)", "ab", factory); }
+    void re2DocsSubmatch3(RegexEngineFactory factory) {
+        assertSameFindPosix("-|(a)(b)", "ab", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void alternationEqualLength(RegexEngineFactory factory) { assertSameFindPosix("(a|ab)(c|bcd)", "abcd", factory); }
+    void alternationEqualLength(RegexEngineFactory factory) {
+        assertSameFindPosix("(a|ab)(c|bcd)", "abcd", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void alternationEqualLength2(RegexEngineFactory factory) { assertSameFindPosix("(a|ab)(c|bcd)(d*)", "abcd", factory); }
+    void alternationEqualLength2(RegexEngineFactory factory) {
+        assertSameFindPosix("(a|ab)(c|bcd)(d*)", "abcd", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void alternationPrefixLonger(RegexEngineFactory factory) { assertSameFindPosix("(ab|a)(b?)", "ab", factory); }
+    void alternationPrefixLonger(RegexEngineFactory factory) {
+        assertSameFindPosix("(ab|a)(b?)", "ab", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void alternationPrefixShorter(RegexEngineFactory factory) { assertSameFindPosix("(a|ab)(b?)", "ab", factory); }
+    void alternationPrefixShorter(RegexEngineFactory factory) {
+        assertSameFindPosix("(a|ab)(b?)", "ab", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void nestedAltEqual(RegexEngineFactory factory) { assertSameFindPosix("((a)|(ab))", "ab", factory); }
+    void nestedAltEqual(RegexEngineFactory factory) {
+        assertSameFindPosix("((a)|(ab))", "ab", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void nestedAltEqual2(RegexEngineFactory factory) { assertSameFindPosix("((ab)|(a))", "ab", factory); }
+    void nestedAltEqual2(RegexEngineFactory factory) {
+        assertSameFindPosix("((ab)|(a))", "ab", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void adjacentGroups(RegexEngineFactory factory) { assertSameFindPosix("(a*)(a*)", "aa", factory); }
+    void adjacentGroups(RegexEngineFactory factory) {
+        assertSameFindPosix("(a*)(a*)", "aa", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void adjacentGroupsPlus(RegexEngineFactory factory) { assertSameFindPosix("(a+)(a*)", "aaa", factory); }
+    void adjacentGroupsPlus(RegexEngineFactory factory) {
+        assertSameFindPosix("(a+)(a*)", "aaa", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void adjacentGroupsMixed(RegexEngineFactory factory) { assertSameFindPosix("(a*)(ab)", "aab", factory); }
+    void adjacentGroupsMixed(RegexEngineFactory factory) {
+        assertSameFindPosix("(a*)(ab)", "aab", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void loopAltGroups(RegexEngineFactory factory) { assertSameFindPosix("x(a|ab)*y", "xaaby", factory); }
+    void loopAltGroups(RegexEngineFactory factory) {
+        assertSameFindPosix("x(a|ab)*y", "xaaby", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void loopAltGroups2(RegexEngineFactory factory) { assertSameFindPosix("x(ab|a)*y", "xaaby", factory); }
+    void loopAltGroups2(RegexEngineFactory factory) {
+        assertSameFindPosix("x(ab|a)*y", "xaaby", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void loopAltSingleIter(RegexEngineFactory factory) { assertSameFindPosix("x(a|ab)+y", "xaby", factory); }
+    void loopAltSingleIter(RegexEngineFactory factory) {
+        assertSameFindPosix("x(a|ab)+y", "xaby", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void optionalParticipation(RegexEngineFactory factory) { assertSameFindPosix("(a)?(b)", "b", factory); }
+    void optionalParticipation(RegexEngineFactory factory) {
+        assertSameFindPosix("(a)?(b)", "b", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void optionalParticipation2(RegexEngineFactory factory) { assertSameFindPosix("(a)?(b)?", "", factory); }
+    void optionalParticipation2(RegexEngineFactory factory) {
+        assertSameFindPosix("(a)?(b)?", "", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void optionalParticipation3(RegexEngineFactory factory) { assertSameFindPosix("(a)?(b)?", "a", factory); }
+    void optionalParticipation3(RegexEngineFactory factory) {
+        assertSameFindPosix("(a)?(b)?", "a", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void altWithOptionalArm(RegexEngineFactory factory) { assertSameFindPosix("(ab?|a)(c?)", "abc", factory); }
+    void altWithOptionalArm(RegexEngineFactory factory) {
+        assertSameFindPosix("(ab?|a)(c?)", "abc", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void lazyUnderLongest(RegexEngineFactory factory) { assertSameFindPosix("(a+?)(a*)", "aaa", factory); }
+    void lazyUnderLongest(RegexEngineFactory factory) {
+        assertSameFindPosix("(a+?)(a*)", "aaa", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void lazyUnderLongest2(RegexEngineFactory factory) { assertSameFindPosix("(a|ab)+?(b|c)", "abc", factory); }
+    void lazyUnderLongest2(RegexEngineFactory factory) {
+        assertSameFindPosix("(a|ab)+?(b|c)", "abc", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void anchoredBoth(RegexEngineFactory factory) { assertSameFindPosix("^(a|ab)$", "ab", factory); }
+    void anchoredBoth(RegexEngineFactory factory) {
+        assertSameFindPosix("^(a|ab)$", "ab", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void wordBoundaryGroups(RegexEngineFactory factory) { assertSameFindPosix("\\b(a|ab)\\b", "ab", factory); }
+    void wordBoundaryGroups(RegexEngineFactory factory) {
+        assertSameFindPosix("\\b(a|ab)\\b", "ab", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void wordGroups(RegexEngineFactory factory) { assertSameFindPosix("(\\w+)(\\w+)", "abcd", factory); }
+    void wordGroups(RegexEngineFactory factory) {
+        assertSameFindPosix("(\\w+)(\\w+)", "abcd", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void caseInsensitiveLongest(RegexEngineFactory factory) { assertSameFindPosix("(?i)(a|AB)(b|bc)", "abc", factory); }
+    void caseInsensitiveLongest(RegexEngineFactory factory) {
+        assertSameFindPosix("(?i)(a|AB)(b|bc)", "abc", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unicodeLiteralAlt(RegexEngineFactory factory) { assertSameFindPosix("(а|аб)(б|бвд)", "абвд", factory); }
+    void unicodeLiteralAlt(RegexEngineFactory factory) {
+        assertSameFindPosix("(а|аб)(б|бвд)", "абвд", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void threeWayEqualLength(RegexEngineFactory factory) { assertSameFindPosix("(a|ab|abc)(x|xy)", "abcxy", factory); }
+    void threeWayEqualLength(RegexEngineFactory factory) {
+        assertSameFindPosix("(a|ab|abc)(x|xy)", "abcxy", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void midPatternAlt(RegexEngineFactory factory) { assertSameFindPosix("p(a|ab)q", "pabq", factory); }
+    void midPatternAlt(RegexEngineFactory factory) {
+        assertSameFindPosix("p(a|ab)q", "pabq", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void midPatternAltSuffixAlt(RegexEngineFactory factory) { assertSameFindPosix("p(a|ab)(q|qr)", "pabqr", factory); }
+    void midPatternAltSuffixAlt(RegexEngineFactory factory) {
+        assertSameFindPosix("p(a|ab)(q|qr)", "pabqr", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void boundedAlt(RegexEngineFactory factory) { assertSameFindPosix("(a|ab){1,2}", "abab", factory); }
+    void boundedAlt(RegexEngineFactory factory) {
+        assertSameFindPosix("(a|ab){1,2}", "abab", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void emptyAltArm(RegexEngineFactory factory) { assertSameFindPosix("(a|)(b)", "b", factory); }
+    void emptyAltArm(RegexEngineFactory factory) {
+        assertSameFindPosix("(a|)(b)", "b", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void unmatchedInLongerAlt(RegexEngineFactory factory) { assertSameFindPosix("(x(a|ab)|(xa)b)", "xab", factory); }
+    void unmatchedInLongerAlt(RegexEngineFactory factory) {
+        assertSameFindPosix("(x(a|ab)|(xa)b)", "xab", factory);
+    }
 
     // ---- randomized differential sweep (fixed seed) ----
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void randomizedDifferential(RegexEngineFactory factory) {
-        java.util.random.RandomGeneratorFactory<RandomGenerator> rf =
-                java.util.random.RandomGeneratorFactory.of("L64X256MixRandom");
+        java.util.random.RandomGeneratorFactory<RandomGenerator> rf = java.util.random.RandomGeneratorFactory.of("L64X256MixRandom");
         RandomGenerator rnd = rf.create(20260818L);
         for (int i = 0; i < 3_000; i++) {
             String pattern = randomPattern(rnd);
@@ -140,8 +236,8 @@ class LongestMatchParityTest {
                 int[] expected = re2jFindPosix(pattern, input);
                 int[] actual = tdfaFindPosix(pattern, input, factory);
                 assertThat(actual)
-                        .as("seed-case #%d pattern=\"%s\" input=\"%s\"", i, pattern, input)
-                        .isEqualTo(expected);
+                                .as("seed-case #%d pattern=\"%s\" input=\"%s\"", i, pattern, input)
+                                .isEqualTo(expected);
             } catch (RuntimeException e) {
                 // both engines must agree on rejection too; anything else is a bug
                 try {
@@ -171,7 +267,7 @@ class LongestMatchParityTest {
                 // nullable-body stars, the (a*?)*? submatch-disambiguation family
                 case 6 -> sb.append('(').append(atom(rnd)).append(quant(rnd)).append(')').append(quant(rnd));
                 case 7 -> sb.append("((").append(atom(rnd)).append(quant(rnd)).append(")|(")
-                        .append(atom(rnd)).append(quant(rnd)).append("))").append(quant(rnd));
+                                .append(atom(rnd)).append(quant(rnd)).append("))").append(quant(rnd));
             }
         }
         return sb.toString();
@@ -200,7 +296,9 @@ class LongestMatchParityTest {
     static String randomInput(RandomGenerator rnd) {
         int len = rnd.nextInt(7);
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < len; i++) sb.append("abc".charAt(rnd.nextInt(3)));
+        for (int i = 0; i < len; i++) {
+            sb.append("abc".charAt(rnd.nextInt(3)));
+        }
         return sb.toString();
     }
 }

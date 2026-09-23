@@ -6,7 +6,7 @@ package io.github.jemmix.tdfa.tdfa;
 final class Range {
     final int lo, hi, target;
     final int requiredMask;
-    int[] ops;  // non-final: rewritten in place by CFG optimization (BT22 §6.3)
+    int[] ops; // non-final: rewritten in place by CFG optimization (BT22 §6.3)
 
     Range(int lo, int hi, int target, int[] ops, int requiredMask) {
         this.lo = lo;

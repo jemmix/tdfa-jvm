@@ -22,19 +22,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class LayeredComparatorTest {
 
-    private static final LayeredComparator C =
-            new LayeredComparator(com.google.re2j.Re2jUnicodeProvider.INSTANCE);
+    private static final LayeredComparator C = new LayeredComparator(com.google.re2j.Re2jUnicodeProvider.INSTANCE);
 
     @Test
     void verdictTableIsExact() {
         // r, s, v, a -> expected layer
         assertThat(LayeredComparator.classify(new String[]{"1", "1", "1", "1"})).isEqualTo(LayeredComparator.Layer.PASS);
-        assertThat(LayeredComparator.classify(new String[]{"1", "1", "2", "1"})).isEqualTo(LayeredComparator.Layer.TIER);          // v != a
-        assertThat(LayeredComparator.classify(new String[]{"1", "1", "2", "3"})).isEqualTo(LayeredComparator.Layer.TIER);          // v != a, both != r/s
-        assertThat(LayeredComparator.classify(new String[]{"2", "2", "1", "1"})).isEqualTo(LayeredComparator.Layer.CONSTRUCTION);  // v==a != s; s==r
-        assertThat(LayeredComparator.classify(new String[]{"1", "3", "1", "1"})).isEqualTo(LayeredComparator.Layer.SIM_SUSPECT);   // v==r != s
-        assertThat(LayeredComparator.classify(new String[]{"2", "1", "1", "1"})).isEqualTo(LayeredComparator.Layer.PARSER);        // v==a==s != r
-        assertThat(LayeredComparator.classify(new String[]{"3", "2", "1", "1"})).isEqualTo(LayeredComparator.Layer.CHAOS);         // three answers
+        assertThat(LayeredComparator.classify(new String[]{"1", "1", "2", "1"})).isEqualTo(LayeredComparator.Layer.TIER); // v != a
+        assertThat(LayeredComparator.classify(new String[]{"1", "1", "2", "3"})).isEqualTo(LayeredComparator.Layer.TIER); // v != a, both != r/s
+        assertThat(LayeredComparator.classify(new String[]{"2", "2", "1", "1"})).isEqualTo(LayeredComparator.Layer.CONSTRUCTION); // v==a != s; s==r
+        assertThat(LayeredComparator.classify(new String[]{"1", "3", "1", "1"})).isEqualTo(LayeredComparator.Layer.SIM_SUSPECT); // v==r != s
+        assertThat(LayeredComparator.classify(new String[]{"2", "1", "1", "1"})).isEqualTo(LayeredComparator.Layer.PARSER); // v==a==s != r
+        assertThat(LayeredComparator.classify(new String[]{"3", "2", "1", "1"})).isEqualTo(LayeredComparator.Layer.CHAOS); // three answers
         assertThat(LayeredComparator.classify(new String[]{"1", "2", "3", "3"})).isEqualTo(LayeredComparator.Layer.CHAOS);
     }
 
@@ -68,10 +67,10 @@ class LayeredComparatorTest {
         // the assertion holds under both.
         String loneLow = String.valueOf((char) 0xDC21);
         boolean releasedOracle = com.google.re2j.Pattern.compile("(" + loneLow + ")")
-                .matcher("a\ud800\udc21zz").find();
+                        .matcher("a\ud800\udc21zz").find();
         LayeredComparator.Report r = C.compare("(" + loneLow + ")", "a\ud800\udc21zz");
         assertThat(r.layer()).isEqualTo(
-                releasedOracle ? LayeredComparator.Layer.PARSER : LayeredComparator.Layer.PASS);
+                        releasedOracle ? LayeredComparator.Layer.PARSER : LayeredComparator.Layer.PASS);
         assertThat(r.sim()).isEqualTo(r.vm());
         assertThat(r.vm()).isEqualTo(r.asm());
     }
@@ -95,7 +94,7 @@ class LayeredComparatorTest {
         // This also pins the sim's own fix: find() on lone-high input used to
         // throw StringIndexOutOfBoundsException (charAt(len) in the interior
         // skip), which poisoned the sim column for the whole class of inputs.
-        String pair = "\ud800\udfff";                     // U+103FF
+        String pair = "\ud800\udfff"; // U+103FF
         String loneHighInput = String.valueOf(new char[]{'\ud83f'});
         assertThat(C.compare("(?i:\ud800)\udfff", pair).layer()).isEqualTo(LayeredComparator.Layer.PASS);
         assertThat(C.compare("(?i:\ud800)", loneHighInput).layer()).isEqualTo(LayeredComparator.Layer.PASS);

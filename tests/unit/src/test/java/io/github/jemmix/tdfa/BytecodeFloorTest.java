@@ -43,18 +43,20 @@ class BytecodeFloorTest {
 
     /** One anchor + ceiling per shipped module — compile-time presence guarantee. */
     private static final Object[][] ANCHORS = {
-            {io.github.jemmix.tdfa.Pattern.class, MAJOR_JAVA_8},                   // facade
-            {io.github.jemmix.tdfa.tdfa.Tdfa.class, MAJOR_JAVA_8},                   // core
-            {io.github.jemmix.tdfa.asm.TdfaAsmBackend.class, MAJOR_JAVA_8},          // asm
-            {io.github.jemmix.tdfa.sim.PikeSim.class, MAJOR_JAVA_25},                // lib:pikesim
-            {io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0.class, MAJOR_JAVA_25},    // unicode:v6_0
-            {io.github.jemmix.tdfa.unicode.v17_0.Unicode17_0.class, MAJOR_JAVA_25},  // unicode:v17_0
+                    {io.github.jemmix.tdfa.Pattern.class, MAJOR_JAVA_8}, // facade
+                    {io.github.jemmix.tdfa.tdfa.Tdfa.class, MAJOR_JAVA_8}, // core
+                    {io.github.jemmix.tdfa.asm.TdfaAsmBackend.class, MAJOR_JAVA_8}, // asm
+                    {io.github.jemmix.tdfa.sim.PikeSim.class, MAJOR_JAVA_25}, // lib:pikesim
+                    {io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0.class, MAJOR_JAVA_25}, // unicode:v6_0
+                    {io.github.jemmix.tdfa.unicode.v17_0.Unicode17_0.class, MAJOR_JAVA_25}, // unicode:v17_0
     };
 
     @Test
     void everyShippedClassIsAtItsFloor() throws IOException {
         Set<Path> roots = new LinkedHashSet<>();
-        for (Object[] anchor : ANCHORS) roots.add(codeSourceDir((Class<?>) anchor[0]));
+        for (Object[] anchor : ANCHORS) {
+            roots.add(codeSourceDir((Class<?>) anchor[0]));
+        }
         // Every anchor resolved to a distinct, plausible classes directory.
         assertThat(roots).hasSize(ANCHORS.length);
 
@@ -77,7 +79,9 @@ class BytecodeFloorTest {
                     java.util.Enumeration<? extends java.util.zip.ZipEntry> entries = zip.entries();
                     while (entries.hasMoreElements()) {
                         java.util.zip.ZipEntry e = entries.nextElement();
-                        if (!e.getName().endsWith(".class")) continue;
+                        if (!e.getName().endsWith(".class")) {
+                            continue;
+                        }
                         checked[0]++;
                         java.util.zip.ZipEntry entry = e;
                         checkOne(root + "!" + e.getName(), limit, offenders, () -> zip.getInputStream(entry));
@@ -87,13 +91,13 @@ class BytecodeFloorTest {
             // Vacuous-success guard per module: an empty/ relocated output
             // directory must fail loudly, not silently pass.
             assertThat(checked[0] - before)
-                    .as("class files under %s (output layout change?)", root)
-                    .isGreaterThanOrEqualTo(3);
+                            .as("class files under %s (output layout change?)", root)
+                            .isGreaterThanOrEqualTo(3);
         }
         assertThat(checked[0]).isGreaterThanOrEqualTo(60);
         assertThat(offenders)
-                .as("classes above their module's floor major")
-                .isEmpty();
+                        .as("classes above their module's floor major")
+                        .isEmpty();
     }
 
     /** The compiled-output directory backing {@code clazz}. */
@@ -116,10 +120,14 @@ class BytecodeFloorTest {
     private static void checkOne(String name, int limit, List<String> offenders, IOSupplier<InputStream> open) {
         try (InputStream in = open.get(); DataInputStream data = new DataInputStream(in)) {
             int magic = data.readInt();
-            if (magic != 0xCAFEBABE) throw new IOException("not a class file: " + name);
-            data.readUnsignedShort();                       // minor
+            if (magic != 0xCAFEBABE) {
+                throw new IOException("not a class file: " + name);
+            }
+            data.readUnsignedShort(); // minor
             int major = data.readUnsignedShort();
-            if (major > limit) offenders.add("major " + major + " > " + limit + ": " + name);
+            if (major > limit) {
+                offenders.add("major " + major + " > " + limit + ": " + name);
+            }
         } catch (IOException e) {
             offenders.add("unreadable (" + e + "): " + name);
         }

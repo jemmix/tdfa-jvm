@@ -32,9 +32,9 @@ import java.util.List;
  */
 public final class Cfg {
     // ---- Op kinds ----
-    public static final int KIND_SET    = 1;
-    public static final int KIND_COPY   = 2;
-    public static final int KIND_APPEND = 3;  // reserved for multi-valued tags (not yet supported)
+    public static final int KIND_SET = 1;
+    public static final int KIND_COPY = 2;
+    public static final int KIND_APPEND = 3; // reserved for multi-valued tags (not yet supported)
 
     // ---- Set values (for KIND_SET only) ----
     /**
@@ -50,32 +50,48 @@ public final class Cfg {
      * registers holding different positions and silently corrupt captures).
      */
     public static final int VAL_POS = 1;
-    public static final int VAL_NIL = 2;  // set to NIL (-1)
+    public static final int VAL_NIL = 2; // set to NIL (-1)
 
     // ---- Block kinds ----
-    public static final int BLOCK_BASIC    = 1;
-    public static final int BLOCK_FINAL    = 2;
-    public static final int BLOCK_FALLBACK = 3;  // reserved for M3
+    public static final int BLOCK_BASIC = 1;
+    public static final int BLOCK_FINAL = 2;
+    public static final int BLOCK_FALLBACK = 3; // reserved for M3
 
     /** A single register operation. Ops are mutated in place by the optimization passes. */
     public static final class Op {
-        public int kind;     // KIND_*
+        public int kind; // KIND_*
         public int dst;
-        public int src;      // for KIND_COPY / KIND_APPEND
-        public int value;    // for KIND_SET: VAL_POS or VAL_NIL
+        public int src; // for KIND_COPY / KIND_APPEND
+        public int value; // for KIND_SET: VAL_POS or VAL_NIL
 
         public Op(int kind, int dst, int src, int value) {
-            this.kind = kind; this.dst = dst; this.src = src; this.value = value;
+            this.kind = kind;
+            this.dst = dst;
+            this.src = src;
+            this.value = value;
         }
-        public static Op setPos(int dst) { return new Op(KIND_SET, dst, 0, VAL_POS); }
-        public static Op setNil(int dst) { return new Op(KIND_SET, dst, 0, VAL_NIL); }
-        public static Op copy(int dst, int src) { return new Op(KIND_COPY, dst, src, 0); }
 
-        @Override public String toString() {
+        public static Op setPos(int dst) {
+            return new Op(KIND_SET, dst, 0, VAL_POS);
+        }
+
+        public static Op setNil(int dst) {
+            return new Op(KIND_SET, dst, 0, VAL_NIL);
+        }
+
+        public static Op copy(int dst, int src) {
+            return new Op(KIND_COPY, dst, src, 0);
+        }
+
+        @Override
+        public String toString() {
             switch (kind) {
-                case KIND_SET:  return "r" + dst + "=" + (value == VAL_POS ? "pos" : "nil");
-                case KIND_COPY: return "r" + dst + "=r" + src;
-                default:        return "r" + dst + "=r" + dst + "·r" + src;
+                case KIND_SET :
+                    return "r" + dst + "=" + (value == VAL_POS ? "pos" : "nil");
+                case KIND_COPY :
+                    return "r" + dst + "=r" + src;
+                default :
+                    return "r" + dst + "=r" + dst + "·r" + src;
             }
         }
     }
@@ -112,7 +128,7 @@ public final class Cfg {
         this.groupCount = groupCount;
         this.initialRegCount = initialRegCount;
         this.regCount = initialRegCount;
-        this.finalRegBase = tagCount;  // pre-optimimization layout: working [0..T-1], final [T..2T-1], extras [2T..]
+        this.finalRegBase = tagCount; // pre-optimimization layout: working [0..T-1], final [T..2T-1], extras [2T..]
     }
 
     public Block newBlock(int kind, int stateId, int rangeIndex) {
@@ -126,25 +142,28 @@ public final class Cfg {
 
     /** Max register index + 1 across all ops (or {@code finalRegBase + tagCount} if no ops). */
     public int computeMaxReg() {
-        int max = finalRegBase + tagCount;  // final registers always present
+        int max = finalRegBase + tagCount; // final registers always present
         for (Block b : blocks) {
             for (Op op : b.ops) {
                 max = Math.max(max, op.dst + 1);
-                if (op.kind == KIND_COPY || op.kind == KIND_APPEND) max = Math.max(max, op.src + 1);
+                if (op.kind == KIND_COPY || op.kind == KIND_APPEND) {
+                    max = Math.max(max, op.src + 1);
+                }
             }
         }
         return max;
     }
 
-    @Override public String toString() {
+    @Override
+    public String toString() {
         StringBuilder sb = new StringBuilder();
         sb.append("CFG: ").append(blocks.size()).append(" blocks, ")
-          .append(regCount).append(" regs (final base ").append(finalRegBase).append(")\n");
+                        .append(regCount).append(" regs (final base ").append(finalRegBase).append(")\n");
         for (int i = 0; i < blocks.size(); i++) {
             Block b = blocks.get(i);
             sb.append("  B").append(i).append(" [")
-              .append(b.kind == BLOCK_BASIC ? "basic" : b.kind == BLOCK_FINAL ? "final" : "fallback")
-              .append(" state=").append(b.stateId).append("]: ");
+                            .append(b.kind == BLOCK_BASIC ? "basic" : b.kind == BLOCK_FINAL ? "final" : "fallback")
+                            .append(" state=").append(b.stateId).append("]: ");
             sb.append(b.ops).append(" -> succ ").append(b.successors).append("\n");
         }
         return sb.toString();

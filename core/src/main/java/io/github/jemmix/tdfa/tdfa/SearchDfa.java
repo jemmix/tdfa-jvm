@@ -47,8 +47,8 @@ final class SearchDfa {
     final int maxBlocks;
     final Object lock = new Object();
     // ---- writer-confined (all accesses under lock) ----
-    private final HashMap<Wrapper, Integer> rowById = new HashMap<>();    // bitset -> row id
-    private final HashMap<Wrapper, Integer> blockById = new HashMap<>();  // content -> block id
+    private final HashMap<Wrapper, Integer> rowById = new HashMap<>(); // bitset -> row id
+    private final HashMap<Wrapper, Integer> blockById = new HashMap<>(); // content -> block id
     /**
      * Reusable probe key for both intern maps (lock-confined; the maps
      * never hold it — a fresh Wrapper is still allocated on the intern
@@ -86,9 +86,13 @@ final class SearchDfa {
      * row 0 in the snapshot and return.
      */
     void ensureSeed() {
-        if (rowWordsArr.length != 0) return;
+        if (rowWordsArr.length != 0) {
+            return;
+        }
         synchronized (lock) {
-            if (rowWordsArr.length != 0) return;
+            if (rowWordsArr.length != 0) {
+                return;
+            }
             int[] seed = new int[nw];
             seed[r.startState >>> 5] |= 1 << (r.startState & 31);
             internRowLocked(seed);
@@ -103,7 +107,9 @@ final class SearchDfa {
         probe.a = words;
         probe.hash = java.util.Arrays.hashCode(words);
         Integer id = rowById.get(probe);
-        if (id != null) return id;
+        if (id != null) {
+            return id;
+        }
         if (rowWordsArr.length >= maxRows || capped) {
             capped = true;
             return -1;
@@ -113,12 +119,12 @@ final class SearchDfa {
         rowById.put(new Wrapper(key), nid);
         int[][] rw = java.util.Arrays.copyOf(rowWordsArr, nid + 1);
         rw[nid] = key;
-        rowWordsArr = rw;   // volatile publish
+        rowWordsArr = rw; // volatile publish
         int[][] rb = java.util.Arrays.copyOf(rowBlockIdsArr, nid + 1);
         int[] cells = new int[128];
         java.util.Arrays.fill(cells, -1);
         rb[nid] = cells;
-        rowBlockIdsArr = rb;   // volatile publish (cells still all -1)
+        rowBlockIdsArr = rb; // volatile publish (cells still all -1)
         return nid;
     }
 
@@ -132,7 +138,11 @@ final class SearchDfa {
 
     boolean accept(int rowId) {
         int[] w = rowWordsArr[rowId];
-        for (int i = 0; i < nw; i++) if ((w[i] & r.acceptBits[i]) != 0) return true;
+        for (int i = 0; i < nw; i++) {
+            if ((w[i] & r.acceptBits[i]) != 0) {
+                return true;
+            }
+        }
         return false;
     }
 
@@ -156,13 +166,17 @@ final class SearchDfa {
                     if (r.ranges[(base + mid) * 5] <= c) {
                         anchor = mid;
                         rlo = mid + 1;
-                    } else rhi = mid - 1;
+                    } else {
+                        rhi = mid - 1;
+                    }
                 }
                 for (int i = anchor; i >= 0 && r.rhp[base + i] >= c; i--) {
                     int mo = (base + i) * 5;
                     if (c <= r.ranges[mo + 1]) {
                         int t = r.ranges[mo + 2];
-                        if (t >= 0) next[t >>> 5] |= 1 << (t & 31);
+                        if (t >= 0) {
+                            next[t >>> 5] |= 1 << (t & 31);
+                        }
                     }
                 }
             }
@@ -179,12 +193,15 @@ final class SearchDfa {
         synchronized (lock) {
             int[] d = delta(rowWordsArr[rowId], c);
             boolean empty = true;
-            for (int i = 0; i < nw; i++)
+            for (int i = 0; i < nw; i++) {
                 if (d[i] != 0) {
                     empty = false;
                     break;
                 }
-            if (empty) return SDFA_KILL;   // next = pure row 0 + kill
+            }
+            if (empty) {
+                return SDFA_KILL;
+            } // next = pure row 0 + kill
             d[r.startState >>> 5] |= 1 << (r.startState & 31);
             return internRowLocked(d);
         }
@@ -206,17 +223,20 @@ final class SearchDfa {
                 setRowCell(rowId, b, -2);
                 return -2;
             }
-            if (t != SDFA_KILL) allKill = false;
+            if (t != SDFA_KILL) {
+                allKill = false;
+            }
             cells[k] = t;
         }
         int blockId;
         if (allKill) {
-            blockId = -3;   // shared all-kill block
+            blockId = -3; // shared all-kill block
         } else {
             Wrapper key = new Wrapper(cells);
             Integer cached = blockById.get(key);
-            if (cached != null) blockId = cached;
-            else {
+            if (cached != null) {
+                blockId = cached;
+            } else {
                 if (blocksArr.length >= maxBlocks) {
                     setRowCell(rowId, b, -2);
                     return -2;
@@ -224,7 +244,7 @@ final class SearchDfa {
                 int n = blocksArr.length;
                 int[][] nb = java.util.Arrays.copyOf(blocksArr, n + 1);
                 nb[n] = cells;
-                blocksArr = nb;   // volatile publish BEFORE the cell can point at it
+                blocksArr = nb; // volatile publish BEFORE the cell can point at it
                 blockId = n;
                 blockById.put(key, blockId);
             }
@@ -239,12 +259,15 @@ final class SearchDfa {
     private int transitionLocked(int rowId, int c) {
         int[] d = delta(rowWordsArr[rowId], c);
         boolean empty = true;
-        for (int i = 0; i < nw; i++)
+        for (int i = 0; i < nw; i++) {
             if (d[i] != 0) {
                 empty = false;
                 break;
             }
-        if (empty) return SDFA_KILL;
+        }
+        if (empty) {
+            return SDFA_KILL;
+        }
         d[r.startState >>> 5] |= 1 << (r.startState & 31);
         return internRowLocked(d);
     }
@@ -276,19 +299,29 @@ final class SearchDfa {
         int cell = rowBlockIdsArr[rowId][b];
         if (cell == -1) {
             synchronized (lock) {
-                cell = rowBlockIdsArr[rowId][b];   // re-read under lock: may have been built
-                if (cell == -1) cell = buildBlockLocked(rowId, b);
+                cell = rowBlockIdsArr[rowId][b]; // re-read under lock: may have been built
+                if (cell == -1) {
+                    cell = buildBlockLocked(rowId, b);
+                }
             }
         }
-        if (cell == -2) return transition(rowId, c);   // capped: compute directly
-        if (cell == -3) return SDFA_KILL;              // all-kill block
+        if (cell == -2) {
+            return transition(rowId, c);
+        } // capped: compute directly
+        if (cell == -3) {
+            return SDFA_KILL;
+        } // all-kill block
         int[][] arr = blocksArr;
-        if (cell < arr.length) return arr[cell][c & 511];
+        if (cell < arr.length) {
+            return arr[cell][c & 511];
+        }
         // Stale snapshot vs a fresh id (no happens-before edge between the
         // plain cell read and this volatile read): re-check under the lock.
         synchronized (lock) {
             cell = rowBlockIdsArr[rowId][b];
-            if (cell >= 0 && cell < blocksArr.length) return blocksArr[cell][c & 511];
+            if (cell >= 0 && cell < blocksArr.length) {
+                return blocksArr[cell][c & 511];
+            }
             return transitionLocked(rowId, c);
         }
     }

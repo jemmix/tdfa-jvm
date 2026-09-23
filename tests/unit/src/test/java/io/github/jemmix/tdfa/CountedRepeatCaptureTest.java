@@ -35,19 +35,19 @@ class CountedRepeatCaptureTest {
         assertThat(g1("(.?){2,}", "xy")).isEqualTo("y");
         assertThat(g1("(.{0,2}){2,}", "abc")).isEqualTo("c");
         assertThat(g1("(a?){3,}", "aaaa")).isEqualTo("a");
-        assertThat(g1("((a)?){2,}", "aa")).isEqualTo("a");       // nested group
-        assertThat(g1("(\\W?){2,}", "!!")).isEqualTo("!");       // class body
-        assertThat(g1("x(a?){2,}", "xaa")).isEqualTo("a");       // leading context
-        assertThat(g1("(a?){2,}b", "aab")).isEqualTo("a");       // trailing context
+        assertThat(g1("((a)?){2,}", "aa")).isEqualTo("a"); // nested group
+        assertThat(g1("(\\W?){2,}", "!!")).isEqualTo("!"); // class body
+        assertThat(g1("x(a?){2,}", "xaa")).isEqualTo("a"); // leading context
+        assertThat(g1("(a?){2,}b", "aab")).isEqualTo("a"); // trailing context
     }
 
     @Test
     void lazyAndEmptyBodyVariants() {
-        assertThat(g1("(a?){2,}?", "aab")).isEqualTo("a");       // lazy open counted
+        assertThat(g1("(a?){2,}?", "aab")).isEqualTo("a"); // lazy open counted
         assertThat(g1("(.{0,2}){2,}?", "abcd")).isEqualTo("cd");
-        assertThat(g1("(a{0,}){2,}", "aa")).isEmpty();           // star body: "" in re2j too
-        assertThat(g1("(a??){2,}", "aa")).isEmpty();             // lazy-null body: empty overall match
-        assertThat(g1("(a?){2,}", "b")).isEmpty();               // zero-width overall match, g1=""
+        assertThat(g1("(a{0,}){2,}", "aa")).isEmpty(); // star body: "" in re2j too
+        assertThat(g1("(a??){2,}", "aa")).isEmpty(); // lazy-null body: empty overall match
+        assertThat(g1("(a?){2,}", "b")).isEmpty(); // zero-width overall match, g1=""
     }
 
     @Test
@@ -57,7 +57,7 @@ class CountedRepeatCaptureTest {
         // facade default used by g1() above.
         String pat = "(a?){2,}";
         var interp = io.github.jemmix.tdfa.Pattern.compile(
-                pat, 0, io.github.jemmix.tdfa.tdfa.TdfaRunner::new);
+                        pat, 0, io.github.jemmix.tdfa.tdfa.TdfaRunner::new);
         var m = interp.matcher("aa");
         assertThat(m.find()).isTrue();
         assertThat(m.group(1)).isEqualTo("a");

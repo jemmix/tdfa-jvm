@@ -33,8 +33,8 @@ public final class ParseResult {
     private final Map<String, Integer> namedGroups;
 
     public ParseResult(Ast ast, int tagCount, int groupCount, boolean multiline,
-                       boolean unicodeShorthand, int[] unicodeWordRanges,
-                       Map<String, Integer> namedGroups) {
+                    boolean unicodeShorthand, int[] unicodeWordRanges,
+                    Map<String, Integer> namedGroups) {
         this.ast = ast;
         this.tagCount = tagCount;
         this.groupCount = groupCount;
@@ -42,23 +42,39 @@ public final class ParseResult {
         this.unicodeShorthand = unicodeShorthand;
         // Unmodifiable copy on construction.
         this.namedGroups = namedGroups != null
-                ? java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(namedGroups))
-                : java.util.Collections.emptyMap();
+                        ? java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(namedGroups))
+                        : java.util.Collections.emptyMap();
         // Defensive copy: an array field is otherwise only as immutable as
         // the caller's discipline.
         this.unicodeWordRanges = unicodeWordRanges != null ? unicodeWordRanges.clone() : null;
     }
 
-    public Ast ast() { return ast; }
-    public int tagCount() { return tagCount; }
-    public int groupCount() { return groupCount; }
-    public boolean multiline() { return multiline; }
-    public boolean unicodeShorthand() { return unicodeShorthand; }
+    public Ast ast() {
+        return ast;
+    }
+
+    public int tagCount() {
+        return tagCount;
+    }
+
+    public int groupCount() {
+        return groupCount;
+    }
+
+    public boolean multiline() {
+        return multiline;
+    }
+
+    public boolean unicodeShorthand() {
+        return unicodeShorthand;
+    }
 
     /** Defensive copy on read too — hands out a fresh array each call. */
     public int[] unicodeWordRanges() {
         return unicodeWordRanges != null ? unicodeWordRanges.clone() : null;
     }
 
-    public Map<String, Integer> namedGroups() { return namedGroups; }
+    public Map<String, Integer> namedGroups() {
+        return namedGroups;
+    }
 }

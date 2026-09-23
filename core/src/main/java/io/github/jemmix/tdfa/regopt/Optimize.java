@@ -25,7 +25,8 @@ import java.util.List;
  * <p>Public entry point: {@link #optimize(Cfg)}.
  */
 public final class Optimize {
-    private Optimize() {}
+    private Optimize() {
+    }
 
     /** Run the full pipeline on {@code cfg} (in place). */
     public static void optimize(Cfg cfg) {
@@ -36,9 +37,12 @@ public final class Optimize {
     public static void optimize(Cfg cfg, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
         if (Boolean.getBoolean("tdfa.debug")) {
             int edges = 0, ops = 0;
-            for (Cfg.Block b : cfg.blocks) { edges += b.successors.size(); ops += b.ops.size(); }
+            for (Cfg.Block b : cfg.blocks) {
+                edges += b.successors.size();
+                ops += b.ops.size();
+            }
             System.err.printf("[cfg] blocks=%d edges=%d ops=%d regs=%d tags=%d%n",
-                cfg.blocks.size(), edges, ops, cfg.initialRegCount, cfg.tagCount);
+                            cfg.blocks.size(), edges, ops, cfg.initialRegCount, cfg.tagCount);
         }
         // Stage 1: compaction (renumber survivors into a contiguous range).
         int[] vmap = compaction(cfg);
@@ -101,12 +105,16 @@ public final class Optimize {
         for (Cfg.Block b : cfg.blocks) {
             for (Cfg.Op op : b.ops) {
                 used.set(op.dst);
-                if (op.kind == Cfg.KIND_COPY || op.kind == Cfg.KIND_APPEND) used.set(op.src);
+                if (op.kind == Cfg.KIND_COPY || op.kind == Cfg.KIND_APPEND) {
+                    used.set(op.src);
+                }
             }
         }
         // Always-used: final register block (one per tag).
         int tagCount = cfg.tagCount;
-        for (int t = 0; t < tagCount; t++) used.set(tagCount + t);
+        for (int t = 0; t < tagCount; t++) {
+            used.set(tagCount + t);
+        }
 
         // Two-pass renumbering: working registers first (lowest indices), then
         // final registers (highest). This keeps the final block contiguous at the top.
@@ -115,10 +123,14 @@ public final class Optimize {
         int nextWorking = 0;
         // Pass 1: working registers = used regs in [0..tagCount-1] and [2*tagCount..n-1].
         for (int i = 0; i < tagCount; i++) {
-            if (used.get(i)) vmap[i] = nextWorking++;
+            if (used.get(i)) {
+                vmap[i] = nextWorking++;
+            }
         }
         for (int i = 2 * tagCount; i < n; i++) {
-            if (used.get(i)) vmap[i] = nextWorking++;
+            if (used.get(i)) {
+                vmap[i] = nextWorking++;
+            }
         }
         // Pass 2: final registers go right after the working block.
         int finalBase = nextWorking;
@@ -149,15 +161,20 @@ public final class Optimize {
     }
 
     private static int mapped(int r, int[] vmap) {
-        if (r < 0 || r >= vmap.length || vmap[r] < 0)
+        if (r < 0 || r >= vmap.length || vmap[r] < 0) {
             throw new IllegalStateException("regopt: rename: op references unmapped register " + r
-                    + " (vmap covers " + vmap.length + " registers) — compaction invariant broken");
+                            + " (vmap covers " + vmap.length + " registers) — compaction invariant broken");
+        }
         return vmap[r];
     }
 
     private static int countUsed(int[] vmap) {
         int max = -1;
-        for (int v : vmap) if (v > max) max = v;
+        for (int v : vmap) {
+            if (v > max) {
+                max = v;
+            }
+        }
         return max + 1;
     }
 
@@ -192,30 +209,47 @@ public final class Optimize {
         int nr = cfg.regCount;
         int w = (nr + 63) >>> 6;
         long[][] rows = new long[nb][];
-        for (int b = 0; b < nb; b++) rows[b] = new long[w];
+        for (int b = 0; b < nb; b++) {
+            rows[b] = new long[w];
+        }
         int fb = cfg.finalRegBase;
         int T = cfg.tagCount;
         // Seed: all final registers live at end of every final block.
         for (int b = 0; b < nb; b++) {
-            if (cfg.blocks.get(b).kind != Cfg.BLOCK_FINAL) continue;
+            if (cfg.blocks.get(b).kind != Cfg.BLOCK_FINAL) {
+                continue;
+            }
             for (int t = 0; t < T; t++) {
                 int r = fb + t;
-                if (r < nr) rows[b][r >>> 6] |= 1L << r;
+                if (r < nr) {
+                    rows[b][r >>> 6] |= 1L << r;
+                }
             }
         }
         // Predecessor lists (BASIC blocks only — FINAL rows never change, so
         // nothing needs to re-derive them).
         int[] predCount = new int[nb];
-        for (Cfg.Block b : cfg.blocks)
-            for (int si : b.successors)
-                if (cfg.blocks.get(si).kind == Cfg.BLOCK_BASIC) predCount[si]++;
+        for (Cfg.Block b : cfg.blocks) {
+            for (int si : b.successors) {
+                if (cfg.blocks.get(si).kind == Cfg.BLOCK_BASIC) {
+                    predCount[si]++;
+                }
+            }
+        }
         int[][] preds = new int[nb][];
-        for (int b = 0; b < nb; b++) preds[b] = new int[predCount[b]];
+        for (int b = 0; b < nb; b++) {
+            preds[b] = new int[predCount[b]];
+        }
         int[] fill = new int[nb];
         for (int b = 0; b < nb; b++) {
-            if (cfg.blocks.get(b).kind != Cfg.BLOCK_BASIC) continue;
-            for (int si : cfg.blocks.get(b).successors)
-                if (cfg.blocks.get(si).kind == Cfg.BLOCK_BASIC) preds[si][fill[si]++] = b;
+            if (cfg.blocks.get(b).kind != Cfg.BLOCK_BASIC) {
+                continue;
+            }
+            for (int si : cfg.blocks.get(b).successors) {
+                if (cfg.blocks.get(si).kind == Cfg.BLOCK_BASIC) {
+                    preds[si][fill[si]++] = b;
+                }
+            }
         }
         // Worklist seeded with all BASIC blocks in post-order (successors
         // before predecessors: information flows backward, so that order
@@ -225,16 +259,20 @@ public final class Optimize {
         java.util.BitSet queued = new java.util.BitSet(nb);
         int head = 0, tail = 0;
         for (int bi : postOrder) {
-            if (cfg.blocks.get(bi).kind != Cfg.BLOCK_BASIC) continue;
+            if (cfg.blocks.get(bi).kind != Cfg.BLOCK_BASIC) {
+                continue;
+            }
             queue[tail % queue.length] = bi;
             tail++;
             queued.set(bi);
         }
         long[] scratch = new long[w];
-        long[] spare = new long[w];   // next stored-row buffer; displaced rows recycle into it
+        long[] spare = new long[w]; // next stored-row buffer; displaced rows recycle into it
         long[] propBuf = new long[w]; // propagateBackwardW result buffer (consumed immediately)
         while (head != tail) {
-            if (meter != null) meter.tick();
+            if (meter != null) {
+                meter.tick();
+            }
             int bi = queue[head % queue.length];
             head++;
             queued.clear(bi);
@@ -245,12 +283,16 @@ public final class Optimize {
                 Cfg.Block s = cfg.blocks.get(si);
                 long[] in = propagateBackwardW(rows[si], s.ops, nr, meter, propBuf);
                 for (int k = 0; k < w; k++) {
-                    if (meter != null) meter.tick();   // per (successor, word): the fixpoint's real unit
+                    if (meter != null) {
+                        meter.tick();
+                    } // per (successor, word): the fixpoint's real unit
                     scratch[k] |= in[k];
                 }
                 any = true;
             }
-            if (!any) continue;   // no successors: row stays (seed or empty)
+            if (!any) {
+                continue;
+            } // no successors: row stays (seed or empty)
             if (!java.util.Arrays.equals(scratch, rows[bi])) {
                 // Zero-allocation row store: write into the spare buffer and
                 // recycle the displaced row as the next spare (this churn was
@@ -276,7 +318,9 @@ public final class Optimize {
                 long bits = row[k];
                 while (bits != 0) {
                     int r = (k << 6) + Long.numberOfTrailingZeros(bits);
-                    if (r < nr) L[b][r] = true;
+                    if (r < nr) {
+                        L[b][r] = true;
+                    }
                     bits &= bits - 1;
                 }
             }
@@ -293,25 +337,31 @@ public final class Optimize {
      *  8M budget took 6+s to trip (fuzz round 20 hang: liveness on a
      *  1389-state DFA burning 17s at library budget). */
     private static long[] propagateBackwardW(long[] liveOut, List<Cfg.Op> ops, int nr,
-                                             io.github.jemmix.tdfa.tdfa.WorkMeter meter, long[] buf) {
+                    io.github.jemmix.tdfa.tdfa.WorkMeter meter, long[] buf) {
         System.arraycopy(liveOut, 0, buf, 0, buf.length);
         long[] live = buf;
         for (int oi = ops.size() - 1; oi >= 0; oi--) {
-            if (meter != null) meter.tick();
+            if (meter != null) {
+                meter.tick();
+            }
             Cfg.Op op = ops.get(oi);
-            if (op.dst >= nr) continue;
+            if (op.dst >= nr) {
+                continue;
+            }
             switch (op.kind) {
-                case Cfg.KIND_SET:
+                case Cfg.KIND_SET :
                     live[op.dst >>> 6] &= ~(1L << op.dst);
                     break;
-                case Cfg.KIND_COPY:
+                case Cfg.KIND_COPY :
                     if ((live[op.dst >>> 6] & (1L << op.dst)) != 0) {
                         live[op.dst >>> 6] &= ~(1L << op.dst);
-                        if (op.src < nr) live[op.src >>> 6] |= 1L << op.src;
+                        if (op.src < nr) {
+                            live[op.src >>> 6] |= 1L << op.src;
+                        }
                     }
                     break;
-                default:
-                    break;   // KIND_APPEND: multi-valued tags unmodeled
+                default :
+                    break; // KIND_APPEND: multi-valued tags unmodeled
             }
         }
         return live;
@@ -328,22 +378,32 @@ public final class Optimize {
         BitSet visited = new BitSet();
         // DFS from each unvisited BASIC block.
         for (int root = 0; root < nb; root++) {
-            if (cfg.blocks.get(root).kind != Cfg.BLOCK_BASIC) continue;
-            if (visited.get(root)) continue;
+            if (cfg.blocks.get(root).kind != Cfg.BLOCK_BASIC) {
+                continue;
+            }
+            if (visited.get(root)) {
+                continue;
+            }
             dfsPostOrder(root, cfg, visited, postOrder);
         }
         int[] arr = new int[postOrder.size()];
-        for (int i = 0; i < arr.length; i++) arr[i] = postOrder.get(i);
+        for (int i = 0; i < arr.length; i++) {
+            arr[i] = postOrder.get(i);
+        }
         return arr;
     }
 
     private static void dfsPostOrder(int bi, Cfg cfg, BitSet visited, List<Integer> out) {
-        if (visited.get(bi)) return;
+        if (visited.get(bi)) {
+            return;
+        }
         visited.set(bi);
         Cfg.Block b = cfg.blocks.get(bi);
         for (int succ : b.successors) {
             // Recurse into BASIC successors only (FINAL blocks have no successors to visit).
-            if (cfg.blocks.get(succ).kind == Cfg.BLOCK_BASIC) dfsPostOrder(succ, cfg, visited, out);
+            if (cfg.blocks.get(succ).kind == Cfg.BLOCK_BASIC) {
+                dfsPostOrder(succ, cfg, visited, out);
+            }
         }
         out.add(bi);
     }
@@ -363,7 +423,9 @@ public final class Optimize {
         int nr = cfg.regCount;
         for (int bi = 0; bi < cfg.blocks.size(); bi++) {
             Cfg.Block b = cfg.blocks.get(bi);
-            if (b.kind != Cfg.BLOCK_BASIC) continue;
+            if (b.kind != Cfg.BLOCK_BASIC) {
+                continue;
+            }
             boolean[] Lb = L[bi].clone();
             boolean[] keep = new boolean[b.ops.size()];
             for (int oi = b.ops.size() - 1; oi >= 0; oi--) {
@@ -374,7 +436,9 @@ public final class Optimize {
                         Lb[op.dst] = false;
                     } else if (op.kind == Cfg.KIND_COPY) {
                         Lb[op.dst] = false;
-                        if (op.src < nr) Lb[op.src] = true;
+                        if (op.src < nr) {
+                            Lb[op.src] = true;
+                        }
                     }
                 } else {
                     keep[oi] = false;
@@ -382,7 +446,9 @@ public final class Optimize {
             }
             List<Cfg.Op> survivors = new ArrayList<>(b.ops.size());
             for (int oi = 0; oi < b.ops.size(); oi++) {
-                if (keep[oi]) survivors.add(b.ops.get(oi));
+                if (keep[oi]) {
+                    survivors.add(b.ops.get(oi));
+                }
             }
             cfg.dceRemovedOps += b.ops.size() - survivors.size();
             b.ops.clear();
@@ -438,7 +504,9 @@ public final class Optimize {
         for (int bi = 0; bi < cfg.blocks.size(); bi++) {
             Cfg.Block b = cfg.blocks.get(bi);
             int nOps = b.ops.size();
-            if (nOps == 0) continue;
+            if (nOps == 0) {
+                continue;
+            }
 
             // Forward pre-pass: compute V at each op position (V_after[i] = V just after op i).
             int[] V = new int[nr];
@@ -446,7 +514,9 @@ public final class Optimize {
             // Seed V for COPY sources: V[src] = src, so COPY A <- B gives V[A] = B.
             for (Cfg.Op op : b.ops) {
                 if ((op.kind == Cfg.KIND_COPY || op.kind == Cfg.KIND_APPEND) && op.src < nr) {
-                    if (V[op.src] == NO_VALUE) V[op.src] = op.src;
+                    if (V[op.src] == NO_VALUE) {
+                        V[op.src] = op.src;
+                    }
                 }
             }
             int[][] V_after = new int[nOps][];
@@ -454,29 +524,38 @@ public final class Optimize {
                 Cfg.Op op = b.ops.get(oi);
                 if (op.dst < nr) {
                     switch (op.kind) {
-                        case Cfg.KIND_SET:
+                        case Cfg.KIND_SET :
                             V[op.dst] = (op.value == Cfg.VAL_POS) ? POS_VALUE : NIL_VALUE;
                             break;
-                        case Cfg.KIND_COPY:
-                            if (op.src < nr) V[op.dst] = V[op.src];
+                        case Cfg.KIND_COPY :
+                            if (op.src < nr) {
+                                V[op.dst] = V[op.src];
+                            }
                             break;
-                        default: break;
+                        default :
+                            break;
                     }
                 }
                 V_after[oi] = V.clone();
-                if (meter != null) meter.tick(nr);   // the clone is the pass's real unit (nOps*nr)
+                if (meter != null) {
+                    meter.tick(nr);
+                } // the clone is the pass's real unit (nOps*nr)
             }
 
             // Backward pass: maintain running live set, mark interferences.
             boolean[] live = L[bi].clone();
             for (int oi = nOps - 1; oi >= 0; oi--) {
                 Cfg.Op op = b.ops.get(oi);
-                if (op.dst >= nr) continue;
+                if (op.dst >= nr) {
+                    continue;
+                }
                 int[] Voi = V_after[oi];
                 int vDst = Voi[op.dst];
                 // op.dst interferes with everything live (except itself and same-value regs).
                 for (int k = 0; k < nr; k++) {
-                    if (meter != null) meter.tick();   // O(nOps*nr) marking scan
+                    if (meter != null) {
+                        meter.tick();
+                    } // O(nOps*nr) marking scan
                     if (k != op.dst && live[k] && Voi[k] != vDst) {
                         I[op.dst][k] = true;
                         I[k][op.dst] = true;
@@ -519,19 +598,29 @@ public final class Optimize {
      */
     static int[] registerAllocation(Cfg cfg, boolean[][] I, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
         int nr = cfg.regCount;
-        int nw = cfg.finalRegBase;  // working registers: [0..nw); finals: [nw..nr)
+        int nw = cfg.finalRegBase; // working registers: [0..nw); finals: [nw..nr)
         int[] B = new int[nr];
         List<BitSet> S = new ArrayList<>(nr);
         java.util.Arrays.fill(B, -1);
-        for (int i = 0; i < nr; i++) S.add(new BitSet());
+        for (int i = 0; i < nr; i++) {
+            S.add(new BitSet());
+        }
 
         // Phase 1: walk COPY ops; try to coalesce src+dst (working registers only).
         for (Cfg.Block b : cfg.blocks) {
             for (Cfg.Op op : b.ops) {
-                if (meter != null) meter.tick();   // per COPY op walked (+ class probes inside)
-                if (op.kind != Cfg.KIND_COPY && op.kind != Cfg.KIND_APPEND) continue;
-                if (op.dst == op.src) continue;
-                if (op.dst >= nw || op.src >= nw) continue;
+                if (meter != null) {
+                    meter.tick();
+                } // per COPY op walked (+ class probes inside)
+                if (op.kind != Cfg.KIND_COPY && op.kind != Cfg.KIND_APPEND) {
+                    continue;
+                }
+                if (op.dst == op.src) {
+                    continue;
+                }
+                if (op.dst >= nw || op.src >= nw) {
+                    continue;
+                }
                 int i = op.dst, j = op.src;
                 int x = B[i], y = B[j];
                 if (x == -1 && y == -1) {
@@ -545,7 +634,7 @@ public final class Optimize {
                         B[j] = x;
                         S.get(x).set(j);
                     }
-                } else if (x == -1) {  // y != -1
+                } else if (x == -1) { // y != -1
                     if (noInterfere(S.get(y), i, I)) {
                         B[i] = y;
                         S.get(y).set(i);
@@ -565,10 +654,16 @@ public final class Optimize {
 
         // Phase 2: merge pairs of non-interfering classes (working registers only).
         for (int i = 0; i < nw; i++) {
-            if (B[i] != i) continue;
+            if (B[i] != i) {
+                continue;
+            }
             for (int j = i + 1; j < nw; j++) {
-                if (meter != null) meter.tick();   // O(n²) pair scan — keep it budget-visible
-                if (B[j] != j) continue;
+                if (meter != null) {
+                    meter.tick();
+                } // O(n²) pair scan — keep it budget-visible
+                if (B[j] != j) {
+                    continue;
+                }
                 if (noInterfereCross(S.get(i), S.get(j), I)) {
                     for (int m = S.get(j).nextSetBit(0); m >= 0; m = S.get(j).nextSetBit(m + 1)) {
                         B[m] = i;
@@ -582,11 +677,17 @@ public final class Optimize {
         // Phase 3: assign leftover (B[i] == -1) to a non-interfering class or new class
         // (working registers only — finals get dedicated slots below).
         for (int i = 0; i < nw; i++) {
-            if (B[i] != -1) continue;
+            if (B[i] != -1) {
+                continue;
+            }
             int assigned = -1;
             for (int j = 0; j < nw; j++) {
-                if (meter != null) meter.tick();   // O(nw²) worst-case placement scan
-                if (B[j] != j) continue;
+                if (meter != null) {
+                    meter.tick();
+                } // O(nw²) worst-case placement scan
+                if (B[j] != j) {
+                    continue;
+                }
                 if (noInterfere(S.get(j), i, I)) {
                     assigned = j;
                     break;
@@ -624,7 +725,9 @@ public final class Optimize {
 
     private static boolean noInterfere(BitSet cls, int j, boolean[][] I) {
         for (int k = cls.nextSetBit(0); k >= 0; k = cls.nextSetBit(k + 1)) {
-            if (I[k][j]) return false;
+            if (I[k][j]) {
+                return false;
+            }
         }
         return true;
     }
@@ -632,7 +735,9 @@ public final class Optimize {
     private static boolean noInterfereCross(BitSet x, BitSet y, boolean[][] I) {
         for (int i = x.nextSetBit(0); i >= 0; i = x.nextSetBit(i + 1)) {
             for (int j = y.nextSetBit(0); j >= 0; j = y.nextSetBit(j + 1)) {
-                if (I[i][j]) return false;
+                if (I[i][j]) {
+                    return false;
+                }
             }
         }
         return true;
@@ -651,13 +756,17 @@ public final class Optimize {
      */
     static void normalization(Cfg cfg, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
         for (Cfg.Block b : cfg.blocks) {
-            if (b.ops.isEmpty()) continue;
+            if (b.ops.isEmpty()) {
+                continue;
+            }
             List<Cfg.Op> normalized = new ArrayList<>(b.ops.size());
             int i = 0;
             while (i < b.ops.size()) {
                 int kind = b.ops.get(i).kind;
                 int j = i;
-                while (j < b.ops.size() && b.ops.get(j).kind == kind) j++;
+                while (j < b.ops.size() && b.ops.get(j).kind == kind) {
+                    j++;
+                }
                 List<Cfg.Op> run = new ArrayList<>(b.ops.subList(i, j));
                 normalizeRun(run, meter);
                 normalized.addAll(run);
@@ -672,8 +781,13 @@ public final class Optimize {
         // Dedup.
         for (int a = run.size() - 1; a >= 0; a--) {
             for (int b2 = a - 1; b2 >= 0; b2--) {
-                if (meter != null) meter.tick();   // O(run²) pair dedup
-                if (opsEqual(run.get(a), run.get(b2))) { run.remove(a); break; }
+                if (meter != null) {
+                    meter.tick();
+                } // O(run²) pair dedup
+                if (opsEqual(run.get(a), run.get(b2))) {
+                    run.remove(a);
+                    break;
+                }
             }
         }
         int kind = run.isEmpty() ? -1 : run.get(0).kind;
@@ -704,13 +818,19 @@ public final class Optimize {
      */
     private static void topoSortCopy(List<Cfg.Op> run, io.github.jemmix.tdfa.tdfa.WorkMeter meter) {
         int n = run.size();
-        if (n < 2) return;
+        if (n < 2) {
+            return;
+        }
         // Find max register id to size the I[] array.
         int maxReg = 0;
-        for (Cfg.Op op : run) maxReg = Math.max(maxReg, Math.max(op.dst, op.src));
+        for (Cfg.Op op : run) {
+            maxReg = Math.max(maxReg, Math.max(op.dst, op.src));
+        }
         int[] I = new int[maxReg + 1];
         // I[r] = number of ops in O with src = r (i.e., reading register r).
-        for (Cfg.Op op : run) I[op.src]++;
+        for (Cfg.Op op : run) {
+            I[op.src]++;
+        }
 
         List<Cfg.Op> Oprime = new ArrayList<>(n);
         boolean[] removed = new boolean[n];
@@ -718,8 +838,12 @@ public final class Optimize {
         while (remaining > 0) {
             boolean added = false;
             for (int i = 0; i < n; i++) {
-                if (meter != null) meter.tick();   // O(n²) re-scan per removal round
-                if (removed[i]) continue;
+                if (meter != null) {
+                    meter.tick();
+                } // O(n²) re-scan per removal round
+                if (removed[i]) {
+                    continue;
+                }
                 Cfg.Op op = run.get(i);
                 if (I[op.dst] == 0) {
                     Oprime.add(op);
@@ -744,4 +868,3 @@ public final class Optimize {
         run.addAll(Oprime);
     }
 }
-

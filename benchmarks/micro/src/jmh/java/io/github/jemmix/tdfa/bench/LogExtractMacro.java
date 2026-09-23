@@ -29,46 +29,58 @@ public final class LogExtractMacro {
     static final int COLD = 10_000;
     static final int WARM_BATCH = 100_000;
 
-    record Row(String name, String regex, int groupCount) { }
+    record Row(String name, String regex, int groupCount) {
+    }
 
     static final List<Row> ROWS = List.of(
-            new Row("ip", "ip=(\\d+\\.\\d+\\.\\d+\\.\\d+)", 1),
-            new Row("user-status", "user_id=(\\d+).*?status=(\\d+)", 2),
-            new Row("path", "path=(/[a-z0-9/]+)", 1),
-            new Row("no-match", "[a-z]+@[a-z]+\\.[a-z]{3}", 1)
-    );
+                    new Row("ip", "ip=(\\d+\\.\\d+\\.\\d+\\.\\d+)", 1),
+                    new Row("user-status", "user_id=(\\d+).*?status=(\\d+)", 2),
+                    new Row("path", "path=(/[a-z0-9/]+)", 1),
+                    new Row("no-match", "[a-z]+@[a-z]+\\.[a-z]{3}", 1));
+
+    private LogExtractMacro() {
+    }
 
     public static void main(String[] args) {
         List<String> lines = genLines(LINES);
         String[] engines = {"jur", "re2j", "vm", "asm"};
         System.out.println(LogExtractMacro.class.getSimpleName()
-                + ": " + LINES + " lines, cold = first " + COLD + " calls, warm = min-of-5 x " + WARM_BATCH);
+                        + ": " + LINES + " lines, cold = first " + COLD + " calls, warm = min-of-5 x " + WARM_BATCH);
         System.out.printf("%-14s %-6s %10s %14s   %s%n", "row", "eng", "cold", "warm", "ns/line(warm)");
         for (Row row : ROWS) {
             long jurCount = 0;
             for (String eng : engines) {
                 BiFunction<String, java.util.function.IntConsumer, Long> fn = mk(eng, row);
                 // cold pass: COLD lines, first calls ever on this pattern
-                java.util.function.IntConsumer sink = c -> { };
+                java.util.function.IntConsumer sink = c -> {
+                };
                 long coldStart = System.nanoTime();
                 long coldCount = 0;
-                for (int i = 0; i < COLD; i++) coldCount += fn.apply(lines.get(i), sink);
+                for (int i = 0; i < COLD; i++) {
+                    coldCount += fn.apply(lines.get(i), sink);
+                }
                 long coldNs = System.nanoTime() - coldStart;
                 // warmup + min-of-5
-                for (int i = 0; i < WARM_BATCH; i++) fn.apply(lines.get(i % LINES), sink);
+                for (int i = 0; i < WARM_BATCH; i++) {
+                    fn.apply(lines.get(i % LINES), sink);
+                }
                 long best = Long.MAX_VALUE;
                 long warmCount = 0;
                 for (int r = 0; r < 5; r++) {
                     long t = System.nanoTime();
                     warmCount = 0;
-                    for (int i = 0; i < WARM_BATCH; i++) warmCount += fn.apply(lines.get(i % LINES), sink);
+                    for (int i = 0; i < WARM_BATCH; i++) {
+                        warmCount += fn.apply(lines.get(i % LINES), sink);
+                    }
                     best = Math.min(best, System.nanoTime() - t);
                 }
-                if (eng.equals("jur")) jurCount = warmCount;
-                else if (warmCount != jurCount)
+                if (eng.equals("jur")) {
+                    jurCount = warmCount;
+                } else if (warmCount != jurCount) {
                     throw new AssertionError(row.name() + "/" + eng + ": count " + warmCount + " != jur " + jurCount);
+                }
                 System.out.printf("%-14s %-6s %8.1f ms %12.1f ms   %8.1f%n",
-                        row.name(), eng, coldNs / 1e6, best / 1e6, (double) best / WARM_BATCH);
+                                row.name(), eng, coldNs / 1e6, best / 1e6, (double) best / WARM_BATCH);
             }
         }
     }
@@ -85,7 +97,9 @@ public final class LogExtractMacro {
                     var m = p.matcher(line);
                     long n = 0;
                     while (m.find()) {
-                        for (int g = 1; g <= row.groupCount(); g++) sink.accept(m.start(g));
+                        for (int g = 1; g <= row.groupCount(); g++) {
+                            sink.accept(m.start(g));
+                        }
                         n++;
                     }
                     return n;
@@ -97,7 +111,9 @@ public final class LogExtractMacro {
                     var m = p.matcher(line);
                     long n = 0;
                     while (m.find()) {
-                        for (int g = 1; g <= row.groupCount(); g++) sink.accept(m.start(g));
+                        for (int g = 1; g <= row.groupCount(); g++) {
+                            sink.accept(m.start(g));
+                        }
                         n++;
                     }
                     return n;
@@ -109,7 +125,9 @@ public final class LogExtractMacro {
                     var m = p.matcher(line);
                     long n = 0;
                     while (m.find()) {
-                        for (int g = 1; g <= row.groupCount(); g++) sink.accept(m.start(g));
+                        for (int g = 1; g <= row.groupCount(); g++) {
+                            sink.accept(m.start(g));
+                        }
                         n++;
                     }
                     return n;
@@ -121,7 +139,9 @@ public final class LogExtractMacro {
                     var m = p.matcher(line);
                     long n = 0;
                     while (m.find()) {
-                        for (int g = 1; g <= row.groupCount(); g++) sink.accept(m.start(g));
+                        for (int g = 1; g <= row.groupCount(); g++) {
+                            sink.accept(m.start(g));
+                        }
                         n++;
                     }
                     return n;
@@ -137,15 +157,14 @@ public final class LogExtractMacro {
         String[] levels = {"INFO", "WARN", "ERROR", "DEBUG"};
         for (int i = 0; i < n; i++) {
             out.add(String.format(
-                    "2026-08-15T12:%02d:%02d.%03d %s [worker-%d] user_id=%d path=/api/v%d/items/list page=%d status=%d dur=%dms ip=192.168.%d.%d",
-                    rnd.nextInt(60), rnd.nextInt(60), rnd.nextInt(1000),
-                    levels[rnd.nextInt(levels.length)], rnd.nextInt(16),
-                    1000 + rnd.nextInt(9000), 1 + rnd.nextInt(3), 1 + rnd.nextInt(50),
-                    rnd.nextBoolean() ? 200 : rnd.nextBoolean() ? 404 : 500,
-                    rnd.nextInt(500), rnd.nextInt(256), rnd.nextInt(256)));
+                            "2026-08-15T12:%02d:%02d.%03d %s [worker-%d] user_id=%d path=/api/v%d/items/list page=%d status=%d dur=%dms ip=192.168.%d.%d",
+                            rnd.nextInt(60), rnd.nextInt(60), rnd.nextInt(1000),
+                            levels[rnd.nextInt(levels.length)], rnd.nextInt(16),
+                            1000 + rnd.nextInt(9000), 1 + rnd.nextInt(3), 1 + rnd.nextInt(50),
+                            rnd.nextBoolean() ? 200 : rnd.nextBoolean() ? 404 : 500,
+                            rnd.nextInt(500), rnd.nextInt(256), rnd.nextInt(256)));
         }
         return out;
     }
 
-    private LogExtractMacro() { }
 }

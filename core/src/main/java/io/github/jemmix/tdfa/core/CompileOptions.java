@@ -23,7 +23,7 @@ public final class CompileOptions {
     private final CompileObserver observer;
 
     private CompileOptions(boolean longestMatch, boolean disableUnicodeGroups,
-                           UnicodeDataProvider unicodeProvider, CompileObserver observer) {
+                    UnicodeDataProvider unicodeProvider, CompileObserver observer) {
         this.longestMatch = longestMatch;
         this.disableUnicodeGroups = disableUnicodeGroups;
         this.unicodeProvider = unicodeProvider;
@@ -50,12 +50,18 @@ public final class CompileOptions {
         return new CompileOptions(longestMatch, disableUnicodeGroups, provider, observer);
     }
 
-    public boolean isLongestMatch() { return longestMatch; }
+    public boolean isLongestMatch() {
+        return longestMatch;
+    }
 
-    public boolean isDisableUnicodeGroups() { return disableUnicodeGroups; }
+    public boolean isDisableUnicodeGroups() {
+        return disableUnicodeGroups;
+    }
 
     /** Configured provider, or {@code null} for the default resolution. */
-    public UnicodeDataProvider unicodeProvider() { return unicodeProvider; }
+    public UnicodeDataProvider unicodeProvider() {
+        return unicodeProvider;
+    }
 
     /** Attach a compilation transparency hook (stage timings, decisions). */
     public CompileOptions observer(CompileObserver obs) {
@@ -63,25 +69,33 @@ public final class CompileOptions {
     }
 
     /** Configured provider, or {@code null} for the default resolution. */
-    public CompileObserver observer() { return observer; }
+    public CompileObserver observer() {
+        return observer;
+    }
 
     /** Value equality (wither classes get compared in tests; the observer is
      *  compared by identity — it is a hook, not a value). */
     @SuppressWarnings("ReferenceEquality") // observer: identity is the semantics (see below)
-    @Override public boolean equals(Object o) {
-        if (this == o) return true;
-        if (!(o instanceof CompileOptions)) return false;
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (!(o instanceof CompileOptions)) {
+            return false;
+        }
         CompileOptions c = (CompileOptions) o;
         return longestMatch == c.longestMatch
-                && disableUnicodeGroups == c.disableUnicodeGroups
-                && java.util.Objects.equals(unicodeProvider, c.unicodeProvider)
-                // Identity is intentional: the observer is a push hook, not a
-                // value — two different hook instances with equal state are
-                // still different options (they observe different people).
-                && observer == c.observer;
+                        && disableUnicodeGroups == c.disableUnicodeGroups
+                        && java.util.Objects.equals(unicodeProvider, c.unicodeProvider)
+                        // Identity is intentional: the observer is a push hook, not a
+                        // value — two different hook instances with equal state are
+                        // still different options (they observe different people).
+                        && observer == c.observer;
     }
 
-    @Override public int hashCode() {
+    @Override
+    public int hashCode() {
         int h = (longestMatch ? 1 : 0) * 31 + (disableUnicodeGroups ? 1 : 0);
         h = h * 31 + (unicodeProvider == null ? 0 : unicodeProvider.hashCode());
         return h * 31 + System.identityHashCode(observer);

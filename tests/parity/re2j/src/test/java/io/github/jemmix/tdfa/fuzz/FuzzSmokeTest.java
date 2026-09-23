@@ -21,7 +21,7 @@ class FuzzSmokeTest {
         DifferentialFuzzer.Results r = DifferentialFuzzer.run(0xC0FFEE, 1, 500, tmp);
         assertThat(r.cases).as("cases executed").isEqualTo(500);
         assertThat(r.failures)
-                .as("failures (inspect %s/failures.ndjson; reproduce any line with -Dfuzz.one=<caseSeed>)", tmp)
-                .isZero();
+                        .as("failures (inspect %s/failures.ndjson; reproduce any line with -Dfuzz.one=<caseSeed>)", tmp)
+                        .isZero();
     }
 }

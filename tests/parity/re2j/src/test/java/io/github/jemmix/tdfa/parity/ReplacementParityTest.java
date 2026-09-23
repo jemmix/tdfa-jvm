@@ -1,13 +1,13 @@
 package io.github.jemmix.tdfa.parity;
 
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
 import io.github.jemmix.tdfa.core.Matcher;
 import io.github.jemmix.tdfa.core.PatternSyntaxException;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
-import static org.assertj.core.api.Assertions.*;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Replacement API parity: replaceAll, replaceFirst, appendReplacement,
@@ -98,12 +98,16 @@ class ReplacementParityTest {
         String p = "(\\w+)", in = "hello world", repl = "[$1]";
         var re2jSb = new StringBuilder();
         var re2jM = com.google.re2j.Pattern.compile(p).matcher(in);
-        while (re2jM.find()) re2jM.appendReplacement(re2jSb, repl);
+        while (re2jM.find()) {
+            re2jM.appendReplacement(re2jSb, repl);
+        }
         re2jM.appendTail(re2jSb);
 
         var tdfaSb = new StringBuilder();
         var tdfaM = io.github.jemmix.tdfa.Pattern.compile(p, 0, factory).matcher(in);
-        while (tdfaM.find()) tdfaM.appendReplacement(tdfaSb, repl);
+        while (tdfaM.find()) {
+            tdfaM.appendReplacement(tdfaSb, repl);
+        }
         tdfaM.appendTail(tdfaSb);
 
         assertThat(tdfaSb.toString()).isEqualTo(re2jSb.toString());
@@ -113,7 +117,7 @@ class ReplacementParityTest {
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void quoteReplacementStatic(RegexEngineFactory factory) {
         assertThat(io.github.jemmix.tdfa.core.Matcher.quoteReplacement("$1\\2"))
-                .isEqualTo(com.google.re2j.Matcher.quoteReplacement("$1\\2"));
+                        .isEqualTo(com.google.re2j.Matcher.quoteReplacement("$1\\2"));
     }
 
     @ParameterizedTest
@@ -163,9 +167,9 @@ class ReplacementParityTest {
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void replaceAllGroupRefOutOfRange(RegexEngineFactory factory) {
         assertThatThrownBy(() -> tdfaReplaceAll("(a)", "a", "$2", factory))
-                .isInstanceOf(IndexOutOfBoundsException.class);
+                        .isInstanceOf(IndexOutOfBoundsException.class);
         assertThatThrownBy(() -> re2jReplaceAll("(a)", "a", "$2"))
-                .isInstanceOf(IndexOutOfBoundsException.class);
+                        .isInstanceOf(IndexOutOfBoundsException.class);
     }
 
     @ParameterizedTest
@@ -174,12 +178,16 @@ class ReplacementParityTest {
         String p = "(\\w+)", in = "hello world", repl = "[$1]";
         var rSb = new StringBuffer();
         var rM = com.google.re2j.Pattern.compile(p).matcher(in);
-        while (rM.find()) rM.appendReplacement(rSb, repl);
+        while (rM.find()) {
+            rM.appendReplacement(rSb, repl);
+        }
         rM.appendTail(rSb);
 
         var tSb = new StringBuffer();
         var tM = io.github.jemmix.tdfa.Pattern.compile(p, 0, factory).matcher(in);
-        while (tM.find()) tM.appendReplacement(tSb, repl);
+        while (tM.find()) {
+            tM.appendReplacement(tSb, repl);
+        }
         tM.appendTail(tSb);
 
         assertThat(tSb.toString()).isEqualTo(rSb.toString());
@@ -189,14 +197,14 @@ class ReplacementParityTest {
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void replaceAllEmptyInput(RegexEngineFactory factory) {
         assertThat(tdfaReplaceAll("a", "", "X", factory))
-                .isEqualTo(re2jReplaceAll("a", "", "X"));
+                        .isEqualTo(re2jReplaceAll("a", "", "X"));
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void replaceAllNoMatchKeepsInput(RegexEngineFactory factory) {
         assertThat(tdfaReplaceAll("xyz", "abc", "Y", factory))
-                .isEqualTo(re2jReplaceAll("xyz", "abc", "Y"));
+                        .isEqualTo(re2jReplaceAll("xyz", "abc", "Y"));
     }
 
     @ParameterizedTest

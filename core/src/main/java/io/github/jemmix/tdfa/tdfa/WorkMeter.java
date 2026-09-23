@@ -76,11 +76,11 @@ public final class WorkMeter {
     public void tick() {
         if (++spent > budget) {
             throw new Exhausted("pattern too large: TDFA compile work budget exceeded ("
-                + spent + "/" + budget + " ticks — raise -D" + Budgets.COMPILE_COMPUTE_PROP + ")");
+                            + spent + "/" + budget + " ticks — raise -D" + Budgets.COMPILE_COMPUTE_PROP + ")");
         }
         if (--ledger.remaining < 0) {
             throw new Exhausted("pattern too large: TDFA compile work budget exceeded (total across compile attempts — raise -D"
-                + Budgets.COMPILE_COMPUTE_PROP + ")");
+                            + Budgets.COMPILE_COMPUTE_PROP + ")");
         }
     }
 
@@ -90,11 +90,11 @@ public final class WorkMeter {
     public void tick(long n) {
         if ((spent += n) > budget) {
             throw new Exhausted("pattern too large: TDFA compile work budget exceeded ("
-                + spent + "/" + budget + " ticks — raise -D" + Budgets.COMPILE_COMPUTE_PROP + ")");
+                            + spent + "/" + budget + " ticks — raise -D" + Budgets.COMPILE_COMPUTE_PROP + ")");
         }
         if ((ledger.remaining -= n) < 0) {
             throw new Exhausted("pattern too large: TDFA compile work budget exceeded (total across compile attempts — raise -D"
-                + Budgets.COMPILE_COMPUTE_PROP + ")");
+                            + Budgets.COMPILE_COMPUTE_PROP + ")");
         }
     }
 

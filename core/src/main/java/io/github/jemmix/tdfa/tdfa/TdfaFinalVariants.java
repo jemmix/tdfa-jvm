@@ -4,7 +4,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import static io.github.jemmix.tdfa.tdfa.Tdfa.*;
+import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_COPY;
+import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_SET_NIL;
+import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_SET_POS;
 
 /**
  * Final-ops (φ-function) variant solving + transition-op register allocation.
@@ -31,13 +33,17 @@ final class TdfaFinalVariants {
         owner.meter.tick();
         // Tagless patterns (count-model usage, the giant bounded-repeat DFAs):
         // no registers exist, so transitions carry no ops — nothing to do.
-        if (owner.tags == 0) return TdfaCompiler.EMPTY;
+        if (owner.tags == 0) {
+            return TdfaCompiler.EMPTY;
+        }
         // vmap is keyed (tag, sign) — a flat int[2*tags] per source state,
         // shared across that state's symbol transitions (register
         // assignments are stable per source). The former boxed
         // HashMap<Long,Integer> was a top profile entry after the
         // interning rework.
-        while (sourceVmaps.size() <= sourceStateId) sourceVmaps.add(null);
+        while (sourceVmaps.size() <= sourceStateId) {
+            sourceVmaps.add(null);
+        }
         int[] vmap = sourceVmaps.get(sourceStateId);
         if (vmap == null) {
             vmap = new int[2 * owner.tags];
@@ -49,15 +55,21 @@ final class TdfaFinalVariants {
         // sequence content, the transition-regop hot spot.
         for (int ci = 0; ci < configs.size(); ci++) {
             Config c = configs.get(ci);
-            if (c.h == HistTable.EMPTY_ID) continue;
+            if (c.h == HistTable.EMPTY_ID) {
+                continue;
+            }
             int[] last = owner.hist.lastSign(c.h, owner.tags);
             int[] newRegs = c.regs.clone();
             for (int t = 1; t <= owner.tags; t++) {
                 int l = last[t - 1];
-                if (l == 0) continue;   // tag has no history entry
+                if (l == 0) {
+                    continue;
+                } // tag has no history entry
                 int slot = 2 * (t - 1) + (l == TdfaCompiler.TAG_POS ? 0 : 1);
                 int reg = vmap[slot];
-                if (reg == 0) reg = vmap[slot] = owner.nextReg++;
+                if (reg == 0) {
+                    reg = vmap[slot] = owner.nextReg++;
+                }
                 // Per-transition dedup (paper "if op not in O"): opList is
                 // bounded by 2*tags distinct (reg, sign) ops — linear scan
                 // beats the former boxed HashSet.
@@ -69,8 +81,11 @@ final class TdfaFinalVariants {
                     }
                 }
                 if (!dup) {
-                    if (l == TdfaCompiler.TAG_POS) opList.add(new int[]{OP_SET_POS, reg, 0});
-                    else opList.add(new int[]{OP_SET_NIL, reg, 0});
+                    if (l == TdfaCompiler.TAG_POS) {
+                        opList.add(new int[]{OP_SET_POS, reg, 0});
+                    } else {
+                        opList.add(new int[]{OP_SET_NIL, reg, 0});
+                    }
                 }
                 newRegs[t - 1] = reg;
             }
@@ -80,9 +95,13 @@ final class TdfaFinalVariants {
     }
 
     int[] finalRegops(List<Config> configs) {
-        if (owner.tags == 0) return TdfaCompiler.EMPTY;
+        if (owner.tags == 0) {
+            return TdfaCompiler.EMPTY;
+        }
         for (Config c : configs) {
-            if (c.state == owner.nfa.accept) return finalRegopsOf(c);
+            if (c.state == owner.nfa.accept) {
+                return finalRegopsOf(c);
+            }
         }
         return TdfaCompiler.EMPTY;
     }
@@ -125,26 +144,34 @@ final class TdfaFinalVariants {
     }
 
     void computeFinalVariants(DfaStateBuilder sb, int[] st, int[] mk, java.util.function.IntFunction<Config> at) {
-        owner.meter.tick(64L * st.length);   // 64 masks × n aliveness scan — budget-visible
+        owner.meter.tick(64L * st.length); // 64 masks × n aliveness scan — budget-visible
         int[] winner = new int[64];
         boolean uniform = true;
         for (int M = 0; M < 64; M++) {
             int w = -1;
             for (int i = 0; i < st.length; i++) {
-                if (st[i] != owner.nfa.accept) continue;
+                if (st[i] != owner.nfa.accept) {
+                    continue;
+                }
                 if ((mk[i] & ~M) == 0) {
                     w = i;
                     break;
                 }
             }
             winner[M] = w;
-            if (M > 0 && w != winner[0]) uniform = false;
+            if (M > 0 && w != winner[0]) {
+                uniform = false;
+            }
         }
         if (Boolean.getBoolean("tdfa.debug.finals") && owner.tags > 0) {
             for (int i = 0; i < st.length; i++) {
-                if (st[i] != owner.nfa.accept) continue;
+                if (st[i] != owner.nfa.accept) {
+                    continue;
+                }
                 Config c = at.apply(i);
-                if (c == null) continue;   // packed (tagless) kernel
+                if (c == null) {
+                    continue;
+                } // packed (tagless) kernel
                 StringBuilder h = new StringBuilder("cfg[" + i + "] mask=" + c.emptyMask + " l:");
                 int[] last = owner.hist.lastSign(c.l, owner.tags);
                 for (int t = 1; t <= owner.tags; t++) {
@@ -153,7 +180,9 @@ final class TdfaFinalVariants {
                 System.err.println("  [finals] " + h + "  winner(M63)=" + winner[63] + " winner(M0)=" + winner[0]);
             }
         }
-        if (uniform) return;
+        if (uniform) {
+            return;
+        }
         List<int[]> variants = new ArrayList<>();
         int[] maskVariant = new int[64];
         for (int M = 0; M < 64; M++) {
@@ -164,11 +193,12 @@ final class TdfaFinalVariants {
             }
             int[] opsArr = finalRegopsOf(at.apply(w));
             int v = -1;
-            for (int k = 0; k < variants.size(); k++)
+            for (int k = 0; k < variants.size(); k++) {
                 if (Arrays.equals(variants.get(k), opsArr)) {
                     v = k;
                     break;
                 }
+            }
             if (v < 0) {
                 variants.add(opsArr);
                 v = variants.size() - 1;
@@ -184,7 +214,9 @@ final class TdfaFinalVariants {
      * SET_POS/SET_NIL from its tag history.
      */
     int[] finalRegopsOf(Config c) {
-        if (owner.tags == 0) return TdfaCompiler.EMPTY;
+        if (owner.tags == 0) {
+            return TdfaCompiler.EMPTY;
+        }
         List<int[]> opList = new ArrayList<>();
         int[] lastSign = owner.hist.lastSign(c.l, owner.tags);
         for (int t = 1; t <= owner.tags; t++) {
@@ -193,8 +225,11 @@ final class TdfaFinalVariants {
                 opList.add(new int[]{OP_COPY, dst, c.regs[t - 1]});
             } else {
                 int last = lastSign[t - 1];
-                if (last == TdfaCompiler.TAG_POS) opList.add(new int[]{OP_SET_POS, dst, 0});
-                else opList.add(new int[]{OP_SET_NIL, dst, 0});
+                if (last == TdfaCompiler.TAG_POS) {
+                    opList.add(new int[]{OP_SET_POS, dst, 0});
+                } else {
+                    opList.add(new int[]{OP_SET_NIL, dst, 0});
+                }
             }
         }
         return flatten(opList);

@@ -53,14 +53,15 @@ public final class ScenarioLoader {
         }
         try (var walk = Files.walk(definitionsDir)) {
             walk.filter(p -> p.toString().endsWith(".toml"))
-                .filter(Files::isRegularFile)
-                .sorted()
-                .forEach(toml -> {
-                    try { loadFile(definitionsDir, toml, out); }
-                    catch (IOException e) {
-                        // Skip files we can't read; surfaced as missing scenarios.
-                    }
-                });
+                            .filter(Files::isRegularFile)
+                            .sorted()
+                            .forEach(toml -> {
+                                try {
+                                    loadFile(definitionsDir, toml, out);
+                                } catch (IOException e) {
+                                    // Skip files we can't read; surfaced as missing scenarios.
+                                }
+                            });
         }
         return List.copyOf(out);
     }
@@ -122,9 +123,9 @@ public final class ScenarioLoader {
             }
         }
         return new Scenario(
-                fullName, group, name, model, regex,
-                caseInsensitive, unicode, hsSpec, count,
-                List.copyOf(engines));
+                        fullName, group, name, model, regex,
+                        caseInsensitive, unicode, hsSpec, count,
+                        List.copyOf(engines));
     }
 
     /**
@@ -158,17 +159,19 @@ public final class ScenarioLoader {
             patterns = new ArrayList<>(arr.size());
             for (int i = 0; i < arr.size(); i++) {
                 String p = arr.getString(i);
-                if (p != null) patterns.add(p);
+                if (p != null) {
+                    patterns.add(p);
+                }
             }
         } else if (regexValue instanceof TomlTable t) {
             boolean literal = boolOr(t.getBoolean("literal"), false);
             String prepend = t.getString("prepend");
-            String append  = t.getString("append");
+            String append = t.getString("append");
             String perLine = t.getString("per-line");
 
             if (t.isString("patterns")) {
                 patterns = transform(List.of(t.getString("patterns")),
-                        literal, prepend, append);
+                                literal, prepend, append);
             } else if (t.isArray("patterns")) {
                 TomlArray arr = t.getArray("patterns");
                 List<String> ps = new ArrayList<>(arr.size());
@@ -178,7 +181,9 @@ public final class ScenarioLoader {
                 patterns = transform(ps, literal, prepend, append);
             } else if (t.isString("path")) {
                 String raw = resolveRegexPath(t.getString("path"));
-                if (raw == null) return null;
+                if (raw == null) {
+                    return null;
+                }
                 if ("alternate".equals(perLine)) {
                     // rebar wraps each line in (?:...) and joins with |.
                     List<String> lines = raw.lines().toList();
@@ -200,7 +205,9 @@ public final class ScenarioLoader {
         } else {
             return null;
         }
-        if (patterns.isEmpty()) return null;
+        if (patterns.isEmpty()) {
+            return null;
+        }
         return joinAlternation(patterns);
     }
 
@@ -210,13 +217,21 @@ public final class ScenarioLoader {
      * pattern.
      */
     private static List<String> transform(List<String> patterns,
-                                          boolean literal, String prepend, String append) {
+                    boolean literal, String prepend, String append) {
         List<String> out = new ArrayList<>(patterns.size());
         for (String p : patterns) {
-            if (p == null) continue;
-            if (literal) p = regexEscape(p);
-            if (prepend != null) p = prepend + p;
-            if (append  != null) p = p + append;
+            if (p == null) {
+                continue;
+            }
+            if (literal) {
+                p = regexEscape(p);
+            }
+            if (prepend != null) {
+                p = prepend + p;
+            }
+            if (append != null) {
+                p = p + append;
+            }
             out.add(p);
         }
         return out;
@@ -234,7 +249,9 @@ public final class ScenarioLoader {
         }
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < patterns.size(); i++) {
-            if (i > 0) sb.append('|');
+            if (i > 0) {
+                sb.append('|');
+            }
             sb.append("(?:").append(patterns.get(i)).append(')');
         }
         return sb.toString();
@@ -290,7 +307,7 @@ public final class ScenarioLoader {
             String append = t.getString("append");
             if (t.isString("contents")) {
                 return new Scenario.HaystackSpec.Inline(
-                        t.getString("contents"), repeat, prepend, append);
+                                t.getString("contents"), repeat, prepend, append);
             }
             if (t.isString("path")) {
                 boolean trim = boolOr(t.getBoolean("trim"), false);
@@ -298,9 +315,9 @@ public final class ScenarioLoader {
                 Long ls = t.getLong("line-start");
                 Long le = t.getLong("line-end");
                 return new Scenario.HaystackSpec.FromPath(
-                        t.getString("path"), trim, utf8Lossy, repeat, prepend, append,
-                        ls != null ? ls.intValue() : null,
-                        le != null ? le.intValue() : null);
+                                t.getString("path"), trim, utf8Lossy, repeat, prepend, append,
+                                ls != null ? ls.intValue() : null,
+                                le != null ? le.intValue() : null);
             }
         }
         return null;
@@ -338,9 +355,13 @@ public final class ScenarioLoader {
             for (String identity : identities) {
                 for (int i = 0; i < arr.size(); i++) {
                     TomlTable t = arr.getTable(i);
-                    if (t == null) continue;
+                    if (t == null) {
+                        continue;
+                    }
                     String engRegex = t.getString("engine");
-                    if (engRegex == null) continue;
+                    if (engRegex == null) {
+                        continue;
+                    }
                     java.util.regex.Pattern r;
                     try {
                         r = java.util.regex.Pattern.compile("^(" + engRegex + ")$");

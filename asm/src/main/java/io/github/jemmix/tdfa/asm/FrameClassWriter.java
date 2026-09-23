@@ -42,19 +42,31 @@ class FrameClassWriter extends ClassWriter {
 
     @Override
     protected String getCommonSuperClass(String type1, String type2) {
-        if (type1.equals(type2)) return type1;
+        if (type1.equals(type2)) {
+            return type1;
+        }
         if ("java/lang/Object".equals(type1) || "java/lang/Object".equals(type2)) {
             return "java/lang/Object";
         }
-        if (type1.charAt(0) == '[' || type2.charAt(0) == '[') return "java/lang/Object";
+        if (type1.charAt(0) == '[' || type2.charAt(0) == '[') {
+            return "java/lang/Object";
+        }
         Class<?> c1 = probe(type1);
         Class<?> c2 = probe(type2);
-        if (c1 == null || c2 == null) return "java/lang/Object";
+        if (c1 == null || c2 == null) {
+            return "java/lang/Object";
+        }
         // ASM-documented walk: mutual assignability, then c1's superclass chain.
-        if (c1.isAssignableFrom(c2)) return type1;
-        if (c2.isAssignableFrom(c1)) return type2;
+        if (c1.isAssignableFrom(c2)) {
+            return type1;
+        }
+        if (c2.isAssignableFrom(c1)) {
+            return type2;
+        }
         for (Class<?> s = c1.getSuperclass(); s != null; s = s.getSuperclass()) {
-            if (s.isAssignableFrom(c2)) return s.getName().replace('.', '/');
+            if (s.isAssignableFrom(c2)) {
+                return s.getName().replace('.', '/');
+            }
         }
         return "java/lang/Object";
     }
@@ -63,7 +75,7 @@ class FrameClassWriter extends ClassWriter {
     private static Class<?> probe(String internalName) {
         try {
             return Class.forName(internalName.replace('/', '.'), false,
-                    FrameClassWriter.class.getClassLoader());
+                            FrameClassWriter.class.getClassLoader());
         } catch (ClassNotFoundException e) {
             return null;
         }

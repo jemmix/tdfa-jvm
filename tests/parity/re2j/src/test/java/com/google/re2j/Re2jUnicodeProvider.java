@@ -32,6 +32,8 @@ public final class Re2jUnicodeProvider implements UnicodeDataProvider {
     private static final int[] ANY = new int[]{0, MAX_RUNE};
 
     private final Map<String, int[][]> raw = new HashMap<>();
+
+    private final Map<Integer, int[]> orbits = new HashMap<>();
     private final Map<String, int[]> expanded = new HashMap<>();
 
     private Re2jUnicodeProvider() {
@@ -49,11 +51,17 @@ public final class Re2jUnicodeProvider implements UnicodeDataProvider {
 
     @Override
     public int[] tableFor(String name) {
-        if ("Any".equals(name)) return ANY;
+        if ("Any".equals(name)) {
+            return ANY;
+        }
         int[] cached = expanded.get(name);
-        if (cached != null) return cached;
+        if (cached != null) {
+            return cached;
+        }
         int[][] triples = raw.get(name);
-        if (triples == null) return null;
+        if (triples == null) {
+            return null;
+        }
         int[] flat = expand(triples);
         expanded.put(name, flat);
         return flat;
@@ -65,9 +73,13 @@ public final class Re2jUnicodeProvider implements UnicodeDataProvider {
         // Lu/Ll/Lt/Mn (see UnicodeTables.FoldCategory); other classes get no fold additions.
         // NB: this faithfully matches re2j, which (notably) does NOT fold ASCII A-Z into \p{Ll}.
         int[][] fold = UnicodeTables.FOLD_CATEGORIES.get(name);
-        if (fold == null) return null;
+        if (fold == null) {
+            return null;
+        }
         int[] cached = expanded.get("fold:" + name);
-        if (cached != null) return cached;
+        if (cached != null) {
+            return cached;
+        }
         int[] flat = expand(fold);
         expanded.put("fold:" + name, flat);
         return flat;
@@ -87,14 +99,16 @@ public final class Re2jUnicodeProvider implements UnicodeDataProvider {
         return true;
     }
 
-    private final Map<Integer, int[]> orbits = new HashMap<>();
-
     @Override
     public int[] foldCounterparts(int cp) {
-        if (cp < 0 || cp > MAX_RUNE) return null;
+        if (cp < 0 || cp > MAX_RUNE) {
+            return null;
+        }
         synchronized (orbits) {
             int[] cached = orbits.get(cp);
-            if (cached != null) return cached.length == 0 ? null : cached;
+            if (cached != null) {
+                return cached.length == 0 ? null : cached;
+            }
         }
         int[] result = buildOrbit(cp);
         synchronized (orbits) {
@@ -112,15 +126,23 @@ public final class Re2jUnicodeProvider implements UnicodeDataProvider {
         int f = Unicode.simpleFold(cp);
         for (int hops = 0; f != cp && hops < 4; hops++) {
             int i = 0;
-            while (i < n && members[i] != f) i++;
+            while (i < n && members[i] != f) {
+                i++;
+            }
             if (i == n) {
-                if (n == members.length) return null; // not closing: bail out inert
+                if (n == members.length) {
+                    return null;
+                } // not closing: bail out inert
                 members[n++] = f;
             }
             f = Unicode.simpleFold(f);
         }
-        if (f != cp) return null; // bounded without cycling back: fold-inert
-        if (n == 1) return null;
+        if (f != cp) {
+            return null;
+        } // bounded without cycling back: fold-inert
+        if (n == 1) {
+            return null;
+        }
         java.util.Arrays.sort(members, 0, n);
         ArrayList<int[]> merged = new ArrayList<>();
         int lo = members[0], hi = members[0];
@@ -149,7 +171,9 @@ public final class Re2jUnicodeProvider implements UnicodeDataProvider {
             if (stride == 1) {
                 ranges.add(new int[]{lo, hi});
             } else {
-                for (int cp = lo; cp <= hi; cp += stride) ranges.add(new int[]{cp, cp});
+                for (int cp = lo; cp <= hi; cp += stride) {
+                    ranges.add(new int[]{cp, cp});
+                }
             }
         }
         return flatten(ranges);

@@ -23,7 +23,7 @@ public class Matcher {
     private final RegexEngine engine;
     private final RegexEngine wholeEngine;
 
-    @EmittedSurface  // the 7 fields below are linked by name from generated shells
+    @EmittedSurface // the 7 fields below are linked by name from generated shells
     protected CharSequence input;
     @EmittedSurface
     protected int inputLength;
@@ -51,7 +51,7 @@ public class Matcher {
      * engines then run this matcher's whole ladder without a single scratch
      * allocation.
      */
-    @EmittedSurface  // emitted shells read this field (carrier-aware engine calls)
+    @EmittedSurface // emitted shells read this field (carrier-aware engine calls)
     protected MatchScratch scratch;
 
     public Matcher(RegexEngine engine, RegexEngine wholeEngine, CharSequence input) {
@@ -60,7 +60,8 @@ public class Matcher {
         this.input = input;
         this.inputLength = input.length();
         this.scratch = engine.wantsScratch() || wholeEngine.wantsScratch()
-                ? new MatchScratch() : null;
+                        ? new MatchScratch()
+                        : null;
     }
 
     public Matcher reset() {
@@ -111,7 +112,9 @@ public class Matcher {
         int start;
         if (hasMatch) {
             start = lastMatchEnd;
-            if (lastMatchStart == lastMatchEnd) start++;
+            if (lastMatchStart == lastMatchEnd) {
+                start++;
+            }
         } else {
             start = appendPos;
         }
@@ -132,8 +135,9 @@ public class Matcher {
     }
 
     public boolean find(int start) {
-        if (start < 0 || start > inputLength)
+        if (start < 0 || start > inputLength) {
             throw new IndexOutOfBoundsException("start index out of bounds: " + start);
+        }
         reset();
         appendPos = start;
         return find();
@@ -141,9 +145,13 @@ public class Matcher {
 
     // ---- match results ----
 
-    public int start() { return start(0); }
+    public int start() {
+        return start(0);
+    }
 
-    public int end() { return end(0); }
+    public int end() {
+        return end(0);
+    }
 
     public int start(int group) {
         ensureMatch();
@@ -155,12 +163,16 @@ public class Matcher {
         return match.end(group);
     }
 
-    public String group() { return group(0); }
+    public String group() {
+        return group(0);
+    }
 
     public String group(int group) {
         int s = start(group);
         int e = end(group);
-        if (s < 0 || e < 0) return null;
+        if (s < 0 || e < 0) {
+            return null;
+        }
         return input.subSequence(s, e).toString();
     }
 
@@ -240,11 +252,15 @@ public class Matcher {
 
     /** Quote {@code \} and {@code $} in {@code s} for use as a literal replacement. */
     public static String quoteReplacement(String s) {
-        if (s.indexOf('\\') < 0 && s.indexOf('$') < 0) return s;
+        if (s.indexOf('\\') < 0 && s.indexOf('$') < 0) {
+            return s;
+        }
         StringBuilder sb = new StringBuilder(s.length() * 2);
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);
-            if (c == '\\' || c == '$') sb.append('\\');
+            if (c == '\\' || c == '$') {
+                sb.append('\\');
+            }
             sb.append(c);
         }
         return sb.toString();
@@ -253,12 +269,16 @@ public class Matcher {
     // ---- internal ----
 
     private void ensureMatch() {
-        if (!hasMatch) throw new IllegalStateException("perhaps no match attempted");
+        if (!hasMatch) {
+            throw new IllegalStateException("perhaps no match attempted");
+        }
     }
 
     private int groupIndex(String name) {
         Integer idx = engine.namedGroups().get(name);
-        if (idx == null) throw new IllegalArgumentException("group '" + name + "' not found");
+        if (idx == null) {
+            throw new IllegalArgumentException("group '" + name + "' not found");
+        }
         return idx;
     }
 
@@ -270,7 +290,9 @@ public class Matcher {
         for (; i < m - 1; i++) {
             char c = replacement.charAt(i);
             if (c == '\\') {
-                if (last < i) sb.append(replacement, last, i);
+                if (last < i) {
+                    sb.append(replacement, last, i);
+                }
                 i++;
                 last = i;
                 continue;
@@ -279,33 +301,49 @@ public class Matcher {
                 char c2 = replacement.charAt(i + 1);
                 if (c2 >= '0' && c2 <= '9') {
                     int n = c2 - '0';
-                    if (last < i) sb.append(replacement, last, i);
+                    if (last < i) {
+                        sb.append(replacement, last, i);
+                    }
                     for (i += 2; i < m; i++) {
                         c2 = replacement.charAt(i);
-                        if (c2 < '0' || c2 > '9' || n * 10 + c2 - '0' > gc) break;
+                        if (c2 < '0' || c2 > '9' || n * 10 + c2 - '0' > gc) {
+                            break;
+                        }
                         n = n * 10 + c2 - '0';
                     }
-                    if (n > gc)
+                    if (n > gc) {
                         throw new IndexOutOfBoundsException("n > number of groups: " + n);
+                    }
                     String g = group(n);
-                    if (g != null) sb.append(g);
+                    if (g != null) {
+                        sb.append(g);
+                    }
                     last = i;
                     i--;
                 } else if (c2 == '{') {
-                    if (last < i) sb.append(replacement, last, i);
+                    if (last < i) {
+                        sb.append(replacement, last, i);
+                    }
                     i += 2;
                     int j = i;
-                    while (j < m && replacement.charAt(j) != '}' && replacement.charAt(j) != ' ') j++;
-                    if (j >= m || replacement.charAt(j) != '}')
+                    while (j < m && replacement.charAt(j) != '}' && replacement.charAt(j) != ' ') {
+                        j++;
+                    }
+                    if (j >= m || replacement.charAt(j) != '}') {
                         throw new IllegalArgumentException("named capture group is missing trailing '}'");
+                    }
                     String gName = replacement.substring(i, j);
                     String gVal = group(gName);
-                    if (gVal != null) sb.append(gVal);
+                    if (gVal != null) {
+                        sb.append(gVal);
+                    }
                     last = j + 1;
                     i = j;
                 }
             }
         }
-        if (last < m) sb.append(replacement, last, m);
+        if (last < m) {
+            sb.append(replacement, last, m);
+        }
     }
 }

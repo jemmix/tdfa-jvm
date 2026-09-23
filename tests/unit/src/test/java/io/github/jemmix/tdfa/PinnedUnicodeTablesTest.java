@@ -13,7 +13,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class PinnedUnicodeTablesTest {
 
-    @Test void v6CategoriesAndScriptsResolve() {
+    @Test
+    void v6CategoriesAndScriptsResolve() {
         var p = io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0.provider();
         assertThat(p.tableFor("L")).isNotNull();
         assertThat(p.tableFor("Lu")).isNotNull();
@@ -28,7 +29,8 @@ class PinnedUnicodeTablesTest {
         assertThat(contains(p.tableFor("Lu"), 0x1D504)).isTrue();
     }
 
-    @Test void v17AssignsWhatV6DidNot() {
+    @Test
+    void v17AssignsWhatV6DidNot() {
         var v6 = io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0.provider();
         var v17 = io.github.jemmix.tdfa.unicode.v17_0.Unicode17_0.provider();
         // Unicode 8.0 assigned Osage capitals (U+104B0..) to Lu
@@ -39,21 +41,23 @@ class PinnedUnicodeTablesTest {
         assertThat(contains(v17.tableFor("Lu"), 'A')).isTrue();
     }
 
-    @Test void foldCounterpartsFromPinnedOrbits() {
+    @Test
+    void foldCounterpartsFromPinnedOrbits() {
         var p = io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0.provider();
         // ſ (U+017F) folds with s (U+0073): outside \p{Lu} but counterpart 'S' is inside
         int[] luFold = p.foldTableFor("Lu");
         assertThat(luFold).isNotNull();
-        assertThat(contains(luFold, 's')).isTrue();   // lowercase counterparts of A-Z
+        assertThat(contains(luFold, 's')).isTrue(); // lowercase counterparts of A-Z
         // K (U+212A KELVIN SIGN) folds with k: outside \p{Ll}, counterpart 'k' inside
         assertThat(contains(p.foldTableFor("Ll"), 0x212A)).isTrue();
         // Table without case pairs has no fold additions
         assertThat(p.foldTableFor("Nd")).isNull();
     }
 
-    @Test void compilesThroughPipelineWithPinnedTables() {
+    @Test
+    void compilesThroughPipelineWithPinnedTables() {
         CompiledRegex r = CompiledRegex.compile("\\p{L}+",
-                CompileOptions.of().unicode(io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0.provider()));
+                        CompileOptions.of().unicode(io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0.provider()));
         assertThat(r.find("abc")).isTrue();
         assertThat(r.find("123")).isFalse();
         // v17 matches Osage capitals; v6 (unassigned there) does not.
@@ -61,25 +65,26 @@ class PinnedUnicodeTablesTest {
         // Tdfa breakpoints — so the delta probe uses the table API above.)
         String osage = "\uD801\uDCB0\uD801\uDCB1\uD801\uDCB2\uD801\uDCB3\uD801\uDCB4";
         CompiledRegex r17 = CompiledRegex.compile("\\p{Lu}{5}",
-                CompileOptions.of().unicode(io.github.jemmix.tdfa.unicode.v17_0.Unicode17_0.provider()));
+                        CompileOptions.of().unicode(io.github.jemmix.tdfa.unicode.v17_0.Unicode17_0.provider()));
         assertThat(r17.find(osage)).isTrue();
         CompiledRegex r6 = CompiledRegex.compile("\\p{Lu}{5}",
-                CompileOptions.of().unicode(io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0.provider()));
+                        CompileOptions.of().unicode(io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0.provider()));
         assertThat(r6.find(osage)).isFalse();
     }
 
-    @Test void unknownPropertyStillRejected() {
-        assertThatThrownBy(() ->
-                CompiledRegex.compile("[\\p{NotAProperty}]", CompileOptions.of()
+    @Test
+    void unknownPropertyStillRejected() {
+        assertThatThrownBy(() -> CompiledRegex.compile("[\\p{NotAProperty}]", CompileOptions.of()
                         .unicode(io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0.provider())))
-                .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class);
+                        .isInstanceOf(io.github.jemmix.tdfa.core.PatternSyntaxException.class);
     }
 
     /** Literal/class folding is pinned to the snapshot too (not the runtime
      *  JDK): v6 folds only what CaseFolding 6.0 knew, v17 adds the Cyrillic
      *  historic letters (Unicode 9.0). The Turkic İ/ı pair has no C+S
      *  entries in either snapshot — fold-inert, matching every re2j. */
-    @Test void literalFoldingPinnedToSnapshot() {
+    @Test
+    void literalFoldingPinnedToSnapshot() {
         var v6 = io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0.provider();
         var v17 = io.github.jemmix.tdfa.unicode.v17_0.Unicode17_0.provider();
         assertThat(v6.suppliesFoldUniverse()).isTrue();
@@ -100,13 +105,19 @@ class PinnedUnicodeTablesTest {
     }
 
     private static boolean contains(int[] table, int cp) {
-        if (table == null) return false;
+        if (table == null) {
+            return false;
+        }
         int lo = 0, hi = table.length / 2 - 1;
         while (lo <= hi) {
             int mid = (lo + hi) >>> 1;
-            if (cp < table[2 * mid]) hi = mid - 1;
-            else if (cp > table[2 * mid + 1]) lo = mid + 1;
-            else return true;
+            if (cp < table[2 * mid]) {
+                hi = mid - 1;
+            } else if (cp > table[2 * mid + 1]) {
+                lo = mid + 1;
+            } else {
+                return true;
+            }
         }
         return false;
     }

@@ -1,7 +1,7 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.core.MatchScratch;
+import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
 import org.junit.jupiter.api.AfterEach;

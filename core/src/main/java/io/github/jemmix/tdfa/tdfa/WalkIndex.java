@@ -47,13 +47,14 @@ final class WalkIndex {
      * and double-checked, so races only cost a redundant lock).
      */
     private volatile int[][] walkBlocksArr = EMPTY_BLOCKS;
-    private int walkBlockCount;                       // guarded by this
+    private int walkBlockCount; // guarded by this
     private long chargedBytes;
 
     WalkIndex(TdfaRunner r, long memoBudgetBytes) {
         this.r = r;
         this.walkBlockIdx = r.rangesDisjoint
-            ? new AtomicReferenceArray<>(r.stateCount) : null;
+                        ? new AtomicReferenceArray<>(r.stateCount)
+                        : null;
         this.maxBytes = Budgets.walkMaxBytes(memoBudgetBytes);
     }
 
@@ -63,7 +64,9 @@ final class WalkIndex {
      * fall back to binary search).
      */
     private synchronized boolean tryCharge(long bytes) {
-        if (chargedBytes + bytes > maxBytes) return false;
+        if (chargedBytes + bytes > maxBytes) {
+            return false;
+        }
         chargedBytes += bytes;
         return true;
     }
@@ -83,24 +86,30 @@ final class WalkIndex {
             if (tryCharge(BudgetWeights.WALK_STATE_TABLE_BYTES)) {
                 idx = new int[128];
                 java.util.Arrays.fill(idx, -1);
-                walkBlockIdx.set(state, idx);      // volatile publish of the filled array
-                idx = walkBlockIdx.get(state);     // adopt the winner if we lost the race
+                walkBlockIdx.set(state, idx); // volatile publish of the filled array
+                idx = walkBlockIdx.get(state); // adopt the winner if we lost the race
             } else {
                 walkBlockIdx.compareAndSet(state, null, CAP_MARKER);
                 idx = walkBlockIdx.get(state);
             }
         }
-        if (idx == CAP_MARKER) return -2;
+        if (idx == CAP_MARKER) {
+            return -2;
+        }
         int b = c >>> 9;
         int id = idx[b];
-        if (id == -1) id = buildWalkBlock(state, b);
-        if (id < 0) return id;
+        if (id == -1) {
+            id = buildWalkBlock(state, b);
+        }
+        if (id < 0) {
+            return id;
+        }
         int[][] arr = walkBlocksArr;
         if (id < arr.length) {
             int ri = arr[id][c & 511];
-            return ri;   // -1 cell = dead entry
+            return ri; // -1 cell = dead entry
         }
-        return -2;       // stale id vs a fresh snapshot: treat as capped (rare, safe)
+        return -2; // stale id vs a fresh snapshot: treat as capped (rare, safe)
     }
 
     /**
@@ -115,9 +124,13 @@ final class WalkIndex {
     private synchronized int buildWalkBlock(int state, int b) {
         int[] pub = walkBlockIdx.get(state);
         int e = pub != null ? pub[b] : -1;
-        if (e != -1) return e;
+        if (e != -1) {
+            return e;
+        }
         if (walkBlockCount >= maxWalkBlocks() || !tryCharge(BudgetWeights.WALK_BLOCK_BYTES)) {
-            if (pub != null) pub[b] = -2;
+            if (pub != null) {
+                pub[b] = -2;
+            }
             return -2;
         }
         int[] cells = new int[512];
@@ -128,13 +141,17 @@ final class WalkIndex {
         for (int i = 0; i < cnt; i++) {
             int o = (base + i) * 5;
             int eLo = Math.max(rg[o], lo), eHi = Math.min(rg[o + 1], hi);
-            for (int cp = eLo; cp <= eHi; cp++) cells[cp - lo] = i;
+            for (int cp = eLo; cp <= eHi; cp++) {
+                cells[cp - lo] = i;
+            }
         }
         int n = walkBlockCount++;
         int[][] next = java.util.Arrays.copyOf(walkBlocksArr, n + 1);
         next[n] = cells;
-        walkBlocksArr = next;    // volatile publish: cells contents visible to readers
-        if (pub != null) pub[b] = n;
+        walkBlocksArr = next; // volatile publish: cells contents visible to readers
+        if (pub != null) {
+            pub[b] = n;
+        }
         return n;
     }
 

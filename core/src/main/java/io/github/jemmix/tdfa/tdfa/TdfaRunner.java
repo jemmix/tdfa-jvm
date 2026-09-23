@@ -90,8 +90,7 @@ public final class TdfaRunner implements RegexEngine {
      * below the cap and keeps the direct-dispatch fast paths.
      */
     private static final int ASCII_TABLE_MAX_STATES = 16_384;
-    private static final ThreadLocal<ArrayList<Strategy>> TRACE_BUF =
-        ThreadLocal.withInitial(ArrayList::new);
+    private static final ThreadLocal<ArrayList<Strategy>> TRACE_BUF = ThreadLocal.withInitial(ArrayList::new);
     // Lazy-DFA memo caps, DERIVED per runner from the match-time RAM budget
     // ({@link Budgets#runtimeMemoryBytes()}, -Dtdfa.budget.runtime.memory,
     // default 16 MiB per compiled pattern) through the weight model:
@@ -103,7 +102,7 @@ public final class TdfaRunner implements RegexEngine {
     // The memo is shared across threads matching the same Pattern (safe:
     // see SearchDfa — locked mutation, snapshot reads), NOT per-thread.
     // Below SDFA_MIN_WINDOW the raw scan runs unmemoized entirely.
-    private static final int SDFA_MIN_WINDOW = 2048;   // below: unmemoized raw scan
+    private static final int SDFA_MIN_WINDOW = 2048; // below: unmemoized raw scan
     /**
      * Origin-sim budget before falling back to the memoized trigger scan.
      */
@@ -128,15 +127,15 @@ public final class TdfaRunner implements RegexEngine {
     final int[] ops;
     final int startState;
     final boolean rangesDisjoint;
-    final int[] rhp;             // tdfa.entryHiPrefix — prefix-max-hi per entry
+    final int[] rhp; // tdfa.entryHiPrefix — prefix-max-hi per entry
     /**
      * This runner's share of the pattern's runtime RAM budget (see the
      * constructor overload): caps the lazy search-DFA and walk memos.
      */
     final long memoBudgetBytes;
     final int stateCount;
-    final int stateWords;       // # of 32-bit words in state bitsets
-    final int[] acceptBits;     // bitset of accepting states (over-approximate)
+    final int stateWords; // # of 32-bit words in state bitsets
+    final int[] acceptBits; // bitset of accepting states (over-approximate)
     private final Tdfa tdfa;
     private final int[] stateFinalOpsOff;
     private final int[] stateEntryMask;
@@ -175,9 +174,9 @@ public final class TdfaRunner implements RegexEngine {
      * limit ints per state; 21K-state dictionary DFAs would pay ~42 MB at 256).
      */
     private final int latinLimit;
-    private final boolean fastPath;     // true = no masks + disjoint + not multiline
+    private final boolean fastPath; // true = no masks + disjoint + not multiline
     private final boolean unicodeWordBoundary;
-    private final int[] wordRanges;     // Unicode \w ranges for \b when unicodeWordBoundary is true
+    private final int[] wordRanges; // Unicode \w ranges for \b when unicodeWordBoundary is true
     /**
      * Whether any mask / stop-table cell actually consults the word-boundary
      * flags — when false, positionFlags skips both word-class checks.
@@ -274,17 +273,18 @@ public final class TdfaRunner implements RegexEngine {
         this.stateCount = tdfa.stateCount;
         this.stateWords = (tdfa.stateCount + 31) >>> 5;
         this.acceptBits = RunnerTables.buildAcceptBits(tdfa);
-        this.searchDfa = new SearchDfa(this, memoBudgetBytes);   // after all table fields are assigned
+        this.searchDfa = new SearchDfa(this, memoBudgetBytes); // after all table fields are assigned
         this.literalNeedle = RunnerTables.detectLiteralNeedle(tdfa);
         this.unicodeWordBoundary = tdfa.unicodeWordBoundary;
         this.wordRanges = tdfa.wordRanges;
         // Derived, not inferred: the tables themselves declare which posFlag bits
         // they distinguish (see Tdfa.posFlagDeps) — no per-consumer model to keep in sync.
         this.needsWordFlags = (tdfa.posFlagDeps()
-            & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY)) != 0;
+                        & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY)) != 0;
         this.wordBits = RunnerTables.buildWordBits(tdfa.unicodeWordBoundary ? tdfa.wordRanges : null);
         this.startBits = (literalNeedle == null && (tdfa.stateMeta[tdfa.startState] & 1) == 0)
-            ? buildStartBits() : null;
+                        ? buildStartBits()
+                        : null;
         this.walkIdx = new WalkIndex(this, memoBudgetBytes);
     }
 
@@ -302,7 +302,9 @@ public final class TdfaRunner implements RegexEngine {
      */
     @EmittedSurface
     public static void trace(Strategy s) {
-        if (TRACE) TRACE_BUF.get().add(s);
+        if (TRACE) {
+            TRACE_BUF.get().add(s);
+        }
     }
 
     /**
@@ -365,13 +367,19 @@ public final class TdfaRunner implements RegexEngine {
     }
 
     private static void applyOps(int[] ops, int opsOff, int[] regs, int pos) {
-        for (int j = opsOff; ; j += 3) {
+        for (int j = opsOff;; j += 3) {
             int op = ops[j];
-            if (op == Tdfa.OP_END) return;
+            if (op == Tdfa.OP_END) {
+                return;
+            }
             int dst = ops[j + 1];
-            if (op == Tdfa.OP_SET_POS) regs[dst] = pos;
-            else if (op == Tdfa.OP_COPY) regs[dst] = regs[ops[j + 2]];
-            else regs[dst] = -1;
+            if (op == Tdfa.OP_SET_POS) {
+                regs[dst] = pos;
+            } else if (op == Tdfa.OP_COPY) {
+                regs[dst] = regs[ops[j + 2]];
+            } else {
+                regs[dst] = -1;
+            }
         }
     }
 
@@ -426,14 +434,18 @@ public final class TdfaRunner implements RegexEngine {
                 return RunnerTables.literalIndexOf(s, literalNeedle, 0) >= 0;
             }
             MatchScratch sc = new MatchScratch();
-            if (fastPath) return runStringFindFast(s, len, sc);
+            if (fastPath) {
+                return runStringFindFast(s, len, sc);
+            }
             int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? 0 : len;
             if (maxStart > 0) {
                 // One exact walk from 0 first: for prefix-chain DFAs (e.g.
                 // \p{L}{256}) a match at/near 0 answers in O(len) while the
                 // trigger's raw-scan pre-check is O(len^2) in live-set size.
                 trace(Strategy.EXACT_FROM);
-                if (runStringMatchFrom(s, 0, len) >= 0) return true;
+                if (runStringMatchFrom(s, 0, len) >= 0) {
+                    return true;
+                }
                 // Short inputs: first-char-set candidate scan with exact
                 // (mask-aware) walks instead of the raw-scan simulation.
                 if (startBits != null && len <= CAND_SCAN_MAX) {
@@ -442,17 +454,25 @@ public final class TdfaRunner implements RegexEngine {
                     for (int p = 1; p < len; p++) {
                         char c = s.charAt(p);
                         if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && (c < 0xDC00 || !Alphabet.pairInterior(s, p))
-                            && runStringMatchFrom(s, p, len) >= 0) return true;
+                                        && runStringMatchFrom(s, p, len) >= 0) {
+                            return true;
+                        }
                     }
                     return false;
                 }
                 int w = triggerScan(s, 0, len, sc);
-                if (w < 0) return false;
+                if (w < 0) {
+                    return false;
+                }
                 trace(Strategy.WALK_RESTART);
                 for (int from = Math.max(w, 1); from <= maxStart; from++) {
-                    if (Alphabet.pairInterior(s, from)) continue;
+                    if (Alphabet.pairInterior(s, from)) {
+                        continue;
+                    }
                     int res = runStringMatchFrom(s, from, len);
-                    if (res >= 0) return true;
+                    if (res >= 0) {
+                        return true;
+                    }
                 }
                 return false;
             }
@@ -474,9 +494,12 @@ public final class TdfaRunner implements RegexEngine {
     public MatchResult match(CharSequence input, int from, MatchScratch sc) {
         // Interface contract (see RegexEngine.match): clean bounds failure,
         // never the walk's raw StringIndexOutOfBoundsException.
-        if (from < 0 || from > input.length())
+        if (from < 0 || from > input.length()) {
             throw new IndexOutOfBoundsException("from: " + from + ", length: " + input.length());
-        if (sc == null) sc = new MatchScratch();
+        }
+        if (sc == null) {
+            sc = new MatchScratch();
+        }
         MatchHolder h;
         if (input instanceof String) {
             String s = (String) input;
@@ -485,7 +508,9 @@ public final class TdfaRunner implements RegexEngine {
             trace(Strategy.GENERIC);
             h = runGeneric(input, from, input.length(), false, sc);
         }
-        if (h == null) return null;
+        if (h == null) {
+            return null;
+        }
         if (tdfa.fixedBase != null) {
             MatchResult.reconstructFixed(h.regs, tdfa.finalRegBase, tdfa.fixedBase, tdfa.fixedOffset);
         }
@@ -514,9 +539,13 @@ public final class TdfaRunner implements RegexEngine {
     @Override
     public MatchResult matchWhole(CharSequence input, MatchScratch sc) {
         trace(input instanceof String ? Strategy.ANCHORED : Strategy.GENERIC);
-        if (sc == null) sc = new MatchScratch();
+        if (sc == null) {
+            sc = new MatchScratch();
+        }
         MatchHolder h = wholeWalk(input, 0, input.length(), sc);
-        if (h == null) return null;
+        if (h == null) {
+            return null;
+        }
         if (tdfa.fixedBase != null) {
             MatchResult.reconstructFixed(h.regs, tdfa.finalRegBase, tdfa.fixedBase, tdfa.fixedOffset);
         }
@@ -532,7 +561,7 @@ public final class TdfaRunner implements RegexEngine {
         final int[] op = this.ops;
         final int[] sem = this.stateEntryMask;
         final int[] sam = this.stateAcceptMask;
-        final int[] arf = this.asciiRangeFlat;   // non-null iff rangesDisjoint
+        final int[] arf = this.asciiRangeFlat; // non-null iff rangesDisjoint
         final int limit = this.latinLimit;
         final int[] regs;
         if (regSize == 0) {
@@ -547,7 +576,9 @@ public final class TdfaRunner implements RegexEngine {
         // Entry check for start state — inline
         {
             int entryReq = sem[state];
-            if (entryReq != 0 && (positionFlagsCS(input, pos, to) & entryReq) != entryReq) return null;
+            if (entryReq != 0 && (positionFlagsCS(input, pos, to) & entryReq) != entryReq) {
+                return null;
+            }
         }
 
         int posFlags = -1;
@@ -564,7 +595,9 @@ public final class TdfaRunner implements RegexEngine {
                 ri = arf[state * limit + c];
             } else if (rangesDisjoint && c < 0x10000) {
                 ri = walkIdx.walkRangeIndex(state, c);
-                if (ri == -2) ri = Integer.MIN_VALUE;
+                if (ri == -2) {
+                    ri = Integer.MIN_VALUE;
+                }
             } else {
                 ri = Integer.MIN_VALUE;
             }
@@ -578,7 +611,9 @@ public final class TdfaRunner implements RegexEngine {
                     if (rg[(base + mid) * 5] <= c) {
                         anchor = mid;
                         rlo = mid + 1;
-                    } else rhi = mid - 1;
+                    } else {
+                        rhi = mid - 1;
+                    }
                 }
                 int best = -1, bestSpec = -1;
                 for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
@@ -586,20 +621,26 @@ public final class TdfaRunner implements RegexEngine {
                     if (c <= rg[o + 1]) {
                         int requiredMask = rg[o + 4];
                         if (requiredMask != 0) {
-                            if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
-                            if ((posFlags & requiredMask) != requiredMask) continue;
+                            if (posFlags < 0) {
+                                posFlags = positionFlagsCS(input, pos, to);
+                            }
+                            if ((posFlags & requiredMask) != requiredMask) {
+                                continue;
+                            }
                         }
                         int spec = Integer.bitCount(requiredMask);
                         if (spec >= bestSpec) {
                             best = i;
                             bestSpec = spec;
-                        }   // >= : lower index wins ties
+                        } // >= : lower index wins ties
                     }
                 }
                 if (best >= 0) {
                     int o = (base + best) * 5;
                     int target = rg[o + 2];
-                    if (target < 0) return null;   // dead marker of the owning context
+                    if (target < 0) {
+                        return null;
+                    } // dead marker of the owning context
                     chosen = o;
                     chosenTarget = target;
                 }
@@ -610,7 +651,9 @@ public final class TdfaRunner implements RegexEngine {
                     int requiredMask = rg[o + 4];
                     boolean ok = requiredMask == 0;
                     if (!ok) {
-                        if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
+                        if (posFlags < 0) {
+                            posFlags = positionFlagsCS(input, pos, to);
+                        }
                         ok = (posFlags & requiredMask) == requiredMask;
                     }
                     if (ok) {
@@ -619,35 +662,53 @@ public final class TdfaRunner implements RegexEngine {
                     }
                 }
             }
-            if (chosen < 0) return null;   // dead: no full match through this prefix
-            // Target entry mask is a position predicate, evaluated BEFORE the
-            // transition's ops run (see extractFrom).
+            if (chosen < 0) {
+                return null;
+            } // dead: no full match through this prefix
+              // Target entry mask is a position predicate, evaluated BEFORE the
+              // transition's ops run (see extractFrom).
             int width = c > 0xFFFF ? 2 : 1;
             int entryReqNext = sem[chosenTarget];
             if (entryReqNext != 0
-                && (positionFlagsCS(input, pos + width, to) & entryReqNext) != entryReqNext) return null;
+                            && (positionFlagsCS(input, pos + width, to) & entryReqNext) != entryReqNext) {
+                return null;
+            }
             if (regs != null) {
                 int opsOff = rg[chosen + 3];
-                if (opsOff != 0) applyOps(op, opsOff, regs, pos);
+                if (opsOff != 0) {
+                    applyOps(op, opsOff, regs, pos);
+                }
             }
             state = chosenTarget;
-            if (width == 2) pos++;
+            if (width == 2) {
+                pos++;
+            }
             pos++;
             posFlags = -1;
         }
         // EOF: an alive accept config here consumed exactly [from, to) — a
         // full match. Gate and apply the winner's φ reading EOF-time registers.
-        if ((sm[state] & 1) == 0) return null;
+        if ((sm[state] & 1) == 0) {
+            return null;
+        }
         int eofFlags = positionFlagsCS(input, to, to);
         final int[] fm = this.finalOpsByMask;
         if (fm != null) {
             int cell = fm[state * 64 + eofFlags];
-            if (cell < 0) return null;   // no accept config alive under these posFlags
-            if (regs != null && cell != 0) applyOps(op, cell, regs, to);
+            if (cell < 0) {
+                return null;
+            } // no accept config alive under these posFlags
+            if (regs != null && cell != 0) {
+                applyOps(op, cell, regs, to);
+            }
         } else {
             int acceptMask = sam[state];
-            if (acceptMask != 0 && (eofFlags & acceptMask) != acceptMask) return null;
-            if (regs != null) applyFinalOps(state, regs, to);
+            if (acceptMask != 0 && (eofFlags & acceptMask) != acceptMask) {
+                return null;
+            }
+            if (regs != null) {
+                applyFinalOps(state, regs, to);
+            }
         }
         return new MatchHolder(from, to, regs == null ? new int[0] : regs.clone());
     }
@@ -662,7 +723,9 @@ public final class TdfaRunner implements RegexEngine {
         {
             trace(Strategy.EXACT_FROM);
             MatchHolder direct = extractFrom(input, from, to, sc);
-            if (direct != null) return direct;
+            if (direct != null) {
+                return direct;
+            }
         }
         // Short inputs: first-char-set candidate scan with exact (mask-aware)
         // walks instead of the trigger scan + restart loop. Zero-length
@@ -676,11 +739,19 @@ public final class TdfaRunner implements RegexEngine {
             int fails = 0;
             for (int p = from + 1; p < to; p++) {
                 char c = input.charAt(p);
-                if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) continue;
-                if (c >= 0xDC00 && Alphabet.pairInterior(input, p)) continue;
-                if (fails >= ADAPTIVE_PREFILTER_AFTER && runStringMatchFrom(input, p, to) < 0) continue;
+                if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) {
+                    continue;
+                }
+                if (c >= 0xDC00 && Alphabet.pairInterior(input, p)) {
+                    continue;
+                }
+                if (fails >= ADAPTIVE_PREFILTER_AFTER && runStringMatchFrom(input, p, to) < 0) {
+                    continue;
+                }
                 MatchHolder h = extractFrom(input, p, to, sc);
-                if (h != null) return h;
+                if (h != null) {
+                    return h;
+                }
                 fails++;
             }
             return null;
@@ -690,15 +761,25 @@ public final class TdfaRunner implements RegexEngine {
         // alive before W can produce a match — see SearchDfa).
         if (maxStart > 0) {
             int w = triggerScan(input, from, to, sc);
-            if (w < 0) return null;
-            if (w > from + 1) from = w - 1;
+            if (w < 0) {
+                return null;
+            }
+            if (w > from + 1) {
+                from = w - 1;
+            }
         }
         trace(Strategy.WALK_RESTART);
         for (int startSearch = from + 1; startSearch <= maxStart; startSearch++) {
-            if (Alphabet.pairInterior(input, startSearch)) continue;
-            if (WTRACE) System.err.println("[walk] === start " + startSearch);
+            if (Alphabet.pairInterior(input, startSearch)) {
+                continue;
+            }
+            if (WTRACE) {
+                System.err.println("[walk] === start " + startSearch);
+            }
             MatchHolder h = extractFrom(input, startSearch, to, sc);
-            if (h != null) return h;
+            if (h != null) {
+                return h;
+            }
         }
         return null;
     }
@@ -712,7 +793,7 @@ public final class TdfaRunner implements RegexEngine {
         final int[] op = this.ops;
         final int[] sem = this.stateEntryMask;
         final int[] sam = this.stateAcceptMask;
-        final int[] arf = this.asciiRangeFlat;   // non-null iff rangesDisjoint
+        final int[] arf = this.asciiRangeFlat; // non-null iff rangesDisjoint
         final int limit = this.latinLimit;
         // Pooled regs (per-call carrier): the candidate-scan loops call this
         // per candidate and most walks fail — no allocation on that path. The
@@ -733,57 +814,83 @@ public final class TdfaRunner implements RegexEngine {
         // Entry check for start state — inline
         {
             int entryReq = sem[state];
-            if (entryReq != 0 && (positionFlags(input, pos, to) & entryReq) != entryReq) return null;
+            if (entryReq != 0 && (positionFlags(input, pos, to) & entryReq) != entryReq) {
+                return null;
+            }
         }
 
         int posFlags = -1;
-        loop:
-        for (; ; pos++) {
+        loop : for (;; pos++) {
             int meta = sm[state];
-            if (WTRACE) System.err.println("[walk] pos=" + pos + " state=" + state + " accept=" + ((meta & 1) != 0));
+            if (WTRACE) {
+                System.err.println("[walk] pos=" + pos + " state=" + state + " accept=" + ((meta & 1) != 0));
+            }
             if ((meta & 1) != 0) {
                 final int[] fm = this.finalOpsByMask;
                 if (fm != null) {
                     // Position-aware table is authoritative: cell >= 0 = an
                     // accept config is alive under these posFlags (the gate
                     // the sam-intersection only approximated), cell = its φ.
-                    if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                    if (posFlags < 0) {
+                        posFlags = positionFlags(input, pos, to);
+                    }
                     int cell = fm[state * 64 + posFlags];
-                    if (WTRACE)
+                    if (WTRACE) {
                         System.err.println("[walk]   fmCell=" + cell + " M=" + Integer.toBinaryString(posFlags));
+                    }
                     if (cell >= 0) {
                         lastAcceptPos = pos;
                         haveAccept = true;
-                        if (regs != null && cell != 0) applyOps(op, cell, regs, pos);
-                        if (!longestMatch && stopNow(state, posFlags)) break;
+                        if (regs != null && cell != 0) {
+                            applyOps(op, cell, regs, pos);
+                        }
+                        if (!longestMatch && stopNow(state, posFlags)) {
+                            break;
+                        }
                     }
                 } else {
                     int acceptMask = sam[state];
                     if (acceptMask == 0) {
                         lastAcceptPos = pos;
                         haveAccept = true;
-                        if (regs != null) applyFinalOps(state, regs, pos);
+                        if (regs != null) {
+                            applyFinalOps(state, regs, pos);
+                        }
                         if (!longestMatch) {
                             // stopNow ignores posFlags when the stop table is
                             // uniform (assertion-free) — skip the 2×charAt +
                             // word lookups; other readers recompute lazily.
-                            if (posFlags < 0 && stopMaskUniform == null) posFlags = positionFlags(input, pos, to);
-                            if (stopNow(state, posFlags)) break;
+                            if (posFlags < 0 && stopMaskUniform == null) {
+                                posFlags = positionFlags(input, pos, to);
+                            }
+                            if (stopNow(state, posFlags)) {
+                                break;
+                            }
                         }
                     } else {
-                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                        if (posFlags < 0) {
+                            posFlags = positionFlags(input, pos, to);
+                        }
                         if ((posFlags & acceptMask) == acceptMask) {
-                            if (WTRACE)
-                                System.err.println("[walk]   sam accept M=" + Integer.toBinaryString(posFlags) + " stop=" + stopNow(state, posFlags));
+                            if (WTRACE) {
+                                System.err.println("[walk]   sam accept M=" + Integer.toBinaryString(posFlags) + " stop="
+                                                + stopNow(state, posFlags));
+                            }
                             lastAcceptPos = pos;
                             haveAccept = true;
-                            if (regs != null) applyFinalOps(state, regs, pos);
-                            if (!longestMatch && stopNow(state, posFlags)) break;
+                            if (regs != null) {
+                                applyFinalOps(state, regs, pos);
+                            }
+                            if (!longestMatch && stopNow(state, posFlags)) {
+                                break;
+                            }
                         }
                     }
                 }
             }
-            if (pos >= to) break;
+            if (pos >= to) {
+                break;
+            }
             int c = Alphabet.decode(input, pos, to);
             int base = stateBase[state];
             int count = (meta >>> 1) & 0xFFFF;
@@ -799,7 +906,9 @@ public final class TdfaRunner implements RegexEngine {
                 // block (one array load) or, past the block cap, the binary
                 // search below.
                 ri = walkIdx.walkRangeIndex(state, c);
-                if (ri == -2) ri = Integer.MIN_VALUE;
+                if (ri == -2) {
+                    ri = Integer.MIN_VALUE;
+                }
             } else {
                 ri = Integer.MIN_VALUE;
             }
@@ -814,7 +923,9 @@ public final class TdfaRunner implements RegexEngine {
                     if (rg[(base + mid) * 5] <= c) {
                         anchor = mid;
                         rlo = mid + 1;
-                    } else rhi = mid - 1;
+                    } else {
+                        rhi = mid - 1;
+                    }
                 }
                 // Walk back over containing entries. Ownership: the MOST
                 // SPECIFIC satisfied mask wins (popcount of requiredMask);
@@ -830,14 +941,18 @@ public final class TdfaRunner implements RegexEngine {
                     if (c <= rg[o + 1]) {
                         int requiredMask = rg[o + 4];
                         if (requiredMask != 0) {
-                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                            if ((posFlags & requiredMask) != requiredMask) continue;
+                            if (posFlags < 0) {
+                                posFlags = positionFlags(input, pos, to);
+                            }
+                            if ((posFlags & requiredMask) != requiredMask) {
+                                continue;
+                            }
                         }
                         int spec = Integer.bitCount(requiredMask);
                         if (spec >= bestSpec) {
                             best = i;
                             bestSpec = spec;
-                        }   // >= : lower index wins ties
+                        } // >= : lower index wins ties
                     }
                 }
                 if (best >= 0) {
@@ -847,12 +962,17 @@ public final class TdfaRunner implements RegexEngine {
                         // Dead marker of the OWNING context (lowest satisfied):
                         // no continuation exists under this posFlags — lower-
                         // specificity ranges belong to contexts not alive here.
-                        if (WTRACE)
-                            System.err.println("[walk]   c=" + Integer.toHexString(c) + " DEAD idx " + best + " mask=" + Integer.toBinaryString(rg[o + 4]) + " (M=" + Integer.toBinaryString(posFlags) + ")");
+                        if (WTRACE) {
+                            System.err.println("[walk]   c=" + Integer.toHexString(c) + " DEAD idx " + best + " mask="
+                                            + Integer.toBinaryString(rg[o + 4]) + " (M=" + Integer.toBinaryString(posFlags) + ")");
+                        }
                         break;
                     }
-                    if (WTRACE)
-                        System.err.println("[walk]   c=" + Integer.toHexString(c) + " pick idx " + best + " lo=" + Integer.toHexString(rg[o]) + " mask=" + Integer.toBinaryString(rg[o + 4]) + " -> " + target + " (M=" + Integer.toBinaryString(posFlags) + ")");
+                    if (WTRACE) {
+                        System.err.println("[walk]   c=" + Integer.toHexString(c) + " pick idx " + best + " lo="
+                                        + Integer.toHexString(rg[o]) + " mask=" + Integer.toBinaryString(rg[o + 4]) + " -> " + target
+                                        + " (M=" + Integer.toBinaryString(posFlags) + ")");
+                    }
                     chosen = o;
                     chosenTarget = target;
                 }
@@ -863,7 +983,9 @@ public final class TdfaRunner implements RegexEngine {
                     int requiredMask = rg[o + 4];
                     boolean ok = requiredMask == 0;
                     if (!ok) {
-                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                        if (posFlags < 0) {
+                            posFlags = positionFlags(input, pos, to);
+                        }
                         ok = (posFlags & requiredMask) == requiredMask;
                     }
                     if (ok) {
@@ -872,7 +994,9 @@ public final class TdfaRunner implements RegexEngine {
                     }
                 }
             }
-            if (chosen < 0) break;
+            if (chosen < 0) {
+                break;
+            }
             // Target entry mask is a position predicate, evaluated BEFORE the
             // transition's ops run: a mask-failing transition is never taken,
             // so its tag writes must not contaminate the register file (a
@@ -881,16 +1005,24 @@ public final class TdfaRunner implements RegexEngine {
             int width = c > 0xFFFF ? 2 : 1;
             int entryReqNext = sem[chosenTarget];
             if (entryReqNext != 0
-                && (positionFlags(input, pos + width, to) & entryReqNext) != entryReqNext) break;
+                            && (positionFlags(input, pos + width, to) & entryReqNext) != entryReqNext) {
+                break;
+            }
             if (regs != null) {
                 int opsOff = rg[chosen + 3];
-                if (opsOff != 0) applyOps(op, opsOff, regs, pos);
+                if (opsOff != 0) {
+                    applyOps(op, opsOff, regs, pos);
+                }
             }
             state = chosenTarget;
-            if (width == 2) pos++;
+            if (width == 2) {
+                pos++;
+            }
             posFlags = -1;
         }
-        if (!haveAccept) return null;
+        if (!haveAccept) {
+            return null;
+        }
         int[] r = regs == null ? new int[0] : regs.clone();
         // Final ops already applied eagerly at accept-record time (BT22's
         // declaration semantics): they read the accept-time register values.
@@ -915,11 +1047,18 @@ public final class TdfaRunner implements RegexEngine {
         boolean any = false;
         for (int i = 0; i < cnt; i++) {
             int o = (base + i) * 5;
-            if (rg[o + 2] < 0) continue;               // dead: never a first char
+            if (rg[o + 2] < 0) {
+                continue;
+            } // dead: never a first char
             int lo = Math.max(rg[o], 0), hi = Math.min(rg[o + 1], 0xFFFF);
-            for (int c = lo; c <= hi; c++) bits[c >>> 6] |= 1L << (c & 63);
-            if (rg[o + 1] > 0xFFFF)
-                for (int c = 0xD800; c <= 0xDBFF; c++) bits[c >>> 6] |= 1L << (c & 63);
+            for (int c = lo; c <= hi; c++) {
+                bits[c >>> 6] |= 1L << (c & 63);
+            }
+            if (rg[o + 1] > 0xFFFF) {
+                for (int c = 0xD800; c <= 0xDBFF; c++) {
+                    bits[c >>> 6] |= 1L << (c & 63);
+                }
+            }
             any = true;
         }
         return any ? bits : null;
@@ -942,11 +1081,13 @@ public final class TdfaRunner implements RegexEngine {
             return rawScan(input, from, to, from, null, sc);
         }
         trace(Strategy.TRIGGER);
-        sd.ensureSeed();   // pure-seed row 0, interned once, race-safe
+        sd.ensureSeed(); // pure-seed row 0, interned once, race-safe
         int cur = 0;
         int W = from;
-        for (int pos = from; pos < to; ) {
-            if (sd.accept(cur)) return W;
+        for (int pos = from; pos < to;) {
+            if (sd.accept(cur)) {
+                return W;
+            }
             int c = Alphabet.decode(input, pos, to);
             int adv = Alphabet.width(c);
             int v = c < 0x10000 ? sd.bmpTransition(cur, c) : sd.transition(cur, c);
@@ -960,7 +1101,9 @@ public final class TdfaRunner implements RegexEngine {
             if (v == SDFA_KILL) {
                 W = pos + adv;
                 cur = 0;
-            } else cur = v;
+            } else {
+                cur = v;
+            }
             pos += adv;
         }
         return sd.accept(cur) ? W : -1;
@@ -975,7 +1118,7 @@ public final class TdfaRunner implements RegexEngine {
         int[] live = sc.takeLive(nwords);
         int[] next = sc.takeNext(nwords);
         if (liveIn != null) {
-            System.arraycopy(liveIn, 0, live, 0, nwords);   // exact continuation
+            System.arraycopy(liveIn, 0, live, 0, nwords); // exact continuation
         } else {
             Arrays.fill(live, 0, nwords, 0);
             live[startState >>> 5] |= 1 << (startState & 31);
@@ -984,9 +1127,13 @@ public final class TdfaRunner implements RegexEngine {
         int W = wIn;
         for (int pos = from; pos <= to; pos++) {
             for (int w = 0; w < nwords; w++) {
-                if ((live[w] & ab[w]) != 0) return W;
+                if ((live[w] & ab[w]) != 0) {
+                    return W;
+                }
             }
-            if (pos == to) break;
+            if (pos == to) {
+                break;
+            }
             int c = Alphabet.decode(input, pos, to);
             int adv = Alphabet.width(c);
             Arrays.fill(next, 0, nwords, 0);
@@ -1006,7 +1153,9 @@ public final class TdfaRunner implements RegexEngine {
                         if (rg[(base + mid) * 5] <= c) {
                             anchor = mid;
                             rlo = mid + 1;
-                        } else rhi = mid - 1;
+                        } else {
+                            rhi = mid - 1;
+                        }
                     }
                     for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
                         int mo = (base + i) * 5;
@@ -1024,11 +1173,15 @@ public final class TdfaRunner implements RegexEngine {
             // (match may start at pos+1), not empty — an empty live set would
             // kill every subsequent step too and mask real matches.
             next[startState >>> 5] |= 1 << (startState & 31);
-            if (empty) W = pos + adv;
+            if (empty) {
+                W = pos + adv;
+            }
             int[] tmp = live;
             live = next;
             next = tmp;
-            if (adv == 2) pos++;
+            if (adv == 2) {
+                pos++;
+            }
         }
         return -1;
     }
@@ -1048,11 +1201,17 @@ public final class TdfaRunner implements RegexEngine {
      */
     @EmittedSurface
     public MatchHolder restartExtract(String input, int fromStart, int to, int from0, MatchScratch sc) {
-        if (sc == null) sc = new MatchScratch();
+        if (sc == null) {
+            sc = new MatchScratch();
+        }
         for (int s = fromStart; s <= to; s++) {
-            if (Alphabet.pairInterior(input, s)) continue;
+            if (Alphabet.pairInterior(input, s)) {
+                continue;
+            }
             MatchHolder h = tryStartFast(input, s, to, sc);
-            if (h != null) return h;
+            if (h != null) {
+                return h;
+            }
         }
         return null;
     }
@@ -1137,7 +1296,9 @@ public final class TdfaRunner implements RegexEngine {
      */
     private int multiStateLeftmostStart(CharSequence input, int from, int to, int budget, MatchScratch sc) {
         final int nwords = stateWords;
-        if (nwords == 0) return -1;
+        if (nwords == 0) {
+            return -1;
+        }
         final int[] sm = stateMeta;
         final int[] rg = ranges;
         final int[] at = asciiTarget;
@@ -1164,7 +1325,9 @@ public final class TdfaRunner implements RegexEngine {
         int best = -1;
         final int limit = budget < 0 ? Integer.MAX_VALUE : from + budget;
         for (int pos = from; pos <= to; pos++) {
-            if (best < 0 && pos > limit) return LSS_BUDGET;
+            if (best < 0 && pos > limit) {
+                return LSS_BUDGET;
+            }
             // accept check with origin tracking
             for (int w = 0; w < nwords; w++) {
                 int bits = live[w] & ab[w];
@@ -1172,7 +1335,9 @@ public final class TdfaRunner implements RegexEngine {
                     int bit = Integer.numberOfTrailingZeros(bits);
                     bits &= bits - 1;
                     int s = (w << 5) + bit;
-                    if (best < 0 || origin[s] < best) best = origin[s];
+                    if (best < 0 || origin[s] < best) {
+                        best = origin[s];
+                    }
                 }
             }
             if (best >= 0) {
@@ -1186,17 +1351,23 @@ public final class TdfaRunner implements RegexEngine {
                         int bit = Integer.numberOfTrailingZeros(bits);
                         bits &= bits - 1;
                         int s = (w << 5) + bit;
-                        if (origin[s] < minLive) minLive = origin[s];
+                        if (origin[s] < minLive) {
+                            minLive = origin[s];
+                        }
                     }
                 }
-                if (best <= pos && best <= minLive) return best;
+                if (best <= pos && best <= minLive) {
+                    return best;
+                }
             }
-            if (pos == to) break;
+            if (pos == to) {
+                break;
+            }
 
             int c = Alphabet.decode(input, pos, to);
             int adv = Alphabet.width(c);
 
-            Arrays.fill(next, 0, nwords, 0);   // grown carrier: zero only our prefix
+            Arrays.fill(next, 0, nwords, 0); // grown carrier: zero only our prefix
             if (at != null && c < 128) {
                 for (int w = 0; w < nwords; w++) {
                     int bits = live[w];
@@ -1205,7 +1376,9 @@ public final class TdfaRunner implements RegexEngine {
                         bits &= bits - 1;
                         int s = (w << 5) + bit;
                         int target = at[s * 128 + c];
-                        if (target >= 0) setOrigin(next, originNext, target, origin[s]);
+                        if (target >= 0) {
+                            setOrigin(next, originNext, target, origin[s]);
+                        }
                     }
                 }
             } else {
@@ -1232,13 +1405,15 @@ public final class TdfaRunner implements RegexEngine {
                                 continue;
                             }
                             int target = rg[mo + 2];
-                            if (target >= 0) setOrigin(next, originNext, target, origin[s]);
+                            if (target >= 0) {
+                                setOrigin(next, originNext, target, origin[s]);
+                            }
                             break;
                         }
                     }
                 }
             }
-            setOrigin(next, originNext, ss, pos + adv);  // unanchored re-seed (min-merge if already re-added)
+            setOrigin(next, originNext, ss, pos + adv); // unanchored re-seed (min-merge if already re-added)
 
             int[] tmp = live;
             live = next;
@@ -1246,7 +1421,9 @@ public final class TdfaRunner implements RegexEngine {
             int[] to2 = origin;
             origin = originNext;
             originNext = to2;
-            if (adv == 2) pos++;
+            if (adv == 2) {
+                pos++;
+            }
         }
         return best;
     }
@@ -1264,9 +1441,13 @@ public final class TdfaRunner implements RegexEngine {
         final int limit = this.latinLimit;
         for (int pos = 0; pos < to; pos++) {
             char c = input.charAt(pos);
-            if (c >= limit) return runStringAnchored(input) >= 0;
+            if (c >= limit) {
+                return runStringAnchored(input) >= 0;
+            }
             state = at[state * limit + c];
-            if (state < 0) return false;
+            if (state < 0) {
+                return false;
+            }
         }
         return (sm[state] & 1) != 0;
     }
@@ -1285,7 +1466,9 @@ public final class TdfaRunner implements RegexEngine {
             for (int p = 0; p < to; p++) {
                 char c = input.charAt(p);
                 if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && (c < 0xDC00 || !Alphabet.pairInterior(input, p))
-                    && matchFromFast(input, p, to)) return true;
+                                && matchFromFast(input, p, to)) {
+                    return true;
+                }
             }
             return false;
         }
@@ -1316,7 +1499,9 @@ public final class TdfaRunner implements RegexEngine {
                 ri = arf[state * limit + c];
             } else if (c < 0x10000) {
                 ri = walkIdx.walkRangeIndex(state, c);
-                if (ri == -2) ri = Integer.MIN_VALUE;
+                if (ri == -2) {
+                    ri = Integer.MIN_VALUE;
+                }
             } else {
                 ri = Integer.MIN_VALUE;
             }
@@ -1339,12 +1524,18 @@ public final class TdfaRunner implements RegexEngine {
                     break;
                 }
             }
-            if (ri < 0) return false;
+            if (ri < 0) {
+                return false;
+            }
             int target = rg[(stateBase[state] + ri) * 5 + 2];
-            if (target < 0) return false;
+            if (target < 0) {
+                return false;
+            }
             state = target;
             pos += adv;
-            if ((sm[state] & 1) != 0) return true;
+            if ((sm[state] & 1) != 0) {
+                return true;
+            }
         }
         return false;
     }
@@ -1362,7 +1553,9 @@ public final class TdfaRunner implements RegexEngine {
         //    (match at/near the start) never needs the simulation at all.
         trace(Strategy.EXACT_FROM);
         MatchHolder h = tryStartFast(input, from, to, sc);
-        if (h != null) return h;
+        if (h != null) {
+            return h;
+        }
         // 1b) Short inputs: first-char-set candidate scan. Coverage is exact
         //     (start state not accepting — else startBits is null — so every
         //     match consumes a first char carrying its bit); each candidate
@@ -1376,11 +1569,19 @@ public final class TdfaRunner implements RegexEngine {
             int fails = 0;
             for (int p = from + 1; p < to; p++) {
                 char c = input.charAt(p);
-                if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) continue;
-                if (c >= 0xDC00 && Alphabet.pairInterior(input, p)) continue;
-                if (fails >= ADAPTIVE_PREFILTER_AFTER && !matchFromFast(input, p, to)) continue;
+                if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) {
+                    continue;
+                }
+                if (c >= 0xDC00 && Alphabet.pairInterior(input, p)) {
+                    continue;
+                }
+                if (fails >= ADAPTIVE_PREFILTER_AFTER && !matchFromFast(input, p, to)) {
+                    continue;
+                }
                 h = tryStartFast(input, p, to, sc);
-                if (h != null) return h;
+                if (h != null) {
+                    return h;
+                }
                 fails++;
             }
             return null;
@@ -1397,12 +1598,18 @@ public final class TdfaRunner implements RegexEngine {
         int leftmost = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS, sc);
         if (leftmost == LSS_BUDGET) {
             int w = triggerScan(input, from, to, sc);
-            if (w < 0) return null;
+            if (w < 0) {
+                return null;
+            }
             leftmost = multiStateLeftmostStart(input, w, to, sc);
         }
-        if (leftmost < 0) return null;
+        if (leftmost < 0) {
+            return null;
+        }
         h = tryStartFast(input, leftmost, to, sc);
-        if (h != null) return h;
+        if (h != null) {
+            return h;
+        }
         // 3) Defensive: the sim and the walk must agree on fast-path DFAs; if
         //    they ever don't, fall back to the old restart shape rather than
         //    return a wrong null.
@@ -1448,7 +1655,9 @@ public final class TdfaRunner implements RegexEngine {
             if ((meta & 1) != 0) {
                 final int[] fm = this.finalOpsByMask;
                 if (fm != null) {
-                    if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                    if (posFlags < 0) {
+                        posFlags = positionFlags(input, pos, to);
+                    }
                     int cell = fm[state * 64 + posFlags];
                     // cell < 0 (position-suppressed accept): do NOT record and
                     // do NOT stop — fall through to the transition, exactly
@@ -1457,30 +1666,50 @@ public final class TdfaRunner implements RegexEngine {
                     if (cell >= 0) {
                         haveAccept = true;
                         lastAcceptPos = pos;
-                        if (regs != null && cell != 0) applyOps(op, cell, regs, pos);
-                        if (pm && stopNow(state, posFlags)) break;
+                        if (regs != null && cell != 0) {
+                            applyOps(op, cell, regs, pos);
+                        }
+                        if (pm && stopNow(state, posFlags)) {
+                            break;
+                        }
                     }
                 } else {
                     haveAccept = true;
                     lastAcceptPos = pos;
-                    if (regs != null) applyFinalOps(state, regs, pos);
+                    if (regs != null) {
+                        applyFinalOps(state, regs, pos);
+                    }
                     if (pm) {
-                        if (stopMaskUniform == null) posFlags = positionFlags(input, pos, to);
-                        if (stopNow(state, posFlags)) break;
+                        if (stopMaskUniform == null) {
+                            posFlags = positionFlags(input, pos, to);
+                        }
+                        if (stopNow(state, posFlags)) {
+                            break;
+                        }
                     }
                 }
             }
-            if (pos == to) break;
+            if (pos == to) {
+                break;
+            }
             char c = input.charAt(pos);
-            if (c >= latinLimit) return extractFrom(input, start, to, sc);
+            if (c >= latinLimit) {
+                return extractFrom(input, start, to, sc);
+            }
             int ri = arf[state * latinLimit + c];
-            if (ri < 0) break;
+            if (ri < 0) {
+                break;
+            }
             int mo = (stateBase[state] + ri) * 5;
             int target = rg[mo + 2];
-            if (target < 0) break;
+            if (target < 0) {
+                break;
+            }
             if (regs != null) {
                 int opsOff = rg[mo + 3];
-                if (opsOff != 0) applyOps(op, opsOff, regs, pos);
+                if (opsOff != 0) {
+                    applyOps(op, opsOff, regs, pos);
+                }
             }
             state = target;
             // posFlags belongs to the OLD position — invalidate (extractFrom /
@@ -1512,7 +1741,9 @@ public final class TdfaRunner implements RegexEngine {
         // Entry check for start state — inline
         {
             int entryReq = sem[state];
-            if (entryReq != 0 && (positionFlags(input, 0, to) & entryReq) != entryReq) return -1;
+            if (entryReq != 0 && (positionFlags(input, 0, to) & entryReq) != entryReq) {
+                return -1;
+            }
         }
 
         int posFlags = -1; // lazy: -1 means not yet computed for current pos
@@ -1523,11 +1754,17 @@ public final class TdfaRunner implements RegexEngine {
                 if (acceptMask == 0) {
                     lastAcceptPos = pos;
                 } else {
-                    if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                    if ((posFlags & acceptMask) == acceptMask) lastAcceptPos = pos;
+                    if (posFlags < 0) {
+                        posFlags = positionFlags(input, pos, to);
+                    }
+                    if ((posFlags & acceptMask) == acceptMask) {
+                        lastAcceptPos = pos;
+                    }
                 }
             }
-            if (pos == to) break;
+            if (pos == to) {
+                break;
+            }
             int c = Alphabet.decode(input, pos, to);
             int base = stateBase[state];
             int count = (meta >>> 1) & 0xFFFF;
@@ -1542,12 +1779,16 @@ public final class TdfaRunner implements RegexEngine {
                         int requiredMask = rg[mo + 4];
                         boolean maskOk = true;
                         if (requiredMask != 0) {
-                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                            if (posFlags < 0) {
+                                posFlags = positionFlags(input, pos, to);
+                            }
                             maskOk = (posFlags & requiredMask) == requiredMask;
                         }
                         if (maskOk) {
                             state = target;
-                            if (c > 0xFFFF) pos++;
+                            if (c > 0xFFFF) {
+                                pos++;
+                            }
                             int entryReq = sem[state];
                             if (entryReq == 0 || (positionFlags(input, pos + 1, to) & entryReq) == entryReq) {
                                 matched = true;
@@ -1573,14 +1814,22 @@ public final class TdfaRunner implements RegexEngine {
                             continue;
                         }
                         int target = rg[mo + 2];
-                        if (target < 0) break;
+                        if (target < 0) {
+                            break;
+                        }
                         int requiredMask = rg[mo + 4];
                         if (requiredMask != 0) {
-                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                            if ((posFlags & requiredMask) != requiredMask) break;
+                            if (posFlags < 0) {
+                                posFlags = positionFlags(input, pos, to);
+                            }
+                            if ((posFlags & requiredMask) != requiredMask) {
+                                break;
+                            }
                         }
                         state = target;
-                        if (c > 0xFFFF) pos++;
+                        if (c > 0xFFFF) {
+                            pos++;
+                        }
                         int entryReq = sem[state];
                         if (entryReq != 0) {
                             if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
@@ -1607,7 +1856,9 @@ public final class TdfaRunner implements RegexEngine {
                     if (rg[(base + mid) * 5] <= c) {
                         anchor = mid;
                         rlo = mid + 1;
-                    } else rhi = mid - 1;
+                    } else {
+                        rhi = mid - 1;
+                    }
                 }
                 int chosen = -1, chosenTarget = 0;
                 int best = -1, bestSpec = -1;
@@ -1616,14 +1867,18 @@ public final class TdfaRunner implements RegexEngine {
                     if (c <= rg[o + 1]) {
                         int requiredMask = rg[o + 4];
                         if (requiredMask != 0) {
-                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                            if ((posFlags & requiredMask) != requiredMask) continue;
+                            if (posFlags < 0) {
+                                posFlags = positionFlags(input, pos, to);
+                            }
+                            if ((posFlags & requiredMask) != requiredMask) {
+                                continue;
+                            }
                         }
                         int spec = Integer.bitCount(requiredMask);
                         if (spec >= bestSpec) {
                             best = i;
                             bestSpec = spec;
-                        }   // >= : lower index wins ties
+                        } // >= : lower index wins ties
                     }
                 }
                 if (best >= 0) {
@@ -1640,7 +1895,9 @@ public final class TdfaRunner implements RegexEngine {
                 }
                 if (chosen >= 0) {
                     state = chosenTarget;
-                    if (c > 0xFFFF) pos++;
+                    if (c > 0xFFFF) {
+                        pos++;
+                    }
                     int entryReq = sem[state];
                     if (entryReq != 0) {
                         if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
@@ -1650,7 +1907,9 @@ public final class TdfaRunner implements RegexEngine {
                     matched = true;
                 }
             }
-            if (!matched) break;
+            if (!matched) {
+                break;
+            }
             posFlags = -1;
         }
         return lastAcceptPos == to ? lastAcceptPos : -1;
@@ -1664,7 +1923,7 @@ public final class TdfaRunner implements RegexEngine {
         final int[] rg = this.ranges;
         final int[] sem = this.stateEntryMask;
         final int[] sam = this.stateAcceptMask;
-        final int[] arf = this.asciiRangeFlat;   // non-null iff rangesDisjoint
+        final int[] arf = this.asciiRangeFlat; // non-null iff rangesDisjoint
         final int limit = this.latinLimit;
         int state = startState;
         int lastAcceptPos = -1;
@@ -1674,11 +1933,13 @@ public final class TdfaRunner implements RegexEngine {
         // Entry check for start state — inline
         {
             int entryReq = sem[state];
-            if (entryReq != 0 && (positionFlags(input, pos, to) & entryReq) != entryReq) return -1;
+            if (entryReq != 0 && (positionFlags(input, pos, to) & entryReq) != entryReq) {
+                return -1;
+            }
         }
 
         int posFlags = -1;
-        for (; ; pos++) {
+        for (;; pos++) {
             int meta = sm[state];
             if ((meta & 1) != 0) {
                 int acceptMask = sam[state];
@@ -1686,19 +1947,29 @@ public final class TdfaRunner implements RegexEngine {
                     haveAccept = true;
                     lastAcceptPos = pos;
                     if (!longestMatch) {
-                        if (posFlags < 0 && stopMaskUniform == null) posFlags = positionFlags(input, pos, to);
-                        if (stopNow(state, posFlags)) break;
+                        if (posFlags < 0 && stopMaskUniform == null) {
+                            posFlags = positionFlags(input, pos, to);
+                        }
+                        if (stopNow(state, posFlags)) {
+                            break;
+                        }
                     }
                 } else {
-                    if (posFlags < 0) posFlags = positionFlags(input, pos, to);
+                    if (posFlags < 0) {
+                        posFlags = positionFlags(input, pos, to);
+                    }
                     if ((posFlags & acceptMask) == acceptMask) {
                         haveAccept = true;
                         lastAcceptPos = pos;
-                        if (!longestMatch && stopNow(state, posFlags)) break;
+                        if (!longestMatch && stopNow(state, posFlags)) {
+                            break;
+                        }
                     }
                 }
             }
-            if (pos >= to) break;
+            if (pos >= to) {
+                break;
+            }
             int c = Alphabet.decode(input, pos, to);
             int base = stateBase[state];
             int count = (meta >>> 1) & 0xFFFF;
@@ -1709,7 +1980,9 @@ public final class TdfaRunner implements RegexEngine {
             } else if (rangesDisjoint && c < 0x10000) {
                 // tableless giant DFA (see ASCII_TABLE_MAX_STATES): walk blocks
                 riFlat = walkIdx.walkRangeIndex(state, c);
-                if (riFlat == -2) riFlat = Integer.MIN_VALUE;   // block cap: binary search
+                if (riFlat == -2) {
+                    riFlat = Integer.MIN_VALUE;
+                } // block cap: binary search
             } else {
                 riFlat = Integer.MIN_VALUE;
             }
@@ -1718,14 +1991,22 @@ public final class TdfaRunner implements RegexEngine {
                 if (riFlat >= 0) {
                     int mo = (base + riFlat) * 5;
                     int target = rg[mo + 2];
-                    if (target < 0) return haveAccept ? lastAcceptPos : -1;
+                    if (target < 0) {
+                        return haveAccept ? lastAcceptPos : -1;
+                    }
                     int requiredMask = rg[mo + 4];
                     if (requiredMask != 0) {
-                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                        if ((posFlags & requiredMask) != requiredMask) return haveAccept ? lastAcceptPos : -1;
+                        if (posFlags < 0) {
+                            posFlags = positionFlags(input, pos, to);
+                        }
+                        if ((posFlags & requiredMask) != requiredMask) {
+                            return haveAccept ? lastAcceptPos : -1;
+                        }
                     }
                     state = target;
-                    if (c > 0xFFFF) pos++;
+                    if (c > 0xFFFF) {
+                        pos++;
+                    }
                     int entryReq = sem[state];
                     if (entryReq != 0) {
                         if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
@@ -1748,14 +2029,22 @@ public final class TdfaRunner implements RegexEngine {
                         continue;
                     }
                     int target = rg[mo + 2];
-                    if (target < 0) return haveAccept ? lastAcceptPos : -1;
+                    if (target < 0) {
+                        return haveAccept ? lastAcceptPos : -1;
+                    }
                     int requiredMask = rg[mo + 4];
                     if (requiredMask != 0) {
-                        if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                        if ((posFlags & requiredMask) != requiredMask) return haveAccept ? lastAcceptPos : -1;
+                        if (posFlags < 0) {
+                            posFlags = positionFlags(input, pos, to);
+                        }
+                        if ((posFlags & requiredMask) != requiredMask) {
+                            return haveAccept ? lastAcceptPos : -1;
+                        }
                     }
                     state = target;
-                    if (c > 0xFFFF) pos++;
+                    if (c > 0xFFFF) {
+                        pos++;
+                    }
                     int entryReq = sem[state];
                     if (entryReq != 0) {
                         if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
@@ -1774,7 +2063,9 @@ public final class TdfaRunner implements RegexEngine {
                     if (rg[(base + mid) * 5] <= c) {
                         anchor = mid;
                         rlo = mid + 1;
-                    } else rhi = mid - 1;
+                    } else {
+                        rhi = mid - 1;
+                    }
                 }
                 int chosen = -1, chosenTarget = 0;
                 // Most-specific satisfied mask owns the step (popcount, ties
@@ -1787,8 +2078,12 @@ public final class TdfaRunner implements RegexEngine {
                     if (c <= rg[o + 1]) {
                         int requiredMask = rg[o + 4];
                         if (requiredMask != 0) {
-                            if (posFlags < 0) posFlags = positionFlags(input, pos, to);
-                            if ((posFlags & requiredMask) != requiredMask) continue;
+                            if (posFlags < 0) {
+                                posFlags = positionFlags(input, pos, to);
+                            }
+                            if ((posFlags & requiredMask) != requiredMask) {
+                                continue;
+                            }
                         }
                         int spec = Integer.bitCount(requiredMask);
                         if (spec >= bestSpec) {
@@ -1799,11 +2094,13 @@ public final class TdfaRunner implements RegexEngine {
                     }
                 }
                 if (chosen < 0 || chosenTarget < 0) {
-                    return haveAccept ? lastAcceptPos : -1;   // owning context dead: no fallthrough
+                    return haveAccept ? lastAcceptPos : -1; // owning context dead: no fallthrough
                 }
                 {
                     state = chosenTarget;
-                    if (c > 0xFFFF) pos++;
+                    if (c > 0xFFFF) {
+                        pos++;
+                    }
                     int entryReq = sem[state];
                     if (entryReq != 0) {
                         if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
@@ -1813,7 +2110,9 @@ public final class TdfaRunner implements RegexEngine {
                     matched = true;
                 }
             }
-            if (!matched) break;
+            if (!matched) {
+                break;
+            }
             posFlags = -1;
         }
         return haveAccept ? lastAcceptPos : -1;
@@ -1841,51 +2140,76 @@ public final class TdfaRunner implements RegexEngine {
             {
                 int entryReq = stateEntryMask[state];
                 if (entryReq != 0 && (positionFlagsCS(input, pos, to) & entryReq) != entryReq) {
-                    if (anchored) return null;
-                    if ((startStateEntryMask & Tnfa.ABS_BEGIN) != 0) return null;
+                    if (anchored) {
+                        return null;
+                    }
+                    if ((startStateEntryMask & Tnfa.ABS_BEGIN) != 0) {
+                        return null;
+                    }
                     startSearch++;
-                    if (startSearch > to) return null;
+                    if (startSearch > to) {
+                        return null;
+                    }
                     continue;
                 }
             }
 
             int posFlags = -1;
-            loop:
-            for (; ; pos++) {
+            loop : for (;; pos++) {
                 int meta = stateMeta[state];
                 if ((meta & 1) != 0) {
                     final int[] fm = this.finalOpsByMask;
                     if (fm != null) {
-                        if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
+                        if (posFlags < 0) {
+                            posFlags = positionFlagsCS(input, pos, to);
+                        }
                         int cell = fm[state * 64 + posFlags];
                         if (cell >= 0) {
                             lastAcceptPos = pos;
                             haveAccept = true;
-                            if (regs != null && cell != 0) applyOps(ops, cell, regs, pos);
-                            if (!longestMatch && stopNow(state, posFlags)) break;
+                            if (regs != null && cell != 0) {
+                                applyOps(ops, cell, regs, pos);
+                            }
+                            if (!longestMatch && stopNow(state, posFlags)) {
+                                break;
+                            }
                         }
                     } else {
                         int acceptMask = stateAcceptMask[state];
                         if (acceptMask == 0) {
                             lastAcceptPos = pos;
                             haveAccept = true;
-                            if (regs != null) applyFinalOps(state, regs, pos);
+                            if (regs != null) {
+                                applyFinalOps(state, regs, pos);
+                            }
                             if (!longestMatch) {
-                                if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
-                                if (stopNow(state, posFlags)) break;
+                                if (posFlags < 0) {
+                                    posFlags = positionFlagsCS(input, pos, to);
+                                }
+                                if (stopNow(state, posFlags)) {
+                                    break;
+                                }
                             }
                         } else {
-                            if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
+                            if (posFlags < 0) {
+                                posFlags = positionFlagsCS(input, pos, to);
+                            }
                             if ((posFlags & acceptMask) == acceptMask) {
                                 lastAcceptPos = pos;
                                 haveAccept = true;
-                                if (regs != null) applyFinalOps(state, regs, pos);
-                                if (!longestMatch && stopNow(state, posFlags)) break;
+                                if (regs != null) {
+                                    applyFinalOps(state, regs, pos);
+                                }
+                                if (!longestMatch && stopNow(state, posFlags)) {
+                                    break;
+                                }
                             }
                         }
                     }
                 }
-                if (pos >= to) break;
+                if (pos >= to) {
+                    break;
+                }
                 int c = Alphabet.decode(input, pos, to);
                 int base = stateBase[state];
                 int count = (meta >>> 1) & 0xFFFF;
@@ -1896,7 +2220,9 @@ public final class TdfaRunner implements RegexEngine {
                     if (ranges[(base + mid) * 5] <= c) {
                         anchor = mid;
                         rlo = mid + 1;
-                    } else rhi = mid - 1;
+                    } else {
+                        rhi = mid - 1;
+                    }
                 }
                 int chosen = -1, chosenTarget = 0;
                 // Most-specific satisfied mask owns the step (popcount, ties
@@ -1907,8 +2233,12 @@ public final class TdfaRunner implements RegexEngine {
                     if (c <= ranges[o + 1]) {
                         int requiredMask = ranges[o + 4];
                         if (requiredMask != 0) {
-                            if (posFlags < 0) posFlags = positionFlagsCS(input, pos, to);
-                            if ((posFlags & requiredMask) != requiredMask) continue;
+                            if (posFlags < 0) {
+                                posFlags = positionFlagsCS(input, pos, to);
+                            }
+                            if ((posFlags & requiredMask) != requiredMask) {
+                                continue;
+                            }
                         }
                         int spec = Integer.bitCount(requiredMask);
                         if (spec >= bestSpec) {
@@ -1918,29 +2248,45 @@ public final class TdfaRunner implements RegexEngine {
                         }
                     }
                 }
-                if (chosen < 0 || chosenTarget < 0) break;
+                if (chosen < 0 || chosenTarget < 0) {
+                    break;
+                }
                 // Mask before ops — see extractFrom.
                 int width = c > 0xFFFF ? 2 : 1;
                 int entryReqNext = stateEntryMask[chosenTarget];
                 if (entryReqNext != 0
-                    && (positionFlagsCS(input, pos + width, to) & entryReqNext) != entryReqNext) break;
+                                && (positionFlagsCS(input, pos + width, to) & entryReqNext) != entryReqNext) {
+                    break;
+                }
                 if (regs != null) {
                     int opsOff = ranges[chosen + 3];
-                    if (opsOff != 0) applyOps(ops, opsOff, regs, pos);
+                    if (opsOff != 0) {
+                        applyOps(ops, opsOff, regs, pos);
+                    }
                 }
                 state = chosenTarget;
-                if (width == 2) pos++;
+                if (width == 2) {
+                    pos++;
+                }
                 posFlags = -1;
             }
             if (haveAccept) {
-                if (anchored && lastAcceptPos != to) return null;
+                if (anchored && lastAcceptPos != to) {
+                    return null;
+                }
                 // Eager finals at accept-record time (see extractFrom).
                 return new MatchHolder(startSearch, lastAcceptPos, regs == null ? new int[0] : regs.clone());
             }
-            if (anchored) return null;
-            if ((startStateEntryMask & Tnfa.ABS_BEGIN) != 0) return null;
+            if (anchored) {
+                return null;
+            }
+            if ((startStateEntryMask & Tnfa.ABS_BEGIN) != 0) {
+                return null;
+            }
             startSearch++;
-            if (startSearch > to) return null;
+            if (startSearch > to) {
+                return null;
+            }
         }
     }
 
@@ -1957,7 +2303,9 @@ public final class TdfaRunner implements RegexEngine {
      */
     private void applyFinalOps(int state, int[] regs, int pos) {
         int foff = stateFinalOpsOff[state];
-        if (foff != 0) applyOps(ops, foff, regs, pos);
+        if (foff != 0) {
+            applyOps(ops, foff, regs, pos);
+        }
     }
 
     /**
@@ -1972,7 +2320,9 @@ public final class TdfaRunner implements RegexEngine {
 
     private boolean stopNow(int state, int posFlags) {
         byte[] u = stopMaskUniform;
-        if (u != null) return u[state] == 0;
+        if (u != null) {
+            return u[state] == 0;
+        }
         return stopOnAcceptMask[state * 64 + posFlags] != Tdfa.NEVER_STOP;
     }
 
@@ -1981,15 +2331,26 @@ public final class TdfaRunner implements RegexEngine {
      */
     private int positionFlags(String s, int pos, int len) {
         int flags = 0;
-        if (pos == 0 || (pos > 0 && s.charAt(pos - 1) == '\n')) flags |= Tnfa.BEGIN_TEXT;
-        if (pos == len || (pos < len && s.charAt(pos) == '\n')) flags |= Tnfa.END_TEXT;
-        if (pos == 0) flags |= Tnfa.ABS_BEGIN;   // \A: absolute start, never affected by (?m)
-        if (pos == len) flags |= Tnfa.ABS_END;    // \z: absolute end, never affected by (?m)
+        if (pos == 0 || (pos > 0 && s.charAt(pos - 1) == '\n')) {
+            flags |= Tnfa.BEGIN_TEXT;
+        }
+        if (pos == len || (pos < len && s.charAt(pos) == '\n')) {
+            flags |= Tnfa.END_TEXT;
+        }
+        if (pos == 0) {
+            flags |= Tnfa.ABS_BEGIN;
+        } // \A: absolute start, never affected by (?m)
+        if (pos == len) {
+            flags |= Tnfa.ABS_END;
+        } // \z: absolute end, never affected by (?m)
         if (needsWordFlags) {
             boolean prevWord = isWordBefore(s, pos);
             boolean currWord = isWordAt(s, pos, len);
-            if (prevWord != currWord) flags |= Tnfa.WORD_BOUNDARY;
-            else flags |= Tnfa.NO_WORD_BOUNDARY;
+            if (prevWord != currWord) {
+                flags |= Tnfa.WORD_BOUNDARY;
+            } else {
+                flags |= Tnfa.NO_WORD_BOUNDARY;
+            }
         }
         return flags;
     }
@@ -2001,15 +2362,26 @@ public final class TdfaRunner implements RegexEngine {
      */
     private int positionFlagsCS(CharSequence s, int pos, int len) {
         int flags = 0;
-        if (pos == 0 || (pos > 0 && s.charAt(pos - 1) == '\n')) flags |= Tnfa.BEGIN_TEXT;
-        if (pos == len || (pos < len && s.charAt(pos) == '\n')) flags |= Tnfa.END_TEXT;
-        if (pos == 0) flags |= Tnfa.ABS_BEGIN;
-        if (pos == len) flags |= Tnfa.ABS_END;
+        if (pos == 0 || (pos > 0 && s.charAt(pos - 1) == '\n')) {
+            flags |= Tnfa.BEGIN_TEXT;
+        }
+        if (pos == len || (pos < len && s.charAt(pos) == '\n')) {
+            flags |= Tnfa.END_TEXT;
+        }
+        if (pos == 0) {
+            flags |= Tnfa.ABS_BEGIN;
+        }
+        if (pos == len) {
+            flags |= Tnfa.ABS_END;
+        }
         if (needsWordFlags) {
             boolean prevWord = isWordBefore(s, pos);
             boolean currWord = isWordAt(s, pos, len);
-            if (prevWord != currWord) flags |= Tnfa.WORD_BOUNDARY;
-            else flags |= Tnfa.NO_WORD_BOUNDARY;
+            if (prevWord != currWord) {
+                flags |= Tnfa.WORD_BOUNDARY;
+            } else {
+                flags |= Tnfa.NO_WORD_BOUNDARY;
+            }
         }
         return flags;
     }
@@ -2021,10 +2393,24 @@ public final class TdfaRunner implements RegexEngine {
         // fastPath methods (tryStartFast/matchFromFast/runStringAnchoredFast)
         // dereference the eager ASCII dispatch tables unconditionally — they
         // require asciiTables (disjoint ∧ ≤ ASCII_TABLE_MAX_STATES).
-        if (!asciiTables || multiline) return false;
-        for (int mask : tdfa.stateEntryMask) if (mask != 0) return false;
-        for (int mask : tdfa.stateAcceptMask) if (mask != 0) return false;
-        for (int i = 4; i < tdfa.ranges.length; i += 5) if (tdfa.ranges[i] != 0) return false;
+        if (!asciiTables || multiline) {
+            return false;
+        }
+        for (int mask : tdfa.stateEntryMask) {
+            if (mask != 0) {
+                return false;
+            }
+        }
+        for (int mask : tdfa.stateAcceptMask) {
+            if (mask != 0) {
+                return false;
+            }
+        }
+        for (int i = 4; i < tdfa.ranges.length; i += 5) {
+            if (tdfa.ranges[i] != 0) {
+                return false;
+            }
+        }
         // NOTE: per-mask final variants (stateFinalOpsByMask != null) do NOT
         // disqualify — tryStartFast's fm branch handles them and now matches
         // extractFrom exactly (suppressed-accept fall-through + posFlags
@@ -2051,14 +2437,20 @@ public final class TdfaRunner implements RegexEngine {
      */
     private boolean isUnicodeWordCodepoint(int cp) {
         int[] wr = wordRanges;
-        if (wr == null) return false;
+        if (wr == null) {
+            return false;
+        }
         int lo = 0, hi = wr.length / 2 - 1;
         while (lo <= hi) {
             int mid = (lo + hi) >>> 1;
             int rLo = wr[2 * mid], rHi = wr[2 * mid + 1];
-            if (cp < rLo) hi = mid - 1;
-            else if (cp > rHi) lo = mid + 1;
-            else return true;
+            if (cp < rLo) {
+                hi = mid - 1;
+            } else if (cp > rHi) {
+                lo = mid + 1;
+            } else {
+                return true;
+            }
         }
         return false;
     }
@@ -2071,7 +2463,9 @@ public final class TdfaRunner implements RegexEngine {
      * full codepoint. In ASCII mode surrogate halves are simply non-word.
      */
     private boolean isWordBefore(CharSequence s, int pos) {
-        if (pos <= 0) return false;
+        if (pos <= 0) {
+            return false;
+        }
         char c = s.charAt(pos - 1);
         if (unicodeWordBoundary && c >= Character.MIN_LOW_SURROGATE && c <= Character.MAX_LOW_SURROGATE && pos >= 2) {
             char h = s.charAt(pos - 2);
@@ -2088,7 +2482,9 @@ public final class TdfaRunner implements RegexEngine {
      * the full codepoint under {@code (?u)}.
      */
     private boolean isWordAt(CharSequence s, int pos, int len) {
-        if (pos >= len) return false;
+        if (pos >= len) {
+            return false;
+        }
         char c = s.charAt(pos);
         if (unicodeWordBoundary && c >= Character.MIN_HIGH_SURROGATE && c <= Character.MAX_HIGH_SURROGATE && pos + 1 < len) {
             char l = s.charAt(pos + 1);
@@ -2103,16 +2499,16 @@ public final class TdfaRunner implements RegexEngine {
      * Which branch of the search ladder served one public entry call.
      */
     public enum Strategy {
-        LITERAL,        // literalNeedle -> String.indexOf
-        CAND_SCAN,      // first-char-set bit scan + exact walks (short input)
-        EXACT_FROM,     // one exact walk from the requested start
-        ORIGIN_SIM,     // budgeted origin-tracking multi-state simulation
-        TRIGGER,        // memoized search-DFA trigger scan
-        RAW_SCAN,       // unmemoized live-set simulation (short window / cap)
-        WALK_RESTART,   // defensive per-start restart loop
-        ANCHORED_FAST,  // flat-table anchored loop (fastPath)
-        ANCHORED,       // generic anchored walk
-        GENERIC         // CharSequence (non-String) fallback
+        LITERAL, // literalNeedle -> String.indexOf
+        CAND_SCAN, // first-char-set bit scan + exact walks (short input)
+        EXACT_FROM, // one exact walk from the requested start
+        ORIGIN_SIM, // budgeted origin-tracking multi-state simulation
+        TRIGGER, // memoized search-DFA trigger scan
+        RAW_SCAN, // unmemoized live-set simulation (short window / cap)
+        WALK_RESTART, // defensive per-start restart loop
+        ANCHORED_FAST, // flat-table anchored loop (fastPath)
+        ANCHORED, // generic anchored walk
+        GENERIC // CharSequence (non-String) fallback
     }
 
     // ===== per-call scratch (P2: hot-path allocation removal) =====
