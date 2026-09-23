@@ -1,11 +1,11 @@
 package io.github.jemmix.tdfa.parity;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Replacement API parity: replaceAll, replaceFirst, appendReplacement,
@@ -114,8 +114,7 @@ class ReplacementParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void quoteReplacementStatic(RegexEngineFactory factory) {
-        assertThat(io.github.jemmix.tdfa.core.Matcher.quoteReplacement("$1\\2"))
-                .isEqualTo(com.google.re2j.Matcher.quoteReplacement("$1\\2"));
+        assertThat(io.github.jemmix.tdfa.core.Matcher.quoteReplacement("$1\\2")).isEqualTo(com.google.re2j.Matcher.quoteReplacement("$1\\2"));
     }
 
     @ParameterizedTest
@@ -164,8 +163,7 @@ class ReplacementParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void replaceAllGroupRefOutOfRange(RegexEngineFactory factory) {
-        assertThatThrownBy(() -> tdfaReplaceAll("(a)", "a", "$2", factory))
-                .isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> tdfaReplaceAll("(a)", "a", "$2", factory)).isInstanceOf(IndexOutOfBoundsException.class);
         assertThatThrownBy(() -> re2jReplaceAll("(a)", "a", "$2")).isInstanceOf(IndexOutOfBoundsException.class);
     }
 

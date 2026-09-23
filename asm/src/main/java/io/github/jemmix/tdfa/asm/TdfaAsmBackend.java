@@ -4,6 +4,11 @@ import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.tdfa.Budgets;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -15,17 +20,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
-import org.objectweb.asm.ClassWriter;
-import org.objectweb.asm.Label;
-import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
 
 public final class TdfaAsmBackend {
 
     private static final AtomicLong COUNTER = new AtomicLong();
     private static final String ENGINE = "io/github/jemmix/tdfa/core/RegexEngine";
-    private static final String HOLDER =
-            "io/github/jemmix/tdfa/tdfa/MatchHolder"; // moved out of TdfaRunner (2026-09 split)
+    private static final String HOLDER = "io/github/jemmix/tdfa/tdfa/MatchHolder"; // moved out of TdfaRunner (2026-09 split)
     private static final String RESULT = "io/github/jemmix/tdfa/core/MatchResult";
 
     /** Register-file size ceiling for the stack-register leaves (see
@@ -113,10 +113,7 @@ public final class TdfaAsmBackend {
             }
             GenClassLoader cl = new GenClassLoader(TdfaAsmBackend.class.getClassLoader());
             cl.register(cn, bc);
-            return Class.forName(cn, true, cl)
-                    .asSubclass(RegexEngine.class)
-                    .getDeclaredConstructor(Tdfa.class)
-                    .newInstance(tdfa);
+            return Class.forName(cn, true, cl).asSubclass(RegexEngine.class).getDeclaredConstructor(Tdfa.class).newInstance(tdfa);
         } catch (Exception e) {
             throw new IllegalStateException("ASM backend failed", e);
         }
@@ -124,8 +121,7 @@ public final class TdfaAsmBackend {
 
     /** Dispatch mode picked at class-emit time, see {@link #pickMode}. */
     enum DispatchMode {
-        INLINED,
-        DELEGATE
+        INLINED, DELEGATE
     }
 
     private static byte[] generateBytes(Tdfa tdfa, String owner, long memoBudgetBytes) {
@@ -146,9 +142,7 @@ public final class TdfaAsmBackend {
         // INLINED-only; thresholds and kill switch in stackRegsEligible().
         boolean stackRegs = fastPath && stackRegsEligible(tdfa);
         FrameClassWriter cw = new FrameClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
-        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, owner, null, "java/lang/Object", new String[] {
-            ENGINE
-        });
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, owner, null, "java/lang/Object", new String[]{ENGINE});
         if (delegate) {
             // Minimal class: just an init storing the runner, and forwarding stubs
             // for the RegexEngine interface. No static tables, no <clinit>.
@@ -221,30 +215,16 @@ public final class TdfaAsmBackend {
         // method-size limit on DFAs with many states (e.g. dictionary alternation,
         // 21 K states × 64 STOP_MASK slots = 1.36 M entries; or fastPath-eligible
         // wide-ASCII-class patterns like [^u-z]{80}x with 16 K ASCII_TARGET IASTOREs).
-        for (String f : new String[] {"ENTRY_MASK", "ACCEPT_MASK", "STOP_MASK", "IS_ACCEPT"}) {
-            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, f, "[I", null, null)
-                    .visitEnd();
+        for (String f : new String[]{"ENTRY_MASK", "ACCEPT_MASK", "STOP_MASK", "IS_ACCEPT"}) {
+            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, f, "[I", null, null).visitEnd();
         }
         if (fastPath) {
-            cw.visitField(
-                            Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL,
-                            "ASCII_TARGET",
-                            "[I",
-                            null,
-                            null)
-                    .visitEnd();
+            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "ASCII_TARGET", "[I", null, null).visitEnd();
         }
         boolean hasFixed = tdfa.fixedBase() != null;
         if (hasFixed) {
-            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "FIXED_BASE", "[I", null, null)
-                    .visitEnd();
-            cw.visitField(
-                            Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL,
-                            "FIXED_OFFSET",
-                            "[I",
-                            null,
-                            null)
-                    .visitEnd();
+            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "FIXED_BASE", "[I", null, null).visitEnd();
+            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "FIXED_OFFSET", "[I", null, null).visitEnd();
         }
         // Empty <clinit>. Required by the JVM if any static initializer is implied,
         // and harmless. The actual array population lives in <init> as reference
@@ -262,11 +242,9 @@ public final class TdfaAsmBackend {
         // Instance field holding the TdfaRunner: the shared strategy brain
         // (ladder hooks are monomorphic final-class calls) and the full
         // delegate path for everything the generated class doesn't own.
-        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "runner", RUNNER_D, null, null)
-                .visitEnd();
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "runner", RUNNER_D, null, null).visitEnd();
         if (tdfa.unicodeWordBoundary()) {
-            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "WORD_RANGES", "[I", null, null)
-                    .visitEnd();
+            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "WORD_RANGES", "[I", null, null).visitEnd();
         }
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(" + TDFA_D + ")V", null, null);
         mv.visitCode();
@@ -516,8 +494,7 @@ public final class TdfaAsmBackend {
      * this method because they compile to DELEGATE classes.
      */
     private static void genMatch(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(
-                Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", null, null);
         mv.visitCode();
         // locals: 0=this, 1=input, 2=from, 3=sc, 4=s, 5=len, 6=holder,
         //         7=leftmost/idx, 8=p, 9=fails, 10=c, 11=bits
@@ -531,8 +508,7 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
         mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitMethodInsn(
-                Opcodes.INVOKEVIRTUAL, RUNNER, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", false);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitLabel(isStr);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
@@ -643,8 +619,7 @@ public final class TdfaAsmBackend {
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "originSimBudget", "()I", false);
         mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitMethodInsn(
-                Opcodes.INVOKEVIRTUAL, RUNNER, "originSimLeftmost", "(" + CS_D + "III" + SCRATCH_D + ")I", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "originSimLeftmost", "(" + CS_D + "III" + SCRATCH_D + ")I", false);
         mv.visitVarInsn(Opcodes.ISTORE, 7);
         Label noBudget = new Label();
         mv.visitVarInsn(Opcodes.ILOAD, 7);
@@ -656,8 +631,7 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, 2);
         mv.visitVarInsn(Opcodes.ILOAD, 5);
         mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitMethodInsn(
-                Opcodes.INVOKEVIRTUAL, RUNNER, "triggerScanTop", "(Ljava/lang/String;II" + SCRATCH_D + ")I", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "triggerScanTop", "(Ljava/lang/String;II" + SCRATCH_D + ")I", false);
         mv.visitVarInsn(Opcodes.ISTORE, 7);
         Label noMatch1 = new Label();
         mv.visitVarInsn(Opcodes.ILOAD, 7);
@@ -669,8 +643,7 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, 5);
         mv.visitInsn(Opcodes.ICONST_M1);
         mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitMethodInsn(
-                Opcodes.INVOKEVIRTUAL, RUNNER, "originSimLeftmost", "(" + CS_D + "III" + SCRATCH_D + ")I", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "originSimLeftmost", "(" + CS_D + "III" + SCRATCH_D + ")I", false);
         mv.visitVarInsn(Opcodes.ISTORE, 7);
         mv.visitLabel(noBudget);
         mv.visitVarInsn(Opcodes.ILOAD, 7);
@@ -690,12 +663,7 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, 5);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
         mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitMethodInsn(
-                Opcodes.INVOKEVIRTUAL,
-                RUNNER,
-                "restartExtract",
-                "(Ljava/lang/String;III" + SCRATCH_D + ")L" + HOLDER + ";",
-                false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "restartExtract", "(Ljava/lang/String;III" + SCRATCH_D + ")L" + HOLDER + ";", false);
         mv.visitVarInsn(Opcodes.ASTORE, 6);
         mv.visitVarInsn(Opcodes.ALOAD, 6);
         mv.visitJumpInsn(Opcodes.IFNULL, noMatch1);
@@ -708,18 +676,12 @@ public final class TdfaAsmBackend {
     }
 
     /** extractOne(s, fromLocal, toLocal, sc) → holderLocal. */
-    private static void emitExtractOne(
-            MethodVisitor mv, String owner, int sL, int fromL, int toL, int holderL, int scL) {
+    private static void emitExtractOne(MethodVisitor mv, String owner, int sL, int fromL, int toL, int holderL, int scL) {
         mv.visitVarInsn(Opcodes.ALOAD, sL);
         mv.visitVarInsn(Opcodes.ILOAD, fromL);
         mv.visitVarInsn(Opcodes.ILOAD, toL);
         mv.visitVarInsn(Opcodes.ALOAD, scL);
-        mv.visitMethodInsn(
-                Opcodes.INVOKESTATIC,
-                owner,
-                "extractOne",
-                "(Ljava/lang/String;II" + SCRATCH_D + ")L" + HOLDER + ";",
-                false);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "extractOne", "(Ljava/lang/String;II" + SCRATCH_D + ")L" + HOLDER + ";", false);
         mv.visitVarInsn(Opcodes.ASTORE, holderL);
     }
 
@@ -750,12 +712,7 @@ public final class TdfaAsmBackend {
      * carrier supplies the pooled register file ({@code takeRegs(n, sc)}).
      */
     private static void genExtractOne(ClassWriter cw, Tdfa tdfa, String owner, boolean stackRegs) {
-        MethodVisitor mv = cw.visitMethod(
-                Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "extractOne",
-                "(Ljava/lang/String;II" + SCRATCH_D + ")L" + HOLDER + ";",
-                null,
-                null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "extractOne", "(Ljava/lang/String;II" + SCRATCH_D + ")L" + HOLDER + ";", null, null);
         mv.visitCode();
         emitRunCore(mv, tdfa, owner, stackRegs);
         mv.visitMaxs(0, 0);
@@ -764,8 +721,7 @@ public final class TdfaAsmBackend {
 
     /** Shared result epilogue: holder → MatchResult (fixed-tag rewrite + ctor). */
     private static void genToResult(ClassWriter cw, Tdfa tdfa, String owner) {
-        MethodVisitor mv = cw.visitMethod(
-                Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "toResult", "(L" + HOLDER + ";)L" + RESULT + ";", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "toResult", "(L" + HOLDER + ";)L" + RESULT + ";", null, null);
         mv.visitCode();
         // local 0 = h
         mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -803,8 +759,7 @@ public final class TdfaAsmBackend {
     // ===== entryOkC — entry mask check over String (helper for DFA dispatch) =====
 
     private static void genEntryOkC(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(
-                Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "entryOkC", "(IIILjava/lang/String;)Z", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "entryOkC", "(IIILjava/lang/String;)Z", null, null);
         mv.visitCode();
         // locals: 0=state, 1=pos, 2=len, 3=input, 4=required
         mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ENTRY_MASK", "[I");
@@ -837,8 +792,7 @@ public final class TdfaAsmBackend {
     // ===== positionFlagsC — position flags over String (helper) =====
 
     private static void genPositionFlagsC(ClassWriter cw, String owner, boolean multiline, boolean unicodeWord) {
-        MethodVisitor mv = cw.visitMethod(
-                Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "positionFlagsC", "(IILjava/lang/String;)I", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "positionFlagsC", "(IILjava/lang/String;)I", null, null);
         mv.visitCode();
         // locals: 0=pos, 1=len, 2=input, 3=flags, 4=t1, 5=t2
         mv.visitInsn(Opcodes.ICONST_0);
@@ -1261,22 +1215,7 @@ public final class TdfaAsmBackend {
 
     // ===== DFA TABLESWITCH + range checks =====
 
-    private static void emitDfaDispatch(
-            MethodVisitor mv,
-            Tdfa tdfa,
-            String owner,
-            int IN,
-            int STATE,
-            int POS,
-            int LEN,
-            int PF,
-            int C_LV,
-            int REGS,
-            Label dfaLoop,
-            Label dfaEnd,
-            int[] op,
-            boolean stackRegs,
-            int REGBASE) {
+    private static void emitDfaDispatch(MethodVisitor mv, Tdfa tdfa, String owner, int IN, int STATE, int POS, int LEN, int PF, int C_LV, int REGS, Label dfaLoop, Label dfaEnd, int[] op, boolean stackRegs, int REGBASE) {
         int nStates = tdfa.stateCount();
         // Hoisted locals: accessors are defensive copies (Tdfa policy) —
         // never call one inside the per-state/per-range emit loops below.
@@ -1305,7 +1244,7 @@ public final class TdfaAsmBackend {
             List<int[]> live = new ArrayList<>();
             for (int i = 0; i < cnt; i++) {
                 int o = (base + i) * 5;
-                live.add(new int[] {rg[o], rg[o + 1], rg[o + 2], rg[o + 3], rg[o + 4], Integer.bitCount(rg[o + 4])});
+                live.add(new int[]{rg[o], rg[o + 1], rg[o + 2], rg[o + 3], rg[o + 4], Integer.bitCount(rg[o + 4])});
             }
             live.sort((x, y) -> {
                 return Integer.compare(y[5], x[5]); // specificity desc; equal keeps list order (stable)
@@ -1429,7 +1368,7 @@ public final class TdfaAsmBackend {
         List<int[]> finals = new ArrayList<>();
         for (int s = 0; s < sm.length; s++) {
             if ((sm[s] & 1) != 0 && sfo[s] != 0) {
-                finals.add(new int[] {s, sfo[s]});
+                finals.add(new int[]{s, sfo[s]});
             }
         }
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "phi", "(I[II)V", null, null);
@@ -1475,8 +1414,7 @@ public final class TdfaAsmBackend {
                 accStates.add(s);
             }
         }
-        MethodVisitor mv =
-                cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "phiMasked", "(I[III)Z", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "phiMasked", "(I[III)Z", null, null);
         mv.visitCode();
         if (!accStates.isEmpty()) {
             int nf = accStates.size();
@@ -1502,9 +1440,7 @@ public final class TdfaAsmBackend {
                 for (int M = 0; M < 64; M++) {
                     ml[M] = cellLabels.get(byMask[s * 64 + M]);
                 }
-                Label defL = cellLabels.containsKey(-1)
-                        ? cellLabels.get(-1)
-                        : cellLabels.values().iterator().next(); // default unreachable
+                Label defL = cellLabels.containsKey(-1) ? cellLabels.get(-1) : cellLabels.values().iterator().next(); // default unreachable
                 mv.visitVarInsn(Opcodes.ILOAD, 3);
                 mv.visitTableSwitchInsn(0, 63, defL, ml);
                 for (Map.Entry<Integer, Label> e : cellLabels.entrySet()) {
@@ -1527,17 +1463,7 @@ public final class TdfaAsmBackend {
 
     // ===== position flags (inline) =====
 
-    private static void emitPFInline(
-            MethodVisitor mv,
-            String owner,
-            int IN,
-            int POS,
-            int LEN,
-            int RESULT,
-            int T1,
-            int T2,
-            boolean multiline,
-            boolean unicodeWord) {
+    private static void emitPFInline(MethodVisitor mv, String owner, int IN, int POS, int LEN, int RESULT, int T1, int T2, boolean multiline, boolean unicodeWord) {
         // pf = 0
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitVarInsn(Opcodes.ISTORE, RESULT);
@@ -1693,8 +1619,7 @@ public final class TdfaAsmBackend {
 
     // ===== isWord (branch to notWord if false) =====
 
-    private static void emitIsWordBranch(
-            MethodVisitor mv, int lvChar, Label notWord, boolean unicodeWord, String owner) {
+    private static void emitIsWordBranch(MethodVisitor mv, int lvChar, Label notWord, boolean unicodeWord, String owner) {
         if (unicodeWord) {
             mv.visitVarInsn(Opcodes.ILOAD, lvChar);
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isUnicodeWordChar", "(I)Z", false);
@@ -1776,8 +1701,7 @@ public final class TdfaAsmBackend {
     // ===== isUnicodeWordChar: binary-search WORD_RANGES for \b under (?u) =====
 
     private static void genIsUnicodeWordChar(ClassWriter cw, String owner) {
-        MethodVisitor mv =
-                cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "isUnicodeWordChar", "(I)Z", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "isUnicodeWordChar", "(I)Z", null, null);
         mv.visitCode();
         // locals: 0 = c, 1 = lo, 2 = hi
         mv.visitInsn(Opcodes.ICONST_0);
@@ -1861,8 +1785,7 @@ public final class TdfaAsmBackend {
      * {@code \b} adjacent to supplementary word chars (e.g. U+1D504) is computed correctly.
      */
     private static void genIsWordBefore(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(
-                Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "isWordBefore", "(IILjava/lang/String;)Z", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "isWordBefore", "(IILjava/lang/String;)Z", null, null);
         mv.visitCode();
         // locals: 0=pos, 1=len, 2=input, 3=c, 4=h
         Label notPos = new Label();
@@ -1934,8 +1857,7 @@ public final class TdfaAsmBackend {
      * {@code pos} paired with a low surrogate at {@code pos+1} is decoded first.
      */
     private static void genIsWordAt(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(
-                Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "isWordAt", "(IILjava/lang/String;)Z", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "isWordAt", "(IILjava/lang/String;)Z", null, null);
         mv.visitCode();
         // locals: 0=pos, 1=len, 2=input, 3=c, 4=l
         Label notPos = new Label();
@@ -2070,7 +1992,7 @@ public final class TdfaAsmBackend {
         List<int[]> finals = new ArrayList<>();
         for (int s = 0; s < sm.length; s++) {
             if ((sm[s] & 1) != 0 && sfo[s] != 0) {
-                finals.add(new int[] {s, sfo[s]});
+                finals.add(new int[]{s, sfo[s]});
             }
         }
         if (finals.isEmpty()) {
@@ -2132,8 +2054,7 @@ public final class TdfaAsmBackend {
      * large to inline (e.g. dictionary alternations with 20 K+ states).
      */
     private static void genDelegateInit(ClassWriter cw, String owner, long memoBudgetBytes) {
-        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "runner", RUNNER_D, null, null)
-                .visitEnd();
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "runner", RUNNER_D, null, null).visitEnd();
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(" + TDFA_D + ")V", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -2175,16 +2096,14 @@ public final class TdfaAsmBackend {
     }
 
     private static void genDelegateMatch(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(
-                Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitVarInsn(Opcodes.ILOAD, 2);
         mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitMethodInsn(
-                Opcodes.INVOKEVIRTUAL, RUNNER, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", false);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
@@ -2197,15 +2116,13 @@ public final class TdfaAsmBackend {
      * classes ({@link #genMatchWholeInlined}) emit the walk itself.
      */
     private static void genMatchWhole(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(
-                Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitVarInsn(Opcodes.ALOAD, 2);
-        mv.visitMethodInsn(
-                Opcodes.INVOKEVIRTUAL, RUNNER, "matchWhole", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "matchWhole", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", false);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
@@ -2221,8 +2138,7 @@ public final class TdfaAsmBackend {
      * {@code TdfaRunner.matchWhole} does (strategy conformance).
      */
     private static void genMatchWholeInlined(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(
-                Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matchWhole", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", null, null);
         mv.visitCode();
         // locals: 1 = input, 2 = sc
         Label isStr = new Label();
@@ -2234,20 +2150,14 @@ public final class TdfaAsmBackend {
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitVarInsn(Opcodes.ALOAD, 2);
-        mv.visitMethodInsn(
-                Opcodes.INVOKEVIRTUAL, RUNNER, "matchWhole", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "matchWhole", "(" + CS_D + SCRATCH_D + ")L" + RESULT + ";", false);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitLabel(isStr);
         emitTrace(mv, "ANCHORED");
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitTypeInsn(Opcodes.CHECKCAST, STR);
         mv.visitVarInsn(Opcodes.ALOAD, 2);
-        mv.visitMethodInsn(
-                Opcodes.INVOKESTATIC,
-                owner,
-                "wholeOne",
-                "(Ljava/lang/String;" + SCRATCH_D + ")L" + HOLDER + ";",
-                false);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "wholeOne", "(Ljava/lang/String;" + SCRATCH_D + ")L" + HOLDER + ";", false);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "toResult", "(L" + HOLDER + ";)L" + RESULT + ";", false);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitMaxs(0, 0);
@@ -2274,12 +2184,7 @@ public final class TdfaAsmBackend {
     private static void genWholeOne(ClassWriter cw, Tdfa tdfa, String owner, boolean stackRegs) {
         final int[] op = tdfa.ops();
         final int[] byMask = tdfa.stateFinalOpsByMask();
-        MethodVisitor mv = cw.visitMethod(
-                Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
-                "wholeOne",
-                "(Ljava/lang/String;" + SCRATCH_D + ")L" + HOLDER + ";",
-                null,
-                null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "wholeOne", "(Ljava/lang/String;" + SCRATCH_D + ")L" + HOLDER + ";", null, null);
         mv.visitCode();
         // locals: 0=s, 1=sc, 2=len, 3=state, 4=pos, 5=regs, 6=c, 7=pf/t1, 8=r
         // stackRegs: register file in [REGBASE, REGBASE+n) instead of local 5

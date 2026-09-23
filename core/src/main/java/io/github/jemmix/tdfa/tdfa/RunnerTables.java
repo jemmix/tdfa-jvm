@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.tdfa;
 
 import io.github.jemmix.tdfa.ast.Alphabet;
+
 import java.util.Arrays;
 
 /**
@@ -9,7 +10,8 @@ import java.util.Arrays;
  * instance state).
  */
 final class RunnerTables {
-    private RunnerTables() {}
+    private RunnerTables() {
+    }
 
     /**
      * Build flat per-state range-index lookup: {@code [state * limit + c] → range index} (-1 = dead).
@@ -155,8 +157,7 @@ final class RunnerTables {
      */
     static int literalIndexOf(String s, String needle, int from) {
         int idx = s.indexOf(needle, from);
-        while (idx >= 0
-                && (needleEndOverlapsPair(s, idx, needle.length()) || (idx > from && Alphabet.pairInterior(s, idx)))) {
+        while (idx >= 0 && (needleEndOverlapsPair(s, idx, needle.length()) || (idx > from && Alphabet.pairInterior(s, idx)))) {
             idx = s.indexOf(needle, idx + 1);
         }
         return idx;

@@ -1,14 +1,15 @@
 package io.github.jemmix.tdfa;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0;
+import org.junit.jupiter.api.Test;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
-import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Serialization round-trips of the facade Pattern (review Phase C / P1 #17):

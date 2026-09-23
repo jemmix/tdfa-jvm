@@ -1,12 +1,12 @@
 package io.github.jemmix.tdfa;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import io.github.jemmix.tdfa.core.CompilationReport;
 import io.github.jemmix.tdfa.core.CompileObserver;
 import io.github.jemmix.tdfa.core.CompileOptions;
 import io.github.jemmix.tdfa.core.CompiledRegex;
 import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Compilation transparency: a {@link CompilationReport} attached via
@@ -33,8 +33,7 @@ class CompilationObserverTest {
     void facadeRecordsGeneratedEngineDecision() {
         CompilationReport r = new CompilationReport();
         Pattern.compile("(a|b)*c", CompileOptions.of().observer(r));
-        assertThat(r.notes().get("engine"))
-                .isIn("generated", "shared (shell emission failed)", "shared-interpreter (tdfa.engine=VM)");
+        assertThat(r.notes().get("engine")).isIn("generated", "shared (shell emission failed)", "shared-interpreter (tdfa.engine=VM)");
         if ("generated".equals(r.notes().get("engine"))) {
             assertThat(r.nanos(CompileObserver.Stage.ENGINE)).isGreaterThanOrEqualTo(0L);
         }

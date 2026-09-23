@@ -1,14 +1,14 @@
 package io.github.jemmix.tdfa;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
 import io.github.jemmix.tdfa.core.CompileOptions;
 import io.github.jemmix.tdfa.core.CompiledRegex;
 import io.github.jemmix.tdfa.core.PatternSyntaxException;
 import io.github.jemmix.tdfa.unicode.v17_0.Unicode17_0;
 import io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0;
 import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Pinned-Unicode-version table modules: category/script lookup and case-fold
@@ -66,19 +66,15 @@ class PinnedUnicodeTablesTest {
         // (Supplementary \p{} matching is an engine limitation — see
         // Tdfa breakpoints — so the delta probe uses the table API above.)
         String osage = "\uD801\uDCB0\uD801\uDCB1\uD801\uDCB2\uD801\uDCB3\uD801\uDCB4";
-        CompiledRegex r17 =
-                CompiledRegex.compile("\\p{Lu}{5}", CompileOptions.of().unicode(Unicode17_0.provider()));
+        CompiledRegex r17 = CompiledRegex.compile("\\p{Lu}{5}", CompileOptions.of().unicode(Unicode17_0.provider()));
         assertThat(r17.find(osage)).isTrue();
-        CompiledRegex r6 =
-                CompiledRegex.compile("\\p{Lu}{5}", CompileOptions.of().unicode(Unicode6_0.provider()));
+        CompiledRegex r6 = CompiledRegex.compile("\\p{Lu}{5}", CompileOptions.of().unicode(Unicode6_0.provider()));
         assertThat(r6.find(osage)).isFalse();
     }
 
     @Test
     void unknownPropertyStillRejected() {
-        assertThatThrownBy(() -> CompiledRegex.compile(
-                        "[\\p{NotAProperty}]", CompileOptions.of().unicode(Unicode6_0.provider())))
-                .isInstanceOf(PatternSyntaxException.class);
+        assertThatThrownBy(() -> CompiledRegex.compile("[\\p{NotAProperty}]", CompileOptions.of().unicode(Unicode6_0.provider()))).isInstanceOf(PatternSyntaxException.class);
     }
 
     /** Literal/class folding is pinned to the snapshot too (not the runtime
@@ -101,15 +97,9 @@ class PinnedUnicodeTablesTest {
         assertThat(v6.foldCounterparts(0x130)).isNull();
         assertThat(v17.foldCounterparts(0x130)).isNull();
         // ... and the parser threads it end to end
-        assertThat(CompiledRegex.compile("(?i)\u1C80", CompileOptions.of().unicode(v6))
-                        .find("\u0432"))
-                .isFalse();
-        assertThat(CompiledRegex.compile("(?i)\u1C80", CompileOptions.of().unicode(v17))
-                        .find("\u0432"))
-                .isTrue();
-        assertThat(CompiledRegex.compile("(?i)\u1C80", CompileOptions.of().unicode(v6))
-                        .find("\u1C80"))
-                .isTrue();
+        assertThat(CompiledRegex.compile("(?i)\u1C80", CompileOptions.of().unicode(v6)).find("\u0432")).isFalse();
+        assertThat(CompiledRegex.compile("(?i)\u1C80", CompileOptions.of().unicode(v17)).find("\u0432")).isTrue();
+        assertThat(CompiledRegex.compile("(?i)\u1C80", CompileOptions.of().unicode(v6)).find("\u1C80")).isTrue();
     }
 
     private static boolean contains(int[] table, int cp) {

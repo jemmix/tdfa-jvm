@@ -1,6 +1,7 @@
 package com.google.re2j;
 
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -29,7 +30,7 @@ public final class Re2jUnicodeProvider implements UnicodeDataProvider {
     public static final Re2jUnicodeProvider INSTANCE = new Re2jUnicodeProvider();
 
     private static final int MAX_RUNE = 0x10FFFF;
-    private static final int[] ANY = new int[] {0, MAX_RUNE};
+    private static final int[] ANY = new int[]{0, MAX_RUNE};
 
     private final Map<String, int[][]> raw = new HashMap<>();
 
@@ -151,10 +152,10 @@ public final class Re2jUnicodeProvider implements UnicodeDataProvider {
                 hi = members[i];
                 continue;
             }
-            merged.add(new int[] {lo, hi});
+            merged.add(new int[]{lo, hi});
             lo = hi = members[i];
         }
-        merged.add(new int[] {lo, hi});
+        merged.add(new int[]{lo, hi});
         int[] flat = new int[merged.size() * 2];
         for (int i = 0; i < merged.size(); i++) {
             flat[2 * i] = merged.get(i)[0];
@@ -169,10 +170,10 @@ public final class Re2jUnicodeProvider implements UnicodeDataProvider {
         for (int[] t : triples) {
             int lo = t[0], hi = t[1], stride = t[2];
             if (stride == 1) {
-                ranges.add(new int[] {lo, hi});
+                ranges.add(new int[]{lo, hi});
             } else {
                 for (int cp = lo; cp <= hi; cp += stride) {
-                    ranges.add(new int[] {cp, cp});
+                    ranges.add(new int[]{cp, cp});
                 }
             }
         }
@@ -190,7 +191,7 @@ public final class Re2jUnicodeProvider implements UnicodeDataProvider {
                     continue;
                 }
             }
-            merged.add(new int[] {r[0], r[1]});
+            merged.add(new int[]{r[0], r[1]});
         }
         int[] flat = new int[merged.size() * 2];
         for (int i = 0; i < merged.size(); i++) {

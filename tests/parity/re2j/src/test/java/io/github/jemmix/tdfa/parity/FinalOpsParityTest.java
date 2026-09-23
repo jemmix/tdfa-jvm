@@ -1,11 +1,11 @@
 package io.github.jemmix.tdfa.parity;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import com.google.re2j.Re2jUnicodeProvider;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Final-ops correctness: eager φ at accept-record time, no ops from
@@ -40,8 +40,7 @@ class FinalOpsParityTest {
     }
 
     private static String tdfaProtocol(String pattern, String input, RegexEngineFactory factory) {
-        var m = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory, Re2jUnicodeProvider.INSTANCE)
-                .matcher(input);
+        var m = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory, Re2jUnicodeProvider.INSTANCE).matcher(input);
         StringBuilder sb = new StringBuilder();
         boolean found = m.find();
         sb.append(found ? "true " + m.group() : "false").append(' ').append(m.groupCount());
@@ -59,17 +58,11 @@ class FinalOpsParityTest {
     private static void assertSameGroups(String pattern, String input, RegexEngineFactory factory) {
         try {
 
-            assertThat(tdfaProtocol(pattern, input, factory))
-                    .as("pattern=\"%s\" input-encoded=\"%s\" [%s]", pattern, escape(input), factory)
-                    .isEqualTo(re2jProtocol(pattern, input));
+            assertThat(tdfaProtocol(pattern, input, factory)).as("pattern=\"%s\" input-encoded=\"%s\" [%s]", pattern, escape(input), factory).isEqualTo(re2jProtocol(pattern, input));
         } catch (AssertionError e) {
             // failure-time layer attribution (zero cost on the green path)
-            throw new AssertionError(
-                    e.getMessage() + "\n  "
-                            + new LayeredComparator(Re2jUnicodeProvider.INSTANCE)
-                                    .compare(pattern, input)
-                                    .attribution(),
-                    e);
+            throw new AssertionError(e.getMessage() + "\n  " + new LayeredComparator(
+                            Re2jUnicodeProvider.INSTANCE).compare(pattern, input).attribution(), e);
         }
     }
 

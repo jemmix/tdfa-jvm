@@ -31,17 +31,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * @see ScenarioLoader
  */
-public record Scenario(
-        String fullName,
-        String group,
-        String name,
-        String model,
-        String regex,
-        boolean caseInsensitive,
-        boolean unicode,
-        HaystackSpec haystackSpec,
-        long expectedCount,
-        List<String> engines) {
+public record Scenario(String fullName, String group, String name, String model, String regex, boolean caseInsensitive,
+                boolean unicode, HaystackSpec haystackSpec, long expectedCount, List<String> engines) {
 
     /**
      * Per-process haystack-file cache. Many rebar scenarios share the same
@@ -70,16 +61,8 @@ public record Scenario(
             }
         }
 
-        record FromPath(
-                String path,
-                boolean trim,
-                boolean utf8Lossy,
-                Long repeat,
-                String prepend,
-                String append,
-                Integer lineStart,
-                Integer lineEnd)
-                implements HaystackSpec {
+        record FromPath(String path, boolean trim, boolean utf8Lossy, Long repeat, String prepend, String append,
+                        Integer lineStart, Integer lineEnd) implements HaystackSpec {
             public FromPath {
                 if (path == null) {
                     throw new NullPointerException("path");
@@ -111,7 +94,8 @@ public record Scenario(
         }
     }
 
-    private record CacheKey(Path path, boolean utf8Lossy) {}
+    private record CacheKey(Path path, boolean utf8Lossy) {
+    }
 
     private static String readHaystackFile(Path file, boolean utf8Lossy) throws IOException {
         CacheKey key = new CacheKey(file, utf8Lossy);
@@ -136,10 +120,7 @@ public record Scenario(
     private static String readStringLossy(Path file) throws IOException {
         byte[] bytes = Files.readAllBytes(file);
         // CharsetDecoder is not thread-safe; create a fresh one per call.
-        CharsetDecoder decoder = StandardCharsets.UTF_8
-                .newDecoder()
-                .onMalformedInput(CodingErrorAction.REPLACE)
-                .onUnmappableCharacter(CodingErrorAction.REPLACE);
+        CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPLACE).onUnmappableCharacter(CodingErrorAction.REPLACE);
         try {
             return decoder.decode(ByteBuffer.wrap(bytes)).toString();
         } catch (CharacterCodingException e) {
@@ -149,8 +130,7 @@ public record Scenario(
         }
     }
 
-    private static String applyTransforms(
-            String base, boolean trim, Long repeat, String prepend, String append, Integer lineStart, Integer lineEnd) {
+    private static String applyTransforms(String base, boolean trim, Long repeat, String prepend, String append, Integer lineStart, Integer lineEnd) {
         if (trim) {
             base = base.trim();
         }

@@ -1,12 +1,12 @@
 package io.github.jemmix.tdfa.parity;
 
-import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameAllMatches;
-import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
-import static org.assertj.core.api.Assertions.assertThat;
-
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+
+import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameAllMatches;
+import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Case-insensitive matching parity: (?i), CASE_INSENSITIVE flag, ASCII folding,
@@ -89,15 +89,8 @@ class CaseSensitivityParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void caseInsensitiveFlag(RegexEngineFactory factory) {
-        int[] expected = com.google.re2j.Pattern.compile("abc", com.google.re2j.Pattern.CASE_INSENSITIVE)
-                        .matcher("ABC")
-                        .matches()
-                ? new int[] {0, 3}
-                : null;
-        boolean actual = io.github.jemmix.tdfa.Pattern.compile(
-                        "abc", io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE, factory)
-                .matcher("ABC")
-                .matches();
+        int[] expected = com.google.re2j.Pattern.compile("abc", com.google.re2j.Pattern.CASE_INSENSITIVE).matcher("ABC").matches() ? new int[]{0, 3} : null;
+        boolean actual = io.github.jemmix.tdfa.Pattern.compile("abc", io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE, factory).matcher("ABC").matches();
         assertThat(actual).isEqualTo(expected != null);
     }
 

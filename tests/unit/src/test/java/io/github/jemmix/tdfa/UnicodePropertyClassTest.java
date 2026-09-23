@@ -1,15 +1,16 @@
 package io.github.jemmix.tdfa;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
-
 import io.github.jemmix.tdfa.core.Matcher;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+
+import java.util.stream.Stream;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
  * Unicode property classes ({@code \p{L}}, {@code \P{N}}, etc.) at scale:
@@ -43,9 +44,7 @@ class UnicodePropertyClassTest {
     @ParameterizedTest
     @MethodSource("factories")
     void letterClassRepeat25Compiles(RegexEngineFactory f) {
-        assertThatCode(() -> Pattern.compile("\\p{L}{25}", 0, f))
-                .as("\\p{L}{25} should compile without stateBase overflow")
-                .doesNotThrowAnyException();
+        assertThatCode(() -> Pattern.compile("\\p{L}{25}", 0, f)).as("\\p{L}{25} should compile without stateBase overflow").doesNotThrowAnyException();
     }
 
     @ParameterizedTest
@@ -82,9 +81,7 @@ class UnicodePropertyClassTest {
 
     @Test
     void asmDelegateModeCompilesWideDfa() {
-        assertThatCode(() -> Pattern.compile("\\p{L}+", 0, null))
-                .as("\\p{L}+ should compile on ASM (DELEGATE dispatch)")
-                .doesNotThrowAnyException();
+        assertThatCode(() -> Pattern.compile("\\p{L}+", 0, null)).as("\\p{L}+ should compile on ASM (DELEGATE dispatch)").doesNotThrowAnyException();
     }
 
     @Test
@@ -98,12 +95,7 @@ class UnicodePropertyClassTest {
 
     @Test
     void asmLargeAlternationCompilesAndMatches() {
-        String[] branches = {
-            "(cat)", "(dog)", "(bird)", "(fish)", "(frog)",
-            "(bear)", "(wolf)", "(deer)", "(lion)", "(tiger)",
-            "(eagle)", "(shark)", "(whale)", "(snake)", "(turtle)",
-            "(duck)", "(goose)", "(horse)", "(mouse)", "(rabbit)"
-        };
+        String[] branches = {"(cat)", "(dog)", "(bird)", "(fish)", "(frog)", "(bear)", "(wolf)", "(deer)", "(lion)", "(tiger)", "(eagle)", "(shark)", "(whale)", "(snake)", "(turtle)", "(duck)", "(goose)", "(horse)", "(mouse)", "(rabbit)"};
         String regex = String.join("|", branches);
         Pattern r = Pattern.compile(regex, 0, null);
         Matcher m = match(r, "have a tiger here");

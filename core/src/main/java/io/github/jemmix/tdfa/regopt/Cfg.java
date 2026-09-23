@@ -87,11 +87,11 @@ public final class Cfg {
         @Override
         public String toString() {
             switch (kind) {
-                case KIND_SET:
+                case KIND_SET :
                     return "r" + dst + "=" + (value == VAL_POS ? "pos" : "nil");
-                case KIND_COPY:
+                case KIND_COPY :
                     return "r" + dst + "=r" + src;
-                default:
+                default :
                     return "r" + dst + "=r" + dst + "·r" + src;
             }
         }
@@ -159,22 +159,10 @@ public final class Cfg {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append("CFG: ")
-                .append(blocks.size())
-                .append(" blocks, ")
-                .append(regCount)
-                .append(" regs (final base ")
-                .append(finalRegBase)
-                .append(")\n");
+        sb.append("CFG: ").append(blocks.size()).append(" blocks, ").append(regCount).append(" regs (final base ").append(finalRegBase).append(")\n");
         for (int i = 0; i < blocks.size(); i++) {
             Block b = blocks.get(i);
-            sb.append("  B")
-                    .append(i)
-                    .append(" [")
-                    .append(b.kind == BLOCK_BASIC ? "basic" : b.kind == BLOCK_FINAL ? "final" : "fallback")
-                    .append(" state=")
-                    .append(b.stateId)
-                    .append("]: ");
+            sb.append("  B").append(i).append(" [").append(b.kind == BLOCK_BASIC ? "basic" : b.kind == BLOCK_FINAL ? "final" : "fallback").append(" state=").append(b.stateId).append("]: ");
             sb.append(b.ops).append(" -> succ ").append(b.successors).append("\n");
         }
         return sb.toString();

@@ -1,10 +1,10 @@
 package io.github.jemmix.tdfa.parity;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Pattern.split() parity: basic split, limit, trailing-empty handling.
@@ -13,18 +13,14 @@ class SplitParityTest {
 
     private static void assertSplit(String pattern, String input, RegexEngineFactory factory) {
         String[] re2j = com.google.re2j.Pattern.compile(pattern).split(input);
-        String[] tdfa =
-                io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory).split(input);
+        String[] tdfa = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory).split(input);
         assertThat(tdfa).as("split \"%s\" on \"%s\"", pattern, input).isEqualTo(re2j);
     }
 
     private static void assertSplit(String pattern, String input, int limit, RegexEngineFactory factory) {
         String[] re2j = com.google.re2j.Pattern.compile(pattern).split(input, limit);
-        String[] tdfa =
-                io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory).split(input, limit);
-        assertThat(tdfa)
-                .as("split \"%s\" on \"%s\" limit=%d", pattern, input, limit)
-                .isEqualTo(re2j);
+        String[] tdfa = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory).split(input, limit);
+        assertThat(tdfa).as("split \"%s\" on \"%s\" limit=%d", pattern, input, limit).isEqualTo(re2j);
     }
 
     @ParameterizedTest

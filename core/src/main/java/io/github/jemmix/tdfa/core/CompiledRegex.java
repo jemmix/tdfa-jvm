@@ -54,8 +54,7 @@ public final class CompiledRegex {
         if (pattern == null) {
             throw new NullPointerException("pattern is null");
         }
-        UnicodeDataProvider provider =
-                options.unicodeProvider() != null ? options.unicodeProvider() : UnicodeProviders.get();
+        UnicodeDataProvider provider = options.unicodeProvider() != null ? options.unicodeProvider() : UnicodeProviders.get();
         CompileObserver obs = options.observer() != null ? options.observer() : CompileObserver.NONE;
         try {
             // One CPU ledger for the whole compile: the front-end, the find
@@ -66,9 +65,7 @@ public final class CompiledRegex {
             WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
             Tnfa nfa = Tnfa.compile(pattern, options.isDisableUnicodeGroups(), false, provider, obs, ledger);
             Tdfa find = Tdfa.compile(nfa, options.isLongestMatch(), obs, ledger.fork(0));
-            Tdfa whole = find.pikeCutMatters()
-                    ? Tdfa.compileUnpruned(nfa, options.isLongestMatch(), obs, ledger.fork(0))
-                    : find;
+            Tdfa whole = find.pikeCutMatters() ? Tdfa.compileUnpruned(nfa, options.isLongestMatch(), obs, ledger.fork(0)) : find;
             long memoBudget = Budgets.runtimeMemoryBytes() / (whole == find ? 1 : 2);
             long t0 = System.nanoTime();
             RegexEngine engine = new TdfaRunner(find, memoBudget);

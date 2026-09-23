@@ -5,6 +5,10 @@ import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import io.github.jemmix.tdfa.rebar.Scenario;
 import io.github.jemmix.tdfa.rebar.ScenarioLoader;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.params.provider.Arguments;
+
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -16,9 +20,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.params.provider.Arguments;
 
 /**
  * Parameterized parity test against rebar's benchmark scenario corpus.
@@ -183,15 +184,7 @@ class RebarScenarioParityTest {
      * out of scope for a Java regex library and don't appear as test cases.
      */
     static Stream<Arguments> scenariosProvider() {
-        return scenarios.stream()
-                .filter(RebarScenarioParityTest::enginesIncludeJava)
-                .flatMap(s -> Stream.of((RegexEngineFactory) null, (RegexEngineFactory) TdfaRunner::new)
-                        .map(f -> Arguments.of(
-                                /*displayName=*/ s.fullName() + "  corpus-want=" + s.expectedCount()
-                                        + (s.unicode() ? " (unicode: corpus stands)" : " (non-unicode: live re2j)")
-                                        + "  /" + abbrev(s.regex(), 60) + "/  [" + labelFor(f) + "]",
-                                /*scenario=*/ s,
-                                /*factory=*/ f)));
+        return scenarios.stream().filter(RebarScenarioParityTest::enginesIncludeJava).flatMap(s -> Stream.of((RegexEngineFactory) null, (RegexEngineFactory) TdfaRunner::new).map(f -> Arguments.of(/*displayName=*/ s.fullName() + "  corpus-want=" + s.expectedCount() + (s.unicode() ? " (unicode: corpus stands)" : " (non-unicode: live re2j)") + "  /" + abbrev(s.regex(), 60) + "/  [" + labelFor(f) + "]", /*scenario=*/ s, /*factory=*/ f)));
     }
 
     static String labelFor(RegexEngineFactory f) {
@@ -395,27 +388,18 @@ class RebarScenarioParityTest {
     static void printSummary() {
         System.out.println();
         System.out.println("╔══════════════════════════════════════════════════════════════════════╗");
-        System.out.printf(
-                "║ rebar parity: pass=%-4d  fail=%-4d  skip=%-4d   total=%-4d%n",
-                passCount.get(), failCount.get(), skipCount.get(), passCount.get() + failCount.get() + skipCount.get());
+        System.out.printf("║ rebar parity: pass=%-4d  fail=%-4d  skip=%-4d   total=%-4d%n", passCount.get(), failCount.get(), skipCount.get(), passCount.get() + failCount.get() + skipCount.get());
         System.out.println("╚══════════════════════════════════════════════════════════════════════╝");
         // Gray-skip cap (see MAX_TOTAL_SKIPS): a skip is only legitimate for a
         // recorded reason; an unexpected compile-exception family shrinking the
         // green set must FAIL the gate, not vanish into the histogram.
-        Assertions.assertTrue(
-                skipCount.get() <= MAX_TOTAL_SKIPS,
-                "rebar parity skipped " + skipCount.get() + " scenarios (cap " + MAX_TOTAL_SKIPS
-                        + ", recorded baseline 2) — the green set shrank; see the skip histogram");
+        Assertions.assertTrue(skipCount.get() <= MAX_TOTAL_SKIPS, "rebar parity skipped " + skipCount.get() + " scenarios (cap " + MAX_TOTAL_SKIPS + ", recorded baseline 2) — the green set shrank; see the skip histogram");
 
         // Skip-reason histogram
         if (!skipBuckets.isEmpty()) {
             System.out.println();
             System.out.println("── Skip reasons ──────────────────────────────────────────────");
-            skipBuckets.entrySet().stream()
-                    .sorted(Map.Entry.<String, AtomicInteger>comparingByValue(
-                                    Comparator.comparingInt(AtomicInteger::get))
-                            .reversed())
-                    .forEach(e -> System.out.printf("  %5d  %s%n", e.getValue().get(), e.getKey()));
+            skipBuckets.entrySet().stream().sorted(Map.Entry.<String, AtomicInteger>comparingByValue(Comparator.comparingInt(AtomicInteger::get)).reversed()).forEach(e -> System.out.printf("  %5d  %s%n", e.getValue().get(), e.getKey()));
         }
 
         // Top-20 slowest tests by compile+run
@@ -425,9 +409,7 @@ class RebarScenarioParityTest {
         System.out.println("── Top 20 slowest (compile + run, ms) ─────────────────────────");
         for (int i = 0; i < Math.min(20, sorted.size()); i++) {
             Timing t = sorted.get(i);
-            System.out.printf(
-                    "  %4dms  c=%-5d r=%-6d  %-50s  [%s]%n",
-                    t.totalMs(), t.compileMs(), t.runMs(), abbrev(t.name(), 50), t.outcome());
+            System.out.printf("  %4dms  c=%-5d r=%-6d  %-50s  [%s]%n", t.totalMs(), t.compileMs(), t.runMs(), abbrev(t.name(), 50), t.outcome());
         }
 
         // Histogram of total time (compile + run)
@@ -449,9 +431,7 @@ class RebarScenarioParityTest {
         long totalMs = sorted.stream().mapToLong(Timing::totalMs).sum();
         long compileMs = sorted.stream().mapToLong(Timing::compileMs).sum();
         long runMs = sorted.stream().mapToLong(Timing::runMs).sum();
-        System.out.printf(
-                "  total: compile=%dms (%.1fs), run=%dms (%.1fs), wall=%dms (%.1fs)%n",
-                compileMs, compileMs / 1000.0, runMs, runMs / 1000.0, totalMs, totalMs / 1000.0);
+        System.out.printf("  total: compile=%dms (%.1fs), run=%dms (%.1fs), wall=%dms (%.1fs)%n", compileMs, compileMs / 1000.0, runMs, runMs / 1000.0, totalMs, totalMs / 1000.0);
     }
 
     /**
@@ -468,24 +448,24 @@ class RebarScenarioParityTest {
     /** Dispatch to the right model implementation. */
     private static long runModel(Scenario s, Pattern p, String haystack) {
         switch (s.model()) {
-            case "count":
+            case "count" :
                 return countMatches(p, haystack);
-            case "count-spans":
+            case "count-spans" :
                 return countSpans(p, haystack);
-            case "count-captures":
+            case "count-captures" :
                 return countCaptures(p, haystack);
-            case "grep":
+            case "grep" :
                 return grepLines(p, haystack);
             // compile model: per rebar, "like count, but uses the compile model to
             // ensure the count is correct" (test/model.toml §compile). We've already
             // compiled by this point, so the verification IS the count.
-            case "compile":
+            case "compile" :
                 return countMatches(p, haystack);
             // grep-captures model: count all captures across all non-overlapping
             // matches, line-oriented with \r stripped (test/model.toml §grep-captures).
-            case "grep-captures":
+            case "grep-captures" :
                 return grepCaptureCounts(p, haystack);
-            default:
+            default :
                 throw new IllegalStateException("unsupported model: " + s.model());
         }
     }
@@ -498,18 +478,18 @@ class RebarScenarioParityTest {
             }
             com.google.re2j.Pattern p = com.google.re2j.Pattern.compile(s.regex(), rflags);
             switch (s.model()) {
-                case "count":
-                case "compile":
+                case "count" :
+                case "compile" :
                     return re2jCount(p, haystack);
-                case "count-spans":
+                case "count-spans" :
                     return re2jSpans(p, haystack);
-                case "count-captures":
+                case "count-captures" :
                     return re2jCaptures(p, haystack);
-                case "grep":
+                case "grep" :
                     return re2jGrep(p, haystack);
-                case "grep-captures":
+                case "grep-captures" :
                     return re2jGrepCaptures(p, haystack);
-                default:
+                default :
                     return null; // unsupported model: corpus value stands
             }
         } catch (Throwable t) {
@@ -519,7 +499,7 @@ class RebarScenarioParityTest {
 
     private static long re2jCount(com.google.re2j.Pattern p, String hs) {
         long n = 0;
-        for (com.google.re2j.Matcher m = p.matcher(hs); m.find(); ) {
+        for (com.google.re2j.Matcher m = p.matcher(hs); m.find();) {
             n++;
         }
         return n;
@@ -609,7 +589,7 @@ class RebarScenarioParityTest {
 
     private static long countMatches(Pattern p, String hs) {
         long n = 0;
-        for (Matcher m = p.matcher(hs); m.find(); ) {
+        for (Matcher m = p.matcher(hs); m.find();) {
             n++;
         }
         return n;

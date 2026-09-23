@@ -1,10 +1,10 @@
 package io.github.jemmix.tdfa.parity;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import com.google.re2j.Pattern;
 import com.google.re2j.Re2jUnicodeProvider;
 import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * The comparator's own acceptance test — retrodiction. Two legs:
@@ -29,22 +29,14 @@ class LayeredComparatorTest {
     @Test
     void verdictTableIsExact() {
         // r, s, v, a -> expected layer
-        assertThat(LayeredComparator.classify(new String[] {"1", "1", "1", "1"}))
-                .isEqualTo(LayeredComparator.Layer.PASS);
-        assertThat(LayeredComparator.classify(new String[] {"1", "1", "2", "1"}))
-                .isEqualTo(LayeredComparator.Layer.TIER); // v != a
-        assertThat(LayeredComparator.classify(new String[] {"1", "1", "2", "3"}))
-                .isEqualTo(LayeredComparator.Layer.TIER); // v != a, both != r/s
-        assertThat(LayeredComparator.classify(new String[] {"2", "2", "1", "1"}))
-                .isEqualTo(LayeredComparator.Layer.CONSTRUCTION); // v==a != s; s==r
-        assertThat(LayeredComparator.classify(new String[] {"1", "3", "1", "1"}))
-                .isEqualTo(LayeredComparator.Layer.SIM_SUSPECT); // v==r != s
-        assertThat(LayeredComparator.classify(new String[] {"2", "1", "1", "1"}))
-                .isEqualTo(LayeredComparator.Layer.PARSER); // v==a==s != r
-        assertThat(LayeredComparator.classify(new String[] {"3", "2", "1", "1"}))
-                .isEqualTo(LayeredComparator.Layer.CHAOS); // three answers
-        assertThat(LayeredComparator.classify(new String[] {"1", "2", "3", "3"}))
-                .isEqualTo(LayeredComparator.Layer.CHAOS);
+        assertThat(LayeredComparator.classify(new String[]{"1", "1", "1", "1"})).isEqualTo(LayeredComparator.Layer.PASS);
+        assertThat(LayeredComparator.classify(new String[]{"1", "1", "2", "1"})).isEqualTo(LayeredComparator.Layer.TIER); // v != a
+        assertThat(LayeredComparator.classify(new String[]{"1", "1", "2", "3"})).isEqualTo(LayeredComparator.Layer.TIER); // v != a, both != r/s
+        assertThat(LayeredComparator.classify(new String[]{"2", "2", "1", "1"})).isEqualTo(LayeredComparator.Layer.CONSTRUCTION); // v==a != s; s==r
+        assertThat(LayeredComparator.classify(new String[]{"1", "3", "1", "1"})).isEqualTo(LayeredComparator.Layer.SIM_SUSPECT); // v==r != s
+        assertThat(LayeredComparator.classify(new String[]{"2", "1", "1", "1"})).isEqualTo(LayeredComparator.Layer.PARSER); // v==a==s != r
+        assertThat(LayeredComparator.classify(new String[]{"3", "2", "1", "1"})).isEqualTo(LayeredComparator.Layer.CHAOS); // three answers
+        assertThat(LayeredComparator.classify(new String[]{"1", "2", "3", "3"})).isEqualTo(LayeredComparator.Layer.CHAOS);
     }
 
     @Test
@@ -76,8 +68,7 @@ class LayeredComparatorTest {
         // classifies as PASS. Probe which oracle is on the classpath so
         // the assertion holds under both.
         String loneLow = String.valueOf((char) 0xDC21);
-        boolean releasedOracle =
-                Pattern.compile("(" + loneLow + ")").matcher("a\ud800\udc21zz").find();
+        boolean releasedOracle = Pattern.compile("(" + loneLow + ")").matcher("a\ud800\udc21zz").find();
         LayeredComparator.Report r = C.compare("(" + loneLow + ")", "a\ud800\udc21zz");
         assertThat(r.layer()).isEqualTo(releasedOracle ? LayeredComparator.Layer.PARSER : LayeredComparator.Layer.PASS);
         assertThat(r.sim()).isEqualTo(r.vm());
@@ -104,7 +95,7 @@ class LayeredComparatorTest {
         // throw StringIndexOutOfBoundsException (charAt(len) in the interior
         // skip), which poisoned the sim column for the whole class of inputs.
         String pair = "\ud800\udfff"; // U+103FF
-        String loneHighInput = String.valueOf(new char[] {'\ud83f'});
+        String loneHighInput = String.valueOf(new char[]{'\ud83f'});
         assertThat(C.compare("(?i:\ud800)\udfff", pair).layer()).isEqualTo(LayeredComparator.Layer.PASS);
         assertThat(C.compare("(?i:\ud800)", loneHighInput).layer()).isEqualTo(LayeredComparator.Layer.PASS);
     }

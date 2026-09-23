@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.regopt;
 
 import io.github.jemmix.tdfa.tdfa.WorkMeter;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
@@ -27,7 +28,8 @@ import java.util.List;
  * <p>Public entry point: {@link #optimize(Cfg)}.
  */
 public final class Optimize {
-    private Optimize() {}
+    private Optimize() {
+    }
 
     /** Run the full pipeline on {@code cfg} (in place). */
     public static void optimize(Cfg cfg) {
@@ -42,9 +44,7 @@ public final class Optimize {
                 edges += b.successors.size();
                 ops += b.ops.size();
             }
-            System.err.printf(
-                    "[cfg] blocks=%d edges=%d ops=%d regs=%d tags=%d%n",
-                    cfg.blocks.size(), edges, ops, cfg.initialRegCount, cfg.tagCount);
+            System.err.printf("[cfg] blocks=%d edges=%d ops=%d regs=%d tags=%d%n", cfg.blocks.size(), edges, ops, cfg.initialRegCount, cfg.tagCount);
         }
         // Stage 1: compaction (renumber survivors into a contiguous range).
         int[] vmap = compaction(cfg);
@@ -164,8 +164,8 @@ public final class Optimize {
 
     private static int mapped(int r, int[] vmap) {
         if (r < 0 || r >= vmap.length || vmap[r] < 0) {
-            throw new IllegalStateException("regopt: rename: op references unmapped register " + r + " (vmap covers "
-                    + vmap.length + " registers) — compaction invariant broken");
+            throw new IllegalStateException(
+                            "regopt: rename: op references unmapped register " + r + " (vmap covers " + vmap.length + " registers) — compaction invariant broken");
         }
         return vmap[r];
     }
@@ -350,10 +350,10 @@ public final class Optimize {
                 continue;
             }
             switch (op.kind) {
-                case Cfg.KIND_SET:
+                case Cfg.KIND_SET :
                     live[op.dst >>> 6] &= ~(1L << op.dst);
                     break;
-                case Cfg.KIND_COPY:
+                case Cfg.KIND_COPY :
                     if ((live[op.dst >>> 6] & (1L << op.dst)) != 0) {
                         live[op.dst >>> 6] &= ~(1L << op.dst);
                         if (op.src < nr) {
@@ -361,7 +361,7 @@ public final class Optimize {
                         }
                     }
                     break;
-                default:
+                default :
                     break; // KIND_APPEND: multi-valued tags unmodeled
             }
         }
@@ -525,15 +525,15 @@ public final class Optimize {
                 Cfg.Op op = b.ops.get(oi);
                 if (op.dst < nr) {
                     switch (op.kind) {
-                        case Cfg.KIND_SET:
+                        case Cfg.KIND_SET :
                             V[op.dst] = (op.value == Cfg.VAL_POS) ? POS_VALUE : NIL_VALUE;
                             break;
-                        case Cfg.KIND_COPY:
+                        case Cfg.KIND_COPY :
                             if (op.src < nr) {
                                 V[op.dst] = V[op.src];
                             }
                             break;
-                        default:
+                        default :
                             break;
                     }
                 }
@@ -643,9 +643,7 @@ public final class Optimize {
                 } else if (x != y) {
                     // Both in classes; merge if possible (paper omits this case).
                     if (noInterfereCross(S.get(x), S.get(y), I)) {
-                        for (int m = S.get(y).nextSetBit(0);
-                                m >= 0;
-                                m = S.get(y).nextSetBit(m + 1)) {
+                        for (int m = S.get(y).nextSetBit(0); m >= 0; m = S.get(y).nextSetBit(m + 1)) {
                             B[m] = x;
                             S.get(x).set(m);
                         }

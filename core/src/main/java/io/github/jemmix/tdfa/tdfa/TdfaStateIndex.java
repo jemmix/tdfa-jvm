@@ -250,8 +250,7 @@ final class TdfaStateIndex {
                 // Ragged: every row is replaced by a hist-cache ref right
                 // below, so new long[rows][words] allocated words*rows junk
                 // longs per growth. words is constant for this compile.
-                hasHistShared =
-                        new long[Math.max(configs.size(), (hasHistShared == null ? 16 : hasHistShared.length) * 2)][];
+                hasHistShared = new long[Math.max(configs.size(), (hasHistShared == null ? 16 : hasHistShared.length) * 2)][];
             }
             for (int i = 0; i < configs.size(); i++) {
                 // Per-history-id cached bitsets (HistTable.bits): no fill,
@@ -294,9 +293,7 @@ final class TdfaStateIndex {
                     // canon-equal members was the residual quadratic.
                     int cand = compatibles[0];
                     int[] stored = stateClassIds.get(cand);
-                    if (stored != null
-                            && stored.length == canon.length
-                            && rangeEquals(canon, 0, canon.length, stored, 0, stored.length)) {
+                    if (stored != null && stored.length == canon.length && rangeEquals(canon, 0, canon.length, stored, 0, stored.length)) {
                         int[] mapped = tryMap(configs, owner.states.get(cand), owner.packedKernels.get(cand), ops);
                         if (mapped != null) {
                             return new AddResult(cand, mapped);
@@ -343,9 +340,9 @@ final class TdfaStateIndex {
         if (candidates == null) {
             StateBucket fresh = new StateBucket();
             if (owner.tags == 0) {
-                fresh.members = new int[] {id};
+                fresh.members = new int[]{id};
             } else {
-                fresh.byClass.put(canonHash, new int[] {id});
+                fresh.byClass.put(canonHash, new int[]{id});
             }
             stateIndex.put(new DfaStateKey(Arrays.copyOf(probe.sig, probe.len)), fresh);
         } else if (owner.tags == 0) {
@@ -354,7 +351,7 @@ final class TdfaStateIndex {
             StateBucket b = candidates;
             // Only the first member of a canon-equal class is ever probed
             // (see above) — don't grow the list.
-            b.byClass.putIfAbsent(canonHash, new int[] {id});
+            b.byClass.putIfAbsent(canonHash, new int[]{id});
         }
         owner.builders.add(new DfaStateBuilder(id));
         if (isAccept) {
@@ -363,12 +360,8 @@ final class TdfaStateIndex {
         owner.kernelsTotal += configs.size();
         owner.kernelsWeighted += (long) configs.size() * owner.kernelConfigBytes;
         if (owner.states.size() > owner.maxStates || owner.kernelsWeighted > Budgets.compileMemoryBytes()) {
-            throw new IllegalStateException("pattern too large: TDFA determinization budget exceeded ("
-                    + owner.states.size() + " states, kernel total " + owner.kernelsTotal + " ("
-                    + owner.kernelsWeighted + " weighted bytes), ticks " + owner.meter.spent()
-                    + "; caps " + owner.maxStates + " states / " + Budgets.compileMemoryBytes()
-                    + " weighted kernel bytes (" + owner.maxKernelsTotal + " tagless-equivalent configs) — raise -D"
-                    + Budgets.COMPILE_MEMORY_PROP + ")");
+            throw new IllegalStateException(
+                            "pattern too large: TDFA determinization budget exceeded (" + owner.states.size() + " states, kernel total " + owner.kernelsTotal + " (" + owner.kernelsWeighted + " weighted bytes), ticks " + owner.meter.spent() + "; caps " + owner.maxStates + " states / " + Budgets.compileMemoryBytes() + " weighted kernel bytes (" + owner.maxKernelsTotal + " tagless-equivalent configs) — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
         }
         return new AddResult(id, ops);
     }
@@ -482,7 +475,7 @@ final class TdfaStateIndex {
             if (eO[mapped] != stamp || mp[mapped] != dst) {
                 return null;
             }
-            rewritten.add(new int[] {op, mapped, src});
+            rewritten.add(new int[]{op, mapped, src});
             eN[dst] = 0;
             eO[mapped] = 0;
         }
@@ -501,7 +494,7 @@ final class TdfaStateIndex {
                 continue;
             }
             if (newReg != oldReg) {
-                rewritten.add(0, new int[] {Tdfa.OP_COPY, oldReg, newReg});
+                rewritten.add(0, new int[]{Tdfa.OP_COPY, oldReg, newReg});
             }
         }
         // Topological sort: copy ops must come before any op that reads their src.

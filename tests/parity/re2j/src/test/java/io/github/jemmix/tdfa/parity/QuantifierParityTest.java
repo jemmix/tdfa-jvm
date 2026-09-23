@@ -1,13 +1,13 @@
 package io.github.jemmix.tdfa.parity;
 
+import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+
 import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameAllMatches;
 import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameCompileReject;
 import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
 import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFindPosix;
-
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Quantifier parity: greedy, lazy, bounded repetition, alternation priority.

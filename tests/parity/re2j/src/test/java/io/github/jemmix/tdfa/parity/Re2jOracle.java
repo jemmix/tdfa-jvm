@@ -1,15 +1,16 @@
 package io.github.jemmix.tdfa.parity;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import com.google.re2j.Re2jUnicodeProvider;
 import io.github.jemmix.tdfa.core.Matcher;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Oracle helpers: compile each pattern in both com.google.re2j (upstream) and
@@ -23,7 +24,8 @@ public final class Re2jOracle {
     /** re2j-exact Unicode tables so parity tests are bit-exact against re2j, not JDK-version-dependent. */
     private static final UnicodeDataProvider UNICODE = Re2jUnicodeProvider.INSTANCE;
 
-    private Re2jOracle() {}
+    private Re2jOracle() {
+    }
 
     /**
      * Which re2j is on the test classpath: released 1.8 (true) or the
@@ -32,9 +34,7 @@ public final class Re2jOracle {
      * fuzzer).
      */
     public static boolean releasedOracle() {
-        return com.google.re2j.Pattern.compile("\uDC21")
-                .matcher("a\uD801\uDC21zz")
-                .find();
+        return com.google.re2j.Pattern.compile("\uDC21").matcher("a\uD801\uDC21zz").find();
     }
 
     /**
@@ -71,8 +71,7 @@ public final class Re2jOracle {
     }
 
     public static int[] re2jFindPosix(String pattern, String input) {
-        com.google.re2j.Matcher m = com.google.re2j.Pattern.compile(pattern, com.google.re2j.Pattern.LONGEST_MATCH)
-                .matcher(input);
+        com.google.re2j.Matcher m = com.google.re2j.Pattern.compile(pattern, com.google.re2j.Pattern.LONGEST_MATCH).matcher(input);
         if (!m.find()) {
             return null;
         }
@@ -107,13 +106,11 @@ public final class Re2jOracle {
      *  the engine-truth lane: what the library does when not pinned to an
      *  oracle/snapshot fold universe. */
     public static int[] tdfaFindDefaultUniverse(String pattern, String input) {
-        return tdfaSpans(
-                io.github.jemmix.tdfa.Pattern.compile(pattern, 0, null, null).matcher(input));
+        return tdfaSpans(io.github.jemmix.tdfa.Pattern.compile(pattern, 0, null, null).matcher(input));
     }
 
     public static int[] tdfaFind(String pattern, String input, RegexEngineFactory factory) {
-        Matcher m = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory, UNICODE)
-                .matcher(input);
+        Matcher m = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory, UNICODE).matcher(input);
         return tdfaSpans(m);
     }
 
@@ -138,9 +135,7 @@ public final class Re2jOracle {
     }
 
     public static int[] tdfaFindPosix(String pattern, String input, RegexEngineFactory factory) {
-        Matcher m = io.github.jemmix.tdfa.Pattern.compile(
-                        pattern, io.github.jemmix.tdfa.Pattern.LONGEST_MATCH, factory, UNICODE)
-                .matcher(input);
+        Matcher m = io.github.jemmix.tdfa.Pattern.compile(pattern, io.github.jemmix.tdfa.Pattern.LONGEST_MATCH, factory, UNICODE).matcher(input);
         if (!m.find()) {
             return null;
         }
@@ -162,8 +157,7 @@ public final class Re2jOracle {
 
     public static List<String> tdfaFindAll(String pattern, String input, RegexEngineFactory factory) {
         List<String> out = new ArrayList<>();
-        Matcher m = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory, UNICODE)
-                .matcher(input);
+        Matcher m = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory, UNICODE).matcher(input);
         while (m.find()) {
             out.add(m.group());
         }
@@ -175,25 +169,19 @@ public final class Re2jOracle {
     public static void assertSameFind(String pattern, String input, RegexEngineFactory factory) {
         int[] expected = re2jFind(pattern, input);
         int[] actual = tdfaFind(pattern, input, factory);
-        assertThat(actual)
-                .as("pattern=\"%s\" input=\"%s\" [%s]", pattern, input, factory)
-                .isEqualTo(expected);
+        assertThat(actual).as("pattern=\"%s\" input=\"%s\" [%s]", pattern, input, factory).isEqualTo(expected);
     }
 
     public static void assertSameFindPosix(String pattern, String input, RegexEngineFactory factory) {
         int[] expected = re2jFindPosix(pattern, input);
         int[] actual = tdfaFindPosix(pattern, input, factory);
-        assertThat(actual)
-                .as("POSIX pattern=\"%s\" input=\"%s\" [%s]", pattern, input, factory)
-                .isEqualTo(expected);
+        assertThat(actual).as("POSIX pattern=\"%s\" input=\"%s\" [%s]", pattern, input, factory).isEqualTo(expected);
     }
 
     public static void assertSameAllMatches(String pattern, String input, RegexEngineFactory factory) {
         List<String> expected = re2jFindAll(pattern, input);
         List<String> actual = tdfaFindAll(pattern, input, factory);
-        assertThat(actual)
-                .as("findAll pattern=\"%s\" input=\"%s\" [%s]", pattern, input, factory)
-                .isEqualTo(expected);
+        assertThat(actual).as("findAll pattern=\"%s\" input=\"%s\" [%s]", pattern, input, factory).isEqualTo(expected);
     }
 
     public static void assertSameCompileSuccess(String pattern, RegexEngineFactory factory) {
@@ -214,8 +202,6 @@ public final class Re2jOracle {
             tdfaThrew = true;
         }
         assertThat(re2jThrew).as("re2j should reject: %s", pattern).isTrue();
-        assertThat(tdfaThrew)
-                .as("tdfa should reject: %s [%s]", pattern, factory)
-                .isTrue();
+        assertThat(tdfaThrew).as("tdfa should reject: %s [%s]", pattern, factory).isTrue();
     }
 }

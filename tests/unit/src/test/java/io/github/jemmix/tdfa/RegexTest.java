@@ -1,11 +1,11 @@
 package io.github.jemmix.tdfa;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import io.github.jemmix.tdfa.core.CompileOptions;
 import io.github.jemmix.tdfa.core.CompiledRegex;
 import io.github.jemmix.tdfa.core.MatchResult;
 import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Correctness tests for the core compiled-regex tier. Patterns are pinned; inputs chosen to exercise
@@ -282,8 +282,7 @@ class RegexTest {
     @Test
     void posixLeftmostLongest() {
         // Sanity: LONGEST_MATCH should give leftmost-longest.
-        CompiledRegex posix =
-                CompiledRegex.compile("(a|ab)", CompileOptions.of().longestMatch());
+        CompiledRegex posix = CompiledRegex.compile("(a|ab)", CompileOptions.of().longestMatch());
         MatchResult m = posix.match("ab", 0);
         assertThat(m).as("POSIX (a|ab) on 'ab' should be [0,2)").isNotNull();
         assertThat(m.start(0)).isEqualTo(0);

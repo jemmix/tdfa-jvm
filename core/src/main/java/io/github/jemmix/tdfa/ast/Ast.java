@@ -39,8 +39,7 @@ public abstract class Ast {
                 }
             } else if (e instanceof Repeat) {
                 Repeat r = (Repeat) e;
-                tokens.push(
-                        "{" + r.min + "," + (r.max == Integer.MAX_VALUE ? "" : r.max) + "}" + (r.greedy ? "" : "?"));
+                tokens.push("{" + r.min + "," + (r.max == Integer.MAX_VALUE ? "" : r.max) + "}" + (r.greedy ? "" : "?"));
                 tokens.push(r.body);
             } else {
                 sb.append(e.toString());

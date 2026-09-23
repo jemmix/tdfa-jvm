@@ -4,6 +4,7 @@ import io.github.jemmix.tdfa.sim.PikeSim;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
 import io.github.jemmix.tdfa.unicode.UnicodeProviders;
+
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -64,12 +65,7 @@ public final class LayeredComparator {
     static final int ITER_CAP = 64;
 
     public enum Layer {
-        PASS,
-        TIER,
-        CONSTRUCTION,
-        PARSER,
-        SIM_SUSPECT,
-        CHAOS
+        PASS, TIER, CONSTRUCTION, PARSER, SIM_SUSPECT, CHAOS
     }
 
     public record Report(Layer layer, String re2j, String sim, String vm, String asm) {
@@ -146,18 +142,13 @@ public final class LayeredComparator {
             StringBuilder sb = new StringBuilder();
             var m = pat.matcher(in);
             if (m.find()) {
-                fmt(
-                        sb,
-                        m.start(),
-                        m.end(),
-                        g -> {
-                            try {
-                                return m.group(g);
-                            } catch (RuntimeException e) {
-                                return null;
-                            }
-                        },
-                        m.groupCount());
+                fmt(sb, m.start(), m.end(), g -> {
+                    try {
+                        return m.group(g);
+                    } catch (RuntimeException e) {
+                        return null;
+                    }
+                }, m.groupCount());
             } else {
                 sb.append("no");
             }
@@ -203,18 +194,13 @@ public final class LayeredComparator {
             StringBuilder sb = new StringBuilder();
             var m = pat.matcher(in);
             if (m.find()) {
-                fmt(
-                        sb,
-                        m.start(),
-                        m.end(),
-                        g -> {
-                            try {
-                                return m.group(g);
-                            } catch (RuntimeException e) {
-                                return null;
-                            }
-                        },
-                        m.groupCount());
+                fmt(sb, m.start(), m.end(), g -> {
+                    try {
+                        return m.group(g);
+                    } catch (RuntimeException e) {
+                        return null;
+                    }
+                }, m.groupCount());
             } else {
                 sb.append("no");
             }

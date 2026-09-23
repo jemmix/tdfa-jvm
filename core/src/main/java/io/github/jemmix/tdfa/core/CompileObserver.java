@@ -37,20 +37,18 @@ public interface CompileObserver {
 
     /** Pipeline stages, in firing order. */
     enum Stage {
-        PARSE,
-        TNFA,
-        DETERMINIZE,
-        MINIMIZE,
-        REGOPT,
-        ENGINE
+        PARSE, TNFA, DETERMINIZE, MINIMIZE, REGOPT, ENGINE
     }
 
     /** A no-op observer (the default when none is attached). */
-    CompileObserver NONE = new CompileObserver() {};
+    CompileObserver NONE = new CompileObserver() {
+    };
 
     /** A stage completed: {@code nanos} wall-clock, {@code detail} per-stage value (see class doc). */
-    default void stage(Stage stage, long nanos, int detail) {}
+    default void stage(Stage stage, long nanos, int detail) {
+    }
 
     /** A compile-time decision or warning (key=value shaped keys, e.g. {@code engine}). */
-    default void note(String key, String value) {}
+    default void note(String key, String value) {
+    }
 }

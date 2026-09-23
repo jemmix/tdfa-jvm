@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.parser;
 
 import io.github.jemmix.tdfa.ast.Ast;
+
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -33,23 +34,16 @@ public final class ParseResult {
     private final int[] unicodeWordRanges;
     private final Map<String, Integer> namedGroups;
 
-    public ParseResult(
-            Ast ast,
-            int tagCount,
-            int groupCount,
-            boolean multiline,
-            boolean unicodeShorthand,
-            int[] unicodeWordRanges,
-            Map<String, Integer> namedGroups) {
+    public ParseResult(Ast ast, int tagCount, int groupCount, boolean multiline, boolean unicodeShorthand,
+                    int[] unicodeWordRanges, Map<String, Integer> namedGroups) {
         this.ast = ast;
         this.tagCount = tagCount;
         this.groupCount = groupCount;
         this.multiline = multiline;
         this.unicodeShorthand = unicodeShorthand;
         // Unmodifiable copy on construction.
-        this.namedGroups = namedGroups != null
-                ? Collections.unmodifiableMap(new LinkedHashMap<>(namedGroups))
-                : Collections.emptyMap();
+        this.namedGroups = namedGroups != null ? Collections.unmodifiableMap(new LinkedHashMap<>(
+                        namedGroups)) : Collections.emptyMap();
         // Defensive copy: an array field is otherwise only as immutable as
         // the caller's discipline.
         this.unicodeWordRanges = unicodeWordRanges != null ? unicodeWordRanges.clone() : null;

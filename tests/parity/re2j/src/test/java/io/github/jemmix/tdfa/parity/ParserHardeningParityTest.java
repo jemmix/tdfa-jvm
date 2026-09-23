@@ -1,12 +1,12 @@
 package io.github.jemmix.tdfa.parity;
 
-import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameCompileReject;
-import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameCompileSuccess;
-import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
-
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+
+import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameCompileReject;
+import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameCompileSuccess;
+import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
 
 /**
  * Parser-hardening parity (2026-09 pre-freeze review): re2j arbitrates the

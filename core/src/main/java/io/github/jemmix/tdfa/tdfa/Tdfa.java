@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.tdfa;
 
 import io.github.jemmix.tdfa.core.CompileObserver;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
+
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
@@ -211,85 +212,24 @@ public final class Tdfa {
      */
     private int posFlagDepsCache = -1;
 
-    Tdfa(
-            int tagCount,
-            int groupCount,
-            Map<String, Integer> namedGroups,
-            int registerCount,
-            int finalRegBase,
-            int startState,
-            int stateCount,
-            int[] stateMeta,
-            int[] stateBase,
-            int[] stateFinalOpsOff,
-            int[] stateFinalOpsByMask,
-            int[] ranges,
-            int[] ops,
-            int[] entryHiPrefix,
-            int[] stateEntryMask,
-            int[] stateAcceptMask,
-            boolean longestMatch,
-            int[] stopOnAcceptMask,
-            byte[] stopMaskUniform,
-            boolean multiline,
-            boolean unicodeWordBoundary,
-            int[] wordRanges,
-            int[] fixedBase,
-            int[] fixedOffset) {
-        this(
-                tagCount,
-                groupCount,
-                namedGroups,
-                registerCount,
-                finalRegBase,
-                startState,
-                stateCount,
-                stateMeta,
-                stateBase,
-                stateFinalOpsOff,
-                stateFinalOpsByMask,
-                ranges,
-                ops,
-                entryHiPrefix,
-                stateEntryMask,
-                stateAcceptMask,
-                longestMatch,
-                stopOnAcceptMask,
-                stopMaskUniform,
-                multiline,
-                unicodeWordBoundary,
-                wordRanges,
-                fixedBase,
-                fixedOffset,
-                false);
+    Tdfa(int tagCount, int groupCount, Map<String, Integer> namedGroups, int registerCount, int finalRegBase,
+                    int startState, int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
+                    int[] stateFinalOpsByMask, int[] ranges, int[] ops, int[] entryHiPrefix, int[] stateEntryMask,
+                    int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform,
+                    boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase,
+                    int[] fixedOffset) {
+        this(tagCount, groupCount, namedGroups, registerCount, finalRegBase, startState, stateCount, stateMeta,
+                        stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges, ops, entryHiPrefix, stateEntryMask,
+                        stateAcceptMask, longestMatch, stopOnAcceptMask, stopMaskUniform, multiline,
+                        unicodeWordBoundary, wordRanges, fixedBase, fixedOffset, false);
     }
 
-    Tdfa(
-            int tagCount,
-            int groupCount,
-            Map<String, Integer> namedGroups,
-            int registerCount,
-            int finalRegBase,
-            int startState,
-            int stateCount,
-            int[] stateMeta,
-            int[] stateBase,
-            int[] stateFinalOpsOff,
-            int[] stateFinalOpsByMask,
-            int[] ranges,
-            int[] ops,
-            int[] entryHiPrefix,
-            int[] stateEntryMask,
-            int[] stateAcceptMask,
-            boolean longestMatch,
-            int[] stopOnAcceptMask,
-            byte[] stopMaskUniform,
-            boolean multiline,
-            boolean unicodeWordBoundary,
-            int[] wordRanges,
-            int[] fixedBase,
-            int[] fixedOffset,
-            boolean pikeCutMatters) {
+    Tdfa(int tagCount, int groupCount, Map<String, Integer> namedGroups, int registerCount, int finalRegBase,
+                    int startState, int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
+                    int[] stateFinalOpsByMask, int[] ranges, int[] ops, int[] entryHiPrefix, int[] stateEntryMask,
+                    int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform,
+                    boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase,
+                    int[] fixedOffset, boolean pikeCutMatters) {
         this.tagCount = tagCount;
         this.groupCount = groupCount;
         this.namedGroups = namedGroups != null ? Collections.unmodifiableMap(namedGroups) : Collections.emptyMap();
@@ -321,21 +261,7 @@ public final class Tdfa {
         // BEFORE any array-indexing field read so every corruption (short
         // arrays, bad startState) reports as this gate's ISE, never a raw
         // AIOOBE out of the constructor.
-        validate(
-                startState,
-                stateCount,
-                stateMeta,
-                stateBase,
-                stateFinalOpsOff,
-                stateFinalOpsByMask,
-                ranges,
-                entryHiPrefix,
-                ops,
-                stateEntryMask,
-                stateAcceptMask,
-                registerCount,
-                finalRegBase,
-                tagCount);
+        validate(startState, stateCount, stateMeta, stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges, entryHiPrefix, ops, stateEntryMask, stateAcceptMask, registerCount, finalRegBase, tagCount);
         this.startStateEntryMask = stateEntryMask[startState];
     }
 
@@ -389,94 +315,77 @@ public final class Tdfa {
      *       with working registers corrupts the MatchResult readout)</li>
      * </ul>
      */
-    private static void validate(
-            int startState,
-            int stateCount,
-            int[] stateMeta,
-            int[] stateBase,
-            int[] stateFinalOpsOff,
-            int[] stateFinalOpsByMask,
-            int[] ranges,
-            int[] entryHiPrefix,
-            int[] ops,
-            int[] stateEntryMask,
-            int[] stateAcceptMask,
-            int registerCount,
-            int finalRegBase,
-            int tagCount) {
+    private static void validate(int startState, int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] stateFinalOpsByMask, int[] ranges, int[] entryHiPrefix, int[] ops, int[] stateEntryMask, int[] stateAcceptMask, int registerCount, int finalRegBase, int tagCount) {
         int entries = ranges.length / 5;
         if (startState < 0 || startState >= stateCount) {
             throw new IllegalStateException(
-                    "tdfa: startState " + startState + " outside state space [0," + stateCount + ")");
+                            "tdfa: startState " + startState + " outside state space [0," + stateCount + ")");
         }
         if (stateAcceptMask.length != stateCount) {
             throw new IllegalStateException(
-                    "tdfa: stateAcceptMask length " + stateAcceptMask.length + " != stateCount " + stateCount);
+                            "tdfa: stateAcceptMask length " + stateAcceptMask.length + " != stateCount " + stateCount);
         }
         if (stateMeta.length != stateCount) {
             throw new IllegalStateException(
-                    "tdfa: stateMeta length " + stateMeta.length + " != stateCount " + stateCount);
+                            "tdfa: stateMeta length " + stateMeta.length + " != stateCount " + stateCount);
         }
         if (stateBase.length != stateCount) {
             throw new IllegalStateException(
-                    "tdfa: stateBase length " + stateBase.length + " != stateCount " + stateCount);
+                            "tdfa: stateBase length " + stateBase.length + " != stateCount " + stateCount);
         }
         if (stateFinalOpsOff.length != stateCount) {
             throw new IllegalStateException(
-                    "tdfa: stateFinalOpsOff length " + stateFinalOpsOff.length + " != stateCount " + stateCount);
+                            "tdfa: stateFinalOpsOff length " + stateFinalOpsOff.length + " != stateCount " + stateCount);
         }
         if (stateEntryMask.length != stateCount) {
             throw new IllegalStateException(
-                    "tdfa: stateEntryMask length " + stateEntryMask.length + " != stateCount " + stateCount);
+                            "tdfa: stateEntryMask length " + stateEntryMask.length + " != stateCount " + stateCount);
         }
         if (entryHiPrefix.length != entries) {
             throw new IllegalStateException(
-                    "tdfa: entryHiPrefix length " + entryHiPrefix.length + " != range entries " + entries);
+                            "tdfa: entryHiPrefix length " + entryHiPrefix.length + " != range entries " + entries);
         }
         for (int s = 0; s < stateCount; s++) {
             int meta = stateMeta[s];
             int cnt = rangeCount(meta);
             int base = stateBase[s];
             if (base < 0 || base + cnt > entries) {
-                throw new IllegalStateException("tdfa: state " + s + " range base/count out of bounds" + " (base="
-                        + base + ", cnt=" + cnt + ", entries=" + entries + ")");
+                throw new IllegalStateException(
+                                "tdfa: state " + s + " range base/count out of bounds" + " (base=" + base + ", cnt=" + cnt + ", entries=" + entries + ")");
             }
             int prevLo = -1;
             int prefixHi = -1;
             for (int i = 0; i < cnt; i++) {
                 int o = (base + i) * 5;
-                int lo = ranges[o],
-                        hi = ranges[o + 1],
-                        target = ranges[o + 2],
-                        opsOff = ranges[o + 3],
-                        mask = ranges[o + 4];
+                int lo = ranges[o], hi = ranges[o + 1], target = ranges[o + 2], opsOff = ranges[o + 3],
+                                mask = ranges[o + 4];
                 if (lo < 0 || hi > 0x10FFFF || lo > hi) {
                     throw new IllegalStateException(
-                            "tdfa: state " + s + " entry " + i + " outside codepoint domain [" + lo + "," + hi + "]");
+                                    "tdfa: state " + s + " entry " + i + " outside codepoint domain [" + lo + "," + hi + "]");
                 }
                 if (lo < prevLo) {
                     throw new IllegalStateException("tdfa: state " + s + " entries not lo-ascending at " + i);
                 }
                 prevLo = lo;
                 if (target >= stateCount) {
-                    throw new IllegalStateException("tdfa: state " + s + " entry " + i + " target " + target
-                            + " beyond state count " + stateCount);
+                    throw new IllegalStateException(
+                                    "tdfa: state " + s + " entry " + i + " target " + target + " beyond state count " + stateCount);
                 }
                 if (target < -1) {
-                    throw new IllegalStateException("tdfa: state " + s + " entry " + i + " target " + target
-                            + " < -1 (dead marker is exactly -1)");
+                    throw new IllegalStateException(
+                                    "tdfa: state " + s + " entry " + i + " target " + target + " < -1 (dead marker is exactly -1)");
                 }
                 if (opsOff != 0) {
                     checkOpsBlock(s, i, opsOff, ops, false, finalRegBase, tagCount);
                 }
                 if ((mask & ~0x3F) != 0) {
                     throw new IllegalStateException(
-                            "tdfa: state " + s + " entry " + i + " unknown assertion-mask bits");
+                                    "tdfa: state " + s + " entry " + i + " unknown assertion-mask bits");
                 }
                 prefixHi = Math.max(prefixHi, hi);
                 if (entryHiPrefix[base + i] != prefixHi) {
                     throw new IllegalStateException(
-                            "tdfa: state " + s + " entry " + i + " prefix-max invariant broken");
+                                    "tdfa: state " + s + " entry " + i + " prefix-max invariant broken");
                 }
             }
             if ((stateEntryMask[s] & ~0x3F) != 0) {
@@ -504,8 +413,8 @@ public final class Tdfa {
             }
         }
         if (tagCount > 0 && (finalRegBase < 0 || finalRegBase + tagCount > registerCount)) {
-            throw new IllegalStateException("tdfa: final-register block [" + finalRegBase + ","
-                    + (finalRegBase + tagCount) + ") exceeds register file of " + registerCount);
+            throw new IllegalStateException(
+                            "tdfa: final-register block [" + finalRegBase + "," + (finalRegBase + tagCount) + ") exceeds register file of " + registerCount);
         }
     }
 
@@ -518,30 +427,28 @@ public final class Tdfa {
      * paths clobber accept-time values (runners apply φ eagerly at
      * accept-record).
      */
-    private static void checkOpsBlock(
-            int s, int i, int opsOff, int[] ops, boolean isFinal, int finalRegBase, int tagCount) {
+    private static void checkOpsBlock(int s, int i, int opsOff, int[] ops, boolean isFinal, int finalRegBase, int tagCount) {
         if (opsOff < 0 || opsOff >= ops.length) {
             throw new IllegalStateException(
-                    "tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i) + " ops offset out of bounds");
+                            "tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i) + " ops offset out of bounds");
         }
         int j = opsOff;
         while (true) {
             if (j >= ops.length) {
-                throw new IllegalStateException("tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i)
-                        + " ops block at " + opsOff + " not OP_END-terminated within ops");
+                throw new IllegalStateException(
+                                "tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i) + " ops block at " + opsOff + " not OP_END-terminated within ops");
             }
             if (ops[j] == OP_END) {
                 break;
             }
             if (j + 2 >= ops.length) {
-                throw new IllegalStateException("tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i)
-                        + " ops block at " + opsOff + " not OP_END-terminated within ops");
+                throw new IllegalStateException(
+                                "tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i) + " ops block at " + opsOff + " not OP_END-terminated within ops");
             }
             int dst = ops[j + 1];
             if (!isFinal && tagCount > 0 && dst >= finalRegBase && dst < finalRegBase + tagCount) {
-                throw new IllegalStateException("tdfa: state " + s + " entry " + i
-                        + " transition op writes final register " + dst
-                        + " — final block is final-ops-only");
+                throw new IllegalStateException(
+                                "tdfa: state " + s + " entry " + i + " transition op writes final register " + dst + " — final block is final-ops-only");
             }
             j += 3;
         }
@@ -609,8 +516,7 @@ public final class Tdfa {
      * Ledger variant of {@link #compileUnpruned(Tnfa, boolean, CompileObserver)}
      * (see {@link #compile(Tnfa, boolean, CompileObserver, WorkMeter)}).
      */
-    public static Tdfa compileUnpruned(
-            Tnfa nfa, boolean longestMatch, CompileObserver observer, WorkMeter sharedMeter) {
+    public static Tdfa compileUnpruned(Tnfa nfa, boolean longestMatch, CompileObserver observer, WorkMeter sharedMeter) {
         return new TdfaCompiler(nfa, longestMatch, true, sharedMeter).compile(observer);
     }
 

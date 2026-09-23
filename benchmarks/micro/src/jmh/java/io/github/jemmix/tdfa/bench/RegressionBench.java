@@ -3,7 +3,6 @@ package io.github.jemmix.tdfa.bench;
 import io.github.jemmix.tdfa.Pattern;
 import io.github.jemmix.tdfa.core.Matcher;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import java.util.concurrent.TimeUnit;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -13,6 +12,8 @@ import org.openjdk.jmh.annotations.OutputTimeUnit;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * Regression-tracking suite — OUR engine only (VM + ASM), no cross-engine comparison.
@@ -152,7 +153,7 @@ public class RegressionBench {
 
     static int findAll(Pattern r, String in) {
         int n = 0;
-        for (Matcher m = r.matcher(in); m.find(); ) {
+        for (Matcher m = r.matcher(in); m.find();) {
             n++;
         }
         return n;

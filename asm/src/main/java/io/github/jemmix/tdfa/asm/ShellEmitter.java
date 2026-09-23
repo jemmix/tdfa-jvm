@@ -2,14 +2,15 @@ package io.github.jemmix.tdfa.asm;
 
 import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.concurrent.atomic.AtomicLong;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Emits the per-pattern facade shell — a Pattern/PatternMatcher pair into the
@@ -88,14 +89,8 @@ public final class ShellEmitter {
          *  provider identity. */
         private final UnicodeDataProvider provider;
 
-        public Spec(
-                String pattern,
-                int flags,
-                int programSize,
-                RegexEngine engine,
-                RegexEngine wholeEngine,
-                String engineInternalName,
-                UnicodeDataProvider provider) {
+        public Spec(String pattern, int flags, int programSize, RegexEngine engine, RegexEngine wholeEngine,
+                        String engineInternalName, UnicodeDataProvider provider) {
             this.pattern = pattern;
             this.flags = flags;
             this.programSize = programSize;
@@ -140,7 +135,8 @@ public final class ShellEmitter {
      * Throws {@link IllegalStateException} on emission problems; the caller
      * falls back to the shared implementation.
      */
-    private ShellEmitter() {}
+    private ShellEmitter() {
+    }
 
     public static Object emit(Spec spec) {
         String engOwner = spec.engineInternalName() != null ? spec.engineInternalName() : ENGINE_ITF;
@@ -162,10 +158,8 @@ public final class ShellEmitter {
 
         // ---- GenNNNMatcher extends PatternMatcher ----
         FrameClassWriter cw = new FrameClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
-        cw.visit(
-                Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER, matOwner, null, PATMAT, null);
-        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "p", patDesc, null, null)
-                .visitEnd();
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER, matOwner, null, PATMAT, null);
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "p", patDesc, null, null).visitEnd();
 
         // ctor(GenNNNPattern, CharSequence)
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(" + patDesc + CS + ")V", null, null);
@@ -228,12 +222,7 @@ public final class ShellEmitter {
         mv.visitVarInsn(Opcodes.ILOAD, 1);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "scratch", SCRATCH_D);
-        mv.visitMethodInsn(
-                concrete ? Opcodes.INVOKEVIRTUAL : Opcodes.INVOKEINTERFACE,
-                engOwner,
-                "match",
-                "(" + CS + "I" + SCRATCH_D + ")L" + RESULT + ";",
-                !concrete);
+        mv.visitMethodInsn(concrete ? Opcodes.INVOKEVIRTUAL : Opcodes.INVOKEINTERFACE, engOwner, "match", "(" + CS + "I" + SCRATCH_D + ")L" + RESULT + ";", !concrete);
         mv.visitVarInsn(Opcodes.ASTORE, 2);
         emitAcceptTail(mv);
         mv.visitMaxs(0, 0);
@@ -251,8 +240,7 @@ public final class ShellEmitter {
         mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "input", CS);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "scratch", SCRATCH_D);
-        mv.visitMethodInsn(
-                Opcodes.INVOKEINTERFACE, ENGINE_ITF, "matchWhole", "(" + CS + SCRATCH_D + ")L" + RESULT + ";", true);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, ENGINE_ITF, "matchWhole", "(" + CS + SCRATCH_D + ")L" + RESULT + ";", true);
         mv.visitVarInsn(Opcodes.ASTORE, 1);
         // hasMatch = m != null; if (m != null) { match=m; lms=m.start(0); lme=m.end(0); } return hasMatch;
         Label mNull = new Label(), hasMatchSet = new Label();
@@ -300,12 +288,7 @@ public final class ShellEmitter {
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "scratch", SCRATCH_D);
-        mv.visitMethodInsn(
-                concrete ? Opcodes.INVOKEVIRTUAL : Opcodes.INVOKEINTERFACE,
-                engOwner,
-                "match",
-                "(" + CS + "I" + SCRATCH_D + ")L" + RESULT + ";",
-                !concrete);
+        mv.visitMethodInsn(concrete ? Opcodes.INVOKEVIRTUAL : Opcodes.INVOKEINTERFACE, engOwner, "match", "(" + CS + "I" + SCRATCH_D + ")L" + RESULT + ";", !concrete);
         mv.visitVarInsn(Opcodes.ASTORE, 1);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         Label laNull = new Label();
@@ -348,23 +331,11 @@ public final class ShellEmitter {
 
         // ---- GenNNNPattern extends TDFAPattern ----
         cw = new FrameClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
-        cw.visit(
-                Opcodes.V1_8,
-                Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER,
-                patOwner,
-                null,
-                TDFAPATTERN,
-                null);
-        cw.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, "eng", engDesc, null, null)
-                .visitEnd();
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER, patOwner, null, TDFAPATTERN, null);
+        cw.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, "eng", engDesc, null, null).visitEnd();
         // (String pattern, int flags, int ps, RegexEngine e, RegexEngine w, UnicodeDataProvider prov, Eng eng)
         String provDesc = "Lio/github/jemmix/tdfa/unicode/UnicodeDataProvider;";
-        mv = cw.visitMethod(
-                Opcodes.ACC_PUBLIC,
-                "<init>",
-                "(Ljava/lang/String;IIL" + ENGINE_ITF + ";L" + ENGINE_ITF + ";" + provDesc + engDesc + ")V",
-                null,
-                null);
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(Ljava/lang/String;IIL" + ENGINE_ITF + ";L" + ENGINE_ITF + ";" + provDesc + engDesc + ")V", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
@@ -373,12 +344,7 @@ public final class ShellEmitter {
         mv.visitVarInsn(Opcodes.ALOAD, 4);
         mv.visitVarInsn(Opcodes.ALOAD, 5);
         mv.visitVarInsn(Opcodes.ALOAD, 6);
-        mv.visitMethodInsn(
-                Opcodes.INVOKESPECIAL,
-                TDFAPATTERN,
-                "<init>",
-                "(Ljava/lang/String;IIL" + ENGINE_ITF + ";L" + ENGINE_ITF + ";" + provDesc + ")V",
-                false);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, TDFAPATTERN, "<init>", "(Ljava/lang/String;IIL" + ENGINE_ITF + ";L" + ENGINE_ITF + ";" + provDesc + ")V", false);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitVarInsn(Opcodes.ALOAD, 7);
         mv.visitFieldInsn(Opcodes.PUTFIELD, patOwner, "eng", engDesc);
@@ -416,29 +382,13 @@ public final class ShellEmitter {
 
         try {
             ClassLoader cl = engInstance.getClass().getClassLoader();
-            TdfaAsmBackend.GenClassLoader gcl = cl instanceof TdfaAsmBackend.GenClassLoader
-                    ? (TdfaAsmBackend.GenClassLoader) cl
-                    : new TdfaAsmBackend.GenClassLoader(cl);
+            TdfaAsmBackend.GenClassLoader gcl = cl instanceof TdfaAsmBackend.GenClassLoader ? (TdfaAsmBackend.GenClassLoader) cl : new TdfaAsmBackend.GenClassLoader(
+                            cl);
             gcl.register(patOwner.replace('/', '.'), patBytes);
             gcl.register(matOwner.replace('/', '.'), matBytes);
             Class<?> patCls = Class.forName(patOwner.replace('/', '.'), true, gcl);
             Class<?> engCls = concrete ? Class.forName(engOwner.replace('/', '.'), true, gcl) : RegexEngine.class;
-            return patCls.getDeclaredConstructor(
-                            String.class,
-                            int.class,
-                            int.class,
-                            RegexEngine.class,
-                            RegexEngine.class,
-                            UnicodeDataProvider.class,
-                            engCls)
-                    .newInstance(
-                            spec.pattern(),
-                            spec.flags(),
-                            spec.programSize(),
-                            engInstance,
-                            spec.wholeEngine(),
-                            spec.provider(),
-                            engInstance);
+            return patCls.getDeclaredConstructor(String.class, int.class, int.class, RegexEngine.class, RegexEngine.class, UnicodeDataProvider.class, engCls).newInstance(spec.pattern(), spec.flags(), spec.programSize(), engInstance, spec.wholeEngine(), spec.provider(), engInstance);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("shell emission failed", e);
         }

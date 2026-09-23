@@ -1,15 +1,16 @@
 package io.github.jemmix.tdfa.rebar;
 
+import org.tomlj.Toml;
+import org.tomlj.TomlArray;
+import org.tomlj.TomlParseResult;
+import org.tomlj.TomlTable;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
-import org.tomlj.Toml;
-import org.tomlj.TomlArray;
-import org.tomlj.TomlParseResult;
-import org.tomlj.TomlTable;
 
 /**
  * Loads rebar benchmark scenarios from a {@code benchmarks/} directory tree
@@ -52,16 +53,13 @@ public final class ScenarioLoader {
             throw new IOException("not a directory: " + definitionsDir);
         }
         try (var walk = Files.walk(definitionsDir)) {
-            walk.filter(p -> p.toString().endsWith(".toml"))
-                    .filter(Files::isRegularFile)
-                    .sorted()
-                    .forEach(toml -> {
-                        try {
-                            loadFile(definitionsDir, toml, out);
-                        } catch (IOException e) {
-                            // Skip files we can't read; surfaced as missing scenarios.
-                        }
-                    });
+            walk.filter(p -> p.toString().endsWith(".toml")).filter(Files::isRegularFile).sorted().forEach(toml -> {
+                try {
+                    loadFile(definitionsDir, toml, out);
+                } catch (IOException e) {
+                    // Skip files we can't read; surfaced as missing scenarios.
+                }
+            });
         }
         return List.copyOf(out);
     }
@@ -122,8 +120,8 @@ public final class ScenarioLoader {
                 engines.add(eng.getString(i));
             }
         }
-        return new Scenario(
-                fullName, group, name, model, regex, caseInsensitive, unicode, hsSpec, count, List.copyOf(engines));
+        return new Scenario(fullName, group, name, model, regex, caseInsensitive, unicode, hsSpec, count,
+                        List.copyOf(engines));
     }
 
     /**
@@ -309,15 +307,8 @@ public final class ScenarioLoader {
                 boolean utf8Lossy = boolOr(t.getBoolean("utf8-lossy"), false);
                 Long ls = t.getLong("line-start");
                 Long le = t.getLong("line-end");
-                return new Scenario.HaystackSpec.FromPath(
-                        t.getString("path"),
-                        trim,
-                        utf8Lossy,
-                        repeat,
-                        prepend,
-                        append,
-                        ls != null ? ls.intValue() : null,
-                        le != null ? le.intValue() : null);
+                return new Scenario.HaystackSpec.FromPath(t.getString("path"), trim, utf8Lossy, repeat, prepend, append,
+                                ls != null ? ls.intValue() : null, le != null ? le.intValue() : null);
             }
         }
         return null;
@@ -351,7 +342,7 @@ public final class ScenarioLoader {
             // (codepoint vs byte spans, etc.). A few scenarios where re2j
             // intentionally diverges from j.u.r (e.g. . matches \r, $ doesn't
             // match before final line terminator) are patched in vendor/patches.
-            String[] identities = new String[] {"java/hotspot", "re2", ".*"};
+            String[] identities = new String[]{"java/hotspot", "re2", ".*"};
             for (String identity : identities) {
                 for (int i = 0; i < arr.size(); i++) {
                     TomlTable t = arr.getTable(i);

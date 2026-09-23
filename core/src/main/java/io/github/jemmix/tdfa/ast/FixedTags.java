@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.ast;
 
 import io.github.jemmix.tdfa.tdfa.FrameBudget;
+
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
@@ -45,7 +46,8 @@ public final class FixedTags {
      *  real value (which is always {@code >= 0}). */
     private static final int NAN = Integer.MIN_VALUE;
 
-    private FixedTags() {}
+    private FixedTags() {
+    }
 
     /** Walk {@code root}, annotating each fixable {@link Ast.Tag} in place. */
     public static void apply(Ast root) {
@@ -224,11 +226,7 @@ public final class FixedTags {
                 rl = levelDist;
                 return;
             }
-            if (e instanceof Ast.Empty
-                    || e instanceof Ast.StartAnchor
-                    || e instanceof Ast.EndAnchor
-                    || e instanceof Ast.WordBoundary
-                    || e instanceof Ast.NoWordBoundary) {
+            if (e instanceof Ast.Empty || e instanceof Ast.StartAnchor || e instanceof Ast.EndAnchor || e instanceof Ast.WordBoundary || e instanceof Ast.NoWordBoundary) {
                 rb = baseTag;
                 rd = dist;
                 rl = levelDist;

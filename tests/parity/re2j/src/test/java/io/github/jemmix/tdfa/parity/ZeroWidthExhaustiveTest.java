@@ -1,16 +1,17 @@
 package io.github.jemmix.tdfa.parity;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import com.google.re2j.Re2jUnicodeProvider;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import io.github.jemmix.tdfa.sim.PikeSim;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.stream.Stream;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Stream;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Exhaustive small-grammar enumeration of the zero-width corner that produced
@@ -45,7 +46,7 @@ class ZeroWidthExhaustiveTest {
             }
         }
         // Multiline variants (inline (?m:) scoping).
-        for (String atom : new String[] {"^", "$"}) {
+        for (String atom : new String[]{"^", "$"}) {
             for (String q : QUANTS) {
                 for (String pre : PREFIX) {
                     for (String suf : SUFFIX) {
@@ -58,20 +59,11 @@ class ZeroWidthExhaustiveTest {
     }
 
     static List<String> inputs() {
-        return List.of(
-                "ab",
-                "a b",
-                "  x  ",
-                "a\nb",
-                "\na\n",
-                "Ω9\ud800\udfff",
-                "ab\udc21\ud800x",
-                "\udc00\ud800\r",
-                "aaaa bbbb aaaa",
-                "€一漢 x");
+        return List.of("ab", "a b", "  x  ", "a\nb", "\na\n", "Ω9\ud800\udfff", "ab\udc21\ud800x", "\udc00\ud800\r", "aaaa bbbb aaaa", "€一漢 x");
     }
 
-    static record Case(String pattern, String input) {}
+    static record Case(String pattern, String input) {
+    }
 
     static Stream<Arguments> cases() {
         List<Arguments> out = new ArrayList<>();
@@ -91,15 +83,11 @@ class ZeroWidthExhaustiveTest {
     void zeroWidthCornerMatchesRe2j(Case c, RegexEngineFactory factory) {
         String expected = re2jProtocol(c.pattern(), c.input());
         String actual = tdfaProtocol(c.pattern(), c.input(), factory);
-        assertThat(actual)
-                .as("pattern=\"%s\" input-encoded=\"%s\" [%s]", c.pattern(), escape(c.input()), factory)
-                .isEqualTo(expected);
+        assertThat(actual).as("pattern=\"%s\" input-encoded=\"%s\" [%s]", c.pattern(), escape(c.input()), factory).isEqualTo(expected);
         // Layered audit: the PikeSim reference (over our Tnfa, no determinizer)
         // must also agree — sim-vs-DFA disagreement on any enumerated case is a
         // determinizer bug, pre-localized by construction.
-        assertThat(simProtocol(c.pattern(), c.input()))
-                .as("sim-vs-re2j pattern=\"%s\" input-encoded=\"%s\"", c.pattern(), escape(c.input()))
-                .isEqualTo(expected);
+        assertThat(simProtocol(c.pattern(), c.input())).as("sim-vs-re2j pattern=\"%s\" input-encoded=\"%s\"", c.pattern(), escape(c.input())).isEqualTo(expected);
     }
 
     /** PikeSim reference in this test's protocol — the audit's fourth column. */
@@ -136,8 +124,7 @@ class ZeroWidthExhaustiveTest {
     }
 
     private static String tdfaProtocol(String pattern, String input, RegexEngineFactory factory) {
-        var m = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory, Re2jUnicodeProvider.INSTANCE)
-                .matcher(input);
+        var m = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory, Re2jUnicodeProvider.INSTANCE).matcher(input);
         StringBuilder sb = new StringBuilder();
         boolean found = m.find();
         sb.append(found ? "true " + m.group() : "false").append(' ').append(m.groupCount());

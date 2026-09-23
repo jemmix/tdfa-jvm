@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.bench;
 
 import io.github.jemmix.tdfa.Pattern;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -33,13 +34,13 @@ public final class QuickBench {
 
     static final String DENSE_INPUT = rep("running singing hopping jumping coding ", 1 << 14);
     static final String SPARSE_INPUT = rep("lorem ipsum dolor sit z123q amet consec z987q tetur elit ", 1 << 14);
-    static final String LATIN1_INPUT = rep(
-            "d\u00e9veloppement \u00e9tablissement \u00e9v\u00e9nement diff\u00e9rent \u00e0 c\u00f4t\u00e9 engagement ",
-            1 << 14);
+    static final String LATIN1_INPUT = rep("d\u00e9veloppement \u00e9tablissement \u00e9v\u00e9nement diff\u00e9rent \u00e0 c\u00f4t\u00e9 engagement ", 1 << 14);
 
-    private QuickBench() {}
+    private QuickBench() {
+    }
 
-    record Op(String name, LongSupplier fn) {}
+    record Op(String name, LongSupplier fn) {
+    }
 
     public static void main(String[] args) throws Exception {
         List<double[]> scores = new ArrayList<>(); // [index, score]
@@ -73,22 +74,16 @@ public final class QuickBench {
         }
         long sink = 0;
         for (int i = 0; i < ops.size(); i++) {
-            scores.add(new double[] {i, norm[i]});
+            scores.add(new double[]{i, norm[i]});
             sink ^= (long) rawBest[i];
-            System.err.printf(
-                    Locale.ROOT, "%-34s raw %10.1f ns  norm %8.2f%n", ops.get(i).name(), rawBest[i], norm[i]);
+            System.err.printf(Locale.ROOT, "%-34s raw %10.1f ns  norm %8.2f%n", ops.get(i).name(), rawBest[i], norm[i]);
         }
         System.err.println("(sink " + sink + ")");
 
         StringBuilder json = new StringBuilder("[\n");
         for (int k = 0; k < scores.size(); k++) {
             Op op = ops.get((int) scores.get(k)[0]);
-            json.append(String.format(
-                    Locale.ROOT,
-                    "  {\"benchmark\":\"io.github.jemmix.tdfa.bench.QuickBench.%s\",\"primaryMetric\":{\"score\":%.3f}}%s%n",
-                    op.name(),
-                    scores.get(k)[1],
-                    k < scores.size() - 1 ? "," : ""));
+            json.append(String.format(Locale.ROOT, "  {\"benchmark\":\"io.github.jemmix.tdfa.bench.QuickBench.%s\",\"primaryMetric\":{\"score\":%.3f}}%s%n", op.name(), scores.get(k)[1], k < scores.size() - 1 ? "," : ""));
         }
         json.append("]");
         String out = args.length > 0 ? args[0] : "quickbench.json";
@@ -146,14 +141,14 @@ public final class QuickBench {
         ops.add(new Op("compile.vm", () -> System.identityHashCode(Pattern.compile(compileRe, 0, TdfaRunner::new))));
         ops.add(new Op("compile.asm", () -> System.identityHashCode(Pattern.compile(compileRe))));
         // re2j shim compile: eager engine + (previously eager, now lazy) anchored-both engine
-        ops.add(new Op(
-                "compile.re2j", () -> System.identityHashCode(io.github.jemmix.tdfa.Pattern.compile(compileRe))));
+        ops.add(new Op("compile.re2j",
+                        () -> System.identityHashCode(io.github.jemmix.tdfa.Pattern.compile(compileRe))));
         return ops;
     }
 
     static int findAll(Pattern r, String in) {
         int n = 0;
-        for (io.github.jemmix.tdfa.core.Matcher m = r.matcher(in); m.find(); ) {
+        for (io.github.jemmix.tdfa.core.Matcher m = r.matcher(in); m.find();) {
             n++;
         }
         return n;
@@ -213,7 +208,7 @@ public final class QuickBench {
             long check = op.getAsLong();
             if (expected != null && check != expected) {
                 throw new IllegalStateException(
-                        "WRONG RESULT for " + name + " during measurement: " + check + " != " + expected);
+                                "WRONG RESULT for " + name + " during measurement: " + check + " != " + expected);
             }
         }
         if (sink == 42) {
@@ -263,8 +258,7 @@ public final class QuickBench {
     /** Expected op results (match counts etc.) computed with java.util.regex as the oracle. */
     static Map<String, Long> expectedCounts() {
         Map<String, Long> m = new HashMap<>();
-        java.util.regex.Matcher two =
-                java.util.regex.Pattern.compile("(\\w+)\\s+(\\w+)").matcher("hello brave new world 42");
+        java.util.regex.Matcher two = java.util.regex.Pattern.compile("(\\w+)\\s+(\\w+)").matcher("hello brave new world 42");
         m.put("info.anchored.vm", two.matches() ? 1L : 0L);
         m.put("info.anchored.asm", two.matches() ? 1L : 0L);
         m.put("info.extract.vm", jurFind("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "ip=192.168.1.77 rest"));

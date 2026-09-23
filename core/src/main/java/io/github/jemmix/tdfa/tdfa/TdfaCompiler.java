@@ -1,13 +1,5 @@
 package io.github.jemmix.tdfa.tdfa;
 
-import static io.github.jemmix.tdfa.tdfa.Tdfa.NEVER_STOP;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_COPY;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_END;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_SET_NIL;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_SET_POS;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.compile;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.rangeCount;
-
 import io.github.jemmix.tdfa.ast.CharClass;
 import io.github.jemmix.tdfa.core.CompileObserver;
 import io.github.jemmix.tdfa.regopt.Cfg;
@@ -15,6 +7,7 @@ import io.github.jemmix.tdfa.regopt.Cfg.Block;
 import io.github.jemmix.tdfa.regopt.Cfg.Op;
 import io.github.jemmix.tdfa.regopt.Optimize;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
+
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -24,6 +17,14 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.TreeSet;
+
+import static io.github.jemmix.tdfa.tdfa.Tdfa.NEVER_STOP;
+import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_COPY;
+import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_END;
+import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_SET_NIL;
+import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_SET_POS;
+import static io.github.jemmix.tdfa.tdfa.Tdfa.compile;
+import static io.github.jemmix.tdfa.tdfa.Tdfa.rangeCount;
 
 // Tdfa's opcode/flag constants, referenced unqualified throughout (the code
 // was moved verbatim out of Tdfa's nested Compiler class).
@@ -296,9 +297,7 @@ final class TdfaCompiler {
         long memBudget = Budgets.compileMemoryBytes();
         if (activeSetBytes > memBudget) {
             throw new IllegalStateException(
-                    "pattern too large: breakpoint active-set precompute exceeds the compile memory budget ("
-                            + cells + " cells x " + words + " words = " + activeSetBytes + " weighted bytes — raise -D"
-                            + Budgets.COMPILE_MEMORY_PROP + ")");
+                            "pattern too large: breakpoint active-set precompute exceeds the compile memory budget (" + cells + " cells x " + words + " words = " + activeSetBytes + " weighted bytes — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
         }
         this.rangeActiveEdges = new long[cells][];
         this.rangeSameEdges = new boolean[cells];
@@ -352,17 +351,17 @@ final class TdfaCompiler {
         for (int i = 0; i < ops.size(); i++) {
             Op op = ops.get(i);
             switch (op.kind) {
-                case Cfg.KIND_SET:
+                case Cfg.KIND_SET :
                     flat[i * 3] = op.value == Cfg.VAL_POS ? OP_SET_POS : OP_SET_NIL;
                     flat[i * 3 + 1] = op.dst;
                     flat[i * 3 + 2] = 0;
                     break;
-                case Cfg.KIND_COPY:
+                case Cfg.KIND_COPY :
                     flat[i * 3] = OP_COPY;
                     flat[i * 3 + 1] = op.dst;
                     flat[i * 3 + 2] = op.src;
                     break;
-                default:
+                default :
                     throw new IllegalStateException("cannot encode op kind " + op.kind);
             }
         }
@@ -448,9 +447,7 @@ final class TdfaCompiler {
     void chargeRange() {
         if ((boxedRangeBytes += BudgetWeights.RANGE_BOXED_BYTES) > Budgets.compileMemoryBytes()) {
             throw new IllegalStateException(
-                    "pattern too large: transition range entries exceed the compile memory budget ("
-                            + (boxedRangeBytes / BudgetWeights.RANGE_BOXED_BYTES) + " live entries, " + boxedRangeBytes
-                            + " weighted bytes — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
+                            "pattern too large: transition range entries exceed the compile memory budget (" + (boxedRangeBytes / BudgetWeights.RANGE_BOXED_BYTES) + " live entries, " + boxedRangeBytes + " weighted bytes — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
         }
     }
 
@@ -535,8 +532,8 @@ final class TdfaCompiler {
         if (debug) {
             System.err.println("[tdfa] tags=" + tags + " breakpoints=" + breakpoints.length);
         }
-        List<Config> initSeed = Collections.unmodifiableList(Collections.singletonList(
-                new Config(nfa.start, initialRegisters, HistTable.EMPTY_ID, HistTable.EMPTY_ID, 0)));
+        List<Config> initSeed = Collections.unmodifiableList(Collections.singletonList(new Config(nfa.start,
+                        initialRegisters, HistTable.EMPTY_ID, HistTable.EMPTY_ID, 0)));
         List<Config> initClosure = epsilonClosure(initSeed);
         int startId = index.addState(initClosure, null, initSeed).targetId;
         work.push(startId);
@@ -553,8 +550,7 @@ final class TdfaCompiler {
             if (debug) {
                 System.err.println("[tdfa] processing state " + sid + " configs:");
                 for (Config c : cur) {
-                    System.err.println("    state=" + c.state + " l=" + Arrays.toString(hist.content(c.l)) + " regs="
-                            + Arrays.toString(c.regs) + " mask=" + c.emptyMask);
+                    System.err.println("    state=" + c.state + " l=" + Arrays.toString(hist.content(c.l)) + " regs=" + Arrays.toString(c.regs) + " mask=" + c.emptyMask);
                 }
             }
             // Assertion-context split (assertions into the alphabet, by
@@ -597,7 +593,7 @@ final class TdfaCompiler {
             List<int[]> ctxList = new ArrayList<>(4); // {orMask, coverage} per context
             List<List<Config>> ctxInputs = new ArrayList<>(4);
             if (ctxMasks == null || ctxMasks.isEmpty() || (ctxMasks.size() == 1 && ctxMasks.contains(0))) {
-                ctxList.add(new int[] {0, 0});
+                ctxList.add(new int[]{0, 0});
                 ctxInputs.add(pruneBelowAccept(cur)); // uniform context: whole closure (pike-pruned)
             } else {
                 // Dedup live-sets by their alive-mask pattern over the 64 runtime
@@ -642,7 +638,7 @@ final class TdfaCompiler {
                         }
                     }
                     pruneBelowAcceptInPlace(live);
-                    ctxList.add(new int[] {r, Integer.bitCount(pat)});
+                    ctxList.add(new int[]{r, Integer.bitCount(pat)});
                     ctxInputs.add(live);
                 }
                 // Emit most coverage first (superset live-sets precede their
@@ -713,8 +709,7 @@ final class TdfaCompiler {
                         continue;
                     }
                     perSetDone[setId] = true;
-                    List<Config> stepped =
-                            stepOnSymbol(stepInput, rangeActiveEdges[bi], requiredMaskOut, ownCount, ctxMask);
+                    List<Config> stepped = stepOnSymbol(stepInput, rangeActiveEdges[bi], requiredMaskOut, ownCount, ctxMask);
                     if (stepped.isEmpty()) {
                         perSet[setId] = null;
                         setRes[setId] = -1;
@@ -722,14 +717,12 @@ final class TdfaCompiler {
                     }
                     List<Config> closed = epsilonClosure(stepped);
                     if (debug && closed.size() > 100) {
-                        System.err.println("[tdfa] state " + sid + " range " + rangeLo + ".." + rangeHi + " closure="
-                                + closed.size());
+                        System.err.println("[tdfa] state " + sid + " range " + rangeLo + ".." + rangeHi + " closure=" + closed.size());
                     }
                     int[] ops = variants.transitionRegops(closed, sid);
                     TdfaStateIndex.AddResult ar = index.addState(closed, ops, stepped);
                     if (debug) {
-                        System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> "
-                                + ar.targetId + " ops.len=" + ops.length + " mask=" + ctxMask);
+                        System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> " + ar.targetId + " ops.len=" + ops.length + " mask=" + ctxMask);
                     }
                     if (builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, ctxMask)) {
                         chargeRange();
@@ -760,8 +753,7 @@ final class TdfaCompiler {
                                     chargeRange();
                                 }
                                 if (debug) {
-                                    System.err.println("[tdfa] state " + sid + " cell " + rangeLo + ".." + rangeHi
-                                            + " DEAD marker mask=" + Integer.toBinaryString(ctxList.get(ci)[0]));
+                                    System.err.println("[tdfa] state " + sid + " cell " + rangeLo + ".." + rangeHi + " DEAD marker mask=" + Integer.toBinaryString(ctxList.get(ci)[0]));
                                 }
                                 break;
                             }
@@ -804,12 +796,7 @@ final class TdfaCompiler {
         if (stateStopOnAcceptMask != null) {
             Arrays.fill(stateStopOnAcceptMask, NEVER_STOP);
         }
-        int ALL_BITS = Tnfa.BEGIN_TEXT
-                | Tnfa.END_TEXT
-                | Tnfa.WORD_BOUNDARY
-                | Tnfa.NO_WORD_BOUNDARY
-                | Tnfa.ABS_BEGIN
-                | Tnfa.ABS_END;
+        int ALL_BITS = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY | Tnfa.ABS_BEGIN | Tnfa.ABS_END;
         for (int s = 0; s < n; s++) {
             List<Config> cfgs = states.get(s);
             int[] pk = tags == 0 ? packedKernels.get(s) : null; // packed form (tagless: cfgs == null)
@@ -853,15 +840,12 @@ final class TdfaCompiler {
                     for (int i = 0; i < cnt; i++) {
                         int st = pk != null ? pk[i * 2] : cfgs.get(i).state;
                         int em = pk != null ? pk[i * 2 + 1] : cfgs.get(i).emptyMask;
-                        System.err.println("[stop]   cfg[" + i + "] nfa=" + st + (st == nfa.accept ? " ACCEPT" : "")
-                                + " mask=" + Integer.toBinaryString(em) + " symEdges=" + symOut[st].length);
+                        System.err.println("[stop]   cfg[" + i + "] nfa=" + st + (st == nfa.accept ? " ACCEPT" : "") + " mask=" + Integer.toBinaryString(em) + " symEdges=" + symOut[st].length);
                     }
                 }
                 for (int M = 0; M < 64; M++) {
                     // seed is int[] or List<Config> by construction (see seed decl)
-                    int[] perStateOrder = seed instanceof int[]
-                            ? computePerStateOrder((int[]) seed, M)
-                            : computePerStateOrder((List<Config>) seed, M);
+                    int[] perStateOrder = seed instanceof int[] ? computePerStateOrder((int[]) seed, M) : computePerStateOrder((List<Config>) seed, M);
                     int acceptOrder = perStateOrder[nfa.accept];
                     if (acceptOrder == -1) {
                         // Accept unreachable under M; sam check will fail too.
@@ -958,8 +942,7 @@ final class TdfaCompiler {
         // Determinize-lifetime data is dead from here: the stateIndex sigs,
         // (packed) kernels, seeds, eps/sym adjacency and scratch are all
         if (Boolean.getBoolean("tdfa.debug.closure")) {
-            System.err.println(
-                    "[det] states=" + states.size() + " kernelsTotal=" + kernelsTotal + " ticks=" + meter.spent());
+            System.err.println("[det] states=" + states.size() + " kernelsTotal=" + kernelsTotal + " ticks=" + meter.spent());
         }
         // downstream-unused, but as Compiler fields they would stay live
         // through materialization/minimization — the heap peak on giant
@@ -989,9 +972,7 @@ final class TdfaCompiler {
             cfgWriteBack(cfg, builders);
             finalRegBase = cfg.finalRegBase;
             if (debug) {
-                System.err.println("[tdfa] regopt: regs " + cfg.initialRegCount + " -> " + cfg.regCount
-                        + " (finalRegBase=" + finalRegBase + ")"
-                        + (cfg.dceRemovedOps > 0 ? " DCE removed " + cfg.dceRemovedOps + " ops" : ""));
+                System.err.println("[tdfa] regopt: regs " + cfg.initialRegCount + " -> " + cfg.regCount + " (finalRegBase=" + finalRegBase + ")" + (cfg.dceRemovedOps > 0 ? " DCE removed " + cfg.dceRemovedOps + " ops" : ""));
             }
             obs.stage(CompileObserver.Stage.REGOPT, System.nanoTime() - tReg, cfg.regCount);
             obs.note("regopt", "regs " + cfg.initialRegCount + "->" + cfg.regCount);
@@ -1103,8 +1084,8 @@ final class TdfaCompiler {
                 // The 16-bit rangeCount pack in stateMeta would silently
                 // wrap (validate cannot detect it post-pack — the count
                 // reads back wrong-but-plausible). Fail the compile loudly.
-                throw new IllegalStateException("tdfa: state " + s + " needs " + k
-                        + " range entries — exceeds the 16-bit rangeCount packing (pattern too large)");
+                throw new IllegalStateException(
+                                "tdfa: state " + s + " needs " + k + " range entries — exceeds the 16-bit rangeCount packing (pattern too large)");
             }
             stateMeta[s] = ((k & 0xFFFF) << 1) | (isAccept ? 1 : 0);
             stateFinalOpsOff[s] = finalOpsOff;
@@ -1165,14 +1146,9 @@ final class TdfaCompiler {
         // but semantically equivalent op lists), but that only yields a suboptimal — not
         // incorrect — minimization. Apply after register optimizations for best results.
         int stateCount = n;
-        int[] minMeta = stateMeta,
-                minBase = stateBase,
-                minFinalOpsOff = stateFinalOpsOff,
-                minRanges = flatRanges,
-                minEntryMask = stateEntryMask,
-                minAcceptMask = stateAcceptMask,
-                minStopMask = stateStopOnAcceptMask,
-                minFinalOpsByMask = stateFinalOpsByMask;
+        int[] minMeta = stateMeta, minBase = stateBase, minFinalOpsOff = stateFinalOpsOff, minRanges = flatRanges,
+                        minEntryMask = stateEntryMask, minAcceptMask = stateAcceptMask,
+                        minStopMask = stateStopOnAcceptMask, minFinalOpsByMask = stateFinalOpsByMask;
         // Toggle post-determinization minimization (Moore's algorithm):
         // default on (-Dtdfa.nominimize disables); skipped above
         // tdfa.minimize.max states (default 20000) — Moore is O(n²)
@@ -1191,19 +1167,9 @@ final class TdfaCompiler {
         if (minimizeEnabled && n > 1 && n <= minimizeMaxStates) {
             int[] partition;
             try {
-                DfaMinimizer m = new DfaMinimizer(
-                        n,
-                        stateMeta,
-                        stateBase,
-                        stateFinalOpsOff,
-                        flatRanges,
-                        flatOps,
-                        stateEntryMask,
-                        stateAcceptMask,
-                        stateStopOnAcceptMask,
-                        stateFinalOpsByMask,
-                        longest,
-                        meter);
+                DfaMinimizer m = new DfaMinimizer(n, stateMeta, stateBase, stateFinalOpsOff, flatRanges, flatOps,
+                                stateEntryMask, stateAcceptMask, stateStopOnAcceptMask, stateFinalOpsByMask, longest,
+                                meter);
                 partition = m.computePartition();
             } catch (WorkMeter.Exhausted overBudget) {
                 obs.note("minimize", "skipped (compute budget)");
@@ -1387,46 +1353,12 @@ final class TdfaCompiler {
                     finalStop = minStopMask;
                 }
             }
-            obs.note(
-                    "tables",
-                    "states=" + stateCount + " ranges=" + (minRanges.length / 5)
-                            + " accept=" + acceptCnt
-                            + " bytes{ranges=" + (minRanges.length * 4L)
-                            + ",stopMask="
-                            + (uniformStop != null ? uniformStop.length : finalStop != null ? finalStop.length * 4L : 0)
-                            + ",entryMask=" + (minEntryMask.length * 4L)
-                            + ",acceptMask=" + (minAcceptMask.length * 4L)
-                            + ",ops=" + (flatOps.length * 4L)
-                            + ",hiPrefix=" + (minHiPrefix.length * 4L)
-                            + ",scalars="
-                            + ((minMeta.length + minBase.length + minFinalOpsOff.length) * 4L + stateCount) + "}"
-                            + " stopMaskUniform=" + (perStateUniform ? (globalUniform ? "global" : "perState") : "no"));
-            Tdfa result = new Tdfa(
-                    tags,
-                    nfa.groupCount,
-                    nfa.namedGroups,
-                    globalMaxReg,
-                    finalRegBase,
-                    0,
-                    stateCount,
-                    minMeta,
-                    minBase,
-                    minFinalOpsOff,
-                    minFinalOpsByMask,
-                    minRanges,
-                    flatOps,
-                    minHiPrefix,
-                    minEntryMask,
-                    minAcceptMask,
-                    longest,
-                    finalStop,
-                    uniformStop,
-                    nfa.multiline,
-                    nfa.unicodeWordBoundary,
-                    nfa.wordRanges,
-                    hasFixed(nfa.fixedBase) ? nfa.fixedBase : null,
-                    hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null,
-                    pikeCutMatters);
+            obs.note("tables", "states=" + stateCount + " ranges=" + (minRanges.length / 5) + " accept=" + acceptCnt + " bytes{ranges=" + (minRanges.length * 4L) + ",stopMask=" + (uniformStop != null ? uniformStop.length : finalStop != null ? finalStop.length * 4L : 0) + ",entryMask=" + (minEntryMask.length * 4L) + ",acceptMask=" + (minAcceptMask.length * 4L) + ",ops=" + (flatOps.length * 4L) + ",hiPrefix=" + (minHiPrefix.length * 4L) + ",scalars=" + ((minMeta.length + minBase.length + minFinalOpsOff.length) * 4L + stateCount) + "}" + " stopMaskUniform=" + (perStateUniform ? (globalUniform ? "global" : "perState") : "no"));
+            Tdfa result = new Tdfa(tags, nfa.groupCount, nfa.namedGroups, globalMaxReg, finalRegBase, 0, stateCount,
+                            minMeta, minBase, minFinalOpsOff, minFinalOpsByMask, minRanges, flatOps, minHiPrefix,
+                            minEntryMask, minAcceptMask, longest, finalStop, uniformStop, nfa.multiline,
+                            nfa.unicodeWordBoundary, nfa.wordRanges, hasFixed(nfa.fixedBase) ? nfa.fixedBase : null,
+                            hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null, pikeCutMatters);
             return result;
         }
     }
@@ -1447,13 +1379,7 @@ final class TdfaCompiler {
      * package-private nested {@code DfaStateBuilder}/{@code Range} types
      * (avoiding reflection on synthetic nested-class field names).
      */
-    Cfg buildCfg(
-            List<DfaStateBuilder> builders,
-            BitSet accept,
-            @SuppressWarnings("unused") List<List<Config>> states,
-            int tagCount,
-            int groupCount,
-            int initialRegCount) {
+    Cfg buildCfg(List<DfaStateBuilder> builders, BitSet accept, @SuppressWarnings("unused") List<List<Config>> states, int tagCount, int groupCount, int initialRegCount) {
         Cfg cfg = new Cfg(tagCount, groupCount, initialRegCount);
         int n = builders.size();
         // First pass: create blocks.
@@ -1536,10 +1462,8 @@ final class TdfaCompiler {
                 meter.tick(arcs);
                 cfgEdges += arcs;
                 if (cfgEdges > maxCfgEdges) {
-                    throw new IllegalStateException("pattern too large: TDFA CFG edge budget exceeded ("
-                            + cfgEdges + " successor arcs at block " + cfg.blocks.size()
-                            + "; cap " + maxCfgEdges + " — raise -D" + Budgets.COMPILE_MEMORY_PROP
-                            + " if you need denser graphs)");
+                    throw new IllegalStateException(
+                                    "pattern too large: TDFA CFG edge budget exceeded (" + cfgEdges + " successor arcs at block " + cfg.blocks.size() + "; cap " + maxCfgEdges + " — raise -D" + Budgets.COMPILE_MEMORY_PROP + " if you need denser graphs)");
                 }
                 DfaStateBuilder tb = builders.get(t);
                 for (int r = 0; r < tb.ranges.size(); r++) {
@@ -1568,16 +1492,16 @@ final class TdfaCompiler {
                 break;
             }
             switch (op) {
-                case OP_SET_POS:
+                case OP_SET_POS :
                     out.add(Cfg.Op.setPos(dst));
                     break;
-                case OP_SET_NIL:
+                case OP_SET_NIL :
                     out.add(Cfg.Op.setNil(dst));
                     break;
-                case OP_COPY:
+                case OP_COPY :
                     out.add(Cfg.Op.copy(dst, src));
                     break;
-                default:
+                default :
                     throw new IllegalStateException("bad op: " + op);
             }
         }
@@ -1679,9 +1603,8 @@ final class TdfaCompiler {
             // nested-counted bomb could otherwise exhaust the heap on
             // its own. Tag-aware: the config weight carries its regs.
             if ((out.size() + 1) * (long) kernelConfigBytes > maxClosureBytes) {
-                throw new IllegalStateException("pattern too large: TDFA ε-closure exceeds the closure spike budget ("
-                        + (out.size() + 1) + " configs x " + kernelConfigBytes + " weighted bytes, cap "
-                        + maxClosureBytes + "; " + c.state + " reached — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
+                throw new IllegalStateException(
+                                "pattern too large: TDFA ε-closure exceeds the closure spike budget (" + (out.size() + 1) + " configs x " + kernelConfigBytes + " weighted bytes, cap " + maxClosureBytes + "; " + c.state + " reached — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
             }
             // Push children in REVERSE priority order. Same contract as the seeds:
             // the pre-push check skips only already-POPPED keys; co-resident
@@ -1893,8 +1816,7 @@ final class TdfaCompiler {
      * check fails, and the lower-priority {@code y} branch survives to extend the match
      * ([0,1] instead of the correct [0,0] — the empty {@code x*} alternative accepts first).
      */
-    List<Config> stepOnSymbol(
-            List<Config> configs, long[] activeEdges, int[] requiredMaskOut, int ownCount, int ctxMask) {
+    List<Config> stepOnSymbol(List<Config> configs, long[] activeEdges, int[] requiredMaskOut, int ownCount, int ctxMask) {
         // Perl leftmost-first: the closure's configs are in priority-ordered DFS arrival order.
         // If any config has reached the accept state, find the FIRST (best-priority) such config
         // and consider suppressing transitions from configs added AFTER it.
@@ -1929,18 +1851,12 @@ final class TdfaCompiler {
             if (firstAcceptIdx >= 0 && (acceptEmptyMask & ~ctxMask) == 0) {
                 suppress = true;
                 if (debug) {
-                    System.err.println("[step] PIKE-CUT accept@" + firstAcceptIdx + " mask="
-                            + Integer.toBinaryString(acceptEmptyMask) + " ctx=" + Integer.toBinaryString(ctxMask));
+                    System.err.println("[step] PIKE-CUT accept@" + firstAcceptIdx + " mask=" + Integer.toBinaryString(acceptEmptyMask) + " ctx=" + Integer.toBinaryString(ctxMask));
                 }
             }
         }
         List<Config> out = new ArrayList<>();
-        int intersection = Tnfa.BEGIN_TEXT
-                | Tnfa.END_TEXT
-                | Tnfa.WORD_BOUNDARY
-                | Tnfa.NO_WORD_BOUNDARY
-                | Tnfa.ABS_BEGIN
-                | Tnfa.ABS_END;
+        int intersection = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY | Tnfa.ABS_BEGIN | Tnfa.ABS_END;
         boolean any = false;
         for (int ci = 0; ci < configs.size(); ci++) {
             if (suppress && ci > firstAcceptIdx) {
@@ -2004,7 +1920,7 @@ final class TdfaCompiler {
         // (hash-consed histories share one array; value-equality would
         // rescan every empty history).
         if (seq == EMPTY || seq.length == 0) {
-            return new int[] {tag};
+            return new int[]{tag};
         }
         int[] out = new int[seq.length + 1];
         System.arraycopy(seq, 0, out, 0, seq.length);

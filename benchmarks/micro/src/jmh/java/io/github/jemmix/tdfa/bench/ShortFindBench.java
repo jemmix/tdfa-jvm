@@ -2,8 +2,6 @@ package io.github.jemmix.tdfa.bench;
 
 import com.datadoghq.reggie.Reggie;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import java.util.concurrent.TimeUnit;
-import java.util.function.Predicate;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -18,6 +16,9 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
+
+import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 
 /**
  * Short-input find() across 5 engines (JMH, ns/op per single call via
@@ -50,18 +51,7 @@ public class ShortFindBench {
         @Param({"jur", "re2j", "reggie", "vm", "asm"})
         public String engine;
 
-        @Param({
-            "litFind",
-            "caseiLit",
-            "wordB",
-            "wordUnicodeCls",
-            "lettersRu",
-            "boundedSpan",
-            "ipExtract",
-            "alternation",
-            "emailNoMatch",
-            "litNoMatch"
-        })
+        @Param({"litFind", "caseiLit", "wordB", "wordUnicodeCls", "lettersRu", "boundedSpan", "ipExtract", "alternation", "emailNoMatch", "litNoMatch"})
         public String slug;
 
         String input;
@@ -69,20 +59,19 @@ public class ShortFindBench {
 
         @Setup(Level.Trial)
         public void setUp() {
-            String regex =
-                    switch (slug) {
-                        case "litFind" -> "Twain";
-                        case "caseiLit" -> "(?i)sherlock";
-                        case "wordB" -> "\\bword\\b";
-                        case "wordUnicodeCls" -> "\\p{L}{2,}";
-                        case "lettersRu" -> "[а-яА-ЯёЁ]{4,}";
-                        case "boundedSpan" -> "\"[^\"]{5,20}\"";
-                        case "ipExtract" -> "(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)";
-                        case "alternation" -> "(a|b)*c";
-                        case "emailNoMatch" -> "\\w+@\\w+\\.(com|org|net)";
-                        case "litNoMatch" -> "zzqqxv";
-                        default -> throw new UnsupportedOperationException(slug);
-                    };
+            String regex = switch (slug) {
+                case "litFind" -> "Twain";
+                case "caseiLit" -> "(?i)sherlock";
+                case "wordB" -> "\\bword\\b";
+                case "wordUnicodeCls" -> "\\p{L}{2,}";
+                case "lettersRu" -> "[а-яА-ЯёЁ]{4,}";
+                case "boundedSpan" -> "\"[^\"]{5,20}\"";
+                case "ipExtract" -> "(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)";
+                case "alternation" -> "(a|b)*c";
+                case "emailNoMatch" -> "\\w+@\\w+\\.(com|org|net)";
+                case "litNoMatch" -> "zzqqxv";
+                default -> throw new UnsupportedOperationException(slug);
+            };
             input = switch (slug) {
                 case "litFind" -> "The adventures of Tom Sawyer and Huckleberry Finn, by Mark Twain.";
                 case "caseiLit" -> "Mr Sherlock Holmes, the consulting detective, walked in.";
@@ -132,11 +121,10 @@ public class ShortFindBench {
                 }
                 default -> throw new UnsupportedOperationException(engine);
             }
-            boolean expect =
-                    switch (slug) {
-                        case "emailNoMatch", "litNoMatch" -> false;
-                        default -> true;
-                    };
+            boolean expect = switch (slug) {
+                case "emailNoMatch", "litNoMatch" -> false;
+                default -> true;
+            };
             if (findOnce.test(in) != expect) {
                 throw new IllegalStateException("count mismatch for " + engine + "/" + slug);
             }

@@ -23,7 +23,7 @@ import java.util.Map;
  */
 final class JdkUnicodeDataProvider implements UnicodeDataProvider {
     static final JdkUnicodeDataProvider INSTANCE = new JdkUnicodeDataProvider();
-    private static final int[] ANY_TABLE = new int[] {0, Character.MAX_CODE_POINT};
+    private static final int[] ANY_TABLE = new int[]{0, Character.MAX_CODE_POINT};
 
     /** Maps each {@code byte} returned by {@link Character#getType(int)} to its
      *  two-letter Unicode general-category code; index is the byte value. */
@@ -66,20 +66,21 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
     private static final Map<String, String[]> CONTAINERS = new HashMap<>();
 
     static {
-        CONTAINERS.put("L", new String[] {"Lu", "Ll", "Lt", "Lm", "Lo"});
-        CONTAINERS.put("M", new String[] {"Mn", "Me", "Mc"});
-        CONTAINERS.put("N", new String[] {"Nd", "Nl", "No"});
-        CONTAINERS.put("P", new String[] {"Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po"});
-        CONTAINERS.put("S", new String[] {"Sm", "Sc", "Sk", "So"});
-        CONTAINERS.put("C", new String[] {"Cc", "Cf", "Co", "Cs", "Cn"});
-        CONTAINERS.put("Z", new String[] {"Zs", "Zl", "Zp"});
+        CONTAINERS.put("L", new String[]{"Lu", "Ll", "Lt", "Lm", "Lo"});
+        CONTAINERS.put("M", new String[]{"Mn", "Me", "Mc"});
+        CONTAINERS.put("N", new String[]{"Nd", "Nl", "No"});
+        CONTAINERS.put("P", new String[]{"Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po"});
+        CONTAINERS.put("S", new String[]{"Sm", "Sc", "Sk", "So"});
+        CONTAINERS.put("C", new String[]{"Cc", "Cf", "Co", "Cs", "Cn"});
+        CONTAINERS.put("Z", new String[]{"Zs", "Zl", "Zp"});
     }
 
     private volatile Map<String, int[]> scripts;
     private volatile Map<String, int[]> categories;
     private volatile Map<String, int[]> foldTables;
 
-    private JdkUnicodeDataProvider() {}
+    private JdkUnicodeDataProvider() {
+    }
 
     @Override
     public int[] tableFor(String name) {
@@ -148,12 +149,12 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
                 continue;
             }
             if (rangeStart >= 0) {
-                ranges.add(new int[] {rangeStart, cp - 1});
+                ranges.add(new int[]{rangeStart, cp - 1});
                 rangeStart = -1;
             }
         }
         if (rangeStart >= 0) {
-            ranges.add(new int[] {rangeStart, 0xFFFF});
+            ranges.add(new int[]{rangeStart, 0xFFFF});
         }
         if (ranges.isEmpty()) {
             return null;
@@ -222,13 +223,13 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
                 continue;
             }
             if (prevType >= 0 && start >= 0) {
-                byType.computeIfAbsent(prevType, k -> new ArrayList<>()).add(new int[] {start, cp - 1});
+                byType.computeIfAbsent(prevType, k -> new ArrayList<>()).add(new int[]{start, cp - 1});
             }
             prevType = t;
             start = cp;
         }
         if (prevType >= 0) {
-            byType.computeIfAbsent(prevType, k -> new ArrayList<>()).add(new int[] {start, Character.MAX_CODE_POINT});
+            byType.computeIfAbsent(prevType, k -> new ArrayList<>()).add(new int[]{start, Character.MAX_CODE_POINT});
         }
         // Flatten per-category.
         Map<String, int[]> out = new HashMap<>();
@@ -248,7 +249,7 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
                     continue;
                 }
                 for (int i = 0; i < r.length; i += 2) {
-                    merged.add(new int[] {r[i], r[i + 1]});
+                    merged.add(new int[]{r[i], r[i + 1]});
                 }
             }
             out.put(e.getKey(), flatten(merged));
@@ -282,13 +283,13 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
                 continue;
             }
             if (prev != null && start >= 0) {
-                byScript.computeIfAbsent(prev, k -> new ArrayList<>()).add(new int[] {start, cp - 1});
+                byScript.computeIfAbsent(prev, k -> new ArrayList<>()).add(new int[]{start, cp - 1});
             }
             prev = s;
             start = cp;
         }
         if (prev != null) {
-            byScript.computeIfAbsent(prev, k -> new ArrayList<>()).add(new int[] {start, Character.MAX_CODE_POINT});
+            byScript.computeIfAbsent(prev, k -> new ArrayList<>()).add(new int[]{start, Character.MAX_CODE_POINT});
         }
         Map<String, int[]> out = new HashMap<>();
         for (Map.Entry<Character.UnicodeScript, ArrayList<int[]>> e : byScript.entrySet()) {
@@ -333,7 +334,7 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
                     continue;
                 }
             }
-            merged.add(new int[] {r[0], r[1]});
+            merged.add(new int[]{r[0], r[1]});
         }
         int[] flat = new int[merged.size() * 2];
         for (int i = 0; i < merged.size(); i++) {

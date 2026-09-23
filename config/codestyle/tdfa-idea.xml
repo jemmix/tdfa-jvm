@@ -7,9 +7,10 @@
      code that passes the CI gates (spotless + checkstyle, wired in the
      root build.gradle from config/codestyle/).
 
-     The machine formatter is palantir-java-format (spotless, no knobs);
-     checkstyle.xml enforces what formatters cannot rewrite. Change all
-     artifacts together.
+     The machine formatter is the eclipse JDT profile in
+     eclipse-formatter.properties (flat 4-space continuation indent, margin
+     120, joins wraps that fit); checkstyle.xml enforces what formatters
+     cannot rewrite. Change all artifacts together.
 
      Core rules:
        - no star imports (single-name imports only, on-demand threshold 999)
@@ -19,10 +20,8 @@
        - member order: static fields, static init, instance fields, instance
          init, constructors, methods, nested types last
        - mandatory braces for if/else/for/while/do-while bodies
-       - 4-space indent AND 4-space continuation indent (flat, never
-         depth-multiplied — that is why the formatter engine is
-         palantir-java-format, not eclipse JDT)
-       - right margin 120, wraps that fit are joined
+       - 4-space indent AND flat 4-space continuation indent, margin 120,
+         wraps that fit are joined
 -->
 <code_scheme name="tdfa">
   <option name="CLASS_COUNT_TO_USE_IMPORT_ON_DEMAND" value="999" />

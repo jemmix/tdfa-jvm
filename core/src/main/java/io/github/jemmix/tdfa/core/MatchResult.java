@@ -132,8 +132,7 @@ public final class MatchResult {
      */
     @Override
     public String toString() {
-        StringBuilder sb =
-                new StringBuilder("Match[0]=").append(matchStart).append(',').append(matchEnd);
+        StringBuilder sb = new StringBuilder("Match[0]=").append(matchStart).append(',').append(matchEnd);
         for (int g = 1; g <= groupCount; g++) {
             sb.append(" [").append(g).append("]=").append(start(g)).append(',').append(end(g));
         }
@@ -150,11 +149,7 @@ public final class MatchResult {
             return false;
         }
         MatchResult m = (MatchResult) o;
-        return finalRegBase == m.finalRegBase
-                && groupCount == m.groupCount
-                && matchStart == m.matchStart
-                && matchEnd == m.matchEnd
-                && Arrays.equals(regs, m.regs);
+        return finalRegBase == m.finalRegBase && groupCount == m.groupCount && matchStart == m.matchStart && matchEnd == m.matchEnd && Arrays.equals(regs, m.regs);
     }
 
     @Override

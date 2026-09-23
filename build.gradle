@@ -115,17 +115,17 @@ tasks.withType(com.github.spotbugs.snom.SpotBugsTask).configureEach {
     }
 }
 
-// Codestyle (2026-09): one ruleset, two cooperating artifacts under
+// Codestyle (2026-09): one ruleset, three cooperating artifacts under
 // config/codestyle/ — change them together:
 //  - tdfa-idea.xml: importable IntelliJ scheme (IDE reformat == CI-clean).
+//  - eclipse-formatter.properties: the machine formatter, driven by
+//    spotless (`spotlessApply` reformats, `spotlessCheck` gates).
 //  - checkstyle.xml: the checks formatters cannot rewrite (mandatory
 //    braces, no star imports, member order, no tabs).
-// The machine formatter is palantir-java-format (fixed 120 margin, flat
-// 4-space continuation indent, joins wraps that fit — no knobs by design)
-// plus two spotless steps: shortenFullyQualifiedTypes (imports, not
-// qualified names; same-simple-name collisions stay qualified) and the
-// import layout. `spotlessApply` reformats, `spotlessCheck` gates — both
-// bind into `check`, so the CI check job enforces everything.
+// Rules: flat 4-space continuation indent, right margin 120, joins wraps
+// that fit, imports not qualified names (same-simple-name collisions stay
+// qualified). `spotlessApply` reformats, `spotlessCheck` gates — both bind
+// into `check`, so the CI check job enforces everything.
 // Unlike ErrorProne/SpotBugs this applies to ALL modules (style rules are
 // text-only, no analysis deps) — the only exemptions are machine-generated
 // or vendored code:
@@ -178,15 +178,17 @@ allprojects {
                 // blank | static ('' = all not matched explicitly).
                 shortenFullyQualifiedTypes()
                 importOrder '', 'javax|java', '\\#'
-                // Machine formatter: palantir-java-format (a google-java-
-                // format fork). Chosen over the eclipse engine for the one
-                // thing JDT cannot do: a FLAT 4-space continuation indent —
-                // JDT multiplies the continuation indent by wrap-nesting
-                // depth (the 16-space continuations it produced), pjf
-                // always continues at +4. Fixed 120 margin, spaces only,
-                // K&R braces, joins wraps that fit. No knobs by design; the
-                // style IS the config.
-                palantirJavaFormat()
+                // Machine formatter: eclipse JDT with a FLAT 4-space
+                // continuation indent. Two things the engine defaults get
+                // wrong (see the properties header): the alignment family
+                // must be "wrap where necessary" (2) — the defaults (16)
+                // encode indent-on-column and produced 16-space
+                // continuations — and continuation_indentation is the unit
+                // JDT multiplies by wrap depth, so depth-1 wraps (the
+                // common case) are exactly +4. Margin 120, joins wraps
+                // that fit, K&R braces, comments never reflowed.
+                def eclipseFormatter = eclipse()
+                eclipseFormatter.configFile rootProject.file('config/codestyle/eclipse-formatter.properties').absolutePath
                 // NOTE: member ORDER is deliberately NOT formatter-driven.
                 // Reordering members is not whitespace-only; it is enforced
                 // by checkstyle (DeclarationOrder + ConstructorsDeclaration-

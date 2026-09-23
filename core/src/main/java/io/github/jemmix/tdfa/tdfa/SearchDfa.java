@@ -1,9 +1,9 @@
 package io.github.jemmix.tdfa.tdfa;
 
-import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_KILL;
-
 import java.util.Arrays;
 import java.util.HashMap;
+
+import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_KILL;
 
 /**
  * Extracted verbatim from TdfaRunner (2026-09 god-file split); the

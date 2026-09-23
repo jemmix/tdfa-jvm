@@ -87,19 +87,9 @@ final class DfaMinimizer {
      */
     boolean useNormalized;
 
-    DfaMinimizer(
-            int n,
-            int[] stateMeta,
-            int[] stateBase,
-            int[] stateFinalOpsOff,
-            int[] ranges,
-            int[] ops,
-            int[] stateEntryMask,
-            int[] stateAcceptMask,
-            int[] stateStopOnAcceptMask,
-            int[] stateFinalOpsByMask,
-            boolean longest,
-            WorkMeter meter) {
+    DfaMinimizer(int n, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] ranges, int[] ops,
+                    int[] stateEntryMask, int[] stateAcceptMask, int[] stateStopOnAcceptMask, int[] stateFinalOpsByMask,
+                    boolean longest, WorkMeter meter) {
         this.n = n;
         this.stateMeta = stateMeta;
         this.stateBase = stateBase;
@@ -123,8 +113,7 @@ final class DfaMinimizer {
      */
     private void detectOverlapsAndInit() {
         useNormalized = true;
-        outer:
-        for (int s = 0; s < n; s++) {
+        outer : for (int s = 0; s < n; s++) {
             int base = stateBase[s];
             int count = Tdfa.rangeCount(stateMeta[s]);
             int prevHi = -1;

@@ -4,6 +4,7 @@ import io.github.jemmix.tdfa.core.CompileOptions;
 import io.github.jemmix.tdfa.core.EmittedSurface;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+
 import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -157,7 +158,7 @@ public interface Pattern extends Serializable {
             return "";
         }
         StringBuilder out = new StringBuilder(s.length() << 1);
-        for (int i = 0; i < s.length(); ) {
+        for (int i = 0; i < s.length();) {
             int c = s.codePointAt(i);
             i += Character.charCount(c);
             if ("\\.+*?()|[]{}^$".indexOf(c) >= 0) {
@@ -236,7 +237,8 @@ public interface Pattern extends Serializable {
      */
     @EmittedSurface
     final class Utf8 {
-        private Utf8() {}
+        private Utf8() {
+        }
 
         public static String decode(byte[] bytes) {
             return new String(bytes, StandardCharsets.UTF_8);

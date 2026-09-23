@@ -1,13 +1,13 @@
 package io.github.jemmix.tdfa.tdfa;
 
-import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_COPY;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_SET_NIL;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_SET_POS;
-
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.function.IntFunction;
+
+import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_COPY;
+import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_SET_NIL;
+import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_SET_POS;
 
 /**
  * Final-ops (φ-function) variant solving + transition-op register allocation.
@@ -83,9 +83,9 @@ final class TdfaFinalVariants {
                 }
                 if (!dup) {
                     if (l == TdfaCompiler.TAG_POS) {
-                        opList.add(new int[] {OP_SET_POS, reg, 0});
+                        opList.add(new int[]{OP_SET_POS, reg, 0});
                     } else {
-                        opList.add(new int[] {OP_SET_NIL, reg, 0});
+                        opList.add(new int[]{OP_SET_NIL, reg, 0});
                     }
                 }
                 newRegs[t - 1] = reg;
@@ -176,9 +176,7 @@ final class TdfaFinalVariants {
                 StringBuilder h = new StringBuilder("cfg[" + i + "] mask=" + c.emptyMask + " l:");
                 int[] last = owner.hist.lastSign(c.l, owner.tags);
                 for (int t = 1; t <= owner.tags; t++) {
-                    h.append(" t")
-                            .append(t)
-                            .append(last[t - 1] == 0 ? "Ø" : (last[t - 1] == TdfaCompiler.TAG_POS ? "P" : "N"));
+                    h.append(" t").append(t).append(last[t - 1] == 0 ? "Ø" : (last[t - 1] == TdfaCompiler.TAG_POS ? "P" : "N"));
                 }
                 System.err.println("  [finals] " + h + "  winner(M63)=" + winner[63] + " winner(M0)=" + winner[0]);
             }
@@ -225,13 +223,13 @@ final class TdfaFinalVariants {
         for (int t = 1; t <= owner.tags; t++) {
             int dst = owner.finalRegisters[t - 1];
             if (lastSign[t - 1] == 0) {
-                opList.add(new int[] {OP_COPY, dst, c.regs[t - 1]});
+                opList.add(new int[]{OP_COPY, dst, c.regs[t - 1]});
             } else {
                 int last = lastSign[t - 1];
                 if (last == TdfaCompiler.TAG_POS) {
-                    opList.add(new int[] {OP_SET_POS, dst, 0});
+                    opList.add(new int[]{OP_SET_POS, dst, 0});
                 } else {
-                    opList.add(new int[] {OP_SET_NIL, dst, 0});
+                    opList.add(new int[]{OP_SET_NIL, dst, 0});
                 }
             }
         }

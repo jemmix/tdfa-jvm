@@ -1,10 +1,10 @@
 package io.github.jemmix.tdfa;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import io.github.jemmix.tdfa.core.CompiledRegex;
 import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.Matcher;
+import org.junit.jupiter.api.Test;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -13,7 +13,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Conformance of the RegexEngine thread-safety contract ("effectively
@@ -96,9 +97,7 @@ class ConcurrencyHammerTest {
                 }));
             }
             for (Future<Long> f : fs) {
-                assertThat(f.get(60, TimeUnit.SECONDS))
-                        .as(name + ": concurrent results identical to single-threaded")
-                        .isEqualTo(expect);
+                assertThat(f.get(60, TimeUnit.SECONDS)).as(name + ": concurrent results identical to single-threaded").isEqualTo(expect);
             }
         } finally {
             pool.shutdownNow();

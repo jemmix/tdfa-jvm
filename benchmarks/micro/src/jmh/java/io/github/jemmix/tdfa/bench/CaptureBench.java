@@ -4,7 +4,6 @@ import com.datadoghq.reggie.Reggie;
 import com.datadoghq.reggie.runtime.ReggieMatcher;
 import io.github.jemmix.tdfa.Pattern;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import java.util.concurrent.TimeUnit;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -15,6 +14,8 @@ import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * JMH: tdfa-jvm vs java.util.regex on capture-heavy patterns (the profit cases).

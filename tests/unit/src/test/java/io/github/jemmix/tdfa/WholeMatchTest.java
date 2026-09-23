@@ -1,9 +1,5 @@
 package io.github.jemmix.tdfa;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
 import io.github.jemmix.tdfa.core.CompiledRegex;
 import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.MatchScratch;
@@ -13,13 +9,18 @@ import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
 import io.github.jemmix.tdfa.unicode.UnicodeProviders;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
 import java.io.ByteArrayOutputStream;
 import java.io.ObjectOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Whole/find semantics: matches() runs a cut-free walk to EOF (an accept
@@ -84,19 +85,14 @@ class WholeMatchTest {
         assertThat(Pattern.compile("a*").matcher("aab").matches()).isFalse();
 
         // Multiline $: a mid-input line-end accept must not satisfy whole.
-        assertThat(Pattern.compile("a$", Pattern.MULTILINE).matcher("a").matches())
-                .isTrue();
-        assertThat(Pattern.compile("a$", Pattern.MULTILINE).matcher("a\nb").matches())
-                .isFalse();
-        assertThat(Pattern.compile("a$", Pattern.MULTILINE).matcher("a\n").matches())
-                .isFalse();
+        assertThat(Pattern.compile("a$", Pattern.MULTILINE).matcher("a").matches()).isTrue();
+        assertThat(Pattern.compile("a$", Pattern.MULTILINE).matcher("a\nb").matches()).isFalse();
+        assertThat(Pattern.compile("a$", Pattern.MULTILINE).matcher("a\n").matches()).isFalse();
         assertThat(Pattern.compile("a$").matcher("a\n").matches()).isFalse();
 
         // Non-String CharSequence path (runGeneric anchored walk).
-        assertThat(Pattern.compile("(a|ab)").matcher(new StringBuilder("ab")).matches())
-                .isTrue();
-        assertThat(Pattern.compile("a+").matcher(new StringBuilder("ab")).matches())
-                .isFalse();
+        assertThat(Pattern.compile("(a|ab)").matcher(new StringBuilder("ab")).matches()).isTrue();
+        assertThat(Pattern.compile("a+").matcher(new StringBuilder("ab")).matches()).isFalse();
 
         // LONGEST_MATCH stays exact on the shared artifact.
         Pattern lm = Pattern.compile("(a|ab)", Pattern.LONGEST_MATCH);
@@ -108,17 +104,15 @@ class WholeMatchTest {
         // Pattern-level conveniences route through the same walk.
         assertThat(Pattern.matches("(a|ab)", "ab")).isTrue();
         assertThat(Pattern.matches("(a|ab)", "abc")).isFalse();
-        assertThat(Pattern.compile("(a|ab)").matches("ab".getBytes(StandardCharsets.UTF_8)))
-                .isTrue();
+        assertThat(Pattern.compile("(a|ab)").matches("ab".getBytes(StandardCharsets.UTF_8))).isTrue();
 
         // Serialization round-trip recompiles eagerly (both artifacts).
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         assertThatCode(() -> {
-                    try (ObjectOutputStream oos = new ObjectOutputStream(bos)) {
-                        oos.writeObject(Pattern.compile("(a|ab)"));
-                    }
-                })
-                .doesNotThrowAnyException();
+            try (ObjectOutputStream oos = new ObjectOutputStream(bos)) {
+                oos.writeObject(Pattern.compile("(a|ab)"));
+            }
+        }).doesNotThrowAnyException();
     }
 
     @Test
@@ -153,9 +147,7 @@ class WholeMatchTest {
         assertThat(m.matches("a\nb")).isFalse();
         // Bomb corner: the cut-free whole artifact exceeds the compile
         // budget, so compile() fails with the standard rejection.
-        assertThatThrownBy(() -> CompiledRegex.compile("(a{1,100}){1,100}"))
-                .isInstanceOf(PatternSyntaxException.class)
-                .hasMessageContaining("pattern too large");
+        assertThatThrownBy(() -> CompiledRegex.compile("(a{1,100}){1,100}")).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
     }
 
     @Test
@@ -197,9 +189,7 @@ class WholeMatchTest {
         assertThat(q.matcher("aaa").matches()).isTrue();
 
         Pattern asm = Pattern.compile("(a|ab)");
-        assertThat(((TDFAPattern) asm).wholeEngine().getClass().getSimpleName())
-                .as("default tier whole engine is generated, not the interpreter")
-                .startsWith("Gen");
+        assertThat(((TDFAPattern) asm).wholeEngine().getClass().getSimpleName()).as("default tier whole engine is generated, not the interpreter").startsWith("Gen");
     }
 
     /**
@@ -213,66 +203,8 @@ class WholeMatchTest {
      */
     @Test
     void anchoredArtifactWholeWalkIsExact() {
-        String[] pats = {
-            "(a|ab)",
-            "ab|a|ac",
-            "ax?|a.y",
-            "(a)(b|bc)",
-            "a*",
-            "a+",
-            "(a*)*",
-            "(a?){2,}",
-            "(^|$)+",
-            "a$",
-            "^a",
-            "(?m)^a$",
-            "(?m)a$",
-            "\\Aab\\z",
-            "a\\z",
-            "(?i)AbC",
-            "(ab|a)+",
-            "(a|ab)+",
-            "x.*y",
-            "x.+?y",
-            "\\bword\\b",
-            "(?:ab|a)(?:c|bcd)",
-            "(a??b??)*",
-            "((a)|b)+",
-            "(a{1,3}?)b",
-            "(\\w+)\\s+(\\w+)",
-            "(a)|(ab)",
-        };
-        String[] inputs = {
-            "",
-            "a",
-            "ab",
-            "abc",
-            "ac",
-            "ad",
-            "ax",
-            "a.y",
-            "b",
-            "abab",
-            "ababc",
-            "aaab",
-            "a\n",
-            "a\nb",
-            "xay",
-            "xabcy",
-            "xxy",
-            "xy",
-            "word",
-            " word ",
-            "a b",
-            "hello brave new world",
-            "AbC",
-            "abcd",
-            "zz",
-            "aab",
-            "aaaa",
-            "aaaaab",
-            "\n",
-        };
+        String[] pats = {"(a|ab)", "ab|a|ac", "ax?|a.y", "(a)(b|bc)", "a*", "a+", "(a*)*", "(a?){2,}", "(^|$)+", "a$", "^a", "(?m)^a$", "(?m)a$", "\\Aab\\z", "a\\z", "(?i)AbC", "(ab|a)+", "(a|ab)+", "x.*y", "x.+?y", "\\bword\\b", "(?:ab|a)(?:c|bcd)", "(a??b??)*", "((a)|b)+", "(a{1,3}?)b", "(\\w+)\\s+(\\w+)", "(a)|(ab)",};
+        String[] inputs = {"", "a", "ab", "abc", "ac", "ad", "ax", "a.y", "b", "abab", "ababc", "aaab", "a\n", "a\nb", "xay", "xabcy", "xxy", "xy", "word", " word ", "a b", "hello brave new world", "AbC", "abcd", "zz", "aab", "aaaa", "aaaaab", "\n",};
         for (String p : pats) {
             TdfaRunner anchored;
             java.util.regex.Pattern jur;
@@ -289,22 +221,14 @@ class WholeMatchTest {
                 MatchResult fm = facadeWhole.matchWhole(s, new MatchScratch());
                 String a = am == null ? "null" : span(am);
                 String f = fm == null ? "null" : span(fm);
-                assertThat(a)
-                        .as("anchored whole of %s on %s (spans)", p, s.replace("\n", "\\n"))
-                        .isEqualTo(f);
-                assertThat(am != null)
-                        .as("anchored whole boolean of %s on %s vs jur", p, s.replace("\n", "\\n"))
-                        .isEqualTo(jur.matcher(s).matches());
+                assertThat(a).as("anchored whole of %s on %s (spans)", p, s.replace("\n", "\\n")).isEqualTo(f);
+                assertThat(am != null).as("anchored whole boolean of %s on %s vs jur", p, s.replace("\n", "\\n")).isEqualTo(jur.matcher(s).matches());
             }
         }
     }
 
     private static String span(MatchResult m) {
-        StringBuilder sb = new StringBuilder("[")
-                .append(m.start(0))
-                .append(',')
-                .append(m.end(0))
-                .append(')');
+        StringBuilder sb = new StringBuilder("[").append(m.start(0)).append(',').append(m.end(0)).append(')');
         for (int g = 1; g <= m.groupCount(); g++) {
             sb.append(';').append(m.start(g) < 0 ? "null" : m.start(g) + "," + m.end(g));
         }
@@ -330,8 +254,7 @@ class WholeMatchTest {
             assertThat(asm.matches()).isTrue();
             assertThat(asm.start(1)).isEqualTo(2);
             assertThat(asm.end(1)).isEqualTo(2);
-            PatternMatcher vm =
-                    Pattern.compile("(?:.)((?:\\B)?)", 0, TdfaRunner::new).matcher(in);
+            PatternMatcher vm = Pattern.compile("(?:.)((?:\\B)?)", 0, TdfaRunner::new).matcher(in);
             assertThat(vm.matches()).isTrue();
             assertThat(vm.start(1)).isEqualTo(2);
             assertThat(vm.end(1)).isEqualTo(2);
@@ -339,12 +262,11 @@ class WholeMatchTest {
         // (\b)? on "": \b dead at EOF of empty input → whole matches via the
         // empty branch, group 1 non-participating (NOT the [0,0) the default
         // φ produced). Same answer at flags=0 and LONGEST_MATCH (fuzz case).
-        for (int flags : new int[] {0, Pattern.LONGEST_MATCH}) {
+        for (int flags : new int[]{0, Pattern.LONGEST_MATCH}) {
             PatternMatcher asm = Pattern.compile("(\\b)?", flags).matcher("");
             assertThat(asm.matches()).as("flags=%d", flags).isTrue();
             assertThat(asm.start(1)).as("flags=%d", flags).isEqualTo(-1);
-            PatternMatcher vm =
-                    Pattern.compile("(\\b)?", flags, TdfaRunner::new).matcher("");
+            PatternMatcher vm = Pattern.compile("(\\b)?", flags, TdfaRunner::new).matcher("");
             assertThat(vm.matches()).isTrue();
             assertThat(vm.start(1)).isEqualTo(-1);
         }
@@ -356,15 +278,13 @@ class WholeMatchTest {
             assertThat(asm.end(1)).isEqualTo(1);
             assertThat(asm.start("n0")).isEqualTo(1);
             assertThat(asm.end("n0")).isEqualTo(1);
-            PatternMatcher vm =
-                    Pattern.compile(".(?<n0>(\\z)*)", 0, TdfaRunner::new).matcher("_");
+            PatternMatcher vm = Pattern.compile(".(?<n0>(\\z)*)", 0, TdfaRunner::new).matcher("_");
             assertThat(vm.matches()).isTrue();
             assertThat(vm.start(1)).isEqualTo(1);
             assertThat(vm.end(1)).isEqualTo(1);
         }
         // CharSequence inputs route the generic (runner) whole walk — exact too.
-        assertThat(Pattern.compile("(\\b)?").matcher(new StringBuilder("")).matches())
-                .isTrue();
+        assertThat(Pattern.compile("(\\b)?").matcher(new StringBuilder("")).matches()).isTrue();
     }
 
     /**
@@ -377,14 +297,8 @@ class WholeMatchTest {
     @Test
     void wholeBombFailsCompile() {
         String bomb = "(a{1,100}){1,100}";
-        assertThatThrownBy(() -> Pattern.compile(bomb))
-                .isInstanceOf(PatternSyntaxException.class)
-                .hasMessageContaining("pattern too large");
-        assertThatThrownBy(() -> Pattern.compile(bomb, 0, TdfaRunner::new))
-                .isInstanceOf(PatternSyntaxException.class)
-                .hasMessageContaining("pattern too large");
-        assertThatThrownBy(() -> CompiledRegex.compile(bomb))
-                .isInstanceOf(PatternSyntaxException.class)
-                .hasMessageContaining("pattern too large");
+        assertThatThrownBy(() -> Pattern.compile(bomb)).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
+        assertThatThrownBy(() -> Pattern.compile(bomb, 0, TdfaRunner::new)).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
+        assertThatThrownBy(() -> CompiledRegex.compile(bomb)).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
     }
 }
