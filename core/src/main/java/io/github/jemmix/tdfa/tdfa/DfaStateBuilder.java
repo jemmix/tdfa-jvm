@@ -39,7 +39,8 @@ final class DfaStateBuilder {
     boolean addRange(int lo, int hi, int target, int[] ops, int requiredMask) {
         if (!ranges.isEmpty()) {
             Range last = ranges.get(ranges.size() - 1);
-            if (last.hi == lo - 1 && last.target == target && last.requiredMask == requiredMask && Arrays.equals(last.ops, ops)) {
+            if (last.hi == lo - 1 && last.target == target && last.requiredMask == requiredMask
+                && Arrays.equals(last.ops, ops)) {
                 ranges.set(ranges.size() - 1, new Range(last.lo, hi, target, ops, requiredMask));
                 return false;
             }
@@ -57,7 +58,8 @@ final class DfaStateBuilder {
         Range cur = ranges.get(0);
         for (int i = 1; i < ranges.size(); i++) {
             Range next = ranges.get(i);
-            if (next.lo == cur.hi + 1 && next.target == cur.target && Arrays.equals(next.ops, cur.ops) && next.requiredMask == cur.requiredMask) {
+            if (next.lo == cur.hi + 1 && next.target == cur.target && Arrays.equals(next.ops, cur.ops)
+                && next.requiredMask == cur.requiredMask) {
                 cur = new Range(cur.lo, next.hi, cur.target, cur.ops, cur.requiredMask);
             } else {
                 out.add(cur);

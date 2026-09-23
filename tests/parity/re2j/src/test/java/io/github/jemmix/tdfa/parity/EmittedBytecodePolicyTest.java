@@ -53,9 +53,9 @@ class EmittedBytecodePolicyTest {
      *  candidate scan with extract kernel, bare kernel. All fastPath/INLINED
      *  tier (no zero-width masks), per the emitter's pickMode. */
     private static final String[] PATTERNS = {"needle42hash", // pure literal -> LITERAL short-circuit
-                                              "[a-z]+ing", // candidate scan -> extractOne kernel
-                                              "(\\d{3})-(\\d{4})", // tagged kernel + register ops
-                                              "\\w+@(\\w+)\\.[a-z]{2,4}",};
+        "[a-z]+ing", // candidate scan -> extractOne kernel
+        "(\\d{3})-(\\d{4})", // tagged kernel + register ops
+        "\\w+@(\\w+)\\.[a-z]{2,4}",};
 
     private static final class Calls {
         final String file, method;
@@ -75,11 +75,13 @@ class EmittedBytecodePolicyTest {
         public String toString() {
             // OPCODES is indexed relative to INVOKEVIRTUAL (182): storing the
             // names at absolute opcode indices would need a 187-slot array.
-            return file + "." + method + ": " + OPCODES[opcode - Opcodes.INVOKEVIRTUAL] + " " + owner + "." + name + desc;
+            return file + "." + method + ": " + OPCODES[opcode - Opcodes.INVOKEVIRTUAL] + " " + owner + "." + name
+                + desc;
         }
     }
 
-    private static final String[] OPCODES = {"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "INVOKEVIRTUAL", "INVOKESPECIAL", "INVOKESTATIC", "INVOKEINTERFACE", "INVOKEDYNAMIC"};
+    private static final String[] OPCODES = {"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+        "INVOKEVIRTUAL", "INVOKESPECIAL", "INVOKESTATIC", "INVOKEINTERFACE", "INVOKEDYNAMIC"};
 
     @Test
     void generatedEngineClassesAreDevirtualizable() throws Exception {
@@ -122,7 +124,8 @@ class EmittedBytecodePolicyTest {
         }
         // There must be real code under test, not empty shells.
         assertThat(counts[0] + counts[1] + counts[2]).as("call sites in generated classes").isGreaterThan(20);
-        assertThat(violations).as("every call in the generated tier must be direct or monomorphic:\n%s", violations.stream().map(Object::toString).collect(Collectors.joining("\n"))).isEmpty();
+        assertThat(violations).as("every call in the generated tier must be direct or monomorphic:\n%s",
+            violations.stream().map(Object::toString).collect(Collectors.joining("\n"))).isEmpty();
     }
 
     /**
@@ -143,9 +146,8 @@ class EmittedBytecodePolicyTest {
         for (Path classFile : dumped) {
             StringWriter sw = new StringWriter();
             try {
-                CheckClassAdapter.verify(new ClassReader(
-                                Files.readAllBytes(classFile)), getClass().getClassLoader(), false, new PrintWriter(
-                                                sw));
+                CheckClassAdapter.verify(new ClassReader(Files.readAllBytes(classFile)), getClass().getClassLoader(),
+                    false, new PrintWriter(sw));
             } catch (Exception e) {
                 problems.add(classFile.getFileName() + ": threw " + e);
                 continue;
@@ -209,7 +211,8 @@ class EmittedBytecodePolicyTest {
      *  per JLS; everything else must declare (or be) final. */
     private static boolean receiverIsFinal(String owner) {
         try {
-            Class<?> c = Class.forName(owner.replace('/', '.'), false, EmittedBytecodePolicyTest.class.getClassLoader());
+            Class<?> c =
+                Class.forName(owner.replace('/', '.'), false, EmittedBytecodePolicyTest.class.getClassLoader());
             return c.isArray() || Modifier.isFinal(c.getModifiers());
         } catch (ClassNotFoundException e) {
             return false; // unloadable receiver: definitely not verifiable

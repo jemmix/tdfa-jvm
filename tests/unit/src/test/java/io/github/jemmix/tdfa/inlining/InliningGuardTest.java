@@ -52,7 +52,9 @@ class InliningGuardTest {
         String lastFailure = null;
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             ForkResult r = forkDriver();
-            Path log = reportDir.resolve("inlining-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")) + "-attempt" + attempt + ".log");
+            Path log = reportDir
+                .resolve("inlining-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
+                    + "-attempt" + attempt + ".log");
             Files.writeString(log, r.output());
 
             if (r.flagsRejected()) {
@@ -62,7 +64,8 @@ class InliningGuardTest {
             List<String> morphic = new ArrayList<>();
             List<String> warnings = new ArrayList<>();
             int genMethods = parse(r.output(), morphic, warnings);
-            String verdict = "attempt " + attempt + ": genMethods=" + genMethods + " morphicFailures=" + morphic.size() + " warnings=" + warnings.size() + " log=" + log;
+            String verdict = "attempt " + attempt + ": genMethods=" + genMethods + " morphicFailures=" + morphic.size()
+                + " warnings=" + warnings.size() + " log=" + log;
 
             if (genMethods >= MIN_GEN_METHODS && morphic.isEmpty()) {
                 System.out.println("[inlining-guard] CLEAN — " + verdict);
@@ -78,15 +81,17 @@ class InliningGuardTest {
 
     private record ForkResult(int exit, String output) {
         boolean flagsRejected() {
-            return exit != 0 && (output.contains("Unrecognized VM option") || output.contains("Could not create the Java Virtual Machine"));
+            return exit != 0 && (output.contains("Unrecognized VM option")
+                || output.contains("Could not create the Java Virtual Machine"));
         }
     }
 
     private static ForkResult forkDriver() throws Exception {
-        String javaBin = Path.of(System.getProperty("java.home"), "bin", System.getProperty("os.name", "").toLowerCase().contains("win") ? "java.exe" : "java").toString();
+        String javaBin = Path.of(System.getProperty("java.home"), "bin",
+            System.getProperty("os.name", "").toLowerCase().contains("win") ? "java.exe" : "java").toString();
         ProcessBuilder pb = new ProcessBuilder(javaBin, "-XX:+UnlockDiagnosticVMOptions", "-XX:+PrintInlining",
-                        "-XX:+PrintCompilation", "-XX:-BackgroundCompilation", "-Xss4m", "-cp",
-                        System.getProperty("java.class.path"), InliningDriver.class.getName());
+            "-XX:+PrintCompilation", "-XX:-BackgroundCompilation", "-Xss4m", "-cp",
+            System.getProperty("java.class.path"), InliningDriver.class.getName());
         pb.redirectErrorStream(true);
         Process p = pb.start();
         StringBuilder out = new StringBuilder();
@@ -140,7 +145,8 @@ class InliningGuardTest {
             String call = line.substring(at).stripLeading();
             if (call.contains("morphic")) {
                 morphic.add(header + " -> " + call);
-            } else if (call.contains("failed to inline") || call.contains("too big") || call.contains("too large") || call.contains("inlining too deep") || call.contains("not enough data")) {
+            } else if (call.contains("failed to inline") || call.contains("too big") || call.contains("too large")
+                || call.contains("inlining too deep") || call.contains("not enough data")) {
                 warnings.add(header + " -> " + call);
             }
         }

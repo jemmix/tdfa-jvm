@@ -68,7 +68,8 @@ class CaptureGroupAllocationTest {
             assertThat(m.end(1)).isEqualTo(3);
             assertThat(m.start(2)).isEqualTo(3);
             assertThat(m.end(2)).isEqualTo(3);
-        }).as("(a*)(a*) should not crash — BUG: ArrayIndexOutOfBoundsException in findFinalRegBase").doesNotThrowAnyException();
+        }).as("(a*)(a*) should not crash — BUG: ArrayIndexOutOfBoundsException in findFinalRegBase")
+            .doesNotThrowAnyException();
     }
 
     /** Same crash with (a+)(a*): a+ eats everything, a* gets nothing. */
@@ -96,14 +97,16 @@ class CaptureGroupAllocationTest {
     @ParameterizedTest
     @MethodSource("factories")
     void threeAdjacentStarGroups(RegexEngineFactory f) {
-        assertThatCode(() -> find("(a*)(a*)(a*)", "aaa", 0, f)).as("(a*)(a*)(a*) should not crash").doesNotThrowAnyException();
+        assertThatCode(() -> find("(a*)(a*)(a*)", "aaa", 0, f)).as("(a*)(a*)(a*) should not crash")
+            .doesNotThrowAnyException();
     }
 
     /** The crash also affects POSIX mode. */
     @ParameterizedTest
     @MethodSource("factories")
     void adjacentStarGroupsPosix(RegexEngineFactory f) {
-        assertThatCode(() -> find("(a*)(a*)", "aaa", Pattern.LONGEST_MATCH, f)).as("POSIX (a*)(a*) should not crash").doesNotThrowAnyException();
+        assertThatCode(() -> find("(a*)(a*)", "aaa", Pattern.LONGEST_MATCH, f)).as("POSIX (a*)(a*) should not crash")
+            .doesNotThrowAnyException();
     }
 
     /** Patterns that DON'T crash (second group requires ≥1 char). */

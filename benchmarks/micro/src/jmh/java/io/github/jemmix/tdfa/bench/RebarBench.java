@@ -72,7 +72,8 @@ public final class RebarBench {
 
     // ===== rebar models, engine-agnostic (ports of RebarScenarioParityTest) =====
 
-    static final Set<String> SUPPORTED_MODELS = Set.of("count", "count-spans", "count-captures", "grep", "compile", "grep-captures");
+    static final Set<String> SUPPORTED_MODELS =
+        Set.of("count", "count-spans", "count-captures", "grep", "compile", "grep-captures");
 
     static final Mode FAST = new Mode("fast", 2_000_000, 1, 3, 20_000, 5_000, 9 * 60_000);
     static final Mode ACCURATE = new Mode("accurate", 200_000_000, 2, 5, 300_000, 60_000, 12L * 60 * 60_000);
@@ -110,7 +111,7 @@ public final class RebarBench {
         private final IntUnaryOperator startG;
 
         ReflectFreeAdapter(Consumer<CharSequence> reset, BooleanSupplier find, IntSupplier start, IntSupplier end,
-                        IntUnaryOperator startG, IntSupplier groupCount) {
+            IntUnaryOperator startG, IntSupplier groupCount) {
             this.reset = reset;
             this.find = find;
             this.start = start;
@@ -158,7 +159,8 @@ public final class RebarBench {
 
         @Override
         public Object compile(String regex, boolean ci, boolean uni) {
-            int f = (ci ? java.util.regex.Pattern.CASE_INSENSITIVE : 0) | (uni ? java.util.regex.Pattern.UNICODE_CHARACTER_CLASS : 0);
+            int f = (ci ? java.util.regex.Pattern.CASE_INSENSITIVE : 0)
+                | (uni ? java.util.regex.Pattern.UNICODE_CHARACTER_CLASS : 0);
             return java.util.regex.Pattern.compile(regex, f);
         }
 
@@ -271,7 +273,8 @@ public final class RebarBench {
 
             @Override
             public Object compile(String regex, boolean ci, boolean uni) {
-                int f = (ci ? io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE : 0) | (uni ? io.github.jemmix.tdfa.Pattern.UNICODE_CHARACTER_CLASS : 0);
+                int f = (ci ? io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE : 0)
+                    | (uni ? io.github.jemmix.tdfa.Pattern.UNICODE_CHARACTER_CLASS : 0);
                 return io.github.jemmix.tdfa.Pattern.compile(regex, f, factory);
             }
 
@@ -535,7 +538,7 @@ public final class RebarBench {
     // ===== harness =====
 
     record Mode(String name, int maxChars, int warmups, int passes, long compileBudgetMs, long passBudgetMs,
-                    long deadlineMs) {
+        long deadlineMs) {
     }
 
     static final class Cell {
@@ -578,17 +581,18 @@ public final class RebarBench {
             }
         }
         if (dirArg == null) {
-            System.err.println("usage: RebarBench [fast|accurate] --dir <benchmarks> [--filter s] [--passes n] [--max-chars n]");
+            System.err.println(
+                "usage: RebarBench [fast|accurate] --dir <benchmarks> [--filter s] [--passes n] [--max-chars n]");
             System.exit(2);
         }
         Mode mode = modeArg.equals("accurate") ? ACCURATE : FAST;
         if (passesOverride != null) {
             mode = new Mode(mode.name(), mode.maxChars(), mode.warmups(), passesOverride, mode.compileBudgetMs(),
-                            mode.passBudgetMs(), mode.deadlineMs());
+                mode.passBudgetMs(), mode.deadlineMs());
         }
         if (maxCharsOverride != null) {
             mode = new Mode(mode.name(), maxCharsOverride, mode.warmups(), mode.passes(), mode.compileBudgetMs(),
-                            mode.passBudgetMs(), mode.deadlineMs());
+                mode.passBudgetMs(), mode.deadlineMs());
         }
 
         Path dir = Paths.get(dirArg);
@@ -599,7 +603,9 @@ public final class RebarBench {
             if (filter != null && !s.fullName().contains(filter)) {
                 continue;
             }
-            if (!enginesIncludeJava(s) || !SUPPORTED_MODELS.contains(s.model()) || s.expectedCount() == Long.MIN_VALUE || s.regex() == null || s.regex().length() > 2_000_000 || haystackByteSize(s, dir) < 0 || haystackByteSize(s, dir) > 80_000_000) {
+            if (!enginesIncludeJava(s) || !SUPPORTED_MODELS.contains(s.model()) || s.expectedCount() == Long.MIN_VALUE
+                || s.regex() == null || s.regex().length() > 2_000_000 || haystackByteSize(s, dir) < 0
+                || haystackByteSize(s, dir) > 80_000_000) {
                 skippedScope++;
                 continue;
             }
@@ -619,7 +625,8 @@ public final class RebarBench {
                 deadlineHit = true;
                 break;
             }
-            System.err.printf("  %-55s /%s/%n", s.fullName(), s.regex().length() > 60 ? s.regex().substring(0, 60) + "..." : s.regex());
+            System.err.printf("  %-55s /%s/%n", s.fullName(),
+                s.regex().length() > 60 ? s.regex().substring(0, 60) + "..." : s.regex());
             String hs0 = s.resolveHaystack(dir);
             String hs = hs0.length() > mode.maxChars() ? hs0.substring(0, mode.maxChars()) : hs0;
             double mb = hs.length() / 1e6;
@@ -708,7 +715,8 @@ public final class RebarBench {
             rows.add(new Row(s, mb, cells));
         }
 
-        printTables(mode, rows, scoped.size(), skippedScope, skippedBomb, deadlineHit, (System.nanoTime() - startWall) / 1_000_000);
+        printTables(mode, rows, scoped.size(), skippedScope, skippedBomb, deadlineHit,
+            (System.nanoTime() - startWall) / 1_000_000);
     }
 
     private static <T> T withTimeout(long timeoutMs, Callable<T> task) throws Exception {
@@ -724,21 +732,30 @@ public final class RebarBench {
 
     // ===== output =====
 
-    private static void printTables(Mode mode, List<Row> rows, int scoped, int skippedScope, int skippedBomb, boolean deadlineHit, long wallMs) {
+    private static void printTables(Mode mode, List<Row> rows, int scoped, int skippedScope, int skippedBomb,
+        boolean deadlineHit, long wallMs) {
         StringBuilder out = new StringBuilder();
         out.append(System.lineSeparator());
-        out.append("═══ rebar corpus — 5-engine bench — mode=").append(mode.name()).append(" ═══").append(System.lineSeparator());
-        out.append("scan = ms per MB of haystack (min of ").append(mode.passes()).append(" passes after ").append(mode.warmups()).append(" warmup; haystack cap ").append(mode.maxChars()).append(" chars)").append(System.lineSeparator());
+        out.append("═══ rebar corpus — 5-engine bench — mode=").append(mode.name()).append(" ═══")
+            .append(System.lineSeparator());
+        out.append("scan = ms per MB of haystack (min of ").append(mode.passes()).append(" passes after ")
+            .append(mode.warmups()).append(" warmup; haystack cap ").append(mode.maxChars()).append(" chars)")
+            .append(System.lineSeparator());
         out.append("* count diverges from java.util.regex on this input; cTO compile>budget;");
         out.append(" TO pass>budget; ERR exception").append(System.lineSeparator());
         out.append("goal: beat re2j decisively, parity with jur; reggie = reference").append(System.lineSeparator());
-        out.append("NOTE: fast mode is triage signal (JIT-cold, min-of-").append(mode.passes()).append("); isolated steady-state probes are ground truth for").append(System.lineSeparator());
-        out.append("single-scenario claims; sub-ms scenarios are noise-dominated. Use accurate mode for decisions.").append(System.lineSeparator());
-        out.append(String.format(Locale.ROOT, "scenarios run=%d (scoped=%d, out-of-scope=%d, bomb-skipped=%d)" + "  wall=%.1fs%s%n", rows.size(), scoped, skippedScope, skippedBomb, wallMs / 1000.0, deadlineHit ? "  [DEADLINE HIT — tail skipped]" : ""));
+        out.append("NOTE: fast mode is triage signal (JIT-cold, min-of-").append(mode.passes())
+            .append("); isolated steady-state probes are ground truth for").append(System.lineSeparator());
+        out.append("single-scenario claims; sub-ms scenarios are noise-dominated. Use accurate mode for decisions.")
+            .append(System.lineSeparator());
+        out.append(String.format(Locale.ROOT,
+            "scenarios run=%d (scoped=%d, out-of-scope=%d, bomb-skipped=%d)" + "  wall=%.1fs%s%n", rows.size(), scoped,
+            skippedScope, skippedBomb, wallMs / 1000.0, deadlineHit ? "  [DEADLINE HIT — tail skipped]" : ""));
 
         // ---- scan table ----
         out.append(System.lineSeparator());
-        out.append("── SCAN ms/MB (lower is better) ──────────────────────────────────────────────").append(System.lineSeparator());
+        out.append("── SCAN ms/MB (lower is better) ──────────────────────────────────────────────")
+            .append(System.lineSeparator());
         out.append(String.format("%-52s %9s %9s %9s %9s %9s%n", "scenario", "jur", "re2j", "reggie", "vm", "asm"));
         for (Row r : rows) {
             out.append(String.format("%-52s", abbrev(r.s().fullName() + " [" + r.s().model() + "]", 52)));
@@ -750,7 +767,8 @@ public final class RebarBench {
 
         // ---- compile table ----
         out.append(System.lineSeparator());
-        out.append("── COMPILE ms ────────────────────────────────────────────────────────────────").append(System.lineSeparator());
+        out.append("── COMPILE ms ────────────────────────────────────────────────────────────────")
+            .append(System.lineSeparator());
         out.append(String.format("%-52s %9s %9s %9s %9s %9s%n", "scenario", "jur", "re2j", "reggie", "vm", "asm"));
         for (Row r : rows) {
             out.append(String.format("%-52s", abbrev(r.s().fullName(), 52)));
@@ -762,10 +780,14 @@ public final class RebarBench {
 
         // ---- summary ----
         out.append(System.lineSeparator());
-        out.append("── SUMMARY ───────────────────────────────────────────────────────────────────").append(System.lineSeparator());
+        out.append("── SUMMARY ───────────────────────────────────────────────────────────────────")
+            .append(System.lineSeparator());
         int iJur = 0, iRe2j = 1, iVm = 3, iAsm = 4;
-        out.append(String.format("geomean scan ratio vs re2j: vm=%.2fx  asm=%.2fx   (n=%d, n=%d)%n", geomean(rows, iVm, iRe2j), geomean(rows, iAsm, iRe2j), nCommon(rows, iVm, iRe2j), nCommon(rows, iAsm, iRe2j)));
-        out.append(String.format("geomean scan ratio vs jur : vm=%.2fx  asm=%.2fx   (n=%d, n=%d)%n", geomean(rows, iVm, iJur), geomean(rows, iAsm, iJur), nCommon(rows, iVm, iJur), nCommon(rows, iAsm, iJur)));
+        out.append(
+            String.format("geomean scan ratio vs re2j: vm=%.2fx  asm=%.2fx   (n=%d, n=%d)%n", geomean(rows, iVm, iRe2j),
+                geomean(rows, iAsm, iRe2j), nCommon(rows, iVm, iRe2j), nCommon(rows, iAsm, iRe2j)));
+        out.append(String.format("geomean scan ratio vs jur : vm=%.2fx  asm=%.2fx   (n=%d, n=%d)%n",
+            geomean(rows, iVm, iJur), geomean(rows, iAsm, iJur), nCommon(rows, iVm, iJur), nCommon(rows, iAsm, iJur)));
         out.append(worst(rows, "worst 10 vm  vs re2j", iVm, iRe2j));
         out.append(worst(rows, "worst 10 asm vs re2j", iAsm, iRe2j));
         out.append(worst(rows, "worst 10 vm  vs jur", iVm, iJur));
@@ -837,7 +859,8 @@ public final class RebarBench {
         StringBuilder sb = new StringBuilder(title + " (ours slower = ratio > 1):" + System.lineSeparator());
         for (int i = 0; i < Math.min(10, list.size()); i++) {
             Ratio x = list.get(i);
-            sb.append(String.format(Locale.ROOT, "  %6.2fx  %-50s  ours=%9d ns  theirs=%9d ns%n", x.ratio(), abbrev(x.name(), 50), x.aNs(), x.bNs()));
+            sb.append(String.format(Locale.ROOT, "  %6.2fx  %-50s  ours=%9d ns  theirs=%9d ns%n", x.ratio(),
+                abbrev(x.name(), 50), x.aNs(), x.bNs()));
         }
         return sb.toString();
     }

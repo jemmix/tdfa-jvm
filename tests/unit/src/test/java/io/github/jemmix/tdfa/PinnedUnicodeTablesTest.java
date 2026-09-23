@@ -74,7 +74,9 @@ class PinnedUnicodeTablesTest {
 
     @Test
     void unknownPropertyStillRejected() {
-        assertThatThrownBy(() -> CompiledRegex.compile("[\\p{NotAProperty}]", CompileOptions.of().unicode(Unicode6_0.provider()))).isInstanceOf(PatternSyntaxException.class);
+        assertThatThrownBy(
+            () -> CompiledRegex.compile("[\\p{NotAProperty}]", CompileOptions.of().unicode(Unicode6_0.provider())))
+            .isInstanceOf(PatternSyntaxException.class);
     }
 
     /** Literal/class folding is pinned to the snapshot too (not the runtime

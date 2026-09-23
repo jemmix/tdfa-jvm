@@ -66,7 +66,8 @@ public final class CompilationReport implements CompileObserver {
                 if (!first) {
                     sb.append(", ");
                 }
-                sb.append(s.name().toLowerCase(Locale.ROOT)).append("=").append(nanos.get(s)).append("ns/").append(details.get(s));
+                sb.append(s.name().toLowerCase(Locale.ROOT)).append("=").append(nanos.get(s)).append("ns/")
+                    .append(details.get(s));
                 first = false;
             }
         }

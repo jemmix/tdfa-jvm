@@ -120,7 +120,8 @@ class JdkRegressionCorpusTest {
                 line = line.substring(0, index) + "\n" + line.substring(index + 2);
             }
             while ((index = line.indexOf("\\u")) != -1) {
-                line = line.substring(0, index) + (char) Integer.parseInt(line.substring(index + 2, index + 6), 16) + line.substring(index + 6);
+                line = line.substring(0, index) + (char) Integer.parseInt(line.substring(index + 2, index + 6), 16)
+                    + line.substring(index + 6);
             }
             return line;
         }
@@ -165,7 +166,8 @@ class JdkRegressionCorpusTest {
         List<Arguments> out = new ArrayList<>();
         List<RegexEngineFactory> factories = Stream.<RegexEngineFactory>of(null, TdfaRunner::new).toList();
         for (RegexEngineFactory factory : factories) {
-            for (String file : List.of("openjdk-regex/TestCases.txt", "openjdk-regex/BMPTestCases.txt", "openjdk-regex/SupplementaryTestCases.txt")) {
+            for (String file : List.of("openjdk-regex/TestCases.txt", "openjdk-regex/BMPTestCases.txt",
+                "openjdk-regex/SupplementaryTestCases.txt")) {
                 for (Case c : parseFile(file)) {
                     out.add(Arguments.of(c, factory));
                 }
@@ -307,11 +309,13 @@ class JdkRegressionCorpusTest {
             jurResult = "<jur-rejects>";
         }
         if (!jurResult.equals(oracle)) {
-            JurOnlySyntax.add(c + " input=`" + c.input().replace("\n", "\\n") + "` re2j/tdfa=`" + oracle + "` jur=`" + jurResult + "`");
+            JurOnlySyntax.add(c + " input=`" + c.input().replace("\n", "\\n") + "` re2j/tdfa=`" + oracle + "` jur=`"
+                + jurResult + "`");
         }
 
         if (!oracle.equals(c.expected())) {
-            RecordedDrift.add(c + " input=`" + c.input().replace("\n", "\\n") + "` recorded=`" + c.expected() + "` live=`" + oracle + "`");
+            RecordedDrift.add(c + " input=`" + c.input().replace("\n", "\\n") + "` recorded=`" + c.expected()
+                + "` live=`" + oracle + "`");
         }
     }
 
@@ -321,13 +325,15 @@ class JdkRegressionCorpusTest {
     }
 
     private static String detail(Case c, String oracle, String actual) {
-        return String.format("%n  input = `%s`%n  re2j  = `%s`%n  tdfa  = `%s`%n  rec   = `%s`", c.input().replace("\n", "\\n"), oracle, actual, c.expected());
+        return String.format("%n  input = `%s`%n  re2j  = `%s`%n  tdfa  = `%s`%n  rec   = `%s`",
+            c.input().replace("\n", "\\n"), oracle, actual, c.expected());
     }
 
     @AfterAll
     static void summary() {
         System.out.println("---- JDK regression corpus summary ----");
-        System.out.println("compared (re2j+tdfa compiled): " + compared + ", both reject: " + bothReject + ", by-design (?u): " + byDesign);
+        System.out.println("compared (re2j+tdfa compiled): " + compared + ", both reject: " + bothReject
+            + ", by-design (?u): " + byDesign);
         System.out.println("jur-only syntax divergences (informational): " + JurOnlySyntax.size());
         System.out.println("recorded-expectation drift vs live engines: " + RecordedDrift.size());
         RecordedDrift.stream().limit(20).forEach(s -> System.out.println("  DRIFT " + s));

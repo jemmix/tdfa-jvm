@@ -53,7 +53,7 @@ public class TDFAPattern implements Pattern {
 
     @EmittedSurface // shells super-ctor call: signature feeds ShellEmitter descriptor
     public TDFAPattern(String pattern, int flags, int programSize, RegexEngine engine, RegexEngine wholeEngine,
-                    UnicodeDataProvider provider) {
+        UnicodeDataProvider provider) {
         this.pattern = pattern;
         this.flags = flags;
         this.programSize = programSize;

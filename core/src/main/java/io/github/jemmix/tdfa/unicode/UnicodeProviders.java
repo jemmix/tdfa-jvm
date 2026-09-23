@@ -43,9 +43,8 @@ public final class UnicodeProviders {
             return p;
         }
         if (failure != null) {
-            throw new IllegalStateException(
-                            "Unicode data provider initialisation failed (property " + PROPERTY_NAME + " = \"" + System.getProperty(PROPERTY_NAME) + "\"); see cause",
-                            failure);
+            throw new IllegalStateException("Unicode data provider initialisation failed (property " + PROPERTY_NAME
+                + " = \"" + System.getProperty(PROPERTY_NAME) + "\"); see cause", failure);
         }
         synchronized (UnicodeProviders.class) {
             p = cached;
@@ -53,9 +52,8 @@ public final class UnicodeProviders {
                 return p;
             }
             if (failure != null) {
-                throw new IllegalStateException(
-                                "Unicode data provider initialisation failed (property " + PROPERTY_NAME + " = \"" + System.getProperty(PROPERTY_NAME) + "\"); see cause",
-                                failure);
+                throw new IllegalStateException("Unicode data provider initialisation failed (property " + PROPERTY_NAME
+                    + " = \"" + System.getProperty(PROPERTY_NAME) + "\"); see cause", failure);
             }
             try {
                 p = resolve();
@@ -63,9 +61,8 @@ public final class UnicodeProviders {
                 return p;
             } catch (Throwable t) {
                 failure = t;
-                throw new IllegalStateException(
-                                "Unicode data provider initialisation failed (property " + PROPERTY_NAME + " = \"" + System.getProperty(PROPERTY_NAME) + "\"); see cause",
-                                t);
+                throw new IllegalStateException("Unicode data provider initialisation failed (property " + PROPERTY_NAME
+                    + " = \"" + System.getProperty(PROPERTY_NAME) + "\"); see cause", t);
             }
         }
     }
@@ -86,13 +83,13 @@ public final class UnicodeProviders {
                 }
                 if (!UnicodeDataProvider.class.isAssignableFrom(cls)) {
                     throw new IllegalArgumentException(
-                                    "Unicode provider class " + v + " does not implement " + UnicodeDataProvider.class.getName());
+                        "Unicode provider class " + v + " does not implement " + UnicodeDataProvider.class.getName());
                 }
                 try {
                     return (UnicodeDataProvider) cls.getDeclaredConstructor().newInstance();
                 } catch (ReflectiveOperationException e) {
                     throw new IllegalStateException(
-                                    "Unicode provider class " + v + " has no accessible no-arg constructor", e);
+                        "Unicode provider class " + v + " has no accessible no-arg constructor", e);
                 }
         }
     }

@@ -71,7 +71,8 @@ public final class Re2jOracle {
     }
 
     public static int[] re2jFindPosix(String pattern, String input) {
-        com.google.re2j.Matcher m = com.google.re2j.Pattern.compile(pattern, com.google.re2j.Pattern.LONGEST_MATCH).matcher(input);
+        com.google.re2j.Matcher m =
+            com.google.re2j.Pattern.compile(pattern, com.google.re2j.Pattern.LONGEST_MATCH).matcher(input);
         if (!m.find()) {
             return null;
         }
@@ -135,7 +136,8 @@ public final class Re2jOracle {
     }
 
     public static int[] tdfaFindPosix(String pattern, String input, RegexEngineFactory factory) {
-        Matcher m = io.github.jemmix.tdfa.Pattern.compile(pattern, io.github.jemmix.tdfa.Pattern.LONGEST_MATCH, factory, UNICODE).matcher(input);
+        Matcher m = io.github.jemmix.tdfa.Pattern
+            .compile(pattern, io.github.jemmix.tdfa.Pattern.LONGEST_MATCH, factory, UNICODE).matcher(input);
         if (!m.find()) {
             return null;
         }

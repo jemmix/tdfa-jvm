@@ -40,8 +40,10 @@ class DotAllParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void dotAllFlag(RegexEngineFactory factory) {
-        com.google.re2j.Matcher rm = com.google.re2j.Pattern.compile("(?s).", com.google.re2j.Pattern.DOTALL).matcher("\n");
-        io.github.jemmix.tdfa.core.Matcher tm = io.github.jemmix.tdfa.Pattern.compile("(?s).", io.github.jemmix.tdfa.Pattern.DOTALL, factory).matcher("\n");
+        com.google.re2j.Matcher rm =
+            com.google.re2j.Pattern.compile("(?s).", com.google.re2j.Pattern.DOTALL).matcher("\n");
+        io.github.jemmix.tdfa.core.Matcher tm =
+            io.github.jemmix.tdfa.Pattern.compile("(?s).", io.github.jemmix.tdfa.Pattern.DOTALL, factory).matcher("\n");
         assertThat(tm.find()).isEqualTo(rm.find());
         assertThat(tm.group()).isEqualTo(rm.group());
     }

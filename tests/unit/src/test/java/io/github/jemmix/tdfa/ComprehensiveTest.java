@@ -147,13 +147,19 @@ class ComprehensiveTest {
         cases.add(Case.c("(\\d+)", "12345", true, new int[]{0, 5, 0, 5}, "digit capture"));
 
         // ===== 6. Realistic patterns =====
-        cases.add(Case.c("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "192.168.1.1", true, new int[]{0, 11, 0, 3, 4, 7, 8, 9, 10, 11}, "IPv4"));
+        cases.add(Case.c("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "192.168.1.1", true,
+            new int[]{0, 11, 0, 3, 4, 7, 8, 9, 10, 11}, "IPv4"));
         cases.add(Case.c("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "192.168.1", false, "IPv4 too few octets"));
-        cases.add(Case.c("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "999.999.999.999", true, "IPv4 large octets (syntactic)"));
-        cases.add(Case.c("([a-fA-F0-9]{2}):([a-fA-F0-9]{2}):([a-fA-F0-9]{2}):([a-fA-F0-9]{2}):([a-fA-F0-9]{2}):([a-fA-F0-9]{2})", "01:23:45:67:89:ab", true, null, "MAC address")); // groups checked separately
-        cases.add(Case.c("([0-9]{4})-([0-9]{2})-([0-9]{2})", "2024-01-15", true, new int[]{0, 10, 0, 4, 5, 7, 8, 10}, "date"));
+        cases
+            .add(Case.c("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "999.999.999.999", true, "IPv4 large octets (syntactic)"));
+        cases.add(Case.c(
+            "([a-fA-F0-9]{2}):([a-fA-F0-9]{2}):([a-fA-F0-9]{2}):([a-fA-F0-9]{2}):([a-fA-F0-9]{2}):([a-fA-F0-9]{2})",
+            "01:23:45:67:89:ab", true, null, "MAC address")); // groups checked separately
+        cases.add(Case.c("([0-9]{4})-([0-9]{2})-([0-9]{2})", "2024-01-15", true, new int[]{0, 10, 0, 4, 5, 7, 8, 10},
+            "date"));
         cases.add(Case.c("([0-9]{4})-([0-9]{2})-([0-9]{2})", "2024-1-15", false, "date single digit month"));
-        cases.add(Case.c("(\\w+)@(\\w+)\\.(\\w+)", "user@example.com", true, new int[]{0, 16, 0, 4, 5, 12, 13, 16}, "email-ish"));
+        cases.add(Case.c("(\\w+)@(\\w+)\\.(\\w+)", "user@example.com", true, new int[]{0, 16, 0, 4, 5, 12, 13, 16},
+            "email-ish"));
         cases.add(Case.c("(\\w+)@(\\w+)\\.(\\w+)", "not-an-email", false, "email-ish no match"));
         cases.add(Case.c("#([0-9a-fA-F]{6})", "#ff0000", true, new int[]{0, 7, 1, 7}, "hex color"));
         cases.add(Case.c("#([0-9a-fA-F]{6})", "#FF00FF", true, new int[]{0, 7, 1, 7}, "hex color upper"));
@@ -190,7 +196,8 @@ class ComprehensiveTest {
 
         // ===== 9. Complex mixed patterns =====
         cases.add(Case.c("(\\d+)-(\\w+)", "123-abc", true, new int[]{0, 7, 0, 3, 4, 7}, "digit-word dash"));
-        cases.add(Case.c("(\\w+)\\s*=(\\w+)", "key=value", true, new int[]{0, 9, 0, 3, 4, 9}, "key=value optional spaces"));
+        cases.add(
+            Case.c("(\\w+)\\s*=(\\w+)", "key=value", true, new int[]{0, 9, 0, 3, 4, 9}, "key=value optional spaces"));
         cases.add(Case.f("(\\w+)\\s*=(\\w+)", "key=value", true, "key=value no spaces"));
         cases.add(Case.c("(a+)(b+)", "aaabb", true, new int[]{0, 5, 0, 3, 3, 5}, "two quantified captures"));
         cases.add(Case.c("(a+)(b+)", "aaa", false, "two quantified captures no b"));

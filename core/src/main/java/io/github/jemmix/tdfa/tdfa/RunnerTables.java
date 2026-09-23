@@ -157,7 +157,8 @@ final class RunnerTables {
      */
     static int literalIndexOf(String s, String needle, int from) {
         int idx = s.indexOf(needle, from);
-        while (idx >= 0 && (needleEndOverlapsPair(s, idx, needle.length()) || (idx > from && Alphabet.pairInterior(s, idx)))) {
+        while (idx >= 0
+            && (needleEndOverlapsPair(s, idx, needle.length()) || (idx > from && Alphabet.pairInterior(s, idx)))) {
             idx = s.indexOf(needle, idx + 1);
         }
         return idx;

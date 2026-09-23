@@ -26,13 +26,15 @@ class OptimizeRenameTest {
     @Test
     void failsFastOnOutOfRangeRegister() {
         Cfg cfg = cfgWithOp(Cfg.Op.copy(0, 2)); // vmap below covers 0..1 only
-        assertThatThrownBy(() -> Optimize.rename(cfg, new int[]{5, -1})).isInstanceOf(IllegalStateException.class).hasMessageContaining("unmapped register 2");
+        assertThatThrownBy(() -> Optimize.rename(cfg, new int[]{5, -1})).isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("unmapped register 2");
     }
 
     @Test
     void failsFastOnUnusedRegister() {
         Cfg cfg = cfgWithOp(Cfg.Op.setPos(1)); // vmap[1] = -1 (unused sentinel)
-        assertThatThrownBy(() -> Optimize.rename(cfg, new int[]{0, -1})).isInstanceOf(IllegalStateException.class).hasMessageContaining("unmapped register 1");
+        assertThatThrownBy(() -> Optimize.rename(cfg, new int[]{0, -1})).isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("unmapped register 1");
     }
 
     @Test

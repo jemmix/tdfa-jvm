@@ -237,7 +237,8 @@ class LongestMatchParityTest {
             try {
                 int[] expected = re2jFindPosix(pattern, input);
                 int[] actual = tdfaFindPosix(pattern, input, factory);
-                assertThat(actual).as("seed-case #%d pattern=\"%s\" input=\"%s\"", i, pattern, input).isEqualTo(expected);
+                assertThat(actual).as("seed-case #%d pattern=\"%s\" input=\"%s\"", i, pattern, input)
+                    .isEqualTo(expected);
             } catch (RuntimeException e) {
                 // both engines must agree on rejection too; anything else is a bug
                 try {
@@ -266,8 +267,8 @@ class LongestMatchParityTest {
                 // nested quantifiers: quantified group whose body is itself quantified —
                 // nullable-body stars, the (a*?)*? submatch-disambiguation family
                 case 6 -> sb.append('(').append(atom(rnd)).append(quant(rnd)).append(')').append(quant(rnd));
-                case 7 ->
-                    sb.append("((").append(atom(rnd)).append(quant(rnd)).append(")|(").append(atom(rnd)).append(quant(rnd)).append("))").append(quant(rnd));
+                case 7 -> sb.append("((").append(atom(rnd)).append(quant(rnd)).append(")|(").append(atom(rnd))
+                    .append(quant(rnd)).append("))").append(quant(rnd));
             }
         }
         return sb.toString();

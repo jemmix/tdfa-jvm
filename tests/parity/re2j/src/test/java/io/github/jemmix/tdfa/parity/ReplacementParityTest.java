@@ -114,7 +114,8 @@ class ReplacementParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void quoteReplacementStatic(RegexEngineFactory factory) {
-        assertThat(io.github.jemmix.tdfa.core.Matcher.quoteReplacement("$1\\2")).isEqualTo(com.google.re2j.Matcher.quoteReplacement("$1\\2"));
+        assertThat(io.github.jemmix.tdfa.core.Matcher.quoteReplacement("$1\\2"))
+            .isEqualTo(com.google.re2j.Matcher.quoteReplacement("$1\\2"));
     }
 
     @ParameterizedTest
@@ -163,7 +164,8 @@ class ReplacementParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void replaceAllGroupRefOutOfRange(RegexEngineFactory factory) {
-        assertThatThrownBy(() -> tdfaReplaceAll("(a)", "a", "$2", factory)).isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> tdfaReplaceAll("(a)", "a", "$2", factory))
+            .isInstanceOf(IndexOutOfBoundsException.class);
         assertThatThrownBy(() -> re2jReplaceAll("(a)", "a", "$2")).isInstanceOf(IndexOutOfBoundsException.class);
     }
 

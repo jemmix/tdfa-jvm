@@ -44,7 +44,8 @@ public final class Optimize {
                 edges += b.successors.size();
                 ops += b.ops.size();
             }
-            System.err.printf("[cfg] blocks=%d edges=%d ops=%d regs=%d tags=%d%n", cfg.blocks.size(), edges, ops, cfg.initialRegCount, cfg.tagCount);
+            System.err.printf("[cfg] blocks=%d edges=%d ops=%d regs=%d tags=%d%n", cfg.blocks.size(), edges, ops,
+                cfg.initialRegCount, cfg.tagCount);
         }
         // Stage 1: compaction (renumber survivors into a contiguous range).
         int[] vmap = compaction(cfg);
@@ -164,8 +165,8 @@ public final class Optimize {
 
     private static int mapped(int r, int[] vmap) {
         if (r < 0 || r >= vmap.length || vmap[r] < 0) {
-            throw new IllegalStateException(
-                            "regopt: rename: op references unmapped register " + r + " (vmap covers " + vmap.length + " registers) — compaction invariant broken");
+            throw new IllegalStateException("regopt: rename: op references unmapped register " + r + " (vmap covers "
+                + vmap.length + " registers) — compaction invariant broken");
         }
         return vmap[r];
     }

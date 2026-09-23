@@ -60,9 +60,9 @@ class FoldCaseParityTest {
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void historicCyrillicAgreesWithOracleUniverse(RegexEngineFactory factory) {
         for (String p : new String[]{"(?i)\u0442", "(?i)\u0422", "(?i)\u1C84", "(?i)\u1C85", // {Т, т, Ꚅ, ꚅ}
-                                     "(?i)\u0432", "(?i)\u0412", "(?i)\u1C80", // {В, в, Ꚁ}
-                                     "(?i)\u1C88", "(?i)\uA64A", "(?i)\uA64B", // {Ԫ, ԫ, Ꚉ}
-                                     "(?i)[\u0422\u0442]", "(?i)[\u1C80]", "(?i)[^t]"}) {
+            "(?i)\u0432", "(?i)\u0412", "(?i)\u1C80", // {В, в, Ꚁ}
+            "(?i)\u1C88", "(?i)\uA64A", "(?i)\uA64B", // {Ԫ, ԫ, Ꚉ}
+            "(?i)[\u0422\u0442]", "(?i)[\u1C80]", "(?i)[^t]"}) {
             // NB: patched-oracle-only shapes: the released oracle's
             // unbounded walk hangs on the letter literals, so those
             // patterns are skipped there (letter RUNES in the PATTERN are
@@ -70,7 +70,8 @@ class FoldCaseParityTest {
             if (releasedOracle() && containsHistoricLetter(p)) {
                 continue;
             }
-            for (String in : new String[]{"\u0442", "\u0422", "\u1C84", "\u1C85", "\u0432", "\u0412", "\u1C80", "\u1C88", "\uA64A", "\uA64B", "x"}) {
+            for (String in : new String[]{"\u0442", "\u0422", "\u1C84", "\u1C85", "\u0432", "\u0412", "\u1C80",
+                "\u1C88", "\uA64A", "\uA64B", "x"}) {
                 assertSameFind(p, in, factory);
             }
         }
@@ -93,9 +94,12 @@ class FoldCaseParityTest {
     @Test
     void defaultUniverseFoldsModernOrbits() {
         // orbit members reach each other ...
-        assertThat(tdfaFindDefaultUniverse("(?i)\u0442", "\u1C85")).as("default universe (?i)т → ꚅ (modern orbit)").isNotNull();
-        assertThat(tdfaFindDefaultUniverse("(?i)\u1C85", "\u0442")).as("default universe (?i)ꚅ → т (modern orbit, both directions)").isNotNull();
-        assertThat(tdfaFindDefaultUniverse("(?i)\u1C80", "\u0432")).as("default universe (?i)Ꚁ → в (modern orbit)").isNotNull();
+        assertThat(tdfaFindDefaultUniverse("(?i)\u0442", "\u1C85")).as("default universe (?i)т → ꚅ (modern orbit)")
+            .isNotNull();
+        assertThat(tdfaFindDefaultUniverse("(?i)\u1C85", "\u0442"))
+            .as("default universe (?i)ꚅ → т (modern orbit, both directions)").isNotNull();
+        assertThat(tdfaFindDefaultUniverse("(?i)\u1C80", "\u0432")).as("default universe (?i)Ꚁ → в (modern orbit)")
+            .isNotNull();
         // ... and self-match, as every fold universe must.
         assertThat(tdfaFindDefaultUniverse("(?i)\u1C80", "\u1C80")).as("default universe (?i)Ꚁ → Ꚁ").isNotNull();
     }
@@ -113,7 +117,8 @@ class FoldCaseParityTest {
         // oracle (hang); partner-side probes only.
         assertThat(re2jFind("(?i)\u0442", "\u1C85")).as("oracle (?i)т → ꚅ (post-6.0 orbits not folded)").isNull();
         // under the bridge tdfa agrees with the oracle on that cell ...
-        assertThat(tdfaFind("(?i)\u0442", "\u1C85", factory)).as("bridge universe tdfa (?i)т → ꚅ agrees with oracle").isNull();
+        assertThat(tdfaFind("(?i)\u0442", "\u1C85", factory)).as("bridge universe tdfa (?i)т → ꚅ agrees with oracle")
+            .isNull();
         // ... while the default universe folds modern (see above) — the
         // documented, deliberate gap between the two lanes.
     }

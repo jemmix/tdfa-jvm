@@ -173,24 +173,28 @@ class MatcherApiParityTest {
 
     @Test
     void staticMatchesTrue() {
-        assertThat(io.github.jemmix.tdfa.Pattern.matches("abc", "abc")).isEqualTo(com.google.re2j.Pattern.matches("abc", "abc"));
+        assertThat(io.github.jemmix.tdfa.Pattern.matches("abc", "abc"))
+            .isEqualTo(com.google.re2j.Pattern.matches("abc", "abc"));
     }
 
     @Test
     void staticMatchesFalse() {
-        assertThat(io.github.jemmix.tdfa.Pattern.matches("abc", "abcd")).isEqualTo(com.google.re2j.Pattern.matches("abc", "abcd"));
+        assertThat(io.github.jemmix.tdfa.Pattern.matches("abc", "abcd"))
+            .isEqualTo(com.google.re2j.Pattern.matches("abc", "abcd"));
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void instanceMatchesTrue(RegexEngineFactory factory) {
-        assertThat(io.github.jemmix.tdfa.Pattern.compile("abc", 0, factory).matches("abc")).isEqualTo(com.google.re2j.Pattern.compile("abc").matches("abc"));
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("abc", 0, factory).matches("abc"))
+            .isEqualTo(com.google.re2j.Pattern.compile("abc").matches("abc"));
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void patternAccessor(RegexEngineFactory factory) {
-        assertThat(io.github.jemmix.tdfa.Pattern.compile("a(b)c", 0, factory).pattern()).isEqualTo(com.google.re2j.Pattern.compile("a(b)c").pattern());
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("a(b)c", 0, factory).pattern())
+            .isEqualTo(com.google.re2j.Pattern.compile("a(b)c").pattern());
     }
 
     // ---- runtime exceptions ----
@@ -358,7 +362,8 @@ class MatcherApiParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void instanceMatchesFalse(RegexEngineFactory factory) {
-        assertThat(io.github.jemmix.tdfa.Pattern.compile("abc", 0, factory).matches("abcd")).isEqualTo(com.google.re2j.Pattern.compile("abc").matches("abcd"));
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("abc", 0, factory).matches("abcd"))
+            .isEqualTo(com.google.re2j.Pattern.compile("abc").matches("abcd"));
     }
 
     @ParameterizedTest

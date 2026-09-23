@@ -121,7 +121,7 @@ public final class ScenarioLoader {
             }
         }
         return new Scenario(fullName, group, name, model, regex, caseInsensitive, unicode, hsSpec, count,
-                        List.copyOf(engines));
+            List.copyOf(engines));
     }
 
     /**
@@ -308,7 +308,7 @@ public final class ScenarioLoader {
                 Long ls = t.getLong("line-start");
                 Long le = t.getLong("line-end");
                 return new Scenario.HaystackSpec.FromPath(t.getString("path"), trim, utf8Lossy, repeat, prepend, append,
-                                ls != null ? ls.intValue() : null, le != null ? le.intValue() : null);
+                    ls != null ? ls.intValue() : null, le != null ? le.intValue() : null);
             }
         }
         return null;

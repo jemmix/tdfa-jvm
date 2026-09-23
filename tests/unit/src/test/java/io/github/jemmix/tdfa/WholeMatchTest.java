@@ -147,7 +147,8 @@ class WholeMatchTest {
         assertThat(m.matches("a\nb")).isFalse();
         // Bomb corner: the cut-free whole artifact exceeds the compile
         // budget, so compile() fails with the standard rejection.
-        assertThatThrownBy(() -> CompiledRegex.compile("(a{1,100}){1,100}")).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
+        assertThatThrownBy(() -> CompiledRegex.compile("(a{1,100}){1,100}")).isInstanceOf(PatternSyntaxException.class)
+            .hasMessageContaining("pattern too large");
     }
 
     @Test
@@ -189,7 +190,8 @@ class WholeMatchTest {
         assertThat(q.matcher("aaa").matches()).isTrue();
 
         Pattern asm = Pattern.compile("(a|ab)");
-        assertThat(((TDFAPattern) asm).wholeEngine().getClass().getSimpleName()).as("default tier whole engine is generated, not the interpreter").startsWith("Gen");
+        assertThat(((TDFAPattern) asm).wholeEngine().getClass().getSimpleName())
+            .as("default tier whole engine is generated, not the interpreter").startsWith("Gen");
     }
 
     /**
@@ -203,8 +205,12 @@ class WholeMatchTest {
      */
     @Test
     void anchoredArtifactWholeWalkIsExact() {
-        String[] pats = {"(a|ab)", "ab|a|ac", "ax?|a.y", "(a)(b|bc)", "a*", "a+", "(a*)*", "(a?){2,}", "(^|$)+", "a$", "^a", "(?m)^a$", "(?m)a$", "\\Aab\\z", "a\\z", "(?i)AbC", "(ab|a)+", "(a|ab)+", "x.*y", "x.+?y", "\\bword\\b", "(?:ab|a)(?:c|bcd)", "(a??b??)*", "((a)|b)+", "(a{1,3}?)b", "(\\w+)\\s+(\\w+)", "(a)|(ab)",};
-        String[] inputs = {"", "a", "ab", "abc", "ac", "ad", "ax", "a.y", "b", "abab", "ababc", "aaab", "a\n", "a\nb", "xay", "xabcy", "xxy", "xy", "word", " word ", "a b", "hello brave new world", "AbC", "abcd", "zz", "aab", "aaaa", "aaaaab", "\n",};
+        String[] pats = {"(a|ab)", "ab|a|ac", "ax?|a.y", "(a)(b|bc)", "a*", "a+", "(a*)*", "(a?){2,}", "(^|$)+", "a$",
+            "^a", "(?m)^a$", "(?m)a$", "\\Aab\\z", "a\\z", "(?i)AbC", "(ab|a)+", "(a|ab)+", "x.*y", "x.+?y",
+            "\\bword\\b", "(?:ab|a)(?:c|bcd)", "(a??b??)*", "((a)|b)+", "(a{1,3}?)b", "(\\w+)\\s+(\\w+)", "(a)|(ab)",};
+        String[] inputs = {"", "a", "ab", "abc", "ac", "ad", "ax", "a.y", "b", "abab", "ababc", "aaab", "a\n", "a\nb",
+            "xay", "xabcy", "xxy", "xy", "word", " word ", "a b", "hello brave new world", "AbC", "abcd", "zz", "aab",
+            "aaaa", "aaaaab", "\n",};
         for (String p : pats) {
             TdfaRunner anchored;
             java.util.regex.Pattern jur;
@@ -222,7 +228,8 @@ class WholeMatchTest {
                 String a = am == null ? "null" : span(am);
                 String f = fm == null ? "null" : span(fm);
                 assertThat(a).as("anchored whole of %s on %s (spans)", p, s.replace("\n", "\\n")).isEqualTo(f);
-                assertThat(am != null).as("anchored whole boolean of %s on %s vs jur", p, s.replace("\n", "\\n")).isEqualTo(jur.matcher(s).matches());
+                assertThat(am != null).as("anchored whole boolean of %s on %s vs jur", p, s.replace("\n", "\\n"))
+                    .isEqualTo(jur.matcher(s).matches());
             }
         }
     }
@@ -297,8 +304,11 @@ class WholeMatchTest {
     @Test
     void wholeBombFailsCompile() {
         String bomb = "(a{1,100}){1,100}";
-        assertThatThrownBy(() -> Pattern.compile(bomb)).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
-        assertThatThrownBy(() -> Pattern.compile(bomb, 0, TdfaRunner::new)).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
-        assertThatThrownBy(() -> CompiledRegex.compile(bomb)).isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
+        assertThatThrownBy(() -> Pattern.compile(bomb)).isInstanceOf(PatternSyntaxException.class)
+            .hasMessageContaining("pattern too large");
+        assertThatThrownBy(() -> Pattern.compile(bomb, 0, TdfaRunner::new)).isInstanceOf(PatternSyntaxException.class)
+            .hasMessageContaining("pattern too large");
+        assertThatThrownBy(() -> CompiledRegex.compile(bomb)).isInstanceOf(PatternSyntaxException.class)
+            .hasMessageContaining("pattern too large");
     }
 }

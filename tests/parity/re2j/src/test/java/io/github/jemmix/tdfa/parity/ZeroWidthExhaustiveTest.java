@@ -59,7 +59,8 @@ class ZeroWidthExhaustiveTest {
     }
 
     static List<String> inputs() {
-        return List.of("ab", "a b", "  x  ", "a\nb", "\na\n", "Ω9\ud800\udfff", "ab\udc21\ud800x", "\udc00\ud800\r", "aaaa bbbb aaaa", "€一漢 x");
+        return List.of("ab", "a b", "  x  ", "a\nb", "\na\n", "Ω9\ud800\udfff", "ab\udc21\ud800x", "\udc00\ud800\r",
+            "aaaa bbbb aaaa", "€一漢 x");
     }
 
     static record Case(String pattern, String input) {
@@ -83,11 +84,13 @@ class ZeroWidthExhaustiveTest {
     void zeroWidthCornerMatchesRe2j(Case c, RegexEngineFactory factory) {
         String expected = re2jProtocol(c.pattern(), c.input());
         String actual = tdfaProtocol(c.pattern(), c.input(), factory);
-        assertThat(actual).as("pattern=\"%s\" input-encoded=\"%s\" [%s]", c.pattern(), escape(c.input()), factory).isEqualTo(expected);
+        assertThat(actual).as("pattern=\"%s\" input-encoded=\"%s\" [%s]", c.pattern(), escape(c.input()), factory)
+            .isEqualTo(expected);
         // Layered audit: the PikeSim reference (over our Tnfa, no determinizer)
         // must also agree — sim-vs-DFA disagreement on any enumerated case is a
         // determinizer bug, pre-localized by construction.
-        assertThat(simProtocol(c.pattern(), c.input())).as("sim-vs-re2j pattern=\"%s\" input-encoded=\"%s\"", c.pattern(), escape(c.input())).isEqualTo(expected);
+        assertThat(simProtocol(c.pattern(), c.input()))
+            .as("sim-vs-re2j pattern=\"%s\" input-encoded=\"%s\"", c.pattern(), escape(c.input())).isEqualTo(expected);
     }
 
     /** PikeSim reference in this test's protocol — the audit's fourth column. */

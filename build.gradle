@@ -179,14 +179,12 @@ allprojects {
                 shortenFullyQualifiedTypes()
                 importOrder '', 'javax|java', '\\#'
                 // Machine formatter: eclipse JDT with a FLAT 4-space
-                // continuation indent. Two things the engine defaults get
-                // wrong (see the properties header): the alignment family
-                // must be "wrap where necessary" (2) — the defaults (16)
-                // encode indent-on-column and produced 16-space
-                // continuations — and continuation_indentation is the unit
-                // JDT multiplies by wrap depth, so depth-1 wraps (the
-                // common case) are exactly +4. Margin 120, joins wraps
-                // that fit, K&R braces, comments never reflowed.
+                // continuation indent. The engine (jdt.core 3.46, token-
+                // based) applies continuation_indentation as a multiple of
+                // the 4-space indent unit — the properties file pins it to
+                // 1 (+4 flat; 2 gives +8, 4 gives +16) and the alignment
+                // family to 16 (wrap where necessary). Margin 120, joins
+                // wraps that fit, K&R braces, comments never reflowed.
                 def eclipseFormatter = eclipse()
                 eclipseFormatter.configFile rootProject.file('config/codestyle/eclipse-formatter.properties').absolutePath
                 // NOTE: member ORDER is deliberately NOT formatter-driven.

@@ -51,7 +51,8 @@ public class ShortFindBench {
         @Param({"jur", "re2j", "reggie", "vm", "asm"})
         public String engine;
 
-        @Param({"litFind", "caseiLit", "wordB", "wordUnicodeCls", "lettersRu", "boundedSpan", "ipExtract", "alternation", "emailNoMatch", "litNoMatch"})
+        @Param({"litFind", "caseiLit", "wordB", "wordUnicodeCls", "lettersRu", "boundedSpan", "ipExtract",
+            "alternation", "emailNoMatch", "litNoMatch"})
         public String slug;
 
         String input;
