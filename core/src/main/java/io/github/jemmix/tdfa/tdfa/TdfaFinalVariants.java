@@ -11,8 +11,8 @@ import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_SET_POS;
 
 /**
  * Final-ops (φ-function) variant solving + transition-op register allocation.
- * Extracted verbatim from TdfaCompiler (2026-09 god-file split); the
- * {@code owner} back-reference carries the shared compiler state.
+ * The {@code owner} back-reference carries the shared determinization
+ * context (registers, tag histories, meter).
  */
 final class TdfaFinalVariants {
     final TdfaCompiler owner;

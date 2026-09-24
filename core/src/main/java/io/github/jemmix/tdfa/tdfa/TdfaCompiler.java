@@ -2,10 +2,6 @@ package io.github.jemmix.tdfa.tdfa;
 
 import io.github.jemmix.tdfa.ast.CharClass;
 import io.github.jemmix.tdfa.core.CompileObserver;
-import io.github.jemmix.tdfa.regopt.Cfg;
-import io.github.jemmix.tdfa.regopt.Cfg.Block;
-import io.github.jemmix.tdfa.regopt.Cfg.Op;
-import io.github.jemmix.tdfa.regopt.Optimize;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
 
 import java.util.ArrayDeque;
@@ -20,17 +16,21 @@ import java.util.TreeSet;
 
 import static io.github.jemmix.tdfa.tdfa.Tdfa.NEVER_STOP;
 import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_COPY;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_END;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_SET_NIL;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.OP_SET_POS;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.compile;
-import static io.github.jemmix.tdfa.tdfa.Tdfa.rangeCount;
-
-// Tdfa's opcode/flag constants, referenced unqualified throughout (the code
-// was moved verbatim out of Tdfa's nested Compiler class).
 
 /**
- * Subset-construction compiler: TNFA in, Tdfa out (paper §3; regopt + minimization passes).
+ * Determinization half of the TDFA compile (paper §3): subset construction
+ * from the TNFA plus the per-state tables derived from the kernels —
+ * entry/accept masks, the position-aware Perl stop-on-accept table, and the
+ * final-φ variants of accepting states. Produces a {@link DeterminizedDfa};
+ * register optimization, flat-array materialization and minimization run in
+ * {@link TdfaMaterializer} on that value.
+ *
+ * <p>Lifetime: every field here is determinization-phase state (work list,
+ * interning index, ε-closure scratch, kernels). The instance becomes
+ * unreachable the moment {@link #compile} returns, so the memory-heavy
+ * phase data is collectable before the flat-array phase begins — no
+ * explicit release of anything, the phase boundary IS the lifetime
+ * boundary.
  */
 final class TdfaCompiler {
     static final int[] EMPTY = new int[0];
@@ -45,8 +45,8 @@ final class TdfaCompiler {
     /**
      * Compile work budget: every unbounded loop ticks it (fuzzer-found
      * nested-quantifier bombs churn fixpoints without growing output —
-     * the state/kernel caps never trip). {@code null} = the
-     * {@code tdfa.budget.compile.compute} budget.
+     * the state/kernel caps never trip). The same meter also covers the
+     * post-determinization stages (handed on by the compile entry points).
      */
     final WorkMeter meter;
 
@@ -78,16 +78,13 @@ final class TdfaCompiler {
      *
      * <p>Storing ALL same-shape state IDs (not just the first one) keeps
      * {@link TdfaStateIndex#addState} expected-O(1) per call. With a single-entry map
-     * (the prior design) addState had to fall back to an O(n²) scan over
-     * all known states whenever the hash-bucket primary candidate failed
-     * tryMap — or, worse, whenever the shape was brand-new (hash-miss),
-     * because the fallback couldn't tell there was nothing to find. On
-     * the 2 663-branch dictionary alternation that fallback fired
-     * 227 M times (every call, never matching) and dominated compile
-     * wall time (~13 s of ~14 s).
+     * addState had to fall back to an O(n²) scan over all known states
+     * whenever the hash-bucket primary candidate failed tryMap — or, worse,
+     * whenever the shape was brand-new (hash-miss), because the fallback
+     * couldn't tell there was nothing to find. On the 2 663-branch
+     * dictionary alternation that fallback fired 227 M times (every call,
+     * never matching) and dominated compile wall time (~13 s of ~14 s).
      */
-    // God-file split (2026-09): state interning/dedup and final-variant
-    // solving extracted verbatim into collaborators with an owner back-ref.
     final TdfaStateIndex index = new TdfaStateIndex(this);
 
     final TdfaFinalVariants variants = new TdfaFinalVariants(this);
@@ -136,29 +133,16 @@ final class TdfaCompiler {
      */
     final long maxClosureBytes;
     /**
-     * Cap on materialized CFG successor arcs: buildCfg materializes TRANSITIVE zero-op
-     * reachability as direct edges (liveness needs them), and φ-variant
-     * finals can make that product explode — the round-24 specimen was a
-     * 287-state DFA whose CFG had 22,637 blocks and 157,176,487 edges
-     * (≈6,940 successors/block): liveness then burned ~60 s at library
-     * budget and >10 s past the fuzz watchdog per engine. Sane shapes
-     * are orders of magnitude below the cap.
-     */
-    final long maxCfgEdges = Budgets.maxCfgEdges();
-    /**
      * Number of breakpoint cells (cells = equivalence classes between adjacent breakpoints).
      */
     final int cellCount;
     /**
-     * rangeSameEdges[bi] == true iff cell bi's active edge set equals cell bi-1's.
-     */
-    final boolean[] rangeSameEdges;
-    /**
      * Number of distinct active edge sets.
      */
     final int activeSetCount;
-    // Per-compile read (was class-init frozen — the tdfa.debug duplicate
-    // that produced partial debug output; see the knob policy in Tdfa).
+    /**
+     * Per-compile read (knob policy: Tdfa javadoc).
+     */
     final boolean debug = Boolean.getBoolean("tdfa.debug");
     int[][] epsOut;
     int[][] symOut;
@@ -169,36 +153,31 @@ final class TdfaCompiler {
 
     int[] maskEpoch;
     int epochCtr;
-    List<List<Config>> states = new ArrayList<>();
     /**
-     * Tagless compiles only: after a state is processed, its closure is
-     * packed here as arrival-ordered (state, emptyMask) pairs (2 ints per
-     * config) and the boxed {@link #states} slot is nulled. The retained
-     * boxed form cost ~48 B × configs (3.18 GB on the 234 K-state bomb);
-     * the packed form is 8 B/config. Consumers that read a state's closure
-     * after processing (tryMap order check, entry/accept masks,
-     * stopOnAccept) branch on which form is present. Tagged compiles never
-     * pack — regopt/fallback/POSIX machinery consumes the boxed closures.
+     * One {@link Kernel} per DFA state: the subset-construction closure in
+     * boxed form, or its (state, emptyMask) projection once a tagless
+     * compile has finished the state.
      */
-    List<int[]> packedKernels = new ArrayList<>();
+    final List<Kernel> kernels = new ArrayList<>();
     /**
      * Seed configs (pre-closure) for each DFA state, used to compute per-state
      * DFS order (stopOnAccept). Stored ONLY for accepting Perl-mode states:
      * as {@code int[]} of states (arrival order) on tagless compiles, as
-     * {@code List<Config>} otherwise. Null for the rest.
+     * {@code List<Config>} otherwise. Null for the rest — retaining seeds
+     * for all states costs ~22 M extra Config objects on a 234 K-state
+     * bounded-repeat determinization and nothing reads them.
      */
-    List<Object> stateSeeds = new ArrayList<>();
+    final List<Object> stateSeeds = new ArrayList<>();
 
-    BitSet accept = new BitSet();
-    BitSet processed = new BitSet();
-    List<DfaStateBuilder> builders = new ArrayList<>();
-    Deque<Integer> work = new ArrayDeque<>();
+    final BitSet accept = new BitSet();
+    final BitSet processed = new BitSet();
+    final List<DfaStateBuilder> builders = new ArrayList<>();
+    final Deque<Integer> work = new ArrayDeque<>();
     /**
      * Global register allocator counter; bumped monotonically across all states.
      */
     int nextReg;
 
-    long cfgEdges;
     /**
      * Running sum of closure (kernel) sizes — re2c's kernels_total.
      */
@@ -216,11 +195,6 @@ final class TdfaCompiler {
      */
     long boxedRangeBytes = 0;
     /**
-     * Set by the stop-table pass on pruned Perl-mode compiles (see the
-     * hazard comment there).
-     */
-    boolean pikeCutMatters;
-    /**
      * Per breakpoint cell: bitset of active symbol-edge ids (edges whose class matches the cell's representative).
      */
     long[][] rangeActiveEdges;
@@ -236,19 +210,11 @@ final class TdfaCompiler {
     private boolean[] psoVisited;
     private int[] psoStack;
 
-    TdfaCompiler(Tnfa nfa, boolean longestMatch) {
-        this(nfa, longestMatch, false);
-    }
-
-    TdfaCompiler(Tnfa nfa, boolean longestMatch, boolean unpruned) {
-        this(nfa, longestMatch, unpruned, new WorkMeter(Budgets.compileComputeTicks()));
-    }
-
     /**
-     * Ledger variant: the caller hands a METER FORKED from the compile's
-     * root meter — its budget is already the per-attempt cap, and its
-     * ticks debit the shared ledger so the whole {@code compile()} stays
-     * within one CPU budget.
+     * @param sharedMeter the compile's work-budget ledger. One meter spans
+     *        the whole compile: this class ticks it during determinization
+     *        and hands the same instance on to the post-determinization
+     *        stages, so a single CPU budget covers the entire pipeline.
      */
     TdfaCompiler(Tnfa nfa, boolean longestMatch, boolean unpruned, WorkMeter sharedMeter) {
         this.nfa = nfa;
@@ -272,25 +238,33 @@ final class TdfaCompiler {
         this.longest = longestMatch;
         this.unpruned = unpruned;
         this.maxClosureBytes = Budgets.compileMemoryBytes() / BudgetWeights.CLOSURE_SPIKE_DIVISOR;
-        // Per-cell active symbol-edge sets (see rangeActiveEdges). Each class range
-        // [lo, hi] covers a contiguous run of breakpoint cells: lo and hi+1 are
-        // themselves breakpoints (they are boundaries of this very class), so the
-        // run is exactly [bpIdx(lo), bpIdx(hi+1)-1] — hence one cc.matches probe
-        // per cell representative suffices here. Identical sets are interned to a
-        // shared id (activeSetId) so the determinize sweep can cache results per
-        // distinct set instead of per adjacent cell: the sets interleave along the
-        // codepoint line (letter / space / other cells), so adjacency-only reuse
-        // would never fire.
-        //
-        // This precompute is O(cells × edges) cc.matches probes plus one
-        // long[words] PER CELL — on class-heavy patterns (tens of
-        // thousands of disjoint single-char alternations) that is
-        // gigabytes of arrays and 10^10 probes. It is fully
-        // budget-visible: the arrays are charged up front against the
-        // compile RAM budget (before a single one is allocated), the
-        // probe scan and set interning tick the work meter, and
-        // interning is hash-based, so no quadratic rescans.
-        int cells = breakpoints.length - 1;
+        this.cellCount = breakpoints.length - 1;
+        this.activeSetCount = precomputeActiveSets(cellCount);
+    }
+
+    /**
+     * Per-cell active symbol-edge sets (see rangeActiveEdges). Each class range
+     * [lo, hi] covers a contiguous run of breakpoint cells: lo and hi+1 are
+     * themselves breakpoints (they are boundaries of this very class), so the
+     * run is exactly [bpIdx(lo), bpIdx(hi+1)-1] — hence one cc.matches probe
+     * per cell representative suffices here. Identical sets are interned to a
+     * shared id (activeSetId) so the determinize sweep can cache results per
+     * distinct set instead of per adjacent cell: the sets interleave along the
+     * codepoint line (letter / space / other cells), so adjacency-only reuse
+     * would never fire.
+     *
+     * <p>This precompute is O(cells × edges) cc.matches probes plus one
+     * long[words] PER CELL — on class-heavy patterns (tens of
+     * thousands of disjoint single-char alternations) that is
+     * gigabytes of arrays and 10^10 probes. It is fully
+     * budget-visible: the arrays are charged up front against the
+     * compile RAM budget (before a single one is allocated), the
+     * probe scan and set interning tick the work meter, and
+     * interning is hash-based, so no quadratic rescans.
+     *
+     * @return the number of distinct active edge sets.
+     */
+    private int precomputeActiveSets(int cells) {
         int edgeCount = nfa.symClass.length;
         int words = (edgeCount + 63) >> 6;
         long activeSetBytes = (long) cells * ((long) words * 8L + BudgetWeights.ACTIVE_CELL_AUX_BYTES);
@@ -302,10 +276,7 @@ final class TdfaCompiler {
                     + Budgets.COMPILE_MEMORY_PROP + ")");
         }
         this.rangeActiveEdges = new long[cells][];
-        this.rangeSameEdges = new boolean[cells];
         this.activeSetId = new int[cells];
-        this.cellCount = cells;
-        long[] prevBits = null;
         HashMap<ActiveSetKey, Integer> distinctSets = new HashMap<>();
         for (int bi = 0; bi < cells; bi++) {
             meter.tick(edgeCount); // one cc.matches probe per edge per cell
@@ -318,9 +289,6 @@ final class TdfaCompiler {
                 }
             }
             rangeActiveEdges[bi] = bits;
-            if (bi > 0) {
-                rangeSameEdges[bi] = Arrays.equals(bits, prevBits);
-            }
             ActiveSetKey key = new ActiveSetKey(bits);
             Integer id = distinctSets.get(key);
             if (id == null) {
@@ -328,49 +296,9 @@ final class TdfaCompiler {
                 distinctSets.put(key, id);
             }
             activeSetId[bi] = id;
-            prevBits = bits;
         }
-        this.activeSetCount = distinctSets.size();
+        return distinctSets.size();
     }
-
-    private static boolean hasFixed(int[] fixedBase) {
-        if (fixedBase == null) {
-            return false;
-        }
-        for (int i = 1; i < fixedBase.length; i++) {
-            if (fixedBase[i] != 0) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static int[] encodeOps(List<Op> ops) {
-        if (ops.isEmpty()) {
-            return null;
-        }
-        int[] flat = new int[ops.size() * 3];
-        for (int i = 0; i < ops.size(); i++) {
-            Op op = ops.get(i);
-            switch (op.kind) {
-                case Cfg.KIND_SET :
-                    flat[i * 3] = op.value == Cfg.VAL_POS ? OP_SET_POS : OP_SET_NIL;
-                    flat[i * 3 + 1] = op.dst;
-                    flat[i * 3 + 2] = 0;
-                    break;
-                case Cfg.KIND_COPY :
-                    flat[i * 3] = OP_COPY;
-                    flat[i * 3 + 1] = op.dst;
-                    flat[i * 3 + 2] = op.src;
-                    break;
-                default :
-                    throw new IllegalStateException("cannot encode op kind " + op.kind);
-            }
-        }
-        return flat;
-    }
-
-    // ============================ CFG construction (BT22 §6.3) ============================
 
     /**
      * True iff {@code popped} (bitset of popped mask values, bit m = mask m) has any submask of {@code m} set.
@@ -404,8 +332,7 @@ final class TdfaCompiler {
      * fresh() id), so the raw (state<<32)|mask encoding made the legal
      * key (accept, 0) collide with the table's 0-as-EMPTY sentinel —
      * (accept, 0) could never be marked visited, and two such configs
-     * pushed in the same expansion wave both survived into the kernel
-     * [review P1 #2].
+     * pushed in the same expansion wave both survived into the kernel.
      */
     private static long visitKey(int state, int emptyMask) {
         return (((long) state + 1) << 32) | (emptyMask & 0xFFFFFFFFL);
@@ -440,8 +367,6 @@ final class TdfaCompiler {
         return key;
     }
 
-    // ---------------- Algorithm 3 building blocks ----------------
-
     /**
      * Charge one newly-live boxed Range (addRange returned true) against
      * the compile RAM budget.
@@ -455,6 +380,10 @@ final class TdfaCompiler {
         }
     }
 
+    /**
+     * Outgoing ε-edge indices per NFA state, sorted by edge priority
+     * (ascending) — the closure explores children in that order.
+     */
     int[][] sortedOutgoing(int[] fromArr, int[] pri) {
         int[][] out = plainOutgoing(fromArr);
         for (int[] arr : out) {
@@ -476,6 +405,9 @@ final class TdfaCompiler {
         return out;
     }
 
+    /**
+     * Outgoing edge indices per NFA state, in edge-array order (no sort).
+     */
     int[][] plainOutgoing(int[] fromArr) {
         int n = nfa.stateCount;
         int[] counts = new int[n];
@@ -525,13 +457,40 @@ final class TdfaCompiler {
         return arr;
     }
 
-    Tdfa compile() {
-        return compile(null);
-    }
+    // ========================= compile pipeline =========================
 
-    Tdfa compile(CompileObserver observer) {
+    /**
+     * Determinization phase of the compile. Runs the subset construction,
+     * derives the per-state tables and solves the accepting states' final
+     * φ ops, then reports the DETERMINIZE stage and returns the DFA shape.
+     * When this returns, this compiler instance (and with it the kernels,
+     * the interning index and the closure scratch) is unreachable.
+     */
+    DeterminizedDfa compile(CompileObserver observer) {
         final CompileObserver obs = observer != null ? observer : CompileObserver.NONE;
         long tDet = System.nanoTime();
+        determinize();
+        StateTables tables = computeStateTables();
+        solveFinalOps();
+        if (Boolean.getBoolean("tdfa.debug.closure")) {
+            System.err.println(
+                "[det] states=" + kernels.size() + " kernelsTotal=" + kernelsTotal + " ticks=" + meter.spent());
+        }
+        int n = kernels.size();
+        obs.stage(CompileObserver.Stage.DETERMINIZE, System.nanoTime() - tDet, n);
+        return new DeterminizedDfa(n, builders, accept, tables.entryMask, tables.acceptMask, tables.stopOnAcceptMask,
+            tables.pikeCutMatters, nextReg);
+    }
+
+    /**
+     * Subset-construction worklist (paper §3): pop an unprocessed state,
+     * split its kernel into assertion live-sets and emit the transitions
+     * of every live-set across all breakpoint cells; targets are interned
+     * through the state index (the paper's {@code map}, extended by
+     * register renaming in tryMap). LIFO order keeps target kernels
+     * available in boxed form for tryMap until their turn comes.
+     */
+    private void determinize() {
         nextReg = 2 * tags;
         if (debug) {
             System.err.println("[tdfa] tags=" + tags + " breakpoints=" + breakpoints.length);
@@ -541,8 +500,6 @@ final class TdfaCompiler {
         List<Config> initClosure = epsilonClosure(initSeed);
         int startId = index.addState(initClosure, null, initSeed).targetId;
         work.push(startId);
-
-        int[] requiredMaskOut = new int[1];
         while (!work.isEmpty()) {
             meter.tick();
             int sid = work.pop();
@@ -550,1004 +507,434 @@ final class TdfaCompiler {
                 continue;
             }
             processed.set(sid);
-            List<Config> cur = states.get(sid);
-            if (debug) {
-                System.err.println("[tdfa] processing state " + sid + " configs:");
-                for (Config c : cur) {
-                    System.err.println("    state=" + c.state + " l=" + Arrays.toString(hist.content(c.l)) + " regs="
-                        + Arrays.toString(c.regs) + " mask=" + c.emptyMask);
-                }
-            }
-            // Assertion-context split (assertions into the alphabet, by
-            // construction). The runtime posFlags M decides which closure
-            // configs are alive (emptyMask ⊆ M). We step per DISTINCT
-            // live-set — the closure filtered to alive configs, kept in
-            // true closure-priority order — so every target state is both
-            // liveness-complete (no continuation silently dropped) and
-            // priority-correct (the kernel order feeds the stop-on-accept
-            // table and final-ops variants). The context's OR-mask rides
-            // its ranges; contexts are emitted most-specific first and the
-            // runner's lowest-index-first scan among mask-satisfied
-            // entries resolves overlaps.
-            //
-            // This replaces the former own/subset mask-group split whose
-            // targets were lopsided: subset-appended configs landed AFTER
-            // the own group in the kernel (priority inversion — the greedy
-            // class-continue lost to a lower-priority \b\W exit and the
-            // stop table stopped early) while less-specific groups dropped
-            // gated continuations (the a*(^a) band-aid that the mask
-            // specificity sort papered over at runtime).
-            List<Integer> ctxMasks = null; // distinct nonzero masks when >1 relevant
+            processState(sid);
+        }
+        if (debug) {
+            System.err.println("[tdfa] total states=" + kernels.size() + " accept=" + accept.cardinality());
+        }
+    }
+
+    /**
+     * Determinize one popped state: split the kernel into assertion
+     * live-sets, emit every context's transitions (plus DEAD markers where
+     * a more-specific context owns cells), then — on tagless compiles —
+     * replace the boxed kernel with its packed projection (see
+     * {@link Kernel#pack()}).
+     */
+    private void processState(int sid) {
+        List<Config> cur = kernels.get(sid).boxed;
+        if (debug) {
+            System.err.println("[tdfa] processing state " + sid + " configs:");
             for (Config c : cur) {
-                if (c.emptyMask != 0) {
-                    if (ctxMasks == null) {
-                        ctxMasks = new ArrayList<>(4);
-                    }
-                    boolean found = false;
-                    for (int m : ctxMasks) {
-                        if (m == c.emptyMask) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        ctxMasks.add(c.emptyMask);
-                    }
-                }
+                System.err.println("    state=" + c.state + " l=" + Arrays.toString(hist.content(c.l)) + " regs="
+                    + Arrays.toString(c.regs) + " mask=" + c.emptyMask);
             }
-            List<int[]> ctxList = new ArrayList<>(4); // {orMask, coverage} per context
-            List<List<Config>> ctxInputs = new ArrayList<>(4);
-            if (ctxMasks == null || ctxMasks.isEmpty() || (ctxMasks.size() == 1 && ctxMasks.contains(0))) {
-                ctxList.add(new int[]{0, 0});
-                ctxInputs.add(pruneBelowAccept(cur)); // uniform context: whole closure (pike-pruned)
-            } else {
-                // Dedup live-sets by their alive-mask pattern over the 64 runtime
-                // M values. Mask-0 configs are alive under every M (their bit is
-                // folded into the pattern directly); a pattern with no configs at
-                // all is unreachable and skipped.
-                int k = ctxMasks.size();
-                boolean anyZero = false;
-                for (Config c : cur) {
-                    if (c.emptyMask == 0) {
-                        anyZero = true;
+        }
+        List<LiveContext> ctxs = liveContexts(cur);
+        int[][] ctxSetRes = emitTransitions(sid, ctxs);
+        emitDeadMarkers(sid, ctxs, ctxSetRes);
+        if (tags == 0) {
+            kernels.get(sid).pack();
+        }
+    }
+
+    /**
+     * Split a closure into its distinct assertion live-sets. Zero-width
+     * assertions enter the DFA as emptyMask bits on kernel configs; the
+     * runtime posFlags M decide which configs are alive (emptyMask ⊆ M).
+     * Stepping runs per DISTINCT live-set — the closure filtered to its
+     * alive configs, kept in true closure-priority order — so every
+     * target state is both liveness-complete (no continuation silently
+     * dropped) and priority-correct (the kernel order feeds the
+     * stop-on-accept table and final-ops variants). The context's OR-mask
+     * rides its ranges; contexts are ordered most coverage first and the
+     * runner's lowest-index-first scan among mask-satisfied entries
+     * resolves overlaps.
+     *
+     * <p>Live-set dedup keys on the alive-mask PATTERN over the 64 runtime
+     * M values (mask-0 configs are alive under every M and fold into the
+     * pattern directly); a pattern with no configs at all is unreachable
+     * and skipped. A closure without assertion-gated configs collapses
+     * into the single whole-closure context (pike-pruned in Perl mode).
+     */
+    private List<LiveContext> liveContexts(List<Config> cur) {
+        List<Integer> ctxMasks = null; // distinct nonzero masks when any relevant
+        for (Config c : cur) {
+            if (c.emptyMask != 0) {
+                if (ctxMasks == null) {
+                    ctxMasks = new ArrayList<>(4);
+                }
+                boolean found = false;
+                for (int m : ctxMasks) {
+                    if (m == c.emptyMask) {
+                        found = true;
                         break;
                     }
                 }
-                HashMap<Integer, Integer> patIdx = new HashMap<>(8);
-                for (int M = 0; M < 64; M++) {
-                    int pat = anyZero ? 1 : 0, r = 0;
-                    for (int i = 0; i < k; i++) {
-                        int mi = ctxMasks.get(i);
-                        if ((mi & ~M) == 0) {
-                            pat |= 2 << i;
-                            r |= mi;
-                        }
-                    }
-                    if (pat == 0 || patIdx.containsKey(pat)) {
-                        continue;
-                    }
-                    patIdx.put(pat, ctxInputs.size());
-                    List<Config> live = new ArrayList<>(cur.size());
-                    for (Config c : cur) {
-                        if (c.emptyMask == 0) {
-                            if (anyZero) {
-                                live.add(c);
-                            }
-                            continue;
-                        }
-                        for (int i = 0; i < k; i++) {
-                            if ((pat & (2 << i)) != 0 && c.emptyMask == ctxMasks.get(i)) {
-                                live.add(c);
-                                break;
-                            }
-                        }
-                    }
-                    pruneBelowAcceptInPlace(live);
-                    ctxList.add(new int[]{r, Integer.bitCount(pat)});
-                    ctxInputs.add(live);
+                if (!found) {
+                    ctxMasks.add(c.emptyMask);
                 }
-                // Emit most coverage first (superset live-sets precede their
-                // subsets; incomparable patterns have disjoint M sets).
-                Integer[] order = new Integer[ctxList.size()];
-                for (int i = 0; i < order.length; i++) {
-                    order[i] = i;
-                }
-                final List<int[]> cl = ctxList;
-                Arrays.sort(order, (x, y) -> Integer.compare(cl.get(y)[1], cl.get(x)[1]));
-                List<int[]> sortedCtx = new ArrayList<>(order.length);
-                List<List<Config>> sortedIn = new ArrayList<>(order.length);
-                for (int o : order) {
-                    sortedCtx.add(ctxList.get(o));
-                    sortedIn.add(ctxInputs.get(o));
-                }
-                ctxList = sortedCtx;
-                ctxInputs = sortedIn;
-            }
-            // Context-major, range-inner sweep with per-active-set result caching.
-            // The stepped configs are a pure function of (stepInput, active edge
-            // set), and the active edge set is a pure function of the breakpoint
-            // cell — so cells sharing an interned active-set id (activeSetId[bi])
-            // yield identical stepped lists, ε-closures, shape keys and addState
-            // results. The expensive closure/key/addState pipeline runs at most
-            // once per distinct active set per context, and the builder's
-            // coalesce() later merges the same-target ranges. On wide-class
-            // patterns ([\s\S]{0,100} etc.) this skips the large majority of
-            // per-cell work; on narrow patterns every cell is distinct and the
-            // cache degenerates to one entry per cell.
-            // Context results per active set: res[ctx][set] = target state id,
-            // -1 = stepped empty, 0 = not yet computed. Contexts run most-
-            // specific first; live ranges emit immediately. A context that
-            // steps EMPTY emits a DEAD marker (target -1, its ctxMask) for
-            // cells where any LESS-specific context is live: at runtime M ⊇
-            // ctxMask that context OWNS the position — its lack of a
-            // transition means the walk dies there, and the marker blocks
-            // the less-specific (wrong-context) range from firing.
-            int nCtx2 = ctxInputs.size();
-            int[][] ctxSetRes = new int[nCtx2][];
-            for (int ci = 0; ci < nCtx2; ci++) {
-                List<Config> stepInput = ctxInputs.get(ci);
-                int ctxMask = ctxList.get(ci)[0];
-                int ownCount = stepInput.size(); // true-order list: every config is a priority competitor
-                int[] setRes = new int[activeSetCount];
-                Arrays.fill(setRes, 0);
-                ctxSetRes[ci] = setRes;
-                TdfaStateIndex.AddResult[] perSet = new TdfaStateIndex.AddResult[activeSetCount];
-                boolean[] perSetDone = new boolean[activeSetCount];
-                for (int bi = 0; bi < cellCount; bi++) {
-                    // One tick per (context, cell) sweep step: the
-                    // per-set DEDUP fast path below still does real work
-                    // per cell (an addRange + charge), and the sweep is
-                    // states × cells — hundreds of thousands of states
-                    // times tens of thousands of cells must trip the
-                    // budget, not just the slow path.
-                    meter.tick();
-                    int rangeLo = breakpoints[bi];
-                    int rangeHi = breakpoints[bi + 1] - 1;
-                    int setId = activeSetId[bi];
-                    if (perSetDone[setId]) {
-                        TdfaStateIndex.AddResult ar = perSet[setId];
-                        if (ar != null) {
-                            if (builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, ctxMask)) {
-                                chargeRange();
-                            }
-                        }
-                        continue;
-                    }
-                    perSetDone[setId] = true;
-                    List<Config> stepped =
-                        stepOnSymbol(stepInput, rangeActiveEdges[bi], requiredMaskOut, ownCount, ctxMask);
-                    if (stepped.isEmpty()) {
-                        perSet[setId] = null;
-                        setRes[setId] = -1;
-                        continue;
-                    }
-                    List<Config> closed = epsilonClosure(stepped);
-                    if (debug && closed.size() > 100) {
-                        System.err.println(
-                            "[tdfa] state " + sid + " range " + rangeLo + ".." + rangeHi + " closure=" + closed.size());
-                    }
-                    int[] ops = variants.transitionRegops(closed, sid);
-                    TdfaStateIndex.AddResult ar = index.addState(closed, ops, stepped);
-                    if (debug) {
-                        System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> "
-                            + ar.targetId + " ops.len=" + ops.length + " mask=" + ctxMask);
-                    }
-                    if (builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, ctxMask)) {
-                        chargeRange();
-                    }
-                    if (!processed.get(ar.targetId)) {
-                        work.push(ar.targetId);
-                    }
-                    perSet[setId] = ar;
-                    setRes[setId] = ar.targetId;
-                }
-            }
-            // Dead markers: only when overlaps exist (nCtx2 > 1) — a single
-            // context owns every cell unambiguously.
-            if (nCtx2 > 1) {
-                for (int bi = 0; bi < cellCount; bi++) {
-                    meter.tick(); // cells × contexts marker scan — same sweep bound
-                    int rangeLo = breakpoints[bi];
-                    int rangeHi = breakpoints[bi + 1] - 1;
-                    int setId = activeSetId[bi];
-                    // for each EMPTY context: marker iff some LATER (less specific) context is live
-                    for (int ci = 0; ci < nCtx2; ci++) {
-                        if (ctxSetRes[ci][setId] != -1) {
-                            continue;
-                        }
-                        for (int cj = ci + 1; cj < nCtx2; cj++) {
-                            if (ctxSetRes[cj][setId] > 0) {
-                                if (builders.get(sid).addRange(rangeLo, rangeHi, -1, null, ctxList.get(ci)[0])) {
-                                    chargeRange();
-                                }
-                                if (debug) {
-                                    System.err.println("[tdfa] state " + sid + " cell " + rangeLo + ".." + rangeHi
-                                        + " DEAD marker mask=" + Integer.toBinaryString(ctxList.get(ci)[0]));
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            // Tagless compiles: release the boxed closure of the just-processed
-            // state — everything downstream reads the packed form (see tryMap and
-            // the materialization pass). This is where the GBs go home.
-            if (tags == 0) {
-                int[] packed = new int[cur.size() * 2];
-                for (int i = 0; i < cur.size(); i++) {
-                    Config c = cur.get(i);
-                    packed[i * 2] = c.state;
-                    packed[i * 2 + 1] = c.emptyMask;
-                }
-                packedKernels.set(sid, packed);
-                states.set(sid, null);
             }
         }
-        if (debug) {
-            System.err.println("[tdfa] total states=" + states.size() + " accept=" + accept.cardinality());
+        List<LiveContext> ctxs = new ArrayList<>(4);
+        if (ctxMasks == null || ctxMasks.isEmpty()) {
+            ctxs.add(new LiveContext(0, 0, pruneBelowAccept(cur)));
+            return ctxs;
         }
+        int k = ctxMasks.size();
+        boolean anyZero = false;
+        for (Config c : cur) {
+            if (c.emptyMask == 0) {
+                anyZero = true;
+                break;
+            }
+        }
+        HashMap<Integer, Integer> patIdx = new HashMap<>(8);
+        for (int M = 0; M < 64; M++) {
+            int pat = anyZero ? 1 : 0, r = 0;
+            for (int i = 0; i < k; i++) {
+                int mi = ctxMasks.get(i);
+                if ((mi & ~M) == 0) {
+                    pat |= 2 << i;
+                    r |= mi;
+                }
+            }
+            if (pat == 0 || patIdx.containsKey(pat)) {
+                continue;
+            }
+            patIdx.put(pat, ctxs.size());
+            List<Config> live = new ArrayList<>(cur.size());
+            for (Config c : cur) {
+                if (c.emptyMask == 0) {
+                    if (anyZero) {
+                        live.add(c);
+                    }
+                    continue;
+                }
+                for (int i = 0; i < k; i++) {
+                    if ((pat & (2 << i)) != 0 && c.emptyMask == ctxMasks.get(i)) {
+                        live.add(c);
+                        break;
+                    }
+                }
+            }
+            pruneBelowAcceptInPlace(live);
+            ctxs.add(new LiveContext(r, Integer.bitCount(pat), live));
+        }
+        // Emit most coverage first: superset live-sets precede their
+        // subsets; incomparable patterns have disjoint M sets.
+        ctxs.sort((x, y) -> Integer.compare(y.coverage, x.coverage));
+        return ctxs;
+    }
 
-        int n = states.size();
-        // Compute per-state entry/accept masks.
+    /**
+     * Context-major, range-inner transition sweep with per-active-set
+     * result caching. The stepped configs are a pure function of
+     * (stepInput, active edge set) and the active edge set is a pure
+     * function of the breakpoint cell — so cells sharing an interned
+     * active-set id (activeSetId[bi]) yield identical stepped lists,
+     * ε-closures, shape keys and addState results. The expensive
+     * closure/regops/addState pipeline runs at most once per distinct
+     * active set per context, and the builder's coalesce() later merges
+     * the same-target ranges. On wide-class patterns
+     * ([\s\S]{0,100} etc.) this skips the large majority of per-cell
+     * work; on narrow patterns every cell is distinct and the cache
+     * degenerates to one entry per cell.
+     *
+     * @return per-context results keyed by active-set id: target state
+     *         id, -1 for stepped-empty, 0 for not-yet-computed. Contexts
+     *         run most-specific first; live ranges emit immediately.
+     */
+    private int[][] emitTransitions(int sid, List<LiveContext> ctxs) {
+        int nCtx = ctxs.size();
+        int[][] ctxSetRes = new int[nCtx][];
+        for (int ci = 0; ci < nCtx; ci++) {
+            LiveContext ctx = ctxs.get(ci);
+            int[] setRes = new int[activeSetCount];
+            Arrays.fill(setRes, 0);
+            ctxSetRes[ci] = setRes;
+            TdfaStateIndex.AddResult[] perSet = new TdfaStateIndex.AddResult[activeSetCount];
+            boolean[] perSetDone = new boolean[activeSetCount];
+            for (int bi = 0; bi < cellCount; bi++) {
+                // One tick per (context, cell) sweep step: the per-set
+                // DEDUP fast path below still does real work per cell (an
+                // addRange + charge), and the sweep is states × cells —
+                // hundreds of thousands of states times tens of thousands
+                // of cells must trip the budget, not just the slow path.
+                meter.tick();
+                int rangeLo = breakpoints[bi];
+                int rangeHi = breakpoints[bi + 1] - 1;
+                int setId = activeSetId[bi];
+                if (perSetDone[setId]) {
+                    TdfaStateIndex.AddResult ar = perSet[setId];
+                    if (ar != null) {
+                        if (builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, ctx.orMask)) {
+                            chargeRange();
+                        }
+                    }
+                    continue;
+                }
+                perSetDone[setId] = true;
+                List<Config> stepped = stepOnSymbol(ctx.configs, rangeActiveEdges[bi], ctx.orMask);
+                if (stepped.isEmpty()) {
+                    perSet[setId] = null;
+                    setRes[setId] = -1;
+                    continue;
+                }
+                List<Config> closed = epsilonClosure(stepped);
+                if (debug && closed.size() > 100) {
+                    System.err.println(
+                        "[tdfa] state " + sid + " range " + rangeLo + ".." + rangeHi + " closure=" + closed.size());
+                }
+                int[] ops = variants.transitionRegops(closed, sid);
+                TdfaStateIndex.AddResult ar = index.addState(closed, ops, stepped);
+                if (debug) {
+                    System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> "
+                        + ar.targetId + " ops.len=" + ops.length + " mask=" + ctx.orMask);
+                }
+                if (builders.get(sid).addRange(rangeLo, rangeHi, ar.targetId, ar.ops, ctx.orMask)) {
+                    chargeRange();
+                }
+                if (!processed.get(ar.targetId)) {
+                    work.push(ar.targetId);
+                }
+                perSet[setId] = ar;
+                setRes[setId] = ar.targetId;
+            }
+        }
+        return ctxSetRes;
+    }
+
+    /**
+     * Emit DEAD markers for context overlaps. A context that steps EMPTY
+     * on a cell emits a DEAD entry (target -1, its orMask) for cells where
+     * any LESS-specific context is live: at runtime, when M ⊇ orMask that
+     * context OWNS the position — its lack of a transition means the walk
+     * dies there, and the marker blocks the less-specific
+     * (wrong-context) range from firing. A single context owns every
+     * cell unambiguously, so markers only exist when overlaps do
+     * (nCtx &gt; 1).
+     */
+    private void emitDeadMarkers(int sid, List<LiveContext> ctxs, int[][] ctxSetRes) {
+        int nCtx = ctxs.size();
+        if (nCtx <= 1) {
+            return;
+        }
+        for (int bi = 0; bi < cellCount; bi++) {
+            meter.tick(); // cells × contexts marker scan — same sweep bound
+            int rangeLo = breakpoints[bi];
+            int rangeHi = breakpoints[bi + 1] - 1;
+            int setId = activeSetId[bi];
+            // for each EMPTY context: marker iff some LATER (less specific) context is live
+            for (int ci = 0; ci < nCtx; ci++) {
+                if (ctxSetRes[ci][setId] != -1) {
+                    continue;
+                }
+                for (int cj = ci + 1; cj < nCtx; cj++) {
+                    if (ctxSetRes[cj][setId] > 0) {
+                        if (builders.get(sid).addRange(rangeLo, rangeHi, -1, null, ctxs.get(ci).orMask)) {
+                            chargeRange();
+                        }
+                        if (debug) {
+                            System.err.println("[tdfa] state " + sid + " cell " + rangeLo + ".." + rangeHi
+                                + " DEAD marker mask=" + Integer.toBinaryString(ctxs.get(ci).orMask));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Derive the per-state tables the runner reads off the artifact:
+     * entryMask (assertions required to enter a state — the intersection
+     * of its kernel's emptyMasks), acceptMask (assertions required to
+     * declare a match — the intersection over the accept configs), and
+     * the position-aware stop-on-accept table (Perl mode only; POSIX
+     * keeps stepping past accepts and stores nothing). Also computes the
+     * pike-cut hazard predicate.
+     */
+    private StateTables computeStateTables() {
+        int n = kernels.size();
         int[] stateEntryMask = new int[n];
         int[] stateAcceptMask = new int[n];
-        // Position-aware stopOnAcceptMask: int[state * 64 + posFlags] encodes
-        // 0 (stop) or NEVER_STOP (don't stop). Position-aware because re2j's
-        // densePcs priority depends on which assertion edges are live at the
-        // current cursor position — see computePerStateOrder(seed, posMask).
-        // 64 = 2^6 position-flag bits (BEGIN/END_TEXT, WORD/NO_WORD, ABS_BEGIN/ABS_END).
-        // POSIX (longest) mode never reads this table — the artifact stores
-        // neither stop tier and every reader gates on Perl mode — so the
-        // n*64 alloc/fill is pure churn there (~25 MB at 100 K states) and
-        // is skipped entirely.
+        // int[state * 64 + posFlags] encodes 0 (stop) or NEVER_STOP (don't
+        // stop), 64 = 2^6 position-flag bits (BEGIN/END_TEXT, WORD/NO_WORD,
+        // ABS_BEGIN/ABS_END). POSIX (longest) mode never reads this table —
+        // the artifact stores neither stop tier and every reader gates on
+        // Perl mode — so the n*64 alloc/fill is pure churn there (~25 MB at
+        // 100 K states) and is skipped entirely.
         int[] stateStopOnAcceptMask = longest ? null : new int[n * 64];
         if (stateStopOnAcceptMask != null) {
             Arrays.fill(stateStopOnAcceptMask, NEVER_STOP);
         }
-        int ALL_BITS = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY | Tnfa.ABS_BEGIN
-            | Tnfa.ABS_END;
+        boolean pikeCutMatters = false;
         for (int s = 0; s < n; s++) {
-            List<Config> cfgs = states.get(s);
-            int[] pk = tags == 0 ? packedKernels.get(s) : null; // packed form (tagless: cfgs == null)
-            int cnt = pk != null ? pk.length >> 1 : cfgs.size();
-            int entryIntersect = ALL_BITS;
+            Kernel k = kernels.get(s);
+            int cnt = k.size();
+            int entryIntersect = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY
+                | Tnfa.ABS_BEGIN | Tnfa.ABS_END;
             for (int i = 0; i < cnt; i++) {
-                entryIntersect &= pk != null ? pk[i * 2 + 1] : cfgs.get(i).emptyMask;
+                entryIntersect &= k.maskAt(i);
             }
             stateEntryMask[s] = entryIntersect;
-            int acceptIntersect = ALL_BITS;
+            int acceptIntersect = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY
+                | Tnfa.ABS_BEGIN | Tnfa.ABS_END;
             boolean anyAccept = false;
             for (int i = 0; i < cnt; i++) {
-                int st = pk != null ? pk[i * 2] : cfgs.get(i).state;
-                if (st == nfa.accept) {
-                    acceptIntersect &= pk != null ? pk[i * 2 + 1] : cfgs.get(i).emptyMask;
+                if (k.stateAt(i) == nfa.accept) {
+                    acceptIntersect &= k.maskAt(i);
                     anyAccept = true;
                 }
             }
             stateAcceptMask[s] = anyAccept ? acceptIntersect : 0;
-            // Perl leftmost-first: for each (state, posFlags) pair, decide
-            // whether the runner should break the match loop on accept. The
-            // decision is position-aware because re2j's runtime closure
-            // evaluates each assertion against the current cursor's cond and
-            // kills failing threads before they can claim a densePcs slot —
-            // so the same DFA state can have different "highest-priority
-            // outcome" at different positions. Example: for ^((?:$)|.)* at
-            // pos 0 of "a", $ fails, so the .-branch outranks the skip-exit
-            // MATCH and we extend; at pos 1 (EOF), $ holds, the $-loop-back
-            // MATCH outranks . and we stop.
-            //
-            // For each of the 64 possible posFlags values M, compute the
-            // perStateOrder DFS skipping assertion edges whose requirements
-            // aren't subset of M, then check whether any sym-bearing config
-            // outranks accept in that order. If yes, NEVER_STOP (extend);
-            // else 0 (stop). Accept-unreachable-under-M also gets NEVER_STOP
-            // (no accept to stop on; runner's sam check filters anyway).
             if (!longest && anyAccept) {
                 Object seed = stateSeeds.get(s);
                 if (debug) {
                     System.err.println("[stop] state " + s + " cnt=" + cnt);
                     for (int i = 0; i < cnt; i++) {
-                        int st = pk != null ? pk[i * 2] : cfgs.get(i).state;
-                        int em = pk != null ? pk[i * 2 + 1] : cfgs.get(i).emptyMask;
+                        int st = k.stateAt(i);
                         System.err.println("[stop]   cfg[" + i + "] nfa=" + st + (st == nfa.accept ? " ACCEPT" : "")
-                            + " mask=" + Integer.toBinaryString(em) + " symEdges=" + symOut[st].length);
+                            + " mask=" + Integer.toBinaryString(k.maskAt(i)) + " symEdges=" + symOut[st].length);
                     }
                 }
-                for (int M = 0; M < 64; M++) {
-                    // seed is int[] or List<Config> by construction (see seed decl)
-                    int[] perStateOrder = seed instanceof int[] ? computePerStateOrder((int[]) seed, M)
-                        : computePerStateOrder((List<Config>) seed, M);
-                    int acceptOrder = perStateOrder[nfa.accept];
-                    if (acceptOrder == -1) {
-                        // Accept unreachable under M; sam check will fail too.
-                        stateStopOnAcceptMask[s * 64 + M] = NEVER_STOP;
-                        continue;
-                    }
-                    boolean higherPriSym = false;
-                    for (int i = 0; i < cnt; i++) {
-                        int st = pk != null ? pk[i * 2] : cfgs.get(i).state;
-                        if (st == nfa.accept) {
-                            continue;
-                        }
-                        if (symOut[st].length == 0) {
-                            continue;
-                        }
-                        int o = perStateOrder[st];
-                        if (o != -1 && o < acceptOrder) {
-                            higherPriSym = true;
-                            break;
-                        }
-                    }
-                    stateStopOnAcceptMask[s * 64 + M] = higherPriSym ? NEVER_STOP : 0;
+                if (stateStopOnAcceptMask != null) {
+                    System.arraycopy(stopRowFor(seed, k), 0, stateStopOnAcceptMask, s * 64, 64);
                 }
-                if (!unpruned) {
-                    // Pike-cut hazard predicate (feeds Tdfa.pikeCutMatters).
-                    // The cut deletes every config below the first accept
-                    // alive in a stepping context, so an alive AND steppable
-                    // config below an alive accept under some posFlags M
-                    // means the cut deleted a real continuation: a
-                    // whole-input walk on this artifact could then miss
-                    // accepts ((a|ab) on "ab" — the b-continuation sits
-                    // below the accept and is cut). With no hazard in any
-                    // state, every cut removed only non-steppable configs,
-                    // which contribute nothing to target kernels, so this
-                    // artifact is identical to the cut-free build and whole
-                    // walks on it are exact.
-                    // (Conservative: kernel masks approximate the runner's
-                    // fm/sam record gates from above, so this flags a
-                    // superset of the real hazard positions.)
-                    for (int M = 0; M < 64 && !pikeCutMatters; M++) {
-                        int firstAliveAccept = -1;
-                        for (int i = 0; i < cnt; i++) {
-                            int st = pk != null ? pk[i * 2] : cfgs.get(i).state;
-                            int em = pk != null ? pk[i * 2 + 1] : cfgs.get(i).emptyMask;
-                            if ((em & ~M) != 0) {
-                                continue;
-                            } // dead under M
-                            if (st == nfa.accept) {
-                                firstAliveAccept = i;
-                                break;
-                            }
-                        }
-                        if (firstAliveAccept < 0) {
-                            continue;
-                        }
-                        for (int i = firstAliveAccept + 1; i < cnt; i++) {
-                            int st = pk != null ? pk[i * 2] : cfgs.get(i).state;
-                            int em = pk != null ? pk[i * 2 + 1] : cfgs.get(i).emptyMask;
-                            if ((em & ~M) != 0) {
-                                continue;
-                            } // dead under M
-                            if (symOut[st].length > 0) {
-                                pikeCutMatters = true;
-                                break;
-                            }
-                        }
-                    }
+                if (!unpruned && !pikeCutMatters) {
+                    pikeCutMatters = pikeCutHazard(k);
                 }
             }
         }
-        // Pre-pass: compute finalRegops for each accepting state up front, so the
-        // CFG optimization (BT22 §6.3) can see them along with transition ops.
-        for (int s = 0; s < n; s++) {
-            if (accept.get(s)) {
-                List<Config> cfgs = states.get(s);
-                if (cfgs != null) {
-                    builders.get(s).finalOpsArr = variants.finalRegops(cfgs);
-                    variants.computeFinalVariants(builders.get(s), cfgs);
-                } else {
-                    // Tagless accept state: boxed closure released, packed
-                    // kernel only. Still compute the per-M variants — an
-                    // accept state whose configs carry DIFFERENT emptyMasks
-                    // is an OR of assertion-gated accepts, which the
-                    // conjunctive stateAcceptMask (intersection) collapses
-                    // to "always alive" (fuzz round 10: Z(?:\A|\B) matched
-                    // at pos 1 where \A and \B both fail). finalRegopsOf
-                    // returns empty ops when tags==0, so variants only
-                    // encode aliveness — the byMask cell sign.
-                    builders.get(s).finalOpsArr = null;
-                    variants.computeFinalVariantsPacked(builders.get(s), packedKernels.get(s));
-                }
-            }
-        }
-        // Determinize-lifetime data is dead from here: the stateIndex sigs,
-        // (packed) kernels, seeds, eps/sym adjacency and scratch are all
-        if (Boolean.getBoolean("tdfa.debug.closure")) {
-            System.err
-                .println("[det] states=" + states.size() + " kernelsTotal=" + kernelsTotal + " ticks=" + meter.spent());
-        }
-        // downstream-unused, but as Compiler fields they would stay live
-        // through materialization/minimization — the heap peak on giant
-        // DFAs. Release ~0.8 GB (bomb) before the flat-array phase.
-        index.stateIndex = null;
-        states = null;
-        packedKernels = null;
-        stateSeeds = null;
-        work = null;
-        epsOut = null;
-        symOut = null;
-        rangeActiveEdges = null;
-        activeSetId = null;
-        processed = null;
-
-        obs.stage(CompileObserver.Stage.DETERMINIZE, System.nanoTime() - tDet, n);
-
-        // === BT22 §6.3 register optimizations ===
-        // Compile knobs, read once per compilation (policy: Tdfa javadoc).
-        final boolean regoptEnabled = !Boolean.getBoolean("tdfa.noregopt");
-        final int regoptMaxStates = Integer.getInteger("tdfa.regopt.max", 2000);
-        int finalRegBase = tags; // default: working [0..T-1], final [T..2T-1]
-        long tReg = System.nanoTime();
-        if (regoptEnabled && tags > 0 && n > 1 && n <= regoptMaxStates) {
-            Cfg cfg = buildCfg(builders, accept, states, tags, nfa.groupCount, nextReg);
-            Optimize.optimize(cfg, meter);
-            cfgWriteBack(cfg, builders);
-            finalRegBase = cfg.finalRegBase;
-            if (debug) {
-                System.err.println("[tdfa] regopt: regs " + cfg.initialRegCount + " -> " + cfg.regCount
-                    + " (finalRegBase=" + finalRegBase + ")"
-                    + (cfg.dceRemovedOps > 0 ? " DCE removed " + cfg.dceRemovedOps + " ops" : ""));
-            }
-            obs.stage(CompileObserver.Stage.REGOPT, System.nanoTime() - tReg, cfg.regCount);
-            obs.note("regopt", "regs " + cfg.initialRegCount + "->" + cfg.regCount);
-        } else {
-            obs.stage(CompileObserver.Stage.REGOPT, System.nanoTime() - tReg, 2 * tags);
-            obs.note("regopt", regoptEnabled ? "skipped (bounds)" : "disabled");
-        }
-
-        // First pass: coalesce + mask-specificity sort on every state's ranges,
-        // compute totals. No gap filling: dead (target=-1) entries between live
-        // ranges are semantically unnecessary — every consumer treats "no entry
-        // matches" as death — and for wide Unicode classes they would double the
-        // entry count (~700 live + ~700 gap fillers for \w under (?u)), halving
-        // scan speed. sortByMaskSpecificity keeps ranges sorted by lo (mask bits
-        // only break ties), so downstream sorted-order assumptions still hold.
-        int totalRanges = 0;
-        int totalOpsSlots = 1; // reserve ops[0] = OP_END for the "no ops" case (opsOff=0 means empty)
-        for (int s = 0; s < n; s++) {
-            meter.tick();
-            DfaStateBuilder sb = builders.get(s);
-            sb.coalesce();
-            sb.sortByMaskSpecificity();
-            totalRanges += sb.ranges.size();
-            for (Range r : sb.ranges) {
-                meter.tick();
-                if (r.ops != null && r.ops.length > 0) {
-                    totalOpsSlots += r.ops.length + 1;
-                } // +1 for OP_END
-            }
-            if (accept.get(s)) {
-                int[] f = sb.finalOpsArr; // populated in pre-pass above (possibly optimized by CFG)
-                if (f != null && f.length > 0) {
-                    totalOpsSlots += f.length + 1;
-                }
-                if (sb.finalOpsVariants != null) {
-                    for (int[] v : sb.finalOpsVariants) {
-                        if (v != null && v.length > 0) {
-                            totalOpsSlots += v.length + 1;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Second pass: allocate flat arrays and populate.
-        int[] stateFinalOpsByMask = null;
-        boolean[] finalVariantState = new boolean[n];
-        int[] stateMeta = new int[n];
-        int[] stateBase = new int[n];
-        int[] stateFinalOpsOff = new int[n];
-        int[] flatRanges = new int[totalRanges * 5];
-        int[] flatOps = new int[totalOpsSlots];
-        flatOps[0] = OP_END; // opsOff=0 means "empty block"
-        int opsHead = 1; // next free slot in flatOps (slot 0 reserved)
-        int rangesHead = 0; // next free slot in flatRanges (in units of 5 ints)
-        int globalMaxReg = 2 * tags; // at least r0 + R_f
-        for (int s = 0; s < n; s++) {
-            meter.tick();
-            DfaStateBuilder sb = builders.get(s);
-            int k = sb.ranges.size();
-            int rangeBase = rangesHead;
-            for (int i = 0; i < k; i++) {
-                meter.tick();
-                Range r = sb.ranges.get(i);
-                int o = rangesHead * 5;
-                flatRanges[o] = r.lo;
-                flatRanges[o + 1] = r.hi;
-                flatRanges[o + 2] = r.target;
-                int opsOff;
-                if (r.ops == null || r.ops.length == 0) {
-                    opsOff = 0; // shared "empty" sentinel at ops[0]
-                } else {
-                    opsOff = opsHead;
-                    for (int j = 0; j < r.ops.length; j += 3) {
-                        flatOps[opsHead] = r.ops[j];
-                        flatOps[opsHead + 1] = r.ops[j + 1];
-                        flatOps[opsHead + 2] = r.ops[j + 2];
-                        globalMaxReg = Math.max(globalMaxReg, r.ops[j + 1] + 1);
-                        if (r.ops[j] == OP_COPY) {
-                            globalMaxReg = Math.max(globalMaxReg, r.ops[j + 2] + 1);
-                        }
-                        opsHead += 3;
-                    }
-                    flatOps[opsHead++] = OP_END;
-                }
-                flatRanges[o + 3] = opsOff;
-                flatRanges[o + 4] = r.requiredMask;
-                rangesHead++;
-            }
-            int finalOpsOff = 0;
-            if (sb.finalOpsArr != null && sb.finalOpsArr.length > 0) {
-                finalOpsOff = opsHead;
-                int[] f = sb.finalOpsArr;
-                for (int j = 0; j < f.length; j += 3) {
-                    flatOps[opsHead] = f[j];
-                    flatOps[opsHead + 1] = f[j + 1];
-                    flatOps[opsHead + 2] = f[j + 2];
-                    globalMaxReg = Math.max(globalMaxReg, f[j + 1] + 1);
-                    if (f[j] == OP_COPY) {
-                        globalMaxReg = Math.max(globalMaxReg, f[j + 2] + 1);
-                    }
-                    opsHead += 3;
-                }
-                flatOps[opsHead++] = OP_END;
-            }
-            boolean isAccept = accept.get(s);
-            stateBase[s] = rangeBase;
-            if (k > 0xFFFF) {
-                // The 16-bit rangeCount pack in stateMeta would silently
-                // wrap (validate cannot detect it post-pack — the count
-                // reads back wrong-but-plausible). Fail the compile loudly.
-                throw new IllegalStateException("tdfa: state " + s + " needs " + k
-                    + " range entries — exceeds the 16-bit rangeCount packing (pattern too large)");
-            }
-            stateMeta[s] = ((k & 0xFFFF) << 1) | (isAccept ? 1 : 0);
-            stateFinalOpsOff[s] = finalOpsOff;
-            if (sb.finalOpsVariants != null && isAccept) {
-                finalVariantState[s] = true;
-                if (stateFinalOpsByMask == null) {
-                    stateFinalOpsByMask = new int[n * 64];
-                }
-                int[] variantOff = new int[sb.finalOpsVariants.length];
-                for (int v = 0; v < variantOff.length; v++) {
-                    int[] f = sb.finalOpsVariants[v];
-                    variantOff[v] = 0; // empty ops: accept fires, no ops
-                    if (f != null && f.length > 0) {
-                        variantOff[v] = opsHead;
-                        for (int j = 0; j < f.length; j += 3) {
-                            flatOps[opsHead] = f[j];
-                            flatOps[opsHead + 1] = f[j + 1];
-                            flatOps[opsHead + 2] = f[j + 2];
-                            globalMaxReg = Math.max(globalMaxReg, f[j + 1] + 1);
-                            if (f[j] == OP_COPY) {
-                                globalMaxReg = Math.max(globalMaxReg, f[j + 2] + 1);
-                            }
-                            opsHead += 3;
-                        }
-                        flatOps[opsHead++] = OP_END;
-                    }
-                }
-                for (int M = 0; M < 64; M++) {
-                    int v = sb.finalMaskVariant[M];
-                    stateFinalOpsByMask[s * 64 + M] = v < 0 ? -1 : variantOff[v];
-                }
-                if (stateFinalOpsOff[s] == 0 && variantOff.length > 0) {
-                    stateFinalOpsOff[s] = variantOff[0];
-                } // sane default for non-runtime consumers
-            }
-        }
-        // Builders (3.2 M Range objects on the bomb) are dead once the flat
-        // arrays are populated; minimize/fallback only read the flat forms.
-        builders = null;
-        accept = null;
-        if (stateFinalOpsByMask != null) {
-            // The table is authoritative for every state when present:
-            // uniform accepting states point all 64 cells at their φ;
-            // non-accepting states stay all -1 (never read).
-            for (int s = 0; s < n; s++) {
-                if (!finalVariantState[s]) {
-                    int off = (stateMeta[s] & 1) != 0 ? stateFinalOpsOff[s] : -1;
-                    Arrays.fill(stateFinalOpsByMask, s * 64, s * 64 + 64, off);
-                }
-            }
-        }
-
-        // === Minimize via register-aware Moore's algorithm (paper §6.2.2 Minimization) ===
-        // Treat transitions on the same symbol but with different register ops as different
-        // transitions. Op sequences are interned to unique numeric IDs for O(1) comparison
-        // (paper: "operation sequences are inserted into a hash map and represented with
-        // unique numeric identifiers"). Comparison may have false negatives (non-identical
-        // but semantically equivalent op lists), but that only yields a suboptimal — not
-        // incorrect — minimization. Apply after register optimizations for best results.
-        int stateCount = n;
-        int[] minMeta = stateMeta, minBase = stateBase, minFinalOpsOff = stateFinalOpsOff, minRanges = flatRanges,
-            minEntryMask = stateEntryMask, minAcceptMask = stateAcceptMask, minStopMask = stateStopOnAcceptMask,
-            minFinalOpsByMask = stateFinalOpsByMask;
-        // Toggle post-determinization minimization (Moore's algorithm):
-        // default on (-Dtdfa.nominimize disables); skipped above
-        // tdfa.minimize.max states (default 20000) — Moore is O(n²)
-        // worst-case and subset construction with map-dedup already
-        // tends to produce minimal DFAs (dictionary alternations:
-        // ~30s of pure overhead saved by skipping). Knob policy: Tdfa javadoc.
-        // The fixpoint itself is METERED (review r10 P1-4 — it was the
-        // one unbounded loop the WorkMeter never saw); because the
-        // unminimized DFA is still correct, exhaustion here DEGRADES
-        // (skip the pass) rather than failing the compile — the same
-        // degrade-not-reject semantics as the norm-cell cap below.
-        final boolean minimizeEnabled = !Boolean.getBoolean("tdfa.nominimize");
-        final int minimizeMaxStates = Integer.getInteger("tdfa.minimize.max", 20000);
-        final boolean debug = Boolean.getBoolean("tdfa.debug");
-        long tMin = System.nanoTime();
-        if (minimizeEnabled && n > 1 && n <= minimizeMaxStates) {
-            int[] partition;
-            try {
-                DfaMinimizer m = new DfaMinimizer(n, stateMeta, stateBase, stateFinalOpsOff, flatRanges, flatOps,
-                    stateEntryMask, stateAcceptMask, stateStopOnAcceptMask, stateFinalOpsByMask, longest, meter);
-                partition = m.computePartition();
-            } catch (WorkMeter.Exhausted overBudget) {
-                obs.note("minimize", "skipped (compute budget)");
-                if (debug) {
-                    System.err.println("[tdfa] minimize degraded: " + overBudget.getMessage());
-                }
-                partition = null;
-            }
-            if (partition != null) {
-                int newN = 0;
-                for (int p : partition) {
-                    newN = Math.max(newN, p + 1);
-                }
-                if (newN < n) {
-                    // Renumber so the start state's partition becomes state 0 (preserves invariant).
-                    int[] renum = new int[newN];
-                    Arrays.fill(renum, -1);
-                    int nextId = 0;
-                    for (int s = 0; s < n; s++) {
-                        int p = partition[s];
-                        if (renum[p] == -1) {
-                            renum[p] = nextId++;
-                        }
-                    }
-                    newN = nextId;
-                    int[] rep = new int[newN];
-                    Arrays.fill(rep, -1);
-                    for (int s = 0; s < n; s++) {
-                        int g = renum[partition[s]];
-                        partition[s] = g;
-                        if (rep[g] == -1) {
-                            rep[g] = s;
-                        }
-                    }
-                    int newTotalRanges = 0;
-                    for (int g = 0; g < newN; g++) {
-                        newTotalRanges += rangeCount(stateMeta[rep[g]]);
-                    }
-                    minMeta = new int[newN];
-                    minBase = new int[newN];
-                    minFinalOpsOff = new int[newN];
-                    minEntryMask = new int[newN];
-                    minAcceptMask = new int[newN];
-                    minStopMask = longest ? null : new int[newN * 64];
-                    minRanges = new int[newTotalRanges * 5];
-                    if (stateFinalOpsByMask != null) {
-                        minFinalOpsByMask = new int[newN * 64];
-                    }
-                    int minRangesHead = 0;
-                    for (int g = 0; g < newN; g++) {
-                        int r = rep[g];
-                        minMeta[g] = stateMeta[r];
-                        minBase[g] = minRangesHead;
-                        minFinalOpsOff[g] = stateFinalOpsOff[r];
-                        minEntryMask[g] = stateEntryMask[r];
-                        minAcceptMask[g] = stateAcceptMask[r];
-                        if (!longest) {
-                            System.arraycopy(stateStopOnAcceptMask, r * 64, minStopMask, g * 64, 64);
-                        }
-                        if (minFinalOpsByMask != null) {
-                            System.arraycopy(stateFinalOpsByMask, r * 64, minFinalOpsByMask, g * 64, 64);
-                        }
-                        int base = stateBase[r];
-                        int count = rangeCount(stateMeta[r]);
-                        for (int i = 0; i < count; i++) {
-                            int o = (base + i) * 5;
-                            int no = minRangesHead * 5;
-                            minRanges[no] = flatRanges[o];
-                            minRanges[no + 1] = flatRanges[o + 1];
-                            int t = flatRanges[o + 2];
-                            minRanges[no + 2] = (t == -1) ? -1 : partition[t];
-                            minRanges[no + 3] = flatRanges[o + 3];
-                            minRanges[no + 4] = flatRanges[o + 4];
-                            minRangesHead++;
-                        }
-                    }
-                    if (debug) {
-                        System.err.println("[tdfa] minimized: " + n + " -> " + newN + " states");
-                    }
-                    stateCount = newN;
-                }
-            }
-        }
-        // === BT22 §6.2 fallback operations ===
-        // Add backup COPY ops on transitions out of fallback states (those final
-        // states with non-accepting paths), and generate ψ quasi-transitions
-        // that route through the backups. Closes a latent POSIX capture bug
-        // where stepping past an accept then falling back clobbers registers.
-        obs.stage(CompileObserver.Stage.MINIMIZE, System.nanoTime() - tMin, stateCount);
-
-        // (BT22 §6.2 ψ/backup machinery deleted 2026-09, review Phase B:
-        // it was generated, executed, and metered here, but NOTHING read
-        // it at runtime — the lazy ψ replay in the runner was unsound and
-        // removed long before; the tables were dead weight that could
-        // push a pattern over the "too large" budget for no effect.)
-
-        // Ensure per-state entries are sorted by lo (stable: equal-lo groups
-        // keep their mask-specificity order). The builders emit sorted, but
-        // the minimizer / regopt rewrite can reorder within a state; the
-        // runtime's binary search over lo requires it.
-        for (int s = 0; s < stateCount; s++) {
-            int cnt = (minMeta[s] >>> 1) & 0xFFFF, b = minBase[s];
-            boolean sorted = true;
-            for (int i = 1; i < cnt; i++) {
-                if (minRanges[(b + i) * 5] < minRanges[(b + i - 1) * 5]) {
-                    sorted = false;
-                    break;
-                }
-            }
-            if (sorted) {
-                continue;
-            }
-            // Pack (lo << 32) | original index for a stable sort by lo, then
-            // permute the 5-int entry groups in place.
-            long[] keys = new long[cnt];
-            for (int i = 0; i < cnt; i++) {
-                keys[i] = ((long) minRanges[(b + i) * 5] << 32) | i;
-            }
-            Arrays.sort(keys);
-            int[] tmp = new int[cnt * 5];
-            for (int i = 0; i < cnt; i++) {
-                int src = (int) (keys[i] & 0xFFFFFFFFL) * 5;
-                System.arraycopy(minRanges, (b + src) * 5, tmp, i * 5, 5);
-            }
-            System.arraycopy(tmp, 0, minRanges, b * 5, cnt * 5);
-        }
-        // Rebuild the per-entry hi-prefix over the final (possibly remapped) arrays.
-        int[] minHiPrefix = new int[minRanges.length / 5];
-        for (int s = 0; s < stateCount; s++) {
-            int cnt = (minMeta[s] >>> 1) & 0xFFFF, b = minBase[s], maxHi = Integer.MIN_VALUE;
-            for (int i = 0; i < cnt; i++) {
-                int hi = minRanges[(b + i) * 5 + 1];
-                if (hi > maxHi) {
-                    maxHi = hi;
-                }
-                minHiPrefix[b + i] = maxHi;
-            }
-        }
-        // Materialization facts for memory attribution (observable via a
-        // CompileObserver "tables" note). Byte sizes are the flat-array
-        // payloads actually retained by the Tdfa (4 B per int slot).
-        boolean perStateUniform = true; // all 64 posFlags cells identical within each state
-        boolean globalUniform = true; // ... and identical across states
-        {
-            int acceptCnt = 0;
-            for (int s = 0; s < stateCount; s++) {
-                if ((minMeta[s] & 1) != 0) {
-                    acceptCnt++;
-                }
-            }
-            // POSIX has no stop table at all; report the same "uniform"
-            // attribution it always had (the all-NEVER_STOP fill it would
-            // trivially satisfy) without the O(n*64) scan.
-            if (minStopMask != null) {
-                int globalVal = minStopMask.length > 0 ? minStopMask[0] : 0;
-                for (int s = 0; s < stateCount && perStateUniform; s++) {
-                    int v0 = minStopMask[s * 64];
-                    for (int m = 1; m < 64; m++) {
-                        if (minStopMask[s * 64 + m] != v0) {
-                            perStateUniform = false;
-                            globalUniform = false;
-                            break;
-                        }
-                    }
-                    if (v0 != globalVal) {
-                        globalUniform = false;
-                    }
-                }
-            }
-            // Storage tier: POSIX -> neither (readers gate on Perl mode);
-            // Perl + per-state-uniform -> byte[n]; general Perl -> int[n*64].
-            byte[] uniformStop = null;
-            int[] finalStop = null;
-            if (!longest) {
-                if (perStateUniform) {
-                    uniformStop = new byte[stateCount];
-                    for (int s = 0; s < stateCount; s++) {
-                        uniformStop[s] = minStopMask[s * 64] != 0 ? (byte) 1 : 0;
-                    }
-                } else {
-                    finalStop = minStopMask;
-                }
-            }
-            obs.note("tables",
-                "states=" + stateCount + " ranges=" + (minRanges.length / 5) + " accept=" + acceptCnt + " bytes{ranges="
-                    + (minRanges.length * 4L) + ",stopMask="
-                    + (uniformStop != null ? uniformStop.length : finalStop != null ? finalStop.length * 4L : 0)
-                    + ",entryMask=" + (minEntryMask.length * 4L) + ",acceptMask=" + (minAcceptMask.length * 4L)
-                    + ",ops=" + (flatOps.length * 4L) + ",hiPrefix=" + (minHiPrefix.length * 4L) + ",scalars="
-                    + ((minMeta.length + minBase.length + minFinalOpsOff.length) * 4L + stateCount) + "}"
-                    + " stopMaskUniform=" + (perStateUniform ? (globalUniform ? "global" : "perState") : "no"));
-            Tdfa result = new Tdfa(tags, nfa.groupCount, nfa.namedGroups, globalMaxReg, finalRegBase, 0, stateCount,
-                minMeta, minBase, minFinalOpsOff, minFinalOpsByMask, minRanges, flatOps, minHiPrefix, minEntryMask,
-                minAcceptMask, longest, finalStop, uniformStop, nfa.multiline, nfa.unicodeWordBoundary, nfa.wordRanges,
-                hasFixed(nfa.fixedBase) ? nfa.fixedBase : null, hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null,
-                pikeCutMatters);
-            return result;
-        }
+        return new StateTables(stateEntryMask, stateAcceptMask, stateStopOnAcceptMask, pikeCutMatters);
     }
 
-    // ---------------- BT19 §7 longest-match closure (closure_gtop) ----------------
-    // Removed 2026-09: the POSIX prectable winner-selection machinery
-    // (UTree/GtopCompare/prectables) was dormant scaffolding, resolved as
-    // NOT-NEEDED for the re2j-parity contract (TODO.md, 2026-08-18);
-    // design recoverable from git history and the BT19 paper.
-
     /**
-     * Build a {@link io.github.jemmix.tdfa.regopt.Cfg} from the post-determinization
-     * {@code DfaStateBuilder} list. Each {@code (state, range-with-ops)} pair becomes
-     * a BASIC block; each accepting state with non-empty {@code finalOpsArr} becomes
-     * a FINAL block. Arcs skip zero-op transitions.
+     * Perl stop-on-accept decision for one accepting state, per posFlags
+     * value M. The decision is position-aware because re2j's runtime
+     * closure evaluates each assertion against the current cursor's cond
+     * and kills failing threads before they can claim a densePcs slot —
+     * so the same DFA state can have a different "highest-priority
+     * outcome" at different positions. For each M, compute the kernel's
+     * DFS arrival order (re2j's densePcs semantics) skipping assertion
+     * edges whose requirements aren't subset of M, then check whether any
+     * sym-bearing config outranks accept in that order: if yes the runner
+     * should extend the match (NEVER_STOP); if no it should stop (0).
+     * Accept-unreachable-under-M also yields NEVER_STOP (no accept to
+     * stop on; the runner's accept-mask check filters anyway).
      *
-     * <p>Lives inline in {@code Tdfa.Compiler} so it has direct access to the
-     * package-private nested {@code DfaStateBuilder}/{@code Range} types
-     * (avoiding reflection on synthetic nested-class field names).
+     * <p>Example: for {@code ^((?:$)|.)*} at pos 0 of "a", $ fails, so
+     * the .-branch outranks the skip-exit MATCH and we extend; at pos 1
+     * (EOF), $ holds, the $-loop-back MATCH outranks . and we stop.
      */
-    Cfg buildCfg(List<DfaStateBuilder> builders, BitSet accept, @SuppressWarnings("unused") List<List<Config>> states,
-        int tagCount, int groupCount, int initialRegCount) {
-        Cfg cfg = new Cfg(tagCount, groupCount, initialRegCount);
-        int n = builders.size();
-        // First pass: create blocks.
-        int[][] rangeBlockIds = new int[n][];
-        @SuppressWarnings("unchecked")
-        List<Integer>[] basicLeaving = new List[n];
-        int[] finalBlockAt = new int[n];
-        @SuppressWarnings("unchecked")
-        List<Integer>[] finalVariantBlocks = new List[n];
-        for (int s = 0; s < n; s++) {
-            finalVariantBlocks[s] = new ArrayList<>();
-        }
-        Arrays.fill(finalBlockAt, -1);
-        for (int s = 0; s < n; s++) {
-            basicLeaving[s] = new ArrayList<>();
-        }
-        for (int s = 0; s < n; s++) {
-            meter.tick();
-            DfaStateBuilder sb = builders.get(s);
-            rangeBlockIds[s] = new int[sb.ranges.size()];
-            Arrays.fill(rangeBlockIds[s], -1);
-            for (int r = 0; r < sb.ranges.size(); r++) {
-                meter.tick(); // per (state, range): pass 1 is real work, budget-visible
-                Range range = sb.ranges.get(r);
-                if (range.ops == null || range.ops.length == 0) {
+    @SuppressWarnings("unchecked")
+    private int[] stopRowFor(Object seed, Kernel k) {
+        int[] row = new int[64];
+        int cnt = k.size();
+        for (int M = 0; M < 64; M++) {
+            // seed is int[] (tagless) or List<Config> (tagged) — see stateSeeds
+            int[] perStateOrder = seed instanceof int[] ? computePerStateOrder((int[]) seed, M)
+                : computePerStateOrder((List<Config>) seed, M);
+            int acceptOrder = perStateOrder[nfa.accept];
+            if (acceptOrder == -1) {
+                row[M] = NEVER_STOP;
+                continue;
+            }
+            boolean higherPriSym = false;
+            for (int i = 0; i < cnt; i++) {
+                int st = k.stateAt(i);
+                if (st == nfa.accept) {
                     continue;
                 }
-                Block blk = cfg.newBlock(Cfg.BLOCK_BASIC, s, r);
-                decodeOps(range.ops, blk.ops);
-                rangeBlockIds[s][r] = cfg.blocks.size() - 1;
-                basicLeaving[s].add(rangeBlockIds[s][r]);
-            }
-            if (accept.get(s)) {
-                if (sb.finalOpsVariants != null) {
-                    // Position-aware state: one FINAL block per φ variant
-                    // (rangeIndex = variant index). No default block — the
-                    // runtime selects per posFlags and never uses
-                    // stateFinalOpsOff for this state.
-                    for (int v = 0; v < sb.finalOpsVariants.length; v++) {
-                        Block vb = cfg.newBlock(Cfg.BLOCK_FINAL, s, v);
-                        if (sb.finalOpsVariants[v] != null) {
-                            decodeOps(sb.finalOpsVariants[v], vb.ops);
-                        }
-                        finalVariantBlocks[s].add(cfg.blocks.size() - 1);
-                    }
-                } else {
-                    Block fb = cfg.newBlock(Cfg.BLOCK_FINAL, s, -1);
-                    if (sb.finalOpsArr != null) {
-                        decodeOps(sb.finalOpsArr, fb.ops);
-                    }
-                    finalBlockAt[s] = cfg.blocks.size() - 1;
+                if (symOut[st].length == 0) {
+                    continue;
                 }
-            }
-        }
-        // Second pass: successor arcs. BASIC block at state s with range.target s' ->
-        // all blocks (BASIC + FINAL) reachable from s' through zero-op transitions.
-        for (Block blk : cfg.blocks) {
-            if (blk.kind != Cfg.BLOCK_BASIC) {
-                continue;
-            }
-            int target = builders.get(blk.stateId).ranges.get(blk.rangeIndex).target;
-            BitSet visited = new BitSet();
-            ArrayDeque<Integer> frontier = new ArrayDeque<>();
-            frontier.push(target);
-            visited.set(target);
-            while (!frontier.isEmpty()) {
-                meter.tick(); // per BFS node per block: the successor-arc pass
-                int t = frontier.pop();
-                int arcs = basicLeaving[t].size() + finalVariantBlocks[t].size();
-                if (finalBlockAt[t] != -1) {
-                    arcs++;
-                }
-                blk.successors.addAll(basicLeaving[t]);
-                if (finalBlockAt[t] != -1) {
-                    blk.successors.add(finalBlockAt[t]);
-                }
-                blk.successors.addAll(finalVariantBlocks[t]);
-                // Per ARC, not per node: materializing the dense lists is
-                // the work (see maxCfgEdges above).
-                meter.tick(arcs);
-                cfgEdges += arcs;
-                if (cfgEdges > maxCfgEdges) {
-                    throw new IllegalStateException("pattern too large: TDFA CFG edge budget exceeded (" + cfgEdges
-                        + " successor arcs at block " + cfg.blocks.size() + "; cap " + maxCfgEdges + " — raise -D"
-                        + Budgets.COMPILE_MEMORY_PROP + " if you need denser graphs)");
-                }
-                DfaStateBuilder tb = builders.get(t);
-                for (int r = 0; r < tb.ranges.size(); r++) {
-                    Range tr = tb.ranges.get(r);
-                    if (tr.ops != null && tr.ops.length > 0) {
-                        continue;
-                    } // op-bearing: not skipped
-                    if (tr.target < 0) {
-                        continue;
-                    }
-                    if (!visited.get(tr.target)) {
-                        visited.set(tr.target);
-                        frontier.push(tr.target);
-                    }
-                }
-            }
-        }
-        return cfg;
-    }
-
-    private void decodeOps(int[] flat, List<Op> out) {
-        for (int i = 0; i < flat.length; i += 3) {
-            meter.tick(); // per op: decode allocates the op objects — the former unticked copyOf hotspot
-            int op = flat[i], dst = flat[i + 1], src = flat[i + 2];
-            if (op == OP_END) {
-                break;
-            }
-            switch (op) {
-                case OP_SET_POS :
-                    out.add(Cfg.Op.setPos(dst));
+                int o = perStateOrder[st];
+                if (o != -1 && o < acceptOrder) {
+                    higherPriSym = true;
                     break;
-                case OP_SET_NIL :
-                    out.add(Cfg.Op.setNil(dst));
-                    break;
-                case OP_COPY :
-                    out.add(Cfg.Op.copy(dst, src));
-                    break;
-                default :
-                    throw new IllegalStateException("bad op: " + op);
+                }
             }
+            row[M] = higherPriSym ? NEVER_STOP : 0;
         }
+        return row;
     }
 
     /**
-     * Flush optimized CFG ops back into the builders' Range/finalOpsArr slots.
+     * Pike-cut hazard predicate (feeds {@link Tdfa#pikeCutMatters()}):
+     * true iff under some posFlags M an alive AND steppable config sits
+     * below the first alive accept in this kernel. The cut deletes every
+     * config below an accept alive in a stepping context, so such a
+     * config means the cut deleted a real continuation — a whole-input
+     * walk on this artifact could then miss accepts ((a|ab) on "ab": the
+     * b-continuation sits below the accept and is cut). When no state
+     * trips this, every cut removed only non-steppable configs, which
+     * contribute nothing to target kernels, so the artifact is identical
+     * to a cut-free build and whole walks on it are exact.
+     *
+     * <p>Conservative: kernel masks approximate the runner's fm/sam
+     * record gates from above, so this flags a superset of the real
+     * hazard positions.
      */
-    void cfgWriteBack(Cfg cfg, List<DfaStateBuilder> builders) {
-        for (Block blk : cfg.blocks) {
-            int[] encoded = encodeOps(blk.ops);
-            DfaStateBuilder sb = builders.get(blk.stateId);
-            if (blk.kind == Cfg.BLOCK_BASIC) {
-                sb.ranges.get(blk.rangeIndex).ops = encoded;
-            } else if (blk.kind == Cfg.BLOCK_FINAL) {
-                if (blk.rangeIndex >= 0) {
-                    sb.finalOpsVariants[blk.rangeIndex] = encoded;
-                } else {
-                    sb.finalOpsArr = encoded;
+    private boolean pikeCutHazard(Kernel k) {
+        int cnt = k.size();
+        for (int M = 0; M < 64; M++) {
+            int firstAliveAccept = -1;
+            for (int i = 0; i < cnt; i++) {
+                if ((k.maskAt(i) & ~M) != 0) {
+                    continue;
+                } // dead under M
+                if (k.stateAt(i) == nfa.accept) {
+                    firstAliveAccept = i;
+                    break;
+                }
+            }
+            if (firstAliveAccept < 0) {
+                continue;
+            }
+            for (int i = firstAliveAccept + 1; i < cnt; i++) {
+                if ((k.maskAt(i) & ~M) != 0) {
+                    continue;
+                } // dead under M
+                if (symOut[k.stateAt(i)].length > 0) {
+                    return true;
                 }
             }
         }
+        return false;
     }
+
+    /**
+     * Solve each accepting state's final register ops (φ) BEFORE the
+     * register optimization, so the CFG pass sees final blocks along with
+     * transition ops. Tagless accepts arrive here with their kernels
+     * already packed: finalRegops yields empty ops (no registers), but
+     * the per-M aliveness variants are still computed — an accept state
+     * whose configs carry DIFFERENT emptyMasks is an OR of
+     * assertion-gated accepts, which the conjunctive stateAcceptMask
+     * (intersection) collapses to "always alive" (e.g.
+     * {@code Z(?:\A|\B)} matching at pos 1 where \A and \B both fail).
+     */
+    private void solveFinalOps() {
+        int n = kernels.size();
+        for (int s = 0; s < n; s++) {
+            if (!accept.get(s)) {
+                continue;
+            }
+            DfaStateBuilder sb = builders.get(s);
+            Kernel k = kernels.get(s);
+            if (k.boxed != null) {
+                sb.finalOpsArr = variants.finalRegops(k.boxed);
+                variants.computeFinalVariants(sb, k.boxed);
+            } else {
+                sb.finalOpsArr = null;
+                variants.computeFinalVariantsPacked(sb, k.packed);
+            }
+        }
+    }
+
+    // ---------------- Algorithm 3 building blocks ----------------
 
     /**
      * ε-closure via DFS with priority-ordered exploration (paper Algorithm 3).
@@ -1566,9 +953,9 @@ final class TdfaCompiler {
         // For deterministic exploration we visit (state, mask) pairs — same NFA state
         // can appear with different assertion masks (e.g. loop entered 0 vs 1 times).
         // A visited set keyed only on state would wrongly suppress the second path.
-        // Open-addressing primitive (state<<32|mask) set: the boxed HashSet<Long> this
-        // replaces allocated a Long per visited config per closure call — the #1
-        // allocation hotspot on wide-class determinization. Initial size seed*2 (not
+        // Open-addressing primitive (state<<32|mask) set: a boxed HashSet<Long>
+        // would allocate a Long per visited config per closure call — the #1
+        // allocation site on wide-class determinization. Initial size seed*2 (not
         // seed*8): closures grow it geometrically on demand, and the smaller initial
         // table saves ~2/3 of the per-call fill cost on the 1.4 M closure calls of
         // large determinizations.
@@ -1648,7 +1035,7 @@ final class TdfaCompiler {
                 // deferred masks, so the FIRST alive thread to reach a pc wins).
                 // For nullable loop bodies the re-entry around the ε-cycle carries
                 // the cycle's accumulated assertion bits — a superset of the entry
-                // variant's — so empty iterations die here ((?:.*?9{0,}\\b){1,} on
+                // variant's — so empty iterations die here ((?:.*?9{0,}\b){1,} on
                 // "99x" matches [0,0) like the refs, not [0,3)). Incomparable-mask
                 // re-arrivals survive ((?:^|$)+ needs both the BEGIN and END
                 // junction variants); that is the difference from a blanket
@@ -1689,9 +1076,9 @@ final class TdfaCompiler {
      * irrelevant. Without the prune, the walk extends past a recorded
      * accept via a lower-priority body and the runner's unconditional
      * lastAccept overwrite turns the result leftmost-LONGEST for that
-     * window — fuzz round 11: {@code .+?\b[^\d]*} on "ß9" reported
-     * [0,2) where re2j/sim/jdk report [0,1) (the lazy {@code .} body
-     * matched '9' although ranked below the \b-gated accept at pos 1).
+     * window ({@code .+?\b[^\d]*} on "ß9" reports [0,2) where
+     * re2j/sim/jdk report [0,1): the lazy {@code .} body matched '9'
+     * although ranked below the \b-gated accept at pos 1).
      *
      * <p>Configs ranked ABOVE the accept are kept: their later match
      * legitimately replaces the recorded one (the stop table's
@@ -1825,40 +1212,27 @@ final class TdfaCompiler {
     }
 
     /**
-     * Step every config in {@code configs} that has an outgoing symbol transition matching {@code a}.
-     * Returns the stepped configs (with emptyMask reset to 0) and stores the intersection of
-     * contributing source config masks into {@code requiredMaskOut[0]}.
+     * Step every config in {@code configs} that has an outgoing symbol
+     * transition matching one of the active edges, preserving the list's
+     * priority order (it is a live-set of ONE assertion context — every
+     * config is a priority competitor).
      *
-     * <p>{@code ownCount} is the number of leading configs belonging to the mask group being
-     * stepped (the rest are subset-mask configs appended for DFA liveness by the caller —
-     * see the subset-inclusion comment in {@code compile()}). Appended configs are NOT
-     * priority competitors of the group's own configs: their true priority position is
-     * elsewhere in the closure. They must therefore neither veto accept-suppression nor
-     * be suppressed by it. Without this boundary, a pattern like
-     * {@code ^(?:x*|y)} loses Perl leftmost-first semantics: the (ungated, mask-0) start
-     * config is appended after the (BEGIN_TEXT-gated) accept config, the superset safety
-     * check fails, and the lower-priority {@code y} branch survives to extend the match
-     * ([0,1] instead of the correct [0,0] — the empty {@code x*} alternative accepts first).
+     * <p>Pike-cut (Perl mode): when the first accept config in the list is
+     * alive in this context ({@code ctxMask ⊇ acceptEmptyMask}), every
+     * config below it is cut exactly like a pike VM cuts threads below a
+     * match-recording thread — they can never produce the answer.
+     * Contexts where the accept is dead keep the fallbacks: no accept
+     * fired there, so nothing was cut.
+     *
+     * <p>Stepping resets emptyMask to 0 — assertions are position-bound;
+     * the context's OR-mask rides the emitted range as requiredMask.
      */
-    List<Config> stepOnSymbol(List<Config> configs, long[] activeEdges, int[] requiredMaskOut, int ownCount,
-        int ctxMask) {
-        // Perl leftmost-first: the closure's configs are in priority-ordered DFS arrival order.
-        // If any config has reached the accept state, find the FIRST (best-priority) such config
-        // and consider suppressing transitions from configs added AFTER it.
-        //
-        // Suppression is safe only if every post-accept OWN config's emptyMask is a SUPERSET of the
-        // accept config's emptyMask — meaning those lower-priority paths are gated by (at least)
-        // the same assertions as the accept. Then wherever the accept fires (assertions hold),
-        // the lower-priority transitions could also fire (so we MUST suppress to keep Perl
-        // first-match); and wherever the accept doesn't fire (assertions don't hold), neither
-        // can the lower-priority transitions (so suppression costs us nothing). When the rule
-        // doesn't hold (e.g. accept requires `$` but a lower-priority alternative is ungated),
-        // we must keep the lower-priority paths as fallback.
+    List<Config> stepOnSymbol(List<Config> configs, long[] activeEdges, int ctxMask) {
         int firstAcceptIdx = -1;
         int acceptEmptyMask = 0;
         boolean suppress = false;
         if (!longest && !unpruned) {
-            for (int i = 0; i < ownCount; i++) {
+            for (int i = 0; i < configs.size(); i++) {
                 Config c = configs.get(i);
                 if (c.state == nfa.accept) {
                     firstAcceptIdx = i;
@@ -1866,13 +1240,6 @@ final class TdfaCompiler {
                     break;
                 }
             }
-            // Pike-cut (context-scoped): the config list is a live-set for ONE
-            // assertion context (ctxMask); when the accept config is alive in
-            // THIS context, every lower-priority config is cut exactly like a
-            // pike VM cuts threads below a match-recording thread — they can
-            // never produce the answer. Contexts where the accept is dead
-            // (acceptEmptyMask ⊄ ctxMask) keep the fallbacks: no accept fired
-            // there, so nothing was cut.
             if (firstAcceptIdx >= 0 && (acceptEmptyMask & ~ctxMask) == 0) {
                 suppress = true;
                 if (debug) {
@@ -1882,9 +1249,6 @@ final class TdfaCompiler {
             }
         }
         List<Config> out = new ArrayList<>();
-        int intersection = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY | Tnfa.ABS_BEGIN
-            | Tnfa.ABS_END;
-        boolean any = false;
         for (int ci = 0; ci < configs.size(); ci++) {
             if (suppress && ci > firstAcceptIdx) {
                 continue; // pike-cut: lower-priority paths past the first live accept
@@ -1896,12 +1260,9 @@ final class TdfaCompiler {
                 if ((activeEdges[idx >> 6] & (1L << (idx & 63))) != 0) {
                     // emptyMask resets on step — assertions are position-bound, gated via requiredMask.
                     out.add(new Config(nfa.symTo[idx], c.regs, c.l, HistTable.EMPTY_ID, 0, c.pri));
-                    intersection &= c.emptyMask;
-                    any = true;
                 }
             }
         }
-        requiredMaskOut[0] = any ? intersection : 0;
         return out;
     }
 
@@ -1941,6 +1302,10 @@ final class TdfaCompiler {
         }
     }
 
+    /**
+     * Append one tag to a history sequence, returning a fresh array (the
+     * shared EMPTY sentinel maps to a single-element sequence).
+     */
     @SuppressWarnings("ReferenceEquality")
     int[] appendTag(int[] seq, int tag) {
         // Reference compare against the shared EMPTY sentinel is the point
@@ -1976,6 +1341,103 @@ final class TdfaCompiler {
         @Override
         public boolean equals(Object o) {
             return o instanceof ActiveSetKey && Arrays.equals(bits, ((ActiveSetKey) o).bits);
+        }
+    }
+
+    /**
+     * One DFA state's kernel (the subset-construction closure) in one of
+     * two forms:
+     * <ul>
+     * <li>{@code boxed} — the closure as Configs in arrival (priority)
+     * order. Needed by every consumer that reads registers or tag
+     * histories: tryMap's register bijection, the final-φ solver, the
+     * transition-op allocator. Tagged compiles retain it for the state's
+     * whole lifetime.</li>
+     * <li>{@code packed} — the (state, emptyMask) projection, 2 ints per
+     * config. Everything the mask/aliveness consumers need (entry/accept
+     * masks, stop table, final-variant aliveness).</li>
+     * </ul>
+     *
+     * <p>Tagless compiles (tags == 0) have no registers or histories, so
+     * once a state is processed nothing can read its boxed configs: pack()
+     * replaces them with the projection (~8 B/config vs ~48 B+ boxed; the
+     * boxed kernels dominated the heap on six-figure-state
+     * determinizations). Tagged compiles never pack. Both forms expose
+     * the same accessors, so mask-only consumers are form-agnostic.
+     */
+    static final class Kernel {
+        List<Config> boxed;
+        int[] packed;
+
+        Kernel(List<Config> boxed) {
+            this.boxed = boxed;
+        }
+
+        /**
+         * Replace the boxed closure with its (state, emptyMask)
+         * projection. Tagless compiles only, after the state is fully
+         * processed — the boxed form is the memory-dominant part of a
+         * giant determinization and has no reader left at that point.
+         */
+        void pack() {
+            int[] p = new int[boxed.size() * 2];
+            for (int i = 0; i < boxed.size(); i++) {
+                p[i * 2] = boxed.get(i).state;
+                p[i * 2 + 1] = boxed.get(i).emptyMask;
+            }
+            packed = p;
+            boxed = null;
+        }
+
+        int size() {
+            return packed != null ? packed.length >> 1 : boxed.size();
+        }
+
+        int stateAt(int i) {
+            return packed != null ? packed[i * 2] : boxed.get(i).state;
+        }
+
+        int maskAt(int i) {
+            return packed != null ? packed[i * 2 + 1] : boxed.get(i).emptyMask;
+        }
+    }
+
+    /**
+     * One assertion context of a closure: the configs alive under one
+     * alive-mask pattern over the runtime posFlags values, in
+     * closure-priority order (pike-pruned in Perl mode), plus the OR of
+     * their emptyMasks ({@code orMask} — rides the emitted ranges as
+     * requiredMask) and the pattern's {@code coverage} (alive-config
+     * count; contexts are emitted most-coverage first so superset
+     * live-sets precede their subsets).
+     */
+    static final class LiveContext {
+        final int orMask;
+        final int coverage;
+        final List<Config> configs;
+
+        LiveContext(int orMask, int coverage, List<Config> configs) {
+            this.orMask = orMask;
+            this.coverage = coverage;
+            this.configs = configs;
+        }
+    }
+
+    /**
+     * Per-state tables derived from the kernels: the carrier for what
+     * {@link #computeStateTables()} hands to the {@link DeterminizedDfa}.
+     */
+    private static final class StateTables {
+        final int[] entryMask;
+        final int[] acceptMask;
+        final int[] stopOnAcceptMask;
+        final boolean pikeCutMatters;
+
+        StateTables(int[] entryMask, int[] acceptMask, int[] stopOnAcceptMask, boolean pikeCutMatters) {
+            this.entryMask = entryMask;
+            this.acceptMask = acceptMask;
+            this.stopOnAcceptMask = stopOnAcceptMask;
+            this.pikeCutMatters = pikeCutMatters;
         }
     }
 }
