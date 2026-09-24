@@ -20,9 +20,9 @@ import java.util.List;
  *       supported but stubbed for algorithmic completeness.</li>
  * </ul>
  *
- * <p>The CFG is a pure data structure. Construction from {@code TdfaCompiler}'s
- * builder list, and writeBack of optimized ops, live inline in {@code TdfaCompiler}
- * (which has direct access to its nested {@code DfaStateBuilder}/{@code Range}
+ * <p>The CFG is a pure data structure. Construction from {@code TdfaMaterializer}'s
+ * builder list, and writeBack of optimized ops, live inline in {@code TdfaMaterializer}
+ * (which has direct access to the package-private {@code DfaStateBuilder}/{@code Range}
  * types). The optimization passes ({@link Optimize}) operate on this data model.
  *
  * <p>Register layout invariant: working registers occupy {@code [0..W-1]}, final

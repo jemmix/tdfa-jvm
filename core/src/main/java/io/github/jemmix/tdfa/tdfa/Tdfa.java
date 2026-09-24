@@ -476,14 +476,14 @@ public final class Tdfa {
      * @param longestMatch true for leftmost-longest, false for leftmost-first.
      */
     public static Tdfa compile(Tnfa nfa, boolean longestMatch) {
-        return new TdfaCompiler(nfa, longestMatch).compile();
+        return compile(nfa, longestMatch, null, new WorkMeter(Budgets.compileComputeTicks()));
     }
 
     /**
      * Compile with a transparency hook receiving stage timings/decisions (may be {@code null}).
      */
     public static Tdfa compile(Tnfa nfa, boolean longestMatch, CompileObserver observer) {
-        return new TdfaCompiler(nfa, longestMatch, false).compile(observer);
+        return compile(nfa, longestMatch, observer, new WorkMeter(Budgets.compileComputeTicks()));
     }
 
     /**
@@ -494,7 +494,7 @@ public final class Tdfa {
      * stay within one compile CPU budget.
      */
     public static Tdfa compile(Tnfa nfa, boolean longestMatch, CompileObserver observer, WorkMeter sharedMeter) {
-        return new TdfaCompiler(nfa, longestMatch, false, sharedMeter).compile(observer);
+        return compileWithMeter(nfa, longestMatch, false, observer, sharedMeter);
     }
 
     /**
@@ -520,7 +520,20 @@ public final class Tdfa {
      */
     public static Tdfa compileUnpruned(Tnfa nfa, boolean longestMatch, CompileObserver observer,
         WorkMeter sharedMeter) {
-        return new TdfaCompiler(nfa, longestMatch, true, sharedMeter).compile(observer);
+        return compileWithMeter(nfa, longestMatch, true, observer, sharedMeter);
+    }
+
+    /**
+     * The compile pipeline seam: determinization in {@link TdfaCompiler}
+     * (which owns the kernels, the interning index and the closure scratch
+     * for exactly its phase), then the register optimization /
+     * materialization / minimization stages in {@link TdfaMaterializer}
+     * over the determinized value. One meter spans both halves.
+     */
+    private static Tdfa compileWithMeter(Tnfa nfa, boolean longestMatch, boolean unpruned, CompileObserver observer,
+        WorkMeter meter) {
+        DeterminizedDfa det = new TdfaCompiler(nfa, longestMatch, unpruned, meter).compile(observer);
+        return TdfaMaterializer.finish(det, nfa, longestMatch, meter, observer);
     }
 
     // ===== public read accessors (fields are package-private; asm generation

@@ -9,8 +9,8 @@ import java.util.Map;
 /**
  * State interning/dedup: signature probing (ProbeKey vs DfaStateKey),
  * class-signature canonicalization, register-bijection mapping (tryMap) and
- * addState. Extracted verbatim from TdfaCompiler (2026-09 god-file split);
- * the {@code owner} back-reference carries the shared compiler state.
+ * addState. The {@code owner} back-reference carries the shared
+ * determinization context (kernels, budgets, meter).
  */
 final class TdfaStateIndex {
     final TdfaCompiler owner;
@@ -234,12 +234,10 @@ final class TdfaStateIndex {
         StateBucket candidates = stateIndex.get(probe);
 
         // Canonical class signature for TAGGED closures — computed for
-        // EVERY state, not just probe hits. The prior code filled
-        // pendingClass/pendingClassHash only when a same-shape candidate
-        // existed, so a first-of-shape state stored the PREVIOUS closure's
-        // class (or null/0L for the very first state): a later identical
-        // closure then missed the byClass probe entirely — permanent
-        // missed merges, state-count/cap pressure [review P1 #1].
+        // EVERY state, not just probe hits. A first-of-shape state must
+        // store its OWN class signature: otherwise a later identical
+        // closure misses the byClass probe entirely — permanent missed
+        // merges, state-count/cap pressure.
         int[] canon = null;
         long canonHash = 0;
         if (owner.tags > 0) {
@@ -278,7 +276,7 @@ final class TdfaStateIndex {
             // (78% of wall time in JFR).
             if (owner.tags == 0) {
                 for (int cand : candidates.members) {
-                    int[] mapped = tryMap(configs, owner.states.get(cand), owner.packedKernels.get(cand), ops);
+                    int[] mapped = tryMap(configs, owner.kernels.get(cand), ops);
                     if (mapped != null) {
                         return new AddResult(cand, mapped);
                     }
@@ -291,12 +289,12 @@ final class TdfaStateIndex {
                     // depends only on the ATTEMPT's registers — so success
                     // or failure (and the merged-into choice) is identical
                     // for every member. One probe suffices; scanning all
-                    // canon-equal members was the residual quadratic.
+                    // canon-equal members is pure quadratic overhead.
                     int cand = compatibles[0];
                     int[] stored = stateClassIds.get(cand);
                     if (stored != null && stored.length == canon.length
                         && rangeEquals(canon, 0, canon.length, stored, 0, stored.length)) {
-                        int[] mapped = tryMap(configs, owner.states.get(cand), owner.packedKernels.get(cand), ops);
+                        int[] mapped = tryMap(configs, owner.kernels.get(cand), ops);
                         if (mapped != null) {
                             return new AddResult(cand, mapped);
                         }
@@ -308,14 +306,13 @@ final class TdfaStateIndex {
             // All same-sequence states failed the register bijection: this
             // closure genuinely needs a new DFA state. Fall through.
         }
-        int id = owner.states.size();
-        owner.states.add(configs);
-        owner.packedKernels.add(null);
+        int id = owner.kernels.size();
+        owner.kernels.add(new TdfaCompiler.Kernel(configs));
         // Seeds are consumed ONLY by the Perl-mode stopOnAccept computation,
-        // and only for ACCEPTING states (compile() line ~663 gates on
-        // anyAccept). Retaining them for all states cost ~22 M extra Config
-        // objects on the 234 K-state bounded-repeat determinization — a
-        // third of all live Configs — for zero readers. Null for the rest.
+        // and only for ACCEPTING states (the state-table pass gates on
+        // anyAccept). Retaining them for all states costs ~22 M extra
+        // Config objects on a 234 K-state bounded-repeat determinization —
+        // a third of all live Configs — for zero readers. Null for the rest.
         boolean isAccept = false;
         for (Config c : configs) {
             if (c.state == owner.nfa.accept) {
@@ -361,9 +358,9 @@ final class TdfaStateIndex {
         }
         owner.kernelsTotal += configs.size();
         owner.kernelsWeighted += (long) configs.size() * owner.kernelConfigBytes;
-        if (owner.states.size() > owner.maxStates || owner.kernelsWeighted > Budgets.compileMemoryBytes()) {
+        if (owner.kernels.size() > owner.maxStates || owner.kernelsWeighted > Budgets.compileMemoryBytes()) {
             throw new IllegalStateException("pattern too large: TDFA determinization budget exceeded ("
-                + owner.states.size() + " states, kernel total " + owner.kernelsTotal + " (" + owner.kernelsWeighted
+                + owner.kernels.size() + " states, kernel total " + owner.kernelsTotal + " (" + owner.kernelsWeighted
                 + " weighted bytes), ticks " + owner.meter.spent() + "; caps " + owner.maxStates + " states / "
                 + Budgets.compileMemoryBytes() + " weighted kernel bytes (" + owner.maxKernelsTotal
                 + " tagless-equivalent configs) — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
@@ -372,19 +369,20 @@ final class TdfaStateIndex {
     }
 
     /**
-     * Attempt to map a candidate closure to an existing state's closure by registering
+     * Attempt to map a candidate closure to an existing state's kernel by registering
      * a bijection on their register vectors. Returns rewritten ops if mapping succeeds,
      * null otherwise. Implements paper §3 {@code map} function.
      *
      * <p>Callers index closures by the ORDER-EXACT (state, l, emptyMask)
      * signature, so every candidate here already has the identical ordered
-     * sequence — the former element-wise state/Arrays.equals(l) phase is
-     * implied by DfaStateKey.equals and has been deleted (it cost a full
-     * l-comparison sweep per candidate on permutation-heavy patterns).
-     * The tagless branch still checks element-wise states only because
-     * its callers may pass closures from unindexed paths.
+     * sequence — the element-wise state/l comparison is implied by
+     * DfaStateKey.equals. The tagless branch still checks element-wise
+     * states only because its callers may pass closures from unindexed
+     * paths.
      */
-    int[] tryMap(List<Config> newConfigs, List<Config> oldConfigs, int[] oldPacked, int[] ops) {
+    int[] tryMap(List<Config> newConfigs, TdfaCompiler.Kernel old, int[] ops) {
+        List<Config> oldConfigs = old.boxed;
+        int[] oldPacked = old.packed;
         int size = newConfigs.size();
         if (oldPacked != null ? oldPacked.length != size * 2 : oldConfigs.size() != size) {
             return null;
