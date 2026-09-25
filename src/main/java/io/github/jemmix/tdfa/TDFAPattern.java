@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.EmittedSurface;
 import io.github.jemmix.tdfa.core.RegexEngine;
+import io.github.jemmix.tdfa.core.WholeEngine;
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
 
 import java.io.IOException;
@@ -41,7 +42,7 @@ public class TDFAPattern implements Pattern {
     // at end-of-input is a full match (the trailing context that a
     // leftmost-first DFA would have pruned — e.g. (a|ab) against "ab" must
     // retain the `ab` path — survives in the cut-free build).
-    private transient RegexEngine wholeEngine;
+    private transient WholeEngine wholeEngine;
     /**
      * The Unicode tables this pattern was compiled against ({@code null} =
      * the process default). Retained only for serialization round-trips —
@@ -52,7 +53,7 @@ public class TDFAPattern implements Pattern {
     private transient UnicodeDataProvider provider;
 
     @EmittedSurface // shells super-ctor call: signature feeds ShellEmitter descriptor
-    public TDFAPattern(String pattern, int flags, int programSize, RegexEngine engine, RegexEngine wholeEngine,
+    public TDFAPattern(String pattern, int flags, int programSize, RegexEngine engine, WholeEngine wholeEngine,
         UnicodeDataProvider provider) {
         this.pattern = pattern;
         this.flags = flags;
@@ -80,7 +81,7 @@ public class TDFAPattern implements Pattern {
      * Engine for {@code matches()}: cut-free whole-match artifact, compiled eagerly.
      */
     @EmittedSurface
-    public RegexEngine wholeEngine() {
+    public WholeEngine wholeEngine() {
         return wholeEngine;
     }
 

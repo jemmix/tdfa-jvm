@@ -20,29 +20,36 @@ class RegexTest {
         return m.groups();
     }
 
+    /** Whole-input probe on the find surface: a full-span match from 0
+     *  (CompiledRegex no longer carries a whole-match entry). */
+    private static boolean whole(CompiledRegex r, CharSequence input) {
+        MatchResult m = r.match(input, 0);
+        return m != null && m.start(0) == 0 && m.end(0) == input.length();
+    }
+
     // ----------------- basic recognition -----------------
 
     @Test
     void literalMatches() {
         CompiledRegex r = CompiledRegex.compile("abc");
-        assertThat(r.matches("abc")).isTrue();
-        assertThat(r.matches("abcd")).isFalse();
-        assertThat(r.matches("ab")).isFalse();
+        assertThat(whole(r, "abc")).isTrue();
+        assertThat(whole(r, "abcd")).isFalse();
+        assertThat(whole(r, "ab")).isFalse();
         assertThat(r.find("xxabcxx")).isTrue();
     }
 
     @Test
     void charClassMatches() {
         CompiledRegex r = CompiledRegex.compile("[abc]+");
-        assertThat(r.matches("aabcc")).isTrue();
-        assertThat(r.matches("abd")).isFalse();
+        assertThat(whole(r, "aabcc")).isTrue();
+        assertThat(whole(r, "abd")).isFalse();
     }
 
     @Test
     void negatedClass() {
         CompiledRegex r = CompiledRegex.compile("[^0-9]+");
-        assertThat(r.matches("abc")).isTrue();
-        assertThat(r.matches("abc1")).isFalse();
+        assertThat(whole(r, "abc")).isTrue();
+        assertThat(whole(r, "abc1")).isFalse();
     }
 
     @Test
@@ -55,9 +62,9 @@ class RegexTest {
     @Test
     void dotClass() {
         CompiledRegex r = CompiledRegex.compile("a.c");
-        assertThat(r.matches("abc")).isTrue();
-        assertThat(r.matches("a c")).isTrue();
-        assertThat(r.matches("a\nc")).isFalse();
+        assertThat(whole(r, "abc")).isTrue();
+        assertThat(whole(r, "a c")).isTrue();
+        assertThat(whole(r, "a\nc")).isFalse();
     }
 
     // ----------------- quantifiers -----------------
@@ -65,43 +72,43 @@ class RegexTest {
     @Test
     void starQuantifier() {
         CompiledRegex r = CompiledRegex.compile("ab*c");
-        assertThat(r.matches("ac")).isTrue();
-        assertThat(r.matches("abc")).isTrue();
-        assertThat(r.matches("abbbbc")).isTrue();
-        assertThat(r.matches("axc")).isFalse();
+        assertThat(whole(r, "ac")).isTrue();
+        assertThat(whole(r, "abc")).isTrue();
+        assertThat(whole(r, "abbbbc")).isTrue();
+        assertThat(whole(r, "axc")).isFalse();
     }
 
     @Test
     void plusQuantifier() {
         CompiledRegex r = CompiledRegex.compile("ab+c");
-        assertThat(r.matches("ac")).isFalse();
-        assertThat(r.matches("abc")).isTrue();
-        assertThat(r.matches("abbbbc")).isTrue();
+        assertThat(whole(r, "ac")).isFalse();
+        assertThat(whole(r, "abc")).isTrue();
+        assertThat(whole(r, "abbbbc")).isTrue();
     }
 
     @Test
     void optionalQuantifier() {
         CompiledRegex r = CompiledRegex.compile("colou?r");
-        assertThat(r.matches("color")).isTrue();
-        assertThat(r.matches("colour")).isTrue();
-        assertThat(r.matches("coloar")).isFalse();
+        assertThat(whole(r, "color")).isTrue();
+        assertThat(whole(r, "colour")).isTrue();
+        assertThat(whole(r, "coloar")).isFalse();
     }
 
     @Test
     void countedQuantifier() {
         CompiledRegex r = CompiledRegex.compile("a{3}");
-        assertThat(r.matches("aaa")).isTrue();
-        assertThat(r.matches("aa")).isFalse();
-        assertThat(r.matches("aaaa")).isFalse();
+        assertThat(whole(r, "aaa")).isTrue();
+        assertThat(whole(r, "aa")).isFalse();
+        assertThat(whole(r, "aaaa")).isFalse();
     }
 
     @Test
     void rangeQuantifier() {
         CompiledRegex r = CompiledRegex.compile("a{2,4}");
-        assertThat(r.matches("aa")).isTrue();
-        assertThat(r.matches("aaaa")).isTrue();
-        assertThat(r.matches("aaaaa")).isFalse();
-        assertThat(r.matches("a")).isFalse();
+        assertThat(whole(r, "aa")).isTrue();
+        assertThat(whole(r, "aaaa")).isTrue();
+        assertThat(whole(r, "aaaaa")).isFalse();
+        assertThat(whole(r, "a")).isFalse();
     }
 
     // ----------------- alternation -----------------
@@ -109,16 +116,16 @@ class RegexTest {
     @Test
     void alternation() {
         CompiledRegex r = CompiledRegex.compile("cat|dog|bird");
-        assertThat(r.matches("cat")).isTrue();
-        assertThat(r.matches("dog")).isTrue();
-        assertThat(r.matches("bird")).isTrue();
-        assertThat(r.matches("fish")).isFalse();
+        assertThat(whole(r, "cat")).isTrue();
+        assertThat(whole(r, "dog")).isTrue();
+        assertThat(whole(r, "bird")).isTrue();
+        assertThat(whole(r, "fish")).isFalse();
     }
 
     @Test
     void alternationWithGroups() {
         CompiledRegex r = CompiledRegex.compile("(cat|dog)");
-        assertThat(r.matches("cat")).isTrue();
+        assertThat(whole(r, "cat")).isTrue();
         int[] g = groups(r, "dog");
         assertThat(g[2]).isEqualTo(0); // group 1 start
         assertThat(g[3]).isEqualTo(3); // group 1 end
@@ -172,10 +179,10 @@ class RegexTest {
         // group 1 captures last alternation choice: 'b' at position 3..4
         assertThat(g[2]).isEqualTo(3);
         assertThat(g[3]).isEqualTo(4);
-        assertThat(r.matches("aabbc")).isTrue();
-        assertThat(r.matches("abc")).isTrue();
-        assertThat(r.matches("c")).isTrue();
-        assertThat(r.matches("d")).isFalse();
+        assertThat(whole(r, "aabbc")).isTrue();
+        assertThat(whole(r, "abc")).isTrue();
+        assertThat(whole(r, "c")).isTrue();
+        assertThat(whole(r, "d")).isFalse();
     }
 
     @Test
@@ -223,8 +230,8 @@ class RegexTest {
     @Test
     void bothAnchors() {
         CompiledRegex r = CompiledRegex.compile("^abc$");
-        assertThat(r.matches("abc")).isTrue();
-        assertThat(r.matches("abcd")).isFalse();
+        assertThat(whole(r, "abc")).isTrue();
+        assertThat(whole(r, "abcd")).isFalse();
         assertThat(r.find(" abc ")).isFalse();
     }
 
@@ -232,8 +239,8 @@ class RegexTest {
     void backslashAnchors() {
         // \A = start of text, \z = end of text (RE2 semantics; matches our ^ $ in default mode).
         CompiledRegex r = CompiledRegex.compile("\\Aabc\\z");
-        assertThat(r.matches("abc")).isTrue();
-        assertThat(r.matches("abcd")).isFalse();
+        assertThat(whole(r, "abc")).isTrue();
+        assertThat(whole(r, "abcd")).isFalse();
         assertThat(r.find("x abc")).isFalse();
     }
 

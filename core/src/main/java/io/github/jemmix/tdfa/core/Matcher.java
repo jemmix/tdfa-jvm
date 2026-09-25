@@ -23,7 +23,7 @@ import java.nio.charset.StandardCharsets;
 public class Matcher {
 
     private final RegexEngine engine;
-    private final RegexEngine wholeEngine;
+    private final WholeEngine wholeEngine;
 
     @EmittedSurface // the 7 fields below are linked by name from generated shells
     protected CharSequence input;
@@ -60,12 +60,16 @@ public class Matcher {
     @EmittedSurface // emitted shells read this field (carrier-aware engine calls)
     protected MatchScratch scratch;
 
-    public Matcher(RegexEngine engine, RegexEngine wholeEngine, CharSequence input) {
+    public Matcher(RegexEngine engine, WholeEngine wholeEngine, CharSequence input) {
         this.engine = engine;
         this.wholeEngine = wholeEngine;
         this.input = input;
         this.inputLength = input.length();
-        this.scratch = engine.wantsScratch() || wholeEngine.wantsScratch() ? new MatchScratch() : null;
+        // The whole engine is always also a RegexEngine by construction
+        // (runner or generated class); a carrier-free one says so through
+        // that side of its type.
+        boolean wholeWants = wholeEngine instanceof RegexEngine && ((RegexEngine) wholeEngine).wantsScratch();
+        this.scratch = engine.wantsScratch() || wholeWants ? new MatchScratch() : null;
     }
 
     public Matcher reset() {

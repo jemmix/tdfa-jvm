@@ -5,6 +5,7 @@ import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.MatchScratch;
 import io.github.jemmix.tdfa.core.Matcher;
 import io.github.jemmix.tdfa.core.RegexEngine;
+import io.github.jemmix.tdfa.core.WholeEngine;
 import io.github.jemmix.tdfa.tdfa.MatchHolder;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
@@ -120,7 +121,7 @@ class EmittedSurfaceConformanceTest {
         // descriptors (match/matchWhole/takeRegs/extractOne/wholeOne).
         hookC(MatchScratch.class);
         // Facade ctors linked by descriptor from ShellEmitter.
-        hookC(TDFAPattern.class, String.class, int.class, int.class, RegexEngine.class, RegexEngine.class,
+        hookC(TDFAPattern.class, String.class, int.class, int.class, RegexEngine.class, WholeEngine.class,
             UnicodeDataProvider.class);
         hookC(PatternMatcher.class, TDFAPattern.class, CharSequence.class);
         hookM(Class.forName("io.github.jemmix.tdfa.Pattern$Utf8"), "decode", byte[].class);

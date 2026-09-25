@@ -10,11 +10,11 @@ import io.github.jemmix.tdfa.tdfa.Tdfa;
  * externally synchronized): a single factory may be asked to create engines
  * for many patterns. Per pattern the facade calls it once per compiled
  * artifact — for the find TDFA, and (when the compile's pike cut deleted
- * continuations) again for the cut-free whole TDFA. Each returned engine's
- * {@code matchWhole}/{@code matches} implementation defines its whole-match
- * semantics (the interface default {@code match(input, 0)} is whole-exact
- * only over both-ends-anchored artifacts; {@code TdfaRunner}-like engines
- * override it).
+ * continuations) again for the cut-free whole TDFA. Whole-input matching is
+ * never a factory engine's obligation: the facade dispatches it through
+ * {@link WholeEngine}, using the returned engine when it natively
+ * implements that seam and a plain {@code TdfaRunner} over the same
+ * artifact otherwise.
  *
  * <pre>
  *   Pattern p = Pattern.compile(regex, flags, TdfaRunner::new);

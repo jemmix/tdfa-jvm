@@ -41,23 +41,30 @@ class SupplementaryCodepointClassTest {
         return sb.toString();
     }
 
+    /** Whole-input probe on the find surface: a full-span match from 0
+     *  (CompiledRegex no longer carries a whole-match entry). */
+    private static boolean whole(CompiledRegex r, CharSequence input) {
+        MatchResult m = r.match(input, 0);
+        return m != null && m.start(0) == 0 && m.end(0) == input.length();
+    }
+
     @Test
     void distinctAssignedSupplementaryLuMatches() {
         for (String re : new String[]{"\\p{Lu}{1}", "\\p{Lu}{2}", "\\p{Lu}{3}", "\\p{Lu}+", "\\p{L}{3}",
             "[\\x{1D504}\\x{1D505}\\x{1D507}]{3}"}) {
             CompiledRegex r = CompiledRegex.compile(re);
-            assertThat(r.matches(re.endsWith("{1}") || re.endsWith("{2}")
+            assertThat(whole(r, re.endsWith("{1}") || re.endsWith("{2}")
                 ? FRAKTUR_ABD.substring(0, re.endsWith("{1}") ? 2 : 4) : FRAKTUR_ABD))
                 .as("%s on assigned Fraktur capitals", re).isTrue();
         }
-        assertThat(CompiledRegex.compile("\\p{Lu}{5}").matches(FRAKTUR_5)).isTrue();
+        assertThat(whole(CompiledRegex.compile("\\p{Lu}{5}"), FRAKTUR_5)).isTrue();
     }
 
     @Test
     void rangedAndLazyQuantifiersOnSupplementary() {
-        assertThat(CompiledRegex.compile("\\p{Lu}{2,4}").matches(cps(0x1D504, 0x1D505, 0x1D507, 0x1D508))).isTrue(); // exactly 4
-        assertThat(CompiledRegex.compile("\\p{Lu}{2,4}").matches(FRAKTUR_5)).isFalse(); // 5 > max
-        assertThat(CompiledRegex.compile("\\p{Lu}{2,4}?").matches(cps(0x1D504, 0x1D505))).isTrue();
+        assertThat(whole(CompiledRegex.compile("\\p{Lu}{2,4}"), cps(0x1D504, 0x1D505, 0x1D507, 0x1D508))).isTrue(); // exactly 4
+        assertThat(whole(CompiledRegex.compile("\\p{Lu}{2,4}"), FRAKTUR_5)).isFalse(); // 5 > max
+        assertThat(whole(CompiledRegex.compile("\\p{Lu}{2,4}?"), cps(0x1D504, 0x1D505))).isTrue();
     }
 
     @Test
@@ -69,7 +76,7 @@ class SupplementaryCodepointClassTest {
         // when it looks escaped inside a string (the escape starts at the
         // second backslash), mangling the literal into ASCII text. The same
         // applies to comments — this very note cannot spell the sequence.
-        assertThat(CompiledRegex.compile("\\p{Lu}{3}").matches(cps(0x1D504, 0x1D505, 0x1D506))).isFalse();
+        assertThat(whole(CompiledRegex.compile("\\p{Lu}{3}"), cps(0x1D504, 0x1D505, 0x1D506))).isFalse();
         assertThat(CompiledRegex.compile("\\p{L}").find(cps(0x1D506))).isFalse();
         // ...while the canonical letterlike symbol is a letter
         assertThat(CompiledRegex.compile("\\p{Lu}").find(cps(0x212D))).isTrue();
@@ -77,9 +84,9 @@ class SupplementaryCodepointClassTest {
 
     @Test
     void gothicIsCaselessLoNotLu() {
-        assertThat(CompiledRegex.compile("\\p{Lo}{3}").matches(GOTHIC_3)).isTrue();
-        assertThat(CompiledRegex.compile("\\p{L}{3}").matches(GOTHIC_3)).isTrue();
-        assertThat(CompiledRegex.compile("\\p{Lu}{3}").matches(GOTHIC_3)).isFalse();
+        assertThat(whole(CompiledRegex.compile("\\p{Lo}{3}"), GOTHIC_3)).isTrue();
+        assertThat(whole(CompiledRegex.compile("\\p{L}{3}"), GOTHIC_3)).isTrue();
+        assertThat(whole(CompiledRegex.compile("\\p{Lu}{3}"), GOTHIC_3)).isFalse();
     }
 
     @Test

@@ -14,6 +14,17 @@ import java.util.NoSuchElementException;
  * pattern implementing this interface. Third parties may supply their own
  * implementations via {@link RegexEngineFactory}.
  *
+ * <p>The surface is find-shaped: {@link #find}, {@link #match} and
+ * {@link #findAll} run leftmost-first (or leftmost-longest, per the
+ * compile) search semantics over the engine's artifact, plus the boolean
+ * whole-input probe {@link #matches}. Exact whole-input matching with
+ * captures is a facade concern: the compile keeps a whole-exact artifact
+ * (cut-free, or the find artifact itself when its pike cut never fired)
+ * and {@code Pattern.compile(...).matcher(...).matches()} walks it through
+ * the narrow {@link WholeEngine} seam — implementors of this interface
+ * carry no whole-match obligation beyond {@link #matches}' documented
+ * contract.
+ *
  * <p>Implementations must be effectively immutable and safe for concurrent
  * use from multiple threads (per-match state lives in the returned
  * {@link MatchResult} and the caller's {@link MatchScratch} carrier, not in
@@ -30,10 +41,9 @@ public interface RegexEngine {
      * compile-time pike cut never fired. Over a pruned UNANCHORED artifact
      * where the cut deleted continuations (e.g. find compiles of
      * {@code (a|ab)}-class patterns), this may reject an input the pattern
-     * whole-matches — the boolean walk shares {@link #matchWhole}'s
-     * artifact requirement; use the facade's
-     * {@code Pattern.matcher().matches()}, which always carries a
-     * whole-exact engine.
+     * whole-matches — the boolean walk shares the whole-engine artifact
+     * requirement; use the facade's {@code Pattern.matcher().matches()},
+     * which always carries a whole-exact engine.
      */
     boolean matches(CharSequence input);
 
@@ -65,27 +75,6 @@ public interface RegexEngine {
      */
     MatchResult match(CharSequence input, int from, MatchScratch scratch);
 
-    /**
-     * Match the ENTIRE input, returning capture registers, or {@code null} if
-     * the input is not a whole match. Unlike {@link #match(CharSequence, int, MatchScratch)}
-     * a mid-input accept never satisfies this — the walk runs to end-of-input
-     * and only an accept alive exactly at EOF counts (so {@code (a|ab)} whole-
-     * matches {@code "ab"} even though leftmost-first find stops after
-     * {@code "a"}).
-     *
-     * <p>The default {@code match(input, 0, scratch)} is whole-exact only for
-     * engines compiled anchored at both ends. Engines over unanchored
-     * or cut-free artifacts must override — {@code TdfaRunner} and the
-     * generated classes do (a single cut-free walk; see {@code Tdfa.compileUnpruned}).
-     * The overridden walk is exact over unpruned and anchored artifacts
-     * alike: an anchored build's accepts are all end-of-input-gated, so its
-     * compile-time pike cut never fires mid-walk (same artifact contract as
-     * {@link #matches}).
-     */
-    default MatchResult matchWhole(CharSequence input, MatchScratch scratch) {
-        return match(input, 0, scratch);
-    }
-
     /** Number of capturing groups (excluding group 0). */
     int groupCount();
 
@@ -112,17 +101,22 @@ public interface RegexEngine {
      * matches advance by one position. The returned iterable is lazy and
      * single-use per {@code iterator()} call; each element is an independent
      * {@link MatchResult} snapshot.
+     *
+     * <p>The iteration pools one scratch carrier across its elements (when
+     * the engine {@link #wantsScratch() wants} one), so a full scan pays the
+     * register/buffer growth once instead of per match.
      */
     default Iterable<MatchResult> findAll(CharSequence input) {
         return () -> new Iterator<MatchResult>() {
             private int from = 0;
+            private final MatchScratch sc = wantsScratch() ? new MatchScratch() : null;
             private MatchResult next = advance();
 
             private MatchResult advance() {
                 if (from > input.length()) {
                     return null;
                 }
-                MatchResult m = match(input, from, null);
+                MatchResult m = match(input, from, sc);
                 if (m == null) {
                     return null;
                 }

@@ -5,6 +5,7 @@ import io.github.jemmix.tdfa.core.EmittedSurface;
 import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.MatchScratch;
 import io.github.jemmix.tdfa.core.RegexEngine;
+import io.github.jemmix.tdfa.core.WholeEngine;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
 
 import java.util.ArrayList;
@@ -30,7 +31,7 @@ import java.util.Map;
  * - Lazy accept snapshot
  * - String specialization
  */
-public final class TdfaRunner implements RegexEngine {
+public final class TdfaRunner implements RegexEngine, WholeEngine {
     /**
      * After this many failed extract walks the candidate loop switches to a
      * boolean pre-filter per candidate (cheaper to reject, same answer).
@@ -525,7 +526,7 @@ public final class TdfaRunner implements RegexEngine {
     }
 
     /**
-     * Whole-input match ({@link RegexEngine#matchWhole}): anchored at 0, runs
+     * Whole-input match ({@link WholeEngine#matchWhole}): anchored at 0, runs
      * to end-of-input, and succeeds iff an accept config is ALIVE exactly at
      * EOF — mid-walk accepts (multiline {@code $}, unanchored prefixes) are
      * stepped past, never recorded. Requires cut-free transitions (the

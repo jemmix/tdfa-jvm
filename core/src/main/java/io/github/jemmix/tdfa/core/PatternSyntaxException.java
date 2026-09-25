@@ -39,4 +39,22 @@ public class PatternSyntaxException extends RuntimeException {
     public int getIndex() {
         return -1;
     }
+
+    /**
+     * Present a compile-pipeline {@link RuntimeException} as a
+     * {@link PatternSyntaxException}: syntax errors are thrown as
+     * {@code PatternSyntaxException} where they are detected (the parser)
+     * and pass through unwrapped; budget rejections ("pattern too
+     * large" ...) and anything else keep their message (or report as an
+     * internal error), with the original chained as the cause.
+     */
+    public static PatternSyntaxException translate(RuntimeException e, String pattern) {
+        if (e instanceof PatternSyntaxException) {
+            return (PatternSyntaxException) e;
+        }
+        String msg = e.getMessage();
+        PatternSyntaxException pse = new PatternSyntaxException(msg != null ? msg : "internal error", pattern);
+        pse.initCause(e);
+        return pse;
+    }
 }
