@@ -8,12 +8,12 @@ import java.util.Arrays;
  * and per-sequence derived data — the has-history bitset and the per-tag last
  * sign — is computed once and cached by id.
  *
- * <p>This replaced per-Config {@code int[]} histories: closures derive their
- * sequences from common ancestors, so the copies dominated determinizer memory
- * on history-heavy patterns, and every consumer (signature fill, has-history
- * fill, last-sign scan, final-regop generation) rescanned sequence content per
- * config per state — O(sum |l|) per state, the residual compile cliff after
- * the interning rework. With ids, signatures hash one int per config and
+ * <p>Histories are interned rather than copied per Config: closures derive
+ * their sequences from common ancestors, so per-Config {@code int[]} copies
+ * would dominate determinizer memory on history-heavy patterns, and every
+ * consumer (signature fill, has-history fill, last-sign scan, final-regop
+ * generation) would rescan sequence content per config per state —
+ * O(sum |l|) per state. With ids, signatures hash one int per config and
  * consumers read cached tables.
  *
  * <p>Not thread-safe: compilation is single-threaded.
@@ -36,8 +36,8 @@ final class HistTable {
     private int[][] contents = new int[16][];
     /**
      * Primitive-chained hash: per-id content hashes + slot head/next chains —
-     * one boxed HashMap<Long,int[]> per intern became a top profile entry on
-     * append-heavy compiles.
+     * a boxed HashMap<Long,int[]> per intern would become a top profile
+     * entry on append-heavy compiles.
      */
     private long[] idHash = new long[16];
 

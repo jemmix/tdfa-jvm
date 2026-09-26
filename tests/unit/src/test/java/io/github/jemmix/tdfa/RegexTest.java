@@ -21,7 +21,7 @@ class RegexTest {
     }
 
     /** Whole-input probe on the find surface: a full-span match from 0
-     *  (CompiledRegex no longer carries a whole-match entry). */
+     *  (CompiledRegex carries no whole-match entry). */
     private static boolean whole(CompiledRegex r, CharSequence input) {
         MatchResult m = r.match(input, 0);
         return m != null && m.start(0) == 0 && m.end(0) == input.length();
@@ -299,10 +299,11 @@ class RegexTest {
     // ----------------- multi-state find (O(n) unanchored search) -----------------
 
     /**
-     * The classic O(n²) repro: a regex that never matches on a large haystack.
-     * The old outer-loop restart scanned from every position, each walk reaching
-     * end-of-input — O(n²). The multi-state fix should be a single O(n × |states|)
-     * pass. 200 K chars took &gt;30 s before; should be well under 1 s now.
+     * The classic O(n²) hazard: a regex that never matches on a large haystack.
+     * A naive outer-loop restart scans from every position, each walk reaching
+     * end-of-input — O(n²). The multi-state search must stay a single
+     * O(n × |states|) pass: 200 K chars in well under 1 s, not the &gt;30 s
+     * of the quadratic scan.
      */
     @Test
     void unanchoredFindNoMatchOnLargeHaystackIsNotQuadratic() {

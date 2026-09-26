@@ -175,8 +175,7 @@ public class TDFAPattern implements Pattern {
     // live in io.github.jemmix.tdfa.gen (child classloader) and rely on
     // inheriting this exact method. With a private writeReplace the shells'
     // raw fields (including the non-serializable engine) hit the wire and
-    // serialization throws NotSerializableException — a latent bug until the
-    // first round-trip test (PatternSerializationTest, 2026-09).
+    // serialization throws NotSerializableException.
     public Object writeReplace() {
         return new SerialProxy(pattern, flags, provider == null ? null : provider.getClass().getName());
     }

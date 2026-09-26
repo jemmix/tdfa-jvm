@@ -43,8 +43,8 @@ final class TdfaCompiler {
     final Tnfa nfa;
     final int tags;
     /**
-     * Compile work budget: every unbounded loop ticks it (fuzzer-found
-     * nested-quantifier bombs churn fixpoints without growing output —
+     * Compile work budget: every unbounded loop ticks it (nested-
+     * quantifier bombs churn fixpoints without growing output —
      * the state/kernel caps never trip). The same meter also covers the
      * post-determinization stages (handed on by the compile entry points).
      */
@@ -77,13 +77,13 @@ final class TdfaCompiler {
      * register assignments.
      *
      * <p>Storing ALL same-shape state IDs (not just the first one) keeps
-     * {@link TdfaStateIndex#addState} expected-O(1) per call. With a single-entry map
-     * addState had to fall back to an O(n²) scan over all known states
-     * whenever the hash-bucket primary candidate failed tryMap — or, worse,
-     * whenever the shape was brand-new (hash-miss), because the fallback
-     * couldn't tell there was nothing to find. On the 2 663-branch
-     * dictionary alternation that fallback fired 227 M times (every call,
-     * never matching) and dominated compile wall time (~13 s of ~14 s).
+     * {@link TdfaStateIndex#addState} expected-O(1) per call. A single-entry map
+     * would degrade addState to an O(n²) scan over all known states
+     * whenever the hash-bucket primary candidate fails tryMap — or, worse,
+     * whenever the shape is brand-new (hash-miss), because the fallback
+     * can't tell there is nothing to find. On wide alternations (e.g. a
+     * 2 663-branch dictionary) that scan fires on every call without
+     * matching and dominates compile wall time (measured ~13 s of ~14 s).
      */
     final TdfaStateIndex index = new TdfaStateIndex(this);
 
@@ -1146,8 +1146,8 @@ final class TdfaCompiler {
      *
      * @param posMask runtime position-flags (subset of
      *                {@code BEGIN_TEXT|END_TEXT|WORD_BOUNDARY|NO_WORD_BOUNDARY});
-     *                0xF ("all assertions hold") recovers the pre-position-aware
-     *                behavior.
+     *                0xF ("all assertions hold") makes every assertion edge
+     *                traversable, so ordering ignores assertion gating.
      * @return int[] indexed by NFA state; value = arrival index (0-based),
      * or -1 for unreachable states (incl. states only reachable via
      * assertion edges whose requirements aren't in posMask).
@@ -1278,7 +1278,7 @@ final class TdfaCompiler {
             changed = false;
             for (int i = 0; i < ops.size(); i++) {
                 meter.tick(); // O(n²)-guarded: without ticks this is a
-                // work-budget blind spot (fuzz hang family)
+                // work-budget blind spot
                 int[] op = ops.get(i);
                 if (op[0] != OP_COPY) {
                     continue;
@@ -1360,8 +1360,8 @@ final class TdfaCompiler {
      *
      * <p>Tagless compiles (tags == 0) have no registers or histories, so
      * once a state is processed nothing can read its boxed configs: pack()
-     * replaces them with the projection (~8 B/config vs ~48 B+ boxed; the
-     * boxed kernels dominated the heap on six-figure-state
+     * replaces them with the projection (~8 B/config vs ~48 B+ boxed —
+     * boxed kernels would dominate the heap on six-figure-state
      * determinizations). Tagged compiles never pack. Both forms expose
      * the same accessors, so mask-only consumers are form-agnostic.
      */

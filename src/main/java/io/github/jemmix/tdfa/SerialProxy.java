@@ -16,17 +16,17 @@ import java.lang.reflect.Modifier;
  * classes live in a child classloader that will not exist in the reading
  * process — serializable without pinning generated classes.
  *
- * <p>Provider pinning round-trips (2026-09, review Phase C / P1 #17): a
- * pattern compiled against a pinned {@code UnicodeDataProvider} keeps that
- * provider across serialization — previously it silently recompiled with the
- * reader's default tables, the exact reproducibility bug the pinned-provider
- * API exists to prevent. The provider travels as its class NAME (providers
+ * <p>Provider pinning round-trips: a pattern compiled against a pinned
+ * {@code UnicodeDataProvider} keeps that provider across serialization —
+ * silently recompiling with the reader's default tables would be exactly
+ * the reproducibility bug the pinned-provider API exists to prevent. The
+ * provider travels as its class NAME (providers
  * are not required to be Serializable) and is resolved on read per the
  * convention documented on {@code UnicodeDataProvider}: a static no-arg
  * {@code provider()} method returning the instance, else a public no-arg
  * constructor. A pattern compiled against the process default serializes
  * with a {@code null} provider class and recompiles against the reader's
- * default — the historical behavior.
+ * default.
  *
  * <p>Resolution failures throw {@link InvalidObjectException} — loud, never
  * a silent fallback to different Unicode tables.

@@ -28,7 +28,7 @@ jar {
     }
 }
 
-// Java 8 floor, two enforcement modes (2026-09 r4, docs/REVIEW-2026-09.md §1d):
+// Java 8 floor, two enforcement modes:
 //  - default: cross-compile with --release 8 (language level AND API surface
 //    via ct.sym; ErrorProne still hosted inside the compiler).
 //  - -PrealJdk8 (the CI jar pipeline): pin the compiler toolchain to a REAL
@@ -60,10 +60,10 @@ tasks.withType(JavaCompile).configureEach {
 
 // SpotBugs: hard-fails on findings AND on analysis errors (never a false
 // green — a degraded analysis exits non-zero). Analyzer 4.9.8 (Java 25
-// classfile support). Exclusions are exclusively documented deferred review
-// items — see config/spotbugs/exclusions.xml. On JDK >= 26 the tasks
+// classfile support). Exclusions are exclusively documented design
+// decisions — see config/spotbugs/exclusions.xml. On JDK >= 26 the tasks
 // self-skip (SpotBugs cannot scan JDK 26 runtime classes); on <= 25 they
-// enforce. Standalone: scripts/lint-spotbugs.sh. Triage: docs/REVIEW-2026-09.md.
+// enforce. Standalone: scripts/lint-spotbugs.sh.
 tasks.withType(com.github.spotbugs.snom.SpotBugsTask).configureEach {
     ignoreFailures = false
     excludeFilter = rootProject.file('config/spotbugs/exclusions.xml')

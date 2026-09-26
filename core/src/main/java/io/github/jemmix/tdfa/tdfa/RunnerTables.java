@@ -6,8 +6,7 @@ import java.util.Arrays;
 
 /**
  * Construction-time table builders + literal-needle analysis for
- * TdfaRunner — extracted verbatim (2026-09 god-file split; statics, no
- * instance state).
+ * TdfaRunner (statics, no instance state).
  */
 final class RunnerTables {
     private RunnerTables() {
@@ -100,8 +99,9 @@ final class RunnerTables {
                 }
             }
             if (!sortedByLo) {
-                // Pack (lo << 32)|hi and sort — O(cnt log cnt) vs the old O(cnt²)
-                // pairwise check (significant for wide Unicode classes, ~1369 ranges).
+                // Pack (lo << 32)|hi and sort — O(cnt log cnt); a pairwise
+                // O(cnt²) check would be significant for wide Unicode
+                // classes (~1369 ranges).
                 if (sortBuf == null || sortBuf.length < cnt) {
                     sortBuf = new long[Math.max(cnt, 64)];
                 }
@@ -260,8 +260,8 @@ final class RunnerTables {
             }
             // final state: accepting, no mask, no fallback, no final ops, and
             // NO live outgoing transition (a live self-loop means the regex is
-            // unbounded — a+ misdetected as literal "a" returned [0,1) for
-            // find("a+","aaa") instead of [0,3)).
+            // unbounded — e.g. a+ would be misdetected as literal "a",
+            // returning [0,1) for find("a+","aaa") instead of [0,3)).
             if ((tdfa.stateMeta[s] & 1) == 0) {
                 return null;
             }
@@ -270,7 +270,7 @@ final class RunnerTables {
             }
             // Position-dependent accept (byMask variants): the accept fires
             // only under some posFlags — the indexOf shortcut can't evaluate
-            // that (fuzz round 10: Z(?:\A|\B) matched "Z" via the needle,
+            // that (e.g. Z(?:\A|\B) would match "Z" via the needle even
             // though \A and \B both fail at pos 1). Not a literal.
             {
                 int[] fm = tdfa.stateFinalOpsByMask();
@@ -302,9 +302,10 @@ final class RunnerTables {
             // symbols (high then low) re-encode as a well-formed surrogate
             // PAIR — the same unit text as the pair codepoint they are not.
             // Unit-wise indexOf then matches input pairs against what the
-            // alphabet defines as two lone codepoints (fuzz repro:
-            // (?i:\uD800)\uDFFF matched 𐏿 = \uD800\uDFFF whole). Rejected
-            // here, the DFA walk handles the shape correctly (it decodes).
+            // alphabet defines as two lone codepoints (e.g.
+            // (?i:\uD800)\uDFFF would match 𐏿 = \uD800\uDFFF whole).
+            // Rejected here; the DFA walk handles the shape correctly (it
+            // decodes).
             for (int i = 0; i < sb.length() - 1; i++) {
                 char c0 = sb.charAt(i), c1 = sb.charAt(i + 1);
                 if (c0 >= 0xD800 && c0 <= 0xDBFF && c1 >= 0xDC00 && c1 <= 0xDFFF) {

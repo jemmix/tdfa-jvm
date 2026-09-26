@@ -68,9 +68,9 @@ class JdkRegressionCorpusTest {
     private static int byDesign;
 
     /**
-     * All former known-bug families are FIXED (2026-08-27 structural round):
+     * Known-bug families pinned as fixed:
      * <ul>
-     *   <li><b>supp-tagged-literal</b> — the parser now reads codepoints
+     *   <li><b>supp-tagged-literal</b> — the parser reads codepoints
      *       (shared {@code Alphabet.decode}); a supplementary literal is one
      *       single-codepoint class, matching anywhere, groups included</li>
      *   <li><b>supp-class-range</b> — class endpoints read as codepoints</li>
@@ -80,11 +80,11 @@ class JdkRegressionCorpusTest {
      *       of a surrogate pair (lone-surrogate corpus lines) — the literal
      *       needle, candidate scans, restart loops and the ASM-emitted ladder
      *       all guard with {@code Alphabet.pairInterior}</li>
-     *   <li><b>(?x) silent no-op</b> — unknown inline flags now reject, as
+     *   <li><b>(?x) silent no-op</b> — unknown inline flags reject, as
      *       re2j does ({@code (?U)} ungreedy is supported, as re2j does)</li>
      * </ul>
      * Every divergence is a hard failure; the {@code tdfa.pending} property
-     * is no longer consulted here.
+     * is not consulted here.
      */
 
     /** Documented by-design divergence: the {@code (?u)} inline flag (unicode

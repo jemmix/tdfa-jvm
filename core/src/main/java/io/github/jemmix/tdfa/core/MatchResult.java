@@ -128,7 +128,7 @@ public final class MatchResult {
 
     /**
      * Debugging aid: whole-match bounds plus every group's span, NIL shown
-     * as {@code -1,-1} — a tag dump without this is misery (review P2).
+     * as {@code -1,-1} — a tag dump without this is misery.
      */
     @Override
     public String toString() {

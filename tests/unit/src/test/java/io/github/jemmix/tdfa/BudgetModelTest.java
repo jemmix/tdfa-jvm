@@ -18,10 +18,10 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 /**
  * The budget model itself: the three {@code tdfa.budget.*} properties, the
  * hardcoded weight model ({@link BudgetWeights}) that translates them into
- * the internal caps, and the review-r10 budget holes the model closes —
- * the pre-determinization surface (TNFA builder RAM+CPU, P0-1; the
- * parser's fold-range scan, P1-1) and the Moore fixpoint (P1-4, which
- * degrades instead of rejecting because the unminimized DFA is correct).
+ * the internal caps, and the budget holes the model must close — the
+ * pre-determinization surface (TNFA builder RAM+CPU; the parser's
+ * fold-range scan) and the Moore fixpoint (which degrades instead of
+ * rejecting because the unminimized DFA is correct).
  */
 class BudgetModelTest {
 
@@ -89,11 +89,12 @@ class BudgetModelTest {
             .hasMessageContaining("pattern too large").hasMessageContaining(Budgets.COMPILE_MEMORY_PROP);
     }
 
-    /** Review r10 P0-1: nested counted repeats used to OOM the JVM in
-     *  Tnfa$Builder.buildRepeat before any determinization cap could fire
-     *  (27 M states / -Xmx2g). The builder's weighted RAM accounting and
-     *  per-action ticks now reject the same 19-char bomb cleanly, fast,
-     *  through the facade's translated PatternSyntaxException. */
+    /** Nested counted repeats are the pre-determinization OOM hazard:
+     *  unmetered, the cross product balloons in Tnfa$Builder.buildRepeat
+     *  (27 M states / -Xmx2g for a 19-char bomb) before any determinization
+     *  cap could fire. The builder's weighted RAM accounting and per-action
+     *  ticks reject it cleanly, fast, through the facade's translated
+     *  PatternSyntaxException. */
     @Test
     void nestedRepeatBombRejectsBeforeDeterminization() {
         long t0 = System.nanoTime();
@@ -103,9 +104,9 @@ class BudgetModelTest {
         assertThat((System.nanoTime() - t0) / 1_000_000).as("wall to the front-end rejection").isLessThan(10_000);
     }
 
-    /** Review r10 P1-1: the parser's O(universe) fold-range scan under
-     *  {@code (?i)} is metered CPU work — a full-universe class cannot
-     *  burn scan time invisible to the compute budget. */
+    /** The parser's O(universe) fold-range scan under {@code (?i)} is
+     *  metered CPU work — a full-universe class cannot burn scan time
+     *  invisible to the compute budget. */
     @Test
     void foldRangeScanIsBudgetVisible() {
         System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "100000");
@@ -113,7 +114,7 @@ class BudgetModelTest {
             .hasMessageContaining("pattern too large").hasMessageContaining(Budgets.COMPILE_COMPUTE_PROP);
     }
 
-    /** Review r10 P1-4: the Moore fixpoint is metered, and because the
+    /** The Moore fixpoint is metered, and because the
      *  unminimized DFA is still correct, exhaustion DEGRADES (the pass is
      *  skipped, noted in the observer) instead of failing the compile.
      *  The suffix-chain DFA over {@code a?×900 b} (flat concatenation —

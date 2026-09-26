@@ -9,8 +9,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * rename() fail-fast contract: every op-referenced register must be mapped by
  * compaction — an unmapped or out-of-range reference means a corrupted program
  * and must throw here, not surface as a runtime AIOOBE or silent capture
- * corruption (review P2: the old code silently skipped negative mappings while
- * its comment claimed detection).
+ * corruption. Negative mappings (the unused sentinel {@code -1}) must be
+ * checked like any other reference: silently skipping them defeats the
+ * detection.
  */
 class OptimizeRenameTest {
 

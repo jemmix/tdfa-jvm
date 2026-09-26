@@ -56,15 +56,15 @@ public final class Tdfa {
     final int stateCount;
     /**
      * Bit mask of zero-width assertions required to ENTER this state. Checked at the
-     * position where the state is entered. Replaces the old pattern-level
-     * {@code hasStartAnchor} flag — now per-state and precise.
+     * position where the state is entered — per-state and precise, not a
+     * pattern-level summary.
      * bit 1 = BEGIN_TEXT, bit 2 = END_TEXT, bit 4 = WORD_BOUNDARY, bit 8 = NO_WORD_BOUNDARY,
      * bit 16 = ABS_BEGIN (\A), bit 32 = ABS_END (\z)
      */
     final int[] stateEntryMask;
     /**
      * Bit mask required to declare a match in this (accepting) state. Subset of
-     * {@link #stateEntryMask}. Replaces the old pattern-level {@code hasEndAnchor} flag.
+     * {@link #stateEntryMask} — per-state and precise, not a pattern-level summary.
      */
     final int[] stateAcceptMask;
     /**
@@ -130,7 +130,7 @@ public final class Tdfa {
      * the {@code $}-loop-back MATCH outranks {@code .} (stop).
      * Unused in POSIX mode (all cells stay {@link #NEVER_STOP}).
      *
-     * <p><b>Storage tiers</b> (2026-08-20): patterns without zero-width
+     * <p><b>Storage tiers</b>: patterns without zero-width
      * assertions — the overwhelming majority, incl. every count-model giant —
      * have all 64 cells of every state IDENTICAL, so the 2D table (256 B/state;
      * 60 MB on the 234 K-state bounded-repeat DFA) is stored instead as the
@@ -154,8 +154,8 @@ public final class Tdfa {
     final int[] stateMeta;
     /**
      * [state] -> range base index into {@link #ranges}. Stored separately from
-     * {@link #stateMeta} so it can use the full 32-bit range — the old packing
-     * (base in bits 17-31 of stateMeta, 15 bits) overflowed at ~25 states for
+     * {@link #stateMeta} so it can use the full 32-bit range — packing the
+     * base into stateMeta's spare bits (15) would overflow at ~25 states of
      * wide Unicode classes like {@code \p{L}} (~1369 ranges per state).
      */
     final int[] stateBase;
@@ -539,7 +539,7 @@ public final class Tdfa {
     // ===== public read accessors (fields are package-private; asm generation
     // and external consumers read through these) =====
     //
-    // Defensive-copy policy (immutability, 2026-09): every array accessor
+    // Defensive-copy policy (immutability): every array accessor
     // returns a CLONE. The artifact is shared across threads and its flat
     // arrays are its entire semantics; a caller mutating a returned array
     // would corrupt every engine built on this Tdfa. All in-package
@@ -584,11 +584,10 @@ public final class Tdfa {
      * an M-indexed table (stop-on-accept, final-ops-by-mask). Uniform tiers
      * contribute nothing by construction.
      *
-     * <p>This replaces the former per-tier re-derivations — the VM's
-     * computeNeedsWordFlags scan and the ASM's pfNeeded model — which answered
-     * the same semantic question with three different hand-written models. A
-     * model that misses one table (or, as in the round-6 bug, one bit
-     * combination) silently selects wrong table cells: the trim question
+     * <p>Deriving this per tier (a hand-written "needs word flags" scan
+     * per backend) would answer the same semantic question with
+     * divergent models: a model that misses one table or one bit
+     * combination silently selects wrong table cells. The trim question
      * "does anything depend on bit b" is answered here GENERICALLY from the
      * tables themselves, so a new M-indexed consumer is covered the moment it
      * reads a table that distinguishes b — no model to keep in sync.
@@ -788,13 +787,13 @@ public final class Tdfa {
     // The derived determinization caps (states/kernels/closure/cfg-edges/
     // norm-cells, the search-DFA memo caps) are
     // all linear functions of the two compile budgets / the runtime budget
-    // through the weight model (BudgetWeights) — the former direct cap
-    // properties (tdfa.max.*) are gone. The only frozen reads left are
-    // RUNTIME diagnostics on hot loops (TdfaRunner.WTRACE) and the
-    // tdfa.asm.dump emission switch — see those sites. tdfa.debug
-    // previously had THREE readers at TWO different timings (frozen in
-    // Tdfa, frozen again in TdfaCompiler.Builder, fresh in Tnfa) — the
-    // split produced partial debug output whenever the property was set
-    // after class init; all three now read fresh, once per compile.
+    // through the weight model (BudgetWeights) — one knob per resource, so
+    // the caps can never drift out of sync with the budgets that derive
+    // them. The only frozen reads are RUNTIME diagnostics on hot loops
+    // (TdfaRunner.WTRACE) and the tdfa.asm.dump emission switch — see
+    // those sites. tdfa.debug has three readers (Tdfa, TdfaCompiler.Builder,
+    // Tnfa) and all read fresh, once per compile — a frozen read anywhere
+    // would produce partial debug output whenever the property is set
+    // after class init.
 
 }

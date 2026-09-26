@@ -12,13 +12,12 @@ import java.io.ObjectOutputStream;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Serialization round-trips of the facade Pattern (review Phase C / P1 #17):
- * the SerialProxy carries pattern + flags + pinned-provider identity, and
- * recompiles on read — generated per-pattern classes live in child loaders
- * that cannot cross processes. The pinned provider must SURVIVE the
- * round-trip (previously it silently recompiled against the reader's
- * default tables — the reproducibility bug the pinned-provider API exists
- * to prevent).
+ * Serialization round-trips of the facade Pattern: the SerialProxy carries
+ * pattern + flags + pinned-provider identity, and recompiles on read —
+ * generated per-pattern classes live in child loaders that cannot cross
+ * processes. The pinned provider must SURVIVE the round-trip: silently
+ * recompiling against the reader's default tables is exactly the
+ * reproducibility bug the pinned-provider API exists to prevent.
  */
 class PatternSerializationTest {
 

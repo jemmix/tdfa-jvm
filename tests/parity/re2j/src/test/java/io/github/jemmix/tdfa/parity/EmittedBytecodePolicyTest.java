@@ -45,7 +45,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * ASM's {@link CheckClassAdapter} (structural checks + SimpleVerifier
  * dataflow) over every dumped class: emitter stack/local-slot/frameshape
  * bugs become BUILD failures here instead of production
- * {@code VerifyError}s at pattern-compile time [review Phase E].
+ * {@code VerifyError}s at pattern-compile time.
  */
 class EmittedBytecodePolicyTest {
 
@@ -131,9 +131,9 @@ class EmittedBytecodePolicyTest {
     /**
      * Every dumped engine class must pass ASM's structural + dataflow
      * verification. Emitter bugs (bad stack shapes, wrong local slots,
-     * broken frames for V1_8 targets) surface here at build time —
-     * previously they only surfaced as production VerifyErrors at
-     * pattern-compile time. verify() throws on structural violations and
+     * broken frames for V1_8 targets) surface here at build time rather
+     * than as production VerifyErrors at pattern-compile time. verify()
+     * throws on structural violations and
      * prints analyzer diagnostics to the writer — both must be clean.
      */
     @Test
@@ -162,8 +162,8 @@ class EmittedBytecodePolicyTest {
     /** Compile the shapes with dumping enabled; return the dumped class files.
      *  Dumping is redirected into {@code dir} (the emitter resolves
      *  java.io.tmpdir per dump, so redirecting the property isolates this
-     *  test from parallel dump consumers — the old shared-tmpdir
-     *  scan-and-delete protocol raced under parallel test execution). */
+     *  test from parallel dump consumers — a shared tmpdir with a
+     *  scan-and-delete protocol would race under parallel test execution). */
     private static List<Path> compileAndDump(Path dir) throws Exception {
         String prefix = "io.github.jemmix.tdfa.gen.Gen";
         List<Path> before = listGenClasses(dir, prefix);

@@ -21,7 +21,7 @@ public final class CharClass extends Ast {
      * unchanged (boolean containment over a union); normalization enables the
      * binary search in {@link #matches} — determinization calls it per config
      * per breakpoint, and Unicode classes like {@code \p{L}} carry ~1369 ranges
-     * where the old linear scan dominated compile time. Already-normalized
+     * where a linear scan dominates compile time. Already-normalized
      * input (the common case: single literals, small hand-built classes)
      * returns the array untouched after one verification pass.
      */

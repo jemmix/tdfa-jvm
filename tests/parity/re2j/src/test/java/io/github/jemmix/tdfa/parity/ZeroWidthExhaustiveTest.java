@@ -14,17 +14,18 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Exhaustive small-grammar enumeration of the zero-width corner that produced
- * the 2026-08 fuzz findings: {zero-width atoms} × {quantifiers} × {grouping} ×
- * {prefix/suffix consumption}. Random fuzzing rediscovered this finite space
- * at ~1/26k cases; enumeration covers it deterministically.
+ * Exhaustive small-grammar enumeration of the zero-width corner — the
+ * shape space where zero-width bugs concentrate: {zero-width atoms} ×
+ * {quantifiers} × {grouping} × {prefix/suffix consumption}. Random fuzzing
+ * reaches this finite space at only ~1/26k cases; enumeration covers it
+ * deterministically.
  *
  * <p><b>Status: gated.</b> The final-ops families (skipped-group null-ness,
  * span-inversion crashes, mask-dependent accept winners) are fixed and hard-
  * gated in {@link FinalOpsParityTest}. What remains open here is the
  * stop-or-extend priority family (e.g. {@code (\S*\B)*} extent shapes,
  * {@code (?:.*?9{0,}\b){1,}} empty-iteration preference — TODO.md "zero-width
- * assertions are second-class automaton citizens"). Run the full enumeration
+ * assertions are second-class automaton citizens").
  */
 class ZeroWidthExhaustiveTest {
 

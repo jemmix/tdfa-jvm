@@ -42,7 +42,7 @@ jar {
 }
 
 tasks.withType(JavaCompile).configureEach {
-    it.options.release = 25  // Floor policy r4 (docs/REVIEW-2026-09.md §1d): ships as Java 25 (latest LTS)
+    it.options.release = 25  // floor policy: ships as Java 25 (latest LTS)
     options.encoding = 'UTF-8'
     options.debug = true
 }
