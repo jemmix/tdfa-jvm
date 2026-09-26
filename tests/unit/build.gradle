@@ -19,7 +19,7 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
-// CI jar pipeline (-PagainstJars, docs/REVIEW-2026-09.md §1d): compile and
+// CI jar pipeline (-PagainstJars): compile and
 // run the unit tests against the PACKAGED jars of the six shipped modules
 // instead of their classes dirs — the exact artifact set a consumer
 // receives. DoFirst classpath swap (CI runs fresh; not an up-to-date-safe

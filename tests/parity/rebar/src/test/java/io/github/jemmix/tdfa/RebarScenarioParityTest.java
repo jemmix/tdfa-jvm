@@ -107,20 +107,20 @@ class RebarScenarioParityTest {
     static final ConcurrentHashMap<String, AtomicInteger> skipBuckets = new ConcurrentHashMap<>();
 
     /**
-     * Total-skip ceiling (review P2: the gray-skip path could silently shrink
-     * the green set). Recorded baseline 2026-09-21: 4 total, all
+     * Total-skip ceiling (gray skips can silently shrink the green set, so
+     * the total is capped). Steady state: ~4 skips, all
      * {@code bomb:over-budget-by-design}; every other reason family
      * (unsupported-model, no-scalar-count, regex-null, haystack-resolve-failed,
-     * compile-failed) is at 0 — a compile-exception bug appearing at scale
-     * blows far past this cap, so the margin only absorbs rare environmental
-     * haystack-resolution hiccups.
+     * compile-failed) should be at 0 — a compile-exception bug appearing at
+     * scale blows far past this cap, so the margin only absorbs rare
+     * environmental haystack-resolution hiccups.
      */
     static final int MAX_TOTAL_SKIPS = 8;
 
     /**
      * In-scope scenarios whose determinization exceeds the engine's budget
      * <em>by design</em> — the suite skips them (visibly) unless
-     * explicitly opted in. Rationale (2026-08-20): running these adds ~40 s of
+     * explicitly opted in. Rationale: running these adds ~40 s of
      * rejected determinization per backend plus a multi-GB raised-budget retry
      * to every suite run, to verify one shape family that is already covered
      * by dedicated probes and documented candor notes. Opt in with
@@ -135,17 +135,15 @@ class RebarScenarioParityTest {
      *   <li>{@code curated/10-bounded-repeat/context} — two-site
      *       {@code [\s\S]{0,100}} counter cross-product: 234 369-state
      *       minimal DFA, kernel total ~44 M (3.6 GB weighted — over the
-     *       default RAM budget on both axes). Measured at the raised
-     *       budget after the 2026-08-20 memory work: ~21 s compile, fits
-     *       -Xmx1g, ~82 MB retained, count=53 verified on both backends
-     *       (TODO.md "budget").
+     *       default RAM budget on both axes). At a raised budget: ~21 s
+     *       compile, fits -Xmx1g, ~82 MB retained, count=53 verified on
+     *       both backends (TODO.md "budget").
      *   <li>{@code curated/09-aws-keys/full} — the find artifact compiles,
      *       but the pattern's pike cut bit and its cut-free whole artifact
      *       (the counter cross-product of the two alternation arms) churns
      *       past the compile CPU budget, so {@code compile()} rejects.
-     *       Find-only acceptance was removed with the defer-flag ladder
-     *       (2026-09-21); at a raised compute budget the whole artifact
-     *       still churns without converging, so raising won't admit it.
+     *       The whole artifact churns without converging even at a raised
+     *       compute budget, so raising won't admit it.
      * </ul>
      */
     static final Set<String> BOMB_SCENARIOS = Set.of("curated/10-bounded-repeat/context", "curated/09-aws-keys/full");
@@ -196,195 +194,6 @@ class RebarScenarioParityTest {
     }
 
     /**
-     * In-scope scenarios whose determinization exceeds the engine's budget
-     * <em>by design</em> — the suite skips them (visibly) unless
-     * explicitly opted in. Rationale (2026-08-20): running these adds ~40 s of
-     * rejected determinization per backend plus a multi-GB raised-budget retry
-     * to every suite run, to verify one shape family that is already covered
-     * by dedicated probes and documented candor notes. Opt in with
-     * {@code -Dtdfa.test.rebar.skipBombs=false} — the test then does a PLAIN
-     * compile at whatever budgets the JVM provides: raise them explicitly
-     * (e.g. {@code -Dtdfa.budget.compile.memory=4000000000
-     * -Dtdfa.budget.compile.compute=4000000000} and ≥1 GB heap — the shape
-     * needs ~3.6 GB of weighted kernel RAM) or expect the engine's
-     * own clean "pattern too large" rejection.
-     *
-     * <ul>
-     *   <li>{@code curated/10-bounded-repeat/context} — two-site
-     *       {@code [\s\S]{0,100}} counter cross-product: 234 369-state
-     *       minimal DFA, kernel total ~44 M (3.6 GB weighted — over the
-     *       default RAM budget on both axes). Measured at the raised
-     *       budget after the 2026-08-20 memory work: ~21 s compile, fits
-     *       -Xmx1g, ~82 MB retained, count=53 verified on both backends
-     *       (TODO.md "budget").
-     *
-     *
-     * @ParameterizedTest(name = "[{index}] {0}")
-     * @MethodSource("scenariosProvider")
-     * void runScenarioThroughTdfa(String displayName, Scenario s, RegexEngineFactory factory) throws Exception {
-     * // Models we run; regex-redux is the only intentionally-skipped model
-     * // (bespoke embedded-regex harness, ~1–2 scenarios — see PARITY-PLAN §4.3).
-     * Set<String> supportedModels = Set.of("count", "count-spans", "count-captures",
-     * "grep", "compile", "grep-captures");
-     * //
-     * // No numeric time/size gates (2026-08-20): the engine's own
-     * // determinization budgets (RAM + CPU, weight-model-derived caps)
-     * // are the only watchdog. A compile rejected with
-     * // "pattern too large" on any scenario NOT in BOMB_SCENARIOS is a
-     * // FAILURE (surfaced, not skipped); the named bombs skip visibly and
-     * // are opt-in via -Dtdfa.test.rebar.skipBombs=false. Compile-latency
-     * // regressions are pinned separately by CompileLatencyGuardTest.
-     *
-     * // --- Named over-budget bombs: skip visibly unless opted in ---
-     * if (SKIP_BOMBS && BOMB_SCENARIOS.contains(s.fullName())) {
-     * countSkip("bomb:over-budget-by-design");
-     * skipCount.incrementAndGet();
-     * timings.add(new Timing(s.fullName(), 0, 0, "SKIP:bomb"));
-     * assumeTrue(false, "over-budget bomb (skipped by default; see BOMB_SCENARIOS javadoc). "
-     * + "Run with -Dtdfa.test.rebar.skipBombs=false -Dtdfa.budget.compile.memory=4000000000 "
-     * + "-Dtdfa.budget.compile.compute=4000000000 (heap >= 1g) to verify it for real.");
-     * return;
-     * }
-     *
-     * // --- Filter: skip cleanly via assumeTrue so IDE shows gray "skipped" ---
-     *
-     * if (!supportedModels.contains(s.model())) {
-     * countSkip("unsupported-model:" + s.model());
-     * skipCount.incrementAndGet();
-     * timings.add(new Timing(s.fullName(), 0, 0, "SKIP:model:" + s.model()));
-     * assumeTrue(false, "unsupported model: " + s.model());
-     * return;
-     * }
-     * if (s.expectedCount() == Long.MIN_VALUE) {
-     * countSkip("no-scalar-count");
-     * skipCount.incrementAndGet();
-     * timings.add(new Timing(s.fullName(), 0, 0, "SKIP:no-scalar-count"));
-     * assumeTrue(false, "no scalar expected count (per-engine overrides only)");
-     * return;
-     * }
-     * if (s.regex() == null) {
-     * countSkip("regex-null");
-     * skipCount.incrementAndGet();
-     * timings.add(new Timing(s.fullName(), 0, 0, "SKIP:regex-null"));
-     * assumeTrue(false, "no regex (unrepresentable input spec)");
-     * return;
-     * }
-     *
-     * // --- Compile via the re2j-compat API (Pattern/Matcher). Flags are
-     * //     translated to inline prefixes by Pattern.compile — (?i) for
-     * //     caseInsensitive, (?u) for unicode (UNICODE_CHARACTER_CLASS).
-     * //     PERL disambiguation is the default (matches re2/re2j semantics).
-     * //     The ASM backend handles every in-scope pattern (DispatchMode.
-     * //     DELEGATE for arbitrary DFA sizes — see TdfaAsmBackend.pickMode),
-     * //     so each parameter value runs its own backend independently and a
-     * //     divergence shows up as a real test failure.
-     *
-     * int flags = 0;
-     * if (s.caseInsensitive()) {
-     * flags |= Pattern.CASE_INSENSITIVE;
-     * }
-     * if (s.unicode()) {
-     * flags |= Pattern.UNICODE_CHARACTER_CLASS;
-     * }
-     * long compileStart = System.nanoTime();
-     * Pattern compiled;
-     * try {
-     * compiled = Pattern.compile(s.regex(), flags, factory);
-     * } catch (Exception e) {
-     * String msg = e.getMessage() != null ? e.getMessage() : "";
-     * // Budget rejection on a non-listed scenario is a FAILURE — the
-     * // engine must handle every in-scope shape within the default caps
-     * // (only BOMB_SCENARIOS are known over-budget, and those skip above).
-     * if (msg.contains("pattern too large")) {
-     * failCount.incrementAndGet();
-     * timings.add(new Timing(s.fullName(),
-     * (System.nanoTime() - compileStart) / 1_000_000, 0,
-     * "FAIL:budget-exceeded"));
-     * throw e;
-     * }
-     * countSkip("compile-failed:" + labelFor(factory) + ":" + e.getClass().getSimpleName());
-     * skipCount.incrementAndGet();
-     * timings.add(new Timing(s.fullName(),
-     * (System.nanoTime() - compileStart) / 1_000_000, 0,
-     * "SKIP:compile-failed:" + labelFor(factory) + ":" + e.getClass().getSimpleName()));
-     * assumeTrue(false, "compile failed (" + labelFor(factory) + "): " + e.getClass().getSimpleName()
-     * + (msg.isEmpty() ? "" : ": " + msg));
-     * return;
-     * }
-     * final Pattern p = compiled;
-     * long compileMs = (System.nanoTime() - compileStart) / 1_000_000;
-     *
-     * // --- Resolve haystack (I/O only) ---
-     *
-     * String haystack;
-     * try {
-     * haystack = s.resolveHaystack(benchmarksDir);
-     * } catch (Exception e) {
-     * countSkip("haystack-resolve-failed");
-     * skipCount.incrementAndGet();
-     * timings.add(new Timing(s.fullName(), compileMs, 0, "SKIP:haystack-resolve"));
-     * assumeTrue(false, "haystack resolve failed: " + e.getMessage());
-     * return;
-     * }
-     *
-     * // --- Run (no wall-clock gate; a hang shows up in the suite timeout) ---
-     *
-     * final long runStart = System.nanoTime();
-     * final long actual = runModel(s, p, haystack);
-     * long runMs = (System.nanoTime() - runStart) / 1_000_000;
-     *
-     * if (compileMs > 50 || runMs > 50) {
-     * System.out.printf("SLOW     %-50s [%s] compile=%dms  run=%dms  /%s/%n",
-     * s.fullName(), labelFor(factory), compileMs, runMs, abbrev(s.regex(), 50));
-     * }
-     *
-     * // --- Resolve expected count: live patched-re2j oracle by default ---
-     * // The corpus's static per-engine counts were recorded by other
-     * // engines at other times (JDK Unicode-DB drift, java/hotspot's
-     * // ASCII-only (?i), UTF-8-vs-UTF-16 units) — every re2j-compat
-     * // divergence needed a hand-patched count. We are a re2j drop-in:
-     * // for scenarios whose flags re2j can represent (unicode=false —
-     * // re2j has no UNICODE_CHARACTER_CLASS; \w\d\s are ASCII there),
-     * // the vendored patched re2j (fix1/fix2) computes `want` LIVE with
-     * // the same model loops. Falls back to the corpus when re2j rejects
-     * // the regex (backrefs/lookaround: j.u.r runs them, re2j doesn't) or
-     * // on any oracle-side exception. -Dtdfa.test.rebar.oracle=corpus
-     * // restores the pure static resolution.
-     * long want;
-     * String wantSource;
-     * if (!CORPUS_ORACLE && !s.unicode()) {
-     * Long live = liveRe2jCount(s, haystack);
-     * if (live != null) {
-     * want = live;
-     * wantSource = "re2j-live";
-     * } else {
-     * want = s.expectedCount();
-     * wantSource = "corpus(re2j-unrunnable)";
-     * }
-     * } else {
-     * want = s.expectedCount();
-     * wantSource = s.unicode() ? "corpus(unicode=java-semantics)" : "corpus";
-     * }
-     *
-     * // --- Assert ---
-     *
-     * boolean passed = actual == want;
-     * if (passed) {
-     * passCount.incrementAndGet();
-     * } else {
-     * failCount.incrementAndGet();
-     * }
-     * timings.add(new Timing(s.fullName(), compileMs, runMs,
-     * passed ? "PASS" : "FAIL:want=" + want + ",got=" + actual));
-     * assertThat(actual)
-     * .as("match count for /%s/ on %d-byte haystack (model=%s, want=%s:%d); compile=%dms run=%dms; hs contains regex? %s; first 40 chars: %s",
-     * s.regex(), haystack.length(), s.model(), wantSource, want, compileMs, runMs,
-     * haystack.contains(s.regex().length() <= 100 ? s.regex() : s.regex().substring(0, 50)),
-     * haystack.substring(0, Math.min(40, haystack.length())).replace("\n", "\\n").replace("\r", "\\r"))
-     * .isEqualTo(want);
-     * }
-     *
-     * /**
      * End-of-suite summary printed once all parameterized invocations finish.
      * Surfaces the slowest tests and the skip-reason histogram for triage.
      */

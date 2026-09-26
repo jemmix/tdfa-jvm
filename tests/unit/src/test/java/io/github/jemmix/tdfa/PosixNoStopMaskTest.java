@@ -12,10 +12,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * POSIX (leftmost-longest) compiles allocate no stop-on-accept table at all:
  * no reader may consult it (Tdfa stores neither stop tier in POSIX mode and
- * every consumer gates on Perl mode), so the former unconditional n*64
- * alloc/fill — ~25 MB of churn at 100 K states — was pure waste (review P2).
- * Both the minimized and the -Dtdfa.nominimize paths must stay null and
- * keep matching correctly.
+ * every consumer gates on Perl mode), so an unconditional n*64 alloc/fill
+ * (~25 MB of churn at 100 K states) would be pure waste. Both the
+ * minimized and the -Dtdfa.nominimize paths must stay null and keep
+ * matching correctly.
  */
 class PosixNoStopMaskTest {
 

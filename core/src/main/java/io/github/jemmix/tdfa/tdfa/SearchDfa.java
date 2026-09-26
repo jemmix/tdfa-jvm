@@ -6,10 +6,9 @@ import java.util.HashMap;
 import static io.github.jemmix.tdfa.tdfa.TdfaRunner.SDFA_KILL;
 
 /**
- * Extracted verbatim from TdfaRunner (2026-09 god-file split); the
- * {@code r} back-reference carries the shared runner tables. Docs moved
- * with the code. The kill sentinel stays on TdfaRunner (its scan paths
- * use it too) and is static-imported here.
+ * The {@code r} back-reference carries the shared runner tables. The
+ * kill sentinel stays on TdfaRunner (its scan paths use it too) and is
+ * static-imported here.
  * <p>
  * Static nested: shared per-Tdfa lifetime; references the runner's tables.
  * The memo's caps derive per runner from the match-time RAM budget

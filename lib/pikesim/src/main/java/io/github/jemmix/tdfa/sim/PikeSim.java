@@ -186,8 +186,7 @@ public final class PikeSim {
                 // from) matches AT from even when from is a pair interior —
                 // the skip governs scanning, not explicit starts). The
                 // s == len case must not read charAt(len) — input ending in
-                // a lone high has no interior there (fuzz repro: lone-high
-                // input).
+                // a lone high has no interior there.
                 if (s > from && s > 0 && s < len && isHigh(input.charAt(s - 1)) && isLow(input.charAt(s))) {
                     continue;
                 }
@@ -389,9 +388,10 @@ public final class PikeSim {
                     // on skip edges — a group's value PERSISTS once set
                     // (((a)?x){2} on "axax" keeps g2="a"; ((a)|b)+ on "ab"
                     // keeps g2="a") and unmatched groups are null by absence.
-                    // Applying ntags here cleared captures of earlier
-                    // iterations (fuzz round 18: the sim reported g2=null
-                    // where re2j/vm/asm kept the last iteration's span).
+                    // Applying ntags here would clear captures of earlier
+                    // iterations, diverging from re2j/vm/asm (which keep
+                    // the last iteration's span; e.g. g2 would come out
+                    // null instead of the last iteration's g2 span).
                     // POSIX-mode compare still sees ntags — via the utree
                     // path in the determinizer, not through caps.
                     int[] c2 = cap.clone();

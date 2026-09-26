@@ -87,9 +87,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * dispatch tables (asciiTarget + asciiRangeFlat ≈ 1 KB/state at the 128-wide
      * tier) and use the lazy walk blocks / binary search instead. A 234 K-state
      * DFA would otherwise retain ~228 MB of dispatch tables — more than ALL of
-     * its Tdfa tables combined (measured 2026-08-20, see TODO "tables" note);
-     * every normal post-minimize DFA (e.g. dictionary: 6.8 K states) stays far
-     * below the cap and keeps the direct-dispatch fast paths.
+     * its Tdfa tables combined; every normal post-minimize DFA (e.g. dictionary:
+     * 6.8 K states) stays far below the cap and keeps the direct-dispatch fast
+     * paths.
      */
     private static final int ASCII_TABLE_MAX_STATES = 16_384;
 
@@ -97,8 +97,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     // Lazy-DFA memo caps, DERIVED per runner from the match-time RAM budget
     // ({@link Budgets#runtimeMemoryBytes()}, -Dtdfa.budget.runtime.memory,
     // default 16 MiB per compiled pattern) through the weight model:
-    // half the budget in rows, half in 512-codepoint blocks (the historical
-    // 512-row/1024-block constants were the same idea without the budget).
+    // half the budget in rows, half in 512-codepoint blocks.
     // Past the caps the scan degrades to the unmemoized simulation (still
     // kill-point aware). Each runner (one per compiled Regex) keeps its own
     // memo — N live Patterns cost at most N runtime budgets of memo RAM.
@@ -163,9 +162,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     private final WalkIndex walkIdx;
     /**
      * Tight 128-entry table for the SIMULATIONS: constant stride keeps the
-     * hot loop's machine code identical to the pre-Latin-1 shape (a 256-stride
-     * table measurably slowed pure-ASCII scans ~15%); codepoints >= 128 take
-     * the binary-search branch.
+     * hot loop's machine code compact (a 256-stride table measurably slows
+     * pure-ASCII scans ~15%); codepoints >= 128 take the binary-search
+     * branch.
      */
     private final int[] asciiTarget;
     /**
@@ -217,8 +216,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     // generator emits recordStrategy calls at the same points of its emitted
     // ladder (single template). The strategy-conformance test asserts both
     // backends produce identical sequences over a shape x length sweep — the
-    // structural guard against the two ladders drifting (the litFind bug:
-    // identical results, different algorithm).
+    // structural guard against the two ladders drifting (identical results
+    // can hide a different algorithm).
     // Zero cost when disabled: TRACE is static final, branches prune.
     // TODO: revisit as first-class internals access (observer/event API) —
     // see TODO.md "internals access".
@@ -298,7 +297,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
 
     /**
      * Public stable hook for the ASM backend's delegate-mode decision
-     * (implementation lives in RunnerTables since the 2026-09 split).
+     * (implementation lives in RunnerTables).
      */
     public static String detectLiteralNeedle(Tdfa tdfa) {
         return RunnerTables.detectLiteralNeedle(tdfa);
@@ -339,8 +338,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * {@code wholeOne} leaves call this hook by name (INVOKESTATIC, no
      * receiver: monomorphic by construction). One carrier per
      * {@link io.github.jemmix.tdfa.core.Matcher} (the caller owns the
-     * lifetime); this replaced the former per-thread ThreadLocal pool
-     * (and before that the per-generated-class {@code RegPool}).
+     * lifetime).
      *
      * <p>Correctness contract: contents are undefined on take — callers fill
      * {@code [0, n)} before reading — and callers must clone before the
@@ -352,9 +350,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      */
     @EmittedSurface
     public static int[] takeRegs(int n, MatchScratch sc) {
-        // sc may be null from carrier-free engines' direct callers; a fresh
-        // carrier per call is exactly what those callers had before the
-        // nullable-carrier contract (CompiledRegex/findAll shape).
+        // sc may be null from carrier-free engines' direct callers
+        // (CompiledRegex/findAll shape); allocate a fresh carrier per call.
         return (sc != null ? sc : new MatchScratch()).takeRegs(n);
     }
 
@@ -837,7 +834,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 if (fm != null) {
                     // Position-aware table is authoritative: cell >= 0 = an
                     // accept config is alive under these posFlags (the gate
-                    // the sam-intersection only approximated), cell = its φ.
+                    // the sam-intersection only approximates), cell = its φ.
                     if (posFlags < 0) {
                         posFlags = positionFlags(input, pos, to);
                     }
@@ -922,8 +919,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             if (ri == Integer.MIN_VALUE) {
                 // Binary search rightmost entry with lo <= c, then walk back
                 // while the per-state prefix-max-hi still reaches c: visits
-                // exactly the entries that can contain c, in the same
-                // lowest-index-first priority the linear scan used.
+                // exactly the entries that can contain c, in
+                // lowest-index-first priority order.
                 int rlo = 0, rhi = count - 1, anchor = -1;
                 while (rlo <= rhi) {
                     int mid = (rlo + rhi) >>> 1;
@@ -937,11 +934,11 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 // Walk back over containing entries. Ownership: the MOST
                 // SPECIFIC satisfied mask wins (popcount of requiredMask);
                 // ties fall to the lowest index (determinizer order). Pure
-                // "lowest index" was wrong once overlapping contexts' ranges
+                // "lowest index" is wrong once overlapping contexts' ranges
                 // differ in lo — a more-specific (e.g. dead-marker) entry at
-                // a HIGHER lo/index was shadowed by a broad mask-0 range
-                // (fuzz round 11: .+?\b[^\d]* extended past its \b-gated
-                // accept through the lazy body's '.' entry).
+                // a HIGHER lo/index gets shadowed by a broad mask-0 range
+                // (e.g. .+?\b[^\d]* extending past its \b-gated accept
+                // through the lazy body's '.' entry).
                 int best = -1, bestSpec = -1;
                 for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
                     int o = (base + i) * 5;
@@ -1007,8 +1004,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             // Target entry mask is a position predicate, evaluated BEFORE the
             // transition's ops run: a mask-failing transition is never taken,
             // so its tag writes must not contaminate the register file (a
-            // later-recorded accept would read them — the fuzz-found "skipped
-            // group reports empty instead of null" family).
+            // later-recorded accept would read them — e.g. a skipped group
+            // reporting empty instead of null).
             int width = c > 0xFFFF ? 2 : 1;
             int entryReqNext = sem[chosenTarget];
             if (entryReqNext != 0 && (positionFlags(input, pos + width, to) & entryReqNext) != entryReqNext) {
@@ -1034,7 +1031,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         // declaration semantics): they read the accept-time register values.
         // A lazy replay here would read end-of-walk values — any transition
         // taken between the accept and the break clobbers working registers
-        // and inverts group spans (the fuzz-found start>end crashes).
+        // and inverts group spans (group start > end).
         return new MatchHolder(startSearch, lastAcceptPos, r);
     }
 
@@ -1101,7 +1098,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 // Cap: continue unmemoized from pos WITH the exact live set —
                 // restarting from a bare seed would drop configurations started
                 // in [W, pos) that are still alive (and may accept later),
-                // masking real matches (seen as skipped leipzig matches).
+                // masking real matches.
                 return rawScan(input, pos, to, W, sd.rowWordsOf(cur), sc);
             }
             if (v == SDFA_KILL) {
@@ -1116,7 +1113,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     }
 
     /**
-     * Uncapped fallback: the original multi-state simulation with kill-point
+     * Uncapped fallback: the unmemoized multi-state simulation with kill-point
      * tracking (kill = the pre-seed step set is empty). Returns W or -1.
      */
     private int rawScan(String input, int from, int to, int wIn, int[] liveIn, MatchScratch sc) {
@@ -1320,7 +1317,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         // stay readable for the whole step — a single buffer would corrupt a
         // state's own origin mid-step when another path's arrival (or the fresh
         // re-seed) targets a still-live state before its self-loop reads it
-        // (seen as +1/step origin drift on (\d+)\.(\d+)... over "ip=192.168.1.77").
+        // (e.g. +1/step origin drift on (\d+)\.(\d+)... over "ip=192.168.1.77").
         // Stale originNext values are never read: a bit present in next implies
         // a this-step write (first arrival sets, later arrivals min-merge).
         Arrays.fill(live, 0, nwords, 0);
@@ -1593,12 +1590,13 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         }
         // 2) No match starting at `from`: budgeted origin-tracking sim. Dense
         //    matches early-stop inside the budget and never touch the trigger
-        //    (the pre-scan would double the work — the findAll regression). A
-        //    distant/absent match exhausts the budget and hands off to the
-        //    memoized trigger scan, which bounds the window to [W, to] via kill
-        //    points; the sim then finishes over just that window. The old shape
-        //    retried every failed start with a full walk: O(n) restarts × O(n)
-        //    walk = O(n²) on dense-match regexes like [a-zA-Z]+ing.
+        //    (an unconditional pre-scan would double the work on dense findAll
+        //    scans). A distant/absent match exhausts the budget and hands off
+        //    to the memoized trigger scan, which bounds the window to [W, to]
+        //    via kill points; the sim then finishes over just that window.
+        //    Retrying every failed start with a full walk instead costs O(n)
+        //    restarts × O(n) walk = O(n²) on dense-match regexes like
+        //    [a-zA-Z]+ing.
         trace(Strategy.ORIGIN_SIM);
         int leftmost = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS, sc);
         if (leftmost == LSS_BUDGET) {
@@ -1616,8 +1614,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             return h;
         }
         // 3) Defensive: the sim and the walk must agree on fast-path DFAs; if
-        //    they ever don't, fall back to the old restart shape rather than
-        //    return a wrong null.
+        //    they ever don't, fall back to the plain per-start restart loop
+        //    rather than return a wrong null.
         trace(Strategy.WALK_RESTART);
         return restartExtract(input, leftmost + 1, to, from, sc);
     }
@@ -1666,8 +1664,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                     int cell = fm[state * 64 + posFlags];
                     // cell < 0 (position-suppressed accept): do NOT record and
                     // do NOT stop — fall through to the transition, exactly
-                    // like extractFrom (the former `continue` skipped the
-                    // transition and froze the walk state while pos advanced).
+                    // like extractFrom (a `continue` here would skip the
+                    // transition and freeze the walk state while pos advanced).
                     if (cell >= 0) {
                         haveAccept = true;
                         lastAcceptPos = pos;
@@ -1718,9 +1716,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             }
             state = target;
             // posFlags belongs to the OLD position — invalidate (extractFrom /
-            // matchFrom / anchored / generic all reset here; the fast walk
-            // historically didn't, feeding stale flags to the next accept /
-            // stopNow probe).
+            // matchFrom / anchored / generic all reset here; skipping the
+            // reset feeds stale flags to the next accept / stopNow probe).
             posFlags = -1;
         }
         if (haveAccept) {
@@ -1847,14 +1844,14 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 }
             } else {
                 // Non-disjoint state: binary search + prefix-max walk. Ownership
-                // protocol (same round-11 fix as extractFrom / runStringMatchFrom /
+                // protocol (same as extractFrom / runStringMatchFrom /
                 // runGeneric): the MOST SPECIFIC satisfied mask wins (popcount of
                 // requiredMask), ties to the lowest index; a dead marker of the
                 // OWNING entry kills the walk — no fallthrough to lower-specificity
-                // entries, whose contexts are not alive here. The former pure
-                // lowest-index + transparent-dead behavior could let matches()
+                // entries, whose contexts are not alive here. A pure
+                // lowest-index + transparent-dead rule would let matches()
                 // return true where match()/find() find nothing on
-                // overlapping-mask-context patterns [review P1 #7].
+                // overlapping-mask-context patterns.
                 int rlo = 0, rhi = count - 1, anchor = -1;
                 while (rlo <= rhi) {
                     int mid = (rlo + rhi) >>> 1;
@@ -2060,8 +2057,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                     break;
                 }
             } else {
-                // Non-disjoint state: binary search + prefix-max walk, keeping the
-                // lowest-index mask-satisfied entry (original priority order).
+                // Non-disjoint state: binary search + prefix-max walk.
                 int rlo = 0, rhi = count - 1, anchor = -1;
                 while (rlo <= rhi) {
                     int mid = (rlo + rhi) >>> 1;
@@ -2301,9 +2297,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * accept time — any transition taken afterwards may clobber them. Later
      * accepts overwrite earlier ones (last write wins), so the register file at
      * walk end already carries the last accept's finals. Both tiers apply φ
-     * eagerly; the former lazy ψ replay (pickFinalOpsOff) was unsound and is
-     * gone — with eager application {@code pos == lastAcceptPos} always holds
-     * and φ is the correct choice.
+     * eagerly — a lazy ψ replay at walk end would be unsound; with eager
+     * application {@code pos == lastAcceptPos} always holds and φ is the
+     * correct choice.
      */
     private void applyFinalOps(int state, int[] regs, int pos) {
         int foff = stateFinalOpsOff[state];
@@ -2415,11 +2411,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             }
         }
         // NOTE: per-mask final variants (stateFinalOpsByMask != null) do NOT
-        // disqualify — tryStartFast's fm branch handles them and now matches
+        // disqualify — tryStartFast's fm branch handles them and matches
         // extractFrom exactly (suppressed-accept fall-through + posFlags
-        // reset, 2026-09). An earlier belt-and-braces exclusion here cost
-        // ~10x on anchored matches() for φ-variant patterns (quick-bench
-        // info.anchored.asm) and was reverted.
+        // reset). A belt-and-braces exclusion here costs ~10x on anchored
+        // matches() for φ-variant patterns (quick-bench info.anchored.asm).
         return true;
     }
 
@@ -2515,7 +2510,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         GENERIC // CharSequence (non-String) fallback
     }
 
-    // ===== per-call scratch (P2: hot-path allocation removal) =====
+    // ===== per-call scratch (hot-path allocation removal) =====
     //
     // Scratch buffers live on the caller's MatchScratch carrier — the re2j /
     // java.util.regex shape: the stateful Matcher owns its buffers for its
@@ -2532,9 +2527,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     // DFAs) and the regs[] allocation on failed single-start walks;
     // successful walks still clone regs into the returned MatchHolder (it
     // escapes the runner). regs is also the pool behind the ASM tier's walk
-    // leaves ({@link #takeRegs}) — pooling removal was measured at +43 % on
-    // the dense extract-restart scan (asmFindAllDense, 2026-09-21), so it
-    // stays.
+    // leaves ({@link #takeRegs}) — removing the pool measured ~43 % slower
+    // on the dense extract-restart scan (asmFindAllDense), so it stays.
     //
     // No nested aliasing: a holder of pooled regs never calls another taker
     // while reading its own [0, regSize) window — the one re-entry

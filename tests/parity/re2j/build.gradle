@@ -93,10 +93,8 @@ tasks.register('fuzz', JavaExec) {
     // fragment the heap and by minute ~25 of a 30-min chunk force Full GCs
     // (observed: 0.7-0.9 s pauses + compaction CPU steal with ~1 GB still
     // free). A stalled 4-6 s bomb batch then crosses the 10 s watchdog and
-    // gets misrecorded as a hang (overnight 491362528: 11 such records, all
-    // replaying clean; stacks spread over 9 unrelated phases incl. re2j's
-    // own write()). 4 MB regions keep those arrays regular; 4 g heap gives
-    // G1 ~1024 regions to work with.
+    // gets misrecorded as a hang. 4 MB regions keep those arrays regular;
+    // 4 g heap gives G1 ~1024 regions to work with.
     jvmArgs '-Xmx4g', '-XX:G1HeapRegionSize=4m'
     systemProperty 'fuzz.minutes', project.findProperty('fuzz.minutes') ?: '480'
     if (project.hasProperty('fuzz.maxWork')) {   // else the fuzzer scopes its own 8M default

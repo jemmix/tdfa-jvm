@@ -18,16 +18,16 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  * <p>Problem areas:
  * <ul>
  *   <li><b>Adjacent greedy groups</b> — patterns like {@code (a*)(a*)} where
- *       a group matches empty adjacent to another greedy group. These used to
- *       crash at compile time ({@code ArrayIndexOutOfBoundsException} in
- *       {@code Optimize.findFinalRegBase}) because allocation coalesced final
- *       registers; fixed by keeping finals in dedicated consecutive slots.</li>
+ *       a group matches empty adjacent to another greedy group. Allocation
+ *       must keep final registers in dedicated consecutive slots — coalescing
+ *       them crashes the compile ({@code ArrayIndexOutOfBoundsException} in
+ *       {@code Optimize.findFinalRegBase}).</li>
  *   <li><b>Alternation aliasing</b> — many-branch alternation with one
  *       capture group per branch must report exactly one participating
  *       group per match (the §A interference analysis area).</li>
  *   <li><b>COPY-chain ordering</b> — final-ops with chained COPYs
- *       ({@code [i←j, j←k]}) must execute in the right order (the 6691e97
- *       topoSortCopy fix area).</li>
+ *       ({@code [i←j, j←k]}) must execute in the right order (the
+ *       topoSortCopy area).</li>
  * </ul>
  */
 class CaptureGroupAllocationTest {
@@ -56,7 +56,7 @@ class CaptureGroupAllocationTest {
         return c;
     }
 
-    // ===== Adjacent greedy groups (fixed: final-register dedicated-slot invariant) =====
+    // ===== Adjacent greedy groups: final-register dedicated-slot invariant =====
 
     @ParameterizedTest
     @MethodSource("factories")

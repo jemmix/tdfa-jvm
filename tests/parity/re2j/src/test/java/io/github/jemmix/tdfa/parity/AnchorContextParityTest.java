@@ -8,34 +8,34 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
 
 /**
  * Assertion-context conformance for zero-width anchors under optional /
- * repeated constructs — the fuzz round-10 CONSTRUCTION family (39 records,
- * 15 patterns, minimized to the cases below).
+ * repeated constructs, minimized to the cases below.
  *
  * <p>Three determinizer defects, all in how assertion contexts interact at
  * one position:
  * <ol>
- *   <li><b>Dead-marker scan order</b> — the binary-search transition scan
- *       broke the walk on ANY satisfied dead marker before reaching
- *       lower-index (more specific) satisfied LIVE entries
- *       ({@code (\b)?^[\d]} on {@code "0"} died on the dead WB-context and
- *       never saw the live WB|BEGIN context that owned the step). The dual
- *       flaw existed in the ladder scans: they SKIPPED dead markers,
- *       falling through to contexts not alive under the posFlags. Rule now:
- *       the lowest-index mask-satisfied entry owns the step, dead or live.</li>
- *   <li><b>OR of assertion-gated accepts, tagless</b> — {@code Z(?:\A|\B)}
- *       accepted at pos 1 where both arms fail: the conjunctive accept mask
- *       (intersection of config emptyMasks) collapsed the disjunction to 0
- *       = unconditional. The byMask final-ops table expresses exactly this
- *       per-posFlags aliveness but was only built when tags &gt; 0; it is now
- *       built for tagless accept kernels too (variants degenerate to empty
- *       ops — the cell sign alone is the aliveness).</li>
+ *   <li><b>Dead-marker scan order</b> — the lowest-index mask-satisfied
+ *       entry owns the step, dead or live. Breaking the walk on ANY
+ *       satisfied dead marker before reaching lower-index (more specific)
+ *       satisfied LIVE entries mis-walks ({@code (\b)?^[\d]} on
+ *       {@code "0"} would die on the dead WB-context and never see the
+ *       live WB|BEGIN context that owns the step); dually, SKIPPING dead
+ *       markers — as the ladder scans must not — falls through to
+ *       contexts not alive under the posFlags.</li>
+ *   <li><b>OR of assertion-gated accepts, tagless</b> — a conjunctive
+ *       accept mask (intersection of config emptyMasks) collapses a
+ *       disjunction like {@code Z(?:\A|\B)} to 0 = unconditional, accepting
+ *       at pos 1 where both arms fail. The byMask final-ops table expresses
+ *       exactly this per-posFlags aliveness and must be built for tagless
+ *       accept kernels too (variants degenerate to empty ops — the cell
+ *       sign alone is the aliveness).</li>
  *   <li><b>Literal-needle shortcut past position-dependent accepts</b> —
- *       the same {@code Z(?:\A|\B)} also matched via the indexOf fast path,
- *       which cannot evaluate posFlags at all. detectLiteralNeedle now
- *       declines any final state with a byMask row.</li>
+ *       {@code Z(?:\A|\B)}-shaped patterns can also match via the indexOf
+ *       fast path, which cannot evaluate posFlags at all.
+ *       detectLiteralNeedle declines any final state with a byMask row.</li>
  * </ol>
- * PikeSim (over the same Tnfa) agreed with re2j on every case — the whole
- * family was determinizer-side, which is what the layered audit said.
+ * PikeSim (over the same Tnfa) agrees with re2j on every case here — these
+ * pins are determinizer-side; a PikeSim disagreement would relocate the bug
+ * to the Tnfa/parser.
  */
 class AnchorContextParityTest {
 
@@ -65,10 +65,10 @@ class AnchorContextParityTest {
     }
 
     /**
-     * Round 11 (2026-09-02): lazy quantifier + {@code \b}/{@code \B} + optional
-     * tail — the walk extended past a recorded accept via a kernel config
-     * ranked BELOW it (leftmost-longest window in a leftmost-first engine).
-     * Fixed by pike post-match thread pruning determinized: a live set that
+     * Lazy quantifier + {@code \b}/{@code \B} + optional tail — the walk
+     * must not extend past a recorded accept via a kernel config ranked
+     * BELOW it (a leftmost-longest window in a leftmost-first engine).
+     * Pike post-match thread pruning, determinized: a live set that
      * contains an ACCEPT config is truncated below the first alive accept
      * (anything those threads reach is discarded by leftmost-first); the
      * emptied contexts emit their dead markers; and overlap ownership across

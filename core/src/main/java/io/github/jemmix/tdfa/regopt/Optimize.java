@@ -191,10 +191,10 @@ public final class Optimize {
      *
      * <p>Paper algorithm: Figure 7 ({@code liveness_analysis}). The paper's
      * round-robin fixpoint over {@code boolean[reg]} rows is correct but
-     * quadratic-in-practice on real TDFA CFGs: the fuzzer's first v3 soak drew
-     * an 11k-block / 135-register CFG where every round cloned and OR-merged
-     * full rows for every block and every successor — 1.4 s in a stage that
-     * converges in 3 rounds. Representation fix: rows are packed {@code long[]}
+     * quadratic-in-practice on real TDFA CFGs: an 11k-block / 135-register
+     * CFG makes every round clone and OR-merge full rows for every block
+     * and every successor — 1.4 s in a stage that converges in 3 rounds.
+     * Representation fix: rows are packed {@code long[]}
      * words (union = word OR, ~64x less traffic) and the fixpoint is a
      * worklist seeded in post-order (successors first — the fast order for
      * backward flow) that re-enqueues only the PREDECESSORS of blocks whose
@@ -298,8 +298,9 @@ public final class Optimize {
             } // no successors: row stays (seed or empty)
             if (!Arrays.equals(scratch, rows[bi])) {
                 // Zero-allocation row store: write into the spare buffer and
-                // recycle the displaced row as the next spare (this churn was
-                // ~25% of wall on liveness-heavy compiles).
+                // recycle the displaced row as the next spare (allocating a
+                // fresh row per update would cost ~25% of wall on
+                // liveness-heavy compiles).
                 long[] displaced = rows[bi];
                 System.arraycopy(scratch, 0, spare, 0, w);
                 rows[bi] = spare;
@@ -336,9 +337,9 @@ public final class Optimize {
      *  {@code liveOut}; writes into the caller's {@code buf} (consumed
      *  immediately — no clone per call). Per-op ticks: the walk is this
      *  phase's real unit of work; with only the caller's per-(successor,
-     *  word) ticks, ops-heavy blocks inflated wall-per-tick ~40x and the
-     *  8M budget took 6+s to trip (fuzz round 20 hang: liveness on a
-     *  1389-state DFA burning 17s at library budget). */
+     *  word) ticks, ops-heavy blocks would inflate wall-per-tick ~40x and
+     *  the 8M budget would take 6+s to trip (e.g. liveness on a 1389-state
+     *  DFA can burn 17s at library budget). */
     private static long[] propagateBackwardW(long[] liveOut, List<Cfg.Op> ops, int nr, WorkMeter meter, long[] buf) {
         System.arraycopy(liveOut, 0, buf, 0, buf.length);
         long[] live = buf;
@@ -590,11 +591,11 @@ public final class Optimize {
      * Final registers (indices {@code [finalRegBase..regCount)}) always get dedicated
      * consecutive slots at the top, in tag order. This is required by the
      * {@code MatchResult} readout protocol ({@code regs[finalRegBase + t - 1]}) —
-     * before this invariant, finals could coalesce with working registers or with
-     * each other (e.g. two SET-pos finals under the same-value rule), which either
-     * scattered the final block (silently wrong captures) or dropped
+     * without the invariant, finals can coalesce with working registers or with
+     * each other (two SET-pos finals under the same-value rule, for instance),
+     * which either scatters the final block (silently wrong captures) or drops
      * {@code regCount} below {@code tagCount}, crashing
-     * {@link #findFinalRegBase} with a negative base (repro: {@code (a*)(a*)}).
+     * {@link #findFinalRegBase} with a negative base (e.g. {@code (a*)(a*)}).
      *
      * @return V[old] = new register index (0-based)
      */

@@ -49,14 +49,14 @@ public final class BudgetWeights {
      * One TNFA-builder action (state mint, epsilon edge, symbol edge) is
      * assumed to take this many ticks. Keeps the pre-determinization
      * surface CPU-bounded: nested counted repeats multiply builder actions
-     * geometrically (review r10 P0-1: {@code ((a{300}){300}){300}} used to
-     * OOM the JVM before any budget fired).
+     * geometrically (e.g. {@code ((a{300}){300}){300}} would OOM the JVM
+     * before any other budget fires).
      */
     public static final int TNFA_BUILD_ACTION_TICKS = 5;
     /**
      * One codepoint scanned by the parser's O(universe) case-fold range
      * expansion ({@code (?i)} classes) is assumed to take this many ticks
-     * (review r10 P1-1: the scan was unmetered linear work inside
+     * (without it the scan would be unmetered linear work inside
      * {@code Pattern.compile}).
      */
     public static final int FOLD_SCAN_CODEPOINT_TICKS = 2;
@@ -156,8 +156,7 @@ public final class BudgetWeights {
     /**
      * The per-kernel &epsilon;-closure spike (one closure, before any
      * totals cap can count it) is bounded to 1/16 of the compile RAM
-     * budget. At the 128 MiB default: 8 MiB / 80 B = ~100 K configs — the
-     * historical standalone cap.
+     * budget. At the 128 MiB default: 8 MiB / 80 B = ~100 K configs.
      */
     public static final int CLOSURE_SPIKE_DIVISOR = 16;
     /**

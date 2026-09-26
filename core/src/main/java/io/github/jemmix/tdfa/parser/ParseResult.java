@@ -11,8 +11,9 @@ import java.util.Map;
  * pipeline stages need that is not derivable from the AST alone — tag and
  * group numbering, effective scanner flags, and named-group metadata.
  *
- * <p>Replaces the former {@code Parser.capture()} side-channel (a Parser
- * instance whose mutable counters were read after parsing).
+ * <p>Complete by design: everything the later pipeline stages need travels
+ * in this result — no fact may be read off a {@code Parser} instance's
+ * mutable counters after parsing.
  *
  * <p>Components: {@code ast} is the parsed syntax tree (anchors injected if
  * requested); {@code tagCount} counts capture tags (2 per group; 1-indexed);

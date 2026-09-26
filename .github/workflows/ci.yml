@@ -1,8 +1,8 @@
 name: ci
 
-# Deliberately minimal and boring (2026-09, the "decade-stable" posture).
-# Floor policy r5 (docs/REVIEW-2026-09.md §1d): core+asm+facade ship Java 8
-# bytecode; pikesim/unicode ship Java 25 (latest LTS). Three jobs:
+# Deliberately minimal and boring.
+# Floor policy: core+asm+facade ship Java 8 bytecode; pikesim/unicode ship
+# Java 25 (latest LTS). Three jobs:
 #   check: full gate on a current JDK (everything; EP lint runs inside
 #       compile via --release cross-compilation),
 #   spotbugs: JDK 25 (4.9.x cannot scan JDK 26 runtime classes; the build
