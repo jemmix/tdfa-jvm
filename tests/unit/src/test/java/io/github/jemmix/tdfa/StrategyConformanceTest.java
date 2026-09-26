@@ -4,6 +4,7 @@ import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.MatchScratch;
 import io.github.jemmix.tdfa.core.RegexEngine;
+import io.github.jemmix.tdfa.core.WholeEngine;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
@@ -161,16 +162,17 @@ class StrategyConformanceTest {
         assertThat(t2).as("%s: matches strategy trace (vm=%s)", ctx, t1).isEqualTo(t1);
         // matchWhole() — the generated wholeOne leaf vs the runner's wholeWalk
         TdfaRunner.traceSnapshot();
-        MatchResult w1 = vm.matchWhole(in, new MatchScratch());
+        MatchResult w1 = ((WholeEngine) vm).matchWhole(in, new MatchScratch());
         t1 = TdfaRunner.traceSnapshot();
-        MatchResult w2 = asm.matchWhole(in, new MatchScratch());
+        MatchResult w2 = ((WholeEngine) asm).matchWhole(in, new MatchScratch());
         t2 = TdfaRunner.traceSnapshot();
         assertSameResult(w1, w2, ctx + " [matchWhole]");
         assertThat(t2).as("%s: matchWhole strategy trace (vm=%s)", ctx, t1).isEqualTo(t1);
         // CharSequence input: both must take the GENERIC delegation path
         CharSequence cs = new StringBuilder(in);
-        assertThat(asm.matchWhole(cs, new MatchScratch()) == null).as("%s: matchWhole(CharSequence) nullity", ctx)
-            .isEqualTo(vm.matchWhole(cs, new MatchScratch()) == null);
+        assertThat(((WholeEngine) asm).matchWhole(cs, new MatchScratch()) == null)
+            .as("%s: matchWhole(CharSequence) nullity", ctx)
+            .isEqualTo(((WholeEngine) vm).matchWhole(cs, new MatchScratch()) == null);
         return 9;
     }
 

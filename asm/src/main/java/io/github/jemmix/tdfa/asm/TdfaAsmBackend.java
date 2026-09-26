@@ -25,6 +25,7 @@ public final class TdfaAsmBackend {
 
     private static final AtomicLong COUNTER = new AtomicLong();
     private static final String ENGINE = "io/github/jemmix/tdfa/core/RegexEngine";
+    private static final String WHOLE = "io/github/jemmix/tdfa/core/WholeEngine";
     private static final String HOLDER = "io/github/jemmix/tdfa/tdfa/MatchHolder"; // moved out of TdfaRunner (2026-09 split)
     private static final String RESULT = "io/github/jemmix/tdfa/core/MatchResult";
 
@@ -144,7 +145,7 @@ public final class TdfaAsmBackend {
         boolean stackRegs = fastPath && stackRegsEligible(tdfa);
         FrameClassWriter cw = new FrameClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, owner, null, "java/lang/Object",
-            new String[]{ENGINE});
+            new String[]{ENGINE, WHOLE});
         if (delegate) {
             // Minimal class: just an init storing the runner, and forwarding stubs
             // for the RegexEngine interface. No static tables, no <clinit>.

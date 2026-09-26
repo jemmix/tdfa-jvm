@@ -3,6 +3,7 @@ package io.github.jemmix.tdfa.parser;
 import io.github.jemmix.tdfa.ast.Alphabet;
 import io.github.jemmix.tdfa.ast.Ast;
 import io.github.jemmix.tdfa.ast.CharClass;
+import io.github.jemmix.tdfa.core.PatternSyntaxException;
 import io.github.jemmix.tdfa.tdfa.BudgetWeights;
 import io.github.jemmix.tdfa.tdfa.Budgets;
 import io.github.jemmix.tdfa.tdfa.FrameBudget;
@@ -1018,7 +1019,7 @@ public final class Parser {
             // We don't support it either; reject at parse time so silent misparse
             // (treating \C as literal C) doesn't yield wrong matches.
             case 'C' :
-                throw new IllegalArgumentException("invalid escape sequence: \\C");
+                throw new PatternSyntaxException("invalid escape sequence", "\\C");
             // Zero-width assertions — RE2/re2j implement these fully.
             case 'A' :
                 return new Ast.StartAnchor(true); // \A = absolute start of text (immune to (?m))
@@ -1371,8 +1372,8 @@ public final class Parser {
             } // further digits cannot help
         }
         if (val > MAX_REPEAT_COUNT) {
-            throw new IllegalArgumentException(
-                "Parse error at index " + start + ": invalid repeat count (in \"" + s + "\")");
+            throw new PatternSyntaxException(
+                "Parse error at index " + start + ": invalid repeat count (in \"" + s + "\")", s);
         }
         return val;
     }
@@ -1453,7 +1454,8 @@ public final class Parser {
         return name;
     }
 
-    private static IllegalArgumentException fail(Parser p, String msg) {
-        return new IllegalArgumentException("Parse error at index " + p.pos + ": " + msg + " (in \"" + p.src + "\")");
+    private static PatternSyntaxException fail(Parser p, String msg) {
+        return new PatternSyntaxException("Parse error at index " + p.pos + ": " + msg + " (in \"" + p.src + "\")",
+            p.src);
     }
 }

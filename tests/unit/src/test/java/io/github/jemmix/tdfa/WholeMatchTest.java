@@ -4,7 +4,7 @@ import io.github.jemmix.tdfa.core.CompiledRegex;
 import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.MatchScratch;
 import io.github.jemmix.tdfa.core.PatternSyntaxException;
-import io.github.jemmix.tdfa.core.RegexEngine;
+import io.github.jemmix.tdfa.core.WholeEngine;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
@@ -129,26 +129,35 @@ class WholeMatchTest {
 
     /**
      * The evergreen core tier ({@code CompiledRegex}) runs the same
-     * pipeline: matches() through the whole engine, find() leftmost-first,
-     * and a bomb whose cut-free whole artifact exceeds the budget fails
-     * compile().
+     * pipeline minus the whole-match surface: find() leftmost-first, and a
+     * bomb whose cut-free whole artifact exceeds the budget fails
+     * compile(). Whole-input probing is the facade's job now; the core-tier
+     * idiom is a full-span check on {@code match(input, 0)}.
      */
     @Test
     void evergreenTier() {
         CompiledRegex p = CompiledRegex.compile("(a|ab)");
-        assertThat(p.matches("ab")).isTrue();
-        assertThat(p.matches("ac")).isFalse();
         assertThat(p.find("xxab")).isTrue();
         CompiledRegex q = CompiledRegex.compile("ab|a|ac");
-        assertThat(q.matches("ac")).isTrue();
         assertThat(q.find("xac")).isTrue();
-        CompiledRegex m = CompiledRegex.compile("a$");
-        assertThat(m.matches("a")).isTrue();
-        assertThat(m.matches("a\nb")).isFalse();
-        // Bomb corner: the cut-free whole artifact exceeds the compile
-        // budget, so compile() fails with the standard rejection.
-        assertThatThrownBy(() -> CompiledRegex.compile("(a{1,100}){1,100}")).isInstanceOf(PatternSyntaxException.class)
-            .hasMessageContaining("pattern too large");
+        // Full-span check on the find surface is the whole-match idiom for
+        // cut-irrelevant patterns (the artifact is identical to the
+        // cut-free build). The (a|ab) divergence class has NO core-tier
+        // whole answer — find stays leftmost-first there by design.
+        assertThat(span0(CompiledRegex.compile("a$"), "a")).isTrue();
+        assertThat(span0(CompiledRegex.compile("a$"), "a\nb")).isFalse();
+        assertThat(span0(CompiledRegex.compile("\\d+"), "123")).isTrue();
+        assertThat(span0(CompiledRegex.compile("\\d+"), "12a")).isFalse();
+        // Budget corner, core tier: no whole artifact is compiled anymore,
+        // so a bomb whose FIND artifact fits ships — the whole-bomb
+        // rejection is the facade's alone (wholeBombFailsCompile below).
+        CompiledRegex bomb = CompiledRegex.compile("(a{1,100}){1,100}");
+        assertThat(bomb.find("a")).isTrue();
+    }
+
+    private static boolean span0(CompiledRegex r, String in) {
+        MatchResult m = r.match(in, 0);
+        return m != null && m.start(0) == 0 && m.end(0) == in.length();
     }
 
     @Test
@@ -221,7 +230,7 @@ class WholeMatchTest {
             } catch (RuntimeException e) {
                 continue;
             }
-            RegexEngine facadeWhole = ((TDFAPattern) Pattern.compile(p)).wholeEngine();
+            WholeEngine facadeWhole = ((TDFAPattern) Pattern.compile(p)).wholeEngine();
             for (String s : inputs) {
                 MatchResult am = anchored.matchWhole(s, new MatchScratch());
                 MatchResult fm = facadeWhole.matchWhole(s, new MatchScratch());
@@ -296,10 +305,11 @@ class WholeMatchTest {
 
     /**
      * Nested-counted bomb: the find artifact compiles, the pike cut bit, and
-     * the cut-free whole artifact exceeds the determinization caps — so
-     * compile() FAILS with the clean "pattern too large" rejection on both
-     * tiers (the same compile-time budget contract the find artifact has
-     * always had; nothing materializes at match time).
+     * the cut-free whole artifact exceeds the determinization caps — so the
+     * FACADE's compile() FAILS with the clean "pattern too large" rejection
+     * (the same compile-time budget contract the find artifact has always
+     * had; nothing materializes at match time). The core tier ships the find
+     * artifact only and compiles (see evergreenTier).
      */
     @Test
     void wholeBombFailsCompile() {
@@ -307,8 +317,6 @@ class WholeMatchTest {
         assertThatThrownBy(() -> Pattern.compile(bomb)).isInstanceOf(PatternSyntaxException.class)
             .hasMessageContaining("pattern too large");
         assertThatThrownBy(() -> Pattern.compile(bomb, 0, TdfaRunner::new)).isInstanceOf(PatternSyntaxException.class)
-            .hasMessageContaining("pattern too large");
-        assertThatThrownBy(() -> CompiledRegex.compile(bomb)).isInstanceOf(PatternSyntaxException.class)
             .hasMessageContaining("pattern too large");
     }
 }

@@ -3,9 +3,10 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.asm.ShellEmitter;
 import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.CompileObserver;
-import io.github.jemmix.tdfa.core.CompiledRegex;
+import io.github.jemmix.tdfa.core.PatternSyntaxException;
 import io.github.jemmix.tdfa.core.RegexEngine;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import io.github.jemmix.tdfa.core.WholeEngine;
 import io.github.jemmix.tdfa.tdfa.Budgets;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
@@ -80,10 +81,15 @@ final class PatternCompiler {
             // memo budget so the pattern's combined memos stay within one budget.
             long memoBudget = Budgets.runtimeMemoryBytes() / (shared ? 1 : 2);
 
-            // One engine translation for both artifacts.
+            // One engine translation for both artifacts. The whole engine
+            // must be whole-capable (WholeEngine): a native runner or
+            // generated class over the whole artifact — a foreign factory
+            // engine that isn't falls back to a runner, so matches() never
+            // depends on a third-party whole walk.
             long t0 = System.nanoTime();
             RegexEngine eng = engineOf(find, factory, memoBudget);
-            RegexEngine wholeEng = shared ? eng : engineOf(whole, factory, memoBudget);
+            WholeEngine wholeEng = shared ? wholeOf(eng, find, memoBudget)
+                : wholeOf(engineOf(whole, factory, memoBudget), whole, memoBudget);
             obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
 
             if (vmSwitched()) {
@@ -110,8 +116,18 @@ final class PatternCompiler {
                 return new TDFAPattern(regex, flags, ps, eng, wholeEng, provider);
             }
         } catch (RuntimeException e) {
-            throw CompiledRegex.translate(e, regex);
+            throw PatternSyntaxException.translate(e, regex);
         }
+    }
+
+    /**
+     * The whole-serving view of a translated artifact engine: used as-is
+     * when the engine natively walks whole matches ({@code TdfaRunner},
+     * generated classes), else a runner over the same artifact — the
+     * whole-match walk is always a native one.
+     */
+    private static WholeEngine wholeOf(RegexEngine candidate, Tdfa artifact, long memoBudget) {
+        return candidate instanceof WholeEngine ? (WholeEngine) candidate : new TdfaRunner(artifact, memoBudget);
     }
 
     /**

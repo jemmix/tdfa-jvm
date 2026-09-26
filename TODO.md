@@ -1581,6 +1581,27 @@ PR #8). Two design questions the round deliberately did NOT decide:
       budgets (reject vs clamp), and what is checkable for BYO factory
       engines (nothing, likely — document).
 
+## Core-tier whole-match removal (2026-09-25 — resolved same day)
+
+`RegexEngine` lost `matchWhole` and `CompiledRegex` lost `matches()`/its
+`wholeEngine` compilation: the core tier is find-shaped (`find`/`match`/
+`findAll`), and a whole-bomb pattern like `(a{1,100}){1,100}` now compiles
+there (the rejection belongs to the facade, which still eagerly builds the
+cut-free whole artifact and still fails `compile()` when it bombs). The
+facade's whole machinery is otherwise unchanged — unpruned artifact shared
+with find whenever `pikeCutMatters()` is false — but dispatches through the
+narrow `core.WholeEngine` seam (implemented by `TdfaRunner` and the
+generated classes only); a BYO factory engine that doesn't implement the
+seam gets a plain runner for the whole role, closing the review-r10 P0-2
+class for good (no third-party whole walk is ever trusted). Scratch
+provisioning was evaluated and deliberately NOT exposed: carriers stay a
+`Matcher`-internal concern (single-threaded, mutable, easy to misuse), and
+the one silly hotspot — `findAll` allocating a carrier per element — is
+fixed inside the interface default (one carrier per iteration). Parser
+errors are now thrown as `PatternSyntaxException` where they're detected
+(`fail()`, `\C`, repeat counts); the old `CompiledRegex.translate` moved to
+`PatternSyntaxException.translate` (PSE passthrough, no `\C` special case).
+
 ## Wishlist (maybe, someday, if motivated)
 
 - [ ] `condy` / `invokedynamic` for lazy per-regex specialization
