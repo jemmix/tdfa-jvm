@@ -1,0 +1,117 @@
+---
+import Base from '../layouts/Base.astro';
+import PageHeader from '../components/PageHeader.astro';
+import Code from '../components/Code.astro';
+import AstLab from '../islands/AstLab.svelte';
+---
+
+<Base title="Parsing: pattern to AST">
+    <PageHeader num="03" title="Parsing: pattern to AST" lede="A hand-written, iterative-descent parser turns pattern text into a small tree — and quietly makes the decision that everything downstream depends on: captures become tags." />
+
+    <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
+        <h2>The grammar, and why it's iterative</h2>
+        <p>
+            The grammar is the classic regex ladder, each level binding tighter than the last:
+        </p>
+        <Code lang="text">{`alt     := concat ('|' concat)*         lowest precedence
+concat  := repeat*
+repeat  := atom ('*' | '+' | '?' | '{n,m}') '?'?
+atom    := literal | class | '.' | escape | anchor | group`}</Code>
+        <p>
+            The parser (<code>core/.../parser/Parser.java</code>) is iterative-descent — loops and an explicit stack of <code>GroupFrame</code> objects, not Java recursion. The reason is stack hygiene: with recursion, <code>(((((…</code>) nested ten thousand deep would blow the JVM stack; with an explicit deque, nesting depth costs heap — heap that is charged to the compile memory budget, so a nesting bomb fails with the same clean "pattern too large" error as any other bomb. re2j's parser is iterative for exactly the same reason, which is why it needs no depth cap.
+        </p>
+
+        <h2>The AST is small on purpose</h2>
+        <p>Nine node types, total:</p>
+        <div class="not-prose my-6 overflow-x-auto rounded-lg border border-zinc-200">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-zinc-200 bg-zinc-50 text-left text-xs tracking-wide text-zinc-500 uppercase">
+                        <th class="px-4 py-2">Node</th>
+                        <th class="px-4 py-2">Fields</th>
+                        <th class="px-4 py-2">Notes</th>
+                    </tr>
+                </thead>
+                <tbody class="text-zinc-700">
+                    {[
+                        ['Symbol', 'char c', 'one BMP codepoint'],
+                        ['CharClass', 'int[] ranges, boolean negated', 'flattened lo/hi pairs, always sorted + disjoint; \\p{L} materializes to ~1369 ranges here'],
+                        ['Tag', 'int tag (+fixedOn, fixedOffset)', 'the capture boundary marker — see below'],
+                        ['Concat', 'List<Ast>', 'sequence'],
+                        ['Alt', 'List<Ast>', 'alternation, branches in source order'],
+                        ['Repeat', 'Ast body, int min, int max, boolean greedy', 'the one quantifier node; max = Integer.MAX_VALUE means ∞'],
+                        ['StartAnchor / EndAnchor', 'boolean absolute, boolean multiline', '^ vs \\A, $ vs \\z — the multiline-ness is frozen at parse time'],
+                        ['WordBoundary / NoWordBoundary', '—', '\\b and \\B'],
+                        ['Empty', '—', 'the identity of concatenation'],
+                    ].map(([n, f, t]) => (
+                        <tr class="border-b border-zinc-100">
+                            <td class="px-4 py-1.5 font-mono text-[13px] font-medium">{n}</td>
+                            <td class="px-4 py-1.5 font-mono text-xs text-zinc-500">{f}</td>
+                            <td class="px-4 py-1.5 text-xs text-zinc-500">{t}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+        <p>
+            Even the tree printer avoids recursion (an explicit token stack in <code>Ast.render</code>) — same stack-hygiene reasoning, applied consistently.
+        </p>
+
+        <h2>Captures become tags — the decision everything else builds on</h2>
+        <p>
+            There is no "group" node. When the parser closes a capturing group it <em>rewrites</em> the group as <code>Concat[Tag(open), body, Tag(close)]</code>. Group 3's open and close boundaries are just two integers, and the numbering follows the position of the <code>(</code> in the source: tags are allocated the moment a group opens, so an outer group always has lower tag numbers than anything inside it.
+        </p>
+        <Code lang="java" title="parser/Parser.java — openGroup">{`int open = -1, close = -1;
+if (capturing) {
+    open = nextTag++;   // group g -> open tag 2g-1, close tag 2g
+    close = nextTag++;
+    groupCount++;
+}`}</Code>
+        <p>
+            So <em>group g has open tag 2g−1 and close tag 2g</em>, 1-indexed, and <code>tagCount = 2 × groupCount</code>. Every downstream stage speaks in tags, never in groups; the <code>MatchResult</code> readout at the very end maps back (<code>start(g) = tag(2(g−1)+1)</code>).
+        </p>
+        <p>
+            One consequence worth internalizing now: because a quantifier wraps whatever its atom was, and a group <em>is</em> rewritten into its body sandwiched by tags, <code>(a)+</code> becomes <code>Repeat(Concat[Tag1, a, Tag2])</code> — the tags are <em>inside</em> the loop. That's why a repeated group reports its <em>last</em> iteration, same as every other engine: each pass through the loop re-writes the tags, and the final pass's values survive.
+        </p>
+
+        <h2>Fixed tags: deleting the easy ones early</h2>
+        <p>
+            Before the TNFA is built, <code>ast/FixedTags.java</code> runs a linear pass that annotates tags whose value is <em>reconstructible</em>: the close of <code>(abc)</code> is always exactly open+3, so why track it at all? Each tag can declare "I'm fixed onto base tag B at distance D" — meaning: at match time, compute me as <code>tag[B] − D</code> (or nil if B is nil).
+        </p>
+        <p>
+            The walker propagates a triple — base tag, character distance since it, and distance since the last "level boundary" — down the tree. Concatenation of known-width atoms extends the distance (a supplementary-plane codepoint counts 2, since reconstruction runs in UTF-16 units). Alternation branches must <em>agree</em> on their length for anything after them to stay fixed; a repeat is fixed-length only when min = max. Anything ambiguous poisons the distance to NaN, and NaN arithmetic stays NaN — with integer-overflow poisoning too, because "a wrapped fixed offset is garbage."
+        </p>
+        <p>
+            Fixed tags then simply don't exist downstream: the TNFA builder emits a plain epsilon edge for them, registers are never allocated, and at match end <code>MatchResult.reconstructFixed</code> recomputes their values arithmetically. It's a small pass with an outsized effect on register pressure — <code>(\w+)@(\w+)</code>-shaped patterns are full of fixable tags.
+        </p>
+    </div>
+
+    <AstLab client:load />
+
+    <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
+        <h2>Parity quirks — the "verifiable against re2j" file</h2>
+        <p>
+            The parser's test oracle is re2j 1.8, and its comments read like a change log of lessons. A sample of the deliberate quirks:
+        </p>
+        <ul class="list-disc pl-6">
+            <li><code>{'{n,m}'}</code> caps at <code>MAX_REPEAT_COUNT = 1000</code> — re2j's repeat-count cap. Without it, <code>{'a{500000000}'}</code> would OOM the eager desugaring you'll meet in the TNFA chapter.</li>
+            <li><code>a{'{,5}'}</code> is a <em>literal</em> (the braces aren't a valid quantifier), and so is <code>a{'{٥}'}</code> with Arabic-Indic digits — ASCII digits only, re2j parity.</li>
+            <li><code>]</code> as the first class character is literal (<code>[]]</code> contains <code>]</code>); <code>[\b]</code> backspace is rejected; inverted ranges like <code>[z-a]</code> throw.</li>
+            <li>Flag scoping is per-group: <code>((?i)a)b</code> does <em>not</em> fold <code>b</code>. Every <code>)</code> restores the flags saved at its <code>(</code>.</li>
+            <li>Plain <code>(?i)</code> is full Unicode simple folding: <code>(?i)s</code> matches <code>ſ</code>. Inside classes, every range member is fold-expanded <em>before</em> negation, so <code>(?i)[^s]</code> still refuses <code>ſ</code>. (That per-codepoint scan is one of the metered hot spots — the fold scan ticks the compute budget.)</li>
+        </ul>
+
+        <h2>What gets rejected, and why</h2>
+        <p>
+            Backreferences (<code>\1</code>), lookaround (<code>(?=…)</code>), atomic groups (<code>(?>…)</code>) and possessive quantifiers (<code>a*+</code>) throw at parse time — not "unsupported, sorry," but structurally impossible for this class of engine. A backreference asks "what did group 1 match earlier?", a question about <em>history</em>, and the entire point of the TDFA construction is that history was resolved at compile time. Lookaround asks about the <em>future</em> — the same problem in the other direction. Atomic groups and possessive quantifiers exist specifically to prune a backtracking search; with no search to prune they are meaningless.
+        </p>
+        <p>
+            Crucially, the library never falls back to a slower engine to accept these. The syntax you can write is the syntax that runs linear time — no silent performance cliffs.
+        </p>
+
+        <h2>The output: an immutable value</h2>
+        <p>
+            Parsing returns a <code>ParseResult</code> — an immutable value carrying the AST, tag and group counts, flags, named groups, and the materialized Unicode ranges that runtime <code>\b</code> will need. It's "complete by design: no fact may be read off a Parser instance's mutable counters after parsing." (And it's a hand-written class, not a record — the Java 8 bytecode floor forbids them. That floor shapes little stylistic decisions all over this codebase.)
+        </p>
+    </div>
+</Base>

@@ -1,0 +1,59 @@
+---
+import Base from '../layouts/Base.astro';
+import PageHeader from '../components/PageHeader.astro';
+import Code from '../components/Code.astro';
+---
+
+<Base title="The bytecode backend">
+    <PageHeader num="11" title="The bytecode backend" lede="The default engine compiles each pattern to a real JVM class: the DFA walk becomes a tableswitch with inlined register stores — and for small register files, the registers become JVM locals." />
+
+    <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
+        <h2>One class per pattern</h2>
+        <p>
+            <code>asm/TdfaAsmBackend.java</code> (with <code>ShellEmitter</code> for the facade pair) emits <code>io.github.jemmix.tdfa.gen.Gen&lt;id&gt;</code> — <code>final</code>, implements <code>RegexEngine</code> and <code>WholeEngine</code>, constructed with the <code>Tdfa</code> tables it copies its static references from. Classloading is per-pattern through a child <code>GenClassLoader</code> that holds the bytes; the loader "stays reachable through the generated engine's own Class, so all of a pattern's generated classes unload together once the engine is garbage." No cross-compile cache — every <code>Pattern.compile</code> is self-contained, and serialization carries only the pattern text (a <code>SerialProxy</code> recompiles on the other side; generated classes are never serialized).
+        </p>
+        <p>
+            The generated shape is chosen by <code>pickMode</code>: <strong>INLINED</strong> for "fastPath" DFAs — no assertion masks, disjoint ranges, not multiline — whose estimated bytecode fits <code>INLINE_BUDGET_BYTES = 30_000</code> (a guard below the JVM's 65 KB per-method cliff, with separate estimates for the walk leaf and the masked-φ helper); <strong>DELEGATE</strong> for everything else — big DFAs, mask-bearing patterns, literal needles — which is a thin forwarder onto the shared interpreter.
+        </p>
+
+        <h2>What the walk looks like</h2>
+        <p>
+            The heart of an INLINED class is <code>extractOne(String, int, int, MatchScratch)</code>: a loop containing a <code>TABLESWITCH</code> on <code>state</code>, and under each case an <em>if-chain over the state's ranges</em>, sorted most-specific-mask-first — the same ownership rule the interpreter's backward walk implements, transcribed. A matched range checks the target's entry mask (before ops, as ever), runs the op block as straight-line bytecode, stores the new state, and jumps back to the loop head:
+        </p>
+        <Code lang="java" title="shape of the generated walk (decompiled intuition)">{`switch (state) {
+case 3:
+    if (c >= 'a' && c <= 'z') {          // range row
+        if ((ENTRY_MASK[7] & ~flags) != 0) goto dead;   // entry gate
+        regs[2] = pos;                                  // OP_SET_POS inlined
+        state = 7; pos += 1; flags = -1; goto loop;
+    }
+    if (c == '@') { /* ... */ }
+    goto dead;
+case 7: /* ... */
+}`}</Code>
+        <p>
+            φ (final ops) are applied eagerly at accept-record time via a generated helper: a <code>LOOKUPSWITCH</code> over accepting states — or, when the pattern has position-aware final variants, a two-dimensional <code>phiMasked</code> (switch on state, then <code>TABLESWITCH</code> over 64 posFlags values, cells deduplicated).
+        </p>
+
+        <h2>Stack-register leaves</h2>
+        <p>
+            The most specialized optimization in the backend: when the register file is small — <code>1 ≤ registerCount ≤ 32</code>, no final-variant selector — the generated walk keeps the registers <em>in JVM local slots</em> instead of the <code>int[]</code>. Every op becomes a bare <code>ILOAD</code>/<code>ISTORE</code> pair: no <code>takeRegs</code>, no <code>Arrays.fill</code> initialization, no array bounds checks in the hot loop, no clone on success (the result array is materialized from locals once per <em>successful</em> match). Measured: −18% at 4 registers, −10% at 8, tapering to parity around 40+ where the frame-size cost wins. The frame stays ≤ 51 slots. These classes report <code>wantsScratch() == false</code> — a Matcher for them allocates no carrier at all.
+        </p>
+
+        <h2>The shell: devirtualizing the API</h2>
+        <p>
+            The backend also emits the <code>Pattern</code>/<code>Matcher</code> pair — <code>GenNNNPattern extends TDFAPattern</code> and <code>GenNNNMatcher extends PatternMatcher</code> — with the engine typed as the <em>concrete final class</em>. The point is call-site quality: <code>Matcher.find()</code> calls into the strategy ladder and the walk leaf "with a statically-known final receiver, so the whole chain devirtualizes and inlines with no megamorphic hop." The ASM module compiles against core only, with facade types appearing as descriptor strings — keeping the module graph acyclic (<code>facade → asm → core</code>).
+        </p>
+
+        <h2>Generated code as a naming contract</h2>
+        <p>
+            Generated bytecode links <em>by name</em> to a handful of core members — the ladder hooks (<code>startBits()</code>, <code>originSimLeftmost</code>, <code>triggerScanTop</code>…), the tracing static, <code>takeRegs</code>. Rename any of them and production breaks with <code>NoSuchMethodError</code>. The defense is the <code>@EmittedSurface</code> annotation: RUNTIME retention, and a conformance test that asserts every annotated member still exists with the exact signature. A <code>StrategyConformanceTest</code> does the same for behavior — both backends must emit identical strategy traces on identical inputs, because "identical results can hide a different algorithm."
+        </p>
+        <p>Two practical flags: <code>-Dtdfa.asm.dump</code> writes the generated classes to your temp dir for inspection, and <code>-Dtdfa.engine=VM</code> skips codegen entirely.</p>
+
+        <h2>Why the interpreter sometimes wins anyway</h2>
+        <p>
+            A counterintuitive benchmark result that the README is upfront about: on the short-input search corpus, the VM backend's geomean is <em>better</em> than ASM's (68 vs 97 ns/op). The reason is structural — unanchored search is dominated by the shared strategy ladder (literal scans, candidate scans, the SearchDfa), which both backends run identically through the same <code>TdfaRunner</code>; the bytecode wins concentrate in the per-state dispatch shapes of long anchored walks. Codegen's ~1 ms compile premium buys you the walks; if your workload is find()-heavy on short inputs, the interpreter is already at the ceiling. Choose with <code>-Dtdfa.engine</code> — or per-compile with a <code>RegexEngineFactory</code> — and note the parity guarantees make the choice safe either way.
+        </p>
+    </div>
+</Base>

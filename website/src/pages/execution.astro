@@ -1,0 +1,109 @@
+---
+import Base from '../layouts/Base.astro';
+import PageHeader from '../components/PageHeader.astro';
+import Code from '../components/Code.astro';
+import SearchLab from '../islands/SearchLab.svelte';
+---
+
+<Base title="Execution: the run loop and the search ladder">
+    <PageHeader num="10" title="Execution: the run loop and the search ladder" lede="Match time is a walk over flat arrays — and a tiered strategy for unanchored search that finds the leftmost match without re-running the walk at every offset." />
+
+    <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
+        <h2>The artifact</h2>
+        <p>
+            The frozen <code>Tdfa</code> is a handful of parallel <code>int[]</code>s, and the interpreter's whole job is to walk them. The layout is worth internalizing because both backends (interpreter and bytecode) read the same tables:
+        </p>
+        <div class="not-prose my-6 overflow-x-auto rounded-lg border border-zinc-200">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-zinc-200 bg-zinc-50 text-left text-xs tracking-wide text-zinc-500 uppercase">
+                        <th class="px-4 py-2">Array</th>
+                        <th class="px-4 py-2">Meaning</th>
+                    </tr>
+                </thead>
+                <tbody class="text-zinc-700">
+                    <tr class="border-b border-zinc-100"><td class="px-4 py-1.5 font-mono text-[13px]">stateMeta[s]</td><td class="px-4 py-1.5 text-zinc-600"><span class="mono">(rangeCount &lt;&lt; 1) | acceptBit</span> — one load answers "am I accepting" and "how many ranges"</td></tr>
+                    <tr class="border-b border-zinc-100"><td class="px-4 py-1.5 font-mono text-[13px]">stateBase[s] → ranges</td><td class="px-4 py-1.5 text-zinc-600">5-int stride per transition: <span class="mono">lo, hi, target, opsOffset, requiredMask</span>; target −1 = dead marker</td></tr>
+                    <tr class="border-b border-zinc-100"><td class="px-4 py-1.5 font-mono text-[13px]">entryHiPrefix</td><td class="px-4 py-1.5 text-zinc-600">running max of <span class="mono">hi</span> per entry — bounds the backward scan after the binary search</td></tr>
+                    <tr class="border-b border-zinc-100"><td class="px-4 py-1.5 font-mono text-[13px]">ops</td><td class="px-4 py-1.5 text-zinc-600">3-int-stride op blocks, <span class="mono">OP_END</span>-terminated</td></tr>
+                    <tr class="border-b border-zinc-100"><td class="px-4 py-1.5 font-mono text-[13px]">entryMask / acceptMask</td><td class="px-4 py-1.5 text-zinc-600">assertion requirements to enter a state / declare its accept</td></tr>
+                    <tr class="border-b border-zinc-100"><td class="px-4 py-1.5 font-mono text-[13px]">finalOps / finalOpsByMask</td><td class="px-4 py-1.5 text-zinc-600">φ ops; or the 64-cell position-aware selector (Anchors chapter)</td></tr>
+                    <tr><td class="px-4 py-1.5 font-mono text-[13px]">stopOnAcceptMask</td><td class="px-4 py-1.5 text-zinc-600">Perl "stop or keep walking" decision per (state, posFlags); 2D or 1-byte-per-state tier</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h2>The anchored walk</h2>
+        <p>The main loop of <code>TdfaRunner.extractFrom</code>, compressed to its skeleton:</p>
+        <Code lang="java">{`for (;;) {
+    if (accepting(state)) {
+        recordAccept();            // applies φ ops EAGERLY, pos = current
+        if (!longestMatch && stopNow(state, posFlags)) break;   // can't grow
+    }
+    int c = Alphabet.decode(input, pos, end);      // one codepoint
+    int row = findRange(state, c);                 // dispatch ladder below
+    if (row < 0) break;                            // dead: walk over
+    if (!entryOk(targetOf(row))) break;            // mask gate BEFORE ops
+    applyOps(opsOf(row), regs, pos);               // SET_POS / SET_NIL / COPY
+    state = targetOf(row);
+    pos += width(c);  posFlags = -1;               // recompute lazily
+}`}</Code>
+        <p>Three details worth a second look:</p>
+        <ul class="list-disc pl-6">
+            <li>
+                <strong>The dispatch ladder.</strong> <code>findRange</code> tries, in order: a flat Latin-1 table (256-wide per state, only when the DFA is small and ranges are disjoint — the ≤ 8192-state gate from the Alphabet chapter); then memoized "walk blocks" for BMP codepoints above it (a lazily-built, budgeted index that falls back to plain search); then the baseline — binary search for the rightmost <code>lo ≤ c</code>, walk backwards while the <em>hi</em>-prefix bound says the entry could still cover <code>c</code>, and among covering rows the most-specific satisfied <code>requiredMask</code> owns the step. The bytecode backend compiles the same ownership order into its if-chains, so the two engines cannot disagree.
+            </li>
+            <li>
+                <strong>Entry masks gate before ops.</strong> A transition whose target's entry mask fails is never taken — and its tag writes must not "contaminate the register file." Ordering is correctness, not hygiene.
+            </li>
+            <li>
+                <strong>Stop-or-extend.</strong> In Perl mode, accepting doesn't end the walk if a higher-priority path could still extend the match — that's the stop table's job, derived at compile time from exactly the Pike-cut analysis you saw in determinization. In POSIX mode the guards vanish: walk to the end, last accept wins.
+            </li>
+        </ul>
+
+        <h2>Unanchored search: the ladder</h2>
+        <p>
+            <code>find()</code> — "the first match anywhere" — is the hard regime for DFA engines, because the naive answer is "restart the walk at every offset," which is quadratic-ish and defeats the whole point. The engine instead climbs a strategy ladder, instrumented by a <code>Strategy</code> enum so tests can assert both backends pick identical strategies on identical inputs:
+        </p>
+        <div class="not-prose my-6 space-y-2">
+            {[
+                ['LITERAL', 'The whole pattern is a literal string: String.indexOf — the JIT\'s vectorized intrinsic — plus surrogate-boundary guards. ~0.2 vs ~6.5 ns/char. Only patterns with no groups, no tags, no assertions, and a final state with no live outgoing edge qualify (a+ can\'t: the walk must run).'],
+                ['EXACT_FROM', 'One exact walk from the known start. The common case; O(input).'],
+                ['CAND_SCAN', 'Short inputs (≤ 64): bit-test each char against a "first character" bitset (startBits) to skip hopeless starts. After 3 failed extract walks, a register-free boolean pre-filter is added adaptively.'],
+                ['ORIGIN_SIM', 'NFA-style multi-state bitset simulation with per-state origin tracking — "smallest start position that reached this state," min-merged per step. Finds the leftmost start directly, bounded to 4096 characters of budget.'],
+                ['TRIGGER / RAW_SCAN', 'The tier the playground below animates: a scan over live sets, memoized as the SearchDfa. Windows < 2048 codepoints run it unmemoized.'],
+                ['WALK_RESTART', 'The defensive floor: restart the walk per start. Rarely reached.'],
+            ].map(([n, d]) => (
+                <div class="flex gap-3 rounded-lg border border-zinc-200 bg-white p-3">
+                    <span class="mono w-36 shrink-0 pt-0.5 text-xs font-semibold text-teal-700">{n}</span>
+                    <p class="text-sm leading-relaxed text-zinc-600">{d}</p>
+                </div>
+            ))}
+        </div>
+
+        <h2>The SearchDfa: interning live sets</h2>
+        <p>
+            The trick that makes unanchored scan cheap: simulate the TNFA as <em>bitsets of live states</em>, and <strong>intern the rows</strong> — a row content seen before becomes an id, and the id becomes a state of a second, tag-free DFA whose transitions are precomputed. "The scan loop is ~3 array loads per char instead of a bitset simulation step." Unanchored-ness is baked in as a self-loop: after computing the pure step, OR the start state back in — the implicit <code>.*?</code> prefix, as one array write instead of restart loops.
+        </p>
+        <p>
+            Two more ideas do heavy lifting. <strong>Kill points:</strong> when a step kills every thread, the next row is the pure seed — and no match can start before the next position, so the search-window base <code>W</code> jumps forward; that's how the restart loop stays bounded to <code>[W, to]</code>. <strong>Over-approximation:</strong> the scan ignores assertion masks and treats "any accept-capable state live" as a trigger — "a trigger can fire without a real match… but it can never miss one." A trigger hands off to one exact anchored walk from <code>W</code> to pin the match and captures.
+        </p>
+        <p>
+            Memoization is budgeted: transitions are stored as de-duplicated 512-codepoint blocks; the 16 MiB runtime budget splits in eighths — 4/8 rows, 3/8 blocks, 1/8 the walk memo — and past the caps the scan continues <em>unmemoized with the exact live set</em>. Correct first, fast where memory allows.
+        </p>
+    </div>
+
+    <SearchLab client:load />
+
+    <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
+        <h2>Whole-input matching: the second artifact</h2>
+        <p>
+            <code>matches()</code> — "does the <em>entire</em> input match, and what are the captures" — runs a different protocol: anchored at 0, walk to EOF, succeed iff an accept is alive exactly at EOF; mid-walk accepts are stepped past, never recorded. The subtle part: the find artifact's Pike cut can discard accepting paths that a <em>full-length</em> match needs — <code>(a|ab)</code> against <code>"ab"</code>: leftmost-first prunes the <code>ab</code> continuation once <code>a</code> accepts, but whole-input matching needs the survivor. The compiler detects this shape (<code>pikeCutMatters</code>) and, when set, compiles a second, <em>cut-free</em> artifact for the whole engine. When the artifact is shared, so is the memo budget; when split, each gets half.
+        </p>
+
+        <h2>Matchers, scratch, and threads</h2>
+        <p>
+            Where does the register file live? In a <code>MatchScratch</code> carrier owned by the <code>Matcher</code> — grow-only arrays rented out per call, contents undefined between takes, cloned before anything escapes. That's the re2j shape: the stateful Matcher owns its buffers, the engine stays immutable and shareable across threads, and there are no <code>ThreadLocal</code>s on the match path at all — which also avoids per-match overhead for virtual threads. Carrier-free engines (the bytecode backend's small-register fast paths report <code>wantsScratch() == false</code>) get <code>null</code> and allocate cold.
+        </p>
+    </div>
+</Base>

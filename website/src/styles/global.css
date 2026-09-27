@@ -1,0 +1,61 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+html {
+    scroll-behavior: smooth;
+}
+
+/* code blocks (inside .not-prose wrappers, so typography never touches them) */
+pre.tdfa-code {
+    @apply overflow-x-auto px-4 py-3.5 text-[13px] leading-[1.65] text-zinc-800;
+}
+pre.tdfa-code code {
+    @apply font-mono;
+}
+.tok-kw { @apply font-medium text-indigo-700; }
+.tok-str { @apply text-teal-700; }
+.tok-com { @apply text-zinc-400; }
+.tok-num { @apply text-amber-800; }
+.tok-ann { @apply text-sky-700; }
+
+/* islands */
+.island {
+    @apply my-8 rounded-xl border border-zinc-300 bg-white shadow-sm;
+}
+.island-header {
+    @apply flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-zinc-200 bg-zinc-50 px-4 py-2.5 text-sm;
+}
+.island-title {
+    @apply font-semibold text-zinc-800;
+}
+.island-body {
+    @apply p-4;
+}
+.island-caption {
+    @apply border-t border-zinc-200 bg-zinc-50/60 px-4 py-2 text-xs leading-relaxed text-zinc-500;
+}
+.btn {
+    @apply inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-40;
+}
+.btn-primary {
+    @apply border-teal-700 bg-teal-700 text-white hover:bg-teal-800 hover:text-white;
+}
+.chip {
+    @apply inline-flex items-center rounded px-1.5 py-0.5 font-mono text-xs;
+}
+.mono {
+    @apply font-mono text-[13px];
+}
+input[type="text"].field {
+    @apply w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 font-mono text-sm text-zinc-800 shadow-inner focus:border-teal-600 focus:outline-none;
+}
+
+/* term tooltips */
+dfn {
+    @apply font-medium;
+}

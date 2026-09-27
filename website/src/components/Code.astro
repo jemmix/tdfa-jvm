@@ -1,0 +1,65 @@
+---
+// Minimal regex-based highlighter for display purposes only.
+// Not a parser. Good enough for fenced blocks in static content.
+
+interface Props {
+    lang?: 'java' | 'ts' | 'text' | 'bash';
+    title?: string;
+}
+const { lang = 'java', title } = Astro.props;
+
+const raw = await Astro.slots.render('default');
+// the slot arrives HTML-encoded; code blocks want their literal characters back
+const decoded = raw
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+const code = decoded.replace(/^\n+|\n+$/g, '');
+
+function esc(s: string): string {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+const JAVA_KW = /\b(abstract|assert|boolean|break|byte|case|catch|char|class|const|continue|default|do|double|else|enum|extends|final|finally|float|for|goto|if|implements|import|instanceof|int|interface|long|native|new|package|private|protected|public|record|return|short|static|strictfp|super|switch|synchronized|this|throw|throws|transient|try|void|volatile|while|var|true|false|null)\b/g;
+const TS_KW = /\b(break|case|catch|class|const|continue|default|do|else|enum|export|extends|false|finally|for|function|if|import|in|instanceof|interface|let|new|null|return|static|super|switch|this|throw|true|try|type|typeof|var|void|while|yield|as|of)\b/g;
+
+function highlight(src: string, lang: string): string {
+    let out = esc(src);
+    if (lang === 'bash') {
+        out = out.replace(/(#.*)$/gm, '<span class="tok-com">$1</span>');
+        return out;
+    }
+    // stash comments and strings first; the S-prefixed ids keep later
+    // keyword/number passes from matching inside them (no word boundary)
+    const stash: string[] = [];
+    const keep = (s: string, cls: string): string => {
+        stash.push(`<span class="${cls}">${s}</span>`);
+        return `\u0000S${stash.length - 1}\u0000`;
+    };
+    out = out.replace(/\/\*[\s\S]*?\*\//g, (m) => keep(m, 'tok-com'));
+    out = out.replace(/\/\/[^\n]*/g, (m) => keep(m, 'tok-com'));
+    out = out.replace(/"(?:[^"\\\n]|\\.)*"/g, (m) => keep(m, 'tok-str'));
+    out = out.replace(/'(?:[^'\\\n]|\\.)*'/g, (m) => keep(m, 'tok-str'));
+    if (lang === 'java') {
+        out = out.replace(JAVA_KW, '<span class="tok-kw">$1</span>');
+        out = out.replace(/(@\w+)/g, '<span class="tok-ann">$1</span>');
+    } else if (lang === 'ts') {
+        out = out.replace(TS_KW, '<span class="tok-kw">$1</span>');
+    }
+    out = out.replace(/\b(\d[\d_]*)\b/g, '<span class="tok-num">$1</span>');
+    out = out.replace(/\u0000S(\d+)\u0000/g, (_, i) => stash[Number(i)]);
+    return out;
+}
+---
+
+<div class="not-prose my-6 overflow-hidden rounded-lg border border-zinc-300 bg-white">
+    {title && (
+        <div class="flex items-center gap-2.5 border-b border-zinc-200 bg-zinc-100 px-4 py-2">
+            <span class="h-2 w-2 shrink-0 rounded-full bg-teal-600"></span>
+            <span class="truncate font-mono text-xs font-medium text-zinc-600">{title}</span>
+        </div>
+    )}
+    <pre class="tdfa-code"><code set:html={highlight(code, lang)} /></pre>
+</div>

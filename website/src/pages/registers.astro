@@ -1,0 +1,88 @@
+---
+import Base from '../layouts/Base.astro';
+import PageHeader from '../components/PageHeader.astro';
+import Code from '../components/Code.astro';
+import RegisterLab from '../islands/RegisterLab.svelte';
+---
+
+<Base title="Registers: captures that survive determinization">
+    <PageHeader num="07" title="Registers: captures that survive determinization" lede="The DFA remembers positions in a flat int[]. Making that file small is a compiler problem — liveness, interference, coalescing — and the engine solves it like a compiler would." />
+
+    <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
+        <h2>The register file</h2>
+        <p>
+            After determinization, the entire match-time state is: <em>current DFA state</em> plus <em>current position</em> plus <em>one integer array</em>. The array has two blocks. <strong>Working registers</strong> hold in-flight tag values as transitions fire. <strong>Final registers</strong> — always a contiguous block at the top, <code>[finalRegBase, finalRegBase+tagCount)</code> — hold the answer: <code>MatchResult.tag(t)</code> is literally <code>regs[finalRegBase + t − 1]</code>. Everything initializes to <code>−1</code>, which is NIL: an unset group simply never got written. When a match succeeds, the array is cloned into an immutable <code>MatchHolder</code>, and fixed tags (chapter 03) are reconstructed arithmetically on top.
+        </p>
+        <p>The op ISA is three instructions plus a terminator, stored as flat <code>int[]</code> triplets:</p>
+        <div class="not-prose my-6 overflow-x-auto rounded-lg border border-zinc-200">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-zinc-200 bg-zinc-50 text-left text-xs tracking-wide text-zinc-500 uppercase">
+                        <th class="px-4 py-2">Opcode</th>
+                        <th class="px-4 py-2">Encoding</th>
+                        <th class="px-4 py-2">Semantics</th>
+                    </tr>
+                </thead>
+                <tbody class="text-zinc-700">
+                    <tr class="border-b border-zinc-100"><td class="px-4 py-1.5 font-mono">OP_SET_POS (1)</td><td class="px-4 py-1.5 font-mono text-zinc-500">[1, dst, 0]</td><td class="px-4 py-1.5"><span class="mono">regs[dst] = pos</span> — the cursor when the op runs</td></tr>
+                    <tr class="border-b border-zinc-100"><td class="px-4 py-1.5 font-mono">OP_SET_NIL (2)</td><td class="px-4 py-1.5 font-mono text-zinc-500">[2, dst, 0]</td><td class="px-4 py-1.5"><span class="mono">regs[dst] = −1</span></td></tr>
+                    <tr class="border-b border-zinc-100"><td class="px-4 py-1.5 font-mono">OP_COPY (3)</td><td class="px-4 py-1.5 font-mono text-zinc-500">[3, dst, src]</td><td class="px-4 py-1.5"><span class="mono">regs[dst] = regs[src]</span></td></tr>
+                    <tr><td class="px-4 py-1.5 font-mono">OP_END (0)</td><td class="px-4 py-1.5 font-mono text-zinc-500">terminator</td><td class="px-4 py-1.5">ends a block; <span class="mono">ops[0]=OP_END</span> is the shared "no ops" sentinel</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <p>
+            <strong>Transition ops</strong> hang off a range row and run when the character is consumed, with <code>pos</code> = the character's own position — which is exactly the position where the source ε-closure ran, so a tag set "just before eating the char" lands on the right boundary. <strong>Final (φ) ops</strong> run at accept time — <em>eagerly</em>, the moment a longer-priority accept overwrites a recorded one, with <code>pos</code> = match end. Eager matters: replaying lazily at end-of-walk would read end-of-walk register values and "invert group spans" — the accept config's working registers hold the correct values only at accept time.
+        </p>
+        <p>
+            There's also a hard invariant, enforced at validation: <em>transition ops never write the final block</em>. Otherwise a dead path could clobber accept-time values on its way to dying.
+        </p>
+    </div>
+
+    <RegisterLab client:load />
+
+    <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
+        <h2>Why the playground's one-register-per-tag is wasteful</h2>
+        <p>
+            The hand-compiled DFA above uses four working registers, and at any instant at most two are live: after <code>@</code> is consumed, <code>r_t1</code>'s value is still needed (for the final answer) but <code>r_t2</code> won't be read again until accept… in this small case the waste is invisible. Generalize to <code>(\w+)@(\w+):(\d+)</code> and a one-register-per-tag policy starts to look like a function with no stack reuse — every variable, even dead ones, holding a frame slot forever.
+        </p>
+        <p>
+            Worse, during determinization the engine doesn't even <em>try</em> to share: each source state gets fresh registers for its tags (<code>nextReg++</code> per (source, tag, sign) on first use) because sharing at that moment would couple unrelated states. A mid-sized pattern can determinize to dozens of registers. That's where <code>regopt</code> comes in — and why it's a whole compiler pass.
+        </p>
+
+        <h2>regopt: liveness, interference, coalescing</h2>
+        <p>
+            <code>regopt/Optimize.java</code> implements BT22 §6.3 — and it is, structurally, the register allocator from a compiler textbook, operating on a control-flow graph whose basic blocks are the op lists of DFA transitions:
+        </p>
+        <ol class="list-decimal pl-6">
+            <li>
+                <strong>Build the CFG.</strong> Nodes are transition blocks and accept blocks; arcs follow DFA reachability, <em>skipping zero-op transitions transitively</em> — that transitive closure is what liveness needs. (There's a cap: a pathological 287-state DFA once produced 157 million edges before the <code>maxCfgEdges</code> limit was drawn from the memory budget.)
+            </li>
+            <li>
+                <strong>Compaction:</strong> drop registers nothing reads, renumber contiguously, finals as a contiguous block on top.
+            </li>
+            <li>
+                <strong>Liveness + dead-code elimination:</strong> classic backward dataflow — a register is live if some later op reads it before overwriting; seeds are the final registers at accept blocks. Ops writing dead registers are deleted. (The paper's round-robin fixpoint was too slow at scale, so rows are bit-packed <code>long[]</code>s with a post-order worklist — an 11k-block CFG went from 1.4 s to fast.)
+            </li>
+            <li>
+                <strong>Interference + allocation:</strong> two registers interfere if their lifetimes overlap <em>and</em> they don't always hold the same value — the value-tracking pre-pass exploits that all <code>SET_POS</code> ops in one block write the same cursor. Allocation is Chaitin-style with copy coalescing: COPY sources and destinations merge into one register when legal, non-interfering classes merge, leftovers get their own slots. <strong>Final registers never coalesce</strong> — the readout protocol <code>regs[finalRegBase+t−1]</code> must stay fixed.
+            </li>
+            <li>
+                <strong>Normalization:</strong> within each block, dedup ops, sort SETs by destination, and topologically sort COPYs so no copy reads a register after something overwrote it ("handles both RAW and WAR hazards").
+            </li>
+        </ol>
+        <p>
+            Steps 3–5 run <strong>twice</strong> — the paper's N=2 — because each pass's renaming creates fresh coalescing opportunities for the next. Compile reports the effect as a note like <code>regs 14-&gt;6</code>. The pass is gated (patterns above <code>tdfa.regopt.max=2000</code> states skip it) and the unoptimized layout is always a correct fallback.
+        </p>
+
+        <h2>The final ops, revisited</h2>
+        <p>
+            One more determinization-time detail belongs here because it's about the registers' <em>meaning</em>. A DFA state may merge several accepting configurations, in priority order, gated by different assertions — <code>a$\n?</code>-style shapes. Which accept's tag values win depends on the runtime position (is this the end of text? a line break?). So the compiler solves, per accepting state, a small case analysis: for each of the 64 possible position-flag values, <em>the first accepting config alive under those flags</em> — that's the winner whose values the φ ops must materialize. When the answer is the same config for all 64 (the overwhelmingly common case), nothing extra is stored. Otherwise the state gets a 64-cell selector table into per-winner op lists — the "final variants" machinery, which the Anchors chapter shows in context.
+        </p>
+
+        <h2>What this engine deliberately doesn't have</h2>
+        <p>
+            The BT22 paper also specifies a <em>fallback</em> TDFA flavor — runtime tag stacks, replayed on ambiguous merges — which trades compile-time analysis for smaller automata. This engine implements only the <strong>lookahead</strong> flavor: histories exist solely at compile time to synthesize ops; at match time there is nothing but the flat register file. The fallback machinery is stubbed (<code>BLOCK_FALLBACK</code>, <code>KIND_APPEND</code>, "reserved for M3") and single-valued tags cover the whole supported feature set. One algorithm, no per-pattern engine choice — that's the "TeX, not a platform" design philosophy.
+        </p>
+    </div>
+</Base>

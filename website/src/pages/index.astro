@@ -1,0 +1,83 @@
+---
+import Base from '../layouts/Base.astro';
+import { pages } from '../lib/pages';
+---
+
+<Base title="How tdfa-jvm works">
+    <header class="mb-12">
+        <div class="mb-3 font-mono text-sm font-semibold tracking-widest text-teal-700">TDFA-JVM EXPLAINED</div>
+        <h1 class="text-4xl font-bold tracking-tight text-zinc-900 sm:text-5xl">
+            A regex engine with<br /><span class="text-teal-700">no backtracking — ever</span>
+        </h1>
+        <p class="mt-5 max-w-2xl text-lg leading-relaxed text-zinc-600">
+            <a href="https://github.com/jemmix/tdfa-jvm" class="font-medium text-teal-700 hover:underline" target="_blank" rel="noopener">tdfa-jvm</a>{' '}
+            compiles every regular expression you hand it into a deterministic finite automaton — and then into JVM bytecode. Matching is a table walk: one step per character, no matter how pathological the pattern.
+            This site explains how that pipeline works, stage by stage, for working engineers — if hash maps and BFS are in your toolbox, this is for you; no automata-theory background assumed.
+        </p>
+    </header>
+
+    <section class="mb-14">
+        <h2 class="mb-4 text-xl font-bold text-zinc-900">The one-minute version</h2>
+        <div class="space-y-3">
+            {[
+                ['Parse', 'the pattern text becomes a syntax tree; every capture group gets two "tags" — integers marking its open and close boundaries.'],
+                ['Thompson-build', 'the tree becomes a TNFA: a graph whose "free move" edges carry those tags plus priorities, so the graph itself encodes both <i>what to capture</i> and <i>which alternative is preferred</i>.'],
+                ['Determinize', 'subset construction folds every possible "thread list" into DFA states. The tag bookkeeping that would be unbounded gets resolved <i>at compile time</i> into tiny register operations — SET position, COPY, SET nil — attached to the DFA transitions.'],
+                ['Optimize & minimize', 'a register-allocation pass (the same ideas a compiler uses for CPU registers) shrinks the register file; a Moore-algorithm pass merges redundant states.'],
+                ['Execute', 'the automaton runs as a flat int-array walk — or as generated JVM bytecode, one <span class="mono">tableswitch</span> per state. Unanchored search adds a scan tier that finds leftmost starts without restarting the walk at every offset.'],
+            ].map(([t, d]) => (
+                <div class="flex gap-4 rounded-lg border border-zinc-200 bg-white p-4">
+                    <div class="w-28 shrink-0 pt-0.5 text-right font-mono text-xs font-semibold text-teal-700">{t}</div>
+                    <p class="text-sm leading-relaxed text-zinc-600" set:html={d} />
+                </div>
+            ))}
+        </div>
+        <p class="mt-4 text-sm leading-relaxed text-zinc-500">
+            The result: 2–6× faster than re2j on short-input search, drop-in <span class="mono">Pattern</span>/<span class="mono">Matcher</span> API, and a structural guarantee that no pattern can burn your match-time budget — because there is no backtracking engine in the library at all.
+        </p>
+    </section>
+
+    <section class="mb-14">
+        <h2 class="mb-4 text-xl font-bold text-zinc-900">The pipeline, end to end</h2>
+        <div class="overflow-x-auto rounded-xl border border-zinc-200 bg-zinc-50 p-5">
+            <div class="flex min-w-max items-stretch gap-2">
+                {[
+                    { artifact: '"(\\w+)@(\\w+)"', stage: 'Parser', cls: 'parser/Parser.java', out: 'AST + tags t1..t4', href: '/parsing/' },
+                    { artifact: 'AST', stage: 'Tnfa.Builder', cls: 'tnfa/Tnfa.java', out: 'TNFA (tagged NFA)', href: '/tnfa/' },
+                    { artifact: 'TNFA', stage: 'TdfaCompiler', cls: 'tdfa/TdfaCompiler.java', out: 'DeterminizedDfa', href: '/determinization/' },
+                    { artifact: 'DeterminizedDfa', stage: 'TdfaMaterializer', cls: 'tdfa/TdfaMaterializer.java', out: 'Tdfa (flat tables)', href: '/registers/' },
+                    { artifact: 'Tdfa', stage: 'ASM / VM', cls: 'asm/TdfaAsmBackend.java', out: 'bytecode or interpreter', href: '/asm/' },
+                    { artifact: 'input text', stage: 'TdfaRunner', cls: 'tdfa/TdfaRunner.java', out: 'MatchResult', href: '/execution/' },
+                ].map((s, i) => (
+                    <div class="flex items-stretch gap-2">
+                        {i > 0 && <div class="flex items-center text-zinc-300">→</div>}
+                        <a href={s.href} class="block w-44 rounded-lg border border-zinc-300 bg-white p-3 transition hover:border-teal-500 hover:shadow-sm">
+                            <div class="mono mb-1 truncate text-[10px] text-zinc-400">{s.artifact}</div>
+                            <div class="text-sm font-semibold text-zinc-800">{s.stage}</div>
+                            <div class="mono mt-0.5 truncate text-[10px] text-zinc-400">{s.cls}</div>
+                            <div class="mono mt-2 text-[11px] text-teal-700">↓ {s.out}</div>
+                        </a>
+                    </div>
+                ))}
+            </div>
+        </div>
+        <p class="mt-3 text-xs text-zinc-500">Every box is a real class in the repo. <span class="mono">FixedTags</span>, <span class="mono">regopt.Optimize</span> and <span class="mono">DfaMinimizer</span> ride along inside the boxes they optimize — each has its own chapter.</p>
+    </section>
+
+    <section>
+        <h2 class="mb-4 text-xl font-bold text-zinc-900">Chapters</h2>
+        <div class="grid gap-3 sm:grid-cols-2">
+            {
+                pages.map((p) => (
+                    <a href={p.href} class="group flex items-baseline gap-3 rounded-lg border border-zinc-200 bg-white p-4 transition hover:border-teal-500 hover:shadow-sm">
+                        <span class="font-mono text-sm font-semibold text-zinc-300 group-hover:text-teal-600">{p.num}</span>
+                        <span class="text-sm font-medium text-zinc-800 group-hover:text-teal-800">{p.title}</span>
+                    </a>
+                ))
+            }
+        </div>
+        <p class="mt-6 text-sm leading-relaxed text-zinc-500">
+            Seven chapters contain interactive playgrounds — a naive backtracker with a visible step count, a Pike-VM thread simulator, a subset-construction stepper, a live register file, and more. Everything that runs in your browser is a faithful miniature of the corresponding Java code, with the file and class names given so you can go read the real thing.
+        </p>
+    </section>
+</Base>

@@ -1,0 +1,57 @@
+---
+import Base from '../layouts/Base.astro';
+import PageHeader from '../components/PageHeader.astro';
+import Code from '../components/Code.astro';
+---
+
+<Base title="Anchors and zero-width assertions">
+    <PageHeader num="08" title="Anchors and other zero-width assertions" lede="^, $, \b and \B consume no characters — so they can’t be DFA transitions. The engine turns them into six bits that ride epsilon edges and get checked against the runtime position." />
+
+    <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
+        <h2>Six bits</h2>
+        <p>
+            An assertion is a predicate about a <em>position</em>, not a character: "start of text," "end of text," "on a word boundary." The TNFA builder compiles each one into an ε-edge gated by a bitmask, chosen per edge at parse time (so group-scoped <code>(?m)</code> works — a <code>^</code> under multiline mode is a different bit than one outside):
+        </p>
+        <Code lang="java" title="tnfa/Tnfa.java">{`public static final int BEGIN_TEXT = 1;        // ^ (line-aware)
+public static final int END_TEXT = 2;          // $ (line-aware)
+public static final int WORD_BOUNDARY = 4;     // \\b
+public static final int NO_WORD_BOUNDARY = 8;  // \\B
+public static final int ABS_BEGIN = 16;        // \\A — position 0 only
+public static final int ABS_END = 32;          // \\z — end of input only`}</Code>
+        <p>
+            At runtime, each position gets its own <code>posFlags</code> value — which of those six facts hold there — computed lazily (a −1 sentinel, recomputed per use; it's just a couple of character class tests against the neighbors). "Does this edge cross?" is then a one-instruction subset test: <code>(mask &amp; ~posFlags) == 0</code>.
+        </p>
+
+        <h2>The complication: one kernel, many truths</h2>
+        <p>
+            That's the easy part. The complication: a position satisfies <em>one</em> set of flags, but a DFA state's kernel accumulates assertion masks from all the ε-paths that built it — and different paths may carry incomparable requirements. The state <code>(?:^|$)</code>'s closure contains an accept reached via "was at start" and another via "at end"; which tag values win depends on where you actually are.
+        </p>
+        <p>
+            So determinization splits each kernel into <strong>live-set contexts</strong>: for each of the 64 possible runtime flag values <code>M</code>, the alive configs are those whose accumulated mask is a subset of <code>M</code>. Contexts are deduped by their alive-pattern, sorted most-coverage-first, and each context's transitions carry its OR-mask as a <code>requiredMask</code> — "this row only applies at positions satisfying these bits." A context that steps to nothing on some cell emits a <strong>dead marker</strong> (target −1) with its mask, so that the wrong context's row can't fire when a more specific one owns the step. The runtime ownership rule: <em>the most specific satisfied mask (by popcount) owns the character; ties go to the lowest index.</em>
+        </p>
+        <p>
+            This 64-way case analysis is also why the closure's visited-set is keyed on (state, mask) rather than state — remember <code>(?:^|$)+</code> needing "both junction variants" — and it's the source of the subsumption cut from the determinization chapter.
+        </p>
+
+        <h2>Position-aware accepting</h2>
+        <p>
+            The same splitting applies at accept time, and it's where "final variants" matter. For an accepting state, the compiler computes — for every one of the 64 flag values — the <em>first accepting config alive under those flags</em>. Two storage tiers:
+        </p>
+        <ul class="list-disc pl-6">
+            <li>
+                <strong>Uniform case:</strong> the same winner everywhere (an unconditional accept — the common case). One final-ops list, stored once; the state's accept mask is the intersection of the winners' requirements.
+            </li>
+            <li>
+                <strong>Variants:</strong> per-winner op lists plus a 64-cell selector, materialized as <code>stateFinalOpsByMask[state*64 + posFlags]</code> — an ops offset, or −1 when <em>no</em> accept is alive under those flags ("accept suppressed"). The minimizer refuses to merge states whose selector rows differ, for exactly this reason.
+            </li>
+        </ul>
+        <p>
+            The stop table — Perl mode's "can this match still grow?" decision — is position-aware the same way: <code>stopOnAcceptMask[state*64 + posFlags]</code>, with a compact per-state byte tier when the answer is uniform. Details of what "stop" means at runtime are in the Execution chapter; the thing to carry away from here is <em>where the 64 comes from</em>: six bits of position truth, multiplied out at compile time so the runtime never re-derives it.
+        </p>
+
+        <h2>Unicode word boundaries</h2>
+        <p>
+            <code>\b</code>'s definition of "word character" is mode-dependent: ASCII by default, Unicode-aware under <code>(?u)</code> (<code>UNICODE_CHARACTER_CLASS</code>) — where "word" is the Java-flavored union <code>L + N + Mn + Me + Pc + Sc + Sk</code>, materialized at parse time into concrete ranges that travel with the pattern. At runtime the boundary test consults those ranges (the ASM backend embeds them as a static <code>WORD_RANGES</code> array and generates <code>isUnicodeWordChar</code> helpers). No dependencies, no runtime Unicode tables — the pattern is self-contained.
+        </p>
+    </div>
+</Base>

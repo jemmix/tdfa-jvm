@@ -1,0 +1,23 @@
+{
+  "name": "tdfa-jvm-explained",
+  "type": "module",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/svelte": "^9.0.0",
+    "@tailwindcss/typography": "^0.5.15",
+    "@tailwindcss/vite": "^4.1.0",
+    "astro": "^7.3.0",
+    "dagre": "^0.8.5",
+    "svelte": "^5.43.0",
+    "tailwindcss": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/dagre": "^0.7.54"
+  }
+}
