@@ -8,9 +8,10 @@ package io.github.jemmix.tdfa.core;
  * {@link Matcher} owns one carrier for its lifetime and hands it down the
  * match ladder, so the buffers are reused across {@code find()} iterations,
  * shared by the interpreter and the generated tier, and released with the
- * matcher — no {@code ThreadLocal} retention on any thread (the former
- * design kept ~2 MB of grown scratch alive per thread after one 234 K-state
- * DFA; virtual threads paid a fresh Scratch + ThreadLocal entry each).
+ * matcher — no {@code ThreadLocal} retention on any thread (retaining grown
+ * per-thread scratch would keep ~2 MB alive per thread after one 234 K-state
+ * DFA, and virtual threads would pay a fresh Scratch + ThreadLocal entry
+ * each).
  *
  * <p><b>Lifecycle.</b> One carrier per {@link Matcher} whose engines want
  * one (see {@code RegexEngine.wantsScratch()}) — carrier-free engines get a

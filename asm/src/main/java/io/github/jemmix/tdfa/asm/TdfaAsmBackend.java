@@ -26,7 +26,7 @@ public final class TdfaAsmBackend {
     private static final AtomicLong COUNTER = new AtomicLong();
     private static final String ENGINE = "io/github/jemmix/tdfa/core/RegexEngine";
     private static final String WHOLE = "io/github/jemmix/tdfa/core/WholeEngine";
-    private static final String HOLDER = "io/github/jemmix/tdfa/tdfa/MatchHolder"; // moved out of TdfaRunner (2026-09 split)
+    private static final String HOLDER = "io/github/jemmix/tdfa/tdfa/MatchHolder";
     private static final String RESULT = "io/github/jemmix/tdfa/core/MatchResult";
 
     /** Register-file size ceiling for the stack-register leaves (see
@@ -74,11 +74,12 @@ public final class TdfaAsmBackend {
         }
 
         /**
-         * Bytes stay registered after definition: removing them on first lookup
-         * turned a transient LinkageError during {@code defineClass} into a
-         * permanent CNFE on retry (the bytes were gone), masking the original
-         * failure. Retention is bounded by the loader's own lifetime (one
-         * pattern, unloaded with its classes).
+         * Bytes stay registered after definition: removing them on first
+         * lookup would turn a transient {@code LinkageError} during
+         * {@code defineClass} into a permanent CNFE on retry (the bytes
+         * would be gone), masking the original failure. Retention is
+         * bounded by the loader's own lifetime (one pattern, unloaded
+         * with its classes).
          */
         @Override
         protected Class<?> findClass(String n) throws ClassNotFoundException {
@@ -213,11 +214,11 @@ public final class TdfaAsmBackend {
 
     private static void genClinit(ClassWriter cw, Tdfa tdfa, boolean fastPath) {
         // Field declarations only; all data flows from the Tdfa arg through <init>.
-        // (Prior design populated ENTRY_MASK/ACCEPT_MASK/IS_ACCEPT/STOP_MASK/ASCII_TARGET/
-        // FIXED_* via per-element IASTORE in <clinit>, which exceeded the JVM 65 KB
-        // method-size limit on DFAs with many states (e.g. dictionary alternation,
-        // 21 K states × 64 STOP_MASK slots = 1.36 M entries; or fastPath-eligible
-        // wide-ASCII-class patterns like [^u-z]{80}x with 16 K ASCII_TARGET IASTOREs).
+        // (Populating ENTRY_MASK/ACCEPT_MASK/IS_ACCEPT/STOP_MASK/ASCII_TARGET/
+        // FIXED_* via per-element IASTORE in <clinit> would exceed the JVM 65 KB
+        // method-size limit on DFAs with many states — e.g. dictionary alternation,
+        // 21 K states × 64 STOP_MASK slots = 1.36 M entries, or fastPath-eligible
+        // wide-ASCII-class patterns like [^u-z]{80}x with 16 K ASCII_TARGET IASTOREs.)
         for (String f : new String[]{"ENTRY_MASK", "ACCEPT_MASK", "STOP_MASK", "IS_ACCEPT"}) {
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, f, "[I", null, null).visitEnd();
         }
@@ -319,18 +320,18 @@ public final class TdfaAsmBackend {
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "fixedOffset", "()[I", false);
             mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "FIXED_OFFSET", "[I");
         }
-        // ASCII_TARGET (fastPath only): populate via a runtime loop over RANGES_TABLE.
-        // The prior design emitted one IASTORE per ASCII char per state range in
-        // <clinit>, which for wide-ASCII-class patterns like [^u-z]{80}x produced
-        // ~16 K IASTOREs (~160 KB bytecode) and tripped the 65 KB method limit.
-        // Loop body is fixed-size; bytecode is ~100 bytes regardless of state count.
+        // ASCII_TARGET (fastPath only): populate via a runtime loop over the
+        // Tdfa ranges. Emitting one IASTORE per ASCII char per state range in
+        // <clinit> would, for wide-ASCII-class patterns like [^u-z]{80}x,
+        // produce ~16 K IASTOREs (~160 KB bytecode) and trip the 65 KB method
+        // limit. Loop body is fixed-size; bytecode is ~100 bytes regardless of state count.
         //
         // Pseudo: for s in 0..n-1: meta=stateMeta[s]; base=stateBase[s]; cnt=(meta>>>1)&0xFFFF;
         //         for i in 0..cnt-1: o=(base+i)*5; lo=max(ranges[o],0); hi=min(ranges[o+1],127);
         //                            target=ranges[o+2]; if (target<0) continue;
         //                            for c in lo..hi: ASCII_TARGET[s*128+c] = target;
         if (fastPath) {
-            // ranges from the Tdfa param (local 14) — RANGES_TABLE static is gone
+            // ranges from the Tdfa param (local 14)
             mv.visitVarInsn(Opcodes.ALOAD, 1);
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "ranges", "()[I", false);
             mv.visitVarInsn(Opcodes.ASTORE, 14);
@@ -466,8 +467,8 @@ public final class TdfaAsmBackend {
 
     private static void genFind(ClassWriter cw, String owner) {
         // Delegate to the runner's find(), which uses the multi-state parallel
-        // simulation — O(n × |states|) instead of the O(n²) outer-loop restart
-        // that runBoolean used. The boolean result is identical; only the path
+        // simulation — O(n × |states|) instead of an O(n²) outer-loop restart.
+        // The boolean result is identical; only the path
         // differs. The ASM inlined transitions don't help here because the O(n²)
         // restart dominates for non-matching haystacks.
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "find", "(" + CS_D + ")Z", null, null);
@@ -529,8 +530,8 @@ public final class TdfaAsmBackend {
         // No literal-needle ladder here by construction: a DFA with a needle
         // always compiles as DELEGATE (generateBytes), so in the INLINED
         // classes that emit this method the runner's literal needle is
-        // provably null and the transcription of that ladder step was
-        // unreachable bytecode (it existed only as a divergence hazard).
+        // provably null; emitting that ladder step here would be unreachable
+        // bytecode and a divergence hazard.
 
         // --- 1) one exact walk from `from` ---
         emitTrace(mv, "EXACT_FROM");
@@ -982,7 +983,8 @@ public final class TdfaAsmBackend {
         // PF is needed if any accepting state has ACCEPT_MASK != 0,
         // Derived, not inferred: Tdfa.posFlagDeps() is the single source of
         // truth for which posFlag bits any mask or M-indexed table actually
-        // distinguishes (the ASM formerly carried its own — broader — model).
+        // distinguishes (a separate, broader model here would diverge from
+        // the core model).
         boolean pfNeeded = tdfa.posFlagDeps() != 0;
         final int[] byMask = tdfa.stateFinalOpsByMask();
 
@@ -1204,10 +1206,10 @@ public final class TdfaAsmBackend {
             }
             mv.visitVarInsn(Opcodes.ASTORE, R);
 
-            // Final ops were applied eagerly at accept-record time into REGS;
-            // the clone above carries them. (The former lazy ψ/φ replay here
-            // read end-of-walk register values — any transition taken between
-            // the accept and the break clobbered them, inverting group spans.)
+            // Final ops are applied eagerly at accept-record time into REGS;
+            // the clone above carries them. (A lazy ψ/φ replay here would read
+            // end-of-walk register values — any transition taken between the
+            // accept and the break clobbers them, inverting group spans.)
 
             // return new MatchHolder(start, lastAcceptPos, r)
             mv.visitTypeInsn(Opcodes.NEW, HOLDER);
@@ -1257,9 +1259,9 @@ public final class TdfaAsmBackend {
             // first: popcount(requiredMask) desc, original index asc. The
             // sequential chain is first-satisfied-wins, so a specific entry
             // (e.g. a dead marker under a word-boundary mask) must precede
-            // the broad mask-0 ranges it shadows — lo order alone let a
-            // lazy body's '.' entry fire where the owning context was dead
-            // (fuzz round 11; parity with TdfaRunner's scan rule).
+            // the broad mask-0 ranges it shadows — lo order alone would let a
+            // lazy body's '.' entry fire where the owning context is dead
+            // (parity with TdfaRunner's scan rule).
             List<int[]> live = new ArrayList<>();
             for (int i = 0; i < cnt; i++) {
                 int o = (base + i) * 5;
@@ -1306,8 +1308,9 @@ public final class TdfaAsmBackend {
 
                 // Target entry mask BEFORE the transition's ops: a
                 // mask-failing transition is never taken, so its tag writes
-                // must not contaminate the register file (parity with
-                // TdfaRunner's walk; the fuzz-found skipped-group family).
+                // must not contaminate the register file — contaminated tag
+                // writes surface as skipped groups (parity with
+                // TdfaRunner's walk).
                 // Checked at pos+width without mutating POS — ops still need
                 // the source position for SET_POS.
                 if (sem[target] != 0) {
@@ -1377,8 +1380,8 @@ public final class TdfaAsmBackend {
      * LOOKUPSWITCH over accepting states applying the state's φ ops into
      * {@code regs} at {@code pos}. Called at the moment an accept is recorded
      * (BT22 match-declaration semantics) — the φ ops read accept-time working
-     * values, which any later transition may clobber. The former lazy replay
-     * (ψ/φ switch on lastAcceptState after the walk) was unsound for exactly
+     * values, which any later transition may clobber. A lazy replay (ψ/φ
+     * switch on lastAcceptState after the walk) would be unsound for exactly
      * that reason; with eager application {@code pos == lastAcceptPos} by
      * construction and φ is always the right list.
      */
@@ -1977,8 +1980,7 @@ public final class TdfaAsmBackend {
         }
     }
 
-    // ===== register ops (inline, final — uses lastAcceptPos) =====
-    // (Retired: final ops are applied eagerly via genPhi; see there.)
+    // ===== register ops (inline, stack-register) =====
 
     /**
      * Stack-register twin of {@link #emitOpsInline}: the register file is
@@ -2480,7 +2482,7 @@ public final class TdfaAsmBackend {
      * INLINED mode — the method the leaf-only estimate never covered. Each
      * accepting state costs a LOOKUPSWITCH key plus a 64-entry TABLESWITCH,
      * then one ops block per <em>distinct</em> cell (dedup parity with
-     * genPhiMasked). This is the silent perf cliff the review flagged: a
+     * genPhiMasked). This is a silent perf cliff: a
      * DFA with many distinct per-mask final-ops cells can push phiMasked
      * past the JVM's 65 KB method cap, MethodTooLargeException then kills
      * the whole engine emission, and PatternCompiler degrades the pattern
@@ -2563,7 +2565,8 @@ public final class TdfaAsmBackend {
             }
             // Fast path (sorted by lo, the materialization default): O(cnt) scan
             // with running max-hi. Reordered states (sortByMaskSpecificity) take
-            // the pack-and-sort path — O(cnt log cnt) vs the old O(cnt²) pairwise.
+            // the pack-and-sort path — O(cnt log cnt) instead of the O(cnt²)
+            // pairwise check.
             boolean sortedByLo = true;
             for (int i = 1; i < cnt; i++) {
                 if (rg[(base + i) * 5] < rg[(base + i - 1) * 5]) {

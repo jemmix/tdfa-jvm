@@ -102,9 +102,9 @@ class QuantifierParityTest {
     // re2j's Simplify desugars x{n,} as x{n-1}x+ (not x{n}x*): a plus tail
     // guarantees one real iteration and the nullable body's empty
     // RE-iteration is cut by pike pc-dedup, so the last NON-EMPTY capture
-    // survives. Our former x* tail let the greedy empty iteration write an
-    // empty capture (g1=""), diverging on every (X?){n,} shape (fuzz round
-    // 9: 25 records). These pin the family across both engines.
+    // survives. An x* tail would let the greedy empty iteration write an
+    // empty capture (g1=""), diverging on every (X?){n,} shape. These pin
+    // the family across both engines.
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
@@ -288,23 +288,23 @@ class QuantifierParityTest {
         assertSameCompileReject("a{3,2}", factory);
     }
 
-    // ---- round 18: {n,m} right-nested suffix + capture persistence ----
+    // ---- {n,m} right-nested suffix + capture persistence ----
 
-    /** Fuzz round 18 (overnight seed 645958308): the flat B?B?B? tail for
-     *  lazy {n,m} resolved "enter next optional copy" vs "extend current
-     *  copy's inner lazy body" opposite to re2j/JDK — group 2 reported the
-     *  extended span instead of the next copy's. Fixed by mirroring re2j
-     *  Simplify's right-nested (x(x(x)?)?)? suffix. */
+    /** The flat B?B?B? tail for lazy {n,m} must resolve "enter next
+     *  optional copy" vs "extend current copy's inner lazy body" the way
+     *  re2j/JDK do — group 2 is the next copy's span, not the extended
+     *  one — which is why {n,m} mirrors re2j Simplify's right-nested
+     *  (x(x(x)?)?)? suffix. */
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void nestedLazyCountedPrefersNextCopyOverExtension(RegexEngineFactory factory) {
         assertSameFind("((a{1,2}?c?){0,5}?)d", "aad", factory);
     }
 
-    /** The round-18 original overnight shape — also the whole-ladder cap
-     *  calibration case: its anchored whole build lands one tick-class over
-     *  the first eager cap (134.22 M ticks ≈ ⅓ of the 500 M default compile
-     *  CPU budget) and compiles under the ⅔ last-chance cap. */
+    /** The whole-ladder cap calibration case: its anchored whole build
+     *  lands one tick-class over the first eager cap (134.22 M ticks ≈ ⅓
+     *  of the 500 M default compile CPU budget) and compiles under the ⅔
+     *  last-chance cap. */
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void nestedLazyCountedOriginalOvernightShape(RegexEngineFactory factory) {
@@ -313,7 +313,8 @@ class QuantifierParityTest {
 
     /** re2j's pike prog never writes empty captures on skip edges: a group's
      *  value persists once set across later iterations that skip it. The sim
-     *  applied ntags destructively and cleared earlier captures (same round). */
+     *  must not apply ntags destructively here — that clears earlier
+     *  captures. */
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void capturePersistsAcrossSkippedIterations(RegexEngineFactory factory) {

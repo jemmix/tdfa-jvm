@@ -56,9 +56,9 @@ final class DfaMinimizer {
     /**
      * Compile work meter (shared with determinization/regopt): the
      * Moore fixpoint is O((n+R)·I) — I rounds of n signature builds —
-     * and was the one unbounded loop the meter never saw (review r10
-     * P1-4: near-cap literal-chain DFAs can peel one group per round
-     * ⇒ O(n²) sig builds, minutes, unmetered, inside compile()).
+     * and without metering would be an unbounded loop inside
+     * compile(): near-cap literal-chain DFAs can peel one group per
+     * round ⇒ O(n²) sig builds, minutes of unmetered wall time.
      * Exhaustion propagates as {@link WorkMeter.Exhausted}; the CALLER
      * degrades to the unminimized DFA instead of failing the compile
      * (minimization is an optional pass — same semantics as the
@@ -159,7 +159,7 @@ final class DfaMinimizer {
 
     /**
      * Per state, per global bp, find the state-range index covering it. Linear merge scan.
-     * Dimension guard [review P1 #3]: n×K is bounded by a cell budget read
+     * Dimension guard: n×K is bounded by a cell budget read
      * PER COMPILE (constructor stores it) — K is the union of every
      * state's breakpoints and no other cap covers it, so without this a
      * wide DFA under the 20 K-state minimize gate could overflow int
@@ -296,9 +296,9 @@ final class DfaMinimizer {
 
     /**
      * Extra sig slots occupied by the full 64-cell rows (never a summary:
-     * two states whose rows differ must never share a Moore group — an
-     * earlier 32-bit rolling hash admitted birthday collisions (~2⁻³²/pair
-     * over distinct rows) that silently merged semantically different
+     * two states whose rows differ must never share a Moore group — a
+     * 32-bit rolling hash would admit birthday collisions (~2⁻³²/pair
+     * over distinct rows) and silently merge semantically different
      * states. Exact cells close that hole by construction.)
      */
     int attrExtra() {

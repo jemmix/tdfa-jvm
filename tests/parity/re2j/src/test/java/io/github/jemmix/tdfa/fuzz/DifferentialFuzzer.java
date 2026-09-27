@@ -72,7 +72,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * table yet; re2j folds fully — TODO.md tracks the gap), and {@code (?i)}
  * class ranges are generated ASCII-narrow only (re2j's own parser expands
  * case folds over every codepoint in a range — wide {@code (?i)} ranges
- * hung the ORACLE in 44 of the first ~50 soak hangs). Everything else
+ * can hang the ORACLE). Everything else
  * must agree with re2j or it is a finding.
  */
 public final class DifferentialFuzzer {
@@ -99,10 +99,10 @@ public final class DifferentialFuzzer {
     static final int MAX_MATCHES = 64;
 
     /** Char pools. Supplementary codepoints and lone surrogates are
-     *  first-class citizens: they found every recent bug family. The
+     *  first-class citizens: the highest-yield divergence territory. The
      *  fold-orbit family members (Turkic İ/ı, Cyrillic historic letters
      *  and their partners) exercise the case-fold universes where engines
-     *  historically disagreed. */
+     *  disagree. */
     static final int[] POOL_ASCII = "abz09ZY_-.#@ ~".chars().toArray();
 
     static final int[] POOL_EDGE = {'\n', '\t', '\r', ' ', '\u0000'};
@@ -114,7 +114,7 @@ public final class DifferentialFuzzer {
     static final int[] POOL_LONE = {0xD800, 0xDBFF, 0xDC00, 0xDC21, 0xDFFF};
 
     /** POOL_UNICODE as drawn for pattern runes under (?i) on the released
-     *  oracle (hang members removed); the full pool everywhere else. */
+     *  oracle (hang-prone members excluded); the full pool everywhere else. */
     static final int[] POOL_UNICODE_CI = releasedCiPool();
 
     static final int MAX_DEPTH = 4;
@@ -128,7 +128,8 @@ public final class DifferentialFuzzer {
      *  Excluded: {@code UNICODE_CHARACTER_CLASS} (tdfa-only, no re2j oracle)
      *  and {@code DISABLE_UNICODE_GROUPS} (inert until \p{} generation lands:
      *  both engines only differ on \p{} acceptance, which the generator never
-     *  emits — dead entropy today, revisit with the \p{} generator round). */
+     *  emits — dead entropy today; revisit if the generator ever emits
+     *  \p{}). */
     static final int FLAG_CI = io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE;
 
     static final int FLAG_DOTALL = io.github.jemmix.tdfa.Pattern.DOTALL;
@@ -141,8 +142,7 @@ public final class DifferentialFuzzer {
      *  boundary bias per index — so every batch caseSeed is independently
      *  replayable via {@code fuzz.one}. One compile per batch serves all K
      *  inputs: compile+codegen is ~45% of per-case cost, matching is µs.
-     *  Generator version bump — pre-v3 caseSeeds are dead (as in rounds
-     *  5/6). */
+     *  Generator version bump — pre-v3 caseSeeds are dead. */
     static final int BATCH_K = 8;
 
     public static void main(String[] argv) throws Exception {
@@ -151,8 +151,8 @@ public final class DifferentialFuzzer {
             // Replay under the SAME scoped budget the soak uses — without
             // this, a one-case replay runs at the library budget (5 s of
             // ticks) and budget monsters replay in tens of seconds,
-            // misrepresenting their in-soak behavior (round 24: a 57 s
-            // replay got labeled "clean"). -Dfuzz.max.work=0 restores the
+            // misrepresenting their in-soak behavior (a slow replay gets
+            // labeled "clean"). -Dfuzz.max.work=0 restores the
             // library budget.
             long fuzzWork = fuzzWorkBudget();
             String prevWork =
@@ -203,7 +203,7 @@ public final class DifferentialFuzzer {
 
     /** One batch with a watchdog: compile once, then K inputs, each guard-tracked
      *  in {@code prog} (-1 = compiling, i = about to run input i). On timeout the
-     *  worker thread is sacrificed as before; outcomes already written (indices
+     *  worker thread is sacrificed; outcomes already written (indices
      *  < prog) are volatile-ordered before the prog store that revealed them, so
      *  the main thread records them normally and attributes the hang to the exact
      *  caseSeed (batch*K + prog). Returns false on timeout; the sacrificed worker
@@ -225,12 +225,12 @@ public final class DifferentialFuzzer {
         if (!worker.isAlive()) {
             return true;
         }
-        // Tiered watchdog (round 21/25): at 10 s, probe the worker's CPU.
+        // Tiered watchdog: at 10 s, probe the worker's CPU.
         // A SPIN (cpu ~ elapsed) is a finding — sacrifice and record now. A
         // STALL (cpu far below wall — GC pause, scheduler starvation from a
         // co-tenant build) gets grace to bound the false-hang class: the
         // batch often completes normally and no record is written at all.
-        // fuzz.graceMs=0 restores the old single-shot behavior.
+        // fuzz.graceMs=0 restores single-shot behavior.
         long grace = Long.getLong("fuzz.graceMs", 50_000);
         if (grace <= 0) {
             return false;
@@ -425,7 +425,8 @@ public final class DifferentialFuzzer {
     /** Engines compiled once per batch. A non-null tag means the compile
      *  path produced that protocol string for EVERY input (rejection, or a
      *  compile-time runtime exception); exc carries the exception detail
-     *  lines to attach to each Outcome, matching the old per-case strings. */
+     *  lines to attach to each Outcome — the same strings a per-case
+     *  compile path would emit. */
     static final class Prepared {
         String pattern;
         int flags;
@@ -468,7 +469,7 @@ public final class DifferentialFuzzer {
     }
 
     /** One (pattern, input) case against prepared engines. Protocol strings
-     *  identical to the former per-case compile path. */
+     *  identical to what a per-case compile path produces. */
     static Outcome matchCase(Prepared pr, Case c) {
         Outcome o = new Outcome(c);
         if (pr.oracle != null) {
@@ -1051,9 +1052,9 @@ public final class DifferentialFuzzer {
                         // The known divergence is a PARSER-boundary semantics
                         // difference (whole stack self-consistent, oracle alone
                         // differs). Any other layer with a lone-surrogate pattern
-                        // is a REAL finding wearing the same coat — v3's first
-                        // soak proved it: a CONSTRUCTION-layer needle bug was
-                        // swallowed here as "known" for a whole night's run.
+                        // is a REAL finding wearing the same coat — e.g. a
+                        // CONSTRUCTION-layer needle bug would otherwise be
+                        // swallowed as "known".
                         knownDivergence++;
                         logs.failure(caseSeed, o, "KNOWN_DIVERGENCE (" + known + ")", layerStr);
                         return;
@@ -1111,9 +1112,7 @@ public final class DifferentialFuzzer {
          * Fold divergences have NO entry — under any oracle: tdfa is
          * compiled with {@code Re2jUnicodeProvider}, whose fold universe
          * IS the oracle's own ({@code Unicode.simpleFold} walk, live), so
-         * the two cannot disagree on folding. (The former stale-orbit
-         * entry covered the days when tdfa folded a JDK-modern universe
-         * against the oracle's 6.0-era one.) The patched oracle's guard
+         * the two cannot disagree on folding. The patched oracle's guard
          * patch additionally makes the asymmetric-orbit family
          * fold-inert there; the released oracle still cannot compile
          * those literals — see {@code releasedFoldHang}.
@@ -1130,10 +1129,10 @@ public final class DifferentialFuzzer {
                     return "re2j matches lone-low pattern at/into pair interior; JDK agrees with us";
                 }
             }
-            // NOTE: the former plain-(?i) full-folding entry is GONE — we now
-            // fold full Unicode simple folding under plain (?i) exactly like
-            // re2j (literals, explicit classes, and word shorthands; verified
-            // against re2j 1.8), so any fold divergence is a real bug.
+            // NOTE: plain (?i) applies full Unicode simple folding exactly
+            // like re2j (literals, explicit classes, and word shorthands;
+            // verified against re2j 1.8), so any fold divergence is a real
+            // bug.
             return null;
         }
 
@@ -1276,8 +1275,8 @@ public final class DifferentialFuzzer {
          *  anything else is oracle/system slowness (e.g. re2j's (?i) class
          *  fold expansion over wide ranges). NOTE: the harness frames
          *  ({@code io.github.jemmix.tdfa.fuzz.*}) wrap EVERY worker stack —
-         *  oracle hangs included — so they must not count as "ours" (the
-         *  first soak misattributed 33 re2j-parser hangs to the engine). */
+         *  oracle hangs included — so they must not count as "ours" (else
+         *  oracle hangs get misattributed to the engine). */
         void hang(long caseSeed, Case c, Results r, Thread w) {
             StringBuilder st = new StringBuilder();
             if (w != null) {
@@ -1294,9 +1293,9 @@ public final class DifferentialFuzzer {
             // Spin vs stall, recorded at the source: a worker that BURNED CPU
             // for the whole watchdog window really hung (finding); one whose
             // thread-CPU is far below wall was stalled — GC pause/compaction
-            // or scheduler starvation (overnight 491362528: every HANG record
-            // was this kind; the same seeds replay in milliseconds). Post-mortem
-            // triage reads cpuMs vs the 10 s watchdog, no re-run needed.
+            // or scheduler starvation (stalled records replay in
+            // milliseconds). Post-mortem triage reads cpuMs vs the 10 s
+            // watchdog, no re-run needed.
             long cpuMs = -1;
             if (w != null) {
                 try {

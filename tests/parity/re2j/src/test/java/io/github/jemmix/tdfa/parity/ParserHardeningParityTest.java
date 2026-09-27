@@ -9,17 +9,17 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameCompileSuccess;
 import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
 
 /**
- * Parser-hardening parity (2026-09 pre-freeze review): re2j arbitrates the
- * exact semantics of the four fix families —
+ * Parser-hardening parity: re2j arbitrates the exact semantics of the four
+ * hardened areas —
  * 1. group-scoped inline flags (every ')' restores the flags saved at its
  *    '('; flag-only groups persist into the enclosing group),
  * 2. "missing argument to repetition operator" (quantifier at atom position),
  * 3. "invalid nested repetition operator" (quantifier after a quantifier —
- *    previously a*{2} silently parsed as a* followed by literal "{2}"),
+ *    a*{2} must not silently parse as a* followed by literal "{2}"),
  * 4. repeat-count cap / ASCII-digit braces / group-name validity / hex
- *    overflow messages (previously raw NumberFormatException or silent
- *    Arabic-Indic-digit misparse).
- * All expectations verified against vendored re2j 1.8 before landing.
+ *    overflow messages (clean errors, never a raw NumberFormatException
+ *    or a silent Arabic-Indic-digit misparse).
+ * All expectations verified against vendored re2j 1.8.
  */
 class ParserHardeningParityTest {
 

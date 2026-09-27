@@ -252,9 +252,9 @@ class WholeMatchTest {
     }
 
     /**
-     * Fuzz round 28 (asm-only probe-M mismatches): accepting states whose
-     * configs carry DIFFERENT zero-width assertions (\b/\B/\z after a group)
-     * compile to a {@code stateFinalOpsByMask} table even on fastPath DFAs;
+     * Accepting states whose configs carry DIFFERENT zero-width assertions
+     * (\b/\B/\z after a group) compile to a {@code stateFinalOpsByMask}
+     * table even on fastPath DFAs;
      * the generated wholeOne leaf must gate and select the φ winner by the
      * EOF position flags exactly like the runner's wholeWalk — not apply the
      * state-keyed default φ. Pinned on both tiers with oracle spans: the
@@ -277,7 +277,7 @@ class WholeMatchTest {
         }
         // (\b)? on "": \b dead at EOF of empty input → whole matches via the
         // empty branch, group 1 non-participating (NOT the [0,0) the default
-        // φ produced). Same answer at flags=0 and LONGEST_MATCH (fuzz case).
+        // φ produced). Same answer at flags=0 and LONGEST_MATCH.
         for (int flags : new int[]{0, Pattern.LONGEST_MATCH}) {
             PatternMatcher asm = Pattern.compile("(\\b)?", flags).matcher("");
             assertThat(asm.matches()).as("flags=%d", flags).isTrue();

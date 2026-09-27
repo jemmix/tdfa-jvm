@@ -25,7 +25,7 @@ import java.util.zip.ZipFile;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Bytecode floor per shipped module (docs/REVIEW-2026-09.md §1d): core,
+ * Bytecode floor per shipped module: core,
  * asm, and the facade must be class-file major version 52 or lower —
  * loadable by a Java 8 runtime — while pikesim and the unicode data
  * modules ship as Java 25 bytecode (latest LTS, major 69).

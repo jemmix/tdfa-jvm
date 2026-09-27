@@ -42,7 +42,7 @@ class SupplementaryCodepointClassTest {
     }
 
     /** Whole-input probe on the find surface: a full-span match from 0
-     *  (CompiledRegex no longer carries a whole-match entry). */
+     *  (CompiledRegex carries no whole-match entry). */
     private static boolean whole(CompiledRegex r, CharSequence input) {
         MatchResult m = r.match(input, 0);
         return m != null && m.start(0) == 0 && m.end(0) == input.length();
@@ -99,16 +99,16 @@ class SupplementaryCodepointClassTest {
     }
 
     /**
-     * Lone-symbol adjacency in the literal needle (fuzz v3, 2026-08-30): a
-     * pattern of two LONE surrogate symbols — high then low, kept apart by
-     * syntax so the parser's pattern-decode does not coalesce them —
-     * re-encodes into the same UTF-16 unit text as the pair codepoint they
-     * are not. The unit-wise literal-needle scan then matched a well-formed
-     * input pair against what the alphabet defines as two lone codepoints.
-     * Repro: the pattern below matched the whole pair 0..2 on every other
-     * engine's "no match" (re2j, JDK, and PikeSim over our own Tnfa).
-     * detectLiteralNeedle now declines needles containing adjacent high+low
-     * units; the DFA walk (which decodes) handles the shape correctly.
+     * Lone-symbol adjacency in the literal needle: a pattern of two LONE
+     * surrogate symbols — high then low, kept apart by syntax so the
+     * parser's pattern-decode does not coalesce them — re-encodes into the
+     * same UTF-16 unit text as the pair codepoint they are not. A unit-wise
+     * literal-needle scan would then match a well-formed input pair against
+     * what the alphabet defines as two lone codepoints (e.g. the pattern
+     * below matching the whole pair 0..2 where re2j, the JDK, and PikeSim
+     * over our own Tnfa all report no match). detectLiteralNeedle therefore
+     * declines needles containing adjacent high+low units; the DFA walk
+     * (which decodes) handles the shape correctly.
      */
     @Test
     void loneSurrogateNeedleAdjacencyDoesNotMatchPairs() {

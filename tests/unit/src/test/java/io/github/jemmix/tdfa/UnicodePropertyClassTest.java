@@ -19,9 +19,9 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  * <p>Problem areas:
  * <ul>
  *   <li><b>stateBase overflow</b> — {@code \p{L}} has ~1369 Unicode ranges per
- *       DFA state. The old 15-bit range-base field overflowed at ~state 24.
- *       Fixed by splitting into a separate full-32-bit {@code stateBase[]}
- *       array.</li>
+ *       DFA state, far beyond a 15-bit range-base field (it overflows at
+ *       ~state 24); the range base lives in a separate full-32-bit
+ *       {@code stateBase[]} array.</li>
  *   <li><b>ASM method-size limit</b> — DFAs too large for INLINED bytecode
  *       (estimate &gt; 30 KB) require DELEGATE dispatch (forward to embedded
  *       {@code TdfaRunner}). Without it, ASM throws

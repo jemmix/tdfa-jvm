@@ -39,9 +39,9 @@ final class TdfaFinalVariants {
         }
         // vmap is keyed (tag, sign) — a flat int[2*tags] per source state,
         // shared across that state's symbol transitions (register
-        // assignments are stable per source). The former boxed
-        // HashMap<Long,Integer> was a top profile entry after the
-        // interning rework.
+        // assignments are stable per source). A boxed
+        // HashMap<Long,Integer> per state would become a top profile
+        // entry.
         while (sourceVmaps.size() <= sourceStateId) {
             sourceVmaps.add(null);
         }
@@ -52,8 +52,8 @@ final class TdfaFinalVariants {
         }
         List<int[]> opList = new ArrayList<>();
         // Per-tag LAST history sign: cached per hash-consed history id
-        // (HistTable.lastSign) — formerly a rescan of each config's
-        // sequence content, the transition-regop hot spot.
+        // (HistTable.lastSign) — a rescan of each config's sequence
+        // content would be the transition-regop hot spot.
         for (int ci = 0; ci < configs.size(); ci++) {
             Config c = configs.get(ci);
             if (c.h == HistTable.EMPTY_ID) {
@@ -72,8 +72,8 @@ final class TdfaFinalVariants {
                     reg = vmap[slot] = owner.nextReg++;
                 }
                 // Per-transition dedup (paper "if op not in O"): opList is
-                // bounded by 2*tags distinct (reg, sign) ops — linear scan
-                // beats the former boxed HashSet.
+                // bounded by 2*tags distinct (reg, sign) ops — a linear
+                // scan beats a boxed HashSet.
                 boolean dup = false;
                 for (int[] o : opList) {
                     if (o[1] == reg && o[0] == (l == TdfaCompiler.TAG_POS ? OP_SET_POS : OP_SET_NIL)) {

@@ -23,9 +23,8 @@ jar {
     }
 }
 
-// Floor policy (2026-09 r4, docs/REVIEW-2026-09.md §1d): this module SHIPS
-// as Java 25 bytecode (latest LTS) — --release 25 enforces language level
-// AND API surface.
+// Floor policy: this module SHIPS as Java 25 bytecode (latest LTS) —
+// --release 25 enforces language level AND API surface.
 tasks.withType(JavaCompile).configureEach {
     it.options.release = 25
 }

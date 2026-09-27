@@ -4,10 +4,9 @@ import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
- * Lazy per-state walk-block memo (codepoints past the flat Latin-1 table):
- * extracted verbatim from TdfaRunner (2026-09 god-file split). The monitor
- * is this index instance (it was the runner's; the runner has no other
- * synchronized methods, so the lock domain is unchanged in effect).
+ * Lazy per-state walk-block memo (codepoints past the flat Latin-1 table).
+ * The monitor is this index instance; the runner has no other synchronized
+ * methods, so this lock is the walk path's only synchronization domain.
  *
  * <p><b>Budget.</b> The memo — per-state block-id tables plus the shared
  * 512-codepoint blocks — is charged against this runner's share of the

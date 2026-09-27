@@ -53,13 +53,9 @@ tasks.named('test') {
 
 // Additional Test task: VM backend. Runs the same test classes with a
 // different engine selection system property. Ensures re2j's full corpus
-// exercises both backends.
-//
-// Historical note: this task once ran with ignoreFailures=true masking a
-// zero-width VM bug (patterns like (?:(?:(?:^)|.)?) matching [0,1] instead
-// of [0,0]). Verified fixed well before the 2026-08 restructure (baseline
-// 287bdca passes 6/6); the mask was stale and has been removed — this task
-// is a hard gate again.
+// exercises both backends. Hard gate — never set ignoreFailures here: a
+// masked VM-only failure (e.g. zero-width spans like [0,1] instead of
+// [0,0] on patterns like (?:(?:(?:^)|.)?)) would silently rot.
 tasks.register('testOnVm', Test) {
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath

@@ -50,7 +50,7 @@ public final class ShellEmitter {
 
     /** Monotonic BYO-shell name sequence: deterministic within a JVM,
      *  collision-free while any shell is live, and stable across runs for
-     *  dumps/debuggers (identityHashCode was none of these). */
+     *  dumps/debuggers (identityHashCode is none of these). */
     private static final AtomicLong SHELL_SEQ = new AtomicLong();
 
     // Facade-tier types, by descriptor only (no compile-time dependency).

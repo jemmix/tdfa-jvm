@@ -11,7 +11,7 @@ dependencies {
     testImplementation project(':testlib:rebar')
     // Vendored patched re2j (fix1 surrogate, fix2 FoldCase, fix3 fold guard)
     // — the live oracle for the re2j-compat scenario class. Gitignored build
-    // output (REVIEW-2026-09 P1-1): built on demand by
+    // output: built on demand by
     // :tests:parity:re2j:buildPatchedOracle, never committed.
     testImplementation files(rootProject.file('vendor/re2j-jemmix/re2j-1.8-jemmix-fix3.jar'))
     testImplementation platform('org.junit:junit-bom:5.10.2'),
@@ -40,12 +40,11 @@ tasks.named('test') {
     // time; the one over-budget bomb skips by name unless opted in — see
     // RebarScenarioParityTest#BOMB_SCENARIOS). 2 GB heap: the largest
     // in-scope haystack is 39 MB (~80 MB UTF-16) and the largest under-
-    // budget compile fits comfortably; even the skipped bomb (opt-in) now
-    // fits 1 GB after the 2026-08-20 memory work — see TODO.md.
+    // budget compile fits comfortably; even the skipped bomb (opt-in) fits
+    // 1 GB — see TODO.md.
     jvmArgs '-Xmx2g'
-    // Historical note: once ran with ignoreFailures=true masking failing
-    // rebar scenarios; all in-scope scenarios now pass (718/718 as of the
-    // 2026-08 restructure) and this is a hard gate.
+    // Hard gate — never set ignoreFailures here: a masked failing scenario
+    // is a silently lost parity guarantee.
     testLogging {
         events 'failed', 'standardOut', 'standardError'
         exceptionFormat 'full'

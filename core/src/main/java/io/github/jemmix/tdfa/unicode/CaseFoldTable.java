@@ -41,12 +41,11 @@ public final class CaseFoldTable {
 
     /**
      * Primitive open-addressed fold-key → ranges index (linear probing,
-     * power-of-two capacity). Replaces the former boxed
-     * {@code HashMap<Integer,int[]> }: the class-fold path calls this once
-     * per codepoint of every range under (?i) — for {@code (?i)[\W]}-shaped
-     * classes that is ~1.1M lookups per compile, where each boxed get cost
-     * an autobox, a hashCode, and a probe (review P2). Keys stored as
-     * {@code foldKey + 1} so slot 0 can mean empty.
+     * power-of-two capacity), not a boxed map: the class-fold path calls
+     * this once per codepoint of every range under (?i) — for
+     * {@code (?i)[\W]}-shaped classes that is ~1.1M lookups per compile,
+     * and a boxed get costs an autobox, a hashCode, and a probe per
+     * lookup. Keys stored as {@code foldKey + 1} so slot 0 can mean empty.
      */
     private static final class FoldIndex {
         final int[] keys;

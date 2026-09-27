@@ -10,11 +10,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Final-ops correctness: eager φ at accept-record time, no ops from
  * mask-failing transitions, and the position-aware final-ops table
- * (per-(state, posFlags) accept-config winner). Regression coverage for the
- * 2026-08-28 fuzz round: the "skipped group reports empty instead of null"
- * family, the start&gt;end group-span crashes, and the {@code .+\b.}
- * undershoot before a supplementary pair. All were fixed by construction
- * (BT22 match-declaration semantics; the register file is a function of the
+ * (per-(state, posFlags) accept-config winner). Tripwires for the classic
+ * failure families: "skipped group reports empty instead of null",
+ * start&gt;end group-span crashes, and {@code .+\b.} undershoot before a
+ * supplementary pair. Correctness here rests on construction (BT22
+ * match-declaration semantics; the register file is a function of the
  * accepted path only) — these tests are the tripwire, not the fix.
  *
  * <p>The comparison protocol includes per-group NULL-ness — re2j reports a

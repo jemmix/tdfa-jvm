@@ -13,13 +13,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   <li><b>Synthetic verdict table</b>: {@link LayeredComparator#classify}
  *       fed hand-built column quartets — the classification must be total and
  *       exact, or the tool lies about localization.</li>
- *   <li><b>Live retrodiction</b>: real historical bug families, asserted to
- *       classify correctly NOW — every fuzz-round 3–6 repro is PASS (the
- *       fixes landed), the ſ-folding repros were PARSER before 12d9921, and
- *       the lone-surrogate boundary divergence (deliberate semantics: we do
- *       codepoint boundaries, released re2j's literal-prefix fast path lands
- *       on pair interiors) is PARSER — our whole stack, sim included,
- *       self-consistent against the oracle.</li>
+ *   <li><b>Live retrodiction</b>: real bug-family repro shapes, asserted
+ *       to classify correctly — the fixed families (eager φ, context
+ *       split, subsumption cut + folding, word-flag trim) classify PASS,
+ *       and the lone-surrogate boundary divergence (deliberate semantics:
+ *       we do codepoint boundaries, released re2j's literal-prefix fast
+ *       path lands on pair interiors) is PARSER — our whole stack, sim
+ *       included, self-consistent against the oracle.</li>
  * </ol>
  */
 class LayeredComparatorTest {
@@ -49,20 +49,20 @@ class LayeredComparatorTest {
 
     @Test
     void historicalBugFamiliesArePassNow() {
-        // round 3: eager φ / mask-before-ops / byMask winners
+        // eager φ / mask-before-ops / byMask winners
         assertThat(C.compare("((?s:\\b))?", "\udc00\ud800\r").layer()).isEqualTo(LayeredComparator.Layer.PASS);
         assertThat(C.compare("(\\b)?", "x").layer()).isEqualTo(LayeredComparator.Layer.PASS);
-        // round 4: context split / anchor flavors / pike-cut / dead markers
+        // context split / anchor flavors / pike-cut / dead markers
         assertThat(C.compare("[^0x]+\\b\\W", "abz c").layer()).isEqualTo(LayeredComparator.Layer.PASS);
         assertThat(C.compare("\\D+?\\s*\\B", "a\u00df#").layer()).isEqualTo(LayeredComparator.Layer.PASS);
         assertThat(C.compare("\\D(?m:\\S.$)", "ab\ncd").layer()).isEqualTo(LayeredComparator.Layer.PASS);
         assertThat(C.compare(".+\\b.", "\u03a99\ud800\udfff").layer()).isEqualTo(LayeredComparator.Layer.PASS);
-        // round 5: subsumption cut + folding (ſ was PARSER before 12d9921)
+        // subsumption cut + folding
         assertThat(C.compare("(?:.*?9{0,}\\b){1,}", "99x").layer()).isEqualTo(LayeredComparator.Layer.PASS);
         assertThat(C.compare("(?:^|$)+$", "a").layer()).isEqualTo(LayeredComparator.Layer.PASS);
         assertThat(C.compare("(?i)s", "\u017f").layer()).isEqualTo(LayeredComparator.Layer.PASS);
         assertThat(C.compare("(?i)\\w+", "a\u017fb").layer()).isEqualTo(LayeredComparator.Layer.PASS);
-        // round 6: word-flag trim
+        // word-flag trim
         assertThat(C.compare("(\\B)*\\z", "!").layer()).isEqualTo(LayeredComparator.Layer.PASS);
     }
 
@@ -95,13 +95,14 @@ class LayeredComparatorTest {
 
     @Test
     void loneSurrogateNeedleAdjacencyIsPassAfterFix() {
-        // fuzz v3 first-soak finding (2026-08-30): the literal needle built
-        // from two LONE surrogate symbols re-encoded as adjacent units matched
-        // a well-formed input pair (CONSTRUCTION: vm+asm yes, sim/re2j no).
-        // detectLiteralNeedle now declines such needles; all four agree.
-        // This also pins the sim's own fix: find() on lone-high input used to
-        // throw StringIndexOutOfBoundsException (charAt(len) in the interior
-        // skip), which poisoned the sim column for the whole class of inputs.
+        // A literal needle built from two LONE surrogate symbols re-encodes
+        // as adjacent units that match a well-formed input pair (the
+        // CONSTRUCTION failure signature: vm+asm yes, sim/re2j no).
+        // detectLiteralNeedle declines such needles; all four agree.
+        // Also pins the sim's own invariant: find() on lone-high input must
+        // not throw StringIndexOutOfBoundsException (charAt(len) in the
+        // interior skip), which would poison the sim column for the whole
+        // class of inputs.
         String pair = "\ud800\udfff"; // U+103FF
         String loneHighInput = String.valueOf(new char[]{'\ud83f'});
         assertThat(C.compare("(?i:\ud800)\udfff", pair).layer()).isEqualTo(LayeredComparator.Layer.PASS);

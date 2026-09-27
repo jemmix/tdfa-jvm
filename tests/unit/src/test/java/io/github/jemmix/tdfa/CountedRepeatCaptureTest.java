@@ -6,17 +6,16 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Final-capture semantics of open counted repetition on a nullable body —
- * the fuzz round-9 family (25 records, 16 patterns, all PARSER-layer: our
- * own NFA built the wrong shape).
+ * Final-capture semantics of open counted repetition on a nullable body.
  *
  * <p>Contract (re2j's Simplify, mirrored by design in
  * {@code Tnfa.Builder}): {@code x{n,} = x{n-1}x+}. The plus tail guarantees
  * one real iteration; the nullable body's empty <b>re</b>-iteration is cut
  * by the pike pc-dedup, so the reported group is the <b>last non-empty</b>
- * iteration's capture. The former {@code x{n}x*} desugaring let the greedy
- * star's first-iteration-empty write an empty capture — {@code (a?){2,}}
- * on {@code "aa"} reported {@code g1=""} where re2j reports {@code "a"}.
+ * iteration's capture. A plain {@code x{n}x*} desugaring would let the
+ * greedy star's first-iteration-empty write an empty capture —
+ * {@code (a?){2,}} on {@code "aa"} would report {@code g1=""} where re2j
+ * reports {@code "a"}.
  *
  * <p>Values here are the oracle-verified ones (java.util.regex differs on
  * this family — it reports {@code ""} — so these are pinned as literals,

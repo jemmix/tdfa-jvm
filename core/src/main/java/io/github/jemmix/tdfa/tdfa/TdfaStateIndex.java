@@ -42,13 +42,14 @@ final class TdfaStateIndex {
     /**
      * Shared per-addState "tag has history" bitsets: computed once for
      * the incoming closure, reused across all tryMap candidates of that
-     * attempt (the per-candidate recompute zeroed and refilled every
-     * config's bits — 8% of cliff-compile time in JFR).
+     * attempt (a per-candidate recompute would zero and refill every
+     * config's bits — measured ~8% of compile time in JFR).
      */
     private long[][] hasHistShared;
     /**
-     * Primitive register bijection scratch for tryMap (replaces the boxed
-     * HashMap pair): mappings stamped with per-attempt epochs.
+     * Primitive register bijection scratch for tryMap (a boxed HashMap
+     * pair would allocate and re-box per attempt): mappings stamped with
+     * per-attempt epochs.
      */
     private int[] mapNewToOld, mapOldToNew, epochNew, epochOld;
 
@@ -61,9 +62,9 @@ final class TdfaStateIndex {
 
     private int pendingCanonLen;
     /**
-     * Epoch-stamped register → class-id map for canonSignature (primitive:
-     * the boxed HashMap made each work-meter tick so expensive the fuzz
-     * watchdog fired before the budget could).
+     * Epoch-stamped register → class-id map for canonSignature
+     * (primitive: a boxed HashMap here would make each work-meter tick
+     * cost more than the work it meters, starving the budget).
      */
     private int[] canonKeyStamp, canonKeyClass;
 
@@ -111,12 +112,12 @@ final class TdfaStateIndex {
      * Fill the reusable probe key with the ORDER-EXACT signature of {@code configs}.
      * tryMap only ever merges closures with identical ordered (state, l)
      * sequences (its first phase compares element i to element i), so the
-     * index key must discriminate by arrival order: the former canonical
-     * (state-sorted) key admitted every permutation of the same multiset,
-     * and tryMap linearly rejected them — the dominant compile cliff
-     * (nested counted repetitions produce many arrival orders of one
-     * multiset; buckets grew into the hundreds and every addState
-     * rescanned them with Arrays.equals over each l). Order-exact keys
+     * index key must discriminate by arrival order: a canonical
+     * (state-sorted) key would admit every permutation of the same
+     * multiset, all of which tryMap then linearly rejects — nested
+     * counted repetitions produce many arrival orders of one multiset,
+     * so buckets would grow into the hundreds and every addState would
+     * rescan them with Arrays.equals over each l. Order-exact keys
      * admit exactly the candidates that can pass tryMap's first phase;
      * buckets hold only genuine register-permutation variants.
      */
@@ -161,8 +162,7 @@ final class TdfaStateIndex {
         // Work meter: sig fill/copy/hash is O(sum |l|) real work — the
         // dominant cost on history-bloated compiles. Ticking per 64 ints
         // keeps the tick rate proportional to that work so the work budget
-        // still bounds adversarial wall time (it was calibrated when the
-        // interning scans dominated; those are gone).
+        // bounds adversarial wall time.
         owner.meter.tick(total >>> 6);
     }
 
@@ -182,8 +182,8 @@ final class TdfaStateIndex {
         int max = n * owner.tags;
         if (classScratch == null || classScratch.length < max) {
             // Slack growth: closure sizes creep up one config at a time, so
-            // exact sizing reallocated on nearly every addState (18% of all
-            // fuzzer allocation). Doubling amortizes to O(log) per compile.
+            // exact sizing would reallocate on nearly every addState (18% of
+            // all allocation). Doubling amortizes to O(log) per compile.
             classScratch = new int[Math.max(max, (classScratch == null ? 32 : classScratch.length) * 2)];
         }
         if (canonKeyStamp == null || canonKeyStamp.length < owner.nextReg) {
@@ -271,9 +271,9 @@ final class TdfaStateIndex {
             // slice-equality aligns (slice_i == slice_j ⟺ oslice_i ==
             // oslice_j for all i,j — otherwise the pair map is ill-defined
             // or non-injective), so the attempt visits only class-compatible
-            // members instead of rescanning the whole bucket — that rescan
-            // was the dominant compile cliff on permutation-heavy patterns
-            // (78% of wall time in JFR).
+            // members instead of rescanning the whole bucket — the rescan
+            // would dominate compile wall time on permutation-heavy
+            // patterns (measured 78% in JFR).
             if (owner.tags == 0) {
                 for (int cand : candidates.members) {
                     int[] mapped = tryMap(configs, owner.kernels.get(cand), ops);
@@ -392,8 +392,8 @@ final class TdfaStateIndex {
         // ORDER check below is still semantically load-bearing: two closures
         // with the same shape-key (canonical state-sorted multiset) can have
         // DIFFERENT DFS arrival orders, and in Perl mode arrival order IS
-        // priority (stepOnSymbol suppression). Refusing to merge those is
-        // what the pre-fast-path code did; keep it.
+        // priority (stepOnSymbol suppression). Merging such closures would
+        // silently flip priorities.
         if (owner.tags == 0) {
             for (int i = 0; i < size; i++) {
                 int oldState = oldPacked != null ? oldPacked[i * 2] : oldConfigs.get(i).state;
@@ -404,9 +404,9 @@ final class TdfaStateIndex {
             return ops;
         }
         // Build register bijection M: newReg -> oldReg, M': oldReg -> newReg.
-        // Primitive arrays with epoch stamps replace the former boxed
-        // HashMaps — this loop was the dominant compile cost on
-        // permutation-heavy patterns (32% getNode + 7% putVal in JFR).
+        // Primitive arrays with epoch stamps, not boxed HashMaps — a boxed
+        // map would dominate this loop on permutation-heavy patterns
+        // (measured 32% getNode + 7% putVal in JFR).
         // Register values come from the GLOBAL register allocator (nextReg
         // grows during compilation; configs' regs arrays only cover the
         // tags they carry) — size scratch by the current universe.
@@ -424,7 +424,7 @@ final class TdfaStateIndex {
         int[] eN = epochNew, eO = epochOld;
         // Stamped new-side registers, for the O(pairs) remaining-pairs scan
         // below — the register universe is global and grows with the DFA
-        // (tens of thousands), so scanning it per attempt was a cliff.
+        // (tens of thousands), so scanning it per attempt would be a cliff.
         // Each (config, tag) pair contributes at most one register.
         int maxPairs = size * owner.tags;
         if (stampedRegs == null || stampedRegs.length < maxPairs) {
@@ -432,11 +432,10 @@ final class TdfaStateIndex {
         }
         int stamped = 0;
         // "Tag has transition-op history" bitsets: one pass over each
-        // config's history sequence replaces the former tags × full-
-        // sequence history() rescans per (config, tag) — the top
-        // compile-time hot spot (410 of 678 overnight hang records were
-        // this loop; the full history ARRAY was built to test only its
-        // existence). Computed by the CALLER once per addState — shared
+        // config's history sequence, not a tags × full-sequence history()
+        // rescan per (config, tag) — the rescan would rebuild the full
+        // history ARRAY to test only its existence, a top compile-time
+        // hot spot. Computed by the CALLER once per addState — shared
         // across all candidates of this attempt.
         long[][] hasHist = hasHistShared;
         for (int i = 0; i < size; i++) {

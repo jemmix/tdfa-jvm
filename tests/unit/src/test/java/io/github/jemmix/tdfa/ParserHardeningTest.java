@@ -10,8 +10,8 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Crash-hardening guarantees of the parser (2026-09 pre-freeze review):
- * hostile patterns must fail with a clean {@link PatternSyntaxException},
+ * Crash-hardening guarantees of the parser: hostile patterns must fail
+ * with a clean {@link PatternSyntaxException},
  * never a raw {@link StackOverflowError}, {@link NumberFormatException},
  * {@link OutOfMemoryError} from eager desugaring, or a silent misparse.
  * re2j-parity of the SEMANTICS is covered by ParserHardeningParityTest;
@@ -92,8 +92,8 @@ class ParserHardeningTest {
 
     @Test
     void repeatHugeCountRejectedNotOom() {
-        // previously: eager {n} desugaring OOM'd the TNFA builder before any
-        // determinization budget could fire
+        // huge counts reject at parse time: eager {n} desugaring would OOM
+        // the TNFA builder before any determinization budget could fire
         assertThatThrownBy(() -> CompiledRegex.compile("a{500000000}")).isInstanceOf(PatternSyntaxException.class)
             .hasMessageContaining("invalid repeat count");
     }
@@ -135,7 +135,8 @@ class ParserHardeningTest {
             .hasMessageContaining("missing argument");
         assertThatThrownBy(() -> CompiledRegex.compile("a*{2}")).isInstanceOf(PatternSyntaxException.class)
             .hasMessageContaining("invalid nested repetition");
-        // previously a*{2} parsed as a* + literal "{2}" and MATCHED "aa{2}"
+        // without the nested-repetition rejection, a*{2} would parse as a*
+        // + literal "{2}" and match "aa{2}"
         assertThat(CompiledRegex.compile("a*").find("aa{2}")).isTrue();
     }
 

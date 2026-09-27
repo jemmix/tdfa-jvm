@@ -49,7 +49,7 @@ class StrategyConformanceTest {
         {"(?m)^line", "first\nline two\nline three\nline four\nline five"},
         // φ-variant accepting states (stateFinalOpsByMask on a fastPath
         // DFA): wholeOne's EOF gate/φ selection is compared span-exact
-        // against wholeWalk via matchWhole (fuzz round 28 family).
+        // against wholeWalk via matchWhole.
         {"(?:.)((?:\\B)?)", "\ud800\udfff"}, {"(\\b)?", "word words"}, {".(?<n0>(\\z)*)", "_"},});
 
     private static final int[] LENGTHS =

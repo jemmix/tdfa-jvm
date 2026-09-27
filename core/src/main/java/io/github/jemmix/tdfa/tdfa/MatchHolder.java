@@ -3,8 +3,7 @@ package io.github.jemmix.tdfa.tdfa;
 import io.github.jemmix.tdfa.core.EmittedSurface;
 
 /**
- * Immutable match result carrier (start/end/registers) — extracted verbatim
- * from TdfaRunner (2026-09 god-file split).
+ * Immutable match result carrier (start/end/registers).
  */
 @EmittedSurface
 public final class MatchHolder {

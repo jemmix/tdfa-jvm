@@ -1,20 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  SpotBugs exclusions: findings that are ALREADY tracked as deferred review
-  items (docs/REVIEW-2026-09.md §2) or deliberate design decisions. The gate
+  SpotBugs exclusions: findings that are deliberate, documented design
+  decisions. The gate
   stays hard-fail for anything NOT listed here — new findings still break the
-  build. Analyzer bumped 4.9.3 -> 4.9.8 for Java 25 (major 69) classfile
-  support; the newer detector waves flag the deferred set below.
+  build. Analyzer 4.9.8 (Java 25, major 69, classfile support); its newer
+  detector waves flag the set below.
 
-  Do not add entries without a review-doc reference.
+  Do not add entries without documenting the reason here.
 -->
 <FindBugsFilter>
 
-    <!-- P1 #4/#18 (REVIEW §2): Tdfa's flat arrays + TdfaRunner's table fields
+    <!-- Tdfa's flat arrays + TdfaRunner's table fields
          are public API via RegexEngineFactory.create(Tdfa) — 29 live-array
-         accessors freeze the internal representation. Copy-on-write or a
-         freeze-hardening pass is the deferred Phase D decision; excluding the
-         (known, counted) exposure reports until then. -->
+         accessors freeze the internal representation; the (known, counted)
+         exposure reports are excluded by design. -->
     <Match classregex="^io\.github\.jemmix\.tdfa\.tdfa\.Tdfa$">
         <Bug pattern="EI_EXPOSE_REP"/>
     </Match>
@@ -22,22 +21,21 @@
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
     </Match>
 
-    <!-- P1 #16 (REVIEW §2): MatchResult's public ctor + register file is
-         engine-API surface (reconstructFixed); internalization is deferred
-         Phase C API-freeze work. -->
+    <!-- MatchResult's public ctor + register file is
+         engine-API surface (reconstructFixed). -->
     <Match classregex="^io\.github\.jemmix\.tdfa\.core\.MatchResult$">
         <Bug pattern="EI_EXPOSE_REP2"/>
     </Match>
 
-    <!-- P2 (REVIEW §2): ProbeKey.equals is deliberately asymmetric (query
-         side only) — documented HashMap-query contract. -->
+    <!-- ProbeKey.equals is deliberately asymmetric (query side only) —
+         documented HashMap-query contract. -->
     <Match classregex="^io\.github\.jemmix\.tdfa\.tdfa\.TdfaStateIndex\$ProbeKey$">
         <Bug pattern="EQ_UNUSUAL,EQ_CHECK_FOR_OPERAND_NOT_COMPATIBLE_WITH_THIS"/>
     </Match>
 
     <!-- ParseResult hands out its unmodifiable views of the named-group map
          (part of the frozen parser API); flagged only by the 4.9.8+ detector
-         wave. Tracked with the Phase C API sweep. -->
+         wave. -->
     <Match classregex="^io\.github\.jemmix\.tdfa\.parser\.Parser$">
         <Bug pattern="EI_EXPOSE_REP"/>
     </Match>
@@ -61,7 +59,7 @@
     </Match>
 
     <!-- PatternMatcher exposes its Pattern (the facade's matcher surface is
-         the frozen re2j-shaped API); tracked with the Phase C sweep. -->
+         the frozen re2j-shaped API). -->
     <Match classregex="^io\.github\.jemmix\.tdfa\.PatternMatcher$">
         <Bug pattern="EI_EXPOSE_REP"/>
     </Match>

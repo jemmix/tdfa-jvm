@@ -28,12 +28,13 @@ import java.util.function.Supplier;
  *   <li>{@code PASS} — all four agree</li>
  *   <li>{@code TIER} — V ≠ A: the tiers disagree with each other (codegen)</li>
  *   <li>{@code CONSTRUCTION} — V == A ≠ S, S == R: the DFA diverges from our
- *       own NFA; the oracle sides with the NFA. This is where every fuzz
- *       round 3–6 determinizer bug landed.</li>
+ *       own NFA; the oracle sides with the NFA. The strongest
+ *       determinizer-correctness signal: construction bugs (wrong priority,
+ *       lost tags) surface here.</li>
  *   <li>{@code PARSER} — V == A == S ≠ R: the whole stack agrees with itself;
- *       the divergence originates in parser/NFA semantics (ſ-folding lived
- *       here; so do deliberate ones like lone-surrogate boundaries — the
- *       KNOWN_DIVERGENCE classifier composes on top)</li>
+ *       the divergence originates in parser/NFA semantics (deliberate ones
+ *       like lone-surrogate boundaries land here — the KNOWN_DIVERGENCE
+ *       classifier composes on top)</li>
  *   <li>{@code SIM_SUSPECT} — V == R ≠ S: 2-vs-1 the other way; the reference
  *       itself is wrong</li>
  *   <li>{@code CHAOS} — three different answers; everything suspect</li>
@@ -261,8 +262,8 @@ public final class LayeredComparator {
     /**
      * CLI probe: {@code LayeredComparator <pattern> <input>} — prints the four
      * columns and the verdict. The default provider is the JDK one; tests
-     * thread their own. This formalizes the ad-hoc debug probes the fuzz
-     * rounds kept re-inventing.
+     * thread their own — one command instead of re-inventing an ad-hoc
+     * column probe per debugging session.
      */
     public static void main(String[] args) {
         if (args.length < 2) {

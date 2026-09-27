@@ -138,13 +138,12 @@ public final class Tnfa {
         long t0 = System.nanoTime();
         // Front-end budget: ONE work meter (CPU, ticks) spans parse + TNFA
         // build so the pre-determinization surface is bounded too — the
-        // parser's O(universe) fold-range scan ticks it (review r10 P1-1),
-        // and the Builder's state/edge creation ticks it AND accumulates
-        // weighted bytes against the compile RAM budget (review r10 P0-1:
-        // nested counted repeats used to OOM the JVM here before any
-        // determinization cap could fire — ((a{300}){300}){300} is a clean
-        // "pattern too large" rejection now). Determinization constructs
-        // its own meter per attempt (TdfaCompiler).
+        // parser's O(universe) fold-range scan ticks it, and the Builder's
+        // state/edge creation ticks it AND accumulates weighted bytes
+        // against the compile RAM budget (nested counted repeats can OOM
+        // the JVM here before any determinization cap fires — e.g.
+        // ((a{300}){300}){300} is rejected as a clean "pattern too large").
+        // Determinization constructs its own meter per attempt (TdfaCompiler).
         ParseResult parsed = Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth, provider, meter);
         if (observer != null) {
             observer.stage(CompileObserver.Stage.PARSE, System.nanoTime() - t0, parsed.tagCount());
@@ -459,7 +458,7 @@ public final class Tnfa {
                     // construction can ever write them — there is no stale value to
                     // kill, and the group simply reports NIL. The asymmetry with the
                     // quest case (which meticulously emits ntags) is deliberate: there
-                    // is nothing below an empty body to poison (review P2 note).
+                    // is nothing below an empty body to poison.
                     if (max == Integer.MAX_VALUE) {
                         // {n,} = (n-1) copies followed by body+  — NOT body*.
                         // re2j's Simplify general case ("x{4,} is xxxx+"): a PLUS tail

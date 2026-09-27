@@ -59,7 +59,7 @@ class WordBoundaryTest {
 
     // ===== Alternation dead-end (§B fix area) =====
 
-    /** Minimal dead-end repro: keyword prefix that doesn't complete must fall through to identifier. */
+    /** Minimal dead-end case: keyword prefix that doesn't complete must fall through to identifier. */
     @ParameterizedTest
     @MethodSource("factories")
     void keywordPrefixFallsThroughToIdentifier(RegexEngineFactory f) {

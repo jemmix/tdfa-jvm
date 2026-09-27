@@ -16,29 +16,29 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Compile-latency regression guard: every formerly-exponential compile in the
+ * Compile-latency regression guard: every superlinear-compile hazard in the
  * in-scope corpus must stay under a fixed wall budget through the full facade
  * ({@link Pattern#compile(String, int)}), both backends.
  *
- * <p>Covered bombs (each was a {@code COMPILE_TIMEOUT} (&gt;2 min) or AST-budget
- * skip before the determinize fast-path landed 2026-08-18):
+ * <p>Covered bombs (shapes whose uncapped determinization is exponential —
+ * without the determinize fast-path each is a {@code COMPILE_TIMEOUT}
+ * (&gt;2 min) or an AST-budget skip):
  * <ul>
  *   <li>{@code curated/03-date} — 6.3 KB datefinder alternation, (?i) and
- *       (?i)(?u) variants (was: AST bomb rule "massive non-literal
- *       alternation"; now ~1-3 s);</li>
+ *       (?i)(?u) variants (~1-3 s);</li>
  *   <li>{@code curated/09-aws-keys/full} — 191-char nested bounded/greedy
- *       alternation (was: AST bomb rule "variable bounded repeat of
- *       wide-unbounded repeat"). The find artifact compiles (~0.4 s); the
+ *       alternation. The find artifact compiles (~0.4 s); the
  *       pattern's pike cut bit, and its cut-free whole artifact churns
  *       without converging — the one shared CPU ledger bounds the doomed
  *       attempt, so compile() rejects in ~2 s. The guard pins that
  *       bounded-rejection wall.</li>
  *   <li>{@code curated/12-dictionary/single} — 2 663-branch literal
  *       alternation, 45 KB regex (legitimately slow-but-finishing;
- *       19.5 K states, minimizes to 6.8 K; ~1.5 s — guards the stateIndex
- *       multimap fix that took it from ~14 s);</li>
+ *       19.5 K states, minimizes to 6.8 K; ~1.5 s — a stateIndex multimap
+ *       regression here superlinearizes it back to ~14 s);</li>
  *   <li>{@code i1095 \p{L}{256}} — bounded-repeat over a Unicode class
- *       (~1.4 K ranges/state; guards the W1a/W1b range work).</li>
+ *       (~1.4 K ranges/state; pins range-table handling at that
+ *       density).</li>
  * </ul>
  *
  * <p>NOT covered (rejected by the engine's DEFAULT budget; skipped by name in
@@ -48,14 +48,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code [\s\S]{0,100}} × 2 whose counter cross-product is an intrinsically
  * huge DFA (measured already-minimal on the simplified analog: 60 604 →
  * 60 603 states). At a raised ceiling it compiles to 234 369 states in
- * ~21 s fitting -Xmx1g (2026-08-20 memory work; was ~5-6 GB) and passes
- * count verification on both backends — far outside this guard's 5 s
- * scope by design.
+ * ~21 s fitting -Xmx1g and passes count verification on both backends
+ * — far outside this guard's 5 s scope by design.
  *
  * <p>Budget: 10 s per compile. Datefinder (pike-cut-hazardous: it keeps a
- * find artifact plus a cut-free whole artifact) went from ~1 s (find only)
- * to ~1.5 s locally / up to ~6 s on a slow CI runner when the whole
- * artifact became eager. 10 s keeps the guard's purpose — catching
+ * find artifact plus a cut-free whole artifact) measures ~1.5 s locally and
+ * up to ~6 s on a slow CI runner. 10 s keeps the guard's purpose — catching
  * superlinear regressions, not micro-optimizing — with headroom over the
  * CI worst measured, while aws-keys' doomed whole attempt burns at most
  * the one CPU budget inside compile() before rejecting.
@@ -66,7 +64,8 @@ class CompileLatencyGuardTest {
      * Wall budget per compile, milliseconds. Local runs keep the tight
      * regression-sensitive bound; shared CI runners (documented to drift
      * ±30%+, and noisier under parallel jobs) get 4× headroom so the guard
-     * catches code regressions, not machine noise (review P1-3).
+     * catches code regressions, not machine noise (thin CI headroom is
+     * the likeliest fresh-machine flake).
      */
     private static final long BUDGET_MS = 10_000 * ciMultiplier();
 

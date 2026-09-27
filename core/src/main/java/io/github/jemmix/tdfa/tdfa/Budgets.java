@@ -27,8 +27,9 @@ package io.github.jemmix.tdfa.tdfa;
  * minimizer normalization cells, tag-history tables, search-DFA memo
  * rows/blocks, walk-memo blocks/per-state tables) are all linear
  * functions of the two compile budgets / the runtime budget through the
- * weight model (BudgetWeights) — there is deliberately no way to set them
- * directly anymore. Raise the budget, not the cap.
+ * weight model (BudgetWeights) — one knob per resource, so the caps can
+ * never drift out of sync with the budgets that derive them. Raise the
+ * budget, not the cap.
  *
  * <p><b>Ledger.</b> The compile CPU budget bounds one whole compile: the
  * attempts (front-end, find determinization, and — when the pike cut bit

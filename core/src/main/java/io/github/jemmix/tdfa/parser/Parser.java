@@ -650,8 +650,8 @@ public final class Parser {
     /** Union of {@code ranges} with every member's full simple-fold orbit (re2j's foldCase).
      *  Output is sorted by lo with overlapping ranges merged — complementRanges
      *  and downstream range walkers rely on that. The per-codepoint scan is
-     *  metered (review r10 P1-1): it is O(universe) per wide class under
-     *  {@code (?i)}, so it must be budget-visible CPU work. */
+     *  metered: it is O(universe) per wide class under {@code (?i)}, so it
+     *  must be budget-visible CPU work. */
     private int[] foldExpandRanges(int[] arr) {
         List<int[]> ivs = new ArrayList<>(arr.length);
         for (int i = 0; i < arr.length; i += 2) {

@@ -32,17 +32,16 @@ class CompileBudgetTest {
     /** The rebar curated/10-bounded-repeat/context shape (both sites). */
     private static final String CONTEXT_BOMB = "[A-Za-z]{10}\\s+[\\s\\S]{0,100}Result[\\s\\S]{0,100}\\s+[A-Za-z]{10}";
 
-    /** Compile-time edge bomb from the fuzz corpus (CFG blowup: a
-     *  157,176,487-edge CFG — liveness burned ~60 s at library budget and
-     *  >10 s past the fuzz watchdog per engine (cpuMs=7161, verdict=spin).
-     *  Pinned with \x{...} escapes so the source stays pure ASCII; lone
-     *  surrogates are exactly what the original carried. */
+    /** Compile-time edge bomb (CFG blowup): a shape whose φ-variant finals
+     *  make buildCfg materialize a 157,176,487-edge CFG — liveness burns
+     *  ~60 s at library budget. Pinned with \x{...} escapes so the source
+     *  stays pure ASCII. */
     private static final String CFG_EDGE_BOMB =
         "(?:(?s:\\-{3}\\x{3042}{0,4}v)(?s:s\\x{dbff}Y))(?U:(\\D)@|_(?:(?<n0>\\-[^.9q-\\x{d800}_]*?Y)\\-\\x{dc21})a"
             + "(?:(?U:z)(?:wa?.{4,}^|$\\x{3a9}?\\Q @_\\E$)*(\\b.)))(?i:q\\x{10402}\\x{11c07})";
 
-    /** Compile RAM budget that derives a ~20 K-state cap (the historical
-     *  tight cap for the context bomb: 20 000 &times; 256 B/state). Also
+    /** Compile RAM budget that derives a ~20 K-state cap (the tight cap
+     *  for the context bomb: 20 000 &times; 256 B/state). Also
      *  derives ~64 K kernels / ~4 K closure — far below this shape's
      *  needs on every axis. */
     private static final String MEM_20K_STATES = "5120000";
@@ -66,7 +65,7 @@ class CompileBudgetTest {
     /**
      * The WORK budget (WorkMeter): nested-quantifier bombs whose closure
      * churns fixpoints without materializing states never trip the
-     * state/kernel caps (fuzzer-found; e.g. the tryMap family). A tight
+     * state/kernel caps (e.g. the tryMap family). A tight
      * budget must reject them with the same clean error shape.
      */
     @Test
@@ -84,12 +83,12 @@ class CompileBudgetTest {
         }
     }
 
-    /** Alternation-in-counted-repetition bomb (fuzzer family): the cross
-     *  product is genuinely huge — clean state-cap rejection. The former
-     *  plain nested-counted bombs ((a{1,100}){1,100} etc.) now COMPILE since
-     *  the {n,m} desugaring moved to re2j's right-nested suffix (round 18):
-     *  (a{1,100}){1,50} compiles in ~1 s at 10001 states where the flat tail
-     *  burned 19.6 M kernels — see nestedCountedNowCompiles below. */
+    /** Alternation-in-counted-repetition bomb: the cross product is
+     *  genuinely huge — clean state-cap rejection. Plain nested-counted
+     *  bombs ((a{1,100}){1,100} etc.) COMPILE: the {n,m} desugaring uses
+     *  re2j's right-nested suffix, so (a{1,100}){1,50} compiles in ~1 s at
+     *  10001 states where a flat tail would burn 19.6 M kernels — see
+     *  nestedCountedNowCompiles below. */
     @Test
     void alternationCountedBombCleanRejects() {
         System.setProperty("tdfa.budget.compile.memory", MEM_20K_STATES);
@@ -104,8 +103,8 @@ class CompileBudgetTest {
         }
     }
 
-    /** The classic nested-counted shape's FIND artifact now compiles under
-     *  default budgets — the right-nested suffix collapsed the determinization
+    /** The classic nested-counted shape's FIND artifact compiles under
+     *  default budgets — the right-nested suffix collapses the determinization
      *  ~90x in kernel total ((a{1,100}){1,100}: 19.6 M kernels -> 148 K,
      *  10001 states). Its cut-free whole artifact still rejects (pinned in
      *  WholeMatchTest), so the facade compile fails; the find-artifact pin
@@ -121,27 +120,7 @@ class CompileBudgetTest {
             .hasMessageContaining("pattern too large");
     }
 
-    /** Fuzz round 24 (caseSeed 727613823329836856): a 287-state DFA whose
-     *  φ-variant finals made buildCfg materialize a 22,637-block /
-     *  157,176,487-edge CFG — liveness burned ~60 s at library budget and
-     *  >10 s past the fuzz watchdog per engine (cpuMs=7161, verdict=spin).
-     *  Pinned with \x{...} escapes so the source stays pure ASCII; lone
-     *
-     * @Test
-     * void cfgEdgeExplosionCapRejectsCleanly() {
-     * long t0 = System.nanoTime();
-     * assertThatCode(() -> Pattern.compile(CFG_EDGE_BOMB))
-     * .isInstanceOf(PatternSyntaxException.class)
-     * .hasMessageContaining("pattern too large")
-     * .hasMessageContaining("CFG edge budget")
-     * .hasMessageContaining("tdfa.budget.compile.memory");
-     * // ~0.7 s measured (cap trips during the successor-arc BFS); the point
-     * // is fail-fast — uncapped, the compile took ~60 s per engine.
-     * assertThat((System.nanoTime() - t0) / 1_000_000)
-     * .as("wall to CFG-edge rejection").isLessThan(10_000);
-     * }
-     *
-     * /** Per-kernel spike bound: kernelsTotal only counts after addState, so a
+    /** Per-kernel spike bound: kernelsTotal only counts after addState, so a
      *  single closure can spike the heap on its own. The wide-alternation
      *  bomb builds 4-figure closures. Derived closure cap = RAM budget /
      *  16 / 80 B: 12 800 bytes → 10 configs. */
@@ -158,12 +137,11 @@ class CompileBudgetTest {
         }
     }
 
-    /** Fuzz round 27's spin family (caseSeeds 4496606199222982303,
-     * 917334682215128318): a bomb whose whole artifact exceeds the budget
-     * fails compile() exactly once, eagerly, with the clean rejection —
-     * the find determinization and the one doomed cut-free attempt all run
-     * inside compile() on the shared CPU ledger (nothing recompiles at
-     * match time). Pinned with \x{...}/escapes per CFG_EDGE_BOMB above. */
+    /** A bomb whose whole artifact exceeds the budget fails compile()
+     *  exactly once, eagerly, with the clean rejection — the find
+     *  determinization and the one doomed cut-free attempt all run inside
+     *  compile() on the shared CPU ledger (nothing recompiles at match
+     *  time). */
     @Test
     void bombWholeOverBudgetFailsCompileEagerly() {
         String bomb = "(?:(?m:\u00e9)(?:\\w[^\u03a9z\\-]{0,}|\ud835\udd04\udfff){1,4}){1,5}";

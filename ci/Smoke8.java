@@ -9,8 +9,8 @@ import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
 
 /**
- * JDK 8 runtime smoke for the Java 8 floor modules (CI job jars-and-tests;
- * docs/REVIEW-2026-09.md §1d). Compiled AND run on a real JDK 8 against the
+ * JDK 8 runtime smoke for the Java 8 floor modules (CI job jars-and-tests).
+ * Compiled AND run on a real JDK 8 against the
  * core, asm, and facade jars — the three modules that ship Java 8 bytecode.
  * The facade's only runtime dependencies are core and asm (plus asm 9.9.1
  * itself, major 49), so the whole public API loads and runs on 8: the user
