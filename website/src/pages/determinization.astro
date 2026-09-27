@@ -5,8 +5,8 @@ import Code from '../components/Code.astro';
 import SubsetLab from '../islands/SubsetLab.svelte';
 ---
 
-<Base title="Determinization: subset construction with luggage">
-    <PageHeader num="06" title="Determinization: subset construction with luggage" lede="The heart of the engine. Ordinary subset construction folds “many possible states” into one; TDFA subset construction must also fold “many possible capture histories” — ahead of time, into register writes." />
+<Base title="Determinization: subset construction with histories">
+    <PageHeader num="06" title="Determinization: subset construction with histories" lede="The core of the engine. Ordinary subset construction folds “many possible states” into one; TDFA subset construction must also fold “many possible capture histories” — ahead of time, into register writes." />
 
     <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
         <h2>Plain subset construction, in one paragraph</h2>
@@ -35,7 +35,7 @@ import SubsetLab from '../islands/SubsetLab.svelte';
 
         <h2>The trick that keeps it finite</h2>
         <p>
-            Here is the load-bearing subtlety of the whole algorithm, so let's slow down. Each config carries <em>two</em> history ids, <code>h</code> and <code>l</code>. During an ε-closure, crossing a <code>+t</code> edge appends to <code>l</code> (negatives are never recorded — nil-ness is structural, from the ntag chains). When the config consumes a character — <code>stepOnSymbol</code> — the history is <strong>rotated, not accumulated</strong>:
+            The key subtlety of the whole algorithm: each config carries <em>two</em> history ids, <code>h</code> and <code>l</code>. During an ε-closure, crossing a <code>+t</code> edge appends to <code>l</code> (negatives are never recorded — nil-ness is structural, from the ntag chains). When the config consumes a character — <code>stepOnSymbol</code> — the history is <strong>rotated, not accumulated</strong>:
         </p>
         <Code lang="java" title="tdfa/TdfaCompiler.java — stepOnSymbol">{`out.add(new Config(nfa.symTo[idx], c.regs, /* h = */ c.l, /* l = */ HistTable.EMPTY_ID, 0, c.pri));`}</Code>
         <p>
@@ -49,7 +49,7 @@ import SubsetLab from '../islands/SubsetLab.svelte';
         </p>
 
         <h2>The worklist loop</h2>
-        <p>End to end, <code>TdfaCompiler.determinize()</code> is beautifully small:</p>
+        <p>End to end, <code>TdfaCompiler.determinize()</code> is small:</p>
         <Code lang="java" title="tdfa/TdfaCompiler.java — determinize (skeleton)">{`List<Config> initClosure = epsilonClosure(initSeed);
 int startId = index.addState(initClosure, null, initSeed).targetId;
 work.push(startId);
@@ -87,7 +87,7 @@ while (!work.isEmpty()) {
 
         <h2>Budgets woven in</h2>
         <p>
-            Every unbounded or quadratic gesture here is metered and capped: closure growth is checked <em>during</em> the closure (a per-kernel "spike" bound — a nested-counted bomb could otherwise exhaust the heap inside one closure before totals catch it); the state count and weighted kernel bytes are checked at <code>addState</code>; the whole thing ticks the compute meter. Exceeding any of them throws the clean <code>"pattern too large"</code> — by design, determinization is where bombs go to die. Defaults allow ~262k states (Perl) / ~524k (POSIX) before the wall.
+            Every unbounded or quadratic gesture here is metered and capped: closure growth is checked <em>during</em> the closure (a per-kernel "spike" bound — a nested-counted bomb could otherwise exhaust the heap inside one closure before totals catch it); the state count and weighted kernel bytes are checked at <code>addState</code>; the whole thing ticks the compute meter. Exceeding any of them throws the clean <code>"pattern too large"</code> — by design, determinization is where pathological patterns are caught. Defaults allow ~262k states (Perl) / ~524k (POSIX) before the wall.
         </p>
     </div>
 
@@ -96,7 +96,7 @@ while (!work.isEmpty()) {
     <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
         <h2>What the playground simplifies</h2>
         <p>
-            Being honest about the deltas, since the island is a teaching miniature: it uses one register per tag (the real engine allocates per (source state, tag, sign) and merges same-shape states with the tryMap bijection and COPY prepends); it skips the Pike cut and the assertion live-context split (patterns here avoid anchors); and its final ops are the didactic <code>COPY work→final</code> plus <code>SET_POS</code> form. Everything else — priorities, the visited rule, the h/l rotation, order-exact interning, coalescing — is the real algorithm at working scale. The <a href="/registers/">Registers</a> chapter covers what the real final ops and the register allocator do with them.
+            This island is a teaching miniature, so to be precise about the deltas: it uses one register per tag (the real engine allocates per (source state, tag, sign) and merges same-shape states with the tryMap bijection and COPY prepends); it skips the Pike cut and the assertion live-context split (patterns here avoid anchors); and its final ops are the didactic <code>COPY work→final</code> plus <code>SET_POS</code> form. Everything else — priorities, the visited rule, the h/l rotation, order-exact interning, coalescing — is the real algorithm at working scale. The <a href="/registers/">Registers</a> chapter covers what the real final ops and the register allocator do with them.
         </p>
     </div>
 </Base>

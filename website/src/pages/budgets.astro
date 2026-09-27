@@ -26,7 +26,7 @@ import Code from '../components/Code.astro';
             </table>
         </div>
         <p>
-            Notice the asymmetry: <em>there is no runtime compute budget, and the class doc is proud of it</em> — "the linear-time guarantee makes a runtime CPU budget meaningless — no backtracking engine exists to burn one." Match time is bounded structurally (chapter 01); only match-time <em>memory</em> needs a cap, for the lazily-built memo tables.
+            Notice the asymmetry: <em>there is no runtime compute budget</em> — "the linear-time guarantee makes a runtime CPU budget meaningless — no backtracking engine exists to burn one." Match time is bounded structurally (chapter 01); only match-time <em>memory</em> needs a cap, for the lazily-built memo tables.
         </p>
 
         <h2>One knob per resource</h2>
@@ -40,7 +40,7 @@ maxCfgEdges       = mem / 32                          → regopt CFG arc cap
 maxMinimizeCells  = mem / 4                           → normalization grid
 runtime eighths   : search rows 4/8 · blocks 3/8 · walk memo 1/8`}</Code>
         <p>
-            The weights themselves are mostly hand-calibrated constants in <code>BudgetWeights</code> — 32 bytes per TNFA state, 64 per edge, 256 per DFA state, 40 + 4/tag per interned history — with one delightful exception: <code>KERNEL_CONFIG_BYTES = 80</code> is annotated as "the one figure that IS measured… 6.4 M kernels peaked under 1 GB."
+            The weights themselves are mostly hand-calibrated constants in <code>BudgetWeights</code> — 32 bytes per TNFA state, 64 per edge, 256 per DFA state, 40 + 4/tag per interned history — with one measured exception: <code>KERNEL_CONFIG_BYTES = 80</code> is annotated as "the one figure that IS measured… 6.4 M kernels peaked under 1 GB."
         </p>
 
         <h2>The compute meter</h2>
@@ -67,7 +67,7 @@ runtime eighths   : search rows 4/8 · blocks 3/8 · walk memo 1/8`}</Code>
             <li>Walk-index memo past its eighth → binary search: "correct, slower."</li>
         </ul>
         <p>
-            The pattern to take away: <strong>bounded work, clean failure, graceful degradation</strong> — every tier either fits, falls back, or fails with a message that tells you which knob to turn. That's what "linear time by construction" looks like as an engineering discipline, not just a big-O claim.
+            The pattern to take away: <strong>bounded work, clean failure, graceful degradation</strong> — every tier either fits, falls back, or fails with a message that tells you which knob to turn. The budget system is what makes the linear-time claim hold in practice, not just in big-O terms.
         </p>
     </div>
 </Base>

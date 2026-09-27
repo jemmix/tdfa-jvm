@@ -1,4 +1,8 @@
 <script lang="ts">
+    import LabModal from './LabModal.svelte';
+
+    let expanded = $state(false);
+
     import { compileTnfa, sortedEps, symEdgesOf, type Tnfa } from '../lib/thompson';
     import { runPikeVm } from '../lib/pikevm';
     import { classMatches } from '../lib/parse';
@@ -117,12 +121,8 @@
     let lastRow = $derived(visibleRows.length ? visibleRows[visibleRows.length - 1] : null);
 </script>
 
-<div class="island">
-    <div class="island-header">
-        <span class="island-title">Unanchored search without restarts: the live-set scan</span>
-        <span class="text-xs text-zinc-500">re-seed · interning · kill points · trigger</span>
-    </div>
-    <div class="island-body space-y-4">
+{#snippet labBody()}
+    <div class="space-y-4">
         <div class="flex flex-wrap items-end gap-3">
             <label class="min-w-48 flex-1 text-sm">
                 <span class="mb-1 block font-medium text-zinc-700">Input</span>
@@ -207,7 +207,22 @@
             {/if}
         {/if}
     </div>
+{/snippet}
+
+<div class="island">
+    <div class="island-header">
+        <span class="island-title">Unanchored search without restarts: the live-set scan</span>
+        <span class="ml-auto text-xs text-zinc-500">re-seed · interning · kill points · trigger</span>
+        <button class="btn !py-1 text-xs" onclick={() => (expanded = true)} title="open this lab fullscreen">⤢ expand</button>
+    </div>
+    <div class="island-body">
+        {@render labBody()}
+    </div>
     <div class="island-caption">
         This is the ORIGIN_SIM/TRIGGER tier of the real ladder (TdfaRunner.multiStateLeftmostStart / triggerScan over SearchDfa, core/.../tdfa/TdfaRunner.java). The real SearchDfa memoizes transitions as de-duplicated 512-codepoint blocks, caps itself against the runtime memory budget (default 16 MiB split 4:3:1 between rows, blocks and the walk memo), and stays thread-safe through immutable row snapshots. Below a 2048-codepoint window the scan runs unmemoized.
     </div>
 </div>
+
+<LabModal bind:open={expanded} title="Unanchored search — the live-set scan">
+    {@render labBody()}
+</LabModal>

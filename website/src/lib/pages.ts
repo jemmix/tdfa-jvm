@@ -11,7 +11,7 @@ export const pages: PageMeta[] = [
     { href: '/parsing/', num: '03', title: 'Parsing: pattern to AST', short: 'Parsing' },
     { href: '/tnfa/', num: '04', title: 'The TNFA: an NFA with tags', short: 'TNFA' },
     { href: '/alphabet/', num: '05', title: 'The alphabet: characters into cells', short: 'Alphabet' },
-    { href: '/determinization/', num: '06', title: 'Determinization: subset construction with luggage', short: 'Determinization' },
+    { href: '/determinization/', num: '06', title: 'Determinization: subset construction with histories', short: 'Determinization' },
     { href: '/registers/', num: '07', title: 'Registers: captures that survive determinization', short: 'Registers' },
     { href: '/anchors/', num: '08', title: 'Anchors and other zero-width assertions', short: 'Anchors' },
     { href: '/minimization/', num: '09', title: 'Minimization: merging twins', short: 'Minimization' },

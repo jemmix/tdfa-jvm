@@ -1,6 +1,9 @@
 <script lang="ts">
     import { parse } from '../lib/parse';
     import { compileBacktracker, runBacktracker } from '../lib/backtracker';
+    import LabModal from './LabModal.svelte';
+
+    let expanded = $state(false);
 
     let pattern = $state('(a+)+b');
     let n = $state(18);
@@ -35,12 +38,8 @@
     let maxBar = $derived(Math.max(bt?.steps ?? 0, dfaSteps, 1000));
 </script>
 
-<div class="island">
-    <div class="island-header">
-        <span class="island-title">Backtracking vs. DFA, step by step</span>
-        <span class="text-xs text-zinc-500">naive backtracker (left) · tdfa-jvm-style walk (right)</span>
-    </div>
-    <div class="island-body space-y-5">
+{#snippet labBody()}
+    <div class="space-y-5">
         <div class="flex flex-wrap items-end gap-4">
             <label class="text-sm">
                 <span class="mb-1 block font-medium text-zinc-700">Pattern</span>
@@ -103,7 +102,22 @@
             </div>
         {/if}
     </div>
+{/snippet}
+
+<div class="island">
+    <div class="island-header">
+        <span class="island-title">Backtracking vs. DFA, step by step</span>
+        <span class="ml-auto text-xs text-zinc-500">naive backtracker (left) · tdfa-jvm-style walk (right)</span>
+        <button class="btn !py-1 text-xs" onclick={() => (expanded = true)} title="open this lab fullscreen">⤢ expand</button>
+    </div>
+    <div class="island-body">
+        {@render labBody()}
+    </div>
     <div class="island-caption">
         The backtracker re-tries every way of splitting the a's between the nested quantifiers — the count roughly doubles (or Fibonaccis) with each added character. The DFA walk consumes one character per step because all the "ways to split" live in the DFA state, not in a choice stack. Bars are log-scaled; the backtracking cap here is 5,000,000 steps (the real engine has no such cliff to hit).
     </div>
 </div>
+
+<LabModal bind:open={expanded} title="Backtracking vs. DFA, step by step">
+    {@render labBody()}
+</LabModal>

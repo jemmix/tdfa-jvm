@@ -37,7 +37,7 @@ case 7: /* ... */
 
         <h2>Stack-register leaves</h2>
         <p>
-            The most micro-optimization-flavored idea in the backend, and a nice one: when the register file is small — <code>1 ≤ registerCount ≤ 32</code>, no final-variant selector — the generated walk keeps the registers <em>in JVM local slots</em> instead of the <code>int[]</code>. Every op becomes a bare <code>ILOAD</code>/<code>ISTORE</code> pair: no <code>takeRegs</code>, no <code>Arrays.fill</code> initialization, no array bounds checks in the hot loop, no clone on success (the result array is materialized from locals once per <em>successful</em> match). Measured: −18% at 4 registers, −10% at 8, tapering to parity around 40+ where the frame-size cost wins. The frame stays ≤ 51 slots. These classes report <code>wantsScratch() == false</code> — a Matcher for them allocates no carrier at all.
+            The most specialized optimization in the backend: when the register file is small — <code>1 ≤ registerCount ≤ 32</code>, no final-variant selector — the generated walk keeps the registers <em>in JVM local slots</em> instead of the <code>int[]</code>. Every op becomes a bare <code>ILOAD</code>/<code>ISTORE</code> pair: no <code>takeRegs</code>, no <code>Arrays.fill</code> initialization, no array bounds checks in the hot loop, no clone on success (the result array is materialized from locals once per <em>successful</em> match). Measured: −18% at 4 registers, −10% at 8, tapering to parity around 40+ where the frame-size cost wins. The frame stays ≤ 51 slots. These classes report <code>wantsScratch() == false</code> — a Matcher for them allocates no carrier at all.
         </p>
 
         <h2>The shell: devirtualizing the API</h2>

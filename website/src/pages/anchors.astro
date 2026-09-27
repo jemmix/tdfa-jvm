@@ -24,7 +24,7 @@ public static final int ABS_END = 32;          // \\z — end of input only`}</C
 
         <h2>The complication: one kernel, many truths</h2>
         <p>
-            If that were the whole story, this chapter would be a footnote. The complication: a position satisfies <em>one</em> set of flags, but a DFA state's kernel accumulates assertion masks from all the ε-paths that built it — and different paths may carry incomparable requirements. The state <code>(?:^|$)</code>'s closure contains an accept reached via "was at start" and another via "at end"; which tag values win depends on where you actually are.
+            That's the easy part. The complication: a position satisfies <em>one</em> set of flags, but a DFA state's kernel accumulates assertion masks from all the ε-paths that built it — and different paths may carry incomparable requirements. The state <code>(?:^|$)</code>'s closure contains an accept reached via "was at start" and another via "at end"; which tag values win depends on where you actually are.
         </p>
         <p>
             So determinization splits each kernel into <strong>live-set contexts</strong>: for each of the 64 possible runtime flag values <code>M</code>, the alive configs are those whose accumulated mask is a subset of <code>M</code>. Contexts are deduped by their alive-pattern, sorted most-coverage-first, and each context's transitions carry its OR-mask as a <code>requiredMask</code> — "this row only applies at positions satisfying these bits." A context that steps to nothing on some cell emits a <strong>dead marker</strong> (target −1) with its mask, so that the wrong context's row can't fire when a more specific one owns the step. The runtime ownership rule: <em>the most specific satisfied mask (by popcount) owns the character; ties go to the lowest index.</em>
@@ -35,7 +35,7 @@ public static final int ABS_END = 32;          // \\z — end of input only`}</C
 
         <h2>Position-aware accepting</h2>
         <p>
-            The same splitting applies at accept time, and it's where "final variants" earn their keep. For an accepting state, the compiler computes — for every one of the 64 flag values — the <em>first accepting config alive under those flags</em>. Two storage tiers:
+            The same splitting applies at accept time, and it's where "final variants" matter. For an accepting state, the compiler computes — for every one of the 64 flag values — the <em>first accepting config alive under those flags</em>. Two storage tiers:
         </p>
         <ul class="list-disc pl-6">
             <li>

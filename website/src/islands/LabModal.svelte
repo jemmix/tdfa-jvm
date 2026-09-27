@@ -1,7 +1,8 @@
 <script lang="ts">
-    // Fullscreen overlay for automata diagrams: the graph takes over most of the
-    // viewport (with margins), nothing beside it, scaled to fit both dimensions.
-    let { open = $bindable(false), title, children, controls } = $props();
+    // Fullscreen overlay for an entire lab: the island's body rendered at full
+    // width (same state, same bindings — editing or stepping works in either
+    // view), so graphs, tables and controls are visible together.
+    let { open = $bindable(false), title, children } = $props();
 </script>
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && open && (open = false)}></svelte:window>
@@ -9,7 +10,7 @@
 {#if open}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div
-        class="fixed inset-0 z-50 flex flex-col bg-zinc-950/70 p-3 backdrop-blur-sm sm:p-6 lg:p-10"
+        class="fixed inset-0 z-50 flex flex-col bg-zinc-950/70 p-3 backdrop-blur-sm sm:p-6 lg:p-8"
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -20,16 +21,11 @@
                 <span class="truncate text-sm font-semibold text-zinc-800">{title}</span>
                 <button class="btn shrink-0" onclick={() => (open = false)}>esc · close</button>
             </div>
-            <div class="min-h-0 flex-1 overflow-auto p-3 sm:p-5">
-                <div class="flex h-full min-h-[50vh] items-center justify-center">
+            <div class="min-h-0 flex-1 overflow-auto p-4 sm:p-6">
+                <div class="mx-auto max-w-5xl">
                     {@render children()}
                 </div>
             </div>
-            {#if controls}
-                <div class="shrink-0 border-t border-zinc-200 bg-zinc-50 px-4 py-2.5">
-                    {@render controls()}
-                </div>
-            {/if}
         </div>
     </div>
 {/if}

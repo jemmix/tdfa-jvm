@@ -1,4 +1,8 @@
 <script lang="ts">
+    import LabModal from './LabModal.svelte';
+
+    let expanded = $state(false);
+
     // Breakpoints / minterms lab: toggle character classes, watch the
     // codepoint line get cut at every class boundary.
 
@@ -69,12 +73,8 @@
     let hoverCell = $state<number | null>(null);
 </script>
 
-<div class="island">
-    <div class="island-header">
-        <span class="island-title">Breakpoints: the partition that makes transitions finite</span>
-        <span class="text-xs text-zinc-500">ASCII 32–127 shown; the real engine partitions all 1,114,112 codepoints</span>
-    </div>
-    <div class="island-body space-y-5">
+{#snippet labBody()}
+    <div class="space-y-5">
         <div class="flex flex-wrap gap-2">
             {#each classes as c, k}
                 <button
@@ -126,10 +126,25 @@
             <b class="text-zinc-800">Why it matters:</b> a DFA transition table needs "for each state, for each character, where do I go?" — that's states × 1,114,112 entries. Because every class boundary is a breakpoint, all codepoints inside one cell behave identically for <i>every</i> class in the pattern, so the engine emits one transition per cell and coalesces adjacent cells that share a target into <span class="mono">Range(lo, hi)</span> rows. Toggle <span class="mono">[a-f]</span> off and watch <span class="mono">[a-z]</span> re-coalesce into one piece.
         </div>
     </div>
+{/snippet}
+
+<div class="island">
+    <div class="island-header">
+        <span class="island-title">Breakpoints: the partition that makes transitions finite</span>
+        <span class="ml-auto text-xs text-zinc-500">ASCII 32–127 shown; the real engine partitions all 1,114,112 codepoints</span>
+        <button class="btn !py-1 text-xs" onclick={() => (expanded = true)} title="open this lab fullscreen">⤢ expand</button>
+    </div>
+    <div class="island-body">
+        {@render labBody()}
+    </div>
     <div class="island-caption">
         Mirrors TdfaCompiler.computeBreakpoints() (core/.../tdfa/TdfaCompiler.java:431): a TreeSet seeded with 0 and 0x110000, plus every lo and hi+1 of every symbol-edge class — negated classes are materialized first. Per cell, the compiler precomputes the bitset of "active" symbol edges and interns identical sets, so the expensive closure/regops pipeline runs once per distinct set, not once per cell.
     </div>
 </div>
+
+<LabModal bind:open={expanded} title="Breakpoints: the partition that makes transitions finite">
+    {@render labBody()}
+</LabModal>
 
 <script module lang="ts">
     export function blend(cls: { color: string }[]): string {

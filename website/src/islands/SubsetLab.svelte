@@ -3,7 +3,7 @@
     import { subsetConstruct, type SubsetEvent, OP_SET_POS, OP_SET_NIL, OP_COPY } from '../lib/subset';
     import { layoutTnfa, edgePath } from '../lib/graph';
     import { esc } from '../lib/parse';
-    import GraphModal from './GraphModal.svelte';
+    import LabModal from './LabModal.svelte';
 
     const presets = ['(a|b)*c', '(a)*', '(ab|a)(c|bc)'];
     let presetIdx = $state(0);
@@ -90,17 +90,8 @@
     });
 </script>
 
-<div class="island">
-    <div class="island-header">
-        <span class="island-title">Watch subset construction build a TDFA</span>
-        <select class="ml-auto field !w-52" value={presetIdx} onchange={(e) => setPreset(Number((e.target as HTMLSelectElement).value))}>
-            {#each presets as p, k}
-                <option value={k}>{p}</option>
-            {/each}
-        </select>
-    </div>
-    <div class="island-body space-y-4">
-        <div class="grid gap-4 lg:grid-cols-2">
+{#snippet labBody(idp: string, svgClass: string)}
+    <div class="grid gap-4 lg:grid-cols-2">
             <div>
                 <h4 class="mb-1.5 text-sm font-semibold text-zinc-800">TNFA <span class="font-normal text-zinc-400">— teal = in a kernel</span></h4>
                 {#snippet graphSvg(svgClass: string, idp: string)}
@@ -136,22 +127,9 @@
                         {/each}
                     </svg>
                 {/snippet}
-                <div class="relative overflow-x-auto rounded-lg border border-zinc-200 bg-white p-2">
-                    {@render graphSvg('min-w-[420px]', 's1')}
-                    <button class="btn absolute top-2 right-2 !px-2 !py-1 text-xs" onclick={() => (expanded = true)} title="open the graph fullscreen">⤢ enlarge</button>
+                <div class="overflow-x-auto rounded-lg border border-zinc-200 bg-white p-2">
+                    {@render graphSvg(svgClass, idp)}
                 </div>
-                <GraphModal bind:open={expanded} title={'TNFA for ' + presets[presetIdx] + ' — kernel states highlighted; step through below'}>
-                    {@render graphSvg('h-full w-full', 's2')}
-                    {#snippet controls()}
-                        <div class="flex items-center gap-2">
-                            <button class="btn" onclick={reset}>⟲</button>
-                            <button class="btn" onclick={back} disabled={i === 0}>◀ back</button>
-                            <button class="btn btn-primary" onclick={step} disabled={i >= result.events.length - 1}>step ▶</button>
-                            <button class="btn" onclick={play}>{playing ? '❚❚ pause' : '▷ play'}</button>
-                            <span class="ml-auto max-w-[50%] truncate font-mono text-xs text-zinc-500">{logLine}</span>
-                        </div>
-                    {/snippet}
-                </GraphModal>
             </div>
             <div>
                 <h4 class="mb-1.5 text-sm font-semibold text-zinc-800">TDFA <span class="font-normal text-zinc-400">— grows as states are interned</span></h4>
@@ -237,8 +215,26 @@
             <button class="btn" onclick={play}>{playing ? '❚❚ pause' : '▷ play'}</button>
             <span class="ml-auto text-xs text-zinc-400">{doneState?.type === 'done' ? `${doneState.stateCount} states · ${cells.length}+ cells` : `cells (ASCII window): ${cells.length}`}</span>
         </div>
+{/snippet}
+
+<div class="island">
+    <div class="island-header">
+        <span class="island-title">Watch subset construction build a TDFA</span>
+        <select class="ml-auto field !w-52" value={presetIdx} onchange={(e) => setPreset(Number((e.target as HTMLSelectElement).value))}>
+            {#each presets as p, k}
+                <option value={k}>{p}</option>
+            {/each}
+        </select>
+        <button class="btn !py-1 text-xs" onclick={() => (expanded = true)} title="open this lab fullscreen">⤢ expand</button>
+    </div>
+    <div class="island-body space-y-4">
+        {@render labBody('s1', 'min-w-[420px]')}
     </div>
     <div class="island-caption">
         The kernel signature includes each config's tag history <span class="mono">l</span> — and <span class="mono">l</span> resets to empty on every symbol step (stepOnSymbol moves it to <span class="mono">h</span>). That reset is why histories stay small and the DFA stays finite. Watch <span class="mono">(a)*</span>: state 1's kernel looks identical after every iteration, so the second arrival is interned to the <i>existing</i> state — the loop closes. This playground dedupes on the full signature (the real engine merges same-shape states with different register assignments via the map bijection + COPY ops, and applies the Pike cut in Perl mode — both are elided here for clarity; ops use one register per tag).
     </div>
 </div>
+
+<LabModal bind:open={expanded} title="Subset construction — watch a TDFA build">
+    {@render labBody('s2', 'w-full')}
+</LabModal>

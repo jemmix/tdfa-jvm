@@ -9,12 +9,12 @@ import PageHeader from '../components/PageHeader.astro';
     <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
         <h2>Differential testing at the center</h2>
         <p>
-            The primary evidence is boring in the best way: run this engine and a trusted engine on the same (pattern, input) pairs and compare everything — match, no-match, spans, every group. The suites:
+            The primary evidence is unglamorous but effective: run this engine and a trusted engine on the same (pattern, input) pairs and compare everything — match, no-match, spans, every group. The suites:
         </p>
         <ul class="list-disc pl-6">
             <li><strong>5.7 million cases</strong> from RE2's exhaustive test suite — 0 failures.</li>
             <li><strong>~300 million fuzz cases</strong> against re2j from overnight soaks — 0 divergences. (Yes, the fuzz module has its own Gradle task; the test JVMs want 4 GB of heap.)</li>
-            <li>re2j-parity suites, Glenn Fowler's <em>testregex</em> corpus, and OpenJDK's <code>java.util.regex</code> regression corpus — the last one being a festival of years of real-world parser edge cases.</li>
+            <li>re2j-parity suites, Glenn Fowler's <em>testregex</em> corpus, and OpenJDK's <code>java.util.regex</code> regression corpus — the last one collecting years of real-world parser edge cases.</li>
         </ul>
 
         <h2>The layered oracle</h2>
@@ -41,10 +41,10 @@ import PageHeader from '../components/PageHeader.astro';
 
         <h2>The vision: finished, then frozen</h2>
         <p>
-            The README's last section is titled "Vision" and says the quiet part loud: <em>a finished library — bounded scope, all bugs fixed, then frozen. Think TeX, not a platform.</em> One algorithm (TDFA) for every pattern, no dispatch across engines, no plugin surface. The inspiration it names — Datadog's reggie — dispatches across multiple engines for peak performance; this engine chose the opposite trade: a single algorithm whose worst case you can reason about, and a site like this one that can explain <em>all of it</em>.
+            The README's last section is titled "Vision" and states it directly: <em>a finished library — bounded scope, all bugs fixed, then frozen. Think TeX, not a platform.</em> One algorithm (TDFA) for every pattern, no dispatch across engines, no plugin surface. The inspiration it names — Datadog's reggie — dispatches across multiple engines for peak performance; this engine chose the opposite trade: a single algorithm for everything, with a worst case you can reason about.
         </p>
         <p>
-            If you've read this far, you now know how a pattern becomes bytecode: tags and priorities in the graph, histories resolved at determinization, registers allocated like a compiler's, dead twins merged, anchors compiled into 64-way position tables, search as interned live-sets with kill points — and a budget ledger making sure none of it ever runs away. The playgrounds are all still there if you want another pass; the paper (<a href="https://arxiv.org/abs/2206.01398" target="_blank" rel="noopener">Borsotti &amp; Trofimovich 2022</a>) is remarkably readable once the code has grounded it; and the source is the final authority.
+            If you've read this far, you now know how a pattern becomes bytecode: tags and priorities in the graph, histories resolved at determinization, registers allocated like a compiler's, dead twins merged, anchors compiled into 64-way position tables, search as interned live-sets with kill points — and a budget ledger making sure none of it ever runs away. The playgrounds are all still there for another pass; the paper (<a href="https://arxiv.org/abs/2206.01398" target="_blank" rel="noopener">Borsotti &amp; Trofimovich 2022</a>) reads well with the code alongside; and the source is the final authority.
         </p>
     </div>
 </Base>

@@ -1,5 +1,8 @@
 <script lang="ts">
     import { parse, type Ast } from '../lib/parse';
+    import LabModal from './LabModal.svelte';
+
+    let expanded = $state(false);
 
     let src = $state('(\\w+)@(\\w+)');
     const presets = ['(\\w+)@(\\w+)', '(a|b)*c', '((a{2}){3}){2}', '(?:ab|cd)+?', 'back\\b'];
@@ -68,12 +71,8 @@
     let rows = $derived(result.ok ? (() => { const o: { node: Ast; depth: number; last: boolean[] }[] = []; flatten(result.res.ast, 0, o); return o; })() : []);
 </script>
 
-<div class="island">
-    <div class="island-header">
-        <span class="island-title">Pattern → AST</span>
-        <span class="text-xs text-zinc-500">capturing groups desugar to tag · body · tag</span>
-    </div>
-    <div class="island-body space-y-4">
+{#snippet labBody()}
+    <div class="space-y-4">
         <div class="flex flex-wrap items-end gap-3">
             <label class="min-w-56 flex-1 text-sm">
                 <span class="mb-1 block font-medium text-zinc-700">Pattern</span>
@@ -111,7 +110,22 @@
             <p class="mono rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">PatternSyntaxException: {result.err}</p>
         {/if}
     </div>
+{/snippet}
+
+<div class="island">
+    <div class="island-header">
+        <span class="island-title">Pattern → AST</span>
+        <span class="ml-auto text-xs text-zinc-500">capturing groups desugar to tag · body · tag</span>
+        <button class="btn !py-1 text-xs" onclick={() => (expanded = true)} title="open this lab fullscreen">⤢ expand</button>
+    </div>
+    <div class="island-body">
+        {@render labBody()}
+    </div>
     <div class="island-caption">
         This mini parser follows the real one's shapes (Parser.java): precedence alternation → concatenation → repetition → atom; a capturing group is not a node — closeGroup rewrites it to <span class="mono">concat[tag 2g−1, body, tag 2g]</span>. Tags are numbered at the <span class="mono">(</span>, so an outer group's tags are lower numbers than an inner group's. Try <span class="mono">(a)\1</span> or <span class="mono">(?=x)</span> to see a compile-time rejection.
     </div>
 </div>
+
+<LabModal bind:open={expanded} title="Pattern → AST">
+    {@render labBody()}
+</LabModal>

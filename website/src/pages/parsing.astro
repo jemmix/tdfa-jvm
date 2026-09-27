@@ -57,7 +57,7 @@ atom    := literal | class | '.' | escape | anchor | group`}</Code>
             Even the tree printer avoids recursion (an explicit token stack in <code>Ast.render</code>) — same stack-hygiene reasoning, applied consistently.
         </p>
 
-        <h2>Captures become tags — the load-bearing decision</h2>
+        <h2>Captures become tags — the decision everything else builds on</h2>
         <p>
             There is no "group" node. When the parser closes a capturing group it <em>rewrites</em> the group as <code>Concat[Tag(open), body, Tag(close)]</code>. Group 3's open and close boundaries are just two integers, and the numbering follows the position of the <code>(</code> in the source: tags are allocated the moment a group opens, so an outer group always has lower tag numbers than anything inside it.
         </p>
@@ -103,7 +103,7 @@ if (capturing) {
 
         <h2>What gets rejected, and why</h2>
         <p>
-            Backreferences (<code>\1</code>), lookaround (<code>(?=…)</code>), atomic groups (<code>(?>…)</code>) and possessive quantifiers (<code>a*+</code>) throw at parse time — not "unsupported, sorry," but structurally impossible for this class of engine. A backreference asks "what did group 1 match earlier?", a question about <em>history</em>, and the entire point of the TDFA construction is that history was resolved at compile time. Lookaround asks about the <em>future</em> — same disease, other direction. Atomic groups and possessive quantifiers exist specifically to prune a backtracking search; with no search to prune they are meaningless.
+            Backreferences (<code>\1</code>), lookaround (<code>(?=…)</code>), atomic groups (<code>(?>…)</code>) and possessive quantifiers (<code>a*+</code>) throw at parse time — not "unsupported, sorry," but structurally impossible for this class of engine. A backreference asks "what did group 1 match earlier?", a question about <em>history</em>, and the entire point of the TDFA construction is that history was resolved at compile time. Lookaround asks about the <em>future</em> — the same problem in the other direction. Atomic groups and possessive quantifiers exist specifically to prune a backtracking search; with no search to prune they are meaningless.
         </p>
         <p>
             Crucially, the library never falls back to a slower engine to accept these. The syntax you can write is the syntax that runs linear time — no silent performance cliffs.

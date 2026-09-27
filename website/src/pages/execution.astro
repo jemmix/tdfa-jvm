@@ -103,7 +103,7 @@ import SearchLab from '../islands/SearchLab.svelte';
 
         <h2>Matchers, scratch, and threads</h2>
         <p>
-            Where does the register file live? In a <code>MatchScratch</code> carrier owned by the <code>Matcher</code> — grow-only arrays rented out per call, contents undefined between takes, cloned before anything escapes. That's the re2j shape: the stateful Matcher owns its buffers, the engine stays immutable and shareable across threads, and there are no <code>ThreadLocal</code>s on the match path at all — a deliberate gift to virtual threads, which shouldn't pay a ThreadLocal tax per match. Carrier-free engines (the bytecode backend's small-register fast paths report <code>wantsScratch() == false</code>) get <code>null</code> and allocate cold.
+            Where does the register file live? In a <code>MatchScratch</code> carrier owned by the <code>Matcher</code> — grow-only arrays rented out per call, contents undefined between takes, cloned before anything escapes. That's the re2j shape: the stateful Matcher owns its buffers, the engine stays immutable and shareable across threads, and there are no <code>ThreadLocal</code>s on the match path at all — which also avoids per-match overhead for virtual threads. Carrier-free engines (the bytecode backend's small-register fast paths report <code>wantsScratch() == false</code>) get <code>null</code> and allocate cold.
         </p>
     </div>
 </Base>

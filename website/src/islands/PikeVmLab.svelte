@@ -2,7 +2,7 @@
     import { compileTnfa, type Tnfa } from '../lib/thompson';
     import { runPikeVm, type Mode } from '../lib/pikevm';
     import { layoutTnfa, edgePath } from '../lib/graph';
-    import GraphModal from './GraphModal.svelte';
+    import LabModal from './LabModal.svelte';
 
     const presets: { pattern: string; text: string; note: string }[] = [
         { pattern: '(a|ab)(c|bc)', text: 'abc', note: 'the classic ambiguity: two ways to split "abc"' },
@@ -93,16 +93,8 @@
 
 <svelte:window onkeydown={(e) => e.key === 'ArrowRight' && step()} />
 
-<div class="island">
-    <div class="island-header">
-        <span class="island-title">Run the TNFA: threads, priorities, captures</span>
-        <div class="ml-auto flex rounded-md border border-zinc-300 bg-white p-0.5 text-xs">
-            <button class="rounded px-2.5 py-1 font-medium {mode === 'first' ? 'bg-teal-700 text-white' : 'text-zinc-600'}" onclick={() => { mode = 'first'; reset(); }}>leftmost-first</button>
-            <button class="rounded px-2.5 py-1 font-medium {mode === 'longest' ? 'bg-teal-700 text-white' : 'text-zinc-600'}" onclick={() => { mode = 'longest'; reset(); }}>leftmost-longest</button>
-        </div>
-    </div>
-    <div class="island-body space-y-4">
-        <div class="flex flex-wrap items-end gap-3">
+{#snippet labBody(idp: string, svgClass: string)}
+    <div class="flex flex-wrap items-end gap-3">
             <label class="min-w-52 flex-1 text-sm">
                 <span class="mb-1 block font-medium text-zinc-700">Pattern</span>
                 <input type="text" class="field" bind:value={pattern} oninput={reset} spellcheck="false" />
@@ -169,17 +161,9 @@
                 </div>
             {/snippet}
 
-            <div class="relative overflow-x-auto rounded-lg border border-zinc-200 bg-white p-2">
-                {@render graphSvg('min-w-[640px]', 'g1')}
-                <button class="btn absolute top-2 right-2 !px-2 !py-1 text-xs" onclick={() => (expanded = true)} title="open the graph fullscreen">⤢ enlarge</button>
+            <div class="overflow-x-auto rounded-lg border border-zinc-200 bg-white p-2">
+                {@render graphSvg(svgClass, idp)}
             </div>
-
-            <GraphModal bind:open={expanded} title={'TNFA for ' + pattern + ' — live states highlighted, step through below'}>
-                {@render graphSvg('h-full w-full', 'g2')}
-                {#snippet controls()}
-                    {@render controlsRow('arrow keys work too · esc closes')}
-                {/snippet}
-            </GraphModal>
 
             <!-- input ruler -->
             <div class="mono flex items-center gap-0 overflow-x-auto">
@@ -266,8 +250,25 @@
             <!-- controls -->
             {@render controlsRow('arrow keys work')}
         {/if}
+{/snippet}
+
+<div class="island">
+    <div class="island-header">
+        <span class="island-title">Run the TNFA: threads, priorities, captures</span>
+        <div class="ml-auto flex rounded-md border border-zinc-300 bg-white p-0.5 text-xs">
+            <button class="rounded px-2.5 py-1 font-medium {mode === 'first' ? 'bg-teal-700 text-white' : 'text-zinc-600'}" onclick={() => { mode = 'first'; reset(); }}>leftmost-first</button>
+            <button class="rounded px-2.5 py-1 font-medium {mode === 'longest' ? 'bg-teal-700 text-white' : 'text-zinc-600'}" onclick={() => { mode = 'longest'; reset(); }}>leftmost-longest</button>
+        </div>
+        <button class="btn !py-1 text-xs" onclick={() => (expanded = true)} title="open this lab fullscreen">⤢ expand</button>
+    </div>
+    <div class="island-body space-y-4">
+        {@render labBody('g1', 'min-w-[640px]')}
     </div>
     <div class="island-caption">
-        Each row is a thread: an NFA state plus a copy of the tag values. The list is kept in priority order — the order the ε-closure DFS first reached each state. Teal nodes in the graph are live. In leftmost-first mode, the moment an accepting thread is the first alive accept, every thread ranked below it is cut (shown struck through): those paths can never influence the answer. Switch modes and re-run <span class="mono">a|ab</span> on "ab" to feel the difference. This playground runs anchored at position 0; its longest mode keeps the longest overall match (the engine's POSIX submatch resolution uses the ntag machinery described above).
+        Each row is a thread: an NFA state plus a copy of the tag values. The list is kept in priority order — the order the ε-closure DFS first reached each state. Teal nodes in the graph are live. In leftmost-first mode, the moment an accepting thread is the first alive accept, every thread ranked below it is cut (shown struck through): those paths can never influence the answer. Switch modes and re-run <span class="mono">a|ab</span> on "ab" to see the difference. This playground runs anchored at position 0; its longest mode keeps the longest overall match (the engine's POSIX submatch resolution uses the ntag machinery described above).
     </div>
 </div>
+
+<LabModal bind:open={expanded} title="Run the TNFA — threads, priorities, captures">
+    {@render labBody('g2', 'w-full')}
+</LabModal>

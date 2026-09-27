@@ -1,4 +1,8 @@
 <script lang="ts">
+    import LabModal from './LabModal.svelte';
+
+    let expanded = $state(false);
+
     // Hand-compiled TDFA for ([a-z]+)@([a-z]+) — a faithful simplification of
     // what TdfaCompiler emits for this shape (one working register per tag,
     // final registers f1..f4 written by the accept-time φ ops).
@@ -117,12 +121,8 @@
     const fNames = ['f_t1', 'f_t2', 'f_t3', 'f_t4'];
 </script>
 
-<div class="island">
-    <div class="island-header">
-        <span class="island-title">Run a TDFA: one register file, no backtracking</span>
-        <span class="text-xs text-zinc-500">pattern <span class="mono">([a-z]+)@([a-z]+)</span>, anchored walk</span>
-    </div>
-    <div class="island-body space-y-4">
+{#snippet labBody()}
+    <div class="space-y-4">
         <div class="flex flex-wrap items-end gap-3">
             <label class="min-w-56 flex-1 text-sm">
                 <span class="mb-1 block font-medium text-zinc-700">Input (letters and one @)</span>
@@ -228,7 +228,22 @@
              </div>
          </div>
     </div>
+{/snippet}
+
+<div class="island">
+    <div class="island-header">
+        <span class="island-title">Run a TDFA: one register file, no backtracking</span>
+        <span class="ml-auto text-xs text-zinc-500">pattern <span class="mono">([a-z]+)@([a-z]+)</span>, anchored walk</span>
+        <button class="btn !py-1 text-xs" onclick={() => (expanded = true)} title="open this lab fullscreen">⤢ expand</button>
+    </div>
+    <div class="island-body">
+        {@render labBody()}
+    </div>
     <div class="island-caption">
         Everything the engine remembers during a match is this one flat <span class="mono">int[]</span>: working registers (written by transition ops as characters are consumed) and final registers (written by the accept-time φ ops). ∅ is −1 — an unset group just never got written. This hand-compiled example uses one register per tag; the real engine's regopt pass shares registers with non-overlapping lifetimes and reconstructs "fixed" tags arithmetically (e.g. the close tag of <span class="mono">(abc)</span> is just open+3 — no register at all).
     </div>
 </div>
+
+<LabModal bind:open={expanded} title="Run a TDFA — one register file, no backtracking">
+    {@render labBody()}
+</LabModal>

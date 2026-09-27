@@ -6,7 +6,7 @@ import PikeVmLab from '../islands/PikeVmLab.svelte';
 ---
 
 <Base title="The TNFA: an NFA with tags">
-    <PageHeader num="04" title="The TNFA: an NFA with luggage" lede="A Thompson NFA whose “free move” edges carry three extra things — a tag action, a priority, and an assertion mask. Those three numbers are where matching semantics live." />
+    <PageHeader num="04" title="The TNFA: an NFA with tags and priorities" lede="A Thompson NFA whose “free move” edges carry three extra things — a tag action, a priority, and an assertion mask. Those three numbers are where matching semantics live." />
 
     <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
         <h2>Quick refresher: the Thompson NFA</h2>
@@ -17,10 +17,10 @@ import PikeVmLab from '../islands/PikeVmLab.svelte';
             "Nondeterministic" means the machine may be in several states at once. A simulator runs it by keeping the <em>set</em> of live states and stepping them all in lockstep — that's the linear-time trick from chapter 01. Thompson's construction is the standard textbook mapping from regex syntax to this graph; it's about a page of code and produces at most a couple of states per syntax node.
         </p>
         <p>
-            A plain Thompson NFA answers one bit: <em>does it match?</em> This engine needs more. It needs <em>where the groups matched</em> and <em>which alternative a backtracker would have preferred</em>. That's the luggage.
+            A plain Thompson NFA answers one bit: <em>does it match?</em> This engine needs more. It needs <em>where the groups matched</em> and <em>which alternative a backtracker would have preferred</em> — and it encodes both in the graph itself.
         </p>
 
-        <h2>The three decorations</h2>
+        <h2>The three edge decorations</h2>
         <p>
             In <code>tnfa/Tnfa.java</code>, every ε-edge carries <code>(priority, tag, emptyMask)</code>:
         </p>
@@ -36,7 +36,7 @@ import PikeVmLab from '../islands/PikeVmLab.svelte';
             </li>
         </ul>
         <p>
-            The representation is deliberately dumb and fast: flat parallel <code>int[]</code> arrays — <code>epsFrom/epsTo/epsPri/epsTag/epsEmptyMask</code> plus symbol-edge arrays — because determinization will scan these arrays millions of times. A state is just an index; there is no state object.
+            The representation is deliberately simple and fast: flat parallel <code>int[]</code> arrays — <code>epsFrom/epsTo/epsPri/epsTag/epsEmptyMask</code> plus symbol-edge arrays — because determinization will scan these arrays millions of times. A state is just an index; there is no state object.
         </p>
 
         <h2>The quantifier shapes</h2>
@@ -95,7 +95,7 @@ import PikeVmLab from '../islands/PikeVmLab.svelte';
             The playground's mode toggle is the whole leftmost-first vs leftmost-longest story. In <strong>leftmost-first</strong> (Perl, default): when an accepting thread exists, everything ranked below it dies, and if nothing is ranked above, the walk stops — the match cannot grow. In <strong>leftmost-longest</strong> (POSIX, the <code>LONGEST_MATCH</code> flag): the TNFA's priorities are simply <em>ignored</em> — no cuts, no suppression, every alternative survives to the end of input and the longest accept wins, with the ntag machinery settling submatches. Same graph, two dispatch policies, both linear time.
         </p>
         <p>
-            One honest footnote: the playground's longest mode finds the longest <em>overall</em> match but resolves submatches by first arrival; the engine's POSIX submatch resolution uses those structural ntags and per-state tables to get the full POSIX answer. The difference only shows on patterns where two same-length splits assign different group boundaries — the classic <code>(a|ab)(c|bc)</code> on <code>"abc"</code>: leftmost-first reports <code>a</code> + <code>bc</code>, POSIX reports <code>ab</code> + <code>c</code>. Both engines agree with their respective reference implementations to millions of differential test cases.
+            One caveat: the playground's longest mode finds the longest <em>overall</em> match but resolves submatches by first arrival; the engine's POSIX submatch resolution uses those structural ntags and per-state tables to get the full POSIX answer. The difference only shows on patterns where two same-length splits assign different group boundaries — the classic <code>(a|ab)(c|bc)</code> on <code>"abc"</code>: leftmost-first reports <code>a</code> + <code>bc</code>, POSIX reports <code>ab</code> + <code>c</code>. Both engines agree with their respective reference implementations to millions of differential test cases.
         </p>
     </div>
 </Base>
