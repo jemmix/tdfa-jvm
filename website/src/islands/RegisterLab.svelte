@@ -155,23 +155,27 @@
         <div class="grid gap-4 md:grid-cols-2">
             <div class="rounded-lg border border-zinc-200 p-3">
                 <div class="mb-2 text-sm font-semibold text-zinc-800">Current step</div>
-                <div class="mono space-y-1 text-[13px] text-zinc-700">
+                <div class="mono min-h-[132px] space-y-1 text-[13px] text-zinc-700">
                     <div>consuming <span class="rounded bg-zinc-100 px-1">'{step?.char}'</span> at pos {step?.pos}</div>
                     <div>state: <span class="font-bold">{stateNames[step?.state ?? 0]}</span></div>
-                    {#if step?.ops.length}
-                        <div class="rounded bg-sky-50 p-1.5">
-                            {#each step.ops as op}
-                                <div class="text-sky-800">{op.text}</div>
-                            {/each}
-                        </div>
-                    {:else if step && step.prev === step.state}
-                        <div class="text-zinc-400">no ops — loop transition</div>
-                    {/if}
-                    {#if step?.acceptCheck?.accepted}
-                        <div class="rounded bg-teal-50 p-1.5 text-teal-800">★ accepting: φ ops copy r_t1..r_t3 → final and SET f_t4 ← {step.pos}</div>
-                    {:else if step?.acceptCheck && !step.acceptCheck.accepted && step.acceptCheck.note}
-                        <div class="rounded bg-red-50 p-1.5 text-red-700">{step.acceptCheck.note}</div>
-                    {/if}
+                    <div class="min-h-[52px]">
+                        {#if step?.ops.length}
+                            <div class="rounded bg-sky-50 p-1.5">
+                                {#each step.ops as op}
+                                    <div class="text-sky-800">{op.text}</div>
+                                {/each}
+                            </div>
+                        {:else if step && step.prev === step.state}
+                            <div class="text-zinc-400">no ops — loop transition</div>
+                        {/if}
+                    </div>
+                    <div class="min-h-[52px]">
+                        {#if step?.acceptCheck?.accepted}
+                            <div class="rounded bg-teal-50 p-1.5 text-teal-800">★ accepting: φ ops copy r_t1..r_t3 → final and SET f_t4 ← {step.pos}</div>
+                        {:else if step?.acceptCheck && !step.acceptCheck.accepted && step.acceptCheck.note}
+                            <div class="rounded bg-red-50 p-1.5 text-red-700">{step.acceptCheck.note}</div>
+                        {/if}
+                    </div>
                 </div>
             </div>
             <div class="rounded-lg border border-zinc-200 p-3">
@@ -209,16 +213,20 @@
                             {/each}
                         </tr>
                     </tbody>
-                </table>
-                {#if groups}
-                    <div class="mt-3 flex flex-wrap gap-2 border-t border-zinc-200 pt-2.5">
-                        {#each groups as g}
-                            <span class="rounded-md border border-teal-200 bg-teal-50 px-2 py-0.5 font-mono text-xs text-teal-900">{g.name}: <b>{g.val}</b> <span class="text-zinc-400">{g.span}</span></span>
-                        {/each}
-                    </div>
-                {/if}
-            </div>
-        </div>
+                 </table>
+                 <div class="mt-3 min-h-[64px] border-t border-zinc-200 pt-2.5">
+                     {#if groups}
+                         <div class="flex flex-wrap gap-2">
+                             {#each groups as g}
+                                 <span class="rounded-md border border-teal-200 bg-teal-50 px-2 py-0.5 font-mono text-xs text-teal-900">{g.name}: <b>{g.val}</b> <span class="text-zinc-400">{g.span}</span></span>
+                             {/each}
+                         </div>
+                     {:else}
+                         <span class="text-xs text-zinc-300">groups appear here when the walk accepts</span>
+                     {/if}
+                 </div>
+             </div>
+         </div>
     </div>
     <div class="island-caption">
         Everything the engine remembers during a match is this one flat <span class="mono">int[]</span>: working registers (written by transition ops as characters are consumed) and final registers (written by the accept-time φ ops). ∅ is −1 — an unset group just never got written. This hand-compiled example uses one register per tag; the real engine's regopt pass shares registers with non-overlapping lifetimes and reconstructs "fixed" tags arithmetically (e.g. the close tag of <span class="mono">(abc)</span> is just open+3 — no register at all).

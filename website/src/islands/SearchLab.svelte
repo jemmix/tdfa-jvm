@@ -187,15 +187,20 @@
                 </div>
             </div>
 
-            {#if sim.match}
-                <div class="rounded-lg border border-teal-200 bg-teal-50/50 p-3 text-sm text-teal-900">
-                    <span class="font-semibold">trigger at {sim.rows[sim.rows.length - 1].pos} → verified:</span>
-                    match <span class="mono">[{sim.match.start},{sim.match.end})</span> = "<b>{text.slice(sim.match.start, sim.match.end)}</b>"
-                    <span class="text-xs text-teal-700"> — the trigger row contains the accept state, so the engine runs one exact anchored walk from W (a few array lookups per character) to pin the match and captures.</span>
-                </div>
-            {:else if i >= sim.rows.length && sim.rows.length > 0}
-                <div class="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-600">scanned the whole input — no match.</div>
-            {/if}
+            <!-- result (fixed reserve so the trigger box appearing doesn't shift anything) -->
+            <div class="min-h-[64px]">
+                {#if sim.match}
+                    <div class="rounded-lg border border-teal-200 bg-teal-50/50 p-3 text-sm text-teal-900">
+                        <span class="font-semibold">trigger at {sim.rows[sim.rows.length - 1].pos} → verified:</span>
+                        match <span class="mono">[{sim.match.start},{sim.match.end})</span> = "<b>{text.slice(sim.match.start, sim.match.end)}</b>"
+                        <span class="text-xs text-teal-700"> — the trigger row contains the accept state, so the engine runs one exact anchored walk from W (a few array lookups per character) to pin the match and captures.</span>
+                    </div>
+                {:else if i >= sim.rows.length && sim.rows.length > 0}
+                    <div class="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-600">scanned the whole input — no match.</div>
+                {:else}
+                    <div class="rounded-lg border border-dashed border-zinc-200 p-3 text-sm text-zinc-300">scanning… a trigger fires when a row turns green.</div>
+                {/if}
+            </div>
 
             {#if lastRow && lastRow.trigger}
                 <p class="text-xs text-zinc-500">Green = the live set contains the accept state: a match may end here (the scan over-approximates — masks are ignored — so a trigger is verified by the exact walk; it can fire early, never late).</p>

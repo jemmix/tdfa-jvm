@@ -1,7 +1,7 @@
 <script lang="ts">
     import { compileTnfa } from '../lib/thompson';
     import { subsetConstruct, type SubsetEvent, OP_SET_POS, OP_SET_NIL, OP_COPY } from '../lib/subset';
-    import { layoutTnfa } from '../lib/graph';
+    import { layoutTnfa, edgePath } from '../lib/graph';
     import { esc } from '../lib/parse';
 
     const presets = ['(a|b)*c', '(a)*', '(ab|a)(c|bc)'];
@@ -108,26 +108,27 @@
                                 <path d="M 0 0 L 10 5 L 0 10 z" fill="#a1a1aa"></path>
                             </marker>
                         </defs>
-                        {#each layout.edges as e}
+                        {#each layout.edges as e (e.id)}
                             <path
-                                d="M {e.dx1} {e.dy1} C {e.dx1 + (e.dx2 - e.dx1) * 0.25} {e.dy1 + (e.dy2 - e.dy1) * 0.25 + (e.from === e.to ? -22 : 0)}, {e.dx1 + (e.dx2 - e.dx1) * 0.75} {e.dy1 + (e.dy2 - e.dy1) * 0.75 + (e.from === e.to ? -22 : 0)}, {e.dx2} {e.dy2}"
+                                d={edgePath(e.points)}
                                 fill="none"
-                                stroke="#e4e4e7"
-                                stroke-width="1.1"
+                                stroke="{kernelStates.has(e.from) || kernelStates.has(e.to) ? '#a8b8b6' : '#e4e4e7'}"
+                                stroke-width="{kernelStates.has(e.from) || kernelStates.has(e.to) ? 1.6 : 1.1}"
                                 marker-end="url(#sarr)"
                             ></path>
-                            {#if e.kind === 'eps' && (e.tag !== 0 || e.mask !== 0 || e.pri! > 1)}
-                                <text x="{(e.dx1 + e.dx2) / 2}" y="{(e.dy1 + e.dy2) / 2 - (e.from === e.to ? 26 : 5)}" text-anchor="middle" font-size="8.5" fill="{e.tag < 0 ? '#dc2626' : e.tag > 0 ? '#0369a1' : '#c4b5fd'}">{e.label}</text>
-                            {/if}
-                            {#if e.kind === 'sym'}
-                                <rect x="{(e.dx1 + e.dx2) / 2 - 8}" y="{(e.dy1 + e.dy2) / 2 - 15}" rx="3" width="16" height="11" fill="#fafafa" stroke="#d4d4d8"></rect>
-                                <text x="{(e.dx1 + e.dx2) / 2}" y="{(e.dy1 + e.dy2) / 2 - 6.5}" text-anchor="middle" font-size="8" fill="#52525b">{e.label.length > 4 ? e.label.slice(0, 4) : e.label}</text>
+                            {#if e.label}
+                                <rect x="{e.lx - e.lw / 2}" y="{e.ly - e.lh / 2}" rx="3" width="{e.lw}" height="{e.lh}" fill="#fafafa" stroke="#e4e4e7"></rect>
+                                <text x="{e.lx}" y="{e.ly + 3}" text-anchor="middle" font-size="8.5" fill="{e.tag < 0 ? '#dc2626' : e.tag > 0 ? '#0369a1' : e.kind === 'sym' ? '#52525b' : '#a1a1aa'}">{e.label}</text>
                             {/if}
                         {/each}
                         {#each layout.nodes as nd (nd.id)}
                             <circle cx={nd.x} cy={nd.y} r="10" fill="{kernelStates.has(nd.id) ? '#99f6e4' : '#fafafa'}" stroke="{kernelStates.has(nd.id) ? '#0f766e' : '#d4d4d8'}" stroke-width="{kernelStates.has(nd.id) ? 2.4 : 1.4}"></circle>
                             {#if nd.id === nfa.accept}
                                 <circle cx={nd.x} cy={nd.y} r="13.5" fill="none" stroke="{kernelStates.has(nd.id) ? '#0f766e' : '#d4d4d8'}"></circle>
+                            {/if}
+                            {#if nd.id === nfa.start}
+                                <path d="M {nd.x - 32} {nd.y} L {nd.x - 13} {nd.y}" stroke="#c9c9cf" stroke-width="1.2" marker-end="url(#sarr)"></path>
+                                <text x="{nd.x - 32}" y="{nd.y - 6}" font-size="8" fill="#a1a1aa">start</text>
                             {/if}
                             <text x={nd.x} y={nd.y + 3} text-anchor="middle" font-size="8.5" font-weight="600" fill="{kernelStates.has(nd.id) ? '#134e4a' : '#b1b1b8'}">{nd.id}</text>
                         {/each}
@@ -136,7 +137,7 @@
             </div>
             <div>
                 <h4 class="mb-1.5 text-sm font-semibold text-zinc-800">TDFA <span class="font-normal text-zinc-400">— grows as states are interned</span></h4>
-                <div class="max-h-96 overflow-auto rounded-lg border border-zinc-200">
+                <div class="h-96 overflow-auto rounded-lg border border-zinc-200">
                     <table class="w-full text-left text-xs">
                         <thead class="sticky top-0 bg-zinc-50 text-[11px] tracking-wide text-zinc-500 uppercase">
                             <tr>
@@ -178,25 +179,35 @@
             </div>
         </div>
 
-        {#if ev?.type === 'cell'}
-            <div class="grid gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs sm:grid-cols-[1fr_auto_1fr]">
-                <div>
-                    <div class="mb-1 font-semibold text-zinc-600">step configs</div>
-                    {#each ev.stepped as s}
-                        <span class="mr-1 inline-block rounded bg-white px-1.5 py-0.5 font-mono">{s.from.state} —[{rangeLabel(ev.lo, ev.hi)}]→ {s.toState} <span class="text-sky-700">h=[{s.h.map((t) => '+' + t).join('')}]</span></span>
-                    {/each}
+        <!-- per-event detail: fixed-height scroll box — content varies, the layout never does -->
+        <div class="h-60 overflow-y-auto">
+            {#if ev?.type === 'cell'}
+                <div class="grid gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs sm:grid-cols-[1fr_auto_1fr]">
+                    <div>
+                        <div class="mb-1 font-semibold text-zinc-600">step configs</div>
+                        {#each ev.stepped as s}
+                            <span class="mr-1 inline-block rounded bg-white px-1.5 py-0.5 font-mono">{s.from.state} —[{rangeLabel(ev.lo, ev.hi)}]→ {s.toState} <span class="text-sky-700">h=[{s.h.map((t) => '+' + t).join('')}]</span></span>
+                        {/each}
+                    </div>
+                    <div class="flex items-center justify-center text-2xl text-zinc-300">⟶</div>
+                    <div>
+                        <div class="mb-1 font-semibold text-zinc-600">target kernel {ev.verdict === 'new' ? `(new: state ${ev.target})` : `(interned: state ${ev.target})`}</div>
+                        {#each ev.targetKernel as c}
+                            <span class="mr-1 inline-block rounded bg-white px-1.5 py-0.5 font-mono">{c.state}{c.mask ? `·m${c.mask}` : ''}{c.l.length ? ` <span class="text-sky-700">l=[${c.l.map((t) => '+' + t).join('')}]</span>` : ''}</span>
+                        {/each}
+                    </div>
                 </div>
-                <div class="flex items-center justify-center text-2xl text-zinc-300">⟶</div>
-                <div>
-                    <div class="mb-1 font-semibold text-zinc-600">target kernel {ev.verdict === 'new' ? `(new: state ${ev.target})` : `(interned: state ${ev.target})`}</div>
-                    {#each ev.targetKernel as c}
+            {:else if ev?.type === 'pop' || ev?.type === 'start'}
+                <div class="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/60 p-3 text-xs">
+                    <div class="mb-1 font-semibold text-zinc-600">kernel of state {ev.type === 'pop' ? ev.sid : 0}</div>
+                    {#each (ev.type === 'pop' ? ev.kernel : result.states[0].kernel) as c}
                         <span class="mr-1 inline-block rounded bg-white px-1.5 py-0.5 font-mono">{c.state}{c.mask ? `·m${c.mask}` : ''}{c.l.length ? ` <span class="text-sky-700">l=[${c.l.map((t) => '+' + t).join('')}]</span>` : ''}</span>
                     {/each}
                 </div>
-            </div>
-        {/if}
+            {/if}
+        </div>
 
-        <div class="mono rounded-md bg-zinc-900 px-3 py-2 text-[12px] leading-relaxed text-zinc-100">
+        <div class="mono min-h-[58px] rounded-md bg-zinc-900 px-3 py-2 text-[12px] leading-relaxed text-zinc-100">
             <span class="mr-2 text-zinc-500">{i}/{result.events.length - 1}</span>
             {logLine}
         </div>

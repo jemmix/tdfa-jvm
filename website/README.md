@@ -2,7 +2,7 @@
 
 A long-form explainer site for the [tdfa-jvm](https://github.com/jemmix/tdfa-jvm) regex engine: 14 chapters covering the full compile pipeline (parse → TNFA → determinization → registers → minimization → bytecode/VM execution) and the engineering around it (budgets, testing).
 
-Stack: [Astro](https://astro.build) static site + Tailwind CSS v4 + Svelte 5 islands. No client framework — each island hydrates independently.
+Stack: [Astro](https://astro.build) static site + Tailwind CSS v4 + Svelte 5 islands, with [dagre](https://github.com/dagrejs/dagre) for automata graph layout. No client framework — each island hydrates independently. The step-through islands reserve stable section heights so stepping never reflows the page.
 
 ## Develop
 

@@ -1,7 +1,7 @@
 <script lang="ts">
     import { compileTnfa, type Tnfa } from '../lib/thompson';
     import { runPikeVm, type Mode } from '../lib/pikevm';
-    import { layoutTnfa } from '../lib/graph';
+    import { layoutTnfa, edgePath } from '../lib/graph';
 
     const presets: { pattern: string; text: string; note: string }[] = [
         { pattern: '(a|ab)(c|bc)', text: 'abc', note: 'the classic ambiguity: two ways to split "abc"' },
@@ -80,6 +80,13 @@
         return out;
     }
     const stateColor = (s: number): string => (liveStates.has(s) ? '#0f766e' : '#d4d4d8');
+
+    // tallest the thread table ever gets — reserved so stepping never reflows the page
+    let threadsMinH = $derived.by(() => {
+        if (!trace) return 64;
+        const maxRows = Math.max(1, ...trace.events.map((e) => e.threads.length));
+        return 34 + maxRows * 34 + 4;
+    });
 </script>
 
 <svelte:window onkeydown={(e) => e.key === 'ArrowRight' && step()} />
@@ -123,26 +130,27 @@
                             <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f766e"></path>
                         </marker>
                     </defs>
-                    {#each layout.edges as e (e.from * 1000 + e.to + (e.kind === 'eps' ? 0 : 0.5))}
+                    {#each layout.edges as e (e.id)}
                         <path
-                            d="M {e.dx1} {e.dy1} C {e.dx1 + (e.dx2 - e.dx1) * 0.25} {e.dy1 + (e.dy2 - e.dy1) * 0.25 + (e.from === e.to ? -24 : 0)}, {e.dx1 + (e.dx2 - e.dx1) * 0.75} {e.dy1 + (e.dy2 - e.dy1) * 0.75 + (e.from === e.to ? -24 : 0)}, {e.dx2} {e.dy2}"
+                            d={edgePath(e.points)}
                             fill="none"
                             stroke={liveStates.has(e.from) ? '#0d9488' : '#d4d4d8'}
                             stroke-width={liveStates.has(e.from) ? 1.8 : 1.2}
                             marker-end={liveStates.has(e.from) ? 'url(#arr-live)' : 'url(#arr)'}
                         ></path>
-                        {#if e.kind === 'eps' && (e.tag !== 0 || e.mask !== 0 || e.pri! > 1)}
-                            <text x="{(e.dx1 + e.dx2) / 2}" y="{(e.dy1 + e.dy2) / 2 - (e.from === e.to ? 30 : 6)}" text-anchor="middle" font-size="9" fill="{e.tag < 0 ? '#b91c1c' : e.tag > 0 ? '#0369a1' : '#a1a1aa'}">{e.label}</text>
-                        {/if}
-                        {#if e.kind === 'sym'}
-                            <rect x="{(e.dx1 + e.dx2) / 2 - 9}" y="{(e.dy1 + e.dy2) / 2 - 16}" rx="3" width="18" height="12" fill="{liveStates.has(e.from) ? '#ccfbf5' : '#f4f4f5'}" stroke="{liveStates.has(e.from) ? '#0d9488' : '#d4d4d8'}"></rect>
-                            <text x="{(e.dx1 + e.dx2) / 2}" y="{(e.dy1 + e.dy2) / 2 - 7}" text-anchor="middle" font-size="8.5" fill="#3f3f46">{e.label.length > 4 ? e.label.slice(0, 4) : e.label}</text>
+                        {#if e.label}
+                            <rect x="{e.lx - e.lw / 2}" y="{e.ly - e.lh / 2}" rx="3" width="{e.lw}" height="{e.lh}" fill="{liveStates.has(e.from) ? '#f0fdfa' : '#fafafa'}" stroke="{liveStates.has(e.from) ? '#99f6e4' : '#e4e4e7'}"></rect>
+                            <text x="{e.lx}" y="{e.ly + 3.2}" text-anchor="middle" font-size="9" fill="{e.tag < 0 ? '#b91c1c' : e.tag > 0 ? '#0369a1' : e.kind === 'sym' ? '#3f3f46' : '#71717a'}">{e.label}</text>
                         {/if}
                     {/each}
                     {#each layout.nodes as nd (nd.id)}
                         <circle cx={nd.x} cy={nd.y} r="11" fill="{nd.id === nfa.nfa.accept ? (liveStates.has(nd.id) ? '#0f766e' : '#a7f3d0') : liveStates.has(nd.id) ? '#99f6e4' : '#fafafa'}" stroke={stateColor(nd.id)} stroke-width="2"></circle>
                         {#if nd.id === nfa.nfa.accept}
                             <circle cx={nd.x} cy={nd.y} r="15" fill="none" stroke={stateColor(nd.id)} stroke-width="1"></circle>
+                        {/if}
+                        {#if nd.id === nfa.nfa.start}
+                            <path d="M {nd.x - 34} {nd.y} L {nd.x - 14} {nd.y}" stroke="#a1a1aa" stroke-width="1.4" marker-end="url(#arr)"></path>
+                            <text x="{nd.x - 34}" y="{nd.y - 6}" font-size="8.5" fill="#a1a1aa">start</text>
                         {/if}
                         <text x={nd.x} y={nd.y + 3.5} text-anchor="middle" font-size="9" font-weight="600" fill="{liveStates.has(nd.id) ? '#134e4a' : '#a1a1aa'}">{nd.id}</text>
                     {/each}
@@ -163,13 +171,13 @@
                 </div>
             </div>
 
-            <!-- threads -->
+            <!-- threads (fixed-height reserve: no vertical jumping between steps) -->
             <div>
                 <div class="mb-1.5 flex items-center justify-between">
                     <h4 class="text-sm font-semibold text-zinc-800">Threads at position {ev?.pos ?? 0} <span class="font-normal text-zinc-400">(rank 0 = highest priority)</span></h4>
                     <span class="text-xs text-zinc-500">{trace.totalSteps} thread-steps total</span>
                 </div>
-                <div class="overflow-x-auto rounded-lg border border-zinc-200">
+                <div class="overflow-x-auto rounded-lg border border-zinc-200" style="min-height: {threadsMinH}px">
                     <table class="w-full text-sm">
                         <thead>
                             <tr class="border-b border-zinc-200 bg-zinc-50 text-left text-xs tracking-wide text-zinc-500 uppercase">
@@ -183,7 +191,7 @@
                         </thead>
                         <tbody>
                             {#if ev && ev.threads.length === 0}
-                                <tr><td colspan="8" class="px-3 py-3 text-center text-zinc-400">no live threads — the walk is over</td></tr>
+                                <tr><td colspan="8" class="px-3 py-1.5 text-center text-zinc-400">no live threads — the walk is over</td></tr>
                             {/if}
                             {#each ev?.threads ?? [] as t, k}
                                 <tr class="border-b border-zinc-100 {k % 2 ? 'bg-zinc-50/60' : ''} {ev && ev.cutFrom !== undefined && k > ev.cutFrom ? 'opacity-40 line-through' : ''}">
@@ -204,28 +212,32 @@
                         </tbody>
                     </table>
                 </div>
-                {#if ev?.stopped}
-                    <p class="mt-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs text-teal-800">
-                        Stop: the highest-ranked thread is accepting — nothing above it can extend the match, so the walk ends now.
-                    </p>
-                {/if}
+                <div class="mt-2 min-h-[54px]">
+                    {#if ev?.stopped}
+                        <p class="rounded-md border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs leading-snug text-teal-800">
+                            Stop: the highest-ranked thread is accepting — nothing above it can extend the match, so the walk ends now.
+                        </p>
+                    {/if}
+                </div>
             </div>
 
-            <!-- result -->
-            {#if groups}
-                <div class="rounded-lg border border-teal-200 bg-teal-50/50 p-3">
-                    <div class="mb-1.5 text-sm font-semibold text-teal-900">{mode === 'first' ? 'leftmost-first' : 'leftmost-longest'} result</div>
-                    <div class="flex flex-wrap gap-2">
-                        {#each groups as g}
-                            <span class="rounded-md border border-teal-200 bg-white px-2.5 py-1 font-mono text-xs text-teal-900">
-                                {g.g === 0 ? 'whole' : `group ${g.g}`}: <b>{g.val === '' ? "''" : g.val}</b> <span class="text-zinc-400">{g.span}</span>
-                            </span>
-                        {/each}
+            <!-- result (reserve keeps controls pinned while stepping) -->
+            <div class="min-h-[86px]">
+                {#if groups}
+                    <div class="rounded-lg border border-teal-200 bg-teal-50/50 p-3">
+                        <div class="mb-1.5 text-sm font-semibold text-teal-900">{mode === 'first' ? 'leftmost-first' : 'leftmost-longest'} result</div>
+                        <div class="flex flex-wrap gap-2">
+                            {#each groups as g}
+                                <span class="rounded-md border border-teal-200 bg-white px-2.5 py-1 font-mono text-xs text-teal-900">
+                                    {g.g === 0 ? 'whole' : `group ${g.g}`}: <b>{g.val === '' ? "''" : g.val}</b> <span class="text-zinc-400">{g.span}</span>
+                                </span>
+                            {/each}
+                        </div>
                     </div>
-                </div>
-            {:else if trace}
-                <div class="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-600">no match from position 0 (the real engine would slide the start — that's the search ladder on the Execution page)</div>
-            {/if}
+                {:else if trace}
+                    <div class="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-600">no match from position 0 (the real engine would slide the start — that's the search ladder on the Execution page)</div>
+                {/if}
+            </div>
 
             <!-- controls -->
             <div class="flex items-center gap-2 border-t border-zinc-200 pt-3">
