@@ -1,0 +1,73 @@
+---
+import Base from '../layouts/Base.astro';
+import PageHeader from '../components/PageHeader.astro';
+import Code from '../components/Code.astro';
+---
+
+<Base title="Budgets: bounded by design">
+    <PageHeader num="12" title="Budgets: bounded by design" lede="A regex library that can hang or OOM your JVM is a liability. This one prices everything — compile memory, compile CPU, match-time memory — in one currency each, and fails cleanly at the cap." />
+
+    <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
+        <h2>Three knobs</h2>
+        <div class="not-prose my-6 overflow-x-auto rounded-lg border border-zinc-200">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-zinc-200 bg-zinc-50 text-left text-xs tracking-wide text-zinc-500 uppercase">
+                        <th class="px-4 py-2">Property</th>
+                        <th class="px-4 py-2">Bounds</th>
+                        <th class="px-4 py-2">Default</th>
+                    </tr>
+                </thead>
+                <tbody class="text-zinc-700">
+                    <tr class="border-b border-zinc-100"><td class="px-4 py-1.5 font-mono text-[13px]">tdfa.budget.compile.memory</td><td class="px-4 py-1.5">transient compile-time structures (weighted bytes)</td><td class="px-4 py-1.5 font-mono">128 MiB</td></tr>
+                    <tr class="border-b border-zinc-100"><td class="px-4 py-1.5 font-mono text-[13px]">tdfa.budget.compile.compute</td><td class="px-4 py-1.5">compile CPU (abstract ticks, ~10 ns each)</td><td class="px-4 py-1.5 font-mono">5 s → 500 M ticks</td></tr>
+                    <tr><td class="px-4 py-1.5 font-mono text-[13px]">tdfa.budget.runtime.memory</td><td class="px-4 py-1.5">per-pattern match-time memos (search DFA, walk index)</td><td class="px-4 py-1.5 font-mono">16 MiB</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <p>
+            Notice the asymmetry: <em>there is no runtime compute budget, and the class doc is proud of it</em> — "the linear-time guarantee makes a runtime CPU budget meaningless — no backtracking engine exists to burn one." Match time is bounded structurally (chapter 01); only match-time <em>memory</em> needs a cap, for the lazily-built memo tables.
+        </p>
+
+        <h2>One knob per resource</h2>
+        <p>
+            The design rule in <code>tdfa/Budgets.java</code>: every internal cap is a <em>linear function of one budget through a weight model</em> — "one knob per resource, so the caps can never drift out of sync… Raise the budget, not the cap." Raise the compile memory budget and the state cap, closure-spike cap, CFG-edge cap and minimization-grid cap all move together, because they're all divisions of the same number:
+        </p>
+        <Code lang="text">{`maxDfaStates      = mem / (256 + 256·perlSurcharge)   → 262,144 states (Perl) / 524,288 (POSIX)
+maxKernelConfigs  = mem / 80                          → ~1.68 M configs (tagless-equivalent)
+maxClosureBytes   = mem / 16                          → ~8 MiB per ε-closure spike
+maxCfgEdges       = mem / 32                          → regopt CFG arc cap
+maxMinimizeCells  = mem / 4                           → normalization grid
+runtime eighths   : search rows 4/8 · blocks 3/8 · walk memo 1/8`}</Code>
+        <p>
+            The weights themselves are mostly hand-calibrated constants in <code>BudgetWeights</code> — 32 bytes per TNFA state, 64 per edge, 256 per DFA state, 40 + 4/tag per interned history — with one delightful exception: <code>KERNEL_CONFIG_BYTES = 80</code> is annotated as "the one figure that IS measured… 6.4 M kernels peaked under 1 GB."
+        </p>
+
+        <h2>The compute meter</h2>
+        <p>
+            Memory caps bound the <em>output</em>; CPU is bounded separately by <code>WorkMeter</code> — "a step counter threaded through every unbounded/fixpoint/quadratic loop in the pipeline": the ε-closure, the tryMap probes, regopt's fixpoints, the final-variant enumeration, the TNFA builder, the parser's fold-range scan, the minimizer's refinement. A tick is a tick — deterministic and machine-independent, which matters for a budget you might tune in CI. One <code>Ledger</code> per compile, forked across parse + find-determinization + the optional whole-artifact determinization, so no stage can starve the others.
+        </p>
+        <p>
+            Exceed a compile budget and you get an <code>IllegalStateException</code> from the <code>"pattern too large"</code> family, surfaced by the facade as a <code>PatternSyntaxException</code> — with the property name in the message, because the intended response is to raise it if you legitimately need bigger.
+        </p>
+
+        <h2>Nesting depth, priced</h2>
+        <p>
+            Even parser recursion-that-isn't is priced: the explicit frame stacks (parser, TNFA builder, fixed-tags walker) charge <code>NESTING_FRAME_BYTES = 64</code> per live frame against the same compile memory budget — the <code>FrameBudget</code>. Deep nesting fails exactly like every other bomb, with no separate depth knob to tune or forget.
+        </p>
+
+        <h2>Degrade, don't die</h2>
+        <p>
+            The hard failures are only the caps on <em>correctness-critical output</em>. The optimization and memo tiers all have specified fallbacks when their budgets run out, and the code treats those fallbacks as part of the contract:
+        </p>
+        <ul class="list-disc pl-6">
+            <li>Minimizer's meter runs dry → compile proceeds <em>unminimized</em>, with a note (<code>minimize=skipped (compute budget)</code>).</li>
+            <li>Pattern too big for regopt's CFG (> 2000 states by default) → skip; "the unoptimized register layout is always a correct fallback."</li>
+            <li>SearchDfa past its row/block caps → keep scanning unmemoized with the exact live set.</li>
+            <li>Walk-index memo past its eighth → binary search: "correct, slower."</li>
+        </ul>
+        <p>
+            The pattern to take away: <strong>bounded work, clean failure, graceful degradation</strong> — every tier either fits, falls back, or fails with a message that tells you which knob to turn. That's what "linear time by construction" looks like as an engineering discipline, not just a big-O claim.
+        </p>
+    </div>
+</Base>

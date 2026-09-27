@@ -1,0 +1,58 @@
+---
+// Minimal regex-based highlighter for display purposes only.
+// Not a parser. Good enough for fenced blocks in static content.
+
+interface Props {
+    lang?: 'java' | 'ts' | 'text' | 'bash';
+    title?: string;
+}
+const { lang = 'java', title } = Astro.props;
+
+const raw = await Astro.slots.render('default');
+const code = raw.replace(/^\n+|\n+$/g, '');
+
+function esc(s: string): string {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+const JAVA_KW = /\b(abstract|assert|boolean|break|byte|case|catch|char|class|const|continue|default|do|double|else|enum|extends|final|finally|float|for|goto|if|implements|import|instanceof|int|interface|long|native|new|package|private|protected|public|record|return|short|static|strictfp|super|switch|synchronized|this|throw|throws|transient|try|void|volatile|while|var|true|false|null)\b/g;
+const TS_KW = /\b(break|case|catch|class|const|continue|default|do|else|enum|export|extends|false|finally|for|function|if|import|in|instanceof|interface|let|new|null|return|static|super|switch|this|throw|true|try|type|typeof|var|void|while|yield|as|of)\b/g;
+
+function highlight(src: string, lang: string): string {
+    let out = esc(src);
+    if (lang === 'bash') {
+        out = out.replace(/(#.*)$/gm, '<span class="tok-com">$1</span>');
+        return out;
+    }
+    // comments and strings first, with placeholders
+    const stash: string[] = [];
+    const keep = (s: string, cls: string) => {
+        stash.push(`<span class="${cls}">${s}</span>`);
+        return `\u0000${stash.length - 1}\u0000`;
+    };
+    out = out.replace(/\/\*[\s\S]*?\*\//g, (m) => keep(m, 'tok-com'));
+    out = out.replace(/\/\/[^\n]*/g, (m) => keep(m, 'tok-com'));
+    out = out.replace(/"(?:[^"\\\n]|\\.)*"/g, (m) => keep(m, 'tok-str'));
+    out = out.replace(/'(?:[^'\\\n]|\\.)*'/g, (m) => keep(m, 'tok-str'));
+    if (lang === 'java') {
+        out = out.replace(JAVA_KW, '<span class="tok-kw">$1</span>');
+        out = out.replace(/(@\w+)/g, '<span class="tok-ann">$1</span>');
+    } else if (lang === 'ts') {
+        out = out.replace(TS_KW, '<span class="tok-kw">$1</span>');
+    }
+    out = out.replace(/\b(\d[\d_]*)\b/g, '<span class="tok-num">$1</span>');
+    out = out.replace(/\u0000(\d+)\u0000/g, (_, i) => stash[Number(i)]);
+    return out;
+}
+---
+
+<div class="my-6">
+    {
+        title && (
+            <div class="flex items-center gap-2 rounded-t-lg border border-b-0 border-zinc-300 bg-zinc-100 px-4 py-1.5">
+                <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">{title}</span>
+            </div>
+        )
+    }
+    <pre class={`tdfa-code ${title ? 'rounded-t-none' : ''}`}><code set:html={highlight(code, lang)} /></pre>
+</div>

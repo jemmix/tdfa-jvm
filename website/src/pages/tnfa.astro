@@ -1,0 +1,101 @@
+---
+import Base from '../layouts/Base.astro';
+import PageHeader from '../components/PageHeader.astro';
+import Code from '../components/Code.astro';
+import PikeVmLab from '../islands/PikeVmLab.svelte';
+---
+
+<Base title="The TNFA: an NFA with tags">
+    <PageHeader num="04" title="The TNFA: an NFA with luggage" lede="A Thompson NFA whose “free move” edges carry three extra things — a tag action, a priority, and an assertion mask. Those three numbers are where matching semantics live." />
+
+    <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
+        <h2>Quick refresher: the Thompson NFA</h2>
+        <p>
+            A Thompson NFA is a directed graph with two kinds of edges. A <strong>symbol edge</strong> consumes one character (matching some class, like <code>[a-z]</code>). An <strong>epsilon (ε) edge</strong> consumes nothing — you can slide along it for free. Every regex construct compiles to a tiny fragment of such a graph, and the fragments splice: concatenation chains them, alternation fans out from a fork, and repetition loops back.
+        </p>
+        <p>
+            "Nondeterministic" means the machine may be in several states at once. A simulator runs it by keeping the <em>set</em> of live states and stepping them all in lockstep — that's the linear-time trick from chapter 01. Thompson's construction is the standard textbook mapping from regex syntax to this graph; it's about a page of code and produces at most a couple of states per syntax node.
+        </p>
+        <p>
+            A plain Thompson NFA answers one bit: <em>does it match?</em> This engine needs more. It needs <em>where the groups matched</em> and <em>which alternative a backtracker would have preferred</em>. That's the luggage.
+        </p>
+
+        <h2>The three decorations</h2>
+        <p>
+            In <code>tnfa/Tnfa.java</code>, every ε-edge carries <code>(priority, tag, emptyMask)</code>:
+        </p>
+        <ul class="list-disc pl-6">
+            <li>
+                <strong>Tag action</strong>: <code>+t</code> means "set tag t to the current position" — crossing the edge writes a boundary. <code>−t</code> (an "ntag", negative tag) means "clear tag t to nil." Group opens are <code>+</code> edges, group closes are <code>+</code> edges, and the <em>skip paths</em> around optional things carry <code>−</code> edges.
+            </li>
+            <li>
+                <strong>Priority</strong>: a small integer, lower = preferred. Alternation branches get priorities 1, 2, 3… in source order. Repetitions put the body/skip preference here: greedy <code>e*</code> prefers the body (priority 1) over exiting (priority 2); lazy <code>e*?</code> swaps them. When the ε-closure explores a state reachable by two routes, the route with the lower priority wins the slot — this single rule is what reproduces backtracking semantics without backtracking.
+            </li>
+            <li>
+                <strong>Assertion mask</strong>: six bits — <code>BEGIN_TEXT, END_TEXT, WORD_BOUNDARY, NO_WORD_BOUNDARY, ABS_BEGIN, ABS_END</code> — meaning "this edge may only be crossed at a position where these hold." That's how <code>^</code>, <code>\b</code> and friends become graph edges instead of special cases. (Full story in the <a href="/anchors/">Anchors</a> chapter.)
+            </li>
+        </ul>
+        <p>
+            The representation is deliberately dumb and fast: flat parallel <code>int[]</code> arrays — <code>epsFrom/epsTo/epsPri/epsTag/epsEmptyMask</code> plus symbol-edge arrays — because determinization will scan these arrays millions of times. A state is just an index; there is no state object.
+        </p>
+
+        <h2>The quantifier shapes</h2>
+        <p>
+            The builder mirrors re2j's fragment shapes (and cites it in comments), with the minting order fixed as "part of the construction contract" so state numbering is deterministic. The interesting ones:
+        </p>
+        <div class="not-prose my-6 grid gap-3 sm:grid-cols-2">
+            <div class="rounded-lg border border-zinc-200 bg-white p-4">
+                <div class="mono mb-1 text-sm font-semibold text-teal-800">e? and the ntag chain</div>
+                <p class="text-sm leading-relaxed text-zinc-600">A fork: body at priority 1 (greedy), skip at priority 2. The skip path first passes through a chain of <code>−t</code> edges — one per group in the body, descending group order. Zero iterations means "these groups did not participate," and the nil is written <em>structurally</em>, on the path itself.</p>
+            </div>
+            <div class="rounded-lg border border-zinc-200 bg-white p-4">
+                <div class="mono mb-1 text-sm font-semibold text-teal-800">e* — the shared hub</div>
+                <p class="text-sm leading-relaxed text-zinc-600">A pre-loop fork decides the initial enter vs. skip (the skip carries the ntags — only the <em>initial</em> skip, since a later exit means an iteration did happen). Then one shared loop hub: iterate at priority 1, exit at priority 2. re2j has the same shape; a split entry/loop variant gets a subtle priority bug wrong for <code>(a*?)*?</code>.</p>
+            </div>
+            <div class="rounded-lg border border-zinc-200 bg-white p-4">
+                <div class="mono mb-1 text-sm font-semibold text-teal-800">e* with nullable body — (f+)?</div>
+                <p class="text-sm leading-relaxed text-zinc-600">When the body can match empty, the star is built as a quest around a plus. re2j's comment, quoted in the source: "When f1 can match an empty string, f1* must be implemented as (f1+)? to get the priority match order correct." Without this, empty re-iterations can steal the accept's priority slot.</p>
+            </div>
+            <div class="rounded-lg border border-zinc-200 bg-white p-4">
+                <div class="mono mb-1 text-sm font-semibold text-teal-800">{'{n,m}'} — desugared eagerly</div>
+                <p class="text-sm leading-relaxed text-zinc-600">Bounded repeats are rewritten at build time: <code>x{'{n}'}</code> = n copies; <code>x{'{n,}'}</code> = (n−1) copies + <code>x+</code> (never <code>x*</code> — the plus tail cuts empty re-iteration, so <code>(a?){'{2,}'}</code> on "aa" reports the group, not an empty last iteration); <code>x{'{n,m}'}</code> = n copies + a right-nested optional suffix <code>x(x(x)?)?</code>. The flat-tail variant matches the same language but gets nested-lazy capture ties wrong vs re2j.</p>
+            </div>
+        </div>
+        <p>
+            The eager desugaring is also why the parser caps repeat counts at 1000 — <code>{'((a{300}){300}){300}'}</code> still expands to a 27-million-edge NFA, but that's a <em>bounded</em> bomb: the build is metered, charged to the compile memory budget, and fails with a clean error (this exact pattern is the test case).
+        </p>
+
+        <h2>Alternation and the structural "no match"</h2>
+        <p>
+            Alternation fans out from a fresh state with branch priorities 1, 2, 3… — but before hooking up branch <em>i</em>, the builder prepends an ntag chain for every group that appears in the <em>union</em> of branches but is <em>missing from this one</em>. In <code>(a)|b</code>, the right branch carries <code>−t2</code> ("clear group 1's close tag"): if the match went right, group 1's tags must read nil. Descending group order puts each group's no-match marker "closer to the body it belongs to."
+        </p>
+        <p>
+            This is BT19 §7.3 machinery, and it's what makes POSIX leftmost-longest submatches work: "no match" is encoded in the graph structure, so comparing alternatives can be done by comparing tag <em>values</em> — nil or a position — without asking which path wrote them.
+        </p>
+
+        <h2>Running it: the Pike VM</h2>
+        <p>
+            Before determinizing, it's worth simulating the TNFA directly, because that's the semantics oracle: the engine's reference implementation (used in testing to pin bugs to a single layer) is exactly this. A Pike VM keeps a list of <em>threads</em> — (state, tag values) pairs in priority order — and per input character:
+        </p>
+        <ol class="list-decimal pl-6">
+            <li>Expand each thread through ε-edges (the closure), applying tag actions as edges are crossed, exploring preferred edges first, and letting the first arrival win any state — dedup by state is what keeps threads bounded by pattern size.</li>
+            <li>Record an accept if an accepting thread is alive; in leftmost-first mode, <strong>cut every thread ranked below it</strong> — they can never influence the answer (this is the "Pike cut," and it will return, determinized, as the stop table).</li>
+            <li>Step the survivors on the character; repeat.</li>
+        </ol>
+        <p>
+            Cost: O(input × pattern) with a per-thread tag array — fine for a reference, too slow and too allocation-heavy to be the shipping engine. The next chapter is about precomputing this entire process into a DFA. But first, <em>feel</em> it:
+        </p>
+    </div>
+
+    <PikeVmLab client:load />
+
+    <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
+        <h2>Two semantics, one graph</h2>
+        <p>
+            The playground's mode toggle is the whole leftmost-first vs leftmost-longest story. In <strong>leftmost-first</strong> (Perl, default): when an accepting thread exists, everything ranked below it dies, and if nothing is ranked above, the walk stops — the match cannot grow. In <strong>leftmost-longest</strong> (POSIX, the <code>LONGEST_MATCH</code> flag): the TNFA's priorities are simply <em>ignored</em> — no cuts, no suppression, every alternative survives to the end of input and the longest accept wins, with the ntag machinery settling submatches. Same graph, two dispatch policies, both linear time.
+        </p>
+        <p>
+            One honest footnote: the playground's longest mode finds the longest <em>overall</em> match but resolves submatches by first arrival; the engine's POSIX submatch resolution uses those structural ntags and per-state tables to get the full POSIX answer. The difference only shows on patterns where two same-length splits assign different group boundaries — the classic <code>(a|ab)(c|bc)</code> on <code>"abc"</code>: leftmost-first reports <code>a</code> + <code>bc</code>, POSIX reports <code>ab</code> + <code>c</code>. Both engines agree with their respective reference implementations to millions of differential test cases.
+        </p>
+    </div>
+</Base>

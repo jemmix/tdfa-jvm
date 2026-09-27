@@ -1,0 +1,37 @@
+---
+import Base from '../layouts/Base.astro';
+import PageHeader from '../components/PageHeader.astro';
+---
+
+<Base title="Minimization: merging twins">
+    <PageHeader num="09" title="Minimization: merging twins" lede="Two DFA states that behave identically — same accepting behavior, same register effects, same destinations — are one state. Finding them all is a fixpoint refinement, and “identical” has to include the registers." />
+
+    <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
+        <h2>Moore's algorithm, register-aware</h2>
+        <p>
+            <code>tdfa/DfaMinimizer.java</code> implements Moore's partition-refinement minimization ("paper §6.2.2"), which works like sorting by repeated comparisons: start with a coarse guess at "which states might be equivalent," then repeatedly split any group whose members disagree about where they go, until no group splits. Each round is one pass over all states' transitions; at most a few passes beyond the state count are needed — it's O(n²) worst case, and capped by budget (degrade, not fail: if the meter runs dry, the compile simply proceeds unminimized, with a note).
+        </p>
+        <p>
+            For a classic DFA, "equivalent" means: same accepting-ness, and same target for every symbol. For a <em>tagged</em> DFA it has to mean more, or minimization would silently corrupt captures:
+        </p>
+        <div class="not-prose my-6 rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-sm leading-relaxed text-zinc-700">
+            Two states are equivalent iff (1) they agree on accept bit, entry mask, accept mask, and Perl stop-on-accept row; (2) their final-ops <em>content</em> is identical; and (3) for every input range, they transition to equivalent states with <strong>bit-identical transition-ops content</strong>.
+        </div>
+        <p>
+            Register actions are part of the machine's observable behavior — merge two states whose ops differ and captures come out wrong. To make "bit-identical" cheap, op sequences are interned to unique ids (<code>OpSeq</code>, a value-equality wrapper over the <code>OP_END</code>-terminated block), so comparing two op lists is one integer compare. The intern comparison admits false negatives — two <em>semantically</em> equivalent but differently-written op lists stay separate — "but this only yields a suboptimal minimization, never an incorrect one."
+        </p>
+
+        <h2>Where the paranoia comes from</h2>
+        <p>
+            Two details of the initial signature (the partition seed before any refinement) are deliberately un-clever, and the comments explain why. First, the full 64-cell stop-table and final-variant rows go into the signature <em>verbatim</em>, not hashed — "a 32-bit rolling hash would admit birthday collisions… and silently merge semantically different states." A birthday collision in a minimizer doesn't crash; it corrupts. Second, transitions are compared on a <strong>global breakpoint partition</strong> — the union of every state's range boundaries — because two states whose identical transitions happened to be cut into differently-sized ranges would otherwise look different (or worse, look same when they aren't). "The difference between minimization working for large literal-alternation DFAs vs. not working at all." If any state has assertion-gated overlapping ranges, or the normalized grid would be too big, it falls back to the conservative raw-range comparison.
+        </p>
+
+        <h2>After the fixpoint</h2>
+        <p>
+            Applying the partition renumbers states so the start state's class becomes state 0, keeps one representative array set per class, and remaps every range's target through the partition. Ops blocks are untouched — "offsets, not contents, identify them," and the interning already established which ones are equal.
+        </p>
+        <p>
+            How much does this matter in practice? Less than you'd guess, and the code says so plainly: <code>tdfa.minimize.max</code> defaults to <strong>20000 states</strong> because "Moore is O(n²) worst-case and subset construction with map-dedup already tends to produce minimal DFAs" — remember that the determinizer's interning index already merges aggressively (same-signature states, plus the tryMap bijection merges). Minimization is a mop-up pass for the residual twins, skipped above the cap or on <code>-Dtdfa.nominimize</code>, and it's the last thing between the flattened tables and the frozen artifact.
+        </p>
+    </div>
+</Base>

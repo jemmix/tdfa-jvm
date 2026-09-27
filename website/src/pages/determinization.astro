@@ -1,0 +1,102 @@
+---
+import Base from '../layouts/Base.astro';
+import PageHeader from '../components/PageHeader.astro';
+import Code from '../components/Code.astro';
+import SubsetLab from '../islands/SubsetLab.svelte';
+---
+
+<Base title="Determinization: subset construction with luggage">
+    <PageHeader num="06" title="Determinization: subset construction with luggage" lede="The heart of the engine. Ordinary subset construction folds “many possible states” into one; TDFA subset construction must also fold “many possible capture histories” — ahead of time, into register writes." />
+
+    <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
+        <h2>Plain subset construction, in one paragraph</h2>
+        <p>
+            You may remember this one from interviews. To turn an NFA into a DFA: define a DFA state to be <em>a set of NFA states</em> — "all the places the NFA could currently be." Start with the ε-closure of the start state. For each input symbol class, step every member, take ε-closures again, and call the result a new DFA state (or reuse an existing one with the same member set). Repeat until no new sets appear. Since there are finitely many subsets, this terminates; and since the DFA state now tracks <em>every</em> possible configuration at once, there is nothing left to be nondeterministic about.
+        </p>
+        <p>
+            The catch, for us: two runs that land in the same NFA-state set may have written <em>different tag values</em>. <code>(a|b)(a|b)</code> after "ba" and after "ab" reach the same NFA states, but a backtracker's group values differ in kind from a DFA's single state. If we merge them and throw the histories away, captures are wrong. If we keep the histories, they grow without bound and the automaton is infinite. The TDFA answer is a third thing: <strong>resolve the history into register operations at the moment of the merge, then forget it.</strong>
+        </p>
+
+        <h2>Configurations and kernels</h2>
+        <p>
+            During determinization, a DFA state's member set is a list of <em>configurations</em> (<code>tdfa/Config.java</code>) — an NFA state, plus the bookkeeping that survives one character step:
+        </p>
+        <Code lang="java" title="tdfa/Config.java">{`final class Config {
+    final int state;    // TNFA state id
+    final int[] regs;   // per-tag register assignment (which register holds this tag's value)
+    final int h;        // history id: what tags were set BEFORE the last symbol step
+    final int l;        // history id: what tags were set during THIS ε-closure
+    final int pri;      // worst ε-edge priority taken to reach this config
+    int emptyMask;      // assertion bits accumulated along the ε-path
+}`}</Code>
+        <p>
+            The closure list, in arrival order, is the DFA state's <em>kernel</em>. Arrival order is priority order — the DFS explores preferred ε-edges first, and the visited-set rule "first arrival wins the slot" means the list is exactly the Pike VM's thread list, frozen.
+        </p>
+
+        <h2>The trick that keeps it finite</h2>
+        <p>
+            Here is the load-bearing subtlety of the whole algorithm, so let's slow down. Each config carries <em>two</em> history ids, <code>h</code> and <code>l</code>. During an ε-closure, crossing a <code>+t</code> edge appends to <code>l</code> (negatives are never recorded — nil-ness is structural, from the ntag chains). When the config consumes a character — <code>stepOnSymbol</code> — the history is <strong>rotated, not accumulated</strong>:
+        </p>
+        <Code lang="java" title="tdfa/TdfaCompiler.java — stepOnSymbol">{`out.add(new Config(nfa.symTo[idx], c.regs, /* h = */ c.l, /* l = */ HistTable.EMPTY_ID, 0, c.pri));`}</Code>
+        <p>
+            The just-accumulated <code>l</code> becomes the carried <code>h</code>, and <code>l</code> restarts empty. So a kernel's <code>l</code> only ever holds "tags set since the last character" — bounded by closure size, never growing with input length. The unbounded history that a naive construction would drag along is consumed the instant it matters:
+        </p>
+        <div class="rounded-lg border border-teal-200 bg-teal-50/50 px-4 py-3 text-sm leading-relaxed text-teal-900">
+            When a transition fires, the <em>pre-step</em> history <code>h</code> of each target config is read for its <strong>last sign per tag</strong> — the final thing that happened to each tag before the character was eaten. Those signs become the transition's register ops: <code>SET_POS</code> for a tag last set, <code>SET_NIL</code> for one last cleared. After that, the history is dead weight and never stored.
+        </div>
+        <p>
+            Run this over <code>(a)*</code> and watch what happens: after the first <code>a</code>, every subsequent iteration lands in a kernel with the <em>same</em> (state, mask, l)-signature — because <code>l</code> reset — so the interning index says "already exists," the loop closes, and the DFA is finite. The history was folded into ops on the incoming transitions; the state remembers nothing.
+        </p>
+
+        <h2>The worklist loop</h2>
+        <p>End to end, <code>TdfaCompiler.determinize()</code> is beautifully small:</p>
+        <Code lang="java" title="tdfa/TdfaCompiler.java — determinize (skeleton)">{`List<Config> initClosure = epsilonClosure(initSeed);
+int startId = index.addState(initClosure, null, initSeed).targetId;
+work.push(startId);
+while (!work.isEmpty()) {
+    int sid = work.pop();          // LIFO: keeps targets boxed for tryMap
+    processState(sid);             // liveContexts → emitTransitions → dead markers
+}`}</Code>
+        <p>
+            <code>processState</code> splits the kernel into <em>assertion live-sets</em> (the Anchors chapter), then sweeps every breakpoint cell for every context: step, closure, intern-or-create the target state, attach the register ops. New states go on the worklist. When it drains, the derived tables are computed — entry/accept masks, the stop table, the final ops — and the result is frozen into a <code>DeterminizedDfa</code>.
+        </p>
+
+        <h2>State identity: what's in the signature, what isn't</h2>
+        <p>
+            Two DFA states are the same iff their kernels have the same signature — an <em>order-exact</em> sequence of <code>(state, l, emptyMask)</code> per config. Order-exact, not sorted-multiset: in Perl mode, arrival order <em>is</em> priority, and merging two closures with different orders "would silently flip priorities." (A canonical sorted key would also grow buckets huge on dictionary patterns — an early version of the index did exactly that and dominated compile time.)
+        </p>
+        <p>
+            Deliberately <em>excluded</em> from the signature: the register assignment <code>regs</code>. Two kernels can reach the same automaton shape with tags living in different registers — and instead of splitting into two states, the engine <strong>merges them with a register bijection</strong>. This is the paper's <code>map</code> function, implemented as <code>TdfaStateIndex.tryMap</code>: build a one-to-one correspondence newReg ↔ oldReg over the (config, tag) positions; rewrite the incoming transition ops through it; and for values already sitting in the wrong registers, <em>prepend COPY ops</em> that shuffle them into place. The result is one state instead of two, at the cost of a few copies on entry — almost always a win.
+        </p>
+
+        <h2>The ε-closure, precisely</h2>
+        <p>
+            The closure routine (<code>epsilonClosure</code>, "paper Algorithm 3") is a DFS with priority-ordered exploration, and three non-obvious details:
+        </p>
+        <ol class="list-decimal pl-6">
+            <li>
+                <strong>Visited set keyed on (state, mask), marked at pop.</strong> Not state alone: the same NFA state reached with different assertion masks is a legitimately different config ("<code>(?:^|$)+</code> needs both junction variants"), and the <em>first pop</em> decides the winner — pop order is priority order.
+            </li>
+            <li>
+                <strong>Subsumption cut.</strong> A re-arrival at <code>(to, newMask)</code> is skipped when an earlier variant <code>(to, m')</code> with <code>m' ⊆ newMask</code> was already popped: everywhere the re-arrival would be alive, the earlier one is too, and produces the same continuations. For nullable loop bodies, re-entry around an ε-cycle accumulates a mask <em>superset</em> of the entry's — so empty iterations die here. This is the determinized form of a Pike VM's per-position pc-dedup.
+            </li>
+            <li>
+                <strong>Pike cut on stepping.</strong> In Perl mode, when the first accepting config in a live set is alive in the current assertion context, every config below it is cut before stepping — "exactly like a pike VM cuts threads below a match-recording thread." The kernel itself is not pruned (state identity and the final tables see the full closure); only this context's stepping input. Its runtime echo is the stop table you'll meet in Execution.
+            </li>
+        </ol>
+
+        <h2>Budgets woven in</h2>
+        <p>
+            Every unbounded or quadratic gesture here is metered and capped: closure growth is checked <em>during</em> the closure (a per-kernel "spike" bound — a nested-counted bomb could otherwise exhaust the heap inside one closure before totals catch it); the state count and weighted kernel bytes are checked at <code>addState</code>; the whole thing ticks the compute meter. Exceeding any of them throws the clean <code>"pattern too large"</code> — by design, determinization is where bombs go to die. Defaults allow ~262k states (Perl) / ~524k (POSIX) before the wall.
+        </p>
+    </div>
+
+    <SubsetLab client:load />
+
+    <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
+        <h2>What the playground simplifies</h2>
+        <p>
+            Being honest about the deltas, since the island is a teaching miniature: it uses one register per tag (the real engine allocates per (source state, tag, sign) and merges same-shape states with the tryMap bijection and COPY prepends); it skips the Pike cut and the assertion live-context split (patterns here avoid anchors); and its final ops are the didactic <code>COPY work→final</code> plus <code>SET_POS</code> form. Everything else — priorities, the visited rule, the h/l rotation, order-exact interning, coalescing — is the real algorithm at working scale. The <a href="/registers/">Registers</a> chapter covers what the real final ops and the register allocator do with them.
+        </p>
+    </div>
+</Base>

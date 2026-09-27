@@ -1,0 +1,20 @@
+---
+interface Props {
+    num?: string;
+    title: string;
+    lede?: string;
+}
+const { num, title, lede } = Astro.props;
+---
+
+<header class="mb-10">
+    {
+        num && (
+            <div class="mb-2 font-mono text-sm font-semibold tracking-widest text-teal-700">
+                {num}
+            </div>
+        )
+    }
+    <h1 class="text-3xl font-bold tracking-tight text-zinc-900 sm:text-4xl">{title}</h1>
+    {lede && <p class="mt-4 text-lg leading-relaxed text-zinc-600">{lede}</p>}
+</header>

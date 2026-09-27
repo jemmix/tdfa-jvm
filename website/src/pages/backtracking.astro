@@ -1,0 +1,91 @@
+---
+import Base from '../layouts/Base.astro';
+import PageHeader from '../components/PageHeader.astro';
+import Code from '../components/Code.astro';
+import BacktrackingLab from '../islands/BacktrackingLab.svelte';
+---
+
+<Base title="Why no backtracking">
+    <PageHeader num="01" title="Why no backtracking" lede="Before we can appreciate the machinery, we need to be honest about the disease: most regex engines are recursive-descent interpreters with an exponential temper." />
+
+    <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
+        <h2>How a backtracking engine works</h2>
+        <p>
+            The regex engine you probably use daily — <code>java.util.regex</code>, PCRE, Python's <code>re</code>, JavaScript's — is at heart a <em>recursive-descent interpreter</em> for your pattern. When it meets <code>a*</code> it makes a choice: consume one more <code>a</code>, or stop? When it meets <code>a|b</code> it chooses a branch. If a choice later leads to a dead end, it <em>backtracks</em>: undoes consumed characters, returns to the most recent choice point, and tries the other road.
+        </p>
+        <p>
+            You can think of it as a depth-first search over "ways to match." DFS with an undo stack is a beautifully simple design — and it's why <code>group(1)</code> can just be "whatever the interpreter happened to write down when it walked through the group." But DFS has a property that matters enormously at scale: its running time is proportional to the <em>number of paths</em>, not the length of the input.
+        </p>
+        <p>
+            Now nest the choice points. <code>(a+)+b</code> against <code>"aaaa…a"</code> (no <code>b</code>): the outer <code>+</code> and inner <code>+</code> can split the run of a's between them in exponentially many ways. The engine dutifully tries every split, fails at the end of each, backtracks, and tries the next. Twenty-four a's is already tens of millions of steps. This is <a href="https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS" target="_blank" rel="noopener">ReDoS</a>, and it has taken down real services.
+        </p>
+    </div>
+
+    <BacktrackingLab client:load />
+
+    <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
+        <h2>Modern backtracking engines defend themselves — incompletely</h2>
+        <p>
+            To be fair: current JDKs have tamed many of the classic blowups in <code>java.util.regex</code> (the graph above runs fine on a modern JDK, in linear-ish time, because of memoization-style fixes). PCRE has a match limit. .NET has timeouts. But these are empirical patches over the algorithm's shape. The <em>structural</em> fix is to use an algorithm whose cost depends only on the input length.
+        </p>
+
+        <h2>The automaton family, in three moves</h2>
+        <p>
+            There is an older, prouder lineage of regex engines — Ken Thompson's 1968 construction, the one in <code>grep</code>, RE2, Go's <code>regexp</code>, and re2j. The idea: compile the pattern to a small graph called an <strong>NFA</strong> (nondeterministic finite automaton — "a machine that can be in several states at once"), then run it by <em>tracking the set of all currently-possible states</em> as you read each character. Set size is bounded by pattern size, so matching is O(input × pattern). No path is ever explored twice, because you're not exploring paths at all — you're advancing a frontier.
+        </p>
+        <p>Trade-offs of each design, in one table:</p>
+        <div class="not-prose my-6 overflow-x-auto rounded-lg border border-zinc-200">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-zinc-200 bg-zinc-50 text-left text-xs tracking-wide text-zinc-500 uppercase">
+                        <th class="px-4 py-2">Engine kind</th>
+                        <th class="px-4 py-2">Time per match attempt</th>
+                        <th class="px-4 py-2">Captures</th>
+                        <th class="px-4 py-2">Can support backrefs / lookaround</th>
+                    </tr>
+                </thead>
+                <tbody class="text-zinc-700">
+                    <tr class="border-b border-zinc-100">
+                        <td class="px-4 py-2 font-medium">Backtracking (PCRE, j.u.r)</td>
+                        <td class="px-4 py-2">exponential worst case</td>
+                        <td class="px-4 py-2">trivially, as a side effect</td>
+                        <td class="px-4 py-2">yes (that's the point)</td>
+                    </tr>
+                    <tr class="border-b border-zinc-100">
+                        <td class="px-4 py-2 font-medium">NFA simulation (Pike VM)</td>
+                        <td class="px-4 py-2">O(input × pattern)</td>
+                        <td class="px-4 py-2">with per-thread tag copies</td>
+                        <td class="px-4 py-2">no</td>
+                    </tr>
+                    <tr>
+                        <td class="px-4 py-2 font-medium">DFA (this engine)</td>
+                        <td class="px-4 py-2">O(input) — one table lookup per char</td>
+                        <td class="px-4 py-2 text-teal-700 font-medium">the hard part — solved by TDFA</td>
+                        <td class="px-4 py-2">no</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <p>
+            The catch with going full DFA has always been the middle column's second row: capture groups. A plain DFA state tells you "the pattern is still alive," but <em>forgets which path it took</em> — and captures are exactly a question about the path. Classic DFA engines either gave up on submatches (early grep) or fell back to a slower engine for them (some RE2 configurations, for leftmost-longest submatches).
+        </p>
+
+        <h2>TDFA: a DFA that remembers, by deciding early</h2>
+        <p>
+            A <strong>TDFA</strong> — <em>tagged</em> DFA — is a DFA where every transition can carry tiny side effects on a set of integer <em>registers</em>: "set register 2 to the current position," "copy register 5 into register 3," "set register 7 to nil." The compile-time analysis figures out, for every state and every character class, exactly which of those writes the <em>winning</em> path would have performed — and bakes them into the transition. At match time the DFA carries one flat <code>int[]</code>; when it accepts, the group boundaries are sitting in the final registers. No paths, no stacks, no replay.
+        </p>
+        <p>
+            That analysis is the heart of this engine and of the paper it implements — Borsotti &amp; Trofimovich, <a href="https://arxiv.org/abs/2206.01398" target="_blank" rel="noopener"><em>A closer look at TDFA</em></a> (2022). The next chapters walk through the whole pipeline: how the pattern becomes a tagged NFA, how subset construction turns that into a register-writing DFA, how a compiler-style register allocator shrinks the result, and how the finished automaton executes as JVM bytecode.
+        </p>
+
+        <h2>What "no backtracking, ever" buys you here</h2>
+        <ul class="list-disc pl-6">
+            <li><strong>Linear match time by construction</strong> — there is no engine in the library that could burn match-time budget, so pathological patterns cannot either. The guarantee is structural, not a matter of patched known cases.</li>
+            <li><strong>Predictable memory</strong> — a matcher owns one scratch <code>int[]</code> and optional memo tables, capped by a 16 MiB-per-pattern runtime budget.</li>
+            <li><strong>Speed</strong> — a table walk beats interpreting a program. Short of the literal cases <code>String.indexOf</code> handles, this is about as fast as regex matching gets: 2–6× re2j on short-input search.</li>
+        </ul>
+        <p>
+            The price is paid once, at <code>Pattern.compile</code>: ~290 µs (interpreter) to ~1.3 ms (bytecode) per pattern, versus ~16 µs for <code>java.util.regex</code>. Compile eagerly, match often — or in a pathological case, fail <em>cleanly</em> with a "pattern too large" error instead of exhausting time and memory. Those limits are three system properties you can raise; see the <a href="/budgets/">Budgets</a> chapter.
+        </p>
+    </div>
+</Base>
