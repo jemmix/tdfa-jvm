@@ -9,7 +9,14 @@ interface Props {
 const { lang = 'java', title } = Astro.props;
 
 const raw = await Astro.slots.render('default');
-const code = raw.replace(/^\n+|\n+$/g, '');
+// the slot arrives HTML-encoded; code blocks want their literal characters back
+const decoded = raw
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+const code = decoded.replace(/^\n+|\n+$/g, '');
 
 function esc(s: string): string {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -24,11 +31,12 @@ function highlight(src: string, lang: string): string {
         out = out.replace(/(#.*)$/gm, '<span class="tok-com">$1</span>');
         return out;
     }
-    // comments and strings first, with placeholders
+    // stash comments and strings first; the S-prefixed ids keep later
+    // keyword/number passes from matching inside them (no word boundary)
     const stash: string[] = [];
-    const keep = (s: string, cls: string) => {
+    const keep = (s: string, cls: string): string => {
         stash.push(`<span class="${cls}">${s}</span>`);
-        return `\u0000${stash.length - 1}\u0000`;
+        return `\u0000S${stash.length - 1}\u0000`;
     };
     out = out.replace(/\/\*[\s\S]*?\*\//g, (m) => keep(m, 'tok-com'));
     out = out.replace(/\/\/[^\n]*/g, (m) => keep(m, 'tok-com'));
@@ -41,18 +49,17 @@ function highlight(src: string, lang: string): string {
         out = out.replace(TS_KW, '<span class="tok-kw">$1</span>');
     }
     out = out.replace(/\b(\d[\d_]*)\b/g, '<span class="tok-num">$1</span>');
-    out = out.replace(/\u0000(\d+)\u0000/g, (_, i) => stash[Number(i)]);
+    out = out.replace(/\u0000S(\d+)\u0000/g, (_, i) => stash[Number(i)]);
     return out;
 }
 ---
 
-<div class="my-6">
-    {
-        title && (
-            <div class="flex items-center gap-2 rounded-t-lg border border-b-0 border-zinc-300 bg-zinc-100 px-4 py-1.5">
-                <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">{title}</span>
-            </div>
-        )
-    }
-    <pre class={`tdfa-code ${title ? 'rounded-t-none' : ''}`}><code set:html={highlight(code, lang)} /></pre>
+<div class="not-prose my-6 overflow-hidden rounded-lg border border-zinc-300 bg-white">
+    {title && (
+        <div class="flex items-center gap-2.5 border-b border-zinc-200 bg-zinc-100 px-4 py-2">
+            <span class="h-2 w-2 shrink-0 rounded-full bg-teal-600"></span>
+            <span class="truncate font-mono text-xs font-medium text-zinc-600">{title}</span>
+        </div>
+    )}
+    <pre class="tdfa-code"><code set:html={highlight(code, lang)} /></pre>
 </div>

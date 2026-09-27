@@ -112,10 +112,12 @@
             </div>
             <div class="mt-1 text-xs text-zinc-500">
                 {cells.length} cells = {breakpoints.length - 1} intervals between breakpoints.
+            </div>
+            <div class="mt-0.5 min-h-[3.4em] text-xs leading-relaxed text-zinc-500">
                 {#if hoverCell !== null && cells[hoverCell]}
                     Cell [{cells[hoverCell].lo}, {cells[hoverCell].hi}]: every class above makes the same yes/no decision for all of it — the DFA needs one transition per cell.
                 {:else}
-                    Hover a cell for detail.
+                    <span class="text-zinc-400">Hover a cell to inspect it.</span>
                 {/if}
             </div>
         </div>

@@ -3,12 +3,14 @@
     import { subsetConstruct, type SubsetEvent, OP_SET_POS, OP_SET_NIL, OP_COPY } from '../lib/subset';
     import { layoutTnfa, edgePath } from '../lib/graph';
     import { esc } from '../lib/parse';
+    import GraphModal from './GraphModal.svelte';
 
     const presets = ['(a|b)*c', '(a)*', '(ab|a)(c|bc)'];
     let presetIdx = $state(0);
     let i = $state(0);
     let playing = $state(false);
     let timer: ReturnType<typeof setInterval> | undefined;
+    let expanded = $state(false);
 
     let nfa = $derived(compileTnfa(presets[presetIdx]));
     let result = $derived(subsetConstruct(nfa));
@@ -101,10 +103,10 @@
         <div class="grid gap-4 lg:grid-cols-2">
             <div>
                 <h4 class="mb-1.5 text-sm font-semibold text-zinc-800">TNFA <span class="font-normal text-zinc-400">— teal = in a kernel</span></h4>
-                <div class="overflow-x-auto rounded-lg border border-zinc-200 bg-white p-2">
-                    <svg viewBox="0 0 {layout.width} {layout.height}" class="min-w-[420px]">
+                {#snippet graphSvg(svgClass: string, idp: string)}
+                    <svg viewBox="0 0 {layout.width} {layout.height}" class={svgClass}>
                         <defs>
-                            <marker id="sarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                            <marker id="{idp}-sarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                                 <path d="M 0 0 L 10 5 L 0 10 z" fill="#a1a1aa"></path>
                             </marker>
                         </defs>
@@ -114,7 +116,7 @@
                                 fill="none"
                                 stroke="{kernelStates.has(e.from) || kernelStates.has(e.to) ? '#a8b8b6' : '#e4e4e7'}"
                                 stroke-width="{kernelStates.has(e.from) || kernelStates.has(e.to) ? 1.6 : 1.1}"
-                                marker-end="url(#sarr)"
+                                marker-end="url(#{idp}-sarr)"
                             ></path>
                             {#if e.label}
                                 <rect x="{e.lx - e.lw / 2}" y="{e.ly - e.lh / 2}" rx="3" width="{e.lw}" height="{e.lh}" fill="#fafafa" stroke="#e4e4e7"></rect>
@@ -127,13 +129,29 @@
                                 <circle cx={nd.x} cy={nd.y} r="13.5" fill="none" stroke="{kernelStates.has(nd.id) ? '#0f766e' : '#d4d4d8'}"></circle>
                             {/if}
                             {#if nd.id === nfa.start}
-                                <path d="M {nd.x - 32} {nd.y} L {nd.x - 13} {nd.y}" stroke="#c9c9cf" stroke-width="1.2" marker-end="url(#sarr)"></path>
+                                <path d="M {nd.x - 32} {nd.y} L {nd.x - 13} {nd.y}" stroke="#c9c9cf" stroke-width="1.2" marker-end="url(#{idp}-sarr)"></path>
                                 <text x="{nd.x - 32}" y="{nd.y - 6}" font-size="8" fill="#a1a1aa">start</text>
                             {/if}
                             <text x={nd.x} y={nd.y + 3} text-anchor="middle" font-size="8.5" font-weight="600" fill="{kernelStates.has(nd.id) ? '#134e4a' : '#b1b1b8'}">{nd.id}</text>
                         {/each}
                     </svg>
+                {/snippet}
+                <div class="relative overflow-x-auto rounded-lg border border-zinc-200 bg-white p-2">
+                    {@render graphSvg('min-w-[420px]', 's1')}
+                    <button class="btn absolute top-2 right-2 !px-2 !py-1 text-xs" onclick={() => (expanded = true)} title="open the graph fullscreen">⤢ enlarge</button>
                 </div>
+                <GraphModal bind:open={expanded} title={'TNFA for ' + presets[presetIdx] + ' — kernel states highlighted; step through below'}>
+                    {@render graphSvg('h-full w-full', 's2')}
+                    {#snippet controls()}
+                        <div class="flex items-center gap-2">
+                            <button class="btn" onclick={reset}>⟲</button>
+                            <button class="btn" onclick={back} disabled={i === 0}>◀ back</button>
+                            <button class="btn btn-primary" onclick={step} disabled={i >= result.events.length - 1}>step ▶</button>
+                            <button class="btn" onclick={play}>{playing ? '❚❚ pause' : '▷ play'}</button>
+                            <span class="ml-auto max-w-[50%] truncate font-mono text-xs text-zinc-500">{logLine}</span>
+                        </div>
+                    {/snippet}
+                </GraphModal>
             </div>
             <div>
                 <h4 class="mb-1.5 text-sm font-semibold text-zinc-800">TDFA <span class="font-normal text-zinc-400">— grows as states are interned</span></h4>

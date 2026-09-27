@@ -10,17 +10,17 @@ html {
     scroll-behavior: smooth;
 }
 
-/* code blocks */
+/* code blocks (inside .not-prose wrappers, so typography never touches them) */
 pre.tdfa-code {
-    @apply overflow-x-auto rounded-lg border border-zinc-300 bg-zinc-50 p-4 text-[13px] leading-relaxed text-zinc-800;
+    @apply overflow-x-auto px-4 py-3.5 text-[13px] leading-[1.65] text-zinc-800;
 }
 pre.tdfa-code code {
     @apply font-mono;
 }
-.tok-kw { @apply text-purple-700 font-medium; }
+.tok-kw { @apply font-medium text-indigo-700; }
 .tok-str { @apply text-teal-700; }
-.tok-com { @apply text-zinc-400 italic; }
-.tok-num { @apply text-amber-700; }
+.tok-com { @apply text-zinc-400; }
+.tok-num { @apply text-amber-800; }
 .tok-ann { @apply text-sky-700; }
 
 /* islands */

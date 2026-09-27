@@ -2,6 +2,7 @@
     import { compileTnfa, type Tnfa } from '../lib/thompson';
     import { runPikeVm, type Mode } from '../lib/pikevm';
     import { layoutTnfa, edgePath } from '../lib/graph';
+    import GraphModal from './GraphModal.svelte';
 
     const presets: { pattern: string; text: string; note: string }[] = [
         { pattern: '(a|ab)(c|bc)', text: 'abc', note: 'the classic ambiguity: two ways to split "abc"' },
@@ -16,6 +17,7 @@
     let i = $state(0);
     let playing = $state(false);
     let timer: ReturnType<typeof setInterval> | undefined;
+    let expanded = $state(false);
 
     let nfa: { ok: true; nfa: Tnfa } | { ok: false; err: string } = $derived.by(() => {
         try {
@@ -120,13 +122,13 @@
         {#if !nfa.ok}
             <p class="mono rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{nfa.err}</p>
         {:else if layout && trace}
-            <div class="overflow-x-auto rounded-lg border border-zinc-200 bg-white p-2">
-                <svg viewBox="0 0 {layout.width} {layout.height}" class="min-w-[640px]">
+            {#snippet graphSvg(svgClass: string, idp: string)}
+                <svg viewBox="0 0 {layout.width} {layout.height}" class={svgClass}>
                     <defs>
-                        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                        <marker id="{idp}-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                             <path d="M 0 0 L 10 5 L 0 10 z" fill="#71717a"></path>
                         </marker>
-                        <marker id="arr-live" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                        <marker id="{idp}-arr-live" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                             <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f766e"></path>
                         </marker>
                     </defs>
@@ -136,7 +138,7 @@
                             fill="none"
                             stroke={liveStates.has(e.from) ? '#0d9488' : '#d4d4d8'}
                             stroke-width={liveStates.has(e.from) ? 1.8 : 1.2}
-                            marker-end={liveStates.has(e.from) ? 'url(#arr-live)' : 'url(#arr)'}
+                            marker-end={liveStates.has(e.from) ? `url(#${idp}-arr-live)` : `url(#${idp}-arr)`}
                         ></path>
                         {#if e.label}
                             <rect x="{e.lx - e.lw / 2}" y="{e.ly - e.lh / 2}" rx="3" width="{e.lw}" height="{e.lh}" fill="{liveStates.has(e.from) ? '#f0fdfa' : '#fafafa'}" stroke="{liveStates.has(e.from) ? '#99f6e4' : '#e4e4e7'}"></rect>
@@ -149,13 +151,35 @@
                             <circle cx={nd.x} cy={nd.y} r="15" fill="none" stroke={stateColor(nd.id)} stroke-width="1"></circle>
                         {/if}
                         {#if nd.id === nfa.nfa.start}
-                            <path d="M {nd.x - 34} {nd.y} L {nd.x - 14} {nd.y}" stroke="#a1a1aa" stroke-width="1.4" marker-end="url(#arr)"></path>
+                            <path d="M {nd.x - 34} {nd.y} L {nd.x - 14} {nd.y}" stroke="#a1a1aa" stroke-width="1.4" marker-end="url(#{idp}-arr)"></path>
                             <text x="{nd.x - 34}" y="{nd.y - 6}" font-size="8.5" fill="#a1a1aa">start</text>
                         {/if}
                         <text x={nd.x} y={nd.y + 3.5} text-anchor="middle" font-size="9" font-weight="600" fill="{liveStates.has(nd.id) ? '#134e4a' : '#a1a1aa'}">{nd.id}</text>
                     {/each}
                 </svg>
+            {/snippet}
+
+            {#snippet controlsRow(hint: string)}
+                <div class="flex items-center gap-2 border-t border-zinc-200 pt-3">
+                    <button class="btn" onclick={reset} title="reset">⟲</button>
+                    <button class="btn" onclick={back} disabled={i === 0}>◀ back</button>
+                    <button class="btn btn-primary" onclick={step} disabled={!trace || i >= trace.events.length - 1}>step ▶</button>
+                    <button class="btn" onclick={play}>{playing ? '❚❚ pause' : '▷ play'}</button>
+                    <span class="ml-auto text-xs text-zinc-400">{hint}</span>
+                </div>
+            {/snippet}
+
+            <div class="relative overflow-x-auto rounded-lg border border-zinc-200 bg-white p-2">
+                {@render graphSvg('min-w-[640px]', 'g1')}
+                <button class="btn absolute top-2 right-2 !px-2 !py-1 text-xs" onclick={() => (expanded = true)} title="open the graph fullscreen">⤢ enlarge</button>
             </div>
+
+            <GraphModal bind:open={expanded} title={'TNFA for ' + pattern + ' — live states highlighted, step through below'}>
+                {@render graphSvg('h-full w-full', 'g2')}
+                {#snippet controls()}
+                    {@render controlsRow('arrow keys work too · esc closes')}
+                {/snippet}
+            </GraphModal>
 
             <!-- input ruler -->
             <div class="mono flex items-center gap-0 overflow-x-auto">
@@ -240,13 +264,7 @@
             </div>
 
             <!-- controls -->
-            <div class="flex items-center gap-2 border-t border-zinc-200 pt-3">
-                <button class="btn" onclick={reset} title="reset">⟲</button>
-                <button class="btn" onclick={back} disabled={i === 0}>◀ back</button>
-                <button class="btn btn-primary" onclick={step} disabled={!trace || i >= trace.events.length - 1}>step ▶</button>
-                <button class="btn" onclick={play}>{playing ? '❚❚ pause' : '▷ play'}</button>
-                <span class="ml-auto text-xs text-zinc-400">arrow keys work</span>
-            </div>
+            {@render controlsRow('arrow keys work')}
         {/if}
     </div>
     <div class="island-caption">
