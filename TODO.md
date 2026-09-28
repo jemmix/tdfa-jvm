@@ -1094,7 +1094,33 @@ hard-gating every fixed family, replay corpora, probe-before-fix.
       events + call sites, fails on megamorphic dispatch inside generated classes; full logs in
       `build/reports/inlining-guard/`). Baseline: CLEAN — 0 morphic failures across 51 compiled
       generated-class methods; size-related non-inlines are warnings.
-- [ ] Deterministic compilation — same regex → identical TDFA across runs
+- [x] **Deterministic compilation** (2026-09-28). Same regex → bit-identical
+      TDFA, now machine-checked. The audit: the pipeline already hashes by
+      content end to end — state interning/order-exact probe keys
+      (DfaStateKey), canon class signatures, HistTable hash-consing,
+      op-sequence interning in the Moore partition — budgets are
+      property-derived constants (never wall-clock/heap probes, which would
+      make degradation run-dependent), no static mutable state survives a
+      compile, and Object/identity hash codes never key anything the
+      artifact depends on. So the artifact is a pure function of
+      (pattern, mode, knobs) and the item lands as its guarantee:
+      `DeterministicCompilationTest` (+ `DeterminismDriver`,
+      `DeterminismCorpus`, `ArtifactFingerprint` under
+      tests/unit .../determinism/) fingerprints the FULL artifact (every
+      public accessor table: meta/base/offsets, ranges, ops, entry/accept
+      masks, stop tier, per-M final ops, word/fixed tables, named groups)
+      over a corpus covering each pipeline family (pike cut + unpruned
+      ladder, empty-iteration cut, dead markers, final-φ variants, nested
+      counted repeats through regopt, minimizer-merging shapes, case fold,
+      wide Unicode classes, POSIX longest, and the tdfa.nominimize/
+      noregopt knob paths). Three layers: repeat compiles in-JVM (reversed
+      order — cross-compile static-state effects), observer attached vs
+      not (stage timings must stay observationally inert), and the driver
+      forked as two fresh JVMs whose line-for-line output must equal each
+      other AND the in-JVM fingerprints. A discriminator meta-test pins
+      that the oracle itself is non-vacuous (different patterns and
+      merge/regopt-active knobs change the fingerprint). Full unit gate
+      green.
 - [ ] `map` + topological sort: reject non-trivial cycles (BT22 §3.3)
 - [x] Fallback / backup operations (BT22 §3.2) — restore clobberable registers on dead-end
       paths; landed as `FallbackOps` (README "What's implemented" §6.2; WorkMeter covers
