@@ -772,6 +772,48 @@ public final class Tdfa {
         return pikeCutMatters;
     }
 
+    /**
+     * Weighted flat bytes this artifact retains at execution time: every
+     * packed array field (per-state tables, flat ranges, prefix-max,
+     * ops, position-aware mask tables, word/fixed-tag annotations) at
+     * its flat JVM cost (16 B array header + 4 B per int cell, 1 B per
+     * byte cell). The end-of-compile execution-RAM check charges this
+     * against {@code tdfa.budget.runtime.memory} (the facade derives the
+     * lazy-memo allowances from the residual); engine-tier tables built
+     * FROM these arrays (dispatch tiers, generated-class statics, the
+     * materialized 2D stop-mask copies) are disclosed construction-time
+     * constants outside the budget — the r11 scope line, see {@link
+     * Budgets}.
+     */
+    public long retainedTableBytes() {
+        long b = intBytes(stateMeta.length) + intBytes(stateBase.length) + intBytes(stateFinalOpsOff.length)
+            + intBytes(stateEntryMask.length) + intBytes(stateAcceptMask.length) + intBytes(ranges.length)
+            + intBytes(entryHiPrefix.length) + intBytes(ops.length);
+        if (stateFinalOpsByMask != null) {
+            b += intBytes(stateFinalOpsByMask.length);
+        }
+        if (stopOnAcceptMask != null) {
+            b += intBytes(stopOnAcceptMask.length);
+        }
+        if (stopMaskUniform != null) {
+            b += 16 + stopMaskUniform.length;
+        }
+        if (wordRanges != null) {
+            b += intBytes(wordRanges.length);
+        }
+        if (fixedBase != null) {
+            b += intBytes(fixedBase.length);
+        }
+        if (fixedOffset != null) {
+            b += intBytes(fixedOffset.length);
+        }
+        return b;
+    }
+
+    private static long intBytes(int cells) {
+        return 16L + 4L * cells;
+    }
+
     // ===== compile-knob policy =====
     //
     // Every tdfa.* knob that steers COMPILATION is read once per

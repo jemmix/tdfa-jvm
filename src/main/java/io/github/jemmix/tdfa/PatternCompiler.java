@@ -23,7 +23,11 @@ import io.github.jemmix.tdfa.unicode.UnicodeProviders;
  * custom {@link RegexEngineFactory}, or per-pattern ASM generation).
  * Everything builds inside {@code compile()}; any budget rejection fails
  * the compile as a translated
- * {@link io.github.jemmix.tdfa.core.PatternSyntaxException}.
+ * {@link io.github.jemmix.tdfa.core.PatternSyntaxException} — including
+ * the end-of-compile execution-RAM check (retained artifact tables must
+ * fit {@code tdfa.budget.runtime.memory}; the lazy-memo allowances draw
+ * from the residual — "if it compiles, it will execute within budget",
+ * see {@link Budgets}).
  */
 final class PatternCompiler {
 
@@ -77,9 +81,35 @@ final class PatternCompiler {
             }
             boolean shared = whole == find;
             int ps = find.stateCount();
-            // A pattern keeping a second (whole) engine splits the runtime
-            // memo budget so the pattern's combined memos stay within one budget.
-            long memoBudget = Budgets.runtimeMemoryBytes() / (shared ? 1 : 2);
+
+            // ===== end-of-compile execution-RAM check =====
+            // The runtime RAM budget bounds the pattern's whole execution
+            // footprint: retained artifact tables plus the lazy memo
+            // allowances. The memos draw from the RESIDUAL after the
+            // retained tables (per-engine split below), so what the check
+            // itself must verify is the retained side — tables beyond the
+            // budget fail the compile with the standard clean "pattern
+            // too large" rejection. Memo floors on a tiny residual are the
+            // documented bounded carve-out (clamped, not rejected — see
+            // Budgets.runtimeMemoAllowance). Engine-tier construction-time
+            // tables (dispatch tiers, generated statics) stay outside the
+            // budget per the r11 scope decision; BYO factory engines are
+            // unaccountable by construction, but the artifact tables and
+            // any native fallback runner still draw from this residual.
+            long budget = Budgets.runtimeMemoryBytes();
+            long retained = find.retainedTableBytes() + (shared ? 0 : whole.retainedTableBytes());
+            if (retained >= budget) {
+                throw new IllegalStateException("pattern too large: retained execution RAM (flat artifact tables "
+                    + retained + " B, " + (shared ? "shared artifact" : "find+whole artifacts")
+                    + ") exceeds the runtime memory budget (" + budget + " B) — raise -D"
+                    + Budgets.RUNTIME_MEMORY_PROP);
+            }
+            obs.note("runtimeFootprint", "retained " + retained + " B, memo allowance " + (budget - retained) + " B"
+                + (shared ? "" : " (split per engine)") + ", budget " + budget + " B");
+            // A pattern keeping a second (whole) engine splits the residual
+            // memo allowance so the pattern's combined memos stay within one
+            // budget; floored at 1 B (the runner contract wants > 0).
+            long memoBudget = Math.max(1, Budgets.runtimeMemoAllowance(retained) / (shared ? 1 : 2));
 
             // One engine translation for both artifacts. The whole engine
             // must be whole-capable (WholeEngine): a native runner or

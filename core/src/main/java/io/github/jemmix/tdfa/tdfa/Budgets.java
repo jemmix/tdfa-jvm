@@ -18,8 +18,8 @@ package io.github.jemmix.tdfa.tdfa;
  *       (one tick &asymp; 10 ns; see {@link BudgetWeights#TICKS_PER_SECOND})</td>
  *       <td>5 s &times; tick rate = 500 M ticks</td></tr>
  *   <tr><td>{@code tdfa.budget.runtime.memory}</td><td>match-time RAM per
- *       compiled pattern (lazy search-DFA memo), bytes</td>
- *       <td>16 MiB</td></tr>
+ *       compiled pattern: retained artifact tables + lazy memo allowances,
+ *       bytes</td><td>16 MiB</td></tr>
  * </table>
  *
  * <p>The derived caps (max DFA states, kernel totals, &epsilon;-closure
@@ -38,11 +38,23 @@ package io.github.jemmix.tdfa.tdfa;
  * than the budget.
  *
  * <p><b>Per-pattern runtime split.</b> The runtime RAM budget bounds the
- * lazy match-time memos of the pattern's engines. A pattern retaining TWO
- * engines (find plus a dedicated whole/anchored runner — the non-shared
- * ladder corners) splits the budget in half per engine, so the pattern's
- * combined memos stay within one budget; a shared artifact (one engine)
- * gets the whole budget.
+ * whole per-pattern execution footprint: the RETAINED artifact tables
+ * (charged at {@link Tdfa#retainedTableBytes()} — an end-of-compile
+ * check fails the compile when they alone exceed the budget, the
+ * standard clean "pattern too large" rejection pointing at {@value
+ * #RUNTIME_MEMORY_PROP}) plus the lazy match-time memos, which draw from
+ * the RESIDUAL allowance after the retained tables. A pattern retaining
+ * TWO engines (find plus a dedicated whole/anchored runner — the
+ * non-shared ladder corners) splits the residual in half per engine, so
+ * the pattern's combined memos stay within one budget; a shared
+ * artifact (one engine) gets the whole residual. Engine-tier
+ * construction-time tables (the eager ascii/latin dispatch tiers,
+ * generated-class statics, derived bitsets) remain disclosed constants
+ * outside the budget — the r11 scope decision: flooring them on it
+ * would flip the flagship dictionary shapes off their fast paths.
+ * BYO-factory engines retain unaccountable state by construction
+ * (documented at the facade); the artifact tables and any native
+ * fallback runner still draw from the same residual.
  *
  * <p>Knob policy (see the inventory note in {@link Tdfa}): every read is
  * fresh — budgets take effect on the next compile (or the next runner
@@ -103,6 +115,24 @@ public final class Budgets {
      */
     public static long runtimeMemoryBytes() {
         return Long.getLong(RUNTIME_MEMORY_PROP, DEFAULT_RUNTIME_MEMORY);
+    }
+
+    /**
+     * The residual lazy-memo allowance after the retained artifact
+     * tables: {@code max(0, runtimeMemoryBytes() - retainedArtifactBytes)}.
+     * The facade splits this per engine slot (the whole residual to a
+     * shared engine, half each to a find+whole pair) and the memo caps
+     * ({@link #sdfaMaxRows(int, long)}, {@link #sdfaMaxBlocks(long)},
+     * {@link #walkMaxBytes(long)}) derive from the split — so a
+     * pattern's retained tables plus its memo shares stay within one
+     * budget ("if it compiles, it will execute within budget"). Memo
+     * {@link BudgetWeights#RUNTIME_MIN_ROWS floors} may lift a tiny
+     * residual's caps above it: the documented bounded carve-out that
+     * keeps tiny budgets usable (clamped, not rejected — the alternative
+     * would reject every pattern below the floor total).
+     */
+    public static long runtimeMemoAllowance(long retainedArtifactBytes) {
+        return Math.max(0, runtimeMemoryBytes() - retainedArtifactBytes);
     }
 
     // ===== compile RAM-derived caps =====

@@ -239,11 +239,14 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * Construct with an explicit lazy-memo budget: the bytes this runner's
      * search-DFA memo (rows + blocks) and walk-block memo may retain,
      * partitioned per the weight model (see {@link Budgets}). The facade
-     * hands HALF the runtime RAM budget to a pattern's SECOND engine (the
-     * dedicated whole/anchored runner beside the find engine), keeping the
-     * PATTERN's combined lazy memos within one
-     * {@code tdfa.budget.runtime.memory}; the default constructor uses the
-     * whole budget for the shared-single-engine case.
+     * derives the budget from the pattern's runtime RAM budget MINUS the
+     * retained artifact tables (the end-of-compile execution-RAM check;
+     * see {@link Budgets#runtimeMemoAllowance(long)}) and hands HALF the
+     * residual to a pattern's SECOND engine (the dedicated whole/anchored
+     * runner beside the find engine), keeping the PATTERN's combined lazy
+     * memos within one {@code tdfa.budget.runtime.memory}; the default
+     * constructor uses the whole budget for the shared-single-engine case
+     * (core-tier callers that skip the facade's check).
      *
      * @param memoBudgetBytes lazy-memo byte budget for this runner (&gt;0)
      */
