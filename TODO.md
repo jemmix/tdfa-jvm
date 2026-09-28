@@ -1591,7 +1591,7 @@ PR #8). Two design questions the round deliberately did NOT decide:
       Decision input to gather first: corpus frequency of
       `pikeCutMatters` (observer note `pikeCut` exists) and the
       over-budget-corner rate.
-- [ ] **Execution RAM checked at the end of compilation.** The runtime
+- [x] **Execution RAM checked at the end of compilation.** The runtime
       budget bounds the lazy memos (rows/blocks/walk, per-engine split),
       but nothing verifies at compile end that the RETAINED footprint —
       flat artifact tables, eager dispatch tables (ascii/latin tiers),
@@ -1606,6 +1606,28 @@ PR #8). Two design questions the round deliberately did NOT decide:
       re-tiers the dictionary fast paths), how floors interact with tiny
       budgets (reject vs clamp), and what is checkable for BYO factory
       engines (nothing, likely — document).
+      Done 2026-09-28: `PatternCompiler` charges each distinct artifact's
+      `Tdfa.retainedTableBytes()` (weighted flat JVM cost of every packed
+      array) against the runtime budget at compile end — over it, the
+      standard clean rejection pointing at the property — and the memo
+      allowances now derive from the RESIDUAL (`Budgets.
+      runtimeMemoAllowance`, split per engine slot as before), so
+      retained tables + memo shares stay within one budget by
+      construction. The three open questions resolved: (1) eager dispatch
+      tables (and generated-class statics, derived bitsets, the 2D
+      stop-mask materialization) stay construction-time constants OUTSIDE
+      the budget per the r11 scope decision — counting them would reject
+      the flagship dictionary shapes at the default 16 MiB (~17 MB of
+      tier tables on a 6.8 K-state DFA); disclosed in the Budgets class
+      doc. (2) Floors CLAMP, not reject — a residual below the floor
+      total keeps the floored caps (bounded overshoot, documented), since
+      rejecting would break the pinned tiny-budget usability contract
+      (BudgetModelTest.walkMemoIsBudgetBoundedAndCorrect compiles at a
+      20 KB budget). (3) BYO factory engines remain unaccountable (the
+      facade cannot see their internals — documented), but the artifact
+      tables and any native fallback whole runner still draw from the
+      same residual. Transparency: every compile emits a
+      `runtimeFootprint` observer note (retained/allowance/budget).
 
 ## Core-tier whole-match removal (2026-09-25 — resolved same day)
 
