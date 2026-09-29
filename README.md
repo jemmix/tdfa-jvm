@@ -15,8 +15,10 @@ Apache 2.0.
   structural, not empirical.
 - **Fast.** Expect **2–6× faster than [re2j](https://github.com/google/re2j)**
   on short-input search and 2–3× on anchored matches — as a drop-in
-  replacement with identical results. Against `java.util.regex`: slightly
-  ahead on both search and anchored matching. Full tables and known gaps:
+  replacement with identical results. Against `java.util.regex`: at or ahead
+  on search and anchored matching, and **ahead on literal-prefixed log
+  queries** (`ip=…` shapes ride the JIT's vectorized `String.indexOf` on the
+  required literal prefix). Full tables and known gaps:
   [`BENCHMARKS.md`](BENCHMARKS.md).
 - **Drop-in.** re2j-shaped `Pattern`/`Matcher` API, both leftmost-first
   (default) and leftmost-longest (`LONGEST_MATCH`) semantics.
@@ -29,8 +31,11 @@ exhausting time and memory; the limits are three `-D` properties
 (`tdfa.budget.compile.memory`, `tdfa.budget.compile.compute`,
 `tdfa.budget.runtime.memory`) — raise them if you legitimately need bigger.
 
-Known gap: `java.util.regex` still beats us ~2× on literal-prefixed search of
-medium inputs (`ip=`-shaped log queries) — the next work item.
+Known gap: `java.util.regex` still beats us ~2–4× on unicode wide-class
+scans (`\p{L}`, `(?u)\w`-shaped rows in the benchmark tables) — the next
+work item. Literal-prefixed search of medium inputs (the `ip=`-shaped log
+queries that used to lose ~2–4×) now rides `String.indexOf` over the
+required literal prefix and beats `java.util.regex` on both backends.
 
 ## Headline numbers
 

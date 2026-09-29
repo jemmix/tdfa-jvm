@@ -1238,6 +1238,46 @@ maintainer review; the Java CI runs need workflow approval.
 
 ## Performance
 
+- [x] **Literal-prefix acceleration for medium inputs** (2026-09-29) — the
+      README's "`java.util.regex` beats us ~2–4× on ip=-shaped log queries"
+      gap. `RunnerTables.detectPrefixNeedle` walks the compiled DFA's start
+      chain while every state has exactly ONE live exit shape (single BMP
+      codepoint, mask-free, unique target — duplicate same-char-same-target
+      entries allowed); any divergence (range, second char, fork, mask,
+      accepting state, entry-masked target) ENDS the chain, and every char
+      appended so far stays REQUIRED (each step had exactly one live char,
+      so every accepting path consumed it — any prefix length is sound, the
+      loop takes the longest; cap 32). `Strategy.PREFIX` then enumerates
+      candidate starts with the intrinsified `String.indexOf` and runs the
+      EXACT walk per hit (masks/tags/stop-on-accept all evaluated by the
+      walk — transition ops on chain exits are therefore fine, unlike the
+      whole-literal needle which skips the walk). No hits ⇒ no match (the
+      exact-from walk already ruled out a start at `from`). A failed-walk
+      budget (`PREFIX_WALK_BUDGET` = 16, same constant baked into the
+      emitted ladder) bounds dense-hit adversarial shapes (needle `a` on
+      `aaa…`) before falling through to the origin-sim/trigger ladder — a
+      complete search, so the whole ladder stays linear. Inserted in all
+      four search ladders (fast + generic extract, fast + generic boolean
+      find); the ASM INLINED class emits its own transcribed loop (needle
+      baked at emit time from the SAME detector — trace-identical by
+      construction, asserted by PrefixScanTest + the strategy-conformance
+      sweep). Guards: `prefixHitUsable` (pair-interior start, needle ending
+      on a pair's high half) mirrors the candidate scans' codepoint-boundary
+      rule. Detection bails on: start-state accepts (zero-length matches),
+      `startStateEntryMask != 0`, `(?i)` (two fold chars lead onward — v1;
+      a fold-aware needle would need case-insensitive indexOf), `\b`-gated
+      exits (v1). The emitted ladder's first cut had the boolean-prefilter
+      polarity INVERTED (extract on rejected candidates, skip on confirmed)
+      — caught by Fowler basic.dat rows in the re2j parity gate
+      (`abaa|abbaa|abbbaa|abbbbaa`: three dead hits then a live one), not by
+      output-only tests; pinned in PrefixParityTest with that exact shape.
+      Gates: full `./gradlew check` + 3-min fuzz smoke (0 real failures; the
+      usual BUDGET_REJECT rate). LogExtractMacro (ns/line, warm): ip 2557 →
+      183 (ASM, 0.57× jur), user-status 1844 → 239 (0.51×), path 1130 → 245
+      (0.79×) — the old table's rows from jur's 2–4× behind to jur-beating;
+      VM 278/538/429. Quick-bench baseline re-captured (findAllSparse
+      −80…−90%). Remaining: fold-aware needles, `\b`-gated chains, and the
+      no-prefix no-match row (jur keeps ~1.1× — class-shaped, no literal).
 - [x] **O(n²) unanchored `find()` — no-match case** — fixed via multi-state parallel simulation in `TdfaRunner.multiStateAnyMatch`: a single forward pass tracks the set of all DFA states reachable from any start position (O(n × |states|)), replacing the outer-loop restart. Used for boolean `find()` directly and as a no-match pre-check for the extract path. 200 K-char no-match haystack: ~14 ms (was >30 s).
 - [x] **O(n²) `find()` on dense matches** — FIXED (P1). `multiStateLeftmostStart` runs the multi-state simulation with per-state origin tracking (double-buffered with the state sets); the extract walk starts directly at the leftmost match position, replacing the retry-every-failed-start shape. leipzig `[a-zA-Z]+ing` findAll: 41 ms → 19 ms per 512 KB (2.2×, both backends, same 2351 matches). Note: the original 249 s/16 MB figure was stale — the stopOnAccept short-circuit (REBAR-SPEEDUP-PLAN §Tier-2 #3) had already cut it to ~41 ms/512 KB before P1 landed.
 - [x] **ASM backend hits the 65 KB JVM method limit** — fully solved via `TdfaAsmBackend.pickMode`, which selects one of two dispatch modes per pattern: `INLINED` (per-state range checks, fastest) or `DELEGATE` (thin wrapper that forwards to a `TdfaRunner`). (A third mode, `TABLE_SCAN`, existed briefly and was deleted in the kernel refactor — measured NO-GO, see the P5 row above.) Combined with `<clinit>` no longer materializing per-element arrays (ENTRY/ACCEPT/STOP/IS_ACCEPT/ASCII_TARGET all become reference copies or runtime loops in `<init>`), no in-scope rebar pattern throws `MethodTooLargeException`. The old VM-retry path in `RebarScenarioParityTest` was removed; both backends now run as peer parameter values.
@@ -1654,7 +1694,12 @@ errors are now thrown as `PatternSyntaxException` where they're detected
 
 - [ ] `condy` / `invokedynamic` for lazy per-regex specialization
 - [ ] Tiered compilation hints (`@Contended`, `@Stable`)
-- [ ] SIMD-accelerated `find()` for fixed-string prefixes (`String.indexOf` vectorization)
+- [x] SIMD-accelerated `find()` for fixed-string prefixes (`String.indexOf`
+      vectorization) — delivered 2026-09-29 for required literal PREFIXES
+      (`RunnerTables.detectPrefixNeedle` + `Strategy.PREFIX`, see
+      Performance). Whole-regex literals had it earlier
+      (`detectLiteralNeedle`). A fold-aware variant (case-insensitive
+      needles) remains open if ever needed.
 - [ ] Ahead-of-time class persistence (compile regex to `.class` on disk, load at startup)
 - [ ] POSIX longest-leftmost capture groups (not just match boundaries) — TRUE POSIX
       submatch maximization. Note: the BT19 §7 winner-selection scaffolding that used to

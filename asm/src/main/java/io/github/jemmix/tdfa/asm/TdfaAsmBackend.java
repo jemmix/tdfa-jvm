@@ -162,7 +162,7 @@ public final class TdfaAsmBackend {
             genInit(cw, owner, tdfa, fastPath, memoBudgetBytes);
             genMatches(cw, owner);
             genFind(cw, owner);
-            genMatch(cw, owner);
+            genMatch(cw, tdfa, owner);
             genMatchWholeInlined(cw, owner);
             genWholeOne(cw, tdfa, owner, stackRegs);
             genExtractOne(cw, tdfa, owner, stackRegs);
@@ -501,12 +501,13 @@ public final class TdfaAsmBackend {
      * fastPath: no masks, disjoint ranges) — non-fastPath shapes never see
      * this method because they compile to DELEGATE classes.
      */
-    private static void genMatch(ClassWriter cw, String owner) {
+    private static void genMatch(ClassWriter cw, Tdfa tdfa, String owner) {
         MethodVisitor mv =
             cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", null, null);
         mv.visitCode();
         // locals: 0=this, 1=input, 2=from, 3=sc, 4=s, 5=len, 6=holder,
-        //         7=leftmost/idx, 8=p, 9=fails, 10=c, 11=bits
+        //         7=leftmost/idx, 8=p, 9=fails, 10=c, 11=bits,
+        //         12=prefixSearchFrom, 13=prefixWalks
         Label isStr = new Label();
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitTypeInsn(Opcodes.INSTANCEOF, STR);
@@ -538,6 +539,82 @@ public final class TdfaAsmBackend {
         emitTrace(mv, "EXACT_FROM");
         emitExtractOne(mv, owner, 4, 2, 5, 6, 3);
         emitReturnToResult(mv, owner, 6);
+
+        // --- 1a) literal-prefix candidate scan ---
+        // Emitted only when the DFA carries a required literal prefix
+        // (decided at emit time by the SAME detector the VM runner's
+        // constructor uses, so the needle — and therefore the trace
+        // sequence — is identical by construction). Transcription of
+        // runStringExtractFast's 1a block: indexOf enumerates candidate
+        // starts, guards skip pair-interior / pair-ending hits, the
+        // adaptive boolean prefilter and walk budget bake in the same
+        // TdfaRunner constants. Budget exhaustion falls through to the
+        // candidate scan below (a complete search).
+        String prefix = TdfaRunner.detectPrefixNeedle(tdfa);
+        if (prefix != null) {
+            emitTrace(mv, "PREFIX");
+            // searchFrom = from + 1 (local 12); walks = 0 (local 13)
+            mv.visitVarInsn(Opcodes.ILOAD, 2);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitInsn(Opcodes.IADD);
+            mv.visitVarInsn(Opcodes.ISTORE, 12);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitVarInsn(Opcodes.ISTORE, 13);
+            Label pfxLoop = new Label(), pfxWalk = new Label(), pfxFall = new Label(), pfxNone = new Label();
+            mv.visitLabel(pfxLoop);
+            // idx = s.indexOf(needle, searchFrom) → local 7
+            mv.visitVarInsn(Opcodes.ALOAD, 4);
+            mv.visitLdcInsn(prefix);
+            mv.visitVarInsn(Opcodes.ILOAD, 12);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "indexOf", "(Ljava/lang/String;I)I", false);
+            mv.visitVarInsn(Opcodes.ISTORE, 7);
+            mv.visitVarInsn(Opcodes.ILOAD, 7);
+            mv.visitJumpInsn(Opcodes.IFLT, pfxNone);
+            // searchFrom = idx + 1
+            mv.visitVarInsn(Opcodes.ILOAD, 7);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitInsn(Opcodes.IADD);
+            mv.visitVarInsn(Opcodes.ISTORE, 12);
+            // if (!TdfaRunner.prefixHitUsable(s, idx, needleLen)) continue;
+            mv.visitVarInsn(Opcodes.ALOAD, 4);
+            mv.visitVarInsn(Opcodes.ILOAD, 7);
+            ic(mv, prefix.length());
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "prefixHitUsable", "(Ljava/lang/String;II)Z", false);
+            mv.visitJumpInsn(Opcodes.IFEQ, pfxLoop);
+            // if (walks >= ADAPTIVE_PREFILTER_AFTER && !booleanMatchFrom(s, idx, len))
+            //     { ++walks; if (walks > PREFIX_WALK_BUDGET) fall; continue; }
+            mv.visitVarInsn(Opcodes.ILOAD, 13);
+            ic(mv, TdfaRunner.ADAPTIVE_PREFILTER_AFTER);
+            mv.visitJumpInsn(Opcodes.IF_ICMPLT, pfxWalk);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+            mv.visitVarInsn(Opcodes.ALOAD, 4);
+            mv.visitVarInsn(Opcodes.ILOAD, 7);
+            mv.visitVarInsn(Opcodes.ILOAD, 5);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "booleanMatchFrom", "(Ljava/lang/String;II)Z", false);
+            mv.visitJumpInsn(Opcodes.IFNE, pfxWalk);
+            mv.visitIincInsn(13, 1);
+            mv.visitVarInsn(Opcodes.ILOAD, 13);
+            ic(mv, TdfaRunner.PREFIX_WALK_BUDGET);
+            mv.visitJumpInsn(Opcodes.IF_ICMPGT, pfxFall);
+            mv.visitJumpInsn(Opcodes.GOTO, pfxLoop);
+            // h = extractOne(s, idx, len, sc); if (h != null) return;
+            mv.visitLabel(pfxWalk);
+            emitExtractOne(mv, owner, 4, 7, 5, 6, 3);
+            emitReturnToResult(mv, owner, 6);
+            mv.visitIincInsn(13, 1);
+            mv.visitVarInsn(Opcodes.ILOAD, 13);
+            ic(mv, TdfaRunner.PREFIX_WALK_BUDGET);
+            mv.visitJumpInsn(Opcodes.IF_ICMPGT, pfxFall);
+            mv.visitJumpInsn(Opcodes.GOTO, pfxLoop);
+            // budget exhausted (pfxFall): fall through to the candidate scan.
+            // no hits (pfxNone): the exact walk above ruled out a start at
+            // `from`, and every other start needs the needle — no match.
+            mv.visitLabel(pfxNone);
+            mv.visitInsn(Opcodes.ACONST_NULL);
+            mv.visitInsn(Opcodes.ARETURN);
+            mv.visitLabel(pfxFall);
+        }
 
         // --- 1b) short-input candidate scan ---
         mv.visitVarInsn(Opcodes.ALOAD, 0);

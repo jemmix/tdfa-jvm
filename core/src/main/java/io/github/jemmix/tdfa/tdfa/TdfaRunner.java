@@ -42,6 +42,17 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     @EmittedSurface
     public static final int ADAPTIVE_PREFILTER_AFTER = 3;
     /**
+     * Failed-walk budget for the literal-prefix candidate scan before it
+     * falls back to the origin-sim/trigger ladder (complete search): bounds
+     * dense-hit adversarial shapes (needle {@code a} on {@code aaaa…} with a
+     * long tail) to a constant number of walks, keeping the ladder linear.
+     * Real prefix queries (ip=-shaped) walk a handful of hits per call.
+     * Single source of truth: the ASM-emitted prefix loop bakes the same
+     * value at emit time — read this constant, never hard-code it.
+     */
+    @EmittedSurface
+    public static final int PREFIX_WALK_BUDGET = 16;
+    /**
      * Budget-exceeded sentinel for {@link #multiStateLeftmostStart}.
      */
     public static final int LSS_BUDGET = -2;
@@ -229,6 +240,16 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * instead of DFA stepping. ~0.2 vs ~6.5 ns/char on ASCII haystacks.
      */
     private final String literalNeedle;
+    /**
+     * Required literal prefix (see RunnerTables.detectPrefixNeedle): every
+     * match must START by consuming exactly these chars, so String.indexOf
+     * — the JIT's intrinsified, vectorized scan — enumerates exactly the
+     * possible start positions of a match; each hit gets an exact walk
+     * (masks, tags and stop-on-accept all evaluated by the walk). Null when
+     * the DFA has no such chain, or when the whole regex is a plain literal
+     * (literalNeedle already serves that shape).
+     */
+    private final String prefixNeedle;
 
     @EmittedSurface
     public TdfaRunner(Tdfa tdfa) {
@@ -287,6 +308,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         this.acceptBits = RunnerTables.buildAcceptBits(tdfa);
         this.searchDfa = new SearchDfa(this, memoBudgetBytes); // after all table fields are assigned
         this.literalNeedle = RunnerTables.detectLiteralNeedle(tdfa);
+        this.prefixNeedle = this.literalNeedle == null ? RunnerTables.detectPrefixNeedle(tdfa) : null;
         this.unicodeWordBoundary = tdfa.unicodeWordBoundary;
         this.wordRanges = tdfa.wordRanges;
         // Derived, not inferred: the tables themselves declare which posFlag bits
@@ -304,6 +326,30 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      */
     public static String detectLiteralNeedle(Tdfa tdfa) {
         return RunnerTables.detectLiteralNeedle(tdfa);
+    }
+
+    /**
+     * Required literal prefix of the compiled DFA, or null (implementation
+     * lives in RunnerTables). Public stable hook: the ASM backend asks at
+     * emit time so INLINED classes bake the needle in as a class constant —
+     * the emitted prefix loop and the VM's use the same string by
+     * construction.
+     */
+    public static String detectPrefixNeedle(Tdfa tdfa) {
+        return RunnerTables.detectPrefixNeedle(tdfa);
+    }
+
+    /**
+     * Whether an indexOf hit of a prefix needle at {@code idx} is a usable
+     * walk start: not the interior of a surrogate pair (codepoint-boundary
+     * semantics, same rule the candidate scans use) and not ending on the
+     * high half of a pair (the walk decodes the whole pair there and cannot
+     * match the needle's last unit as a lone symbol). Public static: the
+     * ASM-emitted prefix loop calls it for the same guards.
+     */
+    @EmittedSurface
+    public static boolean prefixHitUsable(String s, int idx, int needleLen) {
+        return !RunnerTables.needleEndOverlapsPair(s, idx, needleLen) && !Alphabet.pairInterior(s, idx);
     }
 
     /**
@@ -453,6 +499,33 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 trace(Strategy.EXACT_FROM);
                 if (runStringMatchFrom(s, 0, len) >= 0) {
                     return true;
+                }
+                // Literal-prefix candidate scan (see runStringExtractFast 1a):
+                // indexOf enumerates possible starts, exact boolean walk per
+                // hit; no hits ⇒ no match. Budget exhaustion falls through to
+                // the trigger scan + restart loop below.
+                if (prefixNeedle != null) {
+                    trace(Strategy.PREFIX);
+                    final String needle = this.prefixNeedle;
+                    final int nlen = needle.length();
+                    int searchFrom = 1;
+                    int walks = 0;
+                    while (true) {
+                        int idx = s.indexOf(needle, searchFrom);
+                        if (idx < 0) {
+                            return false;
+                        }
+                        searchFrom = idx + 1;
+                        if (!prefixHitUsable(s, idx, nlen)) {
+                            continue;
+                        }
+                        if (runStringMatchFrom(s, idx, len) >= 0) {
+                            return true;
+                        }
+                        if (++walks > PREFIX_WALK_BUDGET) {
+                            break;
+                        }
+                    }
                 }
                 // Short inputs: first-char-set candidate scan with exact
                 // (mask-aware) walks instead of the raw-scan simulation.
@@ -732,6 +805,40 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             MatchHolder direct = extractFrom(input, from, to, sc);
             if (direct != null) {
                 return direct;
+            }
+        }
+        // Literal-prefix candidate scan (see runStringExtractFast 1a): indexOf
+        // enumerates exactly the possible starts; each hit gets the exact
+        // mask-aware walk. No hits ⇒ no match. Budget exhaustion falls through
+        // to the trigger scan, which is a complete search.
+        if (maxStart > 0 && prefixNeedle != null) {
+            trace(Strategy.PREFIX);
+            final String needle = this.prefixNeedle;
+            final int nlen = needle.length();
+            int searchFrom = from + 1;
+            int walks = 0;
+            while (true) {
+                int idx = input.indexOf(needle, searchFrom);
+                if (idx < 0) {
+                    return null;
+                }
+                searchFrom = idx + 1;
+                if (!prefixHitUsable(input, idx, nlen)) {
+                    continue;
+                }
+                if (walks >= ADAPTIVE_PREFILTER_AFTER && runStringMatchFrom(input, idx, to) < 0) {
+                    if (++walks > PREFIX_WALK_BUDGET) {
+                        break;
+                    }
+                    continue;
+                }
+                MatchHolder hp = extractFrom(input, idx, to, sc);
+                if (hp != null) {
+                    return hp;
+                }
+                if (++walks > PREFIX_WALK_BUDGET) {
+                    break;
+                }
             }
         }
         // Short inputs: first-char-set candidate scan with exact (mask-aware)
@@ -1463,6 +1570,33 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * Unanchored boolean search via single-pass multi-state simulation. O(n × |states|).
      */
     private boolean runStringFindFast(String input, int to, MatchScratch sc) {
+        // Literal-prefix candidate scan first (see runStringExtractFast 1a):
+        // indexOf enumerates possible starts, exact boolean walk per hit; no
+        // hits ⇒ no match. Budget exhaustion falls through to the ladders
+        // below (complete searches).
+        if (prefixNeedle != null) {
+            trace(Strategy.PREFIX);
+            final String needle = this.prefixNeedle;
+            final int nlen = needle.length();
+            int searchFrom = 0;
+            int walks = 0;
+            while (true) {
+                int idx = input.indexOf(needle, searchFrom);
+                if (idx < 0) {
+                    return false;
+                }
+                searchFrom = idx + 1;
+                if (!prefixHitUsable(input, idx, nlen)) {
+                    continue;
+                }
+                if (matchFromFast(input, idx, to)) {
+                    return true;
+                }
+                if (++walks > PREFIX_WALK_BUDGET) {
+                    break;
+                }
+            }
+        }
         // Short inputs: first-char-set candidate scan (one bit test per char,
         // exact walk per candidate) beats the raw-scan live-set simulation.
         if (startBits != null && to <= CAND_SCAN_MAX) {
@@ -1560,6 +1694,44 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         MatchHolder h = tryStartFast(input, from, to, sc);
         if (h != null) {
             return h;
+        }
+        // 1a) Literal-prefix candidate scan: every match must start with the
+        //     required literal prefix, so indexOf enumerates exactly the
+        //     possible starts — the intrinsified vectorized scan beats the
+        //     per-char ladders below on any needle-prefixed shape. No hits
+        //     ⇒ no match at all (the exact walk above ruled out a start at
+        //     `from`). The walk budget bounds dense-hit adversarial shapes;
+        //     on exhaustion fall through to the sim/trigger ladder, which is
+        //     a complete search from `from`.
+        if (prefixNeedle != null) {
+            trace(Strategy.PREFIX);
+            final String needle = this.prefixNeedle;
+            final int nlen = needle.length();
+            int searchFrom = from + 1;
+            int walks = 0;
+            while (true) {
+                int idx = input.indexOf(needle, searchFrom);
+                if (idx < 0) {
+                    return null;
+                }
+                searchFrom = idx + 1;
+                if (!prefixHitUsable(input, idx, nlen)) {
+                    continue;
+                }
+                if (walks >= ADAPTIVE_PREFILTER_AFTER && !matchFromFast(input, idx, to)) {
+                    if (++walks > PREFIX_WALK_BUDGET) {
+                        break;
+                    }
+                    continue;
+                }
+                h = tryStartFast(input, idx, to, sc);
+                if (h != null) {
+                    return h;
+                }
+                if (++walks > PREFIX_WALK_BUDGET) {
+                    break;
+                }
+            }
         }
         // 1b) Short inputs: first-char-set candidate scan. Coverage is exact
         //     (start state not accepting — else startBits is null — so every
@@ -2502,6 +2674,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      */
     public enum Strategy {
         LITERAL, // literalNeedle -> String.indexOf
+        PREFIX, // required literal prefix -> indexOf candidate walks
         CAND_SCAN, // first-char-set bit scan + exact walks (short input)
         EXACT_FROM, // one exact walk from the requested start
         ORIGIN_SIM, // budgeted origin-tracking multi-state simulation

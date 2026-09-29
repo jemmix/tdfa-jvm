@@ -93,8 +93,9 @@ Count-verified against `java.util.regex`; interleaved passes. Artifacts:
   1.04× / 1.08× — ASM's fast-mode geomean is dominated by µs-scale micro
   rows' cold JIT — a harness artifact, documented in the artifact headers.
 - Per-row (accurate, 93 scannable rows): VM vs re2j **75 W / 4 T / 14 L**;
-  VM vs jur **52 W / 4 T / 47 L** — losses cluster in literal-prefixed
-  searches (the known gap) and unicode wide classes.
+  VM vs jur **52 W / 4 T / 47 L** — losses cluster in unicode wide classes
+  (the remaining known gap; the literal-prefixed family got its dedicated
+  fix in §4, 2026-09-29 — these per-row counts predate it).
 - The 2026-08-era blowouts are gone or flipped: **dictionary is now a 64×
   WIN vs jur** (373 vs 23,701 ms/MB — the Sep-2 interning/hash-cons rounds),
   i1095-ascii is a win (18.2 vs 30.1 ms/MB), lexer-veryl narrowed 12× → 2.2×.
@@ -110,15 +111,23 @@ min-of-5 × 100 k lines. Artifact: `benchmarks/results-logextract-macro.txt`.
 
 | query | jur | re2j | VM | ASM |
 |---|---:|---:|---:|---:|
-| `ip=(\d+\.\d+\.\d+\.\d+)` (ns/line, warm) | **608.7** | 2,842.9 | 3,153.3 | 2,557.1 |
-| `user_id=(\d+).*?status=(\d+)` | **506.8** | 8,799.9 | 2,325.2 | **1,843.6** |
-| `path=(/[a-z0-9/]+)` | **358.9** | 3,238.9 | 1,312.4 | **1,129.6** |
-| `[a-z]+@[a-z]+\.[a-z]{3}` (no-match) | 1,989.3 | 5,790.2 | **1,918.1** | 1,919.8 |
+| `ip=(\d+\.\d+\.\d+\.\d+)` | 323.4 | 1,648.3 | 278.1 | **182.7** |
+| `user_id=(\d+).*?status=(\d+)` | 469.6 | 5,710.3 | 537.7 | **238.6** |
+| `path=(/[a-z0-9/]+)` | 310.0 | 2,304.6 | 428.6 | **244.6** |
+| `[a-z]+@[a-z]+\.[a-z]{3}` (no-match) | **1,340.8** | 3,547.3 | 1,431.0 | 1,502.6 |
 
-**VM ≈ ASM warm on every row** (0.86–1.0×); **geomean ~2× faster than re2j**.
-`java.util.regex` wins all four via literal-prefix search — the known gap and
-the next work item. No ASM cold penalty (first-10 k passes: ASM 22–65 ms,
-VM 18–115 ms).
+**Literal-prefix scan (2026-09-29):** the first three rows ride the new
+`PREFIX` strategy — every match must start with the DFA's required literal
+chain (`ip=`, `user_id=`, `path=/`, detected at compile), so `String.indexOf`
+(the intrinsified vectorized scan) enumerates exactly the possible starts
+and an exact walk confirms each hit. This closed the old 2–4× gap and put
+both tiers at or ahead of `java.util.regex` on every prefix row (ASM
+0.57–0.79× jur; VM 0.86–1.38×); a failed-walk budget falls back to the
+origin-sim/trigger ladder on dense-hit adversarial shapes. The no-match row
+(class-shaped, no literal prefix) is unchanged — jur keeps its ~1.1× edge
+there. **VM ≈ ASM warm** is no longer universal on this suite: the ASM
+extract leaf is 1.5–2.3× faster than the interpreter's walk at prefix hits.
+No ASM cold penalty.
 
 ## 5. Backend comparison — ASM vs VM, and when to pick which
 
