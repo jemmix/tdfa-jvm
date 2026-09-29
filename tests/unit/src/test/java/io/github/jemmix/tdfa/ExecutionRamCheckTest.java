@@ -74,9 +74,11 @@ class ExecutionRamCheckTest {
         assertThat(p.matcher("x\u0451x").find()).isFalse();
     }
 
-    /** A pike-cut pair (find + dedicated whole artifact) charges BOTH
-     *  retained tables and splits the residual per engine; mid budgets
-     *  compile and keep exact whole/find answers. */
+    /** A pike-cut shape is ONE artifact now (its partial-whole side table
+     *  is retained bytes of the find artifact — no engine split, exact
+     *  whole/find answers); with the side disabled the pair form (find +
+     *  dedicated whole artifact) charges BOTH retained tables and splits
+     *  the residual per engine. Mid budgets compile in both forms. */
     @Test
     void pairShapesChargeBothArtifactsAndSplitTheResidual() {
         CompilationReport r = new CompilationReport();
@@ -87,7 +89,20 @@ class ExecutionRamCheckTest {
         assertThat(p.matcher("ac").matches()).isTrue();
         assertThat(p.matcher("a").matches()).isTrue();
         assertThat(p.matcher("ad").matches()).isFalse();
-        assertThat(r.notes().get("runtimeFootprint")).contains("retained ").contains("(split per engine)");
+        assertThat(r.notes().get("runtimeFootprint")).contains("retained ").doesNotContain("(split per engine)");
+        assertThat(r.notes()).containsKey("partialWhole");
+
+        System.setProperty("tdfa.nopartialwhole", "true");
+        try {
+            CompilationReport r2 = new CompilationReport();
+            Pattern q = Pattern.compile("ab|a|ac", CompileOptions.of().observer(r2));
+            assertThat(q.matcher("ab").find()).isTrue();
+            assertThat(q.matcher("ac").matches()).isTrue();
+            assertThat(r2.notes().get("runtimeFootprint")).contains("retained ").contains("(split per engine)");
+            assertThat(r2.notes()).doesNotContainKey("partialWhole");
+        } finally {
+            System.clearProperty("tdfa.nopartialwhole");
+        }
     }
 
     /** The check is transparent: every compile emits a runtimeFootprint

@@ -92,6 +92,43 @@ public final class Tdfa {
      */
     final boolean pikeCutMatters;
 
+    /**
+     * The partial-whole side table (the "one artifact for find() AND
+     * matches()" form): null when the compile's pike cut never fired on
+     * any state (or the side was disabled/abandoned over budget). When
+     * non-null, states listed in {@link #wholeBase} carry their UNCUT
+     * whole-walk relation here (5-int entries like {@link #ranges}: the
+     * cut contexts' uncut targets; uncut contexts mirror {@link #ranges}
+     * — the whole relation of a state without a list IS {@code ranges}),
+     * so whole-input walks on the PRUNED artifact are exact without a
+     * second determinization. The bounded side exploration that records
+     * it runs inside the pruned compile; on exhaustion it is abandoned
+     * and the facade falls back to {@link #compileUnpruned}.
+     */
+    final int[] wholeRanges;
+    /**
+     * [state] → base index into {@link #wholeRanges}, or -1 (whole walks
+     * dispatch on {@link #ranges} for that state). Null iff no side table.
+     */
+    final int[] wholeBase;
+    /**
+     * [state] → entry count in {@link #wholeRanges}. Null iff no side table.
+     */
+    final int[] wholeCount;
+    /**
+     * Per-entry running max of hi within each whole-side state, exactly
+     * {@link #entryHiPrefix}'s layout over {@link #wholeRanges}. Null iff
+     * no side table.
+     */
+    final int[] wholeHiPrefix;
+    /**
+     * True iff the side table completed (its bounded exploration never
+     * exhausted): with {@link #wholeRanges} present, whole-input walks on
+     * this artifact are exact even though {@link #pikeCutMatters} may be
+     * true. See {@link #wholeWalkExact()}.
+     */
+    final boolean wholeSideComplete;
+
     final boolean multiline;
     /**
      * True iff the DFA was compiled with Unicode-aware shorthand ({@code (?u)}),
@@ -220,7 +257,7 @@ public final class Tdfa {
         this(tagCount, groupCount, namedGroups, registerCount, finalRegBase, startState, stateCount, stateMeta,
             stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges, ops, entryHiPrefix, stateEntryMask,
             stateAcceptMask, longestMatch, stopOnAcceptMask, stopMaskUniform, multiline, unicodeWordBoundary,
-            wordRanges, fixedBase, fixedOffset, false);
+            wordRanges, fixedBase, fixedOffset, false, null, null, null, null, false);
     }
 
     Tdfa(int tagCount, int groupCount, Map<String, Integer> namedGroups, int registerCount, int finalRegBase,
@@ -228,6 +265,18 @@ public final class Tdfa {
         int[] stateFinalOpsByMask, int[] ranges, int[] ops, int[] entryHiPrefix, int[] stateEntryMask,
         int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
         boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset, boolean pikeCutMatters) {
+        this(tagCount, groupCount, namedGroups, registerCount, finalRegBase, startState, stateCount, stateMeta,
+            stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges, ops, entryHiPrefix, stateEntryMask,
+            stateAcceptMask, longestMatch, stopOnAcceptMask, stopMaskUniform, multiline, unicodeWordBoundary,
+            wordRanges, fixedBase, fixedOffset, pikeCutMatters, null, null, null, null, false);
+    }
+
+    Tdfa(int tagCount, int groupCount, Map<String, Integer> namedGroups, int registerCount, int finalRegBase,
+        int startState, int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
+        int[] stateFinalOpsByMask, int[] ranges, int[] ops, int[] entryHiPrefix, int[] stateEntryMask,
+        int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
+        boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset, boolean pikeCutMatters,
+        int[] wholeRanges, int[] wholeBase, int[] wholeCount, int[] wholeHiPrefix, boolean wholeSideComplete) {
         this.tagCount = tagCount;
         this.groupCount = groupCount;
         this.namedGroups = namedGroups != null ? Collections.unmodifiableMap(namedGroups) : Collections.emptyMap();
@@ -246,6 +295,11 @@ public final class Tdfa {
         this.stateAcceptMask = stateAcceptMask;
         this.longestMatch = longestMatch;
         this.pikeCutMatters = pikeCutMatters;
+        this.wholeRanges = wholeRanges;
+        this.wholeBase = wholeBase;
+        this.wholeCount = wholeCount;
+        this.wholeHiPrefix = wholeHiPrefix;
+        this.wholeSideComplete = wholeSideComplete;
         this.stopOnAcceptMask = stopOnAcceptMask;
         this.stopMaskUniform = stopMaskUniform;
         this.multiline = multiline;
@@ -261,6 +315,9 @@ public final class Tdfa {
         // AIOOBE out of the constructor.
         validate(startState, stateCount, stateMeta, stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges,
             entryHiPrefix, ops, stateEntryMask, stateAcceptMask, registerCount, finalRegBase, tagCount);
+        if (wholeRanges != null) {
+            validateWhole(stateCount, wholeRanges, wholeBase, wholeCount, wholeHiPrefix, ops, finalRegBase, tagCount);
+        }
         this.startStateEntryMask = stateEntryMask[startState];
     }
 
@@ -457,6 +514,77 @@ public final class Tdfa {
     }
 
     /**
+     * Construction-time invariants of the partial-whole side table (the
+     * same shape of checks {@link #validate} runs over the pruned ranges;
+     * the whole walk's dispatch reads these arrays exactly like the find
+     * walk reads {@code ranges}).
+     */
+    private static void validateWhole(int stateCount, int[] wholeRanges, int[] wholeBase, int[] wholeCount,
+        int[] wholeHiPrefix, int[] ops, int finalRegBase, int tagCount) {
+        if (wholeBase == null || wholeCount == null || wholeHiPrefix == null) {
+            throw new IllegalStateException("tdfa: partial-whole side table present but incomplete");
+        }
+        if (wholeBase.length != stateCount || wholeCount.length != stateCount) {
+            throw new IllegalStateException("tdfa: wholeBase/wholeCount length != stateCount");
+        }
+        int entries = wholeRanges.length / 5;
+        if (wholeHiPrefix.length != entries) {
+            throw new IllegalStateException(
+                "tdfa: wholeHiPrefix length " + wholeHiPrefix.length + " != whole entries " + entries);
+        }
+        for (int s = 0; s < stateCount; s++) {
+            int base = wholeBase[s];
+            if (base < 0) {
+                if (wholeCount[s] != 0) {
+                    throw new IllegalStateException(
+                        "tdfa: whole state " + s + " has no base but count " + wholeCount[s]);
+                }
+                continue;
+            }
+            int cnt = wholeCount[s];
+            if (base + cnt > entries) {
+                throw new IllegalStateException("tdfa: whole state " + s + " base/count out of bounds (base=" + base
+                    + ", cnt=" + cnt + ", entries=" + entries + ")");
+            }
+            int prevLo = -1;
+            int prefixHi = -1;
+            for (int i = 0; i < cnt; i++) {
+                int o = (base + i) * 5;
+                int lo = wholeRanges[o], hi = wholeRanges[o + 1], target = wholeRanges[o + 2],
+                    opsOff = wholeRanges[o + 3], mask = wholeRanges[o + 4];
+                if (lo < 0 || hi > 0x10FFFF || lo > hi) {
+                    throw new IllegalStateException(
+                        "tdfa: whole state " + s + " entry " + i + " outside codepoint domain [" + lo + "," + hi + "]");
+                }
+                if (lo < prevLo) {
+                    throw new IllegalStateException("tdfa: whole state " + s + " entries not lo-ascending at " + i);
+                }
+                prevLo = lo;
+                if (target >= stateCount) {
+                    throw new IllegalStateException("tdfa: whole state " + s + " entry " + i + " target " + target
+                        + " beyond state count " + stateCount);
+                }
+                if (target < -1) {
+                    throw new IllegalStateException(
+                        "tdfa: whole state " + s + " entry " + i + " target " + target + " < -1 (dead marker)");
+                }
+                if (opsOff != 0) {
+                    checkOpsBlock(s, i, opsOff, ops, false, finalRegBase, tagCount);
+                }
+                if ((mask & ~0x3F) != 0) {
+                    throw new IllegalStateException(
+                        "tdfa: whole state " + s + " entry " + i + " unknown assertion-mask bits");
+                }
+                prefixHi = Math.max(prefixHi, hi);
+                if (wholeHiPrefix[base + i] != prefixHi) {
+                    throw new IllegalStateException(
+                        "tdfa: whole state " + s + " entry " + i + " prefix-max invariant broken");
+                }
+            }
+        }
+    }
+
+    /**
      * Unpack range count from packed stateMeta.
      */
     public static int rangeCount(int meta) {
@@ -524,6 +652,27 @@ public final class Tdfa {
     }
 
     /**
+     * Ledger variant of {@link #compile(Tnfa, boolean, CompileObserver)}
+     * that ALSO records the partial-whole side table during the pruned
+     * determinization: every pike-cut context contributes its UNCUT
+     * transitions to the artifact's whole relation (see {@link #wholeRanges}),
+     * so the ONE artifact serves find() and whole-input walks —
+     * {@link #wholeWalkExact()} then reports whether the side completed
+     * (callers needing whole matches fall back to
+     * {@link #compileUnpruned} when it reports false). For find-only
+     * consumers ({@code core.CompiledRegex}) the plain compile is
+     * cheaper — the side table has no reader there.
+     *
+     * <p>The side exploration is bounded (child meter + the compile RAM
+     * charge); on exhaustion it is abandoned cleanly and this returns a
+     * plain pruned artifact with {@link #wholeWalkExact()} == false.
+     */
+    public static Tdfa compileWithWholeSide(Tnfa nfa, boolean longestMatch, CompileObserver observer,
+        WorkMeter sharedMeter) {
+        return compileWithMeter(nfa, longestMatch, false, true, observer, sharedMeter);
+    }
+
+    /**
      * The compile pipeline seam: determinization in {@link TdfaCompiler}
      * (which owns the kernels, the interning index and the closure scratch
      * for exactly its phase), then the register optimization /
@@ -532,7 +681,12 @@ public final class Tdfa {
      */
     private static Tdfa compileWithMeter(Tnfa nfa, boolean longestMatch, boolean unpruned, CompileObserver observer,
         WorkMeter meter) {
-        DeterminizedDfa det = new TdfaCompiler(nfa, longestMatch, unpruned, meter).compile(observer);
+        return compileWithMeter(nfa, longestMatch, unpruned, false, observer, meter);
+    }
+
+    private static Tdfa compileWithMeter(Tnfa nfa, boolean longestMatch, boolean unpruned, boolean wholeSide,
+        CompileObserver observer, WorkMeter meter) {
+        DeterminizedDfa det = new TdfaCompiler(nfa, longestMatch, unpruned, wholeSide, meter).compile(observer);
         return TdfaMaterializer.finish(det, nfa, longestMatch, meter, observer);
     }
 
@@ -606,6 +760,15 @@ public final class Tdfa {
         }
         for (int i = 4; i < ranges.length; i += 5) {
             deps |= ranges[i];
+        }
+        if (wholeRanges != null) {
+            // A cut context with a dead/empty PRUNED step may contribute
+            // mask bits ONLY through its whole-side entries (e.g. a
+            // residue that continues past an accept gate) — the whole
+            // walk's entry gating depends on them.
+            for (int i = 4; i < wholeRanges.length; i += 5) {
+                deps |= wholeRanges[i];
+            }
         }
         deps |= tableDeps(stopOnAcceptMask());
         deps |= tableDeps(stateFinalOpsByMask());
@@ -775,15 +938,15 @@ public final class Tdfa {
     /**
      * Weighted flat bytes this artifact retains at execution time: every
      * packed array field (per-state tables, flat ranges, prefix-max,
-     * ops, position-aware mask tables, word/fixed-tag annotations) at
-     * its flat JVM cost (16 B array header + 4 B per int cell, 1 B per
-     * byte cell). The end-of-compile execution-RAM check charges this
-     * against {@code tdfa.budget.runtime.memory} (the facade derives the
-     * lazy-memo allowances from the residual); engine-tier tables built
-     * FROM these arrays (dispatch tiers, generated-class statics, the
-     * materialized 2D stop-mask copies) are disclosed construction-time
-     * constants outside the budget — the r11 scope line, see {@link
-     * Budgets}.
+     * ops, position-aware mask tables, word/fixed-tag annotations, the
+     * partial-whole side table) at its flat JVM cost (16 B array header
+     * + 4 B per int cell, 1 B per byte cell). The end-of-compile
+     * execution-RAM check charges this against {@code
+     * tdfa.budget.runtime.memory} (the facade derives the lazy-memo
+     * allowances from the residual); engine-tier tables built FROM these
+     * arrays (dispatch tiers, generated-class statics, the materialized
+     * 2D stop-mask copies) are disclosed construction-time constants
+     * outside the budget — the r11 scope line, see {@link Budgets}.
      */
     public long retainedTableBytes() {
         long b = intBytes(stateMeta.length) + intBytes(stateBase.length) + intBytes(stateFinalOpsOff.length)
@@ -807,11 +970,51 @@ public final class Tdfa {
         if (fixedOffset != null) {
             b += intBytes(fixedOffset.length);
         }
+        if (wholeRanges != null) {
+            b += intBytes(wholeRanges.length) + intBytes(wholeBase.length) + intBytes(wholeCount.length)
+                + intBytes(wholeHiPrefix.length);
+        }
         return b;
     }
 
     private static long intBytes(int cells) {
         return 16L + 4L * cells;
+    }
+
+    /**
+     * Whether whole-input walks ({@code matchWhole}) are EXACT on this
+     * artifact: either the pike cut never deleted a continuation, or the
+     * partial-whole side table recorded every cut context's uncut
+     * transitions (complete exploration). The facade relies on this to
+     * decide whether the cut-free second determinization is needed at
+     * all; false means the caller must build (or fall back to) a
+     * {@link #compileUnpruned} artifact for whole matching.
+     */
+    public boolean wholeWalkExact() {
+        return !pikeCutMatters || (wholeRanges != null && wholeSideComplete);
+    }
+
+    /**
+     * The partial-whole side table's flat entries ([lo, hi, target,
+     * opsOff, requiredMask] quintets), or null when absent. Defensive copy.
+     */
+    public int[] wholeRanges() {
+        return wholeRanges == null ? null : wholeRanges.clone();
+    }
+
+    /**
+     * [state] → base index into {@link #wholeRanges()}, or -1. Null when
+     * no side table. Defensive copy.
+     */
+    public int[] wholeBase() {
+        return wholeBase == null ? null : wholeBase.clone();
+    }
+
+    /**
+     * [state] → whole-side entry count. Null when no side table. Defensive copy.
+     */
+    public int[] wholeCount() {
+        return wholeCount == null ? null : wholeCount.clone();
     }
 
     // ===== compile-knob policy =====
@@ -824,7 +1027,8 @@ public final class Tdfa {
     //   tdfa.budget.compile.memory / .compute               (budgets, Budgets —
     //   tdfa.budget.runtime.memory                            all caps derive)
     //   tdfa.nominimize, tdfa.minimize.max, tdfa.noregopt, tdfa.regopt.max,
-    //   tdfa.debug, tdfa.debug.closure, tdfa.debug.finals          (compile)
+    //   tdfa.nopartialwhole, tdfa.debug, tdfa.debug.closure,
+    //   tdfa.debug.finals                          (compile)
     //   tdfa.engine, tdfa.gen.debug                                 (facade, per compile)
     // The derived determinization caps (states/kernels/closure/cfg-edges/
     // norm-cells, the search-DFA memo caps) are

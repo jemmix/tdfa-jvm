@@ -50,9 +50,17 @@ final class DeterminizedDfa {
      * global nextReg counter); the register optimization's initial count.
      */
     final int registerCount;
+    /**
+     * The partial-whole side table completed: every cut context's uncut
+     * transitions were recorded (bounded exploration never exhausted),
+     * so whole-input walks on THIS artifact are exact and the facade
+     * must not determinize the cut-free second build. False when the
+     * side was disabled/abandoned or never fired.
+     */
+    final boolean wholeSideComplete;
 
     DeterminizedDfa(int stateCount, List<DfaStateBuilder> builders, BitSet accept, int[] entryMask, int[] acceptMask,
-        int[] stopOnAcceptMask, boolean pikeCutMatters, int registerCount) {
+        int[] stopOnAcceptMask, boolean pikeCutMatters, int registerCount, boolean wholeSideComplete) {
         this.stateCount = stateCount;
         this.builders = builders;
         this.accept = accept;
@@ -61,5 +69,6 @@ final class DeterminizedDfa {
         this.stopOnAcceptMask = stopOnAcceptMask;
         this.pikeCutMatters = pikeCutMatters;
         this.registerCount = registerCount;
+        this.wholeSideComplete = wholeSideComplete;
     }
 }

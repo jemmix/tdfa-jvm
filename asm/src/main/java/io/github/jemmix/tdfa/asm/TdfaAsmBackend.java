@@ -145,6 +145,13 @@ public final class TdfaAsmBackend {
         // carrier-pooled array (takeRegs + fill + IALOAD/IASTORE + clone).
         // INLINED-only; thresholds and kill switch in stackRegsEligible().
         boolean stackRegs = fastPath && stackRegsEligible(tdfa);
+        // Partial-whole side table: the emitted wholeOne leaf is a
+        // transcription of the PRUNED walk's dispatch — it cannot consult
+        // the side table, so artifacts carrying one keep their find tier
+        // INLINED but route matchWhole through the embedded runner (whose
+        // wholeWalk dispatches on the whole relation). Non-side artifacts
+        // are unchanged.
+        boolean wholeDelegate = delegate || tdfa.wholeRanges() != null;
         FrameClassWriter cw = new FrameClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, owner, null, "java/lang/Object",
             new String[]{ENGINE, WHOLE});
@@ -163,8 +170,12 @@ public final class TdfaAsmBackend {
             genMatches(cw, owner);
             genFind(cw, owner);
             genMatch(cw, tdfa, owner);
-            genMatchWholeInlined(cw, owner);
-            genWholeOne(cw, tdfa, owner, stackRegs);
+            if (wholeDelegate) {
+                genMatchWhole(cw, owner);
+            } else {
+                genMatchWholeInlined(cw, owner);
+                genWholeOne(cw, tdfa, owner, stackRegs);
+            }
             genExtractOne(cw, tdfa, owner, stackRegs);
             genToResult(cw, tdfa, owner);
             genEntryOkC(cw, owner);

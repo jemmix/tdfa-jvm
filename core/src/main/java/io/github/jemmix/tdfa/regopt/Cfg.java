@@ -110,6 +110,13 @@ public final class Cfg {
         /** Back-link so writeBack can find the right slot. For BASIC blocks: range index
          *  within the state's builder. For FINAL blocks: -1 (the state's finalOpsArr). */
         public int rangeIndex;
+        /**
+         * BASIC blocks of a partial-whole side-table entry: rangeIndex
+         * indexes the state builder's wholeRanges list, and write-back
+         * targets that list (the whole walk's op block, not the pruned
+         * one).
+         */
+        public boolean whole;
     }
 
     public final List<Block> blocks = new ArrayList<>();

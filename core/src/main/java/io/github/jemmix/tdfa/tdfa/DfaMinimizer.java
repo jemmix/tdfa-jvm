@@ -43,6 +43,16 @@ final class DfaMinimizer {
     final int[] stateMeta, stateBase, stateFinalOpsOff, ranges, ops;
     final int[] stateEntryMask, stateAcceptMask, stateStopOnAcceptMask;
     final int[] stateFinalOpsByMask;
+    /**
+     * Partial-whole side table (null = none): wholeBase/wholeCount/
+     * wholeRanges mirror the pruned arrays' layout for the whole-walk
+     * relation. Two states may only merge when their WHOLE behavior
+     * matches too — the whole walk is a reader of the merged state — so
+     * the whole entries join both the attribute and transition
+     * signatures (unnormalized rows; the pruned rows keep their
+     * normalization).
+     */
+    final int[] wholeBase, wholeCount, wholeRanges;
     final boolean longest;
     /**
      * Cap on n×K range-normalization cells. Derived per compile from
@@ -89,7 +99,7 @@ final class DfaMinimizer {
 
     DfaMinimizer(int n, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] ranges, int[] ops,
         int[] stateEntryMask, int[] stateAcceptMask, int[] stateStopOnAcceptMask, int[] stateFinalOpsByMask,
-        boolean longest, WorkMeter meter) {
+        int[] wholeBase, int[] wholeCount, int[] wholeRanges, boolean longest, WorkMeter meter) {
         this.n = n;
         this.stateMeta = stateMeta;
         this.stateBase = stateBase;
@@ -100,6 +110,9 @@ final class DfaMinimizer {
         this.stateAcceptMask = stateAcceptMask;
         this.stateStopOnAcceptMask = stateStopOnAcceptMask;
         this.stateFinalOpsByMask = stateFinalOpsByMask;
+        this.wholeBase = wholeRanges == null ? null : wholeBase;
+        this.wholeCount = wholeRanges == null ? null : wholeCount;
+        this.wholeRanges = wholeRanges;
         this.longest = longest;
         this.meter = meter;
         this.maxNormCells = Budgets.maxMinimizeNormCells();
@@ -286,11 +299,17 @@ final class DfaMinimizer {
     }
 
     /**
-     * Per-state attribute signature: accept bit, final-ops id, masks.
+     * Per-state attribute signature: accept bit, final-ops id, masks,
+     * and — when the partial-whole side table exists — the whole-side
+     * entry count (a state carrying a whole list must never merge with
+     * one that doesn't, whatever its pruned behavior).
      */
     SigKey attrSig(int s) {
-        int[] sig = new int[5 + attrExtra()];
+        int[] sig = new int[5 + attrExtra() + (wholeRanges != null ? 1 : 0)];
         fillAttrs(sig, s, 0);
+        if (wholeRanges != null) {
+            sig[sig.length - 1] = wholeBase != null && wholeBase[s] >= 0 ? wholeCount[s] : 0;
+        }
         return new SigKey(sig);
     }
 
@@ -332,18 +351,27 @@ final class DfaMinimizer {
     }
 
     /**
-     * Transition signature, normalized on global breakpoints when possible.
+     * Transition signature, normalized on global breakpoints when
+     * possible. Whole-side entries (when present) are appended as
+     * unnormalized (lo, hi, target_partition, opSeqId, requiredMask)
+     * rows — the whole walk's dispatch must stay distinct per state, so
+     * any whole-row difference blocks the merge (false negatives only
+     * cost merging quality, never correctness).
      */
     SigKey transSig(int s, int[] partition) {
         int extra = attrExtra();
         int base = stateBase[s];
         int count = Tdfa.rangeCount(stateMeta[s]);
+        int wCount = wholeRows(s);
         int[] sig;
         int i;
         if (useNormalized) {
             int K = globalBps.length - 1; // # of codepoint-covering ranges
-            sig = new int[5 + extra + K * 3];
+            sig = new int[5 + extra + (wholeRanges != null ? 1 : 0) + K * 3 + wCount * 5];
             i = fillAttrs(sig, s, 0);
+            if (wholeRanges != null) {
+                sig[i++] = wholeBase != null && wholeBase[s] >= 0 ? wholeCount[s] : 0;
+            }
             int rowBase = s * globalBps.length;
             for (int k = 0; k < K; k++) {
                 int rIdx = stateRangeAt[rowBase + k];
@@ -361,8 +389,11 @@ final class DfaMinimizer {
             }
         } else {
             // Unnormalized fallback: per-range (lo, hi, target_partition, opSeqId, requiredMask).
-            sig = new int[5 + extra + count * 5];
+            sig = new int[5 + extra + (wholeRanges != null ? 1 : 0) + count * 5 + wCount * 5];
             i = fillAttrs(sig, s, 0);
+            if (wholeRanges != null) {
+                sig[i++] = wholeBase != null && wholeBase[s] >= 0 ? wholeCount[s] : 0;
+            }
             for (int r = 0; r < count; r++) {
                 int o = (base + r) * 5;
                 int t = ranges[o + 2];
@@ -373,6 +404,29 @@ final class DfaMinimizer {
                 sig[i++] = ranges[o + 4]; // requiredMask
             }
         }
+        if (wCount > 0) {
+            int wbase = wholeBase[s];
+            for (int r = 0; r < wCount; r++) {
+                int o = (wbase + r) * 5;
+                int t = wholeRanges[o + 2];
+                sig[i++] = wholeRanges[o];
+                sig[i++] = wholeRanges[o + 1];
+                sig[i++] = (t == -1) ? -1 : partition[t];
+                sig[i++] = opSeqId(wholeRanges[o + 3]);
+                sig[i++] = wholeRanges[o + 4];
+            }
+        }
         return new SigKey(sig);
+    }
+
+    /**
+     * Number of whole-side entries of state s (0 when no side table or
+     * none for the state).
+     */
+    private int wholeRows(int s) {
+        if (wholeRanges == null || wholeBase == null || wholeBase[s] < 0) {
+            return 0;
+        }
+        return wholeCount[s];
     }
 }

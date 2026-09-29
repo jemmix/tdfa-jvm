@@ -143,6 +143,15 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     final boolean rangesDisjoint;
     final int[] rhp; // tdfa.entryHiPrefix — prefix-max-hi per entry
     /**
+     * Partial-whole side table (null = none; see Tdfa.wholeRanges): the
+     * whole walk dispatches on these entries for the states in
+     * {@link #wholeBase}, and on {@link #ranges} elsewhere.
+     */
+    final int[] wholeRanges;
+    final int[] wholeBase;
+    final int[] wholeCount;
+    final int[] wholeRhp;
+    /**
      * This runner's share of the pattern's runtime RAM budget (see the
      * constructor overload): caps the lazy search-DFA and walk memos.
      */
@@ -282,6 +291,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         this.stateAcceptMask = tdfa.stateAcceptMask;
         this.ranges = tdfa.ranges;
         this.ops = tdfa.ops;
+        this.wholeRanges = tdfa.wholeRanges;
+        this.wholeBase = tdfa.wholeBase;
+        this.wholeCount = tdfa.wholeCount;
+        this.wholeRhp = tdfa.wholeHiPrefix;
         this.regSize = tdfa.registerCount;
         this.startState = tdfa.startState;
         this.startStateEntryMask = tdfa.startStateEntryMask;
@@ -602,10 +615,13 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * Whole-input match ({@link WholeEngine#matchWhole}): anchored at 0, runs
      * to end-of-input, and succeeds iff an accept config is ALIVE exactly at
      * EOF — mid-walk accepts (multiline {@code $}, unanchored prefixes) are
-     * stepped past, never recorded. Requires cut-free transitions (the
-     * compile-time pike cut would delete full-match continuations past an
-     * earlier higher-priority accept — {@code (a|ab)} on {@code "ab"}); the
-     * facade guarantees that via {@link Tdfa#compileUnpruned}.
+     * stepped past, never recorded. Requires transitions that keep
+     * full-match continuations past an earlier higher-priority accept
+     * ({@code (a|ab)} on {@code "ab"}): either a cut-free artifact
+     * ({@link Tdfa#compileUnpruned}), a pruned artifact whose cut never
+     * fired, or a pruned artifact with its partial-whole side table — the
+     * walk then dispatches on the side entries of the states whose cut
+     * deleted continuations ({@link Tdfa#wholeRanges}).
      *
      * <p>Transition machinery is a verbatim transplant of {@link #extractFrom}'s
      * (flat dispatch / walk blocks / most-specific-mask ownership with dead
@@ -663,14 +679,35 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         }
 
         int posFlags = -1;
+        final int[] wrg = this.wholeRanges;
+        final int[] wBase = this.wholeBase;
+        final int[] wCount = this.wholeCount;
+        final int[] wRhp = this.wholeRhp;
         while (pos < to) {
-            int meta = sm[state];
             int c = Alphabet.decode(input, pos, to);
-            int base = stateBase[state];
-            int count = (meta >>> 1) & 0xFFFF;
+            // Partial-whole side table: states whose pike cut deleted
+            // continuations dispatch on their UNCUT whole relation; every
+            // other state's whole relation IS the pruned one.
+            final int[] table;
+            final int[] tableRhp;
+            int base, count;
+            boolean wholeState = wrg != null && wBase[state] >= 0;
+            if (wholeState) {
+                table = wrg;
+                tableRhp = wRhp;
+                base = wBase[state];
+                count = wCount[state];
+            } else {
+                table = rg;
+                tableRhp = rhp;
+                base = stateBase[state];
+                count = (sm[state] >>> 1) & 0xFFFF;
+            }
             int chosen = -1, chosenTarget = 0;
             int ri;
-            if (arf != null && c < limit) {
+            if (wholeState) {
+                ri = Integer.MIN_VALUE; // flat/walk tables index the pruned layout
+            } else if (arf != null && c < limit) {
                 // Disjoint ranges: at most one entry contains c, so entry
                 // priority is moot and the flat table is exact.
                 ri = arf[state * limit + c];
@@ -689,7 +726,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 int rlo = 0, rhi = count - 1, anchor = -1;
                 while (rlo <= rhi) {
                     int mid = (rlo + rhi) >>> 1;
-                    if (rg[(base + mid) * 5] <= c) {
+                    if (table[(base + mid) * 5] <= c) {
                         anchor = mid;
                         rlo = mid + 1;
                     } else {
@@ -697,10 +734,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                     }
                 }
                 int best = -1, bestSpec = -1;
-                for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+                for (int i = anchor; i >= 0 && tableRhp[base + i] >= c; i--) {
                     int o = (base + i) * 5;
-                    if (c <= rg[o + 1]) {
-                        int requiredMask = rg[o + 4];
+                    if (c <= table[o + 1]) {
+                        int requiredMask = table[o + 4];
                         if (requiredMask != 0) {
                             if (posFlags < 0) {
                                 posFlags = positionFlagsCS(input, pos, to);
@@ -718,7 +755,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 }
                 if (best >= 0) {
                     int o = (base + best) * 5;
-                    int target = rg[o + 2];
+                    int target = table[o + 2];
                     if (target < 0) {
                         return null;
                     } // dead marker of the owning context
@@ -727,9 +764,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 }
             } else if (ri >= 0) {
                 int o = (base + ri) * 5;
-                int target = rg[o + 2];
+                int target = table[o + 2];
                 if (target >= 0) {
-                    int requiredMask = rg[o + 4];
+                    int requiredMask = table[o + 4];
                     boolean ok = requiredMask == 0;
                     if (!ok) {
                         if (posFlags < 0) {
@@ -754,7 +791,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 return null;
             }
             if (regs != null) {
-                int opsOff = rg[chosen + 3];
+                int opsOff = table[chosen + 3];
                 if (opsOff != 0) {
                     applyOps(op, opsOff, regs, pos);
                 }

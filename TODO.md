@@ -1593,44 +1593,62 @@ end-of-input is a full match. The follow-up list, resolved (commits 0fded73
       design round; only worth it if datefinder-class compile walls bother
       anyone after the benchmark run).
 
-## Budget round r11 follow-ups (2026-09-18, open)
+## Budget round r11 follow-ups (2026-09-18 — both resolved 2026-09-28/29)
 
 Opened by the budget-accounting round (`docs/REVIEW-2026-09-budget.md`,
 PR #8). Two design questions the round deliberately did NOT decide:
 
-- [ ] **Partial-whole TDFA — one artifact for find() AND matches().**
-      Today `Pattern.compile` determinizes up to three times (unpruned
-      whole, pruned find when `pikeCutMatters`, anchored fallback in the
-      over-budget corner) because the pike cut that makes find() exact
-      deletes the continuations whole-input walks need. Options to
-      evaluate, roughly in increasing invasiveness:
-      1. *Anchored-first ladder* — build the both-ends-anchored artifact
-         as the ONLY whole artifact (it is exact for matches() by
-         construction and cheaper than the cut-free build on cut-heavy
-         shapes, since anchoring prunes harder). Cost: the shared
-         find+whole single-build case disappears (anchored can't serve
-         find), so every pattern pays two determinizations; net win only
-         if the unpruned-shared case is rarer than measured or the
-         anchored build gets much cheaper.
-      2. *Cut-residue side table (the actual "partial-whole" artifact)* —
-         during the PRUNED compile, when the pike cut deletes configs,
-         record the deleted continuations keyed by (state, range, ctx) in
-         a bounded side table; `matchWhole` walks the pruned artifact and
-         spawns recorded shadow tracks at marked transitions. One
-         determinization total; the side table replaces the second build
-         and its cap replaces the whole-ladder probe budget. Needs: a
-         construction proof (recorded tracks are exactly the unpruned
-         walk's divergence), a size cap with clean rejection, and
-         randomized anchored-vs-partial parity like the anchored
-         artifact's 18 K-pair validation.
-      3. *Drop whole exactness* — `matches()` := `find()` from 0 plus a
-         full-span check. One build, zero new machinery; wrong group
-         spans (and wrong booleans on `(a|ab)`-class shapes where the
-         whole winner outranks the find winner). Only if the contract is
-         ever relaxed deliberately.
-      Decision input to gather first: corpus frequency of
-      `pikeCutMatters` (observer note `pikeCut` exists) and the
-      over-budget-corner rate.
+- [x] **Partial-whole TDFA — one artifact for find() AND matches().**
+      RESOLVED 2026-09-29 as option 2 (the cut-residue side table), with
+      the artifact-scope refinement that made it safe. The pruned
+      determinization runs FIRST and alone (`TdfaCompiler`'s primary
+      phase — the find artifact's budget/caps contract stays
+      bit-identical with a plain compile); a SECONDARY sweep then walks
+      every primary-phase state whose live context's pike cut deleted
+      continuations and emits the state's FULL UNCUT transition relation
+      as a whole-list (`DfaStateBuilder.wholeRanges` — cut contexts
+      through the uncut step, uncut contexts by deterministic
+      re-interning of the pruned target). Targets the uncut steps
+      discover join the SHARED interning space (one space, no duplicate
+      kernels; their own cut contexts grow the side transitively), so
+      the recorded whole relation is exactly the unpruned walk's
+      divergence — the construction proof, by induction over the walk:
+      until the first cut point the pruned transitions ARE the uncut
+      ones, from there on the side entries are the uncut ones. Runtime:
+      `TdfaRunner.wholeWalk` (and the generated engines' `matchWhole`,
+      which delegates to it for side-carrying artifacts) dispatch on the
+      whole list of states that have one, on the pruned entries
+      elsewhere; register optimization models the side entries as CFG
+      blocks (liveness through both relations — the union is the
+      conservative reachability), and the minimizer's signatures carry
+      the whole rows so states never merge across a whole-behavior
+      difference. Bounded + clean abandon: the sweep runs after the
+      pruned build on a child meter (half the remaining ticks) with
+      pre-flight checks against the exact remaining state/kernel/RAM
+      headroom, so abandonment can never starve the find build (no
+      false rejections) — an exhausted side strips its entries, notes
+      `partialWhole abandoned`, and the facade falls back to the
+      cut-free `compileUnpruned` build, which rejects bombs with the
+      standard "pattern too large" family exactly as before. The core
+      (find-only) tier never runs the side (`Tdfa.compileWithWholeSide`
+      is the facade's entry point). `matches()` keeps full-span
+      exactness: pinned by span parity against BOTH the cut-free and
+      the both-ends-anchored artifacts plus java.util.regex booleans,
+      over a divergence-class catalog and a seeded 900-pattern random
+      sweep (`PartialWholeTest`), find untouched A/B with
+      `-Dtdfa.nopartialwhole` (which also forces the two-artifact
+      fallback for testing), and the bomb/abandon corner through the
+      observer note. Budget posture: the side table
+      counts as retained bytes of the one artifact in the 2026-09-28
+      end-of-compile execution-RAM check (`Tdfa.retainedTableBytes`),
+      and the one-artifact compile keeps the WHOLE residual memo
+      allowance (no split) — the divergence class no longer pays a
+      second engine. Option 1 (anchored-first ladder) was
+      rejected: under the find-first pipeline it saves nothing over the
+      fallback (still two determinizations when it applies) and costs
+      the shared single build everywhere. Option 3 (drop whole
+      exactness) was rejected as designed (wrong spans/booleans on
+      `(a|ab)`-class shapes).
 - [x] **Execution RAM checked at the end of compilation.** The runtime
       budget bounds the lazy memos (rows/blocks/walk, per-engine split),
       but nothing verifies at compile end that the RETAINED footprint —
