@@ -815,14 +815,20 @@ public final class Optimize {
      * (op with dst = R) is gated on {@code I[R] = 0} — i.e., all readers of R
      * must have been processed first.
      *
-     * <p>If a cycle remains, append the rest as-is. The paper tracks a
-     * {@code nontrivial_cycle} flag (true if any non-self cycle exists); we
-     * don't currently surface it.
+     * <p>If a cycle remains, append the rest as-is and return the paper's
+     * {@code nontrivial_cycle} flag: false when only self-copies (dst = src,
+     * no-ops) remain, true when a genuine copy cycle does. Normalization
+     * discards the flag (paper Algorithm 6 line 44 does the same) — cycles
+     * here would be a regopt construction bug, not an input property; the
+     * flag is load-bearing only in determinization's {@code map}, which
+     * rejects the mapping on it (BT22 §3.3).
+     *
+     * @return true iff a non-trivial cycle was found
      */
-    private static void topoSortCopy(List<Cfg.Op> run, WorkMeter meter) {
+    static boolean topoSortCopy(List<Cfg.Op> run, WorkMeter meter) {
         int n = run.size();
         if (n < 2) {
-            return;
+            return false;
         }
         // Find max register id to size the I[] array.
         int maxReg = 0;
@@ -857,17 +863,27 @@ public final class Optimize {
                 }
             }
             if (!added) {
-                // Cycle: append remaining ops as-is.
+                // Cycle: append remaining ops as-is. Only self-copies
+                // (dst == src) are trivial; anything else is non-trivial.
+                boolean nontrivialCycle = false;
                 for (int i = 0; i < n; i++) {
                     if (!removed[i]) {
-                        Oprime.add(run.get(i));
+                        Cfg.Op op = run.get(i);
+                        if (op.dst != op.src) {
+                            nontrivialCycle = true;
+                        }
+                        Oprime.add(op);
                         removed[i] = true;
                         remaining--;
                     }
                 }
+                run.clear();
+                run.addAll(Oprime);
+                return nontrivialCycle;
             }
         }
         run.clear();
         run.addAll(Oprime);
+        return false;
     }
 }

@@ -1093,7 +1093,7 @@ hard-gating every fixed family, replay corpora, probe-before-fix.
       `:tests:unit:inliningGuard` (separate action, forks a `-XX:+PrintInlining` JVM, parses compilation
       events + call sites, fails on megamorphic dispatch inside generated classes; full logs in
       `build/reports/inlining-guard/`). Baseline: CLEAN — 0 morphic failures across 51 compiled
-      generated-class methods; size-related non-inlines are warnings.
+       generated-class methods; size-related non-inlines are warnings.
 - [x] **Deterministic compilation** (2026-09-28). Same regex → bit-identical
       TDFA, now machine-checked. The audit: the pipeline already hashes by
       content end to end — state interning/order-exact probe keys
@@ -1121,7 +1121,37 @@ hard-gating every fixed family, replay corpora, probe-before-fix.
       that the oracle itself is non-vacuous (different patterns and
       merge/regopt-active knobs change the fingerprint). Full unit gate
       green.
-- [ ] `map` + topological sort: reject non-trivial cycles (BT22 §3.3)
+- [x] **`map` + topological sort: reject non-trivial cycles (BT22 §3.3)**
+      (2026-09-29). `TdfaCompiler.topologicalSort` is now paper Algorithm 6
+      verbatim: `I[r]` counts remaining COPY readers of r, every op (SETs
+      included) is gated on `I[dst]=0` — all reads of a register emit before
+      any write updates it — and a stall means the remainder is cyclic:
+      self-copies are trivial no-ops, any dst≠src copy is a NONTRIVIAL cycle,
+      unexecutable without a temp register. `tryMap` (paper §2 map, line 43
+      `return topological_sort(O)`) rejects on it and addState falls through
+      to a fresh DFA state — replacing the old bounded-stabilizer give-up,
+      which emitted the cycle and corrupted captures. regopt's
+      normalization-side `topoSortCopy` computes the same
+      `nontrivial_cycle` flag; normalization discards it per the paper
+      (Algorithm 6 line 44) — cycles there would be a regopt construction
+      bug, not an input property. Validated by a 30k-pattern × 133-input
+      old-vs-new differential: every capture-differring pattern (6 per mode)
+      was an OLD-engine bug — including impossible spans like g2=[0,-1]
+      from the half-written tag pair; now zero corrupt spans corpus-wide
+      (JDK oracle for Perl, patched-re2j LONGEST_MATCH for POSIX). Side
+      effects, both clean: 10+29 budget-edge patterns now clean-reject
+      "pattern too large" (previously they compiled with corruptible
+      captures), and 255 former WORK-budget clean-rejects now compile — the
+      old O(n⁴)-guarded bubble sorter was itself the meter burner. Minimal
+      rejection repro (POSIX, 14 states):
+      `((?:(?:(?:(?:b))|())|((?:(b|)|c)){2})){2}`. Tests:
+      `TopologicalSortTest` (Algorithm-6 semantics: chains, set gating,
+      self-copy/2-cycle/3-cycle, scratch reuse), `OptimizeTopoSortTest`
+      (flag + paper line-44 discard), `MapCycleRejectionTest` (oracle-pinned
+      corruption fixes + corrupt-span sweep). NB: the minimal repro still
+      reports a corrupt g5 span on POSIX "bcc" in BOTH generations — the
+      separate empty-iteration/final-ops family, not map (documented in the
+      test; candidate TODO for that family).
 - [x] Fallback / backup operations (BT22 §3.2) — restore clobberable registers on dead-end
       paths; landed as `FallbackOps` (README "What's implemented" §6.2; WorkMeter covers
       the fallback accumulation loop).

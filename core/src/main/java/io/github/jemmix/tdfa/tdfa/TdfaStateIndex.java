@@ -298,8 +298,10 @@ final class TdfaStateIndex {
                         if (mapped != null) {
                             return new AddResult(cand, mapped);
                         }
-                        // ops-rewrite failed: outcome is member-independent,
-                        // fall through to append a new state.
+                        // ops-rewrite failed (or the prepended copies form a
+                        // nontrivial cycle — conjugate under canon-equal
+                        // relabeling, so the outcome is still
+                        // member-independent): fall through to append a new state.
                     }
                 }
             }
@@ -499,8 +501,17 @@ final class TdfaStateIndex {
                 rewritten.add(0, new int[]{Tdfa.OP_COPY, oldReg, newReg});
             }
         }
-        // Topological sort: copy ops must come before any op that reads their src.
-        owner.topologicalSort(rewritten);
+        // Topological sort: order the copy shuffle so every read happens
+        // before the write that updates its register. A non-trivial copy
+        // cycle cannot be executed without a temporary register, so per
+        // paper §2 (map returns topological_sort(O)) the MAPPING IS REJECTED
+        // and addState falls through to a fresh DFA state.
+        if (!owner.topologicalSort(rewritten)) {
+            if (owner.debug) {
+                System.err.println("[map] rejected: nontrivial copy cycle in " + rewritten.size() + " ops");
+            }
+            return null;
+        }
         return owner.variants.flatten(rewritten);
     }
 
