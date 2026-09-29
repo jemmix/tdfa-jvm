@@ -9,6 +9,15 @@ import java.util.Arrays;
  * TdfaRunner (statics, no instance state).
  */
 final class RunnerTables {
+    /**
+     * Longest prefix needle detected ({@link #detectPrefixNeedle}): the walk
+     * is bounded by state count, so detection stays O(32) even on giant
+     * chain DFAs; every real log-shape needle (ip=, user_id=, path=) is far
+     * shorter. Single source of truth — {@link TdfaRunner#detectPrefixNeedle}
+     * exposes it to the ASM backend's emit-time mirror.
+     */
+    static final int PREFIX_NEEDLE_MAX = 32;
+
     private RunnerTables() {
     }
 
@@ -178,6 +187,85 @@ final class RunnerTables {
         }
         int end = idx + needleLen;
         return end < s.length() && s.charAt(end) >= 0xDC00 && s.charAt(end) <= 0xDFFF;
+    }
+
+    /**
+     * Detect a REQUIRED literal prefix: the longest char chain from the
+     * start state such that every match must begin by consuming exactly
+     * those chars (null otherwise). The chain EXTENDS one char at a time
+     * while the current state is non-accepting and has exactly one live
+     * (non-dead) exit shape — a single BMP codepoint, no required mask,
+     * unique target (duplicate entries on the same char+target are fine).
+     * Anything else — a wider range, a second char, a fork, a mask-gated
+     * exit, an accepting state — ENDS the chain there: every char appended
+     * so far is still required (each step had exactly one live char, so
+     * every accepting path consumed it), while the divergence happens
+     * after the needle. That makes any prefix length sound; the loop just
+     * takes the longest one. The start state's own entry mask must be zero
+     * (an entry-masked start restricts where matches may begin — the
+     * restart ladder owns that). Transition OPS on chain exits are
+     * allowed: the prefix scan still runs the exact walk at every hit, so
+     * tag writes are applied by the walk, not skipped. Public static via
+     * {@link TdfaRunner#detectPrefixNeedle(Tdfa)}: the ASM backend asks
+     * at emit time and bakes the needle in as a class constant.
+     */
+    static String detectPrefixNeedle(Tdfa tdfa) {
+        try {
+            int n = tdfa.stateCount;
+            if (n < 2 || tdfa.startStateEntryMask != 0) {
+                return null;
+            }
+            int s = tdfa.startState;
+            if ((tdfa.stateMeta[s] & 1) != 0) {
+                return null; // zero-length matches possible anywhere
+            }
+            StringBuilder sb = new StringBuilder(8);
+            int cap = Math.min(n - 1, PREFIX_NEEDLE_MAX);
+            while (sb.length() < cap) {
+                int meta = tdfa.stateMeta[s];
+                int base = tdfa.stateBase[s], cnt = (meta >>> 1) & 0xFFFF;
+                // Unique extendable exit, if one exists: single BMP
+                // codepoint, mask-free, and every other live exit is an
+                // exact duplicate of it. A conflict (any other live exit)
+                // means two chars/targets lead onward — stop, keep sb.
+                int ch = -1, target = -1;
+                boolean conflict = false;
+                for (int i = 0; i < cnt && !conflict; i++) {
+                    int o = (base + i) * 5;
+                    if (tdfa.ranges[o + 2] < 0) {
+                        continue; // dead marker: this char never leads onward
+                    }
+                    boolean singleton =
+                        tdfa.ranges[o + 4] == 0 && tdfa.ranges[o] == tdfa.ranges[o + 1] && tdfa.ranges[o] <= 0xFFFF;
+                    if (!singleton) {
+                        conflict = true;
+                    } else if (ch < 0) {
+                        ch = tdfa.ranges[o];
+                        target = tdfa.ranges[o + 2];
+                    } else if (tdfa.ranges[o] != ch || tdfa.ranges[o + 2] != target) {
+                        conflict = true;
+                    }
+                }
+                if (conflict || ch < 0 || (meta & 1) != 0 || tdfa.stateEntryMask[target] != 0) {
+                    break; // chain end: divergence, dead-end, accept, or mask
+                }
+                sb.append((char) ch);
+                s = target;
+            }
+            // Same lone-surrogate adjacency bail as the literal needle: two
+            // adjacent LONE symbols re-encoded as a well-formed pair can
+            // never be matched by the codepoint-decoding walk, so the needle
+            // would only produce doomed candidates. Not a usable prefix.
+            for (int i = 0; i < sb.length() - 1; i++) {
+                char c0 = sb.charAt(i), c1 = sb.charAt(i + 1);
+                if (c0 >= 0xD800 && c0 <= 0xDBFF && c1 >= 0xDC00 && c1 <= 0xDFFF) {
+                    return null;
+                }
+            }
+            return sb.length() > 0 ? sb.toString() : null;
+        } catch (RuntimeException e) {
+            return null; // any surprise shape: no prefix acceleration
+        }
     }
 
     static void setBit(long[] bits, int c) {
