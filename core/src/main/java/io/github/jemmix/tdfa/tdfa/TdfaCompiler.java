@@ -47,8 +47,12 @@ final class TdfaCompiler {
      * quantifier bombs churn fixpoints without growing output —
      * the state/kernel caps never trip). The same meter also covers the
      * post-determinization stages (handed on by the compile entry points).
+     * Non-final: the secondary partial-whole phase swaps in its child
+     * meter for its duration (see {@link #wholeSidePass}) so the side
+     * exploration is bounded independently and can be abandoned on
+     * exhaustion without draining the stages that follow.
      */
-    final WorkMeter meter;
+    WorkMeter meter;
 
     final int[] initialRegisters;
     final int[] finalRegisters;
@@ -67,6 +71,35 @@ final class TdfaCompiler {
      * {@link Tdfa#pikeCutMatters()} predicate comes out false.
      */
     final boolean unpruned;
+    /**
+     * The partial-whole side table is recorded for this compile: a pruned
+     * Perl-mode compile that ASKED for it (the facade's one-artifact
+     * build, {@link Tdfa#compileWithWholeSide}; find-only consumers never
+     * do — the side has no reader there) with {@code -Dtdfa.nopartialwhole}
+     * unset. Every cut context then also contributes its UNCUT transitions
+     * to the source state's whole list (see {@link DfaStateBuilder#wholeRanges}),
+     * so one artifact serves find() AND whole-input walks — the facade
+     * needs the cut-free second determinization only when the side was
+     * abandoned over budget ({@link #wholeAbandoned}).
+     */
+    final boolean wholeSide;
+    /**
+     * True once the whole side was abandoned (its bounded exploration
+     * exceeded the side meter or the RAM charge): every recorded whole
+     * list is stripped and later cut contexts record nothing — the
+     * artifact is a plain pruned one and whole walks on it are NOT exact.
+     */
+    boolean wholeAbandoned;
+    /**
+     * The rejection that caused {@link #wholeAbandoned} (null when the
+     * RAM pre-check tripped); reported through the observer.
+     */
+    Exception abandonCause;
+    /**
+     * The secondary phase's meter (half the compile's remaining ticks at
+     * pass start; see {@link #wholeSidePass}).
+     */
+    WorkMeter wholeMeter;
     /**
      * Multimap from DFA-state shape key to the list of DFA-state IDs that
      * share that shape. The paper's {@code map}+{@code topological_sort}
@@ -171,6 +204,19 @@ final class TdfaCompiler {
 
     final BitSet accept = new BitSet();
     final BitSet processed = new BitSet();
+    /**
+     * Primary-phase states where some live context's pike cut deleted
+     * continuations — the seeds of the secondary whole-side sweep. Their
+     * boxed kernels are retained on tagless compiles (packed kernels
+     * cannot re-derive the live contexts the sweep needs).
+     */
+    final BitSet cutStates = new BitSet();
+    /**
+     * True while the secondary (partial-whole side) phase runs: cut
+     * states' processState interleaves the whole-list emission, and the
+     * cut recording is off (only primary-phase cuts seed the sweep).
+     */
+    boolean secondaryPhase;
     final List<DfaStateBuilder> builders = new ArrayList<>();
     final Deque<Integer> work = new ArrayDeque<>();
     /**
@@ -215,8 +261,11 @@ final class TdfaCompiler {
      *        the whole compile: this class ticks it during determinization
      *        and hands the same instance on to the post-determinization
      *        stages, so a single CPU budget covers the entire pipeline.
+     * @param wholeSide record the partial-whole side table (the facade's
+     *        one-artifact compile; see {@link Tdfa#compileWithWholeSide}).
+     *        Find-only consumers pass false — the side has no reader there.
      */
-    TdfaCompiler(Tnfa nfa, boolean longestMatch, boolean unpruned, WorkMeter sharedMeter) {
+    TdfaCompiler(Tnfa nfa, boolean longestMatch, boolean unpruned, boolean wholeSide, WorkMeter sharedMeter) {
         this.nfa = nfa;
         this.tags = nfa.tagCount;
         this.meter = sharedMeter;
@@ -237,6 +286,8 @@ final class TdfaCompiler {
         this.breakpoints = computeBreakpoints();
         this.longest = longestMatch;
         this.unpruned = unpruned;
+        // Compile knob, read once per compilation (policy: Tdfa javadoc).
+        this.wholeSide = wholeSide && !longestMatch && !unpruned && !Boolean.getBoolean("tdfa.nopartialwhole");
         this.maxClosureBytes = Budgets.compileMemoryBytes() / BudgetWeights.CLOSURE_SPIKE_DIVISOR;
         this.cellCount = breakpoints.length - 1;
         this.activeSetCount = precomputeActiveSets(cellCount);
@@ -460,11 +511,13 @@ final class TdfaCompiler {
     // ========================= compile pipeline =========================
 
     /**
-     * Determinization phase of the compile. Runs the subset construction,
-     * derives the per-state tables and solves the accepting states' final
-     * φ ops, then reports the DETERMINIZE stage and returns the DFA shape.
-     * When this returns, this compiler instance (and with it the kernels,
-     * the interning index and the closure scratch) is unreachable.
+     * Determinization phase of the compile. Runs the subset construction
+     * (with the partial-whole side table when the pike cut bites and the
+     * side is enabled), derives the per-state tables and solves the
+     * accepting states' final φ ops, then reports the DETERMINIZE stage
+     * and returns the DFA shape. When this returns, this compiler
+     * instance (and with it the kernels, the interning index and the
+     * closure scratch) is unreachable.
      */
     DeterminizedDfa compile(CompileObserver observer) {
         final CompileObserver obs = observer != null ? observer : CompileObserver.NONE;
@@ -476,10 +529,32 @@ final class TdfaCompiler {
             System.err.println(
                 "[det] states=" + kernels.size() + " kernelsTotal=" + kernelsTotal + " ticks=" + meter.spent());
         }
+        boolean wholeComplete = false;
+        if (wholeSide) {
+            if (wholeAbandoned) {
+                String why =
+                    abandonCause == null ? "side-table RAM charge over budget" : abandonCause.getMessage() == null
+                        ? abandonCause.getClass().getSimpleName() : abandonCause.getMessage();
+                obs.note("partialWhole", "abandoned (" + why + "); cut-free fallback");
+            } else {
+                int wholeStates = 0;
+                int wholeEntries = 0;
+                for (DfaStateBuilder b : builders) {
+                    if (b.wholeRanges != null) {
+                        wholeStates++;
+                        wholeEntries += b.wholeRanges.size();
+                    }
+                }
+                if (wholeStates > 0) {
+                    obs.note("partialWhole", wholeStates + " states / " + wholeEntries + " side entries");
+                    wholeComplete = true;
+                }
+            }
+        }
         int n = kernels.size();
         obs.stage(CompileObserver.Stage.DETERMINIZE, System.nanoTime() - tDet, n);
         return new DeterminizedDfa(n, builders, accept, tables.entryMask, tables.acceptMask, tables.stopOnAcceptMask,
-            tables.pikeCutMatters, nextReg);
+            tables.pikeCutMatters, nextReg, wholeComplete);
     }
 
     /**
@@ -500,6 +575,10 @@ final class TdfaCompiler {
         List<Config> initClosure = epsilonClosure(initSeed);
         int startId = index.addState(initClosure, null, initSeed).targetId;
         work.push(startId);
+        // PRIMARY phase: the pruned subset construction, exactly as a
+        // plain compile — the partial-whole side never runs here, so the
+        // find artifact's budget/caps contract is bit-identical with (and
+        // never starved by) the side exploration.
         while (!work.isEmpty()) {
             meter.tick();
             int sid = work.pop();
@@ -509,17 +588,74 @@ final class TdfaCompiler {
             processed.set(sid);
             processState(sid);
         }
+        wholeSidePass();
         if (debug) {
             System.err.println("[tdfa] total states=" + kernels.size() + " accept=" + accept.cardinality());
         }
     }
 
     /**
+     * SECONDARY phase — the partial-whole side sweep, running only after
+     * the pruned construction finished. Ordering is the safety property:
+     * the pruned build has consumed exactly what a plain compile would,
+     * so the caps' remaining headroom is exact and the side can only
+     * abandon (never push a later pruned addState over a cap — no false
+     * rejections of patterns whose find artifact fits). For every state
+     * whose pike cut deleted continuations, the state's FULL uncut
+     * relation is (re)derived and recorded as its whole list
+     * ({@link #emitWholeEntries}); targets interned only by the uncut
+     * steps join the shared space and are processed through the normal
+     * {@link #processState} (whose whole-interleaved emission serves
+     * them; their pruned entries are find-unreachable dead weight,
+     * bounded by the caps). All of it runs on the side meter.
+     */
+    private void wholeSidePass() {
+        if (!wholeSideActive() || cutStates.isEmpty()) {
+            return;
+        }
+        secondaryPhase = true;
+        wholeMeter = meter.fork(Math.max(1, meter.remaining() / 2));
+        WorkMeter saved = this.meter;
+        this.meter = wholeMeter;
+        try {
+            for (int sid = cutStates.nextSetBit(0); sid >= 0; sid = cutStates.nextSetBit(sid + 1)) {
+                if (wholeAbandoned) {
+                    break;
+                }
+                emitWholeEntries(sid);
+            }
+            while (!wholeAbandoned && !work.isEmpty()) {
+                meter.tick();
+                int sid = work.pop();
+                if (processed.get(sid)) {
+                    continue;
+                }
+                processed.set(sid);
+                processState(sid);
+            }
+        } catch (WorkMeter.Exhausted over) {
+            abandonWholeSide(over);
+        } catch (IllegalStateException e) {
+            if (String.valueOf(e.getMessage()).contains("pattern too large")) {
+                abandonWholeSide(e);
+            } else {
+                throw e;
+            }
+        } finally {
+            this.meter = saved;
+        }
+    }
+
+    /**
      * Determinize one popped state: split the kernel into assertion
      * live-sets, emit every context's transitions (plus DEAD markers where
-     * a more-specific context owns cells), then — on tagless compiles —
-     * replace the boxed kernel with its packed projection (see
-     * {@link Kernel#pack()}).
+     * a more-specific context owns cells) — and, in the secondary phase
+     * when any context's pike cut removed a continuation, the SAME
+     * emission for the whole-walk side table (uncut targets; see
+     * {@link #wholeSideStep}) — then, on tagless compiles, replace the
+     * boxed kernel with its packed projection (see {@link Kernel#pack()};
+     * cut states keep the boxed form — the side sweep re-derives their
+     * contexts from it).
      */
     private void processState(int sid) {
         List<Config> cur = kernels.get(sid).boxed;
@@ -531,10 +667,134 @@ final class TdfaCompiler {
             }
         }
         List<LiveContext> ctxs = liveContexts(cur);
-        int[][] ctxSetRes = emitTransitions(sid, ctxs);
-        emitDeadMarkers(sid, ctxs, ctxSetRes);
-        if (tags == 0) {
+        boolean anyCut = false;
+        for (LiveContext ctx : ctxs) {
+            if (ctx.cut) {
+                anyCut = true;
+                break;
+            }
+        }
+        if (!secondaryPhase && anyCut) {
+            cutStates.set(sid);
+        }
+        boolean whole = anyCut && secondaryPhase && wholeSideActive();
+        if (whole) {
+            builders.get(sid).wholeRanges = new ArrayList<>();
+        }
+        int[][] ctxSetResU = whole ? new int[ctxs.size()][] : null;
+        int[][] ctxSetRes = emitTransitions(sid, ctxs, ctxSetResU);
+        emitDeadMarkers(sid, ctxs, ctxSetRes, ctxSetResU);
+        if (tags == 0 && !anyCut) {
             kernels.get(sid).pack();
+        }
+    }
+
+    /**
+     * Assemble one primary-phase cut state's whole list: the state's FULL
+     * uncut transition relation. Every context is swept across every
+     * breakpoint cell — cut contexts through the UNCUT step (new targets
+     * interned, pushed for secondary processing), uncut contexts through
+     * the pruned step (a deterministic re-derivation that re-interns the
+     * existing target; registers allocate identically through the cached
+     * per-source vmaps) — and the results land in the state's wholeRanges
+     * as the whole walk's dispatch table, DEAD markers included. Runs on
+     * the side meter; any budget trip abandons the whole side cleanly.
+     */
+    private void emitWholeEntries(int sid) {
+        List<Config> cur = kernels.get(sid).boxed;
+        if (cur == null) {
+            throw new IllegalStateException("tdfa: cut state " + sid + " kernel packed before the whole sweep");
+        }
+        List<LiveContext> ctxs = liveContexts(cur);
+        builders.get(sid).wholeRanges = new ArrayList<>();
+        int nCtx = ctxs.size();
+        int[][] setResU = new int[nCtx][];
+        try {
+            for (int ci = 0; ci < nCtx; ci++) {
+                LiveContext ctx = ctxs.get(ci);
+                int[] res = new int[activeSetCount];
+                Arrays.fill(res, 0);
+                setResU[ci] = res;
+                TdfaStateIndex.AddResult[] perSet = new TdfaStateIndex.AddResult[activeSetCount];
+                boolean[] done = new boolean[activeSetCount];
+                for (int bi = 0; bi < cellCount; bi++) {
+                    meter.tick();
+                    if (wholeAbandoned) {
+                        return;
+                    }
+                    int rangeLo = breakpoints[bi];
+                    int rangeHi = breakpoints[bi + 1] - 1;
+                    int setId = activeSetId[bi];
+                    if (done[setId]) {
+                        TdfaStateIndex.AddResult ar = perSet[setId];
+                        if (ar != null) {
+                            addWhole(sid, rangeLo, rangeHi, ar.targetId, ar.ops, ctx.orMask);
+                        }
+                        continue;
+                    }
+                    done[setId] = true;
+                    List<Config> stepped =
+                        stepOnSymbol(ctx.cut ? ctx.uncut : ctx.configs, rangeActiveEdges[bi], ctx.orMask, ctx.cut);
+                    if (stepped.isEmpty()) {
+                        perSet[setId] = null;
+                        res[setId] = -1;
+                        continue;
+                    }
+                    List<Config> closed = epsilonClosure(stepped);
+                    long weight = (long) closed.size() * kernelConfigBytes;
+                    if (kernels.size() + 1 > maxStates || kernelsWeighted + weight > Budgets.compileMemoryBytes()) {
+                        abandonWholeSide(null);
+                        return;
+                    }
+                    int[] ops = variants.transitionRegops(closed, sid);
+                    TdfaStateIndex.AddResult ar = index.addState(closed, ops, stepped);
+                    if (!processed.get(ar.targetId)) {
+                        work.push(ar.targetId);
+                    }
+                    perSet[setId] = ar;
+                    res[setId] = ar.targetId;
+                    addWhole(sid, rangeLo, rangeHi, ar.targetId, ar.ops, ctx.orMask);
+                }
+            }
+            emitWholeDeadMarkers(sid, ctxs, setResU);
+        } catch (WorkMeter.Exhausted over) {
+            abandonWholeSide(over);
+        } catch (IllegalStateException e) {
+            if (String.valueOf(e.getMessage()).contains("pattern too large")) {
+                abandonWholeSide(e);
+            } else {
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * DEAD markers for the whole list — the whole twin of
+     * {@link #emitDeadMarkers}' rule, keyed on the uncut liveness matrix
+     * (a cut context whose residue still steps is LIVE in the whole
+     * relation; an uncut-empty context owns its cells with a DEAD).
+     */
+    private void emitWholeDeadMarkers(int sid, List<LiveContext> ctxs, int[][] setResU) {
+        int nCtx = ctxs.size();
+        if (nCtx <= 1) {
+            return;
+        }
+        for (int bi = 0; bi < cellCount; bi++) {
+            meter.tick();
+            int rangeLo = breakpoints[bi];
+            int rangeHi = breakpoints[bi + 1] - 1;
+            int setId = activeSetId[bi];
+            for (int ci = 0; ci < nCtx; ci++) {
+                if (setResU[ci][setId] != -1) {
+                    continue;
+                }
+                for (int cj = ci + 1; cj < nCtx; cj++) {
+                    if (setResU[cj][setId] > 0) {
+                        addWhole(sid, rangeLo, rangeHi, -1, null, ctxs.get(ci).orMask);
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -556,6 +816,13 @@ final class TdfaCompiler {
      * pattern directly); a pattern with no configs at all is unreachable
      * and skipped. A closure without assertion-gated configs collapses
      * into the single whole-closure context (pike-pruned in Perl mode).
+     *
+     * <p>Each context keeps BOTH stepping inputs: {@link LiveContext#uncut}
+     * (the alive list before the pike cut) and {@link LiveContext#configs}
+     * (after it). The pruned sweep steps {@code configs}; when
+     * {@link LiveContext#cut} is set the whole-side sweep steps
+     * {@code uncut} and records the uncut targets as the state's
+     * partial-whole side table (see {@link #emitTransitions}).
      */
     private List<LiveContext> liveContexts(List<Config> cur) {
         List<Integer> ctxMasks = null; // distinct nonzero masks when any relevant
@@ -578,7 +845,7 @@ final class TdfaCompiler {
         }
         List<LiveContext> ctxs = new ArrayList<>(4);
         if (ctxMasks == null || ctxMasks.isEmpty()) {
-            ctxs.add(new LiveContext(0, 0, pruneBelowAccept(cur)));
+            ctxs.add(new LiveContext(this, 0, 0, cur));
             return ctxs;
         }
         int k = ctxMasks.size();
@@ -618,8 +885,7 @@ final class TdfaCompiler {
                     }
                 }
             }
-            pruneBelowAcceptInPlace(live);
-            ctxs.add(new LiveContext(r, Integer.bitCount(pat), live));
+            ctxs.add(new LiveContext(this, r, Integer.bitCount(pat), live));
         }
         // Emit most coverage first: superset live-sets precede their
         // subsets; incomparable patterns have disjoint M sets.
@@ -641,11 +907,21 @@ final class TdfaCompiler {
      * work; on narrow patterns every cell is distinct and the cache
      * degenerates to one entry per cell.
      *
+     * <p>When {@code whole} is set (some context of this state cut and
+     * the partial-whole side is active), every context ALSO contributes
+     * its entry to the state's whole-walk list: the cut contexts via
+     * {@link #wholeSideStep} (uncut step → uncut target, budgeted on the
+     * side meter, cleanly abandoned on exhaustion), the uncut contexts by
+     * mirroring the pruned entry (identical transition).
+     *
      * @return per-context results keyed by active-set id: target state
      *         id, -1 for stepped-empty, 0 for not-yet-computed. Contexts
-     *         run most-specific first; live ranges emit immediately.
+     *         run most-specific first; live ranges emit immediately. When
+     *         {@code ctxSetResU} is non-null it is filled with the UNCUT
+     *         liveness (same encoding) for the whole dead-marker pass.
      */
-    private int[][] emitTransitions(int sid, List<LiveContext> ctxs) {
+    private int[][] emitTransitions(int sid, List<LiveContext> ctxs, int[][] ctxSetResU) {
+        boolean whole = ctxSetResU != null;
         int nCtx = ctxs.size();
         int[][] ctxSetRes = new int[nCtx][];
         for (int ci = 0; ci < nCtx; ci++) {
@@ -653,7 +929,16 @@ final class TdfaCompiler {
             int[] setRes = new int[activeSetCount];
             Arrays.fill(setRes, 0);
             ctxSetRes[ci] = setRes;
+            int[] setResU = null;
+            if (whole) {
+                setResU = ctxSetResU[ci] != null ? ctxSetResU[ci] : new int[activeSetCount];
+                Arrays.fill(setResU, 0);
+                ctxSetResU[ci] = setResU;
+            }
             TdfaStateIndex.AddResult[] perSet = new TdfaStateIndex.AddResult[activeSetCount];
+            // Whole-side per-set results: null = uncut stepped-empty,
+            // otherwise the uncut AddResult (may equal the pruned one).
+            TdfaStateIndex.AddResult[] perSetU = whole ? new TdfaStateIndex.AddResult[activeSetCount] : null;
             boolean[] perSetDone = new boolean[activeSetCount];
             for (int bi = 0; bi < cellCount; bi++) {
                 // One tick per (context, cell) sweep step: the per-set
@@ -672,13 +957,30 @@ final class TdfaCompiler {
                             chargeRange();
                         }
                     }
+                    if (perSetU != null) {
+                        TdfaStateIndex.AddResult arU = perSetU[setId];
+                        if (arU != null) {
+                            addWhole(sid, rangeLo, rangeHi, arU.targetId, arU.ops, ctx.orMask);
+                        }
+                    }
                     continue;
                 }
                 perSetDone[setId] = true;
-                List<Config> stepped = stepOnSymbol(ctx.configs, rangeActiveEdges[bi], ctx.orMask);
+                List<Config> stepped = stepOnSymbol(ctx.configs, rangeActiveEdges[bi], ctx.orMask, false);
                 if (stepped.isEmpty()) {
                     perSet[setId] = null;
                     setRes[setId] = -1;
+                    if (perSetU != null) {
+                        // Cut context with a dead PRUNED step: the residue
+                        // may still step — a live whole entry where the
+                        // pruned relation is dead.
+                        TdfaStateIndex.AddResult arU = wholeSideStep(sid, ctx, rangeActiveEdges[bi]);
+                        perSetU[setId] = arU;
+                        setResU[setId] = arU == null ? -1 : arU.targetId;
+                        if (arU != null) {
+                            addWhole(sid, rangeLo, rangeHi, arU.targetId, arU.ops, ctx.orMask);
+                        }
+                    }
                     continue;
                 }
                 List<Config> closed = epsilonClosure(stepped);
@@ -700,9 +1002,129 @@ final class TdfaCompiler {
                 }
                 perSet[setId] = ar;
                 setRes[setId] = ar.targetId;
+                if (perSetU != null) {
+                    TdfaStateIndex.AddResult arU = ctx.cut ? wholeSideStep(sid, ctx, rangeActiveEdges[bi]) : ar;
+                    perSetU[setId] = arU;
+                    setResU[setId] = arU == null ? -1 : arU.targetId;
+                    if (arU != null) {
+                        addWhole(sid, rangeLo, rangeHi, arU.targetId, arU.ops, ctx.orMask);
+                    }
+                }
             }
         }
         return ctxSetRes;
+    }
+
+    /**
+     * One whole-side step+closure+intern, or null when the uncut step is
+     * empty or the side was abandoned. Fresh targets join the worklist —
+     * the target states intern into the SHARED space (one interning index:
+     * kernels the pruned sweep also reaches are visited, not duplicated),
+     * so their own cut contexts grow the side table transitively.
+     *
+     * <p>Bounded + clean abandon: the whole-side pipeline runs on the
+     * side meter (the secondary phase's fork — half of the compile's
+     * remaining ticks AFTER the pruned build completed), and its boxed
+     * entries charge the same compile RAM budget as pruned ones (see
+     * {@link #addWhole}). On exhaustion the side is ABANDONED — the
+     * recorded whole lists are stripped, the artifact stays a plain
+     * pruned one, and the facade falls back to the cut-free second build
+     * (which rejects bombs with the standard "pattern too large" family,
+     * exactly as before the side table existed). Budget exceptions raised
+     * by the shared caps (closure spike, state/kernel totals) are caught
+     * the same way: only "pattern too large" rejections are treated as
+     * abandon, anything else is a bug and propagates.
+     */
+    private TdfaStateIndex.AddResult wholeSideStep(int sid, LiveContext ctx, long[] activeEdges) {
+        if (!ctx.cut || wholeAbandoned) {
+            return null;
+        }
+        // Runs inside the secondary phase, on its side meter.
+        try {
+            List<Config> steppedU = stepOnSymbol(ctx.uncut, activeEdges, ctx.orMask, true);
+            if (steppedU.isEmpty()) {
+                return null;
+            }
+            List<Config> closedU = epsilonClosure(steppedU);
+            // Shared-cap pre-flight: whole-side states debit the SAME
+            // state/kernel totals as pruned ones (one interning space).
+            // Abandon BEFORE the add would push the shared totals over a
+            // cap — a fatal throw from a later addState would fail a
+            // compile whose artifacts fit (the caps belong to the primary
+            // build; the side is optional).
+            long weight = (long) closedU.size() * kernelConfigBytes;
+            if (kernels.size() + 1 > maxStates || kernelsWeighted + weight > Budgets.compileMemoryBytes()) {
+                abandonWholeSide(null);
+                return null;
+            }
+            int[] opsU = variants.transitionRegops(closedU, sid);
+            TdfaStateIndex.AddResult arU = index.addState(closedU, opsU, steppedU);
+            if (!processed.get(arU.targetId)) {
+                work.push(arU.targetId);
+            }
+            return arU;
+        } catch (WorkMeter.Exhausted over) {
+            abandonWholeSide(over);
+            return null;
+        } catch (IllegalStateException e) {
+            if (String.valueOf(e.getMessage()).contains("pattern too large")) {
+                abandonWholeSide(e);
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Record one whole-list entry, charging the side table against the
+     * compile RAM budget. Returns false (and abandons the side) when the
+     * charge would exceed it.
+     */
+    private boolean addWhole(int sid, int lo, int hi, int target, int[] ops, int requiredMask) {
+        if (wholeAbandoned) {
+            return false;
+        }
+        if (boxedRangeBytes + BudgetWeights.RANGE_BOXED_BYTES > Budgets.compileMemoryBytes()) {
+            abandonWholeSide(null);
+            return false;
+        }
+        List<Range> wholeList = builders.get(sid).wholeRanges;
+        if (wholeList == null) {
+            return false;
+        }
+        boolean fresh = DfaStateBuilder.addRange(wholeList, lo, hi, target, ops, requiredMask);
+        if (fresh) {
+            boxedRangeBytes += BudgetWeights.RANGE_BOXED_BYTES;
+        }
+        return fresh;
+    }
+
+    /**
+     * Abandon the partial-whole side: strip every recorded whole list (the
+     * artifact reverts to the plain pruned one; states interned only by
+     * the side's exploration stay as find-unreachable dead weight —
+     * correct, and bounded by the caps that tripped) and record the
+     * reason. The facade sees wholeSideComplete == false and falls back to
+     * the cut-free whole determinization.
+     */
+    private void abandonWholeSide(Exception cause) {
+        if (wholeAbandoned) {
+            return;
+        }
+        wholeAbandoned = true;
+        abandonCause = cause;
+        for (DfaStateBuilder b : builders) {
+            b.wholeRanges = null;
+        }
+    }
+
+    /**
+     * The whole side is active for this compile: pruned Perl mode with the
+     * side table not disabled ({@code -Dtdfa.nopartialwhole}) and not
+     * already abandoned.
+     */
+    private boolean wholeSideActive() {
+        return wholeSide && !wholeAbandoned;
     }
 
     /**
@@ -714,8 +1136,13 @@ final class TdfaCompiler {
      * (wrong-context) range from firing. A single context owns every
      * cell unambiguously, so markers only exist when overlaps do
      * (nCtx &gt; 1).
+     *
+     * <p>The whole list (when present) gets its own marker pass keyed on
+     * the UNCUT liveness: a cut context whose residue still steps is
+     * LIVE in the whole relation (no marker there), while a context whose
+     * uncut step is empty owns its cells with a whole-side DEAD.
      */
-    private void emitDeadMarkers(int sid, List<LiveContext> ctxs, int[][] ctxSetRes) {
+    private void emitDeadMarkers(int sid, List<LiveContext> ctxs, int[][] ctxSetRes, int[][] ctxSetResU) {
         int nCtx = ctxs.size();
         if (nCtx <= 1) {
             return;
@@ -740,6 +1167,20 @@ final class TdfaCompiler {
                                 + " DEAD marker mask=" + Integer.toBinaryString(ctxs.get(ci).orMask));
                         }
                         break;
+                    }
+                }
+            }
+            // whole relation: same rule over the uncut liveness matrix
+            if (ctxSetResU != null && !wholeAbandoned && builders.get(sid).wholeRanges != null) {
+                for (int ci = 0; ci < nCtx; ci++) {
+                    if (ctxSetResU[ci][setId] != -1) {
+                        continue;
+                    }
+                    for (int cj = ci + 1; cj < nCtx; cj++) {
+                        if (ctxSetResU[cj][setId] > 0) {
+                            addWhole(sid, rangeLo, rangeHi, -1, null, ctxs.get(ci).orMask);
+                            break;
+                        }
                     }
                 }
             }
@@ -1068,63 +1509,6 @@ final class TdfaCompiler {
     }
 
     /**
-     * Pike post-match thread pruning, determinized (Perl mode only): the
-     * moment a live set contains an ACCEPT config, every config ranked
-     * BELOW the first (highest-priority) alive accept is dead — any match
-     * those threads reach is discarded by leftmost-first (re2j records
-     * only the first Match), and non-matching continuations of them are
-     * irrelevant. Without the prune, the walk extends past a recorded
-     * accept via a lower-priority body and the runner's unconditional
-     * lastAccept overwrite turns the result leftmost-LONGEST for that
-     * window ({@code .+?\b[^\d]*} on "ß9" reports [0,2) where
-     * re2j/sim/jdk report [0,1): the lazy {@code .} body matched '9'
-     * although ranked below the \b-gated accept at pos 1).
-     *
-     * <p>Configs ranked ABOVE the accept are kept: their later match
-     * legitimately replaces the recorded one (the stop table's
-     * higherPriSym NEVER_STOP exists for exactly them). Greedy shapes
-     * are unaffected in practice — the body outranks the accept there.
-     * The KERNEL itself is not pruned (state identity and the stop/final
-     * tables see the full closure); only this live set's stepping input.
-     */
-    List<Config> pruneBelowAccept(List<Config> live) {
-        if (longest || unpruned) {
-            return live;
-        }
-        int cut = -1;
-        for (int i = 0; i < live.size(); i++) {
-            if (live.get(i).state == nfa.accept) {
-                cut = i;
-                break;
-            }
-        }
-        if (cut < 0 || cut == live.size() - 1) {
-            return live;
-        } // nothing below the accept
-        List<Config> pruned = new ArrayList<>(live.subList(0, cut + 1));
-        return pruned;
-    }
-
-    /**
-     * In-place variant for freshly-built live lists.
-     */
-    void pruneBelowAcceptInPlace(List<Config> live) {
-        if (longest || unpruned) {
-            return;
-        }
-        int cut = -1;
-        for (int i = 0; i < live.size(); i++) {
-            if (live.get(i).state == nfa.accept) {
-                cut = i;
-                break;
-            }
-        }
-        if (cut >= 0 && cut < live.size() - 1) {
-            live.subList(cut + 1, live.size()).clear();
-        }
-    }
-
-    /**
      * Compute per-state DFS arrival order (re2j's densePcs semantics) for the
      * closure rooted at {@code seed}, assuming the cursor's position-flags
      * are exactly {@code posMask}. Assertion ε-edges whose required bits
@@ -1217,21 +1601,24 @@ final class TdfaCompiler {
      * priority order (it is a live-set of ONE assertion context — every
      * config is a priority competitor).
      *
-     * <p>Pike-cut (Perl mode): when the first accept config in the list is
-     * alive in this context ({@code ctxMask ⊇ acceptEmptyMask}), every
-     * config below it is cut exactly like a pike VM cuts threads below a
-     * match-recording thread — they can never produce the answer.
-     * Contexts where the accept is dead keep the fallbacks: no accept
-     * fired there, so nothing was cut.
+     * <p>Pike-cut (Perl pruned mode, {@code uncutStep == false}): when the
+     * first accept config in the list is alive in this context
+     * ({@code ctxMask ⊇ acceptEmptyMask}), every config below it is cut
+     * exactly like a pike VM cuts threads below a match-recording thread —
+     * they can never produce the answer. Contexts where the accept is
+     * dead keep the fallbacks: no accept fired there, so nothing was cut.
+     * {@code uncutStep == true} (the partial-whole side sweep) skips the
+     * cut: whole-input walks must follow the continuations past an
+     * earlier accept (see {@link #wholeSideStep}).
      *
      * <p>Stepping resets emptyMask to 0 — assertions are position-bound;
      * the context's OR-mask rides the emitted range as requiredMask.
      */
-    List<Config> stepOnSymbol(List<Config> configs, long[] activeEdges, int ctxMask) {
+    List<Config> stepOnSymbol(List<Config> configs, long[] activeEdges, int ctxMask, boolean uncutStep) {
         int firstAcceptIdx = -1;
         int acceptEmptyMask = 0;
         boolean suppress = false;
-        if (!longest && !unpruned) {
+        if (!longest && !unpruned && !uncutStep) {
             for (int i = 0; i < configs.size(); i++) {
                 Config c = configs.get(i);
                 if (c.state == nfa.accept) {
@@ -1405,22 +1792,76 @@ final class TdfaCompiler {
     /**
      * One assertion context of a closure: the configs alive under one
      * alive-mask pattern over the runtime posFlags values, in
-     * closure-priority order (pike-pruned in Perl mode), plus the OR of
-     * their emptyMasks ({@code orMask} — rides the emitted ranges as
-     * requiredMask) and the pattern's {@code coverage} (alive-config
-     * count; contexts are emitted most-coverage first so superset
-     * live-sets precede their subsets).
+     * closure-priority order, plus the OR of their emptyMasks ({@code
+     * orMask} — rides the emitted ranges as requiredMask) and the
+     * pattern's {@code coverage} (alive-config count; contexts are
+     * emitted most-coverage first so superset live-sets precede their
+     * subsets).
+     *
+     * <p>Perl pruned compiles split the context's stepping input at the
+     * first alive accept: {@code configs} is the pike-cut list the pruned
+     * sweep steps, {@code uncut} the pre-cut list the whole-side sweep
+     * steps, and {@code cut} records whether anything was actually
+     * removed (only then does the state grow a partial-whole side table
+     * for this context). POSIX and cut-free compiles never cut
+     * ({@code configs == uncut}).
+     *
+     * <p>The pike cut is re2j's post-match thread pruning, determinized:
+     * the moment a live set contains an ACCEPT config, every config
+     * ranked BELOW the first (highest-priority) alive accept is dead —
+     * any match those threads reach is discarded by leftmost-first (re2j
+     * records only the first Match), and non-matching continuations of
+     * them are irrelevant. Without the prune, the walk extends past a
+     * recorded accept via a lower-priority body and the runner's
+     * unconditional lastAccept overwrite turns the result
+     * leftmost-LONGEST for that window ({@code .+?\b[^\d]*} on "ß9"
+     * reports [0,2) where re2j/sim/jdk report [0,1): the lazy {@code .}
+     * body matched '9' although ranked below the \b-gated accept at pos
+     * 1). Configs ranked ABOVE the accept are kept: their later match
+     * legitimately replaces the recorded one (the stop table's
+     * higherPriSym NEVER_STOP exists for exactly them). The KERNEL
+     * itself is never pruned (state identity and the stop/final tables
+     * see the full closure); only the stepping input — and the pre-cut
+     * list survives beside it, because whole-input walks need exactly
+     * those below-accept continuations ({@code (a|ab)} on "ab").
      */
     static final class LiveContext {
         final int orMask;
         final int coverage;
         final List<Config> configs;
+        final List<Config> uncut;
+        final boolean cut;
 
-        LiveContext(int orMask, int coverage, List<Config> configs) {
+        LiveContext(TdfaCompiler c, int orMask, int coverage, List<Config> uncut) {
             this.orMask = orMask;
             this.coverage = coverage;
-            this.configs = configs;
+            this.uncut = uncut;
+            if (c.longest || c.unpruned) {
+                this.configs = uncut;
+                this.cut = false;
+                return;
+            }
+            int cutAt = firstAccept(uncut, c.nfa.accept);
+            if (cutAt < 0 || cutAt == uncut.size() - 1) {
+                this.configs = uncut;
+                this.cut = false;
+                return;
+            }
+            this.configs = new ArrayList<>(uncut.subList(0, cutAt + 1));
+            this.cut = true;
         }
+    }
+
+    /**
+     * Index of the first accept config in the list, or -1.
+     */
+    private static int firstAccept(List<Config> live, int accept) {
+        for (int i = 0; i < live.size(); i++) {
+            if (live.get(i).state == accept) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**

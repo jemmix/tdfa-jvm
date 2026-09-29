@@ -12,8 +12,9 @@ package io.github.jemmix.tdfa.core;
  * Deliberately NOT part of {@link RegexEngine}: third-party engines carry
  * no whole-match contract, and a compile's whole engine is always one of
  * the native ones (a runner over the cut-free artifact, or the find engine
- * itself when its pike cut never deleted a continuation — the artifact
- * is then identical to the cut-free build and the walk is exact on it).
+ * itself when its pike cut never deleted a continuation or its
+ * partial-whole side table recorded the uncut continuations — the walk is
+ * exact on that one artifact).
  *
  * <p>The {@link MatchScratch} carrier follows the {@link RegexEngine#match
  * match} reuse contract: {@code null} allocates on demand, a caller-owned

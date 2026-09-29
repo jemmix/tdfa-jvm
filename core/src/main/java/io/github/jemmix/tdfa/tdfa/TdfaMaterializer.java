@@ -152,6 +152,27 @@ final class TdfaMaterializer {
                 rangeBlockIds[s][r] = cfg.blocks.size() - 1;
                 basicLeaving[s].add(rangeBlockIds[s][r]);
             }
+            // Partial-whole side blocks: the whole walk's op blocks. They
+            // join the same liveness universe — successor arcs are the
+            // UNION of both relations' zero-op reachability (a superset of
+            // either walk's real successors, i.e. conservative for
+            // liveness: no register read on any walk is ever missed).
+            if (sb.wholeRanges != null) {
+                for (int r = 0; r < sb.wholeRanges.size(); r++) {
+                    meter.tick();
+                    Range range = sb.wholeRanges.get(r);
+                    if (range.ops == null || range.ops.length == 0) {
+                        continue;
+                    }
+                    if (range.target < 0) {
+                        continue;
+                    } // DEAD markers carry no ops and no successors
+                    Block blk = cfg.newBlock(Cfg.BLOCK_BASIC, s, r);
+                    blk.whole = true;
+                    decodeOps(range.ops, blk.ops);
+                    basicLeaving[s].add(cfg.blocks.size() - 1);
+                }
+            }
             if (accept.get(s)) {
                 if (sb.finalOpsVariants != null) {
                     // Position-aware state: one FINAL block per φ variant
@@ -181,7 +202,12 @@ final class TdfaMaterializer {
             if (blk.kind != Cfg.BLOCK_BASIC) {
                 continue;
             }
-            int target = builders.get(blk.stateId).ranges.get(blk.rangeIndex).target;
+            DfaStateBuilder blkOwner = builders.get(blk.stateId);
+            int target = blk.whole ? blkOwner.wholeRanges.get(blk.rangeIndex).target
+                : blkOwner.ranges.get(blk.rangeIndex).target;
+            if (target < 0) {
+                continue;
+            } // DEAD marker: no successors
             BitSet visited = new BitSet();
             ArrayDeque<Integer> frontier = new ArrayDeque<>();
             frontier.push(target);
@@ -208,22 +234,34 @@ final class TdfaMaterializer {
                         + Budgets.COMPILE_MEMORY_PROP + " if you need denser graphs)");
                 }
                 DfaStateBuilder tb = builders.get(t);
-                for (int r = 0; r < tb.ranges.size(); r++) {
-                    Range tr = tb.ranges.get(r);
-                    if (tr.ops != null && tr.ops.length > 0) {
-                        continue;
-                    } // op-bearing: not skipped
-                    if (tr.target < 0) {
-                        continue;
-                    }
-                    if (!visited.get(tr.target)) {
-                        visited.set(tr.target);
-                        frontier.push(tr.target);
-                    }
+                addZeroOpFrontier(tb.ranges, visited, frontier);
+                if (tb.wholeRanges != null) {
+                    addZeroOpFrontier(tb.wholeRanges, visited, frontier);
                 }
             }
         }
         return cfg;
+    }
+
+    /**
+     * Push targets of zero-op transitions of one relation onto the
+     * successor frontier (shared by the pruned and whole lists — the
+     * union is the conservative liveness reachability).
+     */
+    private void addZeroOpFrontier(List<Range> list, BitSet visited, ArrayDeque<Integer> frontier) {
+        for (int r = 0; r < list.size(); r++) {
+            Range tr = list.get(r);
+            if (tr.ops != null && tr.ops.length > 0) {
+                continue;
+            } // op-bearing: not skipped
+            if (tr.target < 0) {
+                continue;
+            }
+            if (!visited.get(tr.target)) {
+                visited.set(tr.target);
+                frontier.push(tr.target);
+            }
+        }
     }
 
     /**
@@ -289,7 +327,11 @@ final class TdfaMaterializer {
             int[] encoded = encodeOps(blk.ops);
             DfaStateBuilder sb = builders.get(blk.stateId);
             if (blk.kind == Cfg.BLOCK_BASIC) {
-                sb.ranges.get(blk.rangeIndex).ops = encoded;
+                if (blk.whole) {
+                    sb.wholeRanges.get(blk.rangeIndex).ops = encoded;
+                } else {
+                    sb.ranges.get(blk.rangeIndex).ops = encoded;
+                }
             } else if (blk.kind == Cfg.BLOCK_FINAL) {
                 if (blk.rangeIndex >= 0) {
                     sb.finalOpsVariants[blk.rangeIndex] = encoded;
@@ -319,6 +361,7 @@ final class TdfaMaterializer {
         // First pass: coalesce + mask-specificity sort on every state's
         // ranges, compute totals.
         int totalRanges = 0;
+        int totalWholeRanges = 0;
         int totalOpsSlots = 1; // reserve ops[0] = OP_END for the "no ops" case (opsOff=0 means empty)
         for (int s = 0; s < n; s++) {
             meter.tick();
@@ -331,6 +374,15 @@ final class TdfaMaterializer {
                 if (r.ops != null && r.ops.length > 0) {
                     totalOpsSlots += r.ops.length + 1;
                 } // +1 for OP_END
+            }
+            if (sb.wholeRanges != null) {
+                totalWholeRanges += sb.wholeRanges.size();
+                for (Range r : sb.wholeRanges) {
+                    meter.tick();
+                    if (r.ops != null && r.ops.length > 0) {
+                        totalOpsSlots += r.ops.length + 1;
+                    } // +1 for OP_END
+                }
             }
             if (det.accept.get(s)) {
                 int[] f = sb.finalOpsArr;
@@ -348,9 +400,10 @@ final class TdfaMaterializer {
         }
 
         // Second pass: allocate flat arrays and populate.
-        FlatDfa flat = new FlatDfa(n, totalRanges, totalOpsSlots, det, nfa.tagCount, finalRegBase);
+        FlatDfa flat = new FlatDfa(n, totalRanges, totalWholeRanges, totalOpsSlots, det, nfa.tagCount, finalRegBase);
         int opsHead = 1; // next free slot in ops (slot 0 reserved)
         int rangesHead = 0; // next free slot in ranges (in units of 5 ints)
+        int wholeHead = 0; // next free slot in wholeRanges (in units of 5 ints)
         boolean[] finalVariantState = new boolean[n];
         for (int s = 0; s < n; s++) {
             meter.tick();
@@ -384,6 +437,42 @@ final class TdfaMaterializer {
                 flat.ranges[o + 3] = opsOff;
                 flat.ranges[o + 4] = r.requiredMask;
                 rangesHead++;
+            }
+            if (sb.wholeRanges != null && !sb.wholeRanges.isEmpty()) {
+                if (sb.wholeRanges.size() > 0xFFFF) {
+                    throw new IllegalStateException("tdfa: state " + s + " needs " + sb.wholeRanges.size()
+                        + " whole-side entries — exceeds the 16-bit wholeCount packing (pattern too large)");
+                }
+                flat.wholeBase[s] = wholeHead;
+                flat.wholeCount[s] = sb.wholeRanges.size();
+                for (int i = 0; i < sb.wholeRanges.size(); i++) {
+                    meter.tick();
+                    Range r = sb.wholeRanges.get(i);
+                    int o = wholeHead * 5;
+                    flat.wholeRanges[o] = r.lo;
+                    flat.wholeRanges[o + 1] = r.hi;
+                    flat.wholeRanges[o + 2] = r.target;
+                    int wholeOpsOff;
+                    if (r.ops == null || r.ops.length == 0) {
+                        wholeOpsOff = 0;
+                    } else {
+                        wholeOpsOff = opsHead;
+                        for (int j = 0; j < r.ops.length; j += 3) {
+                            flat.ops[opsHead] = r.ops[j];
+                            flat.ops[opsHead + 1] = r.ops[j + 1];
+                            flat.ops[opsHead + 2] = r.ops[j + 2];
+                            flat.globalMaxReg = Math.max(flat.globalMaxReg, r.ops[j + 1] + 1);
+                            if (r.ops[j] == OP_COPY) {
+                                flat.globalMaxReg = Math.max(flat.globalMaxReg, r.ops[j + 2] + 1);
+                            }
+                            opsHead += 3;
+                        }
+                        flat.ops[opsHead++] = OP_END;
+                    }
+                    flat.wholeRanges[o + 3] = wholeOpsOff;
+                    flat.wholeRanges[o + 4] = r.requiredMask;
+                    wholeHead++;
+                }
             }
             int finalOpsOff = 0;
             if (sb.finalOpsArr != null && sb.finalOpsArr.length > 0) {
@@ -492,7 +581,8 @@ final class TdfaMaterializer {
             int[] partition;
             try {
                 DfaMinimizer m = new DfaMinimizer(n, flat.meta, flat.base, flat.finalOpsOff, flat.ranges, flat.ops,
-                    flat.entryMask, flat.acceptMask, flat.stopOnAcceptMask, flat.finalOpsByMask, longest, meter);
+                    flat.entryMask, flat.acceptMask, flat.stopOnAcceptMask, flat.finalOpsByMask, flat.wholeBase,
+                    flat.wholeCount, flat.wholeRanges, longest, meter);
                 partition = m.computePartition();
             } catch (WorkMeter.Exhausted overBudget) {
                 obs.note("minimize", "skipped (compute budget)");
@@ -545,8 +635,12 @@ final class TdfaMaterializer {
             }
         }
         int newTotalRanges = 0;
+        int newTotalWholeRanges = 0;
         for (int g = 0; g < newN; g++) {
             newTotalRanges += rangeCount(flat.meta[rep[g]]);
+            if (flat.wholeBase != null && flat.wholeBase[rep[g]] >= 0) {
+                newTotalWholeRanges += flat.wholeCount[rep[g]];
+            }
         }
         int[] minMeta = new int[newN];
         int[] minBase = new int[newN];
@@ -556,7 +650,14 @@ final class TdfaMaterializer {
         int[] minStopMask = flat.stopOnAcceptMask != null ? new int[newN * 64] : null;
         int[] minRanges = new int[newTotalRanges * 5];
         int[] minFinalOpsByMask = flat.finalOpsByMask != null ? new int[newN * 64] : null;
+        int[] minWholeBase = flat.wholeRanges != null ? new int[newN] : null;
+        int[] minWholeCount = flat.wholeRanges != null ? new int[newN] : null;
+        int[] minWholeRanges = newTotalWholeRanges > 0 ? new int[newTotalWholeRanges * 5] : null;
+        if (minWholeBase != null) {
+            Arrays.fill(minWholeBase, -1);
+        }
         int minRangesHead = 0;
+        int minWholeHead = 0;
         for (int g = 0; g < newN; g++) {
             int r = rep[g];
             minMeta[g] = flat.meta[r];
@@ -583,6 +684,22 @@ final class TdfaMaterializer {
                 minRanges[no + 4] = flat.ranges[o + 4];
                 minRangesHead++;
             }
+            if (minWholeRanges != null && flat.wholeBase != null && flat.wholeBase[r] >= 0) {
+                minWholeBase[g] = minWholeHead;
+                minWholeCount[g] = flat.wholeCount[r];
+                int wbase = flat.wholeBase[r];
+                for (int i = 0; i < flat.wholeCount[r]; i++) {
+                    int o = (wbase + i) * 5;
+                    int no = minWholeHead * 5;
+                    minWholeRanges[no] = flat.wholeRanges[o];
+                    minWholeRanges[no + 1] = flat.wholeRanges[o + 1];
+                    int t = flat.wholeRanges[o + 2];
+                    minWholeRanges[no + 2] = (t == -1) ? -1 : partition[t];
+                    minWholeRanges[no + 3] = flat.wholeRanges[o + 3];
+                    minWholeRanges[no + 4] = flat.wholeRanges[o + 4];
+                    minWholeHead++;
+                }
+            }
         }
         if (debug) {
             System.err.println("[tdfa] minimized: " + n + " -> " + newN + " states");
@@ -596,6 +713,9 @@ final class TdfaMaterializer {
         flat.stopOnAcceptMask = minStopMask;
         flat.ranges = minRanges;
         flat.finalOpsByMask = minFinalOpsByMask;
+        flat.wholeBase = minWholeBase != null ? minWholeBase : flat.wholeBase;
+        flat.wholeCount = minWholeCount != null ? minWholeCount : flat.wholeCount;
+        flat.wholeRanges = minWholeRanges != null ? minWholeRanges : flat.wholeRanges;
     }
 
     // ========================= artifact assembly =========================
@@ -605,40 +725,48 @@ final class TdfaMaterializer {
      * groups keep their mask-specificity order). The builders emit
      * sorted, but the minimizer / regopt rewrite can reorder within a
      * state; the runtime's binary search over lo requires the order.
+     * The whole side table gets the same treatment.
      */
     private void ensureRangesSorted(FlatDfa flat) {
         for (int s = 0; s < flat.stateCount; s++) {
             int cnt = (flat.meta[s] >>> 1) & 0xFFFF, b = flat.base[s];
-            boolean sorted = true;
-            for (int i = 1; i < cnt; i++) {
-                if (flat.ranges[(b + i) * 5] < flat.ranges[(b + i - 1) * 5]) {
-                    sorted = false;
-                    break;
-                }
+            sortStateIfNeeded(flat.ranges, b, cnt);
+            if (flat.wholeRanges != null && flat.wholeBase[s] >= 0) {
+                sortStateIfNeeded(flat.wholeRanges, flat.wholeBase[s], flat.wholeCount[s]);
             }
-            if (sorted) {
-                continue;
-            }
-            // Pack (lo << 32) | original index for a stable sort by lo, then
-            // permute the 5-int entry groups in place.
-            long[] keys = new long[cnt];
-            for (int i = 0; i < cnt; i++) {
-                keys[i] = ((long) flat.ranges[(b + i) * 5] << 32) | i;
-            }
-            Arrays.sort(keys);
-            int[] tmp = new int[cnt * 5];
-            for (int i = 0; i < cnt; i++) {
-                int src = (int) (keys[i] & 0xFFFFFFFFL) * 5;
-                System.arraycopy(flat.ranges, (b + src) * 5, tmp, i * 5, 5);
-            }
-            System.arraycopy(tmp, 0, flat.ranges, b * 5, cnt * 5);
         }
+    }
+
+    private void sortStateIfNeeded(int[] rg, int b, int cnt) {
+        boolean sorted = true;
+        for (int i = 1; i < cnt; i++) {
+            if (rg[(b + i) * 5] < rg[(b + i - 1) * 5]) {
+                sorted = false;
+                break;
+            }
+        }
+        if (sorted) {
+            return;
+        }
+        // Pack (lo << 32) | original index for a stable sort by lo, then
+        // permute the 5-int entry groups in place.
+        long[] keys = new long[cnt];
+        for (int i = 0; i < cnt; i++) {
+            keys[i] = ((long) rg[(b + i) * 5] << 32) | i;
+        }
+        Arrays.sort(keys);
+        int[] tmp = new int[cnt * 5];
+        for (int i = 0; i < cnt; i++) {
+            int src = (int) (keys[i] & 0xFFFFFFFFL) * 5;
+            System.arraycopy(rg, (b + src) * 5, tmp, i * 5, 5);
+        }
+        System.arraycopy(tmp, 0, rg, b * 5, cnt * 5);
     }
 
     /**
      * Rebuild the per-entry hi-prefix (max hi of all earlier entries in
      * the state) over the final, possibly remapped arrays — the runner's
-     * quick-reject scan over wide ranges.
+     * quick-reject scan over wide ranges. One table per relation.
      */
     private int[] buildHiPrefix(FlatDfa flat) {
         int[] hiPrefix = new int[flat.ranges.length / 5];
@@ -651,6 +779,23 @@ final class TdfaMaterializer {
                 }
                 hiPrefix[b + i] = maxHi;
             }
+        }
+        if (flat.wholeRanges != null && flat.wholeRanges.length > 0) {
+            int[] wholeHi = new int[flat.wholeRanges.length / 5];
+            for (int s = 0; s < flat.stateCount; s++) {
+                if (flat.wholeBase[s] < 0) {
+                    continue;
+                }
+                int cnt = flat.wholeCount[s], b = flat.wholeBase[s], maxHi = Integer.MIN_VALUE;
+                for (int i = 0; i < cnt; i++) {
+                    int hi = flat.wholeRanges[(b + i) * 5 + 1];
+                    if (hi > maxHi) {
+                        maxHi = hi;
+                    }
+                    wholeHi[b + i] = maxHi;
+                }
+            }
+            flat.wholeHiPrefix = wholeHi;
         }
         return hiPrefix;
     }
@@ -714,12 +859,17 @@ final class TdfaMaterializer {
                 + ",entryMask=" + (flat.entryMask.length * 4L) + ",acceptMask=" + (flat.acceptMask.length * 4L)
                 + ",ops=" + (flat.ops.length * 4L) + ",hiPrefix=" + (hiPrefix.length * 4L) + ",scalars="
                 + ((flat.meta.length + flat.base.length + flat.finalOpsOff.length) * 4L + stateCount) + "}"
-                + " stopMaskUniform=" + (perStateUniform ? (globalUniform ? "global" : "perState") : "no"));
+                + " stopMaskUniform=" + (perStateUniform ? (globalUniform ? "global" : "perState") : "no")
+                + (flat.wholeRanges != null ? " wholeSide{entries=" + (flat.wholeRanges.length / 5) + ",bytes="
+                    + ((flat.wholeRanges.length + flat.wholeBase.length + flat.wholeCount.length
+                        + (flat.wholeHiPrefix != null ? flat.wholeHiPrefix.length : 0)) * 4L)
+                    + ",complete=" + flat.wholeSideComplete + "}" : ""));
         return new Tdfa(nfa.tagCount, nfa.groupCount, nfa.namedGroups, flat.globalMaxReg, flat.finalRegBase, 0,
             stateCount, flat.meta, flat.base, flat.finalOpsOff, flat.finalOpsByMask, flat.ranges, flat.ops, hiPrefix,
             flat.entryMask, flat.acceptMask, longest, finalStop, uniformStop, nfa.multiline, nfa.unicodeWordBoundary,
             nfa.wordRanges, hasFixed(nfa.fixedBase) ? nfa.fixedBase : null,
-            hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null, flat.pikeCutMatters);
+            hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null, flat.pikeCutMatters, flat.wholeRanges, flat.wholeBase,
+            flat.wholeCount, flat.wholeHiPrefix, flat.wholeSideComplete);
     }
 
     /**
@@ -763,6 +913,34 @@ final class TdfaMaterializer {
          */
         int[] ranges;
         /**
+         * Partial-whole side table (null when the compile never fired the
+         * pike cut on any state or the side was abandoned): 5 ints per
+         * entry like {@link #ranges}, holding the UNCUT whole-walk
+         * relation of the states in {@link #wholeBase} (cut contexts'
+         * uncut targets; uncut contexts mirror {@link #ranges}).
+         */
+        int[] wholeRanges;
+        /**
+         * [state] → base index into wholeRanges, or -1 (the whole walk
+         * then dispatches on {@link #ranges}, which is the exact uncut
+         * relation of that state).
+         */
+        int[] wholeBase;
+        /**
+         * [state] → entry count in wholeRanges (0 when base < 0).
+         */
+        int[] wholeCount;
+        /**
+         * True iff the side table completed (never abandoned); see
+         * {@link DeterminizedDfa#wholeSideComplete}.
+         */
+        boolean wholeSideComplete;
+        /**
+         * Per-entry hi-prefix of {@link #wholeRanges} (assigned by
+         * {@link #buildHiPrefix}); null when no side table.
+         */
+        int[] wholeHiPrefix;
+        /**
          * Op stream, 3 ints per op + OP_END terminator; ops[0] = OP_END is
          * the shared "no ops" sentinel.
          */
@@ -782,13 +960,18 @@ final class TdfaMaterializer {
         int globalMaxReg;
         int finalRegBase;
 
-        FlatDfa(int stateCount, int totalRanges, int totalOpsSlots, DeterminizedDfa det, int tagCount,
-            int finalRegBase) {
+        FlatDfa(int stateCount, int totalRanges, int totalWholeRanges, int totalOpsSlots, DeterminizedDfa det,
+            int tagCount, int finalRegBase) {
             this.stateCount = stateCount;
             this.meta = new int[stateCount];
             this.base = new int[stateCount];
             this.finalOpsOff = new int[stateCount];
             this.ranges = new int[totalRanges * 5];
+            this.wholeRanges = totalWholeRanges > 0 ? new int[totalWholeRanges * 5] : null;
+            this.wholeBase = new int[stateCount];
+            this.wholeCount = new int[stateCount];
+            Arrays.fill(this.wholeBase, -1);
+            this.wholeSideComplete = det.wholeSideComplete;
             this.ops = new int[totalOpsSlots];
             this.ops[0] = OP_END; // opsOff=0 means "empty block"
             this.entryMask = det.entryMask;

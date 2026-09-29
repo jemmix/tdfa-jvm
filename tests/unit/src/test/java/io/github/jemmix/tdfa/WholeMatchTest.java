@@ -26,12 +26,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * Whole/find semantics: matches() runs a cut-free walk to EOF (an accept
  * alive at end-of-input is a full match) while find() keeps leftmost-first
  * — the two answer the same input differently by design ({@code (a|ab)}
- * whole-matches "ab" while find stops at "a"). When the compile's pike cut
- * deleted continuations, a second cut-free artifact backs matches();
- * otherwise both run on the one find artifact. A pattern whose cut-free
- * whole artifact exceeds the compile budget fails {@code compile()} with
- * the standard "pattern too large" rejection. Pinned on BOTH tiers
- * (default ASM shells and {@code -Dtdfa.engine=VM}).
+ * whole-matches "ab" while find stops at "a"). When the compile's pike
+ * cut deleted continuations, the SAME artifact backs matches() through
+ * its partial-whole side table (the uncut continuations recorded beside
+ * the pruned transitions); a pattern whose side exploration exceeds the
+ * budget falls back to a second cut-free artifact, and one whose
+ * cut-free whole artifact exceeds the compile budget fails {@code
+ * compile()} with the standard "pattern too large" rejection. Pinned on
+ * BOTH tiers (default ASM shells and {@code -Dtdfa.engine=VM}).
  */
 class WholeMatchTest {
 
@@ -174,11 +176,17 @@ class WholeMatchTest {
     }
 
     /**
-     * One engine source serves EVERY artifact of a compile: a factory is
-     * called once per artifact (twice when the pike cut bit — find plus
-     * cut-free whole — once when the artifacts are shared), and on the
-     * default tier the whole engine is generated just like the find engine
-     * (its native {@code wholeOne} walk backs {@code matches()}).
+     * One engine source serves EVERY artifact of a compile. The
+     * partial-whole side table makes the hazardous pattern a ONE-artifact
+     * compile (the side records the uncut continuations whole walks need,
+     * so the factory is called once and the whole engine IS the find
+     * engine); hazard-free patterns were always one. With the side
+     * disabled ({@code -Dtdfa.nopartialwhole}) the hazardous shape falls
+     * back to the two-artifact form (find plus the cut-free whole
+     * determinization). On the default tier the whole engine is generated
+     * just like the find engine (its {@code matchWhole} — inlined
+     * wholeOne for plain artifacts, a runner delegate for side-table
+     * ones — backs {@code matches()}).
      */
     @Test
     void engineSourceServesEveryArtifact() {
@@ -187,8 +195,10 @@ class WholeMatchTest {
             seen.add(t);
             return new TdfaRunner(t);
         });
-        assertThat(seen).as("hazardous pattern: find + whole artifacts").hasSize(2);
+        assertThat(seen).as("hazardous pattern: one partial-whole artifact").hasSize(1);
         assertThat(p.matcher("ab").matches()).isTrue();
+        assertThat(p.matcher("ab").matches()).isTrue();
+        assertThat(seen.get(0).wholeWalkExact()).isTrue();
 
         List<Tdfa> seenOnce = new ArrayList<>();
         Pattern q = Pattern.compile("a*", 0, t -> {
@@ -197,6 +207,21 @@ class WholeMatchTest {
         });
         assertThat(seenOnce).as("hazard-free pattern: one shared artifact").hasSize(1);
         assertThat(q.matcher("aaa").matches()).isTrue();
+
+        // Side disabled: the hazardous shape pays the cut-free second
+        // build again — the two-artifact form.
+        System.setProperty("tdfa.nopartialwhole", "true");
+        try {
+            List<Tdfa> seenTwo = new ArrayList<>();
+            Pattern r = Pattern.compile("(a|ab)", 0, t -> {
+                seenTwo.add(t);
+                return new TdfaRunner(t);
+            });
+            assertThat(seenTwo).as("side disabled: find + cut-free whole artifacts").hasSize(2);
+            assertThat(r.matcher("ab").matches()).isTrue();
+        } finally {
+            System.clearProperty("tdfa.nopartialwhole");
+        }
 
         Pattern asm = Pattern.compile("(a|ab)");
         assertThat(((TDFAPattern) asm).wholeEngine().getClass().getSimpleName())

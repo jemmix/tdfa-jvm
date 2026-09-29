@@ -25,9 +25,10 @@ package io.github.jemmix.tdfa.tdfa;
  * cap of {@code min(cap, the ledger's remaining ticks)} ({@code cap <= 0}
  * = the whole remaining ledger), and every tick on any family member
  * debits the ledger too. A compile's shipped work — front-end parse/TNFA,
- * the find determinization, and (when the pike cut bit) the cut-free
- * whole determinization — runs on the one ledger, so a single compile
- * cannot exceed the CPU budget.
+ * the find determinization (with its bounded partial-whole side sweep),
+ * and (when the side was abandoned) the cut-free whole determinization —
+ * runs on the one ledger, so a single compile cannot exceed the CPU
+ * budget.
  */
 public final class WorkMeter {
     private final long budget;

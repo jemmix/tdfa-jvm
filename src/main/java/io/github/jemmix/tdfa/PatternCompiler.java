@@ -17,17 +17,21 @@ import io.github.jemmix.tdfa.unicode.UnicodeProviders;
 
 /**
  * {@link Pattern} compilation: fold the flags into an inline-flag prefix,
- * parse to a TNFA, determinize, compile a cut-free whole-match artifact
- * when the pike cut deleted continuations, and translate each artifact to
- * an engine through one source ({@code -Dtdfa.engine=VM} interpreter, a
+ * parse to a TNFA, determinize once, and translate the artifact to an
+ * engine through one source ({@code -Dtdfa.engine=VM} interpreter, a
  * custom {@link RegexEngineFactory}, or per-pattern ASM generation).
- * Everything builds inside {@code compile()}; any budget rejection fails
- * the compile as a translated
+ * The single artifact serves find() AND matches(): the pruned
+ * determinization records a partial-whole side table at every pike-cut
+ * point (the uncut continuations whole-input walks need), and only when
+ * that bounded side exploration exhausts its budget does the compile
+ * fall back to a second, cut-free whole determinization. Everything
+ * builds inside {@code compile()}; any budget rejection fails the
+ * compile as a translated
  * {@link io.github.jemmix.tdfa.core.PatternSyntaxException} — including
- * the end-of-compile execution-RAM check (retained artifact tables must
- * fit {@code tdfa.budget.runtime.memory}; the lazy-memo allowances draw
- * from the residual — "if it compiles, it will execute within budget",
- * see {@link Budgets}).
+ * the end-of-compile execution-RAM check (retained artifact tables,
+ * side table included, must fit {@code tdfa.budget.runtime.memory}; the
+ * lazy-memo allowances draw from the residual — "if it compiles, it
+ * will execute within budget", see {@link Budgets}).
  */
 final class PatternCompiler {
 
@@ -69,13 +73,15 @@ final class PatternCompiler {
         CompileObserver obs = observer != null ? observer : CompileObserver.NONE;
         try {
             // One CPU ledger for the whole compile: the front-end, the find
-            // determinization and the cut-free whole determinization (when
-            // needed) all debit the same pool.
+            // determinization (with its partial-whole side table, when the
+            // pike cut bites) and — only when that side was abandoned over
+            // budget — the cut-free whole determinization all debit the
+            // same pool.
             WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
             Tnfa nfa = Tnfa.compile(fl, disableUnicodeGroups, false, prov, obs, ledger);
-            Tdfa find = Tdfa.compile(nfa, longest, obs, ledger.fork(0));
+            Tdfa find = Tdfa.compileWithWholeSide(nfa, longest, obs, ledger.fork(0));
             Tdfa whole = find;
-            if (find.pikeCutMatters()) {
+            if (!find.wholeWalkExact()) {
                 obs.note("pikeCut", "cut-free whole artifact compiled");
                 whole = Tdfa.compileUnpruned(nfa, longest, obs, ledger.fork(0));
             }

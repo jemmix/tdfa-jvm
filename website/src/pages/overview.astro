@@ -78,7 +78,7 @@ import Code from '../components/Code.astro';
             <li><code>tdfa-core</code> — everything, interpreter-only, zero dependencies, Java 8 floor. Run with <code>-Dtdfa.engine=VM</code> and no code is ever generated.</li>
         </ul>
         <p>
-            One subtlety worth flagging now: the facade compiles <em>two</em> automata per pattern when needed. <code>find()</code> uses the pruned artifact (leftmost-first semantics baked in with a "stop" table); <code>matches()</code> — whole-input match with captures — uses either the same artifact, or a second, cut-free build when the pattern's shape would let the pruning discard captures that a full match needs (the flag is <code>pikeCutMatters</code>). Both share one compile budget; the runtime memo budget is split in half when they differ. More on that in <a href="/execution/">Execution</a>.
+            One subtlety worth flagging now: <code>find()</code> and <code>matches()</code> share ONE automaton. <code>find()</code> uses the pruned artifact (leftmost-first semantics baked in with a "stop" table); <code>matches()</code> — whole-input match with captures — walks the same tables, except at the spots where the pruning would have discarded captures a full match needs (<code>(a|ab)</code> against <code>"ab"</code>), where a <em>side table</em> recorded during the same determinization holds the un-pruned continuations. Only when that bounded side exploration runs over budget does the compiler fall back to a second, cut-free build. More on that in <a href="/execution/">Execution</a>.
         </p>
 
         <h2>Reading order</h2>

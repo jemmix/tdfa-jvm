@@ -42,19 +42,21 @@ package io.github.jemmix.tdfa.tdfa;
  * (charged at {@link Tdfa#retainedTableBytes()} — an end-of-compile
  * check fails the compile when they alone exceed the budget, the
  * standard clean "pattern too large" rejection pointing at {@value
- * #RUNTIME_MEMORY_PROP}) plus the lazy match-time memos, which draw from
- * the RESIDUAL allowance after the retained tables. A pattern retaining
- * TWO engines (find plus a dedicated whole/anchored runner — the
- * non-shared ladder corners) splits the residual in half per engine, so
- * the pattern's combined memos stay within one budget; a shared
- * artifact (one engine) gets the whole residual. Engine-tier
- * construction-time tables (the eager ascii/latin dispatch tiers,
- * generated-class statics, derived bitsets) remain disclosed constants
- * outside the budget — the r11 scope decision: flooring them on it
- * would flip the flagship dictionary shapes off their fast paths.
- * BYO-factory engines retain unaccountable state by construction
- * (documented at the facade); the artifact tables and any native
- * fallback runner still draw from the same residual.
+ * #RUNTIME_MEMORY_PROP}; the partial-whole side table counts as retained
+ * bytes of the one artifact) plus the lazy match-time memos, which draw
+ * from the RESIDUAL allowance after the retained tables. A pattern
+ * retaining TWO engines (find plus a dedicated cut-free whole runner —
+ * the side-table abandonment corner) splits the residual in half per
+ * engine, so the pattern's combined memos stay within one budget; a
+ * shared artifact (one engine, the partial-whole single-artifact form)
+ * gets the whole residual. Engine-tier construction-time tables (the
+ * eager ascii/latin dispatch tiers, generated-class statics, derived
+ * bitsets) remain disclosed constants outside the budget — the r11
+ * scope decision: flooring them on it would flip the flagship
+ * dictionary shapes off their fast paths. BYO-factory engines retain
+ * unaccountable state by construction (documented at the facade); the
+ * artifact tables and any native fallback runner still draw from the
+ * same residual.
  *
  * <p>Knob policy (see the inventory note in {@link Tdfa}): every read is
  * fresh — budgets take effect on the next compile (or the next runner

@@ -35,13 +35,16 @@ public class TDFAPattern implements Pattern {
     private final int flags;
     private final int programSize;
     private transient RegexEngine engine;
-    // A second engine for matches() (anchored both ends), compiled EAGERLY
-    // alongside the main engine — the same artifact whenever the pike cut
-    // doesn't matter (see PatternCompiler), else the unpruned determinization
-    // of the same parse. matchWhole walks it to EOF; an accept config alive
-    // at end-of-input is a full match (the trailing context that a
-    // leftmost-first DFA would have pruned — e.g. (a|ab) against "ab" must
-    // retain the `ab` path — survives in the cut-free build).
+    // The whole-match engine for matches(), compiled EAGERLY alongside the
+    // main engine: the SAME engine whenever the artifact is whole-exact —
+    // hazard-free compiles (the pike cut never fired) and, for the
+    // divergence class ((a|ab) on "ab" — leftmost-first prunes the `ab`
+    // continuation), the find artifact carrying its partial-whole side
+    // table (the uncut continuations recorded beside the pruned
+    // transitions). Only when that bounded side exploration was over
+    // budget does the compile ship a SECOND engine over the cut-free
+    // determinization of the same parse. matchWhole walks to EOF; an
+    // accept config alive at end-of-input is a full match.
     private transient WholeEngine wholeEngine;
     /**
      * The Unicode tables this pattern was compiled against ({@code null} =
@@ -78,7 +81,8 @@ public class TDFAPattern implements Pattern {
     }
 
     /**
-     * Engine for {@code matches()}: cut-free whole-match artifact, compiled eagerly.
+     * Engine for {@code matches()}: whole-exact (the one artifact with its
+     * side table, or the cut-free fallback), compiled eagerly.
      */
     @EmittedSurface
     public WholeEngine wholeEngine() {

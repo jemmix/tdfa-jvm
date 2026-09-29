@@ -8,6 +8,18 @@ import java.util.List;
 final class DfaStateBuilder {
     final int id;
     final List<Range> ranges = new ArrayList<>();
+    /**
+     * The whole-walk transition list (the partial-whole side table): the
+     * state's FULL uncut relation — every (context, cell) entry, with the
+     * cut contexts' entries pointing at their uncut targets instead of the
+     * pike-cut ones. Null until some context of this state cuts, so the
+     * overwhelming majority of states (no cut) never allocate it and the
+     * whole walk falls back to {@link #ranges}, which is then identical to
+     * the uncut relation. Maintained in lockstep with {@link #ranges} by
+     * the emission sweep; coalesce/sort run over it exactly as over the
+     * pruned list.
+     */
+    List<Range> wholeRanges;
     int[] finalOpsArr; // populated during materialization
     /**
      * Position-aware φ variants (deduped op lists); null = mask-uniform.
@@ -23,13 +35,13 @@ final class DfaStateBuilder {
     }
 
     /**
-     * Append one range entry, coalescing INLINE with the previous entry
-     * when it is the immediately adjacent cell run with identical
-     * (target, ops, requiredMask). Determinization emits per breakpoint
-     * cell in ascending order (per assertion context, which requiredMask
-     * separates), so adjacency-merge at append time keeps the LIVE boxed
-     * range count at the post-coalesce total throughout the sweep — the
-     * figure the compile RAM budget charges ({@link
+     * Append one range entry to {@code list}, coalescing INLINE with the
+     * previous entry when it is the immediately adjacent cell run with
+     * identical (target, ops, requiredMask). Determinization emits per
+     * breakpoint cell in ascending order (per assertion context, which
+     * requiredMask separates), so adjacency-merge at append time keeps the
+     * LIVE boxed range count at the post-coalesce total throughout the
+     * sweep — the figure the compile RAM budget charges ({@link
      * BudgetWeights#RANGE_BOXED_BYTES} per new range), instead of one
      * boxed object per cell pending the materialization-time coalesce.
      *
@@ -37,27 +49,38 @@ final class DfaStateBuilder {
      * signal); false when merged into the previous entry.
      */
     boolean addRange(int lo, int hi, int target, int[] ops, int requiredMask) {
-        if (!ranges.isEmpty()) {
-            Range last = ranges.get(ranges.size() - 1);
+        return addRange(ranges, lo, hi, target, ops, requiredMask);
+    }
+
+    static boolean addRange(List<Range> list, int lo, int hi, int target, int[] ops, int requiredMask) {
+        if (!list.isEmpty()) {
+            Range last = list.get(list.size() - 1);
             if (last.hi == lo - 1 && last.target == target && last.requiredMask == requiredMask
                 && Arrays.equals(last.ops, ops)) {
-                ranges.set(ranges.size() - 1, new Range(last.lo, hi, target, ops, requiredMask));
+                list.set(list.size() - 1, new Range(last.lo, hi, target, ops, requiredMask));
                 return false;
             }
         }
-        ranges.add(new Range(lo, hi, target, ops, requiredMask));
+        list.add(new Range(lo, hi, target, ops, requiredMask));
         return true;
     }
 
     void coalesce() {
-        ranges.sort(Comparator.comparingInt(r -> r.lo));
-        if (ranges.size() <= 1) {
+        coalesce(ranges);
+        if (wholeRanges != null) {
+            coalesce(wholeRanges);
+        }
+    }
+
+    static void coalesce(List<Range> list) {
+        list.sort(Comparator.comparingInt(r -> r.lo));
+        if (list.size() <= 1) {
             return;
         }
         List<Range> out = new ArrayList<>();
-        Range cur = ranges.get(0);
-        for (int i = 1; i < ranges.size(); i++) {
-            Range next = ranges.get(i);
+        Range cur = list.get(0);
+        for (int i = 1; i < list.size(); i++) {
+            Range next = list.get(i);
             if (next.lo == cur.hi + 1 && next.target == cur.target && Arrays.equals(next.ops, cur.ops)
                 && next.requiredMask == cur.requiredMask) {
                 cur = new Range(cur.lo, next.hi, cur.target, cur.ops, cur.requiredMask);
@@ -67,8 +90,8 @@ final class DfaStateBuilder {
             }
         }
         out.add(cur);
-        ranges.clear();
-        ranges.addAll(out);
+        list.clear();
+        list.addAll(out);
     }
 
     /**
@@ -78,7 +101,14 @@ final class DfaStateBuilder {
      * must be tried before the mask=0 loop transition (which would skip past the accept).
      */
     void sortByMaskSpecificity() {
-        ranges.sort((a, b) -> {
+        sortByMaskSpecificity(ranges);
+        if (wholeRanges != null) {
+            sortByMaskSpecificity(wholeRanges);
+        }
+    }
+
+    static void sortByMaskSpecificity(List<Range> list) {
+        list.sort((a, b) -> {
             int cmp = Integer.compare(a.lo, b.lo);
             if (cmp != 0) {
                 return cmp;

@@ -23,15 +23,16 @@ package io.github.jemmix.tdfa.core;
  * implementation is a no-op — compile with no observer attached pays a handful
  * of virtual calls, nothing else.
  *
- * <p><b>Stage multiplicity.</b> A compile runs the pipeline once for the
- * whole-match artifact (cut-free determinization) and — only when the pike
- * cut matters for find() or the whole attempt is over budget — once more
- * (the pruned find artifact, or the both-ends-anchored whole artifact);
- * stages fire once per artifact, in that order. The single-artifact case
- * (the vast majority) fires each stage exactly once, all inside
- * {@code compile()} — nothing compiles at match time, including the
- * over-budget bomb corner ({@code whole} note), where matches() rethrows
- * the rejection recorded at compile time.
+ * <p><b>Stage multiplicity.</b> A compile runs the pipeline once over the
+ * find artifact — which carries the partial-whole side table whenever the
+ * pike cut bites (the {@code partialWhole} note records its extent or its
+ * clean abandonment) — and, only when that bounded side exploration was
+ * over budget, once more (the cut-free whole determinization, noted as
+ * {@code pikeCut}); stages fire once per artifact, in that order. The
+ * single-artifact case (the overwhelming majority) fires each stage
+ * exactly once, all inside {@code compile()} — nothing compiles at match
+ * time; a whole-bomb pattern fails the compile outright with the standard
+ * "pattern too large" rejection.
  */
 public interface CompileObserver {
 
