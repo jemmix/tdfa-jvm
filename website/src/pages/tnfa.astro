@@ -26,7 +26,7 @@ import PikeVmLab from '../islands/PikeVmLab.svelte';
         </p>
         <ul class="list-disc pl-6">
             <li>
-                <strong>Tag action</strong>: <code>+t</code> means "set tag t to the current position" — crossing the edge writes a boundary. <code>−t</code> (an "ntag", negative tag) means "clear tag t to nil." Group opens are <code>+</code> edges, group closes are <code>+</code> edges, and the <em>skip paths</em> around optional things carry <code>−</code> edges.
+                <strong>Tag action</strong>: <code>+t</code> means "set tag t to the current position" — crossing the edge writes a boundary. <code>−t</code> (a negative tag, "ntag" in the TDFA paper) means "clear tag t to nil." Group opens are <code>+</code> edges, group closes are <code>+</code> edges, and the <em>skip paths</em> around optional things carry <code>−</code> edges.
             </li>
             <li>
                 <strong>Priority</strong>: a small integer, lower = preferred. Alternation branches get priorities 1, 2, 3… in source order. Repetitions put the body/skip preference here: greedy <code>e*</code> prefers the body (priority 1) over exiting (priority 2); lazy <code>e*?</code> swaps them. When the ε-closure explores a state reachable by two routes, the route with the lower priority wins the slot — this single rule is what reproduces backtracking semantics without backtracking.
@@ -41,7 +41,7 @@ import PikeVmLab from '../islands/PikeVmLab.svelte';
 
         <h2>The quantifier shapes</h2>
         <p>
-            The builder mirrors re2j's fragment shapes (and cites it in comments), with the minting order fixed as "part of the construction contract" so state numbering is deterministic. The interesting ones:
+            The builder mirrors re2j's fragment shapes (and cites it in comments), with the state-numbering order fixed as part of the construction contract, so the same pattern always compiles to the same machine. The interesting ones:
         </p>
         <div class="not-prose my-6 grid gap-3 sm:grid-cols-2">
             <div class="rounded-lg border border-zinc-200 bg-white p-4">
@@ -70,7 +70,7 @@ import PikeVmLab from '../islands/PikeVmLab.svelte';
             Alternation fans out from a fresh state with branch priorities 1, 2, 3… — but before hooking up branch <em>i</em>, the builder prepends an ntag chain for every group that appears in the <em>union</em> of branches but is <em>missing from this one</em>. In <code>(a)|b</code>, the right branch carries <code>−t2</code> ("clear group 1's close tag"): if the match went right, group 1's tags must read nil. Descending group order puts each group's no-match marker "closer to the body it belongs to."
         </p>
         <p>
-            This is BT19 §7.3 machinery, and it's what makes POSIX leftmost-longest submatches work: "no match" is encoded in the graph structure, so comparing alternatives can be done by comparing tag <em>values</em> — nil or a position — without asking which path wrote them.
+            This is §7.3 machinery from the 2019 TDFA paper (Borsotti &amp; Trofimovich — the companion of the 2022 paper this engine implements), and it's what makes POSIX leftmost-longest submatches work: "no match" is encoded in the graph structure, so comparing alternatives can be done by comparing tag <em>values</em> — nil or a position — without asking which path wrote them.
         </p>
 
         <h2>Running it: the Pike VM</h2>
@@ -79,7 +79,7 @@ import PikeVmLab from '../islands/PikeVmLab.svelte';
         </p>
         <ol class="list-decimal pl-6">
             <li>Expand each thread through ε-edges (the closure), applying tag actions as edges are crossed, exploring preferred edges first, and letting the first arrival win any state — dedup by state is what keeps threads bounded by pattern size.</li>
-            <li>Record an accept if an accepting thread is alive; in leftmost-first mode, <strong>cut every thread ranked below it</strong> — they can never influence the answer (this is the "Pike cut," and it will return, determinized, as the stop table).</li>
+            <li>Record an accept if an accepting thread is alive; in leftmost-first mode, <strong>cut every thread ranked below it</strong> — they can never influence the answer. This below-the-accept cutoff is the standard leftmost-first rule for Pike-style VMs; determinization precomputes the same rule at compile time, and you will meet it again there as the stop table.</li>
             <li>Step the survivors on the character; repeat.</li>
         </ol>
         <p>

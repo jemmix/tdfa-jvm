@@ -4,8 +4,8 @@ import PageHeader from '../components/PageHeader.astro';
 import AlphabetLab from '../islands/AlphabetLab.svelte';
 ---
 
-<Base title="The alphabet: characters into cells">
-    <PageHeader num="05" title="The alphabet: characters into cells" lede="A transition table keyed by “every Unicode codepoint” would need a million columns per state. The engine instead cuts the codepoint line at every class boundary and deals in the intervals between cuts." />
+<Base title="The alphabet: codepoints into minterms">
+    <PageHeader num="05" title="The alphabet: codepoints into minterms" lede="A transition table keyed by “every Unicode codepoint” would need a million columns per state. The engine instead cuts the codepoint line at every class boundary and deals in the intervals between cuts — the minterms of the pattern's classes." />
 
     <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
         <h2>The problem with 1,114,112 characters</h2>
@@ -13,13 +13,13 @@ import AlphabetLab from '../islands/AlphabetLab.svelte';
             Unicode has 1,114,112 codepoints. A DFA is, at bottom, a table of <em>state × character → next state</em>; keyed naively, even a 10-state pattern over full Unicode wants 11 million entries. You could fall back to "for each state, scan the transitions and test each class" — but then every step costs a scan, and classes like <code>{'\\p{L}'}</code> carry ~1369 ranges each.
         </p>
         <p>
-            The standard fix — used here as <code>TdfaCompiler.computeBreakpoints()</code> — is to observe that the pattern partitions the codepoint line. Take every character class appearing on any symbol edge of the TNFA, and put a cut point at each boundary: every <code>lo</code> and every <code>hi+1</code>. Sort them. The intervals between consecutive cut points — "cells," or <em>minterms</em> in the literature — have a defining property:
+            The standard fix — used here as <code>TdfaCompiler.computeBreakpoints()</code> — is to observe that the pattern partitions the codepoint line. Take every character class appearing on any symbol edge of the TNFA, and put a cut point at each boundary: every <code>lo</code> and every <code>hi+1</code>. Sort them. The intervals between consecutive cut points — called <em>minterms</em> in the automata literature, the same idea as minterms of a Boolean function — have a defining property:
         </p>
         <div class="rounded-lg border border-teal-200 bg-teal-50/50 px-4 py-3 text-sm text-teal-900">
-            Within one cell, <strong>every class in the pattern gives the same yes/no answer for every codepoint</strong> — because if two codepoints were told apart by some class, that class's boundary would have cut between them.
+            Within one minterm, <strong>every class in the pattern gives the same yes/no answer for every codepoint</strong> — because if two codepoints were told apart by some class, that class's boundary would have cut between them.
         </div>
         <p>
-            So the determinizer never asks "what does state 5 do on 'x'?" It asks "what does state 5 do on <em>cell</em> 12?" — and there are as many cells as boundaries in your classes, typically a handful to a few hundred. During construction, adjacent cells that produce the same target state and the same register ops are <em>coalesced</em> back into a single <code>Range(lo, hi)</code> row, which is what the finished artifact stores.
+            So the determinizer never asks "what does state 5 do on 'x'?" It asks "what does state 5 do on <em>minterm</em> 12?" — and there are as many minterms as boundaries in your classes, typically a handful to a few hundred. During construction, adjacent minterms that produce the same target state and the same register ops are <em>coalesced</em> back into a single <code>Range(lo, hi)</code> row, which is what the finished artifact stores.
         </p>
     </div>
 
@@ -28,7 +28,7 @@ import AlphabetLab from '../islands/AlphabetLab.svelte';
     <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
         <h2>Active sets, interned</h2>
         <p>
-            The compiler goes one step further. For each cell it precomputes the <em>bitset of active symbol edges</em> — which TNFA transitions match anything in this cell — and then <strong>interns identical sets</strong>. Sweeping a state over 10,000 adjacent cells that share one active set runs the expensive pipeline (closure, register-op synthesis, state interning) exactly <em>once</em>. The precompute is charged to the compile memory budget up front, before any of it can be wasted.
+            The compiler goes one step further. For each minterm it precomputes the <em>bitset of active symbol edges</em> — which TNFA transitions match anything in this minterm — and then <strong>interns identical sets</strong>. Sweeping a state over 10,000 adjacent minterms that share one active set runs the expensive pipeline (closure, register-op synthesis, state interning) exactly <em>once</em>. The precompute is charged to the compile memory budget up front, before any of it can be wasted.
         </p>
         <p>
             The minimizer later recomputes a <em>global</em> breakpoint set — the union over all states' range boundaries — because two states whose transitions were cut differently can only be compared as equals after re-cutting them on the same grid. More on that in its chapter.
@@ -39,7 +39,7 @@ import AlphabetLab from '../islands/AlphabetLab.svelte';
             One quiet correctness decision underlies everything: the automaton consumes <strong>codepoints</strong>, not UTF-16 units. The alphabet's <code>decode</code> (in <code>ast/Alphabet.java</code>) turns a well-formed surrogate pair into a single supplementary codepoint (one transition), and a lone surrogate half into a codepoint of its own. Pattern-side and match-time reading both go through it, "so the two ends cannot disagree about what one transition consumes."
         </p>
         <p>
-            A practical consequence: no match may <em>start</em> in the middle of a surrogate pair, and the search machinery checks <code>pairInterior</code> before re-seeding a start position. Your emoji stay atomic.
+            A practical consequence: no match may <em>start</em> in the middle of a surrogate pair, and the search machinery checks <code>pairInterior</code> before re-seeding a start position — a match can never begin on half of one.
         </p>
 
         <h2>When the DFA is huge anyway</h2>

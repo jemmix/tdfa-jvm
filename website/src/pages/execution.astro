@@ -27,7 +27,7 @@ import SearchLab from '../islands/SearchLab.svelte';
                     <tr class="border-b border-zinc-100"><td class="px-4 py-1.5 font-mono text-[13px]">entryHiPrefix</td><td class="px-4 py-1.5 text-zinc-600">running max of <span class="mono">hi</span> per entry — bounds the backward scan after the binary search</td></tr>
                     <tr class="border-b border-zinc-100"><td class="px-4 py-1.5 font-mono text-[13px]">ops</td><td class="px-4 py-1.5 text-zinc-600">3-int-stride op blocks, <span class="mono">OP_END</span>-terminated</td></tr>
                     <tr class="border-b border-zinc-100"><td class="px-4 py-1.5 font-mono text-[13px]">entryMask / acceptMask</td><td class="px-4 py-1.5 text-zinc-600">assertion requirements to enter a state / declare its accept</td></tr>
-                    <tr class="border-b border-zinc-100"><td class="px-4 py-1.5 font-mono text-[13px]">finalOps / finalOpsByMask</td><td class="px-4 py-1.5 text-zinc-600">φ ops; or the 64-cell position-aware selector (Anchors chapter)</td></tr>
+                    <tr class="border-b border-zinc-100"><td class="px-4 py-1.5 font-mono text-[13px]">finalOps / finalOpsByMask</td><td class="px-4 py-1.5 text-zinc-600">φ ops; or the 64-entry position-aware selector (Anchors chapter)</td></tr>
                     <tr><td class="px-4 py-1.5 font-mono text-[13px]">stopOnAcceptMask</td><td class="px-4 py-1.5 text-zinc-600">Perl "stop or keep walking" decision per (state, posFlags); 2D or 1-byte-per-state tier</td></tr>
                 </tbody>
             </table>
@@ -57,7 +57,7 @@ import SearchLab from '../islands/SearchLab.svelte';
                 <strong>Entry masks gate before ops.</strong> A transition whose target's entry mask fails is never taken — and its tag writes must not "contaminate the register file." Ordering is correctness, not hygiene.
             </li>
             <li>
-                <strong>Stop-or-extend.</strong> In Perl mode, accepting doesn't end the walk if a higher-priority path could still extend the match — that's the stop table's job, derived at compile time from exactly the Pike-cut analysis you saw in determinization. In POSIX mode the guards vanish: walk to the end, last accept wins.
+                <strong>Stop-or-extend.</strong> In Perl mode, accepting doesn't end the walk if a higher-priority path could still extend the match — that's the stop table's job, derived at compile time from the same below-the-accept cutoff rule you saw in determinization. In POSIX mode the guards vanish: walk to the end, last accept wins.
             </li>
         </ul>
 
@@ -98,7 +98,7 @@ import SearchLab from '../islands/SearchLab.svelte';
     <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
         <h2>Whole-input matching: one artifact, two relations</h2>
         <p>
-            <code>matches()</code> — "does the <em>entire</em> input match, and what are the captures" — runs a different protocol: anchored at 0, walk to EOF, succeed iff an accept is alive exactly at EOF; mid-walk accepts are stepped past, never recorded. The subtle part: the find artifact's Pike cut can discard accepting paths that a <em>full-length</em> match needs — <code>(a|ab)</code> against <code>"ab"</code>: leftmost-first prunes the <code>ab</code> continuation once <code>a</code> accepts, but whole-input matching needs the survivor. The fix is a <em>side table</em> recorded during the same determinization: at every spot the cut bites, the compiler also emits the un-pruned continuation as the whole walk's dispatch entry — the <em>partial-whole</em> artifact, one build serving both APIs. The side exploration is bounded; when a bomb exhausts it, the compile fails with the standard "pattern too large" family (a pattern ships only when every surface it carries built).
+            <code>matches()</code> — "does the <em>entire</em> input match, and what are the captures" — runs a different protocol: anchored at 0, walk to EOF, succeed iff an accept is alive exactly at EOF; mid-walk accepts are stepped past, never recorded. The subtle part: the find artifact's cutoff can discard accepting paths that a <em>full-length</em> match needs — <code>(a|ab)</code> against <code>"ab"</code>: leftmost-first prunes the <code>ab</code> continuation once <code>a</code> accepts, but whole-input matching needs the survivor. The fix is a <em>side table</em> recorded during the same determinization: at every spot the cutoff bites, the compiler also emits the un-pruned continuation as the whole walk's dispatch entry. The repo calls this the <em>partial-whole</em> build: one automaton serving both APIs. The side exploration is bounded; when a bomb exhausts it, the compile fails with the standard "pattern too large" family (a pattern ships only when every surface it carries built).
         </p>
 
         <h2>Matchers, scratch, and threads</h2>

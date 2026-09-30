@@ -24,7 +24,7 @@ Seven Svelte islands (`src/islands/`), each backed by a faithful miniature of th
 
 | Island | Page | Lib | Mirrors |
 |---|---|---|---|
-| BacktrackingLab | /backtracking/ | `backtracker.ts` | a naive backtracking VM (the thing the engine refuses to be) |
+| BacktrackingLab | /backtracking/ | `backtracker.ts` | a naive backtracking VM (the design the engine avoids) |
 | AstLab | /parsing/ | `parse.ts` | `parser/Parser.java` — same AST shapes, same tag numbering, same rejections |
 | PikeVmLab | /tnfa/ | `thompson.ts`, `pikevm.ts` | `tnfa/Tnfa.java` shapes (priorities, ntag chains, star hubs, {n,m} desugaring) + the reference Pike VM |
 | AlphabetLab | /alphabet/ | — | `TdfaCompiler.computeBreakpoints` (minterm partition) |

@@ -111,19 +111,19 @@
                 {/each}
             </div>
             <div class="mt-1 text-xs text-zinc-500">
-                {cells.length} cells = {breakpoints.length - 1} intervals between breakpoints.
+                {cells.length} minterms = {breakpoints.length - 1} intervals between breakpoints.
             </div>
             <div class="mt-0.5 min-h-[3.4em] text-xs leading-relaxed text-zinc-500">
                 {#if hoverCell !== null && cells[hoverCell]}
-                    Cell [{cells[hoverCell].lo}, {cells[hoverCell].hi}]: every class above makes the same yes/no decision for all of it — the DFA needs one transition per cell.
+                    Minterm [{cells[hoverCell].lo}, {cells[hoverCell].hi}]: every class above makes the same yes/no decision for all of it — the DFA needs one transition per minterm.
                 {:else}
-                    <span class="text-zinc-400">Hover a cell to inspect it.</span>
+                    <span class="text-zinc-400">Hover a minterm to inspect it.</span>
                 {/if}
             </div>
         </div>
 
         <div class="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs leading-relaxed text-zinc-600">
-            <b class="text-zinc-800">Why it matters:</b> a DFA transition table needs "for each state, for each character, where do I go?" — that's states × 1,114,112 entries. Because every class boundary is a breakpoint, all codepoints inside one cell behave identically for <i>every</i> class in the pattern, so the engine emits one transition per cell and coalesces adjacent cells that share a target into <span class="mono">Range(lo, hi)</span> rows. Toggle <span class="mono">[a-f]</span> off and watch <span class="mono">[a-z]</span> re-coalesce into one piece.
+            <b class="text-zinc-800">Why it matters:</b> a DFA transition table needs "for each state, for each character, where do I go?" — that's states × 1,114,112 entries. Because every class boundary is a breakpoint, all codepoints inside one minterm behave identically for <i>every</i> class in the pattern, so the engine emits one transition per minterm and coalesces adjacent minterms that share a target into <span class="mono">Range(lo, hi)</span> rows. Toggle <span class="mono">[a-f]</span> off and watch <span class="mono">[a-z]</span> re-coalesce into one piece.
         </div>
     </div>
 {/snippet}
@@ -138,7 +138,7 @@
         {@render labBody()}
     </div>
     <div class="island-caption">
-        Mirrors TdfaCompiler.computeBreakpoints() (core/.../tdfa/TdfaCompiler.java:431): a TreeSet seeded with 0 and 0x110000, plus every lo and hi+1 of every symbol-edge class — negated classes are materialized first. Per cell, the compiler precomputes the bitset of "active" symbol edges and interns identical sets, so the expensive closure/regops pipeline runs once per distinct set, not once per cell.
+        Mirrors TdfaCompiler.computeBreakpoints() (core/.../tdfa/TdfaCompiler.java:431): a TreeSet seeded with 0 and 0x110000, plus every lo and hi+1 of every symbol-edge class — negated classes are materialized first. Per minterm, the compiler precomputes the bitset of "active" symbol edges and interns identical sets, so the expensive closure/regops pipeline runs once per distinct set, not once per minterm.
     </div>
 </div>
 

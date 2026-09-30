@@ -60,7 +60,7 @@ import BacktrackingLab from '../islands/BacktrackingLab.svelte';
                     <tr>
                         <td class="px-4 py-2 font-medium">DFA (this engine)</td>
                         <td class="px-4 py-2">O(input) — one table lookup per char</td>
-                        <td class="px-4 py-2 text-teal-700 font-medium">the hard part — solved by TDFA</td>
+                        <td class="px-4 py-2">needs tags plus registers (the subject of this site)</td>
                         <td class="px-4 py-2">no</td>
                     </tr>
                 </tbody>
@@ -78,8 +78,8 @@ import BacktrackingLab from '../islands/BacktrackingLab.svelte';
             That analysis is the heart of this engine and of the paper it implements — Borsotti &amp; Trofimovich, <a href="https://arxiv.org/abs/2206.01398" target="_blank" rel="noopener"><em>A closer look at TDFA</em></a> (2022). The next chapters walk through the whole pipeline: how the pattern becomes a tagged NFA, how subset construction turns that into a register-writing DFA, how a compiler-style register allocator shrinks the result, and how the finished automaton executes as JVM bytecode.
         </p>
 
-        <h2>What this design buys, and what it costs</h2>
-        <ul class="list-disc pl-6">
+        <h2>What the design guarantees, and what it costs</h2>
+            <ul class="list-disc pl-6">
             <li><strong>Linear match time by construction</strong> — there is no engine in the library that could burn match-time budget, so pathological patterns cannot either. The guarantee is structural, not a matter of patched known cases.</li>
             <li><strong>Predictable memory</strong> — a matcher owns one scratch <code>int[]</code> and optional memo tables, capped by a 16 MiB-per-pattern runtime budget.</li>
             <li><strong>Speed</strong> — a table walk is cheap per character. On short-input search the engine measures 2–6× faster than re2j, though <code>java.util.regex</code> still wins some literal-heavy scenarios (tracked in <code>BENCHMARKS.md</code>).</li>
