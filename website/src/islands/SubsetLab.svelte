@@ -213,7 +213,7 @@
             <button class="btn" onclick={back} disabled={i === 0}>◀ back</button>
             <button class="btn btn-primary" onclick={step} disabled={i >= result.events.length - 1}>step ▶</button>
             <button class="btn" onclick={play}>{playing ? '❚❚ pause' : '▷ play'}</button>
-            <span class="ml-auto text-xs text-zinc-400">{doneState?.type === 'done' ? `${doneState.stateCount} states · ${cells.length}+ cells` : `cells (ASCII window): ${cells.length}`}</span>
+            <span class="ml-auto text-xs text-zinc-400">{doneState?.type === 'done' ? `${doneState.stateCount} states · ${cells.length}+ minterms` : `minterms (ASCII window): ${cells.length}`}</span>
         </div>
 {/snippet}
 
@@ -231,7 +231,7 @@
         {@render labBody('s1', 'min-w-[420px]')}
     </div>
     <div class="island-caption">
-        The kernel signature includes each config's tag history <span class="mono">l</span> — and <span class="mono">l</span> resets to empty on every symbol step (stepOnSymbol moves it to <span class="mono">h</span>). That reset is why histories stay small and the DFA stays finite. Watch <span class="mono">(a)*</span>: state 1's kernel looks identical after every iteration, so the second arrival is interned to the <i>existing</i> state — the loop closes. This playground dedupes on the full signature (the real engine merges same-shape states with different register assignments via the map bijection + COPY ops, and applies the Pike cut in Perl mode — both are elided here for clarity; ops use one register per tag).
+        The kernel signature includes each config's tag history <span class="mono">l</span> — and <span class="mono">l</span> resets to empty on every symbol step (stepOnSymbol moves it to <span class="mono">h</span>). That reset is why histories stay small and the DFA stays finite. Watch <span class="mono">(a)*</span>: state 1's kernel looks identical after every iteration, so the second arrival is interned to the <i>existing</i> state — the loop closes. This playground dedupes on the full signature (the real engine merges same-shape states with different register assignments via the map bijection + COPY ops, and applies the below-the-accept thread cutoff in Perl mode — both are elided here for clarity; ops use one register per tag).
     </div>
 </div>
 

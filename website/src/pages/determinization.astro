@@ -30,7 +30,7 @@ import SubsetLab from '../islands/SubsetLab.svelte';
     int emptyMask;      // assertion bits accumulated along the ε-path
 }`}</Code>
         <p>
-            The closure list, in arrival order, is the DFA state's <em>kernel</em>. Arrival order is priority order — the DFS explores preferred ε-edges first, and the visited-set rule "first arrival wins the slot" means the list is exactly the Pike VM's thread list, frozen.
+            The closure list, in arrival order, is the DFA state's <em>kernel</em> — the TDFA paper's name for what plain subset construction calls the member set. Arrival order is priority order — the DFS explores preferred ε-edges first, and the visited-set rule "first arrival wins the slot" means the list is exactly the Pike VM's thread list, frozen.
         </p>
 
         <h2>The trick that keeps it finite</h2>
@@ -58,7 +58,7 @@ while (!work.isEmpty()) {
     processState(sid);             // liveContexts → emitTransitions → dead markers
 }`}</Code>
         <p>
-            <code>processState</code> splits the kernel into <em>assertion live-sets</em> (the Anchors chapter), then sweeps every breakpoint cell for every context: step, closure, intern-or-create the target state, attach the register ops. New states go on the worklist. When it drains, the derived tables are computed — entry/accept masks, the stop table, the final ops — and the result is frozen into a <code>DeterminizedDfa</code>.
+            <code>processState</code> splits the kernel into <em>assertion live-sets</em> (the Anchors chapter), then sweeps every minterm for every context: step, closure, intern-or-create the target state, attach the register ops. New states go on the worklist. When it drains, the derived tables are computed — entry/accept masks, the stop table, the final ops — and the result is frozen into a <code>DeterminizedDfa</code>.
         </p>
 
         <h2>State identity: what's in the signature, what isn't</h2>
@@ -81,7 +81,7 @@ while (!work.isEmpty()) {
                 <strong>Subsumption cut.</strong> A re-arrival at <code>(to, newMask)</code> is skipped when an earlier variant <code>(to, m')</code> with <code>m' ⊆ newMask</code> was already popped: everywhere the re-arrival would be alive, the earlier one is too, and produces the same continuations. For nullable loop bodies, re-entry around an ε-cycle accumulates a mask <em>superset</em> of the entry's — so empty iterations die here. This is the determinized form of a Pike VM's per-position pc-dedup.
             </li>
             <li>
-                <strong>Pike cut on stepping.</strong> In Perl mode, when the first accepting config in a live set is alive in the current assertion context, every config below it is cut before stepping — "exactly like a pike VM cuts threads below a match-recording thread." The kernel itself is not pruned (state identity and the final tables see the full closure); only this context's stepping input. Its runtime echo is the stop table you'll meet in Execution.
+                <strong>Thread cutoff on stepping.</strong> In Perl mode, when the first accepting config in a live set is alive in the current assertion context, every config below it is cut before stepping — the same below-the-accept cutoff a Pike VM applies to its thread list. The kernel itself is not pruned (state identity and the final tables see the full closure); only this context's stepping input. Its runtime echo is the stop table you'll meet in Execution.
             </li>
         </ol>
 
@@ -96,7 +96,7 @@ while (!work.isEmpty()) {
     <div class="prose prose-zinc max-w-none prose-headings:font-bold prose-a:text-teal-700 prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-medium">
         <h2>What the playground simplifies</h2>
         <p>
-            This island is a teaching miniature, so to be precise about the deltas: it uses one register per tag (the real engine allocates per (source state, tag, sign) and merges same-shape states with the tryMap bijection and COPY prepends); it skips the Pike cut and the assertion live-context split (patterns here avoid anchors); and its final ops are the didactic <code>COPY work→final</code> plus <code>SET_POS</code> form. Everything else — priorities, the visited rule, the h/l rotation, order-exact interning, coalescing — is the real algorithm at working scale. The <a href="/registers/">Registers</a> chapter covers what the real final ops and the register allocator do with them.
+            This island is a teaching miniature, so to be precise about the deltas: it uses one register per tag (the real engine allocates per (source state, tag, sign) and merges same-shape states with the tryMap bijection and COPY prepends); it skips the thread cutoff and the assertion live-context split (patterns here avoid anchors); and its final ops are the didactic <code>COPY work→final</code> plus <code>SET_POS</code> form. Everything else — priorities, the visited rule, the h/l rotation, order-exact interning, coalescing — is the real algorithm at working scale. The <a href="/registers/">Registers</a> chapter covers what the real final ops and the register allocator do with them.
         </p>
     </div>
 </Base>

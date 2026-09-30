@@ -10,7 +10,7 @@ export const pages: PageMeta[] = [
     { href: '/overview/', num: '02', title: 'The pipeline on one page', short: 'Pipeline' },
     { href: '/parsing/', num: '03', title: 'Parsing: pattern to AST', short: 'Parsing' },
     { href: '/tnfa/', num: '04', title: 'The TNFA: an NFA with tags', short: 'TNFA' },
-    { href: '/alphabet/', num: '05', title: 'The alphabet: characters into cells', short: 'Alphabet' },
+    { href: '/alphabet/', num: '05', title: 'The alphabet: codepoints into minterms', short: 'Alphabet' },
     { href: '/determinization/', num: '06', title: 'Determinization: subset construction with histories', short: 'Determinization' },
     { href: '/registers/', num: '07', title: 'Registers: captures that survive determinization', short: 'Registers' },
     { href: '/anchors/', num: '08', title: 'Anchors and other zero-width assertions', short: 'Anchors' },

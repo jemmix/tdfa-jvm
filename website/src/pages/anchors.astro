@@ -27,7 +27,7 @@ public static final int ABS_END = 32;          // \\z — end of input only`}</C
             That's the easy part. The complication: a position satisfies <em>one</em> set of flags, but a DFA state's kernel accumulates assertion masks from all the ε-paths that built it — and different paths may carry incomparable requirements. The state <code>(?:^|$)</code>'s closure contains an accept reached via "was at start" and another via "at end"; which tag values win depends on where you actually are.
         </p>
         <p>
-            So determinization splits each kernel into <strong>live-set contexts</strong>: for each of the 64 possible runtime flag values <code>M</code>, the alive configs are those whose accumulated mask is a subset of <code>M</code>. Contexts are deduped by their alive-pattern, sorted most-coverage-first, and each context's transitions carry its OR-mask as a <code>requiredMask</code> — "this row only applies at positions satisfying these bits." A context that steps to nothing on some cell emits a <strong>dead marker</strong> (target −1) with its mask, so that the wrong context's row can't fire when a more specific one owns the step. The runtime ownership rule: <em>the most specific satisfied mask (by popcount) owns the character; ties go to the lowest index.</em>
+            So determinization splits each kernel into <strong>live-set contexts</strong>: for each of the 64 possible runtime flag values <code>M</code>, the alive configs are those whose accumulated mask is a subset of <code>M</code>. Contexts are deduped by their alive-pattern, sorted most-coverage-first, and each context's transitions carry its OR-mask as a <code>requiredMask</code> — "this row only applies at positions satisfying these bits." A context that steps to nothing on some minterm emits a <strong>dead marker</strong> (target −1) with its mask, so that the wrong context's row can't fire when a more specific one owns the step. The runtime ownership rule: <em>the most specific satisfied mask (by popcount) owns the character; ties go to the lowest index.</em>
         </p>
         <p>
             This 64-way case analysis is also why the closure's visited-set is keyed on (state, mask) rather than state — remember <code>(?:^|$)+</code> needing "both junction variants" — and it's the source of the subsumption cut from the determinization chapter.
@@ -42,7 +42,7 @@ public static final int ABS_END = 32;          // \\z — end of input only`}</C
                 <strong>Uniform case:</strong> the same winner everywhere (an unconditional accept — the common case). One final-ops list, stored once; the state's accept mask is the intersection of the winners' requirements.
             </li>
             <li>
-                <strong>Variants:</strong> per-winner op lists plus a 64-cell selector, materialized as <code>stateFinalOpsByMask[state*64 + posFlags]</code> — an ops offset, or −1 when <em>no</em> accept is alive under those flags ("accept suppressed"). The minimizer refuses to merge states whose selector rows differ, for exactly this reason.
+                <strong>Variants:</strong> per-winner op lists plus a 64-entry selector, materialized as <code>stateFinalOpsByMask[state*64 + posFlags]</code> — an ops offset, or −1 when <em>no</em> accept is alive under those flags ("accept suppressed"). The minimizer refuses to merge states whose selector rows differ, for exactly this reason.
             </li>
         </ul>
         <p>

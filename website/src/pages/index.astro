@@ -7,12 +7,12 @@ import { pages } from '../lib/pages';
     <header class="mb-12">
         <div class="mb-3 font-mono text-sm font-semibold tracking-widest text-teal-700">TDFA-JVM EXPLAINED</div>
         <h1 class="text-4xl font-bold tracking-tight text-zinc-900 sm:text-5xl">
-            A regex engine with<br /><span class="text-teal-700">no backtracking — ever</span>
+            How a regex engine<br /><span class="text-teal-700">can match in linear time</span>
         </h1>
         <p class="mt-5 max-w-2xl text-lg leading-relaxed text-zinc-600">
             <a href="https://github.com/jemmix/tdfa-jvm" class="font-medium text-teal-700 hover:underline" target="_blank" rel="noopener">tdfa-jvm</a>{' '}
-            compiles every regular expression you hand it into a deterministic finite automaton — and then into JVM bytecode. Matching is a table walk: one step per character, no matter how pathological the pattern.
-            This site explains how that pipeline works, stage by stage, for working engineers — if hash maps and BFS are in your toolbox, this is for you; no automata-theory background assumed.
+            compiles every regular expression into a deterministic finite automaton — and then into JVM bytecode. Matching is a table walk: one step per input character, for every pattern the parser accepts.
+            This site explains how that pipeline works, stage by stage, so that you can read the code, extend it, or reimplement it — if hash maps and BFS are in your toolbox, this is for you; no automata-theory background assumed.
         </p>
     </header>
 
@@ -21,7 +21,7 @@ import { pages } from '../lib/pages';
         <div class="space-y-3">
             {[
                 ['Parse', 'the pattern text becomes a syntax tree; every capture group gets two "tags" — integers marking its open and close boundaries.'],
-                ['Thompson-build', 'the tree becomes a TNFA: a graph whose "free move" edges carry those tags plus priorities, so the graph itself encodes both <i>what to capture</i> and <i>which alternative is preferred</i>.'],
+                ['Thompson construction', 'the tree becomes a TNFA: a graph whose "free move" edges carry those tags plus priorities, so the graph itself encodes both <i>what to capture</i> and <i>which alternative is preferred</i>.'],
                 ['Determinize', 'subset construction folds every possible "thread list" into DFA states. The tag bookkeeping that would be unbounded gets resolved <i>at compile time</i> into tiny register operations — SET position, COPY, SET nil — attached to the DFA transitions.'],
                 ['Optimize & minimize', 'a register-allocation pass (the same ideas a compiler uses for CPU registers) shrinks the register file; a Moore-algorithm pass merges redundant states.'],
                 ['Execute', 'the automaton runs as a flat int-array walk — or as generated JVM bytecode, one <span class="mono">tableswitch</span> per state. Unanchored search adds a scan tier that finds leftmost starts without restarting the walk at every offset.'],
@@ -33,7 +33,7 @@ import { pages } from '../lib/pages';
             ))}
         </div>
         <p class="mt-4 text-sm leading-relaxed text-zinc-500">
-            The result: 2–6× faster than re2j on short-input search, drop-in <span class="mono">Pattern</span>/<span class="mono">Matcher</span> API, and a structural guarantee that no pattern can burn your match-time budget — because there is no backtracking engine in the library at all.
+            The trade-off, stated plainly: match time is linear in input length regardless of pattern (there is no backtracking engine in the library at all), while compilation is slower than <span class="mono">java.util.regex</span> and backreferences and lookaround are not supported. On the benchmark corpus this comes out to 2–6× faster than re2j on short-input search, with some literal-heavy scenarios still won by <span class="mono">java.util.regex</span> — numbers and known gaps are tracked in <span class="mono">BENCHMARKS.md</span>.
         </p>
     </section>
 
