@@ -6,7 +6,6 @@ import java.util.Comparator;
 import java.util.List;
 
 final class DfaStateBuilder {
-    final int id;
     final List<Range> ranges = new ArrayList<>();
     /**
      * The whole-walk transition list (the partial-whole side table): the
@@ -29,10 +28,6 @@ final class DfaStateBuilder {
      * [64] posFlags → variant index, or -1 (no accept config alive).
      */
     int[] finalMaskVariant;
-
-    DfaStateBuilder(int id) {
-        this.id = id;
-    }
 
     /**
      * Append one range entry to {@code list}, coalescing INLINE with the

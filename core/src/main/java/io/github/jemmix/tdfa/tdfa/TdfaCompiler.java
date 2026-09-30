@@ -159,7 +159,8 @@ final class TdfaCompiler {
      */
     final int kernelConfigBytes;
     /**
-     * Per-kernel spike bound in WEIGHTED bytes (see maxClosureConfigs):
+     * Per-kernel spike bound in WEIGHTED bytes (see
+     * {@link Budgets#maxClosureSpikeBytes()}):
      * the totals cap only counts AFTER addState, so one closure of a
      * nested-counted bomb could exhaust the heap on its own. Checked
      * while the closure is built.
@@ -305,7 +306,7 @@ final class TdfaCompiler {
         // The side is recorded whenever requested (pruned Perl mode; the
         // facade always requests, find-only tiers never do).
         this.wholeSide = wholeSide && !longestMatch && !unpruned;
-        this.maxClosureBytes = Budgets.compileMemoryBytes() / BudgetWeights.CLOSURE_SPIKE_DIVISOR;
+        this.maxClosureBytes = Budgets.maxClosureSpikeBytes();
         this.cellCount = breakpoints.length - 1;
         this.activeSetCount = precomputeActiveSets(cellCount);
     }
@@ -650,14 +651,8 @@ final class TdfaCompiler {
                 processed.set(sid);
                 processState(sid);
             }
-        } catch (WorkMeter.Exhausted over) {
-            abandonWholeSide(over);
         } catch (IllegalStateException e) {
-            if (String.valueOf(e.getMessage()).contains("pattern too large")) {
-                abandonWholeSide(e);
-            } else {
-                throw e;
-            }
+            abandonIfBudget(e);
         } finally {
             this.meter = saved;
         }
@@ -774,14 +769,8 @@ final class TdfaCompiler {
                 }
             }
             emitWholeDeadMarkers(sid, ctxs, setResU);
-        } catch (WorkMeter.Exhausted over) {
-            abandonWholeSide(over);
         } catch (IllegalStateException e) {
-            if (String.valueOf(e.getMessage()).contains("pattern too large")) {
-                abandonWholeSide(e);
-            } else {
-                throw e;
-            }
+            abandonIfBudget(e);
         }
     }
 
@@ -1080,15 +1069,9 @@ final class TdfaCompiler {
                 work.push(arU.targetId);
             }
             return arU;
-        } catch (WorkMeter.Exhausted over) {
-            abandonWholeSide(over);
-            return null;
         } catch (IllegalStateException e) {
-            if (String.valueOf(e.getMessage()).contains("pattern too large")) {
-                abandonWholeSide(e);
-                return null;
-            }
-            throw e;
+            abandonIfBudget(e);
+            return null;
         }
     }
 
@@ -1132,6 +1115,21 @@ final class TdfaCompiler {
         abandonCause = cause;
         for (DfaStateBuilder b : builders) {
             b.wholeRanges = null;
+        }
+    }
+
+    /**
+     * Classify a whole-sweep failure: budget rejections — the typed
+     * {@link WorkMeter.Exhausted}, or any other "pattern too large"
+     * {@link IllegalStateException} raised by the shared caps — abandon the
+     * whole side cleanly (the artifact stays a plain pruned one); anything
+     * else is a bug and propagates.
+     */
+    private void abandonIfBudget(IllegalStateException e) {
+        if (e instanceof WorkMeter.Exhausted || String.valueOf(e.getMessage()).contains("pattern too large")) {
+            abandonWholeSide(e);
+        } else {
+            throw e;
         }
     }
 

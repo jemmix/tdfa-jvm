@@ -7,17 +7,14 @@ import java.util.List;
  * Control flow graph over a TDFA's register operations (BT22 §6.3).
  *
  * <p>The CFG models the dataflow of register values through the DFA. Nodes are
- * basic blocks (per-transition op lists), final blocks (per-accepting-state op lists),
- * and — once M3 lands — fallback blocks. Arcs follow DFA reachability skipping
- * zero-op transitions.
+ * basic blocks (per-transition op lists) and final blocks (per-accepting-state
+ * op lists). Arcs follow DFA reachability skipping zero-op transitions.
  *
  * <p>Each {@link Op} is one of:
  * <ul>
  *   <li>{@link #KIND_SET} with {@link Op#value} = {@link #VAL_POS} or {@link #VAL_NIL}
  *       — modeled uniformly; both are "set dst to a value" for dataflow purposes;</li>
- *   <li>{@link #KIND_COPY} ({@code dst <- src});</li>
- *   <li>{@link #KIND_APPEND} ({@code dst <- dst · src}) — multi-valued tags, not yet
- *       supported but stubbed for algorithmic completeness.</li>
+ *   <li>{@link #KIND_COPY} ({@code dst <- src}).</li>
  * </ul>
  *
  * <p>The CFG is a pure data structure. Construction from {@code TdfaMaterializer}'s
@@ -34,7 +31,6 @@ public final class Cfg {
     // ---- Op kinds ----
     public static final int KIND_SET = 1;
     public static final int KIND_COPY = 2;
-    public static final int KIND_APPEND = 3; // reserved for multi-valued tags (not yet supported)
 
     // ---- Set values (for KIND_SET only) ----
     /**
@@ -56,13 +52,12 @@ public final class Cfg {
     // ---- Block kinds ----
     public static final int BLOCK_BASIC = 1;
     public static final int BLOCK_FINAL = 2;
-    public static final int BLOCK_FALLBACK = 3; // reserved for M3
 
     /** A single register operation. Ops are mutated in place by the optimization passes. */
     public static final class Op {
         public int kind; // KIND_*
         public int dst;
-        public int src; // for KIND_COPY / KIND_APPEND
+        public int src; // for KIND_COPY
         public int value; // for KIND_SET: VAL_POS or VAL_NIL
 
         public Op(int kind, int dst, int src, int value) {
@@ -92,16 +87,16 @@ public final class Cfg {
                 case KIND_COPY :
                     return "r" + dst + "=r" + src;
                 default :
-                    return "r" + dst + "=r" + dst + "·r" + src;
+                    return "r" + dst + "=?<" + kind + ">";
             }
         }
     }
 
-    /** A basic / final / fallback block: an op list plus successor block indices. */
+    /** A basic / final block: an op list plus successor block indices. */
     public static final class Block {
         public int kind;
         /** DFA state this block belongs to. For BASIC: source state of the transition.
-         *  For FINAL: the accepting state. For FALLBACK: reserved. */
+         *  For FINAL: the accepting state. */
         public int stateId;
 
         public final List<Op> ops = new ArrayList<>();
@@ -121,7 +116,6 @@ public final class Cfg {
 
     public final List<Block> blocks = new ArrayList<>();
     public final int tagCount;
-    public final int groupCount;
     /** Initial register count (nextReg at end of determinization). */
     public final int initialRegCount;
     /** Current register count (after optimization passes; starts at initialRegCount). */
@@ -132,9 +126,8 @@ public final class Cfg {
     /** Diagnostic: ops removed by DCE (0 if none). */
     public int dceRemovedOps;
 
-    public Cfg(int tagCount, int groupCount, int initialRegCount) {
+    public Cfg(int tagCount, int initialRegCount) {
         this.tagCount = tagCount;
-        this.groupCount = groupCount;
         this.initialRegCount = initialRegCount;
         this.regCount = initialRegCount;
         this.finalRegBase = tagCount; // pre-optimimization layout: working [0..T-1], final [T..2T-1], extras [2T..]
@@ -147,20 +140,6 @@ public final class Cfg {
         b.rangeIndex = rangeIndex;
         blocks.add(b);
         return b;
-    }
-
-    /** Max register index + 1 across all ops (or {@code finalRegBase + tagCount} if no ops). */
-    public int computeMaxReg() {
-        int max = finalRegBase + tagCount; // final registers always present
-        for (Block b : blocks) {
-            for (Op op : b.ops) {
-                max = Math.max(max, op.dst + 1);
-                if (op.kind == KIND_COPY || op.kind == KIND_APPEND) {
-                    max = Math.max(max, op.src + 1);
-                }
-            }
-        }
-        return max;
     }
 
     @Override

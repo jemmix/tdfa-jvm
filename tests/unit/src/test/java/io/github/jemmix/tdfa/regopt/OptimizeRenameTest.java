@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class OptimizeRenameTest {
 
     private static Cfg cfgWithOp(Cfg.Op op) {
-        Cfg cfg = new Cfg(1, 1, 3);
+        Cfg cfg = new Cfg(1, 3);
         Cfg.Block b = new Cfg.Block();
         b.kind = Cfg.BLOCK_BASIC;
         b.ops.add(op);

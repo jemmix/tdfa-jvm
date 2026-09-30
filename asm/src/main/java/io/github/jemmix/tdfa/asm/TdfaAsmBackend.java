@@ -297,6 +297,13 @@ public final class TdfaAsmBackend {
         // Computed in a fixed-size runtime loop — bytecode is ~30 bytes regardless
         // of state count (matters for dictionary-scale DFAs with 20 K+ states).
         int n = tdfa.stateCount();
+        // Hoisted locals (15 = stateMeta, 16 = stateBase): the accessors are
+        // defensive copies — calling one per loop iteration would clone the
+        // whole array n times (O(n²) construction). Same rule as the emit
+        // loops: never call a defensive-copy accessor inside a loop.
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "stateMeta", "()[I", false);
+        mv.visitVarInsn(Opcodes.ASTORE, 15);
         ic(mv, n);
         mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
         mv.visitVarInsn(Opcodes.ASTORE, 2); // local 2 = IS_ACCEPT temp
@@ -311,8 +318,7 @@ public final class TdfaAsmBackend {
         // IS_ACCEPT[s] = stateMeta[s] & 1
         mv.visitVarInsn(Opcodes.ALOAD, 2);
         mv.visitVarInsn(Opcodes.ILOAD, 3);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "stateMeta", "()[I", false);
+        mv.visitVarInsn(Opcodes.ALOAD, 15);
         mv.visitVarInsn(Opcodes.ILOAD, 3);
         mv.visitInsn(Opcodes.IALOAD);
         mv.visitInsn(Opcodes.ICONST_1);
@@ -343,10 +349,13 @@ public final class TdfaAsmBackend {
         //                            target=ranges[o+2]; if (target<0) continue;
         //                            for c in lo..hi: ASCII_TARGET[s*128+c] = target;
         if (fastPath) {
-            // ranges from the Tdfa param (local 14)
+            // ranges from the Tdfa param (local 14); stateBase hoisted to 16
             mv.visitVarInsn(Opcodes.ALOAD, 1);
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "ranges", "()[I", false);
             mv.visitVarInsn(Opcodes.ASTORE, 14);
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "stateBase", "()[I", false);
+            mv.visitVarInsn(Opcodes.ASTORE, 16);
             int tableSize = tdfa.stateCount() * 128;
             ic(mv, tableSize);
             mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
@@ -363,8 +372,7 @@ public final class TdfaAsmBackend {
             ic(mv, n);
             mv.visitJumpInsn(Opcodes.IF_ICMPGE, sDone);
             // cnt = (stateMeta[s] >>> 1) & 0xFFFF
-            mv.visitVarInsn(Opcodes.ALOAD, 1);
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "stateMeta", "()[I", false);
+            mv.visitVarInsn(Opcodes.ALOAD, 15);
             mv.visitVarInsn(Opcodes.ILOAD, 5);
             mv.visitInsn(Opcodes.IALOAD);
             mv.visitInsn(Opcodes.ICONST_1);
@@ -373,8 +381,7 @@ public final class TdfaAsmBackend {
             mv.visitInsn(Opcodes.IAND);
             mv.visitVarInsn(Opcodes.ISTORE, 6);
             // base = stateBase[s]
-            mv.visitVarInsn(Opcodes.ALOAD, 1);
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "stateBase", "()[I", false);
+            mv.visitVarInsn(Opcodes.ALOAD, 16);
             mv.visitVarInsn(Opcodes.ILOAD, 5);
             mv.visitInsn(Opcodes.IALOAD);
             mv.visitVarInsn(Opcodes.ISTORE, 7);
@@ -2475,8 +2482,9 @@ public final class TdfaAsmBackend {
      */
     private static DispatchMode pickMode(Tdfa tdfa) {
         // INLINED only pays for fastPath DFAs (the emitted leaf + ladder are
-        // fastPath-shaped); everything else delegates to the runner ladder.
-        if (!computeFastPath(tdfa)) {
+        // fastPath-shaped; eligibility is the shared TdfaRunner predicate);
+        // everything else delegates to the runner ladder.
+        if (!TdfaRunner.fastPathEligible(tdfa)) {
             return DispatchMode.DELEGATE;
         }
         if (estimateInlinedBytes(tdfa) <= INLINE_BUDGET_BYTES && estimatePhiMaskedBytes(tdfa) <= INLINE_BUDGET_BYTES) {
@@ -2577,7 +2585,8 @@ public final class TdfaAsmBackend {
      * the whole engine emission, and PatternCompiler degrades the pattern
      * to the shared interpreter with only an observer note. Counting it
      * here sends such DFAs to DELEGATE mode instead — correct bytecode,
-     * and the fastest tier that actually fits.
+     * and the fastest tier that actually fits (an over-cap emission is a
+     * hard engine-emission failure, not something to route around).
      *
      * <p>{@code phi} (the non-masked twin) re-emits each accept state's
      * single final-ops list, so its size is bounded by the final-ops term
@@ -2614,87 +2623,5 @@ public final class TdfaAsmBackend {
             }
         }
         return total;
-    }
-
-    private static boolean computeFastPath(Tdfa tdfa) {
-        if (tdfa.multiline()) {
-            return false;
-        }
-        if (!checkRangesDisjoint(tdfa)) {
-            return false;
-        }
-        for (int mask : tdfa.stateEntryMask()) {
-            if (mask != 0) {
-                return false;
-            }
-        }
-        for (int mask : tdfa.stateAcceptMask()) {
-            if (mask != 0) {
-                return false;
-            }
-        }
-        // Hoisted: accessors clone — one call per array, never inside the loop.
-        int[] rgq = tdfa.ranges();
-        for (int i = 4; i < rgq.length; i += 5) {
-            if (rgq[i] != 0) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean checkRangesDisjoint(Tdfa tdfa) {
-        int[] sm = tdfa.stateMeta(), sb = tdfa.stateBase(), rg = tdfa.ranges();
-        long[] sortBuf = null;
-        for (int s = 0; s < tdfa.stateCount(); s++) {
-            int meta = sm[s];
-            int base = sb[s], cnt = (meta >>> 1) & 0xFFFF;
-            if (cnt < 2) {
-                continue;
-            }
-            // Fast path (sorted by lo, the materialization default): O(cnt) scan
-            // with running max-hi. Reordered states (sortByMaskSpecificity) take
-            // the pack-and-sort path — O(cnt log cnt) instead of the O(cnt²)
-            // pairwise check.
-            boolean sortedByLo = true;
-            for (int i = 1; i < cnt; i++) {
-                if (rg[(base + i) * 5] < rg[(base + i - 1) * 5]) {
-                    sortedByLo = false;
-                    break;
-                }
-            }
-            if (!sortedByLo) {
-                if (sortBuf == null || sortBuf.length < cnt) {
-                    sortBuf = new long[Math.max(cnt, 64)];
-                }
-                for (int i = 0; i < cnt; i++) {
-                    int o = (base + i) * 5;
-                    sortBuf[i] = ((long) rg[o] << 32) | (rg[o + 1] & 0xFFFFFFFFL);
-                }
-                Arrays.sort(sortBuf, 0, cnt);
-                int maxHi = (int) sortBuf[0];
-                for (int i = 1; i < cnt; i++) {
-                    if ((int) (sortBuf[i] >>> 32) <= maxHi) {
-                        return false;
-                    }
-                    int hi = (int) sortBuf[i];
-                    if (hi > maxHi) {
-                        maxHi = hi;
-                    }
-                }
-                continue;
-            }
-            int maxHi = rg[base * 5 + 1];
-            for (int i = 1; i < cnt; i++) {
-                int o = (base + i) * 5;
-                if (rg[o] <= maxHi) {
-                    return false;
-                }
-                if (rg[o + 1] > maxHi) {
-                    maxHi = rg[o + 1];
-                }
-            }
-        }
-        return true;
     }
 }

@@ -616,7 +616,7 @@ public final class Parser {
                 // Unicode property classes \p{X} \pX \P{X} \PX \p{^X}
                 if (next == 'p' || next == 'P') {
                     pos += 2; // consume '\' and 'p'/'P'
-                    appendUnicodeToRanges(ranges, next == 'p', false);
+                    appendUnicodeToRanges(ranges, next == 'p');
                     continue;
                 }
             }
@@ -1109,22 +1109,29 @@ public final class Parser {
      * @param positive {@code true} for {@code \p}, {@code false} for {@code \P}
      */
     private Ast parseUnicodeEscape(boolean positive) {
+        return new CharClass(parseUnicodeTable(positive), false);
+    }
+
+    /** Parse the body of a {@code \p}/{@code \P} escape (after the prefix,
+     *  with the caller's {@code positive} sense) and resolve it to the
+     *  property's EFFECTIVE range table: name read, ^-inner negation
+     *  applied through the truth table, the named table looked up (unknown
+     *  names fail the parse), and the case-folding twin merged when
+     *  active. Shared by the atom path and the class-accumulator path. */
+    private int[] parseUnicodeTable(boolean positive) {
         if (disableUnicodeGroups) {
             throw fail(this, "Unicode groups (\\p/\\P) disabled by DISABLE_UNICODE_GROUPS flag");
         }
         String name = parseUnicodeName();
-        boolean innerNeg = false;
-        if (name.startsWith("^")) {
-            innerNeg = true;
+        boolean innerNeg = name.startsWith("^");
+        if (innerNeg) {
             name = name.substring(1);
         }
         // Truth table:
-        //   \p{X}  → (T, F) → negated=F
-        //   \p{^X} → (T, T) → negated=T
-        //   \P{X}  → (F, F) → negated=T
-        //   \P{^X} → (F, T) → negated=F
-        boolean negated = (positive == innerNeg);
-
+        //   \p{X}  → (T, F) → complement=F
+        //   \p{^X} → (T, T) → complement=T
+        //   \P{X}  → (F, F) → complement=T
+        //   \P{^X} → (F, T) → complement=F
         int[] t = provider.tableFor(name);
         if (t == null) {
             throw fail(this, "unknown character class name: " + name);
@@ -1133,7 +1140,7 @@ public final class Parser {
         if (fold != null && fold.length > 0) {
             t = mergeRanges(t, fold);
         }
-        return new CharClass(t, negated);
+        return (positive == innerNeg) ? complementRanges(t) : t;
     }
 
     /** Append Unicode property ranges into a class's accumulator. The caller
@@ -1141,28 +1148,8 @@ public final class Parser {
      *  materialise the ranges (with complement if {@code \P}) into {@code out}.
      *  The class's own {@code [^...]} negation is applied at the end via the
      *  existing CharClass path; here we only handle the escape's own sign. */
-    private void appendUnicodeToRanges(List<Integer> out, boolean positive, boolean unused) {
-        if (disableUnicodeGroups) {
-            throw fail(this, "Unicode groups (\\p/\\P) disabled by DISABLE_UNICODE_GROUPS flag");
-        }
-        String name = parseUnicodeName();
-        boolean innerNeg = false;
-        if (name.startsWith("^")) {
-            innerNeg = true;
-            name = name.substring(1);
-        }
-        boolean negate = (positive == innerNeg); // see parseUnicodeEscape truth table
-        int[] t = provider.tableFor(name);
-        if (t == null) {
-            throw fail(this, "unknown character class name: " + name);
-        }
-        int[] fold = caseInsensitive ? provider.foldTableFor(name) : null;
-        if (fold != null && fold.length > 0) {
-            t = mergeRanges(t, fold);
-        }
-        if (negate) {
-            t = complementRanges(t);
-        }
+    private void appendUnicodeToRanges(List<Integer> out, boolean positive) {
+        int[] t = parseUnicodeTable(positive);
         for (int v : t) {
             out.add(v);
         }
@@ -1254,36 +1241,7 @@ public final class Parser {
      * </ul>
      */
     private Ast parseHexEscape() {
-        int val;
-        if (pos < src.length() && src.charAt(pos) == '{') {
-            pos++;
-            int start = pos;
-            while (pos < src.length() && isHex(src.charAt(pos))) {
-                pos++;
-            }
-            if (pos >= src.length() || src.charAt(pos) != '}') {
-                throw fail(this, "invalid hex escape: expected '}'");
-            }
-            String hex = src.substring(start, pos);
-            pos++; // consume '}'
-            if (hex.isEmpty()) {
-                throw fail(this, "invalid hex escape: empty \\x{}");
-            }
-            val = parseHexValue(hex);
-            if (val > 0x10FFFF) {
-                throw fail(this, "invalid escape sequence");
-            }
-            if (val > 0xFFFF) {
-                return new CharClass(new int[]{val, val}, false);
-            }
-        } else {
-            if (pos + 1 >= src.length() || !isHex(src.charAt(pos)) || !isHex(src.charAt(pos + 1))) {
-                throw fail(this, "invalid hex escape: expected exactly 2 hex digits after \\x");
-            }
-            val = (hexVal(src.charAt(pos)) << 4) | hexVal(src.charAt(pos + 1));
-            pos += 2;
-        }
-        return new Ast.Symbol((char) val);
+        return literalAtom(parseHexChar());
     }
 
     private static boolean isHex(char c) {

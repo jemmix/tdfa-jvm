@@ -87,7 +87,7 @@ final class HistTable {
      * Intern {@code seq} (not retained — copied on first sighting).
      */
     int intern(int[] seq) {
-        if (seq == null || seq.length == 0) {
+        if (seq.length == 0) {
             return EMPTY_ID;
         }
         long h = 0x9E3779B97F4A7C15L;
