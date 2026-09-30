@@ -7,7 +7,7 @@ git history (TODO.md before 2026-09-30).
 ## Correctness
 
 - [ ] Expand parity tests: backrefs, huge counts, nested quantifiers, Unicode boundaries
-- [ ] Overnight fuzz soak: unpruned determinization + whole ladder
+- [ ] Overnight fuzz soak: whole ladder
 - [ ] Fix POSIX "bcc" corrupt g5 span (empty-iteration final-ops family)
 - [ ] Property shrinking for minimal fuzz repros
 - [ ] Verify TDFA(1) conformance vs paper wording (lookahead delay)
@@ -16,10 +16,7 @@ git history (TODO.md before 2026-09-30).
 
 ## Performance
 
-- [ ] ASM register coalescing (registers → JVM locals)
-- [ ] Cache-friendly flat-array VM data layout
 - [ ] Prefix needle v2: fold-aware, \b-gated chains
-- [ ] Maybe: deduplicate double determinization for cut-matters patterns
 
 ## Benchmarks
 
