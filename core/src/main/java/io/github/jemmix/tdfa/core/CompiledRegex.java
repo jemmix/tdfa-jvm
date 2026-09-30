@@ -19,6 +19,16 @@ import io.github.jemmix.tdfa.unicode.UnicodeProviders;
  * ({@link #find}, {@link #match}, {@link #findAll}) and tag-level capture
  * access via {@link MatchResult}.
  *
+ * <p><b>Find-only by construction.</b> No whole-match machinery is ever
+ * attempted here — the plain pruned determinization, no partial-whole
+ * side table — so patterns whose whole-match divergence would reject a
+ * facade {@code Pattern.compile} (the "pattern too large: whole-match
+ * divergence" family) compile fine. There is no whole-input surface to
+ * refuse. This is the core tier's standing find-only API; the facade's
+ * equivalent (same skipped machinery, full {@code Matcher} surface,
+ * whole methods throwing {@code UnsupportedOperationException}) is
+ * {@code Pattern.compileFind} / {@code Pattern.FIND_ONLY}.
+ *
  * <p><b>Thread safety:</b> safe for concurrent use — instances are
  * immutable; the input CharSequence must not be mutated during matching.
  *

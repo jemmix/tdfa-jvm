@@ -76,6 +76,41 @@ public interface Pattern extends Serializable {
     int UNICODE_CHARACTER_CLASS = 32;
 
     /**
+     * Flag: compile for find-shaped matching only — the whole-match machinery
+     * is skipped entirely (see below). The explicit spellings are
+     * {@link #compileFind(String)} / {@link #compileFind(String, int)};
+     * the bit may also be OR-ed into any {@code compile(regex, flags, ...)}.
+     *
+     * <p><b>What it buys you.</b> By default one artifact serves both
+     * {@code find()} and whole-input {@code matches()}: during determinization
+     * the compiler records a side table of un-pruned continuations wherever
+     * leftmost-first pruning would discard a path a full-length match needs
+     * (the {@code (a|ab)}-on-{@code "ab"} divergence class). That bounded side
+     * exploration is part of the compile budget, and when a pattern's
+     * divergence explodes it, the whole compile fails with "pattern too
+     * large" — even though the find artifact itself is fine. With
+     * {@code FIND_ONLY} no whole machinery is attempted at all: the compile
+     * produces the plain find artifact and accepts exactly the patterns a
+     * find-only consumer can run.
+     *
+     * <p><b>The contract.</b> Whole-input methods on the result throw
+     * {@link UnsupportedOperationException} — always, even for patterns whose
+     * whole side would have built trivially (the flag is a consumer contract,
+     * not an internal artifact switch): {@link #matches(String)},
+     * {@link #matches(byte[])} and {@link PatternMatcher#matches()
+     * matcher(...).matches()}. Everything find-shaped works unchanged:
+     * {@code find()}, {@code lookingAt()}, {@code split()},
+     * {@code replaceAll}/{@code replaceFirst}, groups.
+     *
+     * <p>The flag round-trips serialization and participates in
+     * {@code equals}/{@code hashCode}: a find-only pattern is not equal to
+     * the full compile of the same regex (different capabilities). The core
+     * tier's {@link io.github.jemmix.tdfa.core.CompiledRegex core.CompiledRegex}
+     * is find-only in the same sense, by construction.
+     */
+    int FIND_ONLY = 64;
+
+    /**
      * Flag: disable Unicode groups ({@code \p{...}} / {@code \P{...}} rejected at compile time, like re2j).
      */
     int DISABLE_UNICODE_GROUPS = 8;
@@ -135,6 +170,33 @@ public interface Pattern extends Serializable {
     }
 
     /**
+     * Compile {@code regex} for find-shaped matching only: no whole-match
+     * machinery is attempted (patterns whose whole divergence would reject a
+     * full compile are accepted here), and every whole-input method on the
+     * result throws {@link UnsupportedOperationException} — see
+     * {@link #FIND_ONLY}. The explicit spelling of
+     * {@code compile(regex, flags | FIND_ONLY)}.
+     */
+    static Pattern compileFind(String regex) {
+        if (regex == null) {
+            throw new NullPointerException("pattern is null");
+        }
+        return compileFind(regex, 0);
+    }
+
+    /**
+     * Compile {@code regex} with the given {@code flags} OR-ed with
+     * {@link #FIND_ONLY} — find-shaped matching only, whole-input methods
+     * throw {@link UnsupportedOperationException} (see {@link #FIND_ONLY}).
+     */
+    static Pattern compileFind(String regex, int flags) {
+        if (regex == null) {
+            throw new NullPointerException("pattern is null");
+        }
+        return PatternCompiler.compile(regex, flags | FIND_ONLY, null, null);
+    }
+
+    /**
      * Convenience: compile and match the entire input.
      */
     static boolean matches(String regex, CharSequence input) {
@@ -170,12 +232,16 @@ public interface Pattern extends Serializable {
     }
 
     /**
-     * Match the entire input against this pattern.
+     * Match the entire input against this pattern. Throws
+     * {@link UnsupportedOperationException} on patterns compiled with
+     * {@link #FIND_ONLY} (their whole-match machinery was never built).
      */
     boolean matches(String input);
 
     /**
      * Match the entire input against this pattern (UTF-8 bytes decoded to a String).
+     * Throws {@link UnsupportedOperationException} on patterns compiled with
+     * {@link #FIND_ONLY} (their whole-match machinery was never built).
      */
     boolean matches(byte[] input);
 

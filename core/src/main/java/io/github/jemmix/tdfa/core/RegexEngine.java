@@ -22,9 +22,10 @@ import java.util.NoSuchElementException;
  * (its pike cut never fired, or its partial-whole side table recorded
  * the uncut continuations) and
  * {@code Pattern.compile(...).matcher(...).matches()} walks it through
- * the narrow {@link WholeEngine} seam — implementors of this interface
- * carry no whole-match obligation beyond {@link #matches}' documented
- * contract.
+ * the narrow {@link WholeEngine} seam (find-only facade compiles —
+ * {@code FIND_ONLY} — refuse that surface instead of walking);
+ * implementors of this interface carry no whole-match obligation beyond
+ * {@link #matches}'s documented contract.
  *
  * <p>Implementations must be effectively immutable and safe for concurrent
  * use from multiple threads (per-match state lives in the returned

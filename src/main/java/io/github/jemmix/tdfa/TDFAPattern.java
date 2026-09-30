@@ -43,7 +43,8 @@ public class TDFAPattern implements Pattern {
     // table (the uncut continuations recorded beside the pruned
     // transitions — one artifact, one engine; a side over budget fails
     // the compile). matchWhole walks to EOF; an accept config alive at
-    // end-of-input is a full match.
+    // end-of-input is a full match. FIND_ONLY compiles carry the refusing
+    // non-engine instead (no whole machinery was attempted).
     private transient WholeEngine wholeEngine;
     /**
      * The Unicode tables this pattern was compiled against ({@code null} =
@@ -81,7 +82,10 @@ public class TDFAPattern implements Pattern {
 
     /**
      * Engine for {@code matches()}: whole-exact over the one artifact
-     * (its side table when the pike cut bit), compiled eagerly.
+     * (its side table when the pike cut bit), compiled eagerly — or, on
+     * {@link Pattern#FIND_ONLY} compiles, the refusing non-engine whose
+     * {@code matchWhole} throws {@link UnsupportedOperationException}
+     * (nothing whole was built; see {@link FindOnlyWholeEngine}).
      */
     @EmittedSurface
     public WholeEngine wholeEngine() {

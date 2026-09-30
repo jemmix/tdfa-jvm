@@ -29,8 +29,18 @@ import io.github.jemmix.tdfa.unicode.UnicodeProviders;
  * is no second cut-free determinization (its ledger arithmetic is doomed:
  * it would redo the primary prefix plus the divergence that just
  * exhausted the side's half of the remaining ticks, on the half left).
- * Everything builds inside {@code compile()}; any budget rejection fails
- * the compile as a translated
+ *
+ * <p>The find-only escape hatch ({@link Pattern#FIND_ONLY} /
+ * {@link Pattern#compileFind}): consumers who never call whole-input
+ * methods compile the SAME pipeline minus the whole machinery — the plain
+ * pruned determinization, no side table recorded, no exactness gate, no
+ * whole engine translation. Patterns whose whole divergence would reject
+ * a full compile are accepted; the whole surface on the result refuses
+ * with {@link UnsupportedOperationException} (see
+ * {@link FindOnlyWholeEngine}).
+ *
+ * <p>Everything builds inside {@code compile()}; any budget rejection
+ * fails the compile as a translated
  * {@link io.github.jemmix.tdfa.core.PatternSyntaxException} — including
  * the end-of-compile execution-RAM check (retained artifact tables,
  * side table included, must fit {@code tdfa.budget.runtime.memory}; the
@@ -40,7 +50,7 @@ import io.github.jemmix.tdfa.unicode.UnicodeProviders;
 final class PatternCompiler {
 
     private static final int VALID_FLAGS = Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.MULTILINE
-        | Pattern.DISABLE_UNICODE_GROUPS | Pattern.LONGEST_MATCH | Pattern.UNICODE_CHARACTER_CLASS;
+        | Pattern.DISABLE_UNICODE_GROUPS | Pattern.LONGEST_MATCH | Pattern.UNICODE_CHARACTER_CLASS | Pattern.FIND_ONLY;
 
     private PatternCompiler() {
     }
@@ -56,7 +66,8 @@ final class PatternCompiler {
         }
         if ((flags & ~VALID_FLAGS) != 0) {
             throw new IllegalArgumentException(
-                "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS, LONGEST_MATCH, UNICODE_CHARACTER_CLASS");
+                "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS,"
+                    + " LONGEST_MATCH, UNICODE_CHARACTER_CLASS, FIND_ONLY");
         }
         String fl = regex;
         if ((flags & Pattern.CASE_INSENSITIVE) != 0) {
@@ -73,25 +84,37 @@ final class PatternCompiler {
         }
         boolean longest = (flags & Pattern.LONGEST_MATCH) != 0;
         boolean disableUnicodeGroups = (flags & Pattern.DISABLE_UNICODE_GROUPS) != 0;
+        boolean findOnly = (flags & Pattern.FIND_ONLY) != 0;
         UnicodeDataProvider prov = provider != null ? provider : UnicodeProviders.get();
         CompileObserver obs = observer != null ? observer : CompileObserver.NONE;
         try {
-            // One CPU ledger for the whole compile: the front-end and the
-            // find determinization with its partial-whole side table (when
-            // the pike cut bites) all debit the same pool.
+            // One CPU ledger for the whole compile. Full compiles: the
+            // front-end and the find determinization with its partial-whole
+            // side table (when the pike cut bites) all debit the same pool.
+            // FIND_ONLY compiles: the plain pruned determinization — the
+            // side table has no reader, so its exploration is not even
+            // attempted and its budget is never drawn.
             WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
             Tnfa nfa = Tnfa.compile(fl, disableUnicodeGroups, false, prov, obs, ledger);
-            Tdfa find = Tdfa.compileWithWholeSide(nfa, longest, obs, ledger.fork(0));
-            // The side was requested: not exact means it was abandoned —
-            // the whole surface did not build. Accept-only-what-ships
-            // (2026-09-15 contract): reject here rather than attempting a
-            // doomed cut-free second determinization (it would redo the
-            // primary prefix PLUS the divergence that just exhausted the
-            // side's half of the remaining ticks — it can never fit).
-            if (!find.wholeWalkExact()) {
+            Tdfa find = findOnly ? Tdfa.compile(nfa, longest, obs, ledger.fork(0))
+                : Tdfa.compileWithWholeSide(nfa, longest, obs, ledger.fork(0));
+            if (findOnly) {
+                // No whole surface was requested: no exactness gate, no
+                // whole engine — the find artifact is all this compile
+                // ships and all it promised.
+                obs.note("whole", "find-only (FIND_ONLY: no whole machinery attempted)");
+            } else if (!find.wholeWalkExact()) {
+                // The side was requested: not exact means it was abandoned —
+                // the whole surface did not build. Accept-only-what-ships
+                // (2026-09-15 contract): reject here rather than attempting
+                // a doomed cut-free second determinization (it would redo
+                // the primary prefix PLUS the divergence that just
+                // exhausted the side's half of the remaining ticks — it
+                // can never fit).
                 throw new IllegalStateException("pattern too large: whole-match divergence exceeds the compile"
                     + " budget (partial-whole side abandoned) — raise -D" + Budgets.COMPILE_COMPUTE_PROP + " / -D"
-                    + Budgets.COMPILE_MEMORY_PROP + " if you need this pattern");
+                    + Budgets.COMPILE_MEMORY_PROP + " if you need this pattern, or compile find-shaped-only via"
+                    + " Pattern.compileFind / FIND_ONLY");
             }
             int ps = find.stateCount();
 
@@ -120,14 +143,16 @@ final class PatternCompiler {
                 + ", budget " + budget + " B");
             long memoBudget = Math.max(1, Budgets.runtimeMemoAllowance(retained));
 
-            // One engine translation of the one artifact, whole-capable
-            // through the same engine (a native runner or generated class
-            // over the artifact; a foreign factory engine that isn't
-            // whole-capable falls back to a runner, so matches() never
-            // depends on a third-party whole walk).
+            // One engine translation of the one artifact. Full compiles:
+            // whole-capable through the same engine (a native runner or
+            // generated class over the artifact; a foreign factory engine
+            // that isn't whole-capable falls back to a runner, so matches()
+            // never depends on a third-party whole walk). FIND_ONLY
+            // compiles: the whole surface is the refusing non-engine — the
+            // artifact carries no whole relation to walk.
             long t0 = System.nanoTime();
             RegexEngine eng = engineOf(find, factory, memoBudget);
-            WholeEngine wholeEng = wholeOf(eng, find, memoBudget);
+            WholeEngine wholeEng = findOnly ? new FindOnlyWholeEngine(regex) : wholeOf(eng, find, memoBudget);
             obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
 
             if (vmSwitched()) {
