@@ -18,9 +18,10 @@ import java.util.NoSuchElementException;
  * {@link #findAll} run leftmost-first (or leftmost-longest, per the
  * compile) search semantics over the engine's artifact, plus the boolean
  * whole-input probe {@link #matches}. Exact whole-input matching with
- * captures is a facade concern: the compile keeps a whole-exact artifact
- * (cut-free, or the find artifact itself when its pike cut never fired)
- * and {@code Pattern.compile(...).matcher(...).matches()} walks it through
+ * captures is a facade concern: the facade's one artifact is whole-exact
+ * (its pike cut never fired, or its partial-whole side table recorded
+ * the uncut continuations) and
+ * {@code Pattern.compile(...).matcher(...).matches()} walks it through
  * the narrow {@link WholeEngine} seam — implementors of this interface
  * carry no whole-match obligation beyond {@link #matches}' documented
  * contract.

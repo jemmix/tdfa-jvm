@@ -106,9 +106,10 @@ class CompileBudgetTest {
     /** The classic nested-counted shape's FIND artifact compiles under
      *  default budgets — the right-nested suffix collapses the determinization
      *  ~90x in kernel total ((a{1,100}){1,100}: 19.6 M kernels -> 148 K,
-     *  10001 states). Its cut-free whole artifact still rejects (pinned in
-     *  WholeMatchTest), so the facade compile fails; the find-artifact pin
-     *  runs on the core Tdfa API where the whole attempt doesn't interfere. */
+     *  10001 states). Its whole divergence abandons the partial-whole side
+     *  (pinned in WholeMatchTest/PartialWholeTest), so the facade compile
+     *  fails; the find-artifact pin runs on the core Tdfa API where the
+     *  side attempt doesn't interfere. */
     @Test
     void nestedCountedNowCompiles() {
         long t0 = System.nanoTime();
@@ -137,11 +138,11 @@ class CompileBudgetTest {
         }
     }
 
-    /** A bomb whose whole artifact exceeds the budget fails compile()
+    /** A bomb whose whole divergence exceeds the budget fails compile()
      *  exactly once, eagerly, with the clean rejection — the find
-     *  determinization and the one doomed cut-free attempt all run inside
-     *  compile() on the shared CPU ledger (nothing recompiles at match
-     *  time). */
+     *  determinization and its bounded side sweep (which abandons) all
+     *  run inside compile() on the shared CPU ledger (nothing recompiles
+     *  at match time). */
     @Test
     void bombWholeOverBudgetFailsCompileEagerly() {
         String bomb = "(?:(?m:\u00e9)(?:\\w[^\u03a9z\\-]{0,}|\ud835\udd04\udfff){1,4}){1,5}";
@@ -151,7 +152,7 @@ class CompileBudgetTest {
             assertThatCode(() -> Pattern.compile(bomb)).isInstanceOf(PatternSyntaxException.class)
                 .hasMessageContaining("pattern too large");
             assertThat((System.nanoTime() - t0) / 1_000_000)
-                .as("wall of the budgeted compile (find + one doomed whole attempt)").isLessThan(10_000);
+                .as("wall of the budgeted compile (find + bounded side sweep)").isLessThan(10_000);
         } finally {
             System.clearProperty("tdfa.budget.compile.compute");
         }
@@ -160,10 +161,10 @@ class CompileBudgetTest {
     @Test
     void boundedGapWholeBombFailsCompile() {
         // Find compiles (~28 K kernels under the RAM-derived cap); the
-        // pike cut bit, and the cut-free whole DFA is an intrinsically
-        // huge counter cross-product (100 001+ states minimal) — over the
-        // budget, so compile() fails rather than shipping a Pattern whose
-        // matches() would be broken.
+        // pike cut bit, and the whole divergence is an intrinsically huge
+        // counter cross-product (100 001+ states minimal) — the side sweep
+        // abandons over the budget, so compile() fails rather than
+        // shipping a Pattern whose matches() would be broken.
         assertThatCode(() -> Pattern.compile("[\\s\\S]{0,60}x[\\s\\S]{0,60}"))
             .isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
     }

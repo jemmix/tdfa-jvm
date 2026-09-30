@@ -22,11 +22,15 @@ import io.github.jemmix.tdfa.unicode.UnicodeProviders;
  * custom {@link RegexEngineFactory}, or per-pattern ASM generation).
  * The single artifact serves find() AND matches(): the pruned
  * determinization records a partial-whole side table at every pike-cut
- * point (the uncut continuations whole-input walks need), and only when
- * that bounded side exploration exhausts its budget does the compile
- * fall back to a second, cut-free whole determinization. Everything
- * builds inside {@code compile()}; any budget rejection fails the
- * compile as a translated
+ * point (the uncut continuations whole-input walks need). When that
+ * bounded side exploration exhausts its budget, the compile FAILS with
+ * the standard "pattern too large" family — accept-only-what-ships, the
+ * same compile-time budget contract the find artifact always had; there
+ * is no second cut-free determinization (its ledger arithmetic is doomed:
+ * it would redo the primary prefix plus the divergence that just
+ * exhausted the side's half of the remaining ticks, on the half left).
+ * Everything builds inside {@code compile()}; any budget rejection fails
+ * the compile as a translated
  * {@link io.github.jemmix.tdfa.core.PatternSyntaxException} — including
  * the end-of-compile execution-RAM check (retained artifact tables,
  * side table included, must fit {@code tdfa.budget.runtime.memory}; the
@@ -72,30 +76,33 @@ final class PatternCompiler {
         UnicodeDataProvider prov = provider != null ? provider : UnicodeProviders.get();
         CompileObserver obs = observer != null ? observer : CompileObserver.NONE;
         try {
-            // One CPU ledger for the whole compile: the front-end, the find
-            // determinization (with its partial-whole side table, when the
-            // pike cut bites) and — only when that side was abandoned over
-            // budget — the cut-free whole determinization all debit the
-            // same pool.
+            // One CPU ledger for the whole compile: the front-end and the
+            // find determinization with its partial-whole side table (when
+            // the pike cut bites) all debit the same pool.
             WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
             Tnfa nfa = Tnfa.compile(fl, disableUnicodeGroups, false, prov, obs, ledger);
             Tdfa find = Tdfa.compileWithWholeSide(nfa, longest, obs, ledger.fork(0));
-            Tdfa whole = find;
+            // The side was requested: not exact means it was abandoned —
+            // the whole surface did not build. Accept-only-what-ships
+            // (2026-09-15 contract): reject here rather than attempting a
+            // doomed cut-free second determinization (it would redo the
+            // primary prefix PLUS the divergence that just exhausted the
+            // side's half of the remaining ticks — it can never fit).
             if (!find.wholeWalkExact()) {
-                obs.note("pikeCut", "cut-free whole artifact compiled");
-                whole = Tdfa.compileUnpruned(nfa, longest, obs, ledger.fork(0));
+                throw new IllegalStateException("pattern too large: whole-match divergence exceeds the compile"
+                    + " budget (partial-whole side abandoned) — raise -D" + Budgets.COMPILE_COMPUTE_PROP + " / -D"
+                    + Budgets.COMPILE_MEMORY_PROP + " if you need this pattern");
             }
-            boolean shared = whole == find;
             int ps = find.stateCount();
 
             // ===== end-of-compile execution-RAM check =====
             // The runtime RAM budget bounds the pattern's whole execution
             // footprint: retained artifact tables plus the lazy memo
             // allowances. The memos draw from the RESIDUAL after the
-            // retained tables (per-engine split below), so what the check
-            // itself must verify is the retained side — tables beyond the
-            // budget fail the compile with the standard clean "pattern
-            // too large" rejection. Memo floors on a tiny residual are the
+            // retained tables, so what the check itself must verify is
+            // the retained side — tables beyond the budget fail the
+            // compile with the standard clean "pattern too large"
+            // rejection. Memo floors on a tiny residual are the
             // documented bounded carve-out (clamped, not rejected — see
             // Budgets.runtimeMemoAllowance). Engine-tier construction-time
             // tables (dispatch tiers, generated statics) stay outside the
@@ -103,29 +110,24 @@ final class PatternCompiler {
             // unaccountable by construction, but the artifact tables and
             // any native fallback runner still draw from this residual.
             long budget = Budgets.runtimeMemoryBytes();
-            long retained = find.retainedTableBytes() + (shared ? 0 : whole.retainedTableBytes());
+            long retained = find.retainedTableBytes();
             if (retained >= budget) {
                 throw new IllegalStateException("pattern too large: retained execution RAM (flat artifact tables "
-                    + retained + " B, " + (shared ? "shared artifact" : "find+whole artifacts")
-                    + ") exceeds the runtime memory budget (" + budget + " B) — raise -D"
+                    + retained + " B) exceeds the runtime memory budget (" + budget + " B) — raise -D"
                     + Budgets.RUNTIME_MEMORY_PROP);
             }
             obs.note("runtimeFootprint", "retained " + retained + " B, memo allowance " + (budget - retained) + " B"
-                + (shared ? "" : " (split per engine)") + ", budget " + budget + " B");
-            // A pattern keeping a second (whole) engine splits the residual
-            // memo allowance so the pattern's combined memos stay within one
-            // budget; floored at 1 B (the runner contract wants > 0).
-            long memoBudget = Math.max(1, Budgets.runtimeMemoAllowance(retained) / (shared ? 1 : 2));
+                + ", budget " + budget + " B");
+            long memoBudget = Math.max(1, Budgets.runtimeMemoAllowance(retained));
 
-            // One engine translation for both artifacts. The whole engine
-            // must be whole-capable (WholeEngine): a native runner or
-            // generated class over the whole artifact — a foreign factory
-            // engine that isn't falls back to a runner, so matches() never
-            // depends on a third-party whole walk.
+            // One engine translation of the one artifact, whole-capable
+            // through the same engine (a native runner or generated class
+            // over the artifact; a foreign factory engine that isn't
+            // whole-capable falls back to a runner, so matches() never
+            // depends on a third-party whole walk).
             long t0 = System.nanoTime();
             RegexEngine eng = engineOf(find, factory, memoBudget);
-            WholeEngine wholeEng = shared ? wholeOf(eng, find, memoBudget)
-                : wholeOf(engineOf(whole, factory, memoBudget), whole, memoBudget);
+            WholeEngine wholeEng = wholeOf(eng, find, memoBudget);
             obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
 
             if (vmSwitched()) {

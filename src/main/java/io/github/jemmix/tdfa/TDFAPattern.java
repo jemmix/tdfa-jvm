@@ -41,10 +41,9 @@ public class TDFAPattern implements Pattern {
     // divergence class ((a|ab) on "ab" — leftmost-first prunes the `ab`
     // continuation), the find artifact carrying its partial-whole side
     // table (the uncut continuations recorded beside the pruned
-    // transitions). Only when that bounded side exploration was over
-    // budget does the compile ship a SECOND engine over the cut-free
-    // determinization of the same parse. matchWhole walks to EOF; an
-    // accept config alive at end-of-input is a full match.
+    // transitions — one artifact, one engine; a side over budget fails
+    // the compile). matchWhole walks to EOF; an accept config alive at
+    // end-of-input is a full match.
     private transient WholeEngine wholeEngine;
     /**
      * The Unicode tables this pattern was compiled against ({@code null} =
@@ -81,8 +80,8 @@ public class TDFAPattern implements Pattern {
     }
 
     /**
-     * Engine for {@code matches()}: whole-exact (the one artifact with its
-     * side table, or the cut-free fallback), compiled eagerly.
+     * Engine for {@code matches()}: whole-exact over the one artifact
+     * (its side table when the pike cut bit), compiled eagerly.
      */
     @EmittedSurface
     public WholeEngine wholeEngine() {
