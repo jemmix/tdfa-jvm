@@ -257,6 +257,22 @@ final class TdfaCompiler {
     private int[] psoStack;
 
     /**
+     * Scratch for topologicalSort: {@code topoReads[r]} is the Algorithm-6
+     * reader count (zeroed back via {@code topoTouched} after each call —
+     * the register universe is global and grows with the DFA, so clearing
+     * the whole array per attempt would be a cliff); {@code topoRemoved}/
+     * {@code topoOut} stage the peel. Single-threaded, single-caller
+     * (tryMap) — plain reuse is safe.
+     */
+    private int[] topoReads;
+
+    private int[] topoTouched;
+
+    private boolean[] topoRemoved;
+
+    private int[][] topoOut;
+
+    /**
      * @param sharedMeter the compile's work-budget ledger. One meter spans
      *        the whole compile: this class ticks it during determinization
      *        and hands the same instance on to the post-determinization
@@ -1654,39 +1670,104 @@ final class TdfaCompiler {
     }
 
     /**
-     * Stabilize copy chains so reads happen before writes clobber their source.
-     * COPYs that read from a register must execute before any op (COPY or POS/NIL)
-     * that writes to that register.
+     * Topologically sort register ops — paper §3.3 Algorithm 6
+     * ({@code topological_sort}). {@code I[r]} counts the remaining COPY ops
+     * that READ register {@code r}; an op is emittable only when
+     * {@code I[dst] = 0}, so every read of a register happens before any op
+     * (COPY or SET) updates it: old values are consumed before they are
+     * overwritten, which resolves both copy-chain (RAW) and copy-vs-set
+     * (WAR) hazards.
+     *
+     * <p>A stall with ops remaining means the remainder is exactly a set of
+     * cyclic copy dependencies. Trivial cycles (self-copies, dst = src) are
+     * no-ops and ignored; any remaining copy with dst != src forms a
+     * <em>non-trivial</em> cycle — unexecutable without a temporary register
+     * — so the function returns false and the caller ({@code tryMap}, paper
+     * §2 {@code map} line 43 {@code return topological_sort(O)}) rejects the
+     * mapping: determinization creates a fresh state instead of emitting a
+     * value-corrupting copy cycle. The cycle remainder is appended in
+     * original order either way, as the paper's Algorithm 6 does.
+     *
+     * @return true iff no non-trivial cycle was found; {@code ops} is
+     *         reordered in place.
      */
-    void topologicalSort(List<int[]> ops) {
-        boolean changed = true;
-        int guard = 0;
-        while (changed && guard++ < ops.size() * ops.size()) {
-            changed = false;
-            for (int i = 0; i < ops.size(); i++) {
-                meter.tick(); // O(n²)-guarded: without ticks this is a
-                // work-budget blind spot
-                int[] op = ops.get(i);
-                if (op[0] != OP_COPY) {
+    boolean topologicalSort(List<int[]> ops) {
+        int n = ops.size();
+        if (n < 2) {
+            return true;
+        }
+        int maxReg = 0;
+        for (int[] op : ops) {
+            maxReg = Math.max(maxReg, op[1]);
+            if (op[0] == OP_COPY) {
+                maxReg = Math.max(maxReg, op[2]);
+            }
+        }
+        if (topoReads == null || topoReads.length <= maxReg) {
+            int cap = Math.max(64, Integer.highestOneBit(maxReg) << 1);
+            topoReads = new int[cap];
+            topoTouched = new int[cap];
+        }
+        if (topoRemoved == null || topoRemoved.length < n) {
+            int cap = Math.max(8, n * 2);
+            topoRemoved = new boolean[cap];
+            topoOut = new int[cap][];
+        }
+        int[] reads = topoReads;
+        // I[r] = number of ops in O that read register r (COPY sources; SETs
+        // read nothing). Registers entering I are recorded for the zero-back.
+        int touched = 0;
+        for (int[] op : ops) {
+            if (op[0] == OP_COPY && reads[op[2]]++ == 0) {
+                topoTouched[touched++] = op[2];
+            }
+        }
+        boolean[] removed = topoRemoved;
+        int[][] out = topoOut;
+        int remaining = n;
+        int w = 0;
+        boolean progress = true;
+        while (remaining > 0 && progress) {
+            progress = false;
+            for (int i = 0; i < n; i++) {
+                meter.tick(); // per scanned op per round: O(n²) worst case
+                if (removed[i]) {
                     continue;
                 }
-                int src = op[2];
-                // Check if any EARLIER op writes to src — if so, the COPY must
-                // move before it (to read the OLD value before it's clobbered).
-                for (int j = 0; j < i; j++) {
-                    int[] earlier = ops.get(j);
-                    if (earlier[1] == src) {
-                        // Move COPY to position j, shift everything else right.
-                        for (int k = i; k > j; k--) {
-                            ops.set(k, ops.get(k - 1));
-                        }
-                        ops.set(j, op);
-                        changed = true;
-                        break;
-                    }
+                int[] op = ops.get(i);
+                if (reads[op[1]] != 0) {
+                    continue;
+                }
+                out[w++] = op;
+                removed[i] = true;
+                remaining--;
+                progress = true;
+                if (op[0] == OP_COPY) {
+                    reads[op[2]]--;
                 }
             }
         }
+        boolean nontrivialCycle = false;
+        if (remaining > 0) {
+            for (int i = 0; i < n; i++) {
+                if (removed[i]) {
+                    continue;
+                }
+                int[] op = ops.get(i);
+                if (op[0] == OP_COPY && op[1] != op[2]) {
+                    nontrivialCycle = true;
+                }
+                out[w++] = op;
+            }
+        }
+        for (int i = 0; i < touched; i++) {
+            reads[topoTouched[i]] = 0;
+        }
+        Arrays.fill(removed, 0, n, false);
+        for (int i = 0; i < n; i++) {
+            ops.set(i, out[i]);
+        }
+        return !nontrivialCycle;
     }
 
     /**
