@@ -30,6 +30,13 @@ large fail compilation with a clean "pattern too large" error instead of
 exhausting time and memory; the limits are three `-D` properties
 (`tdfa.budget.compile.memory`, `tdfa.budget.compile.compute`,
 `tdfa.budget.runtime.memory`) — raise them if you legitimately need bigger.
+One rejection family has an API escape hatch: by default one artifact serves
+`find()` **and** whole-input `matches()` (a side table of un-pruned
+continuations recorded during determinization), and a pattern whose whole
+divergence blows that side's budget fails the whole compile. If you only ever
+`find()`, say so — `Pattern.compileFind(...)` (or the `FIND_ONLY` flag) skips
+the whole machinery entirely, accepts exactly what a find-only consumer can
+run, and throws `UnsupportedOperationException` from whole-input methods.
 
 Known gap: `java.util.regex` still beats us ~2–4× on unicode wide-class
 scans (`\p{L}`, `(?u)\w`-shaped rows in the benchmark tables) — the next
