@@ -1663,12 +1663,14 @@ PR #8). Two design questions the round deliberately did NOT decide:
       (find-only) tier never runs the side (`Tdfa.compileWithWholeSide`
       is the facade's entry point). `matches()` keeps full-span
       exactness: pinned by span parity against BOTH the cut-free and
-      the both-ends-anchored artifacts plus java.util.regex booleans,
+      the both-ends-      anchored artifacts plus java.util.regex booleans,
       over a divergence-class catalog and a seeded 900-pattern random
       sweep (`PartialWholeTest`), find untouched A/B with
       `-Dtdfa.nopartialwhole` (which also forces the two-artifact
       fallback for testing), and the bomb/abandon corner through the
-      observer note. Budget posture: the side table
+      observer note. **(SUPERSEDED 2026-09-30 — the cut-free fallback
+      and `-Dtdfa.nopartialwhole` are REMOVED; see the
+      "Partial-whole fallback removal" section below.)** Budget posture: the side table
       counts as retained bytes of the one artifact in the 2026-09-28
       end-of-compile execution-RAM check (`Tdfa.retainedTableBytes`),
       and the one-artifact compile keeps the WHOLE residual memo
@@ -1713,9 +1715,52 @@ PR #8). Two design questions the round deliberately did NOT decide:
       (BudgetModelTest.walkMemoIsBudgetBoundedAndCorrect compiles at a
       20 KB budget). (3) BYO factory engines remain unaccountable (the
       facade cannot see their internals — documented), but the artifact
-      tables and any native fallback whole runner still draw from the
-      same residual. Transparency: every compile emits a
-      `runtimeFootprint` observer note (retained/allowance/budget).
+       tables and any native fallback whole runner still draw from the
+       same residual. Transparency: every compile emits a
+       `runtimeFootprint` observer note (retained/allowance/budget).
+
+## Partial-whole fallback removal (2026-09-30 — resolved same day)
+
+The r11 side-table design kept the pre-#24 pipeline as a fallback: side
+abandoned ⇒ second, cut-free `compileUnpruned` determinization; plus the
+`-Dtdfa.nopartialwhole` A/B switch forcing it. Removed: the side-abandoned
+compile now REJECTS immediately with the standard "pattern too large"
+family (message: "whole-match divergence exceeds the compile budget
+(partial-whole side abandoned)"). Rationale:
+
+- **The fallback can never rescue a tick-driven abandon** (the common bomb
+  signature): the side meter is a fork of half the ledger's remaining
+  ticks, every tick debits the shared ledger, and the cut-free build must
+  redo the primary prefix PLUS the full divergence (strictly more than the
+  side's half that just exhausted) — the remaining half can never fit it.
+  Caps-driven abandons are knife-edge at best (the shared space ⊇ the
+  uncut space; rescue requires the pruned-fragment states alone to have
+  pushed the shared total over a cap the cut-free space would fit under).
+- **Zero observed rescues**: no test, fuzz finding, or corpus pattern ever
+  exercised a fallback that SUCCEEDED — every pin was either the A/B flag
+  (where the "fallback" IS the mechanism) or a bomb where the fallback ran
+  only to produce a rejection that can be thrown at abandon time. The
+  flagship hazardous corpus shape (rebar datefinder, both variants) was
+  probed: its side COMPLETES (127/129 whole states, 4 211/8 250 side
+  entries) — no fallback reliance.
+- **Contract alignment**: the 2026-09-15 flip decided "a pattern is
+  accepted only when every artifact it ships built". The fallback quietly
+  violated that (whole surface failed in the one-artifact form ⇒ silent
+  swap to the old two-engine design). Rejecting at abandon completes the
+  decision; bombs also reject ~2× faster (no doomed second burn).
+
+Removed with it: the `pikeCut` observer note, the memo-allowance
+per-engine split and the second `engineOf` translation in the facade
+(`shared` is now constant), and the flag itself (find A/B is now pinned
+facade-vs-core-tier — plain compile, no side — in `PartialWholeTest.
+findUntouchedBySideTable`; whole off-path parity stays pinned against
+explicitly built `compileUnpruned` oracles, which remain the test
+reference form). Kept: the side's own abandon machinery (child meter,
+exact-headroom pre-flight, strip) — that is the find-safety property.
+Pinned: `PartialWholeTest.wholeBombAbandonsSideAndRejectsCompile`
+(abandon note + rejection + NO `pikeCut` note + wall), the reworded
+budget/latency rows (bomb walls only improve), `ExecutionRamCheckTest.
+pikeCutShapeIsOneArtifactInTheFootprint`.
 
 ## Core-tier whole-match removal (2026-09-25 — resolved same day)
 

@@ -75,12 +75,12 @@ final class TdfaCompiler {
      * The partial-whole side table is recorded for this compile: a pruned
      * Perl-mode compile that ASKED for it (the facade's one-artifact
      * build, {@link Tdfa#compileWithWholeSide}; find-only consumers never
-     * do — the side has no reader there) with {@code -Dtdfa.nopartialwhole}
-     * unset. Every cut context then also contributes its UNCUT transitions
-     * to the source state's whole list (see {@link DfaStateBuilder#wholeRanges}),
-     * so one artifact serves find() AND whole-input walks — the facade
-     * needs the cut-free second determinization only when the side was
-     * abandoned over budget ({@link #wholeAbandoned}).
+     * do — the side has no reader there). Every cut context then also
+     * contributes its UNCUT transitions to the source state's whole list
+     * (see {@link DfaStateBuilder#wholeRanges}), so one artifact serves
+     * find() AND whole-input walks. When the bounded exploration is
+     * abandoned over budget ({@link #wholeAbandoned}), the facade
+     * rejects the compile — the whole surface did not build.
      */
     final boolean wholeSide;
     /**
@@ -302,8 +302,9 @@ final class TdfaCompiler {
         this.breakpoints = computeBreakpoints();
         this.longest = longestMatch;
         this.unpruned = unpruned;
-        // Compile knob, read once per compilation (policy: Tdfa javadoc).
-        this.wholeSide = wholeSide && !longestMatch && !unpruned && !Boolean.getBoolean("tdfa.nopartialwhole");
+        // The side is recorded whenever requested (pruned Perl mode; the
+        // facade always requests, find-only tiers never do).
+        this.wholeSide = wholeSide && !longestMatch && !unpruned;
         this.maxClosureBytes = Budgets.compileMemoryBytes() / BudgetWeights.CLOSURE_SPIKE_DIVISOR;
         this.cellCount = breakpoints.length - 1;
         this.activeSetCount = precomputeActiveSets(cellCount);
@@ -551,7 +552,7 @@ final class TdfaCompiler {
                 String why =
                     abandonCause == null ? "side-table RAM charge over budget" : abandonCause.getMessage() == null
                         ? abandonCause.getClass().getSimpleName() : abandonCause.getMessage();
-                obs.note("partialWhole", "abandoned (" + why + "); cut-free fallback");
+                obs.note("partialWhole", "abandoned (" + why + "); compile rejects");
             } else {
                 int wholeStates = 0;
                 int wholeEntries = 0;
@@ -1044,9 +1045,9 @@ final class TdfaCompiler {
      * entries charge the same compile RAM budget as pruned ones (see
      * {@link #addWhole}). On exhaustion the side is ABANDONED — the
      * recorded whole lists are stripped, the artifact stays a plain
-     * pruned one, and the facade falls back to the cut-free second build
-     * (which rejects bombs with the standard "pattern too large" family,
-     * exactly as before the side table existed). Budget exceptions raised
+     * pruned one, and the facade rejects the compile with the standard
+     * "pattern too large" family (the whole surface did not build —
+     * accept-only-what-ships). Budget exceptions raised
      * by the shared caps (closure spike, state/kernel totals) are caught
      * the same way: only "pattern too large" rejections are treated as
      * abandon, anything else is a bug and propagates.
@@ -1120,8 +1121,8 @@ final class TdfaCompiler {
      * artifact reverts to the plain pruned one; states interned only by
      * the side's exploration stay as find-unreachable dead weight —
      * correct, and bounded by the caps that tripped) and record the
-     * reason. The facade sees wholeSideComplete == false and falls back to
-     * the cut-free whole determinization.
+     * reason. The facade sees wholeSideComplete == false and rejects the
+     * compile (the whole surface did not build).
      */
     private void abandonWholeSide(Exception cause) {
         if (wholeAbandoned) {
@@ -1135,9 +1136,8 @@ final class TdfaCompiler {
     }
 
     /**
-     * The whole side is active for this compile: pruned Perl mode with the
-     * side table not disabled ({@code -Dtdfa.nopartialwhole}) and not
-     * already abandoned.
+     * The whole side is active for this compile: pruned Perl mode that
+     * asked for the side table, not already abandoned.
      */
     private boolean wholeSideActive() {
         return wholeSide && !wholeAbandoned;

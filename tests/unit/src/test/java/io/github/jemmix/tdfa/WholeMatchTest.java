@@ -176,17 +176,14 @@ class WholeMatchTest {
     }
 
     /**
-     * One engine source serves EVERY artifact of a compile. The
-     * partial-whole side table makes the hazardous pattern a ONE-artifact
-     * compile (the side records the uncut continuations whole walks need,
-     * so the factory is called once and the whole engine IS the find
-     * engine); hazard-free patterns were always one. With the side
-     * disabled ({@code -Dtdfa.nopartialwhole}) the hazardous shape falls
-     * back to the two-artifact form (find plus the cut-free whole
-     * determinization). On the default tier the whole engine is generated
-     * just like the find engine (its {@code matchWhole} — inlined
-     * wholeOne for plain artifacts, a runner delegate for side-table
-     * ones — backs {@code matches()}).
+     * One engine source serves the ONE artifact of a compile. The
+     * partial-whole side table makes the hazardous pattern one-artifact
+     * (the side records the uncut continuations whole walks need, so the
+     * factory is called once and the whole engine IS the find engine);
+     * hazard-free patterns were always one. On the default tier the
+     * whole engine is generated just like the find engine (its
+     * {@code matchWhole} — inlined wholeOne for plain artifacts, a
+     * runner delegate for side-table ones — backs {@code matches()}).
      */
     @Test
     void engineSourceServesEveryArtifact() {
@@ -207,21 +204,6 @@ class WholeMatchTest {
         });
         assertThat(seenOnce).as("hazard-free pattern: one shared artifact").hasSize(1);
         assertThat(q.matcher("aaa").matches()).isTrue();
-
-        // Side disabled: the hazardous shape pays the cut-free second
-        // build again — the two-artifact form.
-        System.setProperty("tdfa.nopartialwhole", "true");
-        try {
-            List<Tdfa> seenTwo = new ArrayList<>();
-            Pattern r = Pattern.compile("(a|ab)", 0, t -> {
-                seenTwo.add(t);
-                return new TdfaRunner(t);
-            });
-            assertThat(seenTwo).as("side disabled: find + cut-free whole artifacts").hasSize(2);
-            assertThat(r.matcher("ab").matches()).isTrue();
-        } finally {
-            System.clearProperty("tdfa.nopartialwhole");
-        }
 
         Pattern asm = Pattern.compile("(a|ab)");
         assertThat(((TDFAPattern) asm).wholeEngine().getClass().getSimpleName())

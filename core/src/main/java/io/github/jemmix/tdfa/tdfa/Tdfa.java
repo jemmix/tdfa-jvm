@@ -95,15 +95,16 @@ public final class Tdfa {
     /**
      * The partial-whole side table (the "one artifact for find() AND
      * matches()" form): null when the compile's pike cut never fired on
-     * any state (or the side was disabled/abandoned over budget). When
-     * non-null, states listed in {@link #wholeBase} carry their UNCUT
+     * any state (or the side was abandoned over budget). When non-null,
+     * states listed in {@link #wholeBase} carry their UNCUT
      * whole-walk relation here (5-int entries like {@link #ranges}: the
      * cut contexts' uncut targets; uncut contexts mirror {@link #ranges}
      * — the whole relation of a state without a list IS {@code ranges}),
      * so whole-input walks on the PRUNED artifact are exact without a
      * second determinization. The bounded side exploration that records
      * it runs inside the pruned compile; on exhaustion it is abandoned
-     * and the facade falls back to {@link #compileUnpruned}.
+     * and the facade rejects the compile ({@link #wholeWalkExact()}
+     * reports false).
      */
     final int[] wholeRanges;
     /**
@@ -657,15 +658,16 @@ public final class Tdfa {
      * determinization: every pike-cut context contributes its UNCUT
      * transitions to the artifact's whole relation (see {@link #wholeRanges}),
      * so the ONE artifact serves find() and whole-input walks —
-     * {@link #wholeWalkExact()} then reports whether the side completed
-     * (callers needing whole matches fall back to
-     * {@link #compileUnpruned} when it reports false). For find-only
-     * consumers ({@code core.CompiledRegex}) the plain compile is
-     * cheaper — the side table has no reader there.
+     * {@link #wholeWalkExact()} then reports whether the side completed.
+     * For find-only consumers ({@code core.CompiledRegex}) the plain
+     * compile is cheaper — the side table has no reader there.
      *
      * <p>The side exploration is bounded (child meter + the compile RAM
      * charge); on exhaustion it is abandoned cleanly and this returns a
-     * plain pruned artifact with {@link #wholeWalkExact()} == false.
+     * plain pruned artifact with {@link #wholeWalkExact()} == false — the
+     * facade then REJECTS the compile (the whole surface did not build;
+     * {@link #compileUnpruned} remains available to callers building
+     * whole artifacts by hand, e.g. as test oracles).
      */
     public static Tdfa compileWithWholeSide(Tnfa nfa, boolean longestMatch, CompileObserver observer,
         WorkMeter sharedMeter) {
@@ -985,10 +987,10 @@ public final class Tdfa {
      * Whether whole-input walks ({@code matchWhole}) are EXACT on this
      * artifact: either the pike cut never deleted a continuation, or the
      * partial-whole side table recorded every cut context's uncut
-     * transitions (complete exploration). The facade relies on this to
-     * decide whether the cut-free second determinization is needed at
-     * all; false means the caller must build (or fall back to) a
-     * {@link #compileUnpruned} artifact for whole matching.
+     * transitions (complete exploration). The facade relies on this:
+     * after {@link #compileWithWholeSide} (which always requests the
+     * side), false means the side was abandoned and the compile REJECTS
+     * — no second cut-free determinization is attempted.
      */
     public boolean wholeWalkExact() {
         return !pikeCutMatters || (wholeRanges != null && wholeSideComplete);
@@ -1027,7 +1029,7 @@ public final class Tdfa {
     //   tdfa.budget.compile.memory / .compute               (budgets, Budgets —
     //   tdfa.budget.runtime.memory                            all caps derive)
     //   tdfa.nominimize, tdfa.minimize.max, tdfa.noregopt, tdfa.regopt.max,
-    //   tdfa.nopartialwhole, tdfa.debug, tdfa.debug.closure,
+    //   tdfa.debug, tdfa.debug.closure,
     //   tdfa.debug.finals                          (compile)
     //   tdfa.engine, tdfa.gen.debug                                 (facade, per compile)
     // The derived determinization caps (states/kernels/closure/cfg-edges/

@@ -32,14 +32,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       both-ends-anchored artifact — over a divergence-class catalog and
  *       a seeded random sweep (the randomized
  *       anchored-vs-partial-whole parity the design round demanded);</li>
- *   <li>find() untouched: identical find results with the side on and
- *       off ({@code -Dtdfa.nopartialwhole});</li>
- *   <li>whole parity with the side DISABLED (the fallback path through
- *       the cut-free second build answers the same);</li>
+ *   <li>find() untouched: identical find results through the facade
+ *       (side recorded) and the core tier (plain compile, no side);</li>
  *   <li>the abandon path: a cut-matters whole-bomb records the abandon
- *       and falls back to the cut-free build, which rejects the compile
- *       with the standard family (the find contract is never starved —
- *       the primary phase runs before the side).</li>
+ *       and the compile REJECTS with the standard family — no doomed
+ *       cut-free second build is attempted (the ledger arithmetic can
+ *       never fit it), and the find contract is never starved (the
+ *       primary phase runs before the side).</li>
  * </ul>
  */
 class PartialWholeTest {
@@ -54,7 +53,6 @@ class PartialWholeTest {
 
     @AfterEach
     void clearKnobs() {
-        System.clearProperty("tdfa.nopartialwhole");
         System.clearProperty("tdfa.engine");
         System.clearProperty("tdfa.nominimize");
     }
@@ -123,31 +121,22 @@ class PartialWholeTest {
     }
 
     /**
-     * The side table never touches find(): leftmost-first results are
-     * identical with the side on and off, on both tiers, and the
-     * disabled-side whole path (the cut-free fallback build) answers the
-     * same whole matches as the side-table walk.
+     * The side table never touches find(): leftmost-first results through
+     * the facade (side recorded) are identical to the core tier's plain
+     * compile (no side recorded), on both engine tiers. The whole-surface
+     * counterpart — facade whole vs the explicitly built cut-free artifact
+     * — is pinned by the two oracle tests above.
      */
     @Test
-    void findUntouchedAndDisabledSideWholeParity() {
+    void findUntouchedBySideTable() {
         for (boolean vm : new boolean[]{false, true}) {
             if (vm) {
                 System.setProperty("tdfa.engine", "VM");
             }
             for (String p : CATALOG) {
-                List<String> findOn = findResults(p, null);
-                List<String> findOff;
-                List<String> wholeOn = wholeResults(p, null);
-                List<String> wholeOff;
-                System.setProperty("tdfa.nopartialwhole", "true");
-                try {
-                    findOff = findResults(p, null);
-                    wholeOff = wholeResults(p, null);
-                } finally {
-                    System.clearProperty("tdfa.nopartialwhole");
-                }
-                assertThat(findOn).as("find unchanged (vm=%s): %s", vm, p).isEqualTo(findOff);
-                assertThat(wholeOn).as("whole parity on/off (vm=%s): %s", vm, p).isEqualTo(wholeOff);
+                List<String> findFacade = findResults(p, null);
+                List<String> findPlain = coreFindResults(p);
+                assertThat(findFacade).as("find unchanged (vm=%s): %s", vm, p).isEqualTo(findPlain);
             }
         }
     }
@@ -174,14 +163,16 @@ class PartialWholeTest {
     /**
      * The bounded side exploration abandons cleanly: a nested-counted
      * bomb whose find artifact fits records the abandon (observer note)
-     * and falls back to the cut-free build, which rejects the compile
-     * with the standard "pattern too large" family. The core tier —
-     * find-only, no side — still ships the find artifact.
+     * and the compile REJECTS with the standard "pattern too large"
+     * family — no second determinization is attempted (the old cut-free
+     * fallback is gone: no {@code pikeCut} note can fire). The core tier
+     * — find-only, no side — still ships the find artifact.
      */
     @Test
-    void wholeBombAbandonsSideAndFallsBack() {
+    void wholeBombAbandonsSideAndRejectsCompile() {
         String bomb = "(a{1,100}){1,100}";
         CompilationReport r = new CompilationReport();
+        long t0 = System.nanoTime();
         try {
             Pattern.compile(bomb, CompileOptions.of().observer(r));
             throw new AssertionError("bomb must not compile");
@@ -189,6 +180,9 @@ class PartialWholeTest {
             assertThat(e).hasMessageContaining("pattern too large");
         }
         assertThat(r.notes().get("partialWhole")).as("side abandonment is recorded").startsWith("abandoned");
+        assertThat(r.notes()).as("no cut-free second build is attempted").doesNotContainKey("pikeCut");
+        assertThat((System.nanoTime() - t0) / 1_000_000).as("wall to the abandon rejection (no doomed rebuild)")
+            .isLessThan(30_000);
         // find-only tier unaffected: the primary phase never runs the side.
         assertThat(CompiledRegex.compile(bomb).find("a")).isTrue();
     }
@@ -263,6 +257,24 @@ class PartialWholeTest {
             StringBuilder row = new StringBuilder();
             while (m.find()) {
                 row.append('[').append(m.start()).append(',').append(m.end()).append(')');
+                for (int g = 1; g <= m.groupCount(); g++) {
+                    row.append(';').append(m.start(g) < 0 ? "-" : m.start(g) + "," + m.end(g));
+                }
+                row.append(' ');
+            }
+            out.add(row.toString());
+        }
+        return out;
+    }
+
+    /** The same rows through the core tier (plain compile — no side recorded). */
+    private static List<String> coreFindResults(String p) {
+        List<String> out = new ArrayList<>();
+        CompiledRegex r = CompiledRegex.compile(p);
+        for (String s : INPUTS) {
+            StringBuilder row = new StringBuilder();
+            for (MatchResult m : r.findAll(s)) {
+                row.append('[').append(m.start(0)).append(',').append(m.end(0)).append(')');
                 for (int g = 1; g <= m.groupCount(); g++) {
                     row.append(';').append(m.start(g) < 0 ? "-" : m.start(g) + "," + m.end(g));
                 }

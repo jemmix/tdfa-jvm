@@ -139,10 +139,10 @@ class RebarScenarioParityTest {
      *       compile, fits -Xmx1g, ~82 MB retained, count=53 verified on
      *       both backends (TODO.md "budget").
      *   <li>{@code curated/09-aws-keys/full} — the find artifact compiles,
-     *       but the pattern's pike cut bit and its cut-free whole artifact
+     *       but the pattern's pike cut bit and its whole divergence
      *       (the counter cross-product of the two alternation arms) churns
-     *       past the compile CPU budget, so {@code compile()} rejects.
-     *       The whole artifact churns without converging even at a raised
+     *       past the side sweep's budget, so {@code compile()} rejects.
+     *       The divergence churns without converging even at a raised
      *       compute budget, so raising won't admit it.
      * </ul>
      */

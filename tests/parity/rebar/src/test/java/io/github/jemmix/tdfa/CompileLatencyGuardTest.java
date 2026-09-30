@@ -28,9 +28,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       (?i)(?u) variants (~1-3 s);</li>
  *   <li>{@code curated/09-aws-keys/full} — 191-char nested bounded/greedy
  *       alternation. The find artifact compiles (~0.4 s); the
- *       pattern's pike cut bit, and its cut-free whole artifact churns
- *       without converging — the one shared CPU ledger bounds the doomed
- *       attempt, so compile() rejects in ~2 s. The guard pins that
+ *       pattern's pike cut bit, and its whole divergence churns
+ *       without converging — the bounded side sweep abandons and
+ *       compile() rejects in ~2 s. The guard pins that
  *       bounded-rejection wall.</li>
  *   <li>{@code curated/12-dictionary/single} — 2 663-branch literal
  *       alternation, 45 KB regex (legitimately slow-but-finishing;
@@ -51,12 +51,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * ~21 s fitting -Xmx1g and passes count verification on both backends
  * — far outside this guard's 5 s scope by design.
  *
- * <p>Budget: 10 s per compile. Datefinder (pike-cut-hazardous: it keeps a
- * find artifact plus a cut-free whole artifact) measures ~1.5 s locally and
- * up to ~6 s on a slow CI runner. 10 s keeps the guard's purpose — catching
- * superlinear regressions, not micro-optimizing — with headroom over the
- * CI worst measured, while aws-keys' doomed whole attempt burns at most
- * the one CPU budget inside compile() before rejecting.
+ * <p>Budget: 10 s per compile. Datefinder (pike-cut-hazardous: its
+ * side table completes — one artifact, ~127 whole states / ~4-8 K
+ * entries measured) measures ~1.5 s locally and up to ~6 s on a slow CI
+ * runner. 10 s keeps the guard's purpose — catching superlinear
+ * regressions, not micro-optimizing — with headroom over the CI worst
+ * measured, while aws-keys' bounded side sweep burns at most its half
+ * of the CPU budget inside compile() before the abandon rejection.
  */
 class CompileLatencyGuardTest {
 
