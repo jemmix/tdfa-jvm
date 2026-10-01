@@ -1,6 +1,6 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  * compile CPU ({@code tdfa.budget.compile.compute}, ticks) bounds the WORK
  * ({@code WorkMeter}). A pattern whose TDFA construction exceeds either
  * must fail compilation with a clean {@code "pattern too large"}
- * {@link PatternSyntaxException} — quickly, without exhausting memory —
+ * {@link PatternTooLargeException} — quickly, without exhausting memory —
  * instead of burning unbounded time/heap.
  *
  * <p>Reference-implementation context: re2c 4.5.1 refuses two-site
@@ -51,7 +51,7 @@ class CompileBudgetTest {
         System.setProperty("tdfa.budget.compile.memory", MEM_20K_STATES);
         try {
             long t0 = System.nanoTime();
-            assertThatCode(() -> Pattern.compile(CONTEXT_BOMB)).isInstanceOf(PatternSyntaxException.class)
+            assertThatCode(() -> Pattern.compile(CONTEXT_BOMB)).isInstanceOf(PatternTooLargeException.class)
                 .hasMessageContaining("pattern too large").hasMessageContaining("tdfa.budget.compile.memory");
             long ms = (System.nanoTime() - t0) / 1_000_000;
             // ~2 s measured at the 20 K cap on laptop hardware; the point is
@@ -75,7 +75,7 @@ class CompileBudgetTest {
         System.setProperty("tdfa.budget.compile.compute", "10000000");
         try {
             long t0 = System.nanoTime();
-            assertThatCode(() -> Pattern.compile(spinner)).isInstanceOf(PatternSyntaxException.class)
+            assertThatCode(() -> Pattern.compile(spinner)).isInstanceOf(PatternTooLargeException.class)
                 .hasMessageContaining("pattern too large").hasMessageContaining("tdfa.budget.compile.compute");
             assertThat((System.nanoTime() - t0) / 1_000_000).as("wall to work-budget rejection").isLessThan(30_000);
         } finally {
@@ -95,7 +95,7 @@ class CompileBudgetTest {
         try {
             long t0 = System.nanoTime();
             assertThatCode(() -> Pattern.compile("(x{2,4}?z|\\D{1,6}?.+$|~|W(?U:9(\\.b~))\\-){4,}"))
-                .isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large")
+                .isInstanceOf(PatternTooLargeException.class).hasMessageContaining("pattern too large")
                 .hasMessageContaining("tdfa.budget.compile.memory");
             assertThat((System.nanoTime() - t0) / 1_000_000).as("wall to state-cap rejection").isLessThan(30_000);
         } finally {
@@ -117,7 +117,7 @@ class CompileBudgetTest {
         assertThat(new TdfaRunner(find).find("a".repeat(120))).isTrue();
         assertThat((System.nanoTime() - t0) / 1_000_000).as("nested-counted find-artifact compile wall")
             .isLessThan(15_000);
-        assertThatCode(() -> Pattern.compile("(a{1,100}){1,100}")).isInstanceOf(PatternSyntaxException.class)
+        assertThatCode(() -> Pattern.compile("(a{1,100}){1,100}")).isInstanceOf(PatternTooLargeException.class)
             .hasMessageContaining("pattern too large");
     }
 
@@ -131,7 +131,7 @@ class CompileBudgetTest {
         try {
             // 13-arm alternation: initial closure is ~16 configs wide
             assertThatCode(() -> Pattern.compile("(ab|cd|ef|gh|ij|kl|mn|op|qr|st|uv|wx|yz){2}"))
-                .isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large")
+                .isInstanceOf(PatternTooLargeException.class).hasMessageContaining("pattern too large")
                 .hasMessageContaining("tdfa.budget.compile.memory");
         } finally {
             System.clearProperty("tdfa.budget.compile.memory");
@@ -149,7 +149,7 @@ class CompileBudgetTest {
         System.setProperty("tdfa.budget.compile.compute", "8388608");
         try {
             long t0 = System.nanoTime();
-            assertThatCode(() -> Pattern.compile(bomb)).isInstanceOf(PatternSyntaxException.class)
+            assertThatCode(() -> Pattern.compile(bomb)).isInstanceOf(PatternTooLargeException.class)
                 .hasMessageContaining("pattern too large");
             assertThat((System.nanoTime() - t0) / 1_000_000)
                 .as("wall of the budgeted compile (find + bounded side sweep)").isLessThan(10_000);
@@ -166,7 +166,7 @@ class CompileBudgetTest {
         // abandons over the budget, so compile() fails rather than
         // shipping a Pattern whose matches() would be broken.
         assertThatCode(() -> Pattern.compile("[\\s\\S]{0,60}x[\\s\\S]{0,60}"))
-            .isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
+            .isInstanceOf(PatternTooLargeException.class).hasMessageContaining("pattern too large");
     }
 
     @Test
@@ -198,7 +198,7 @@ class CompileBudgetTest {
         System.setProperty("tdfa.budget.compile.memory", "1600000");
         try {
             assertThatCode(() -> Pattern.compile("[\\s\\S]{0,10}x[\\s\\S]{0,10}"))
-                .isInstanceOf(PatternSyntaxException.class);
+                .isInstanceOf(PatternTooLargeException.class);
         } finally {
             System.clearProperty("tdfa.budget.compile.memory");
         }

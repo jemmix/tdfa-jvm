@@ -17,7 +17,12 @@ import java.util.Map;
  * <p>Compile with {@link #compile(String)} or {@link #compile(String, int)};
  * obtain a {@link PatternMatcher} via {@link #matcher(CharSequence)}.
  * Default semantics are leftmost-first (Perl/PCRE/re2j-compatible);
- * {@link #LONGEST_MATCH} selects leftmost-longest.
+ * {@link #LONGEST_MATCH} selects leftmost-longest. Malformed syntax fails
+ * with {@link io.github.jemmix.tdfa.core.PatternSyntaxException}; a pattern
+ * that parses but exceeds a resource budget fails with
+ * {@link io.github.jemmix.tdfa.core.PatternTooLargeException} (the
+ * {@code "pattern too large"} family — raise the named {@code -D} property
+ * if you legitimately need bigger).
  *
  * <p><b>Engines.</b> By default each pattern is backed by a dedicated
  * generated class (ASM tier): the whole Matcher.find() &rarr; engine ladder

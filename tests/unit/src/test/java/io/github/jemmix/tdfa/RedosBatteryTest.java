@@ -1,7 +1,7 @@
 package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.Matcher;
-import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import org.junit.jupiter.api.AfterAll;
@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>Three gates per case, on both backends:
  * <ol>
  *   <li><b>compile</b> — completes within {@link #COMPILE_BOUND_MS} or is
- *       rejected cleanly with {@link PatternSyntaxException} within
+ *       rejected cleanly with {@link PatternTooLargeException} within
  *       {@link #REJECT_BOUND_MS} (determinization budget); any other
  *       exception fails.</li>
  *   <li><b>match</b> — a full find/matches pass over the adversarial input
@@ -110,7 +110,7 @@ class RedosBatteryTest {
         long t0 = System.nanoTime();
         try {
             p = Pattern.compile(c.pattern(), 0, factory);
-        } catch (PatternSyntaxException e) {
+        } catch (PatternTooLargeException e) {
             long ms = (System.nanoTime() - t0) / 1_000_000;
             assertThat(ms).as("%s: budget rejection must be prompt (%d ms)", c, ms).isLessThan(REJECT_BOUND_MS);
             return;
@@ -171,7 +171,7 @@ class RedosBatteryTest {
         try {
             Pattern.compile(pattern, 0, factory);
             throw new AssertionError(name + ": expected budget rejection for `" + pattern + "`");
-        } catch (PatternSyntaxException e) {
+        } catch (PatternTooLargeException e) {
             long ms = (System.nanoTime() - t0) / 1_000_000;
             assertThat(ms).as("%s: rejection must be prompt (%d ms)", name, ms).isLessThan(REJECT_BOUND_MS);
             assertThat(e.getMessage()).as(name + ": rejection must be the documented too-large error")

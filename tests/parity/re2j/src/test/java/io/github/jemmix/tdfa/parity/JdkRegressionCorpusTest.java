@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.parity;
 
 import com.google.re2j.Re2jUnicodeProvider;
 import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
@@ -276,7 +277,7 @@ class JdkRegressionCorpusTest {
             try {
                 io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.flags(), factory, UNICODE);
                 record(c, "tdfa accepts but re2j (contract) rejects", null);
-            } catch (PatternSyntaxException e) {
+            } catch (PatternSyntaxException | PatternTooLargeException e) {
                 bothReject++;
             }
             return;
@@ -285,11 +286,11 @@ class JdkRegressionCorpusTest {
         io.github.jemmix.tdfa.Pattern tdfaPattern;
         try {
             tdfaPattern = io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.flags(), factory, UNICODE);
-        } catch (PatternSyntaxException e) {
+        } catch (PatternSyntaxException | PatternTooLargeException e) {
             record(c, "tdfa rejects but re2j (contract) compiles", "reason: " + e.getMessage());
             return;
         } catch (RuntimeException e) {
-            throw new AssertionError(c + " tdfa threw non-syntax exception", e);
+            throw new AssertionError(c + " tdfa threw non-rejection exception", e);
         }
 
         String oracle = compute(re2jPattern.matcher(c.input()));

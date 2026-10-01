@@ -1,5 +1,7 @@
 package io.github.jemmix.tdfa.tdfa;
 
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
+
 /**
  * Compile-pipeline work budget: a step counter threaded through every
  * unbounded/fixpoint/quadratic loop in the pipeline — determinization closure,
@@ -11,13 +13,14 @@ package io.github.jemmix.tdfa.tdfa;
  * closure churn that never materializes states (nested-quantifier bombs found
  * by the fuzzer) loops forever under output-only caps.
  *
- * <p>Exhaustion fails compilation with the same clean "pattern too large"
- * {@link IllegalStateException} the caps use (as the typed
- * {@link Exhausted} subclass, so degradation sites — the minimizer — can
- * catch exactly budget exhaustion). The budget is
- * {@link Budgets#compileComputeTicks()} ({@code tdfa.budget.compile.compute},
- * default 5 s &times; {@link BudgetWeights#TICKS_PER_SECOND}); override with
- * that property. Not thread-safe: compilation is single-threaded.
+ * <p>Exhaustion fails compilation with the typed {@link
+ * PatternTooLargeException} every budget rejection uses ("pattern too
+ * large: TDFA compile work budget exceeded ..."), so degradation sites —
+ * the minimizer, the whole-side sweep — can catch exactly budget
+ * exhaustion by type. The budget is {@link Budgets#compileComputeTicks()}
+ * ({@code tdfa.budget.compile.compute}, default 5 s &times; {@link
+ * BudgetWeights#TICKS_PER_SECOND}); override with that property. Not
+ * thread-safe: compilation is single-threaded.
  *
  * <p><b>Ledger (one budget per compile).</b> Every meter carries a shared
  * {@link #fork(long)} ledger seeded with its budget: {@link #fork(long)}
@@ -76,13 +79,12 @@ public final class WorkMeter {
      */
     public void tick() {
         if (++spent > budget) {
-            throw new Exhausted("pattern too large: TDFA compile work budget exceeded (" + spent + "/" + budget
-                + " ticks — raise -D" + Budgets.COMPILE_COMPUTE_PROP + ")");
+            throw new PatternTooLargeException("pattern too large: TDFA compile work budget exceeded (" + spent + "/"
+                + budget + " ticks — raise -D" + Budgets.COMPILE_COMPUTE_PROP + ")");
         }
         if (--ledger.remaining < 0) {
-            throw new Exhausted(
-                "pattern too large: TDFA compile work budget exceeded (total across compile attempts — raise -D"
-                    + Budgets.COMPILE_COMPUTE_PROP + ")");
+            throw new PatternTooLargeException("pattern too large: TDFA compile work budget exceeded (total across"
+                + " compile attempts — raise -D" + Budgets.COMPILE_COMPUTE_PROP + ")");
         }
     }
 
@@ -91,31 +93,16 @@ public final class WorkMeter {
      */
     public void tick(long n) {
         if ((spent += n) > budget) {
-            throw new Exhausted("pattern too large: TDFA compile work budget exceeded (" + spent + "/" + budget
-                + " ticks — raise -D" + Budgets.COMPILE_COMPUTE_PROP + ")");
+            throw new PatternTooLargeException("pattern too large: TDFA compile work budget exceeded (" + spent + "/"
+                + budget + " ticks — raise -D" + Budgets.COMPILE_COMPUTE_PROP + ")");
         }
         if ((ledger.remaining -= n) < 0) {
-            throw new Exhausted(
-                "pattern too large: TDFA compile work budget exceeded (total across compile attempts — raise -D"
-                    + Budgets.COMPILE_COMPUTE_PROP + ")");
+            throw new PatternTooLargeException("pattern too large: TDFA compile work budget exceeded (total across"
+                + " compile attempts — raise -D" + Budgets.COMPILE_COMPUTE_PROP + ")");
         }
     }
 
     private static final class Ledger {
         long remaining;
-    }
-
-    /**
-     * Budget exhaustion, as a distinct type so optional passes (the Moore
-     * minimizer) can catch exactly this and degrade — skip themselves —
-     * instead of failing a compile whose main artifact is fine. Same
-     * "pattern too large" message family as every other budget rejection.
-     */
-    public static final class Exhausted extends IllegalStateException {
-        private static final long serialVersionUID = 1L;
-
-        Exhausted(String message) {
-            super(message);
-        }
     }
 }

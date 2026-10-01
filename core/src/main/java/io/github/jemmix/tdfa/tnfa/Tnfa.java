@@ -4,6 +4,7 @@ import io.github.jemmix.tdfa.ast.Ast;
 import io.github.jemmix.tdfa.ast.CharClass;
 import io.github.jemmix.tdfa.ast.FixedTags;
 import io.github.jemmix.tdfa.core.CompileObserver;
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
 import io.github.jemmix.tdfa.parser.ParseResult;
 import io.github.jemmix.tdfa.parser.Parser;
 import io.github.jemmix.tdfa.tdfa.BudgetWeights;
@@ -223,7 +224,7 @@ public final class Tnfa {
 
         private void charge(int bytes) {
             if ((weightedBytes += bytes) > memBudget) {
-                throw new IllegalStateException(
+                throw new PatternTooLargeException(
                     "pattern too large: TNFA construction exceeds the compile memory budget (" + weightedBytes
                         + " weighted bytes for " + counter + " states — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
             }

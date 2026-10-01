@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.tdfa;
 
 import io.github.jemmix.tdfa.core.CompileObserver;
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
 import io.github.jemmix.tdfa.regopt.Cfg;
 import io.github.jemmix.tdfa.regopt.Cfg.Block;
 import io.github.jemmix.tdfa.regopt.Cfg.Op;
@@ -228,7 +229,7 @@ final class TdfaMaterializer {
                 meter.tick(arcs);
                 cfgEdges += arcs;
                 if (cfgEdges > maxCfgEdges) {
-                    throw new IllegalStateException("pattern too large: TDFA CFG edge budget exceeded (" + cfgEdges
+                    throw new PatternTooLargeException("pattern too large: TDFA CFG edge budget exceeded (" + cfgEdges
                         + " successor arcs at block " + cfg.blocks.size() + "; cap " + maxCfgEdges + " — raise -D"
                         + Budgets.COMPILE_MEMORY_PROP + " if you need denser graphs)");
                 }
@@ -439,7 +440,7 @@ final class TdfaMaterializer {
             }
             if (sb.wholeRanges != null && !sb.wholeRanges.isEmpty()) {
                 if (sb.wholeRanges.size() > 0xFFFF) {
-                    throw new IllegalStateException("tdfa: state " + s + " needs " + sb.wholeRanges.size()
+                    throw new PatternTooLargeException("tdfa: state " + s + " needs " + sb.wholeRanges.size()
                         + " whole-side entries — exceeds the 16-bit wholeCount packing (pattern too large)");
                 }
                 flat.wholeBase[s] = wholeHead;
@@ -495,7 +496,7 @@ final class TdfaMaterializer {
                 // The 16-bit rangeCount pack in stateMeta would silently
                 // wrap (validate cannot detect it post-pack — the count
                 // reads back wrong-but-plausible). Fail the compile loudly.
-                throw new IllegalStateException("tdfa: state " + s + " needs " + k
+                throw new PatternTooLargeException("tdfa: state " + s + " needs " + k
                     + " range entries — exceeds the 16-bit rangeCount packing (pattern too large)");
             }
             flat.meta[s] = ((k & 0xFFFF) << 1) | (isAccept ? 1 : 0);
@@ -583,7 +584,7 @@ final class TdfaMaterializer {
                     flat.entryMask, flat.acceptMask, flat.stopOnAcceptMask, flat.finalOpsByMask, flat.wholeBase,
                     flat.wholeCount, flat.wholeRanges, longest, meter);
                 partition = m.computePartition();
-            } catch (WorkMeter.Exhausted overBudget) {
+            } catch (PatternTooLargeException overBudget) {
                 obs.note("minimize", "skipped (compute budget)");
                 if (debug) {
                     System.err.println("[tdfa] minimize degraded: " + overBudget.getMessage());

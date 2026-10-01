@@ -1,6 +1,6 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
 import io.github.jemmix.tdfa.rebar.Scenario;
 import io.github.jemmix.tdfa.rebar.ScenarioLoader;
 import org.assertj.core.api.Assertions;
@@ -105,7 +105,7 @@ class CompileLatencyGuardTest {
         String regex = regexOf(group, name);
         long t0 = System.nanoTime();
         if (expectRejection) {
-            Assertions.assertThatCode(() -> Pattern.compile(regex, flags)).isInstanceOf(PatternSyntaxException.class)
+            Assertions.assertThatCode(() -> Pattern.compile(regex, flags)).isInstanceOf(PatternTooLargeException.class)
                 .hasMessageContaining("pattern too large");
         } else {
             Pattern.compile(regex, flags);

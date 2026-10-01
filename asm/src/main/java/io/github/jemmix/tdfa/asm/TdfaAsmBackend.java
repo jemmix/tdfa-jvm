@@ -9,6 +9,7 @@ import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -106,20 +107,27 @@ public final class TdfaAsmBackend {
      * TdfaRunner(tdfa, budget)} call.
      */
     public static RegexEngine generate(Tdfa tdfa, long memoBudgetBytes) {
+        // Bytecode emission runs OUTSIDE any handler: an emitter bug is an
+        // IllegalStateException/Error and propagates raw (it is a bug in
+        // this code, not a shape to re-type). Only the load/instantiate
+        // step — whose checked reflective failures are structurally
+        // impossible when the emitter is correct (the class and its ctor
+        // were emitted one screen up) — is wrapped, cause chained.
+        long id = COUNTER.incrementAndGet();
+        String cn = "io.github.jemmix.tdfa.gen.Gen" + id;
+        String owner = cn.replace('.', '/');
+        byte[] bc = generateBytes(tdfa, owner, memoBudgetBytes);
+        if (Boolean.getBoolean("tdfa.asm.dump")) {
+            dumpClass(owner, bc);
+        }
+        GenClassLoader cl = new GenClassLoader(TdfaAsmBackend.class.getClassLoader());
+        cl.register(cn, bc);
         try {
-            long id = COUNTER.incrementAndGet();
-            String cn = "io.github.jemmix.tdfa.gen.Gen" + id;
-            String owner = cn.replace('.', '/');
-            byte[] bc = generateBytes(tdfa, owner, memoBudgetBytes);
-            if (Boolean.getBoolean("tdfa.asm.dump")) {
-                dumpClass(owner, bc);
-            }
-            GenClassLoader cl = new GenClassLoader(TdfaAsmBackend.class.getClassLoader());
-            cl.register(cn, bc);
             return Class.forName(cn, true, cl).asSubclass(RegexEngine.class).getDeclaredConstructor(Tdfa.class)
                 .newInstance(tdfa);
-        } catch (Exception e) {
-            throw new IllegalStateException("ASM backend failed", e);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(
+                "ASM backend: generated engine class failed to load or instantiate" + " (bug in the emitter)", e);
         }
     }
 
@@ -220,7 +228,7 @@ public final class TdfaAsmBackend {
         String dp = System.getProperty("java.io.tmpdir") + "/" + owner.replace('/', '.') + ".class";
         try {
             Files.write(Paths.get(dp), bc);
-        } catch (Exception ignored) {
+        } catch (IOException ignored) {
         }
     }
 

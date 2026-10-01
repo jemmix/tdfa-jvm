@@ -1253,7 +1253,8 @@ public final class Parser {
     /** Hex value of a \x{...} body, overflow-safe: after skipping leading
      *  zeros (RE2's own corpus uses zero-padded forms like \x{00000061}), 7+
      *  significant digits cannot be a codepoint — "invalid escape sequence"
-     *  like re2j, never a raw NumberFormatException. */
+     *  like re2j. The body is isHex-validated by the caller and at most 6
+     *  significant digits remain, so the parse cannot fail. */
     private static int parseHexValue(String hex) {
         int i = 0;
         while (i < hex.length() - 1 && hex.charAt(i) == '0') {
@@ -1263,11 +1264,7 @@ public final class Parser {
         if (s.length() > 6) {
             return Integer.MAX_VALUE;
         } // > 0xFFFFFF, over any codepoint
-        try {
-            return Integer.parseInt(s, 16);
-        } catch (NumberFormatException e) {
-            return Integer.MAX_VALUE;
-        }
+        return Integer.parseInt(s, 16);
     }
 
     private static int hexVal(char c) {

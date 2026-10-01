@@ -3,7 +3,7 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.core.CompiledRegex;
 import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.MatchScratch;
-import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.WholeEngine;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
@@ -321,9 +321,9 @@ class WholeMatchTest {
     @Test
     void wholeBombFailsCompile() {
         String bomb = "(a{1,100}){1,100}";
-        assertThatThrownBy(() -> Pattern.compile(bomb)).isInstanceOf(PatternSyntaxException.class)
+        assertThatThrownBy(() -> Pattern.compile(bomb)).isInstanceOf(PatternTooLargeException.class)
             .hasMessageContaining("pattern too large");
-        assertThatThrownBy(() -> Pattern.compile(bomb, 0, TdfaRunner::new)).isInstanceOf(PatternSyntaxException.class)
+        assertThatThrownBy(() -> Pattern.compile(bomb, 0, TdfaRunner::new)).isInstanceOf(PatternTooLargeException.class)
             .hasMessageContaining("pattern too large");
     }
 }

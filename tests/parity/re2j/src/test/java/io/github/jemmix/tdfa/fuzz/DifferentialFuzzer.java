@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.fuzz;
 
 import com.google.re2j.Re2jUnicodeProvider;
 import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
 import io.github.jemmix.tdfa.parity.LayeredComparator;
 import io.github.jemmix.tdfa.parity.LayeredComparator.Layer;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
@@ -451,7 +452,7 @@ public final class DifferentialFuzzer {
         }
         try {
             p.asm = io.github.jemmix.tdfa.Pattern.compile(pattern, flags, null, Re2jUnicodeProvider.INSTANCE);
-        } catch (PatternSyntaxException e) {
+        } catch (PatternSyntaxException | PatternTooLargeException e) {
             p.asmTag = "<reject:" + firstLine(e.getMessage()) + ">";
         } catch (RuntimeException e) {
             p.asmTag = "<exception:" + e.getClass().getSimpleName() + ">";
@@ -459,7 +460,7 @@ public final class DifferentialFuzzer {
         }
         try {
             p.vm = io.github.jemmix.tdfa.Pattern.compile(pattern, flags, TdfaRunner::new, Re2jUnicodeProvider.INSTANCE);
-        } catch (PatternSyntaxException e) {
+        } catch (PatternSyntaxException | PatternTooLargeException e) {
             p.vmTag = "<reject:" + firstLine(e.getMessage()) + ">";
         } catch (RuntimeException e) {
             p.vmTag = "<exception:" + e.getClass().getSimpleName() + ">";

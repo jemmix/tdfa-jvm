@@ -1,7 +1,7 @@
 package io.github.jemmix.tdfa.parity;
 
 import io.github.jemmix.tdfa.Pattern;
-import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.RegexEngineFactory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -111,27 +111,27 @@ class HugeCountParityTest {
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void millionLetterBombRejectsCleanly(RegexEngineFactory factory) {
         assertThatThrownBy(() -> Pattern.compile("(a{1000}){1000}", 0, factory, null))
-            .isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
+            .isInstanceOf(PatternTooLargeException.class).hasMessageContaining("pattern too large");
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void rangeBodyBombRejectsCleanly(RegexEngineFactory factory) {
         assertThatThrownBy(() -> Pattern.compile("(a{2,3}){1000}", 0, factory, null))
-            .isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
+            .isInstanceOf(PatternTooLargeException.class).hasMessageContaining("pattern too large");
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void nullableBodyBombRejectsCleanly(RegexEngineFactory factory) {
         assertThatThrownBy(() -> Pattern.compile("(a{0,1000}){1000}", 0, factory, null))
-            .isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
+            .isInstanceOf(PatternTooLargeException.class).hasMessageContaining("pattern too large");
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void cubedCountBombRejectsCleanly(RegexEngineFactory factory) {
         assertThatThrownBy(() -> Pattern.compile("((a{300}){300}){300}", 0, factory, null))
-            .isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
+            .isInstanceOf(PatternTooLargeException.class).hasMessageContaining("pattern too large");
     }
 }

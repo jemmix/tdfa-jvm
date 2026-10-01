@@ -2,7 +2,7 @@ package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.CompilationReport;
 import io.github.jemmix.tdfa.core.CompileOptions;
-import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
 import io.github.jemmix.tdfa.tdfa.Budgets;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
@@ -50,7 +50,7 @@ class ExecutionRamCheckTest {
         System.setProperty(Budgets.RUNTIME_MEMORY_PROP, "2048");
         try {
             long t0 = System.nanoTime();
-            assertThatCode(() -> Pattern.compile(pattern)).isInstanceOf(PatternSyntaxException.class)
+            assertThatCode(() -> Pattern.compile(pattern)).isInstanceOf(PatternTooLargeException.class)
                 .hasMessageContaining("pattern too large").hasMessageContaining("retained execution RAM")
                 .hasMessageContaining(Budgets.RUNTIME_MEMORY_PROP);
             assertThat((System.nanoTime() - t0) / 1_000_000).as("wall to the end-of-compile rejection")

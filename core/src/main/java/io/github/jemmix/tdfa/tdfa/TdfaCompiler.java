@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.tdfa;
 
 import io.github.jemmix.tdfa.ast.CharClass;
 import io.github.jemmix.tdfa.core.CompileObserver;
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
 
 import java.util.ArrayDeque;
@@ -339,7 +340,7 @@ final class TdfaCompiler {
         long activeSetBytes = (long) cells * ((long) words * 8L + BudgetWeights.ACTIVE_CELL_AUX_BYTES);
         long memBudget = Budgets.compileMemoryBytes();
         if (activeSetBytes > memBudget) {
-            throw new IllegalStateException(
+            throw new PatternTooLargeException(
                 "pattern too large: breakpoint active-set precompute exceeds the compile memory budget (" + cells
                     + " cells x " + words + " words = " + activeSetBytes + " weighted bytes — raise -D"
                     + Budgets.COMPILE_MEMORY_PROP + ")");
@@ -442,7 +443,7 @@ final class TdfaCompiler {
      */
     void chargeRange() {
         if ((boxedRangeBytes += BudgetWeights.RANGE_BOXED_BYTES) > Budgets.compileMemoryBytes()) {
-            throw new IllegalStateException(
+            throw new PatternTooLargeException(
                 "pattern too large: transition range entries exceed the compile memory budget ("
                     + (boxedRangeBytes / BudgetWeights.RANGE_BOXED_BYTES) + " live entries, " + boxedRangeBytes
                     + " weighted bytes — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
@@ -651,8 +652,8 @@ final class TdfaCompiler {
                 processed.set(sid);
                 processState(sid);
             }
-        } catch (IllegalStateException e) {
-            abandonIfBudget(e);
+        } catch (PatternTooLargeException e) {
+            abandonWholeSide(e);
         } finally {
             this.meter = saved;
         }
@@ -769,8 +770,8 @@ final class TdfaCompiler {
                 }
             }
             emitWholeDeadMarkers(sid, ctxs, setResU);
-        } catch (IllegalStateException e) {
-            abandonIfBudget(e);
+        } catch (PatternTooLargeException e) {
+            abandonWholeSide(e);
         }
     }
 
@@ -1036,10 +1037,10 @@ final class TdfaCompiler {
      * recorded whole lists are stripped, the artifact stays a plain
      * pruned one, and the facade rejects the compile with the standard
      * "pattern too large" family (the whole surface did not build —
-     * accept-only-what-ships). Budget exceptions raised
-     * by the shared caps (closure spike, state/kernel totals) are caught
-     * the same way: only "pattern too large" rejections are treated as
-     * abandon, anything else is a bug and propagates.
+     * accept-only-what-ships). Budget rejections raised by the shared
+     * caps (closure spike, state/kernel totals) are
+     * {@link PatternTooLargeException}s and abandon the same way;
+     * anything else is a bug and propagates.
      */
     private TdfaStateIndex.AddResult wholeSideStep(int sid, LiveContext ctx, long[] activeEdges) {
         if (!ctx.cut || wholeAbandoned) {
@@ -1069,8 +1070,8 @@ final class TdfaCompiler {
                 work.push(arU.targetId);
             }
             return arU;
-        } catch (IllegalStateException e) {
-            abandonIfBudget(e);
+        } catch (PatternTooLargeException e) {
+            abandonWholeSide(e);
             return null;
         }
     }
@@ -1115,21 +1116,6 @@ final class TdfaCompiler {
         abandonCause = cause;
         for (DfaStateBuilder b : builders) {
             b.wholeRanges = null;
-        }
-    }
-
-    /**
-     * Classify a whole-sweep failure: budget rejections — the typed
-     * {@link WorkMeter.Exhausted}, or any other "pattern too large"
-     * {@link IllegalStateException} raised by the shared caps — abandon the
-     * whole side cleanly (the artifact stays a plain pruned one); anything
-     * else is a bug and propagates.
-     */
-    private void abandonIfBudget(IllegalStateException e) {
-        if (e instanceof WorkMeter.Exhausted || String.valueOf(e.getMessage()).contains("pattern too large")) {
-            abandonWholeSide(e);
-        } else {
-            throw e;
         }
     }
 
@@ -1468,9 +1454,10 @@ final class TdfaCompiler {
             // nested-counted bomb could otherwise exhaust the heap on
             // its own. Tag-aware: the config weight carries its regs.
             if ((out.size() + 1) * (long) kernelConfigBytes > maxClosureBytes) {
-                throw new IllegalStateException("pattern too large: TDFA ε-closure exceeds the closure spike budget ("
-                    + (out.size() + 1) + " configs x " + kernelConfigBytes + " weighted bytes, cap " + maxClosureBytes
-                    + "; " + c.state + " reached — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
+                throw new PatternTooLargeException(
+                    "pattern too large: TDFA ε-closure exceeds the closure spike budget (" + (out.size() + 1)
+                        + " configs x " + kernelConfigBytes + " weighted bytes, cap " + maxClosureBytes + "; " + c.state
+                        + " reached — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
             }
             // Push children in REVERSE priority order. Same contract as the seeds:
             // the pre-push check skips only already-POPPED keys; co-resident

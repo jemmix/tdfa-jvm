@@ -26,7 +26,9 @@ Apache 2.0.
 The trade: compilation is eager and slower — ~290 µs (VM) / ~1.3 ms (ASM) per
 pattern cold, vs ~16 µs for `java.util.regex` (~32–38 µs steady-state). The
 payoff is bytecode-fast linear-time matching. Patterns whose TDFA would be too
-large fail compilation with a clean "pattern too large" error instead of
+large fail compilation with a clean `PatternTooLargeException` ("pattern too
+large" — raised where the budget trips, distinct from the parser's
+`PatternSyntaxException` for malformed syntax) instead of
 exhausting time and memory; the limits are three `-D` properties
 (`tdfa.budget.compile.memory`, `tdfa.budget.compile.compute`,
 `tdfa.budget.runtime.memory`) — raise them if you legitimately need bigger.

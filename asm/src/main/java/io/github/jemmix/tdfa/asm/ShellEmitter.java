@@ -8,6 +8,7 @@ import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -446,7 +447,7 @@ public final class ShellEmitter {
             Files.createDirectories(dir);
             Files.write(dir.resolve(matOwner.substring(matOwner.lastIndexOf('/') + 1) + ".class"), matBytes);
             Files.write(dir.resolve(patOwner.substring(patOwner.lastIndexOf('/') + 1) + ".class"), patBytes);
-        } catch (Exception ignored) {
+        } catch (IOException ignored) {
         }
     }
 }

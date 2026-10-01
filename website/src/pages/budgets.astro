@@ -48,7 +48,7 @@ runtime eighths   : search rows 4/8 · blocks 3/8 · walk memo 1/8`}</Code>
             Memory caps bound the <em>output</em>; CPU is bounded separately by <code>WorkMeter</code> — "a step counter threaded through every unbounded/fixpoint/quadratic loop in the pipeline": the ε-closure, the tryMap probes, regopt's fixpoints, the final-variant enumeration, the TNFA builder, the parser's fold-range scan, the minimizer's refinement. A tick is a tick — deterministic and machine-independent, which matters for a budget you might tune in CI. One <code>Ledger</code> per compile, forked across parse + find-determinization + the optional whole-artifact determinization, so no stage can starve the others.
         </p>
         <p>
-            Exceed a compile budget and you get an <code>IllegalStateException</code> from the <code>"pattern too large"</code> family, surfaced by the facade as a <code>PatternSyntaxException</code> — with the property name in the message, because the intended response is to raise it if you legitimately need bigger.
+            Exceed a compile budget and you get a <code>PatternTooLargeException</code> from the <code>"pattern too large"</code> family — with the property name in the message, because the intended response is to raise it if you legitimately need bigger. Malformed syntax, by contrast, is a <code>PatternSyntaxException</code> from the parser; the two types share no hierarchy, so catching one never accidentally swallows the other.
         </p>
 
         <h2>Nesting depth, priced</h2>
