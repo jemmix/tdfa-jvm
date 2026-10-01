@@ -6,7 +6,8 @@ import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
 
 /**
  * Unicode 6.0.0 tables for the TDFA pipeline: general categories (two-letter and
- * one-letter containers), scripts, and simple-case-fold orbits, frozen at the
+ * one-letter containers), scripts, the derived properties Alpha/Join_Control
+ * (jur-UCC word-set inputs), and simple-case-fold orbits, frozen at the
  * UCD 6.0.0 snapshot. Deterministically generated; select via
  * {@code CompileOptions.unicode(Unicode6_0.provider())}.
  */
@@ -22,20 +23,20 @@ public final class Unicode6_0 implements UnicodeDataProvider {
     private static final int MAX_CP = 0x10FFFF;
 
     private static final String[] NAMES = {
-            "Any", "Arabic", "Armenian", "Avestan", "Balinese", "Bamum", "Batak", "Bengali", "Bopomofo", "Brahmi", "Braille", "Buginese", "Buhid", "C", "Canadian_Aboriginal", "Carian", "Cc", "Cf", "Cham", "Cherokee", "Cn", "Co", "Common", "Coptic", "Cs", "Cuneiform", "Cypriot", "Cyrillic", "Deseret", "Devanagari", "Egyptian_Hieroglyphs", "Ethiopic", "Georgian", "Glagolitic", "Gothic", "Greek", "Gujarati", "Gurmukhi", "Han", "Hangul", "Hanunoo", "Hebrew", "Hiragana", "Imperial_Aramaic", "Inherited", "Inscriptional_Pahlavi", "Inscriptional_Parthian", "Javanese", "Kaithi", "Kannada", "Katakana", "Kayah_Li", "Kharoshthi", "Khmer", "L", "Lao", "Latin", "Lepcha", "Limbu", "Linear_B", "Lisu", "Ll", "Lm", "Lo", "Lt", "Lu", "Lycian", "Lydian", "M", "Malayalam", "Mandaic", "Mc", "Me", "Meetei_Mayek", "Mn", "Mongolian", "Myanmar", "N", "Nd", "New_Tai_Lue", "Nko", "Nl", "No", "Ogham", "Ol_Chiki", "Old_Italic", "Old_Persian", "Old_South_Arabian", "Old_Turkic", "Oriya", "Osmanya", "P", "Pc", "Pd", "Pe", "Pf", "Phags_Pa", "Phoenician", "Pi", "Po", "Ps", "Rejang", "Runic", "S", "Samaritan", "Saurashtra", "Sc", "Shavian", "Sinhala", "Sk", "Sm", "So", "Sundanese", "Syloti_Nagri", "Syriac", "Tagalog", "Tagbanwa", "Tai_Le", "Tai_Tham", "Tai_Viet", "Tamil", "Telugu", "Thaana", "Thai", "Tibetan", "Tifinagh", "Ugaritic", "Vai", "Yi", "Z", "Zl", "Zp", "Zs"
+            "Alpha", "Any", "Arabic", "Armenian", "Avestan", "Balinese", "Bamum", "Batak", "Bengali", "Bopomofo", "Brahmi", "Braille", "Buginese", "Buhid", "C", "Canadian_Aboriginal", "Carian", "Cc", "Cf", "Cham", "Cherokee", "Cn", "Co", "Common", "Coptic", "Cs", "Cuneiform", "Cypriot", "Cyrillic", "Deseret", "Devanagari", "Egyptian_Hieroglyphs", "Ethiopic", "Georgian", "Glagolitic", "Gothic", "Greek", "Gujarati", "Gurmukhi", "Han", "Hangul", "Hanunoo", "Hebrew", "Hiragana", "Imperial_Aramaic", "Inherited", "Inscriptional_Pahlavi", "Inscriptional_Parthian", "Javanese", "Join_Control", "Kaithi", "Kannada", "Katakana", "Kayah_Li", "Kharoshthi", "Khmer", "L", "Lao", "Latin", "Lepcha", "Limbu", "Linear_B", "Lisu", "Ll", "Lm", "Lo", "Lt", "Lu", "Lycian", "Lydian", "M", "Malayalam", "Mandaic", "Mc", "Me", "Meetei_Mayek", "Mn", "Mongolian", "Myanmar", "N", "Nd", "New_Tai_Lue", "Nko", "Nl", "No", "Ogham", "Ol_Chiki", "Old_Italic", "Old_Persian", "Old_South_Arabian", "Old_Turkic", "Oriya", "Osmanya", "P", "Pc", "Pd", "Pe", "Pf", "Phags_Pa", "Phoenician", "Pi", "Po", "Ps", "Rejang", "Runic", "S", "Samaritan", "Saurashtra", "Sc", "Shavian", "Sinhala", "Sk", "Sm", "So", "Sundanese", "Syloti_Nagri", "Syriac", "Tagalog", "Tagbanwa", "Tai_Le", "Tai_Tham", "Tai_Viet", "Tamil", "Telugu", "Thaana", "Thai", "Tibetan", "Tifinagh", "Ugaritic", "Vai", "Yi", "Z", "Zl", "Zp", "Zs"
     };
 
     /** Table count (index into the chunked holders). */
-    private static final int N_TABLES = 133;
+    private static final int N_TABLES = 135;
 
     /** Merged view over the Tables0..Tables2 chunk classes. */
     private static final int[][][] TRIPLES = buildAll();
 
     private static int[][][] buildAll() {
         int[][][] all = new int[N_TABLES][][];
-        System.arraycopy(Tables0.T, 0, all, 0, 54);
-        System.arraycopy(Tables1.T, 0, all, 54, 36);
-        System.arraycopy(Tables2.T, 0, all, 90, 43);
+        System.arraycopy(Tables0.T, 0, all, 0, 44);
+        System.arraycopy(Tables1.T, 0, all, 44, 39);
+        System.arraycopy(Tables2.T, 0, all, 83, 52);
         return all;
     }
 

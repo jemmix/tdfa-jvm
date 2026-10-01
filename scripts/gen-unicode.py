@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """gen-unicode.py — deterministic Unicode table generator for tdfa-unicode.
 
-Consumes pinned UCD files (UnicodeData.txt, Scripts.txt, CaseFolding.txt)
-and emits one Java provider class in the tdfa-unicode table format:
+Consumes pinned UCD files (UnicodeData.txt, Scripts.txt, CaseFolding.txt,
+DerivedCoreProperties.txt, PropList.txt) and emits one Java provider class in
+the tdfa-unicode table format:
 
   - tableFor(name): 30 two-letter general categories + one-letter
-    containers (L M N P S Z C) + "Any" + script names, as re2j-style
+    containers (L M N P S Z C) + "Any" + script names + the derived
+    properties "Alpha" (Alphabetic) and "Join_Control" (jur-UCC word-set
+    inputs; absent from re2j's tables by name), as re2j-style
     {lo, hi, stride} sparse triples expanded to flat [lo,hi] pairs lazily
     at runtime (cached per name).
   - foldTableFor(name): case-fold counterpart ranges derived from embedded
@@ -16,7 +19,7 @@ and emits one Java provider class in the tdfa-unicode table format:
     pinned snapshot's fold universe cannot float with the runtime JDK.
 
 Determinism: every structure is iterated in sorted order; the output is a
-pure function of the three input files. Inputs are checksum-verified
+pure function of the five input files. Inputs are checksum-verified
 against <dir>/<file>.sha256 sidecars before generation.
 
 Usage:
@@ -139,6 +142,25 @@ def parse_scripts(text):
     return spans
 
 
+def parse_prop_ranges(text, prop):
+    """Ranges of one property from a UCD property file (each line
+    `lo[..hi] ; prop`): DerivedCoreProperties.txt, PropList.txt."""
+    spans = []
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        rng, name = [x.strip() for x in line.split(";", 1)]
+        if name != prop:
+            continue
+        if ".." in rng:
+            a, b = rng.split("..")
+            spans.append((int(a, 16), int(b, 16)))
+        else:
+            spans.append((int(rng, 16), int(rng, 16)))
+    return spans
+
+
 def parse_case_folding(text):
     """Simple-fold orbits (statuses C+S), BMP only. Returns union-find parents."""
     parent = {}
@@ -223,6 +245,8 @@ def main():
     ud = verify(ucd_dir, "UnicodeData.txt")
     sc = verify(ucd_dir, "Scripts.txt")
     cf = verify(ucd_dir, "CaseFolding.txt")
+    dcp = verify(ucd_dir, "DerivedCoreProperties.txt")
+    pl = verify(ucd_dir, "PropList.txt")
 
     # ---- category tables ----
     cat_ranges = {c: [] for c in TWO_LETTER}
@@ -251,6 +275,12 @@ def main():
             rs.extend(tables[sub])
         tables[name] = merge_ranges(rs)
     tables["Any"] = [(0, MAX_CP)]
+
+    # ---- derived-property tables (jur-UCC word-set inputs) ----
+    # Alpha = UCD Alphabetic; Join_Control from PropList.txt (both frozen at
+    # this snapshot's version, like every other table here).
+    tables["Alpha"] = merge_ranges(parse_prop_ranges(dcp, "Alphabetic"))
+    tables["Join_Control"] = merge_ranges(parse_prop_ranges(pl, "Join_Control"))
 
     # ---- script tables ----
     script_ranges = {}
@@ -302,7 +332,8 @@ def main():
         w("package %s;\n\n" % pkg)
         w("import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;\n\n")
         w("/**\n * Unicode %s tables for the TDFA pipeline: general categories (two-letter and\n" % ver_dotted)
-        w(" * one-letter containers), scripts, and simple-case-fold orbits, frozen at the\n")
+        w(" * one-letter containers), scripts, the derived properties Alpha/Join_Control\n")
+        w(" * (jur-UCC word-set inputs), and simple-case-fold orbits, frozen at the\n")
         w(" * UCD %s snapshot. Deterministically generated; select via\n" % ver_dotted)
         w(" * {@code CompileOptions.unicode(%s.provider())}.\n */\n" % cls)
         w("public final class %s implements UnicodeDataProvider {\n\n" % cls)

@@ -24,6 +24,10 @@ import java.util.Map;
 final class JdkUnicodeDataProvider implements UnicodeDataProvider {
     static final JdkUnicodeDataProvider INSTANCE = new JdkUnicodeDataProvider();
     private static final int[] ANY_TABLE = new int[]{0, Character.MAX_CODE_POINT};
+    /** Join_Control = U+200C ZERO WIDTH NON-JOINER + U+200D ZERO WIDTH JOINER,
+     *  frozen to exactly this pair by Unicode stability policy — hardcoded the
+     *  same way {@code java.util.regex}'s UCC word predicate hardcodes it. */
+    private static final int[] JOIN_CONTROL_TABLE = new int[]{0x200C, 0x200D};
 
     /** Maps each {@code byte} returned by {@link Character#getType(int)} to its
      *  two-letter Unicode general-category code; index is the byte value. */
@@ -78,6 +82,7 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
     private volatile Map<String, int[]> scripts;
     private volatile Map<String, int[]> categories;
     private volatile Map<String, int[]> foldTables;
+    private volatile int[] alphabetic;
 
     private JdkUnicodeDataProvider() {
     }
@@ -87,6 +92,12 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
         if ("Any".equals(name)) {
             return ANY_TABLE;
         }
+        if ("Join_Control".equals(name)) {
+            return JOIN_CONTROL_TABLE;
+        }
+        if ("Alpha".equals(name)) {
+            return alphabetic();
+        }
         Map<String, int[]> cats = categories();
         int[] t = cats.get(name);
         if (t != null) {
@@ -94,6 +105,47 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
         }
         Map<String, int[]> scr = scripts();
         return scr.get(name);
+    }
+
+    // ---- Alphabetic (derived property, not a general category) ----
+
+    /** Lazily-built Unicode {@code Alphabetic} table (letters + letter
+     *  numbers + Other_Alphabetic contributions, e.g. U+24B6). */
+    private int[] alphabetic() {
+        int[] t = alphabetic;
+        if (t == null) {
+            synchronized (this) {
+                t = alphabetic;
+                if (t == null) {
+                    t = buildAlphabeticTable();
+                    alphabetic = t;
+                }
+            }
+        }
+        return t;
+    }
+
+    /** Contiguous runs of {@link Character#isAlphabetic(int)} — the JDK's
+     *  spelling of the Unicode Alphabetic property, so the default universe's
+     *  {@code (?u)} word set matches a same-JVM {@code java.util.regex} UCC
+     *  oracle by construction. */
+    private static int[] buildAlphabeticTable() {
+        ArrayList<int[]> ranges = new ArrayList<>();
+        int start = -1;
+        for (int cp = 0; cp <= Character.MAX_CODE_POINT; cp++) {
+            if (Character.isAlphabetic(cp)) {
+                if (start < 0) {
+                    start = cp;
+                }
+            } else if (start >= 0) {
+                ranges.add(new int[]{start, cp - 1});
+                start = -1;
+            }
+        }
+        if (start >= 0) {
+            ranges.add(new int[]{start, Character.MAX_CODE_POINT});
+        }
+        return flatten(ranges);
     }
 
     @Override

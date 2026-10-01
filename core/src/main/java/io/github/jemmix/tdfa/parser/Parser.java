@@ -786,17 +786,24 @@ public final class Parser {
     }
 
     /**
-     * Unicode {@code \w} ranges = {@code L + N + Mn + Me + Pc + Sc + Sk}
-     * (category-based; diverges from {@code java.util.regex} with
-     * UNICODE_CHARACTER_CLASS on Sc/Sk/No vs Mc/Join_Control/Other_Alphabetic —
-     * pinned in UnicodeBoundaryParityTest, see TODO.md).
+     * Unicode {@code \w} ranges = {@code \p{Alpha} + \p{M} + \p{Nd} + \p{Pc}
+     * + \p{IsJoin_Control}} — matching {@code java.util.regex} with
+     * {@code UNICODE_CHARACTER_CLASS} exactly on the default (JDK-derived)
+     * universe. Providers without the Alphabetic derived table (e.g. the
+     * re2j-tables bridge) approximate it by its category-expressible subset
+     * {@code L + Nl}; a missing Join_Control table is omitted (U+200C/200D).
      * Cached for reuse by {@code \b} runtime.
      */
     private int[] computeUnicodeWordRanges() {
         if (cachedUnicodeWord == null) {
             int[] merged = null;
-            for (String cat : new String[]{"L", "N", "Mn", "Me", "Pc", "Sc", "Sk"}) {
-                int[] t = provider.tableFor(cat);
+            for (String prop : new String[]{"Alpha", "M", "Nd", "Pc", "Join_Control"}) {
+                int[] t = provider.tableFor(prop);
+                if (t == null && "Alpha".equals(prop)) {
+                    int[] l = provider.tableFor("L");
+                    int[] nl = provider.tableFor("Nl");
+                    t = (l == null) ? nl : (nl == null) ? l : mergeRanges(l, nl);
+                }
                 if (t != null) {
                     merged = (merged == null) ? t : mergeRanges(merged, t);
                 }
