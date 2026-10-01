@@ -143,6 +143,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * load + never-taken branch is ~free on the hot paths.
      */
     private static volatile boolean TRACE = Boolean.getBoolean("tdfa.trace.strategy");
+    /** Forced-strategy hook state (fuzz cross-rung differential; see
+     * {@link #setForcedStrategy}). */
+    private static volatile boolean anyForced;
+    private static final ThreadLocal<Strategy> FORCED = new ThreadLocal<>();
 
     final int[] stateMeta;
     final int[] stateBase;
@@ -532,6 +536,36 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         return out;
     }
 
+    // ===== forced-strategy hook (fuzz cross-rung differential) =====
+    //
+    // Test-only: starts the VM search ladder AT a given rung instead of at
+    // the top — every rung at or above the forced one is skipped, rungs
+    // below it still run (their natural fall-through, budgets included).
+    // Only the four complete-search rungs are forceable: any of them can
+    // answer any find() alone, so a forced run must return exactly what the
+    // natural ladder returns — the invariant the fuzzer checks per case.
+    // ORIGIN_SIM is valid only on fastPath DFAs (mask-free simulation) and
+    // degrades to the trigger scan otherwise. The ASM tier ignores the hook
+    // entirely: its emitted ladder is frozen at compile time, and parity is
+    // preserved because both ladders must agree with the oracle anyway.
+    // Zero cost when unused: one volatile read per entry call.
+    /**
+     * Force this thread's VM search entries to start at {@code s} (null =
+     * natural ladder). Not consulted by the ASM backend or the anchored
+     * entries ({@code matches()}/{@code lookingAt()}); callers must clear
+     * it in a {@code finally}.
+     */
+    public static void setForcedStrategy(Strategy s) {
+        if (s != null) {
+            anyForced = true;
+        }
+        FORCED.set(s);
+    }
+
+    static Strategy forcedStrategy() {
+        return anyForced ? FORCED.get() : null;
+    }
+
     /**
      * Pooled register file for walk leaves: grow-only reuse of
      * {@code MatchScratch.regs} — the same carrier the interpreter's walks
@@ -630,6 +664,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     public boolean find(CharSequence input) {
         if (input instanceof String) {
             String s = (String) input;
+            Strategy force = forcedStrategy();
+            if (force != null) {
+                return forcedSearch(s, 0, s.length(), new MatchScratch(), force) != null;
+            }
             int len = s.length();
             if (literalNeedle != null) {
                 trace(Strategy.LITERAL);
@@ -710,7 +748,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         MatchHolder h;
         if (input instanceof String) {
             String s = (String) input;
-            h = fastPath ? runStringExtractFast(s, from, s.length(), sc) : runStringExtract(s, from, s.length(), sc);
+            Strategy force = forcedStrategy();
+            h = force != null ? forcedSearch(s, from, s.length(), sc, force)
+                : fastPath ? runStringExtractFast(s, from, s.length(), sc) : runStringExtract(s, from, s.length(), sc);
         } else {
             trace(Strategy.GENERIC);
             h = runGeneric(input, from, input.length(), false, sc);
@@ -1015,6 +1055,105 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     }
 
     /**
+     * Forced-strategy search (fuzz cross-rung differential, see
+     * {@link #setForcedStrategy}): answers the same question as the two
+     * ladders above but ENTERS at the forced rung, keeping the natural
+     * fall-through below it. Every path must return exactly what the
+     * natural ladder returns — that equivalence is the invariant the fuzzer
+     * asserts per case.
+     */
+    private MatchHolder forcedSearch(String input, int from, int to, MatchScratch sc, Strategy force) {
+        if (sc == null) {
+            sc = new MatchScratch();
+        }
+        switch (force) {
+            case ORIGIN_SIM :
+                if (fastPath) {
+                    // Verbatim rung 2 of runStringExtractFast: budgeted sim,
+                    // trigger assist on exhaustion, exact walk, defensive
+                    // restart. (The prefix/candidate scans above it are
+                    // skipped — the sim is a complete search on its own.)
+                    trace(Strategy.ORIGIN_SIM);
+                    int leftmost = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS, sc);
+                    if (leftmost == LSS_BUDGET) {
+                        int w = triggerScan(input, from, to, sc);
+                        if (w < 0) {
+                            return null;
+                        }
+                        leftmost = multiStateLeftmostStart(input, w, to, sc);
+                    }
+                    if (leftmost < 0) {
+                        return null;
+                    }
+                    MatchHolder h = tryStartFast(input, leftmost, to, sc);
+                    if (h != null) {
+                        return h;
+                    }
+                    trace(Strategy.WALK_RESTART);
+                    return restartExtract(input, leftmost + 1, to, from, sc);
+                }
+                // The mask-free sim is fastPath-only; degrade to the trigger
+                // scan (the generic ladder's complete search).
+                // fall through
+            case TRIGGER :
+            case RAW_SCAN : {
+                int w = triggerScan(input, from, to, sc, force);
+                if (w < 0) {
+                    return null;
+                }
+                // The caller's `from` gets the same unguarded exact walk the
+                // natural ladders give it first (mid-pair starts included —
+                // find(int) can land there); the restart loop then resumes at
+                // max(from+1, w), mirroring the generic ladder's
+                // `from = w-1; loop from from+1` — which never walks w-1
+                // itself, a potential pair interior.
+                trace(Strategy.EXACT_FROM);
+                MatchHolder h = fastPath ? tryStartFast(input, from, to, sc) : extractFrom(input, from, to, sc);
+                if (h != null) {
+                    return h;
+                }
+                trace(Strategy.WALK_RESTART);
+                int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? from : to;
+                for (int s = Math.max(from + 1, w); s <= maxStart; s++) {
+                    if (Alphabet.pairInterior(input, s)) {
+                        continue;
+                    }
+                    h = fastPath ? tryStartFast(input, s, to, sc) : extractFrom(input, s, to, sc);
+                    if (h != null) {
+                        return h;
+                    }
+                }
+                return null;
+            }
+            case WALK_RESTART :
+            default :
+                return forcedRestart(input, from, to, sc);
+        }
+    }
+
+    /**
+     * The restart floor under a forced entry: an exact walk at every viable
+     * start (the naive complete search). {@code from} itself is walked even
+     * when it sits inside a surrogate pair, mirroring the EXACT_FROM-at-from
+     * call every natural ladder makes; later starts keep the pair-interior
+     * guard.
+     */
+    private MatchHolder forcedRestart(String input, int from, int to, MatchScratch sc) {
+        trace(Strategy.WALK_RESTART);
+        int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? from : to;
+        for (int s = from; s <= maxStart; s++) {
+            if (s > from && Alphabet.pairInterior(input, s)) {
+                continue;
+            }
+            MatchHolder h = fastPath ? tryStartFast(input, s, to, sc) : extractFrom(input, s, to, sc);
+            if (h != null) {
+                return h;
+            }
+        }
+        return null;
+    }
+
+    /**
      * One exact single-start walk; null = no match starting at startSearch.
      */
     private MatchHolder extractFrom(String input, int startSearch, int to, MatchScratch sc) {
@@ -1301,11 +1440,20 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * match lies in {@code [W, to]}. Returns -1 when no accept can fire at all.
      */
     private int triggerScan(String input, int from, int to, MatchScratch sc) {
+        return triggerScan(input, from, to, sc, null);
+    }
+
+    /**
+     * {@code force} = RAW_SCAN takes the unmemoized path regardless of
+     * window size (forced-strategy hook); TRIGGER still degrades to raw on
+     * a capped memo — the memo cannot grow past its budget.
+     */
+    private int triggerScan(String input, int from, int to, MatchScratch sc, Strategy force) {
         // Short scans never amortize the memo (block build = 512 interned steps);
         // short-lived runners would allocate-and-die fat instead. Raw scan keeps
         // the kill-point window either way.
         SearchDfa sd = searchDfa;
-        if (to - from < SDFA_MIN_WINDOW || sd.capped) {
+        if (force == Strategy.RAW_SCAN || to - from < SDFA_MIN_WINDOW || sd.capped) {
             trace(Strategy.RAW_SCAN);
             return rawScan(input, from, to, from, null, sc);
         }

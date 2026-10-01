@@ -115,4 +115,9 @@ tasks.register('fuzz', JavaExec) {
     systemProperty 'fuzz.cases', project.findProperty('fuzz.cases') ?: '0'
     systemProperty 'fuzz.one', project.findProperty('fuzz.one') ?: '0'
     systemProperty 'fuzz.append', project.findProperty('fuzz.append') ?: 'false'
+    // Cross-rung differential (forced complete-search rungs): on by default;
+    // -Pfuzz.crossRung=0 restores the plain oracle-only protocol.
+    systemProperty 'fuzz.crossRung', project.findProperty('fuzz.crossRung') ?: '1'
+    systemProperty 'fuzz.crossRung.stretch', project.findProperty('fuzz.crossRung.stretch') ?: '1'
+    systemProperty 'fuzz.crossRung.stretchEvery', project.findProperty('fuzz.crossRung.stretchEvery') ?: '8'
 }
