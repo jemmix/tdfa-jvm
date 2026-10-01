@@ -93,6 +93,7 @@ class EmittedSurfaceConformanceTest {
         hookM(TdfaRunner.class, "programSize");
         hookM(TdfaRunner.class, "trace", TdfaRunner.Strategy.class);
         hookM(TdfaRunner.class, "takeRegs", int.class, MatchScratch.class);
+        hookM(TdfaRunner.class, "fromOutOfBounds", int.class, int.class);
         hookF(TdfaRunner.class, "ADAPTIVE_PREFILTER_AFTER");
     }
 

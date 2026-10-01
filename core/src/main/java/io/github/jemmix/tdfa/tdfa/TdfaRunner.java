@@ -702,7 +702,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         // Interface contract (see RegexEngine.match): clean bounds failure,
         // never the walk's raw StringIndexOutOfBoundsException.
         if (from < 0 || from > input.length()) {
-            throw new IndexOutOfBoundsException("from: " + from + ", length: " + input.length());
+            throw fromOutOfBounds(from, input.length());
         }
         if (sc == null) {
             sc = new MatchScratch();
@@ -722,6 +722,18 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             MatchResult.reconstructFixed(h.regs, tdfa.finalRegBase, tdfa.fixedBase, tdfa.fixedOffset);
         }
         return new MatchResult(h.regs, tdfa.finalRegBase, tdfa.groupCount, h.matchStart, h.matchEnd);
+    }
+
+    /**
+     * The shared out-of-range {@code from} failure: the interpreter checks
+     * inline, and the generated INLINED match ladders link this hook on their
+     * cold branch so both tiers throw the identical polite message instead
+     * of the raw walk failure (a beyond-length {@code from} would otherwise
+     * surface as a corrupt match or a wrong {@code null}).
+     */
+    @EmittedSurface
+    public static IndexOutOfBoundsException fromOutOfBounds(int from, int len) {
+        return new IndexOutOfBoundsException("from: " + from + ", length: " + len);
     }
 
     /**

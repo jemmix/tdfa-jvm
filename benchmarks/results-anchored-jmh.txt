@@ -1,0 +1,26 @@
+# ParameterizedShortInputBench — anchored short-input matches() across 5 engines (JMH SingleShotTime, ns/op)
+# Run: 2026-10-01, JDK 26.0.2, macOS arm64 (gradle jmh task: class defaults —
+# 2 forks, 5 warmup + 10 measurement single-shot iterations, OPI 50 M).
+# First committed artifact for this bench: the 2026-09-11 table in
+# BENCHMARKS.md §1 predated the jur-lane fix (the lane compiled OUR engine in
+# jur's calling idiom — its "jur" column was a self-race) and no artifact was
+# committed; this run is the fixed lane (java.util.regex.Pattern.compile).
+# Machine drifts run-to-run; engine-vs-engine ratios within this run are the
+# durable claims.
+
+engine\slug    (a|b)*c   (\w+)\s+(\w+)   IPv4      abc       (a+)+b
+tdfa-jvm VM      73.1     88.5          125.1      25.9     188.2
+tdfa-jvm ASM     17.0     64.9           40.0      44.8      16.2
+java.util.regex 123.4     75.0           94.4      40.4    1862.5
+re2j 1.8        269.6    586.1          420.9     101.0     883.6
+reggie          286.5     19.5           12.7       0.03      5.2
+
+geomean vs jur : VM 0.57x   ASM 0.22x
+geomean vs re2j: VM 0.23x   ASM 0.09x
+
+# Notes: (a+)+b input is 20 x 'a' + 'c'. java.util.regex takes ~1.9 us —
+# the quadratic backtracking cost the fabricated 285 ns row hid. reggie's
+# 0.03 ns "abc" is its literal->String.indexOf special case (SIMD); we take
+# that path only when the whole pattern is one literal. ASM "abc" rides the
+# DELEGATE class (literal needle) through the emitted shell — the extra
+# dispatch layers cost ~19 ns over the bare runner at this scale.
