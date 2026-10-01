@@ -23,6 +23,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -75,6 +76,23 @@ import java.util.concurrent.atomic.AtomicInteger;
  * case folds over every codepoint in a range — wide {@code (?i)} ranges
  * can hang the ORACLE). Everything else
  * must agree with re2j or it is a finding.
+ *
+ * <p>Cross-rung differential (on by default, {@code -Pfuzz.crossRung=0}
+ * off): after the normal protocol, every case is re-run on the VM engine
+ * with each complete-search ladder rung forced via
+ * {@link TdfaRunner#setForcedStrategy} — ORIGIN_SIM, TRIGGER, RAW_SCAN,
+ * WALK_RESTART. A forced rung must return the identical protocol string to
+ * the natural ladder (any rung can serve any find() alone), so every case
+ * doubles as a fast-rung-vs-complete-rung oracle the re2j comparison cannot
+ * provide. Two findings types: CROSS_RUNG (forced answer differs) and
+ * CROSS_ROUTING (forced entry served by unexpected rungs — the trace hook
+ * must stay within the forced rung's fall-through family). A deterministic
+ * 1-in-N subset also runs the probes on a stretched input (~4.3k chars,
+ * whole-string repeats) so the memoized search-DFA path — unreachable on
+ * the 0-24-char generator inputs — actually runs; stretched cases compare
+ * forced runs against the natural VM run on the same stretched input.
+ * ASM is not forced (its ladder is frozen at compile time); its coverage
+ * comes from the layered vote on the natural protocol.
  */
 public final class DifferentialFuzzer {
 
@@ -98,6 +116,23 @@ public final class DifferentialFuzzer {
      *  never advances yields one span per call forever); 64 ≫ any match
      *  count a ≤30-char input can produce, so a healthy case never clips. */
     static final int MAX_MATCHES = 64;
+
+    /** Cross-rung differential on/off (Gradle: -Pfuzz.crossRung=0). */
+    static final boolean CROSS_RUNG = Long.getLong("fuzz.crossRung", 1) != 0;
+
+    /** Stretched-input probes on/off; sampled 1-in-stretchEvery cases. */
+    static final boolean CROSS_STRETCH = Long.getLong("fuzz.crossRung.stretch", 1) != 0;
+
+    static final int STRETCH_EVERY = (int) (long) Long.getLong("fuzz.crossRung.stretchEvery", 8);
+
+    /** The complete-search rungs (any can answer any find() alone). */
+    static final TdfaRunner.Strategy[] FORCED_RUNGS = {TdfaRunner.Strategy.ORIGIN_SIM, TdfaRunner.Strategy.TRIGGER,
+        TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART};
+
+    /** Stretched-input floor: past twice the search-DFA memo window (2048)
+     *  so the memoized trigger path — never reachable on 0-24-char inputs —
+     *  runs with real kill-point windows and multiple interned blocks. */
+    static final int STRETCH_MIN_CHARS = 4300;
 
     /** Char pools. Supplementary codepoints and lone surrogates are
      *  first-class citizens: the highest-yield divergence territory. The
@@ -484,7 +519,99 @@ public final class DifferentialFuzzer {
         }
         o.asm = runEngine(pr.asm, pr.asmTag, pr.asmExc, "asm", c, o);
         o.vm = runEngine(pr.vm, pr.vmTag, pr.vmExc, "vm", c, o);
+        if (CROSS_RUNG && pr.vm != null) {
+            crossRung(pr, c, o);
+        }
         return o;
+    }
+
+    // ---- cross-rung differential ----
+
+    /**
+     * Re-run each find()-carrying probe with every complete-search rung
+     * forced; a forced run must reproduce the natural VM protocol exactly.
+     * The baseline for the raw input is the oracle-checked {@code o.vm}
+     * string itself; a stretched variant (deterministic 1-in-N sample) gets
+     * its own natural baseline first. Runs on the calling (worker) thread —
+     * the force hook is thread-local.
+     */
+    static void crossRung(Prepared pr, Case c, Outcome o) {
+        if (pr.vmTag == null) {
+            runForced(pr.vm, c.input(), o.vm, o, "");
+        }
+        if (CROSS_STRETCH && stretchSampled(c)) {
+            CharSequence stretched = stretch(c.input());
+            String base;
+            try {
+                base = compute(pr.vm, stretched);
+            } catch (RuntimeException e) {
+                o.cross
+                    .add("THREW stretched baseline " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
+                return;
+            }
+            runForced(pr.vm, stretched, base, o, "stretched ");
+        }
+    }
+
+    static void runForced(io.github.jemmix.tdfa.Pattern vm, CharSequence in, String base, Outcome o, String tag) {
+        // Idempotent-on; the per-case snapshots below (same worker thread as
+        // the normal probes) bound every thread's trace buffer.
+        TdfaRunner.setTracing(true);
+        for (TdfaRunner.Strategy f : FORCED_RUNGS) {
+            TdfaRunner.traceSnapshot(); // residue: this case's natural-probe traces
+            TdfaRunner.setForcedStrategy(f);
+            String forced;
+            List<TdfaRunner.Strategy> routed;
+            try {
+                forced = compute(vm, in);
+                routed = TdfaRunner.traceSnapshot();
+            } catch (RuntimeException e) {
+                TdfaRunner.traceSnapshot();
+                o.cross.add("THREW " + tag + f + " " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
+                continue;
+            } finally {
+                TdfaRunner.setForcedStrategy(null);
+            }
+            if (!forced.equals(base)) {
+                o.cross.add("MISMATCH " + tag + f + ": forced [" + forced + "] ladder [" + base + "]");
+            } else if (!allowedUnder(f).containsAll(routed)) {
+                // Result agreed but the ladder served it from an unexpected
+                // rung family — the structural drift the trace hook exists
+                // to catch (identical results, different algorithm).
+                o.cross.add("ROUTED " + tag + f + " served by " + routed);
+            }
+        }
+    }
+
+    /**
+     * Rungs a forced entry may legitimately serve with: the forced rung plus
+     * its fall-through family (budget exhaustion, capped memo, defensive
+     * restart) plus the anchored entries' own traces — matches()/lookingAt()
+     * probes ignore the force hook by design and must stay identical.
+     */
+    static EnumSet<TdfaRunner.Strategy> allowedUnder(TdfaRunner.Strategy f) {
+        EnumSet<TdfaRunner.Strategy> a = EnumSet.of(TdfaRunner.Strategy.EXACT_FROM, TdfaRunner.Strategy.TRIGGER,
+            TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART, TdfaRunner.Strategy.ANCHORED,
+            TdfaRunner.Strategy.ANCHORED_FAST, TdfaRunner.Strategy.GENERIC);
+        a.add(f);
+        return a;
+    }
+
+    /**
+     * Long-input variant: whole-string repeats past {@link #STRETCH_MIN_CHARS}
+     * — deterministic, surrogate-pair-preserving within each copy (new pairs
+     * across copy boundaries affect both sides of the comparison equally).
+     */
+    static String stretch(String in) {
+        if (in.isEmpty()) {
+            return in;
+        }
+        return in.repeat(STRETCH_MIN_CHARS / in.length() + 1);
+    }
+
+    static boolean stretchSampled(Case c) {
+        long h = c.pattern().hashCode() * 1000003L ^ c.input().hashCode();
+        return Math.floorMod(h, STRETCH_EVERY) == 0;
     }
 
     static String runEngine(io.github.jemmix.tdfa.Pattern p, String tag, String exc, String engTag, Case c, Outcome o) {
@@ -994,12 +1121,18 @@ public final class DifferentialFuzzer {
         final Case c;
         String oracle = "?", asm = "?", vm = "?";
         final List<String> exceptions = new ArrayList<>();
+        /** Cross-rung findings (MISMATCH/ROUTED/THREW) — non-empty fails the
+         *  case regardless of the oracle outcome. */
+        final List<String> cross = new ArrayList<>();
 
         Outcome(Case c) {
             this.c = c;
         }
 
         boolean failed() {
+            if (!cross.isEmpty()) {
+                return true;
+            }
             if (!exceptions.isEmpty()) {
                 return true;
             }
@@ -1013,6 +1146,7 @@ public final class DifferentialFuzzer {
     static final class Results {
         final long masterSeed;
         long cases, failures, bothReject, flagged, ciSuppAvoidedTotal, ciRangeAvoidedTotal, knownDivergence;
+        long crossRung, crossRouting;
         final Map<Layer, Integer> layerCounts = new EnumMap<>(Layer.class);
         long hangs, hangsOurs, hangsOracle;
         double casesPerMinute;
@@ -1026,6 +1160,26 @@ public final class DifferentialFuzzer {
             // (generation-guard counters fold once per batch in run(), not here)
             if (o.c.flags() != 0) {
                 flagged++;
+            }
+            if (!o.cross.isEmpty()) {
+                // Cross-rung findings are oracle-independent (VM vs itself);
+                // no known-divergence classification, no layered attribution.
+                failures++;
+                boolean routing = o.cross.get(0).startsWith("ROUTED");
+                if (routing) {
+                    crossRouting++;
+                } else {
+                    crossRung++;
+                }
+                String kind = routing ? "CROSS_ROUTING" : "CROSS_RUNG";
+                String sig = kind + " | shape~" + shape(o.c.pattern());
+                Sig s = signatures.computeIfAbsent(sig, k -> new Sig(kind));
+                s.total++;
+                if (s.recorded < 8) {
+                    s.recorded++;
+                    logs.failure(caseSeed, o, kind + " (" + firstWord(o.cross.get(0)) + ")", "CROSS");
+                }
+                return;
             }
             if (o.failed()) {
                 // Known-divergence classification is RELEASED-oracle-only: it
@@ -1264,8 +1418,10 @@ public final class DifferentialFuzzer {
                 + RUNTIME_MX.getUptime() + ",\"flags\":" + o.c.flags() + ",\"kind\":\"" + kind.replace('"', '\'')
                 + "\",\"layer\":\"" + layer + "\"" + ",\"pattern\":\"" + escape(o.c.pattern()) + "\",\"input\":\""
                 + escape(o.c.input()) + "\",\"oracle\":\"" + escape(o.oracle) + "\",\"asm\":\"" + escape(o.asm)
-                + "\",\"vm\":\"" + escape(o.vm) + "\"" + (o.exceptions.isEmpty() ? ""
+                + "\",\"vm\":\"" + escape(o.vm) + "\""
+                + (o.exceptions.isEmpty() ? ""
                     : ",\"ex\":" + o.exceptions.stream().map(e -> "\"" + escape(e) + "\"").toList())
+                + (o.cross.isEmpty() ? "" : ",\"cross\":" + o.cross.stream().map(e -> "\"" + escape(e) + "\"").toList())
                 + "}");
             failures.flush();
         }
@@ -1338,7 +1494,8 @@ public final class DifferentialFuzzer {
                     : "re2j 1.8 patched fork (known-divergence classifier off)"));
                 w.println("cases: " + r.cases + "  failures: " + r.failures + "  bothReject: " + r.bothReject
                     + "  flagged: " + r.flagged + "  knownDivergence: " + r.knownDivergence + "  hangsEngine: "
-                    + r.hangsOurs + "  hangsOracle: " + r.hangsOracle);
+                    + r.hangsOurs + "  hangsOracle: " + r.hangsOracle + "  crossRung: " + r.crossRung
+                    + "  crossRouting: " + r.crossRouting);
                 w.printf("rate: %.1f cases/min%n", r.casesPerMinute);
                 w.println("ciSuppAvoided (known-gap constructs not generated): " + r.ciSuppAvoidedTotal
                     + "  ciWideRangeAvoided (oracle-hang guard): " + r.ciRangeAvoidedTotal);
@@ -1383,6 +1540,16 @@ public final class DifferentialFuzzer {
         }
         int i = s.indexOf('\n');
         return i < 0 ? s : s.substring(0, i);
+    }
+
+    /** First whitespace-delimited token — keeps CROSS_* kinds signature-stable
+     *  (MISMATCH/ROUTED/THREW) while the detail lives in the record. */
+    static String firstWord(String s) {
+        int i = 0;
+        while (i < s.length() && !Character.isWhitespace(s.charAt(i))) {
+            i++;
+        }
+        return i == 0 ? "?" : s.substring(0, i);
     }
 
     /** ASCII-safe \\uXXXX escaping so overnight logs are reviewable anywhere. */
