@@ -3,6 +3,7 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.core.CompileOptions;
 import io.github.jemmix.tdfa.core.CompiledRegex;
 import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
 import io.github.jemmix.tdfa.unicode.v17_0.Unicode17_0;
 import io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0;
 import org.junit.jupiter.api.Test;
@@ -102,6 +103,23 @@ class PinnedUnicodeTablesTest {
         assertThat(CompiledRegex.compile("(?i)\u1C80", CompileOptions.of().unicode(v6)).find("\u0432")).isFalse();
         assertThat(CompiledRegex.compile("(?i)\u1C80", CompileOptions.of().unicode(v17)).find("\u0432")).isTrue();
         assertThat(CompiledRegex.compile("(?i)\u1C80", CompileOptions.of().unicode(v6)).find("\u1C80")).isTrue();
+    }
+
+    @Test
+    void derivedPropertyTablesResolveInBothSnapshots() {
+        for (UnicodeDataProvider p : new UnicodeDataProvider[]{Unicode6_0.provider(), Unicode17_0.provider()}) {
+            int[] alpha = p.tableFor("Alpha");
+            assertThat(alpha).isNotNull();
+            // Alphabetic covers letters, letter numbers (Nl Ⅴ) and
+            // Other_Alphabetic symbols (Ⓐ), but not Sc/No
+            assertThat(contains(alpha, 'A')).isTrue();
+            assertThat(contains(alpha, 0x2164)).isTrue();
+            assertThat(contains(alpha, 0x24B6)).isTrue();
+            assertThat(contains(alpha, 0x00A5)).isFalse();
+            assertThat(contains(alpha, 0x00B2)).isFalse();
+            // Join_Control is exactly U+200C..U+200D, frozen in every version
+            assertThat(p.tableFor("Join_Control")).containsExactly(0x200C, 0x200D);
+        }
     }
 
     private static boolean contains(int[] table, int cp) {

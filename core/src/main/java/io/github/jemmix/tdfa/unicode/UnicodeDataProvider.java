@@ -15,6 +15,13 @@ package io.github.jemmix.tdfa.unicode;
  *       {@code S}, {@code C}, {@code Z})</li>
  *   <li>Scripts: {@code Latin}, {@code Greek}, {@code Han}, {@code Old_South_Arabian}, ...</li>
  * </ul>
+ * tdfa additionally consults two derived-property names for the Unicode-aware
+ * {@code \w}/{@code \b} set (returning {@code null} for them is legal — the
+ * parser then approximates, see {@code Parser.computeUnicodeWordRanges}):
+ * <ul>
+ *   <li>{@code "Alpha"} — the Unicode {@code Alphabetic} derived property</li>
+ *   <li>{@code "Join_Control"} — U+200C/U+200D</li>
+ * </ul>
  *
  * <h2>Selection</h2>
  * Resolved at first use via {@link UnicodeProviders#get()} based on the

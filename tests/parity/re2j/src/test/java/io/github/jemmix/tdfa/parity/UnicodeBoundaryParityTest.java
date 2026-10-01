@@ -17,24 +17,19 @@ import static org.assertj.core.api.Assertions.assertThat;
  * evaluate them with codepoint (not code-unit) awareness and never start or
  * end inside a surrogate pair.
  *
- * <p><b>{@code (?u)} Unicode boundaries — {@code java.util.regex} parity on
- * the agreeing categories.</b> {@code (?u)} is a tdfa extension (re2j has no
- * {@code u} flag), defined to mirror
- * {@code java.util.regex} with {@code UNICODE_CHARACTER_CLASS}; the live JDK
- * is therefore the oracle, run in the same JVM (same Unicode version) on
- * tdfa's default (JDK-derived) universe. Word chars where both engines
- * agree — {@code L}, {@code Nd}, {@code Mn}, {@code Me}, {@code Nl},
- * {@code Pc}, including supplementary letters — are pinned differentially.
- *
- * <p><b>Known divergence, pinned as contract below:</b> tdfa's Unicode word
- * set is category-based ({@code L N Mn Me Pc Sc Sk}) while the JDK's is
- * {@code [\p{Alpha}\p{M}\p{Nd}\p{Pc}\p{IsJoin_Control}]} — Alphabetic- and
- * Join_Control-based. They disagree on {@code Sc}/{@code Sk}/{@code No}
- * (word for us, not for the JDK), and on {@code Mc}, Join_Control and
- * Other_Alphabetic symbols like U+24B6 (word for the JDK, not for us).
- * Matching the JDK exactly needs Alphabetic/Join_Control tables no provider
- * supplies today (open work, TODO.md); until then the deltas are pinned as
- * fixed expectations so any move flips these lines deliberately.
+ * <p><b>{@code (?u)} boundaries — {@code java.util.regex} parity.</b>
+ * {@code (?u)} is a tdfa extension (re2j has no {@code u} flag), defined to
+ * mirror {@code java.util.regex} with {@code UNICODE_CHARACTER_CLASS}; the live
+ * JDK is therefore the oracle, run in the same JVM (same Unicode version) on
+ * tdfa's default (JDK-derived) universe. The word set is
+ * {@code [\p{Alpha}\p{M}\p{Nd}\p{Pc}\p{IsJoin_Control}]} — the JDK's
+ * Alphabetic-based definition — so parity is exact by construction
+ * ({@code Character.isAlphabetic} on our side) and pinned differentially:
+ * on the agreeing categories, on every category representative, and on the
+ * codepoints where the previous category-based set
+ * ({@code L N Mn Me Pc Sc Sk}) diverged from the JDK — {@code Sc}/{@code Sk}/
+ * {@code No} (formerly word for us only) and {@code Mc}, Join_Control,
+ * Other_Alphabetic (word for the JDK only).
  */
 class UnicodeBoundaryParityTest {
 
@@ -182,35 +177,75 @@ class UnicodeBoundaryParityTest {
         assertSameAsJur("(?u)(\\b\\w+\\b)", "\u30d1\u30fc\u30b9", factory); // Katakana + group span
     }
 
-    // ---- (?u) word-set deltas vs the JDK: pinned tdfa contract ----
-    // (category-based word set — see class javadoc; flip deliberately when
-    //  the Alphabetic/Join_Control-based set lands)
+    // ---- (?u) word-set exactness: one representative per general category,
+    // plus the delta codepoints of the old category-based set ----
 
+    /**
+     * One BMP representative per two-letter general category (Cs skipped:
+     * lone surrogates are their own divergence surface, not a word-set
+     * question). If the word-set formula drifts from the JDK's on ANY
+     * category, one of these lines flips.
+     */
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void currencyAndModifierSymbolsAreWordCharsForUs(RegexEngineFactory factory) {
-        assertThat(findDefault("(?u)\\w", "\u00a5", factory)).isTrue(); // ¥ Sc: JDK says non-word
-        assertThat(findDefault("(?u)\\w", "\u00b2", factory)).isTrue(); // ² No
-        assertThat(findDefault("(?u)\\W", "\u00a5", factory)).isFalse();
-        assertThat(findDefault("(?u)[^\\w]", "\u00a5", factory)).isFalse();
-        assertThat(findDefault("(?u)\\b.", "\u00a5", factory)).isTrue(); // boundaries fire around ¥
-        assertThat(findDefault("(?u)\\b\\w\\b", "_\u00a5", factory)).isFalse(); // no boundary _ | ¥
+    void unicodeWordMembershipPerCategoryMatchesJur(RegexEngineFactory factory) {
+        String[] reps = {"A", // Lu
+            "a", // Ll
+            "\u01c5", // Lt titlecase Ǆ
+            "\u02b0", // Lm modifier letter ʰ
+            "\u6f22", // Lo
+            "\u0591", // Mn accent
+            "\u0488", // Me combining enclosing
+            "\u0903", // Mc spacing mark
+            "5", // Nd
+            "\u2164", // Nl roman numeral Ⅴ
+            "\u00b2", // No superscript two
+            "_", // Pc
+            "-", // Pd
+            "(", // Ps
+            ")", // Pe
+            "\u00ab", // Pi
+            "\u00bb", // Pf
+            ".", // Po
+            "\u00a5", // Sc yen
+            "^", // Sk
+            "+", // Sm
+            "\u24b6", // So circled A (Other_Alphabetic!)
+            " ", // Zs
+            "\u2028", // Zl
+            "\u2029", // Zp
+            "\u0001", // Cc
+            "\u00ad", // Cf soft hyphen
+            "\ue000", // Co private use
+            "\u0378", // Cn unassigned
+        };
+        for (String s : reps) {
+            assertSameAsJur("(?u)\\w", s, factory);
+            assertSameAsJur("(?u)\\W", s, factory);
+            assertSameAsJur("(?u)\\b.", s, factory);
+        }
     }
 
+    /** The codepoints where the old category-based set diverged from the
+     *  JDK — now pinned differentially in both directions. */
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void spacingMarksJoinControlAndCircledAreNotWordCharsForUs(RegexEngineFactory factory) {
-        assertThat(findDefault("(?u)\\w", "\u0903", factory)).isFalse(); // ः Mc: JDK says word
-        assertThat(findDefault("(?u)\\b\\w", "\u0903\u0903", factory)).isFalse();
-        assertThat(findDefault("(?u)\\w", "\u200d", factory)).isFalse(); // ZWJ Join_Control
-        assertThat(findDefault("(?u)\\w", "\u24b6", factory)).isFalse(); // Ⓐ Other_Alphabetic
-        // boundary fires between Ⓐ (non-word for us) and b — JDK matched Ⓐ itself
-        Matcher m = io.github.jemmix.tdfa.Pattern.compile("(?u)\\b.", 0, factory, null).matcher("\u24b6b");
-        assertThat(m.find()).isTrue();
-        assertThat(m.group()).isEqualTo("b");
-    }
-
-    private static boolean findDefault(String pattern, String input, RegexEngineFactory factory) {
-        return io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory, null).matcher(input).find();
+    void formerlyDivergingCodepointsMatchJurExactly(RegexEngineFactory factory) {
+        // Sc/Sk/No: formerly word for us only — now non-word like the JDK.
+        assertSameAsJur("(?u)\\w", "\u00a5", factory); // ¥ Sc
+        assertSameAsJur("(?u)\\w", "\u00b2", factory); // ² No
+        assertSameAsJur("(?u)\\W", "\u00a5", factory);
+        assertSameAsJur("(?u)[^\\w]", "\u00a5", factory);
+        assertSameAsJur("(?u)\\b.", "\u00a5", factory); // boundary fires around ¥
+        assertSameAsJur("(?u)\\b\\w\\b", "_\u00a5", factory); // boundary _ | ¥
+        // Mc / Join_Control / Other_Alphabetic: formerly non-word for us —
+        // now word like the JDK.
+        assertSameAsJur("(?u)\\w", "\u0903", factory); // ः Mc
+        assertSameAsJur("(?u)\\b\\w", "\u0903\u0903", factory);
+        assertSameAsJur("(?u)\\w", "\u200c", factory); // ZWNJ
+        assertSameAsJur("(?u)\\w", "\u200d", factory); // ZWJ
+        assertSameAsJur("(?u)\\b\\w\\b", "a\u200db", factory); // no boundary a | ZWJ
+        assertSameAsJur("(?u)\\w", "\u24b6", factory); // Ⓐ Other_Alphabetic
+        assertSameAsJur("(?u)\\b.", "\u24b6b", factory); // Ⓐ itself matches now
     }
 }

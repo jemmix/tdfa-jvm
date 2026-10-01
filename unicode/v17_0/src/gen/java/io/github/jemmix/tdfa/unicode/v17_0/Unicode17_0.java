@@ -6,7 +6,8 @@ import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
 
 /**
  * Unicode 17.0.0 tables for the TDFA pipeline: general categories (two-letter and
- * one-letter containers), scripts, and simple-case-fold orbits, frozen at the
+ * one-letter containers), scripts, the derived properties Alpha/Join_Control
+ * (jur-UCC word-set inputs), and simple-case-fold orbits, frozen at the
  * UCD 17.0.0 snapshot. Deterministically generated; select via
  * {@code CompileOptions.unicode(Unicode17_0.provider())}.
  */
@@ -22,21 +23,22 @@ public final class Unicode17_0 implements UnicodeDataProvider {
     private static final int MAX_CP = 0x10FFFF;
 
     private static final String[] NAMES = {
-            "Adlam", "Ahom", "Anatolian_Hieroglyphs", "Any", "Arabic", "Armenian", "Avestan", "Balinese", "Bamum", "Bassa_Vah", "Batak", "Bengali", "Beria_Erfe", "Bhaiksuki", "Bopomofo", "Brahmi", "Braille", "Buginese", "Buhid", "C", "Canadian_Aboriginal", "Carian", "Caucasian_Albanian", "Cc", "Cf", "Chakma", "Cham", "Cherokee", "Chorasmian", "Cn", "Co", "Common", "Coptic", "Cs", "Cuneiform", "Cypriot", "Cypro_Minoan", "Cyrillic", "Deseret", "Devanagari", "Dives_Akuru", "Dogra", "Duployan", "Egyptian_Hieroglyphs", "Elbasan", "Elymaic", "Ethiopic", "Garay", "Georgian", "Glagolitic", "Gothic", "Grantha", "Greek", "Gujarati", "Gunjala_Gondi", "Gurmukhi", "Gurung_Khema", "Han", "Hangul", "Hanifi_Rohingya", "Hanunoo", "Hatran", "Hebrew", "Hiragana", "Imperial_Aramaic", "Inherited", "Inscriptional_Pahlavi", "Inscriptional_Parthian", "Javanese", "Kaithi", "Kannada", "Katakana", "Kawi", "Kayah_Li", "Kharoshthi", "Khitan_Small_Script", "Khmer", "Khojki", "Khudawadi", "Kirat_Rai", "L", "Lao", "Latin", "Lepcha", "Limbu", "Linear_A", "Linear_B", "Lisu", "Ll", "Lm", "Lo", "Lt", "Lu", "Lycian", "Lydian", "M", "Mahajani", "Makasar", "Malayalam", "Mandaic", "Manichaean", "Marchen", "Masaram_Gondi", "Mc", "Me", "Medefaidrin", "Meetei_Mayek", "Mende_Kikakui", "Meroitic_Cursive", "Meroitic_Hieroglyphs", "Miao", "Mn", "Modi", "Mongolian", "Mro", "Multani", "Myanmar", "N", "Nabataean", "Nag_Mundari", "Nandinagari", "Nd", "New_Tai_Lue", "Newa", "Nko", "Nl", "No", "Nushu", "Nyiakeng_Puachue_Hmong", "Ogham", "Ol_Chiki", "Ol_Onal", "Old_Hungarian", "Old_Italic", "Old_North_Arabian", "Old_Permic", "Old_Persian", "Old_Sogdian", "Old_South_Arabian", "Old_Turkic", "Old_Uyghur", "Oriya", "Osage", "Osmanya", "P", "Pahawh_Hmong", "Palmyrene", "Pau_Cin_Hau", "Pc", "Pd", "Pe", "Pf", "Phags_Pa", "Phoenician", "Pi", "Po", "Ps", "Psalter_Pahlavi", "Rejang", "Runic", "S", "Samaritan", "Saurashtra", "Sc", "Sharada", "Shavian", "Siddham", "Sidetic", "SignWriting", "Sinhala", "Sk", "Sm", "So", "Sogdian", "Sora_Sompeng", "Soyombo", "Sundanese", "Sunuwar", "Syloti_Nagri", "Syriac", "Tagalog", "Tagbanwa", "Tai_Le", "Tai_Tham", "Tai_Viet", "Tai_Yo", "Takri", "Tamil", "Tangsa", "Tangut", "Telugu", "Thaana", "Thai", "Tibetan", "Tifinagh", "Tirhuta", "Todhri", "Tolong_Siki", "Toto", "Tulu_Tigalari", "Ugaritic", "Vai", "Vithkuqi", "Wancho", "Warang_Citi", "Yezidi", "Yi", "Z", "Zanabazar_Square", "Zl", "Zp", "Zs"
+            "Adlam", "Ahom", "Alpha", "Anatolian_Hieroglyphs", "Any", "Arabic", "Armenian", "Avestan", "Balinese", "Bamum", "Bassa_Vah", "Batak", "Bengali", "Beria_Erfe", "Bhaiksuki", "Bopomofo", "Brahmi", "Braille", "Buginese", "Buhid", "C", "Canadian_Aboriginal", "Carian", "Caucasian_Albanian", "Cc", "Cf", "Chakma", "Cham", "Cherokee", "Chorasmian", "Cn", "Co", "Common", "Coptic", "Cs", "Cuneiform", "Cypriot", "Cypro_Minoan", "Cyrillic", "Deseret", "Devanagari", "Dives_Akuru", "Dogra", "Duployan", "Egyptian_Hieroglyphs", "Elbasan", "Elymaic", "Ethiopic", "Garay", "Georgian", "Glagolitic", "Gothic", "Grantha", "Greek", "Gujarati", "Gunjala_Gondi", "Gurmukhi", "Gurung_Khema", "Han", "Hangul", "Hanifi_Rohingya", "Hanunoo", "Hatran", "Hebrew", "Hiragana", "Imperial_Aramaic", "Inherited", "Inscriptional_Pahlavi", "Inscriptional_Parthian", "Javanese", "Join_Control", "Kaithi", "Kannada", "Katakana", "Kawi", "Kayah_Li", "Kharoshthi", "Khitan_Small_Script", "Khmer", "Khojki", "Khudawadi", "Kirat_Rai", "L", "Lao", "Latin", "Lepcha", "Limbu", "Linear_A", "Linear_B", "Lisu", "Ll", "Lm", "Lo", "Lt", "Lu", "Lycian", "Lydian", "M", "Mahajani", "Makasar", "Malayalam", "Mandaic", "Manichaean", "Marchen", "Masaram_Gondi", "Mc", "Me", "Medefaidrin", "Meetei_Mayek", "Mende_Kikakui", "Meroitic_Cursive", "Meroitic_Hieroglyphs", "Miao", "Mn", "Modi", "Mongolian", "Mro", "Multani", "Myanmar", "N", "Nabataean", "Nag_Mundari", "Nandinagari", "Nd", "New_Tai_Lue", "Newa", "Nko", "Nl", "No", "Nushu", "Nyiakeng_Puachue_Hmong", "Ogham", "Ol_Chiki", "Ol_Onal", "Old_Hungarian", "Old_Italic", "Old_North_Arabian", "Old_Permic", "Old_Persian", "Old_Sogdian", "Old_South_Arabian", "Old_Turkic", "Old_Uyghur", "Oriya", "Osage", "Osmanya", "P", "Pahawh_Hmong", "Palmyrene", "Pau_Cin_Hau", "Pc", "Pd", "Pe", "Pf", "Phags_Pa", "Phoenician", "Pi", "Po", "Ps", "Psalter_Pahlavi", "Rejang", "Runic", "S", "Samaritan", "Saurashtra", "Sc", "Sharada", "Shavian", "Siddham", "Sidetic", "SignWriting", "Sinhala", "Sk", "Sm", "So", "Sogdian", "Sora_Sompeng", "Soyombo", "Sundanese", "Sunuwar", "Syloti_Nagri", "Syriac", "Tagalog", "Tagbanwa", "Tai_Le", "Tai_Tham", "Tai_Viet", "Tai_Yo", "Takri", "Tamil", "Tangsa", "Tangut", "Telugu", "Thaana", "Thai", "Tibetan", "Tifinagh", "Tirhuta", "Todhri", "Tolong_Siki", "Toto", "Tulu_Tigalari", "Ugaritic", "Vai", "Vithkuqi", "Wancho", "Warang_Citi", "Yezidi", "Yi", "Z", "Zanabazar_Square", "Zl", "Zp", "Zs"
     };
 
     /** Table count (index into the chunked holders). */
-    private static final int N_TABLES = 212;
+    private static final int N_TABLES = 214;
 
-    /** Merged view over the Tables0..Tables3 chunk classes. */
+    /** Merged view over the Tables0..Tables4 chunk classes. */
     private static final int[][][] TRIPLES = buildAll();
 
     private static int[][][] buildAll() {
         int[][][] all = new int[N_TABLES][][];
-        System.arraycopy(Tables0.T, 0, all, 0, 48);
-        System.arraycopy(Tables1.T, 0, all, 48, 44);
-        System.arraycopy(Tables2.T, 0, all, 92, 63);
-        System.arraycopy(Tables3.T, 0, all, 155, 57);
+        System.arraycopy(Tables0.T, 0, all, 0, 30);
+        System.arraycopy(Tables1.T, 0, all, 30, 52);
+        System.arraycopy(Tables2.T, 0, all, 82, 15);
+        System.arraycopy(Tables3.T, 0, all, 97, 65);
+        System.arraycopy(Tables4.T, 0, all, 162, 52);
         return all;
     }
 

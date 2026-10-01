@@ -71,19 +71,20 @@ public interface Pattern extends Serializable {
     /**
      * Flag: enables Unicode-aware versions of the predefined character classes
      * {@code \w}, {@code \d}, {@code \s} and the word-boundary assertion
-     * {@code \b}, after {@code java.util.regex.Pattern.UNICODE_CHARACTER_CLASS}.
+     * {@code \b}, matching {@code java.util.regex.Pattern.UNICODE_CHARACTER_CLASS}.
      *
-     * <p>When set, {@code \w} matches {@code [\p{L}\p{N}\p{Mn}\p{Me}\p{Pc}\p{Sc}\p{Sk}]},
+     * <p>When set, {@code \w} matches
+     * {@code [\p{Alpha}\p{gc=M}\p{Nd}\p{gc=Pc}\p{IsJoin_Control}]},
      * {@code \d} matches {@code \p{Nd}}, {@code \s} matches the Unicode
      * {@code White_Space} property, and {@code \b} uses the Unicode-aware
-     * word-character predicate.
-     *
-     * <p>Known divergence from the JDK flag: the JDK's Unicode {@code \w} is
-     * Alphabetic-based ({@code [\p{Alpha}\p{M}\p{Nd}\p{Pc}\p{IsJoin_Control}]}),
-     * ours is category-based — so {@code Sc}/{@code Sk}/{@code No} are word
-     * chars here but not in the JDK, while {@code Mc}, Join_Control and
-     * Other_Alphabetic codepoints (e.g. U+24B6) are word chars in the JDK
-     * but not here. Pinned in {@code UnicodeBoundaryParityTest}; see TODO.md.
+     * word-character predicate — the JDK's Alphabetic-based word set, so
+     * {@code Mc}, Join_Control (U+200C/U+200D) and Other_Alphabetic
+     * codepoints (e.g. U+24B6) are word chars while {@code Sc}/{@code Sk}/
+     * {@code No} are not. Exact membership is universe-dependent: the
+     * default (JDK-derived) universe equals a same-JVM
+     * {@code java.util.regex} oracle by construction; a pinned snapshot
+     * universe freezes the same definition at its Unicode version. The
+     * exact set is differentially pinned in {@code UnicodeBoundaryParityTest}.
      */
     int UNICODE_CHARACTER_CLASS = 32;
 

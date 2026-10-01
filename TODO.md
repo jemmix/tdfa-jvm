@@ -6,13 +6,12 @@ git history (TODO.md before 2026-09-30).
 
 ## Correctness
 
-- [ ] (?u) word set: match jur UCC exactly (Alpha+M+Nd+Pc+Join_Control; needs Alphabetic/Join_Control tables)
+- [ ] Fuzz (?u) lane vs jur oracle (UCC flag in the differential flag matrix)
 - [ ] Overnight soak with cross-rung on; refresh README fuzz numbers
 - [ ] Fuzz families for fact-gated rungs: literal, prefix, cand-scan, anchored-fast
 - [ ] Oracle-check stretched inputs; compare ASM on them too
 - [ ] Fuzz non-String CharSequence inputs against the reference sim
 - [ ] Fuzz budget-exhaustion paths with shrunk budget knobs
->>>>>>> 515319a (Fuzz cross-rung differential: force complete-search rungs per case)
 - [ ] Fix POSIX "bcc" corrupt g5 span (empty-iteration final-ops family)
 - [ ] Property shrinking for minimal fuzz repros
 - [ ] Verify TDFA(1) conformance vs paper wording (lookahead delay)
