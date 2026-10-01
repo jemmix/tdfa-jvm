@@ -786,8 +786,10 @@ public final class Parser {
     }
 
     /**
-     * Unicode {@code \w} ranges = {@code L + N + Mn + Me + Pc + Sc + Sk},
-     * matching {@code java.util.regex} with {@code UNICODE_CHARACTER_CLASS}.
+     * Unicode {@code \w} ranges = {@code L + N + Mn + Me + Pc + Sc + Sk}
+     * (category-based; diverges from {@code java.util.regex} with
+     * UNICODE_CHARACTER_CLASS on Sc/Sk/No vs Mc/Join_Control/Other_Alphabetic —
+     * pinned in UnicodeBoundaryParityTest, see TODO.md).
      * Cached for reuse by {@code \b} runtime.
      */
     private int[] computeUnicodeWordRanges() {
