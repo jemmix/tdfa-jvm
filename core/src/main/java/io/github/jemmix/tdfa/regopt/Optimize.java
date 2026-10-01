@@ -31,12 +31,8 @@ public final class Optimize {
     private Optimize() {
     }
 
-    /** Run the full pipeline on {@code cfg} (in place). */
-    public static void optimize(Cfg cfg) {
-        optimize(cfg, null);
-    }
-
-    /** Full pipeline with a compile work budget (see tdfa.WorkMeter). */
+    /** Run the full pipeline on {@code cfg} (in place), with a compile work
+     *  budget (see tdfa.WorkMeter; null = unmetered). */
     public static void optimize(Cfg cfg, WorkMeter meter) {
         if (Boolean.getBoolean("tdfa.debug")) {
             int edges = 0, ops = 0;
@@ -108,7 +104,7 @@ public final class Optimize {
         for (Cfg.Block b : cfg.blocks) {
             for (Cfg.Op op : b.ops) {
                 used.set(op.dst);
-                if (op.kind == Cfg.KIND_COPY || op.kind == Cfg.KIND_APPEND) {
+                if (op.kind == Cfg.KIND_COPY) {
                     used.set(op.src);
                 }
             }
@@ -156,7 +152,7 @@ public final class Optimize {
         for (Cfg.Block b : cfg.blocks) {
             for (Cfg.Op op : b.ops) {
                 op.dst = mapped(op.dst, vmap);
-                if (op.kind == Cfg.KIND_COPY || op.kind == Cfg.KIND_APPEND) {
+                if (op.kind == Cfg.KIND_COPY) {
                     op.src = mapped(op.src, vmap);
                 }
             }
@@ -364,7 +360,7 @@ public final class Optimize {
                     }
                     break;
                 default :
-                    break; // KIND_APPEND: multi-valued tags unmodeled
+                    break;
             }
         }
         return live;
@@ -516,7 +512,7 @@ public final class Optimize {
             Arrays.fill(V, NO_VALUE);
             // Seed V for COPY sources: V[src] = src, so COPY A <- B gives V[A] = B.
             for (Cfg.Op op : b.ops) {
-                if ((op.kind == Cfg.KIND_COPY || op.kind == Cfg.KIND_APPEND) && op.src < nr) {
+                if ((op.kind == Cfg.KIND_COPY) && op.src < nr) {
                     if (V[op.src] == NO_VALUE) {
                         V[op.src] = op.src;
                     }
@@ -567,7 +563,7 @@ public final class Optimize {
                 // Update live for BEFORE this op: dst dies (written by this op going forward),
                 // src becomes live (read by this op).
                 live[op.dst] = false;
-                if ((op.kind == Cfg.KIND_COPY || op.kind == Cfg.KIND_APPEND) && op.src < nr) {
+                if ((op.kind == Cfg.KIND_COPY) && op.src < nr) {
                     live[op.src] = true;
                 }
             }
@@ -615,7 +611,7 @@ public final class Optimize {
                 if (meter != null) {
                     meter.tick();
                 } // per COPY op walked (+ class probes inside)
-                if (op.kind != Cfg.KIND_COPY && op.kind != Cfg.KIND_APPEND) {
+                if (op.kind != Cfg.KIND_COPY) {
                     continue;
                 }
                 if (op.dst == op.src) {

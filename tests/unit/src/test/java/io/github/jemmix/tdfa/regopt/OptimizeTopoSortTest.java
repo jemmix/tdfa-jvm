@@ -81,7 +81,7 @@ class OptimizeTopoSortTest {
         // a cycle must not make normalization throw or drop ops — the run
         // passes through reordered-then-appended, byte-identical semantics
         // to the pre-flag behavior.
-        Cfg cfg = new Cfg(1, 1, 4);
+        Cfg cfg = new Cfg(1, 4);
         Cfg.Block b = cfg.newBlock(Cfg.BLOCK_BASIC, 0, 0);
         b.ops.add(Cfg.Op.copy(1, 2));
         b.ops.add(Cfg.Op.copy(2, 1));

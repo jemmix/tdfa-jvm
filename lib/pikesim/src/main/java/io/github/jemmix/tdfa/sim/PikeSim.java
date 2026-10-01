@@ -283,10 +283,6 @@ public final class PikeSim {
             }
         }
 
-        private int start0() {
-            return matchStart >= 0 ? matchStart : -1;
-        }
-
         private boolean runFrom(int start) {
             recorded = false;
             recEnd = -1;
@@ -362,7 +358,7 @@ public final class PikeSim {
                 recCap = cap.clone();
                 roundCut = true;
                 if (TRACE) {
-                    System.err.println("[sim] RECORD " + start0() + ".." + pos);
+                    System.err.println("[sim] RECORD " + matchStart + ".." + pos);
                 }
                 return;
             }

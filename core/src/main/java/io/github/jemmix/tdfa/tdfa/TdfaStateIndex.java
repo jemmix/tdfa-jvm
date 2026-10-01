@@ -354,7 +354,7 @@ final class TdfaStateIndex {
             // (see above) — don't grow the list.
             b.byClass.putIfAbsent(canonHash, new int[]{id});
         }
-        owner.builders.add(new DfaStateBuilder(id));
+        owner.builders.add(new DfaStateBuilder());
         if (isAccept) {
             owner.accept.set(id);
         }

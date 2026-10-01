@@ -140,13 +140,6 @@ public final class Budgets {
     // ===== compile RAM-derived caps =====
 
     /**
-     * Cap on determinized DFA states: RAM budget / assumed bytes per state.
-     */
-    public static int maxDfaStates() {
-        return maxDfaStates(0);
-    }
-
-    /**
      * Cap on determinized DFA states with a per-state surcharge the caller
      * knows applies (Perl mode adds the position-aware stop table,
      * {@link BudgetWeights#STOP_TABLE_STATE_BYTES} per state — a dense
@@ -165,13 +158,14 @@ public final class Budgets {
     }
 
     /**
-     * Per-kernel &epsilon;-closure spike (checked while a closure is built,
-     * before any total can count it): 1/{@link BudgetWeights#CLOSURE_SPIKE_DIVISOR}
-     * of the RAM budget in configs.
+     * Per-kernel &epsilon;-closure spike in WEIGHTED bytes (checked while a
+     * closure is built, before any total can count it):
+     * 1/{@link BudgetWeights#CLOSURE_SPIKE_DIVISOR} of the RAM budget —
+     * the running closure's configs, at their tag-aware per-config weight,
+     * must fit inside it.
      */
-    public static int maxClosureConfigs() {
-        return clampInt(
-            compileMemoryBytes() / (BudgetWeights.CLOSURE_SPIKE_DIVISOR * BudgetWeights.KERNEL_CONFIG_BYTES));
+    public static long maxClosureSpikeBytes() {
+        return compileMemoryBytes() / BudgetWeights.CLOSURE_SPIKE_DIVISOR;
     }
 
     /**
@@ -194,17 +188,10 @@ public final class Budgets {
 
     /**
      * Memoized search-DFA row cap for a runner whose live-set bitsets are
-     * {@code stateWords} ints wide: half the runtime RAM budget in
-     * weighted rows at the default budget (the row share of the eighths
-     * partition — rows 4/8, {@link #sdfaMaxBlocks(int)} 3/8, {@link
-     * #walkMaxBytes(int)} 1/8).
-     */
-    public static int sdfaMaxRows(int stateWords) {
-        return sdfaMaxRows(stateWords, runtimeMemoryBytes());
-    }
-
-    /**
-     * Budget-parameterized variant of {@link #sdfaMaxRows(int)}: the
+     * {@code stateWords} ints wide, under an explicit lazy-memo byte
+     * budget: half the budget in weighted rows at the default budget (the
+     * row share of the eighths partition — rows 4/8, {@link
+     * #sdfaMaxBlocks(long)} 3/8, {@link #walkMaxBytes(long)} 1/8). The
      * facade hands a pattern's second engine half the budget (per-pattern
      * runtime split, see the class doc).
      */
@@ -216,17 +203,9 @@ public final class Budgets {
     }
 
     /**
-     * Memoized search-DFA block cap: three eighths of the runtime RAM
-     * budget in weighted 512-codepoint blocks (see the partition note in
-     * the class doc).
-     */
-    public static int sdfaMaxBlocks() {
-        return sdfaMaxBlocks(runtimeMemoryBytes());
-    }
-
-    /**
-     * Budget-parameterized variant of {@link #sdfaMaxBlocks()} (see
-     * {@link #sdfaMaxRows(int, long)}).
+     * Memoized search-DFA block cap under an explicit lazy-memo byte
+     * budget: three eighths of it in weighted 512-codepoint blocks (see
+     * the partition note in {@link #sdfaMaxRows(int, long)}).
      */
     public static int sdfaMaxBlocks(long budgetBytes) {
         long blocks = (budgetBytes * 3 / 8) / BudgetWeights.RUNTIME_BLOCK_BYTES;
@@ -234,17 +213,9 @@ public final class Budgets {
     }
 
     /**
-     * The walk-block memo's share of the runtime RAM budget: one eighth
-     * (see the partition note in the class doc).
-     */
-    public static long walkMaxBytes() {
-        return walkMaxBytes(runtimeMemoryBytes());
-    }
-
-    /**
-     * Budget-parameterized variant of {@link #walkMaxBytes()} (see
-     * {@link #sdfaMaxRows(int, long)}); floored so the minimum block set
-     * always fits.
+     * The walk-block memo's share of an explicit lazy-memo byte budget:
+     * one eighth (see the partition note in {@link #sdfaMaxRows(int,
+     * long)}); floored so the minimum block set always fits.
      */
     public static long walkMaxBytes(long budgetBytes) {
         return Math.max((long) BudgetWeights.WALK_MIN_BLOCKS * BudgetWeights.WALK_BLOCK_BYTES,

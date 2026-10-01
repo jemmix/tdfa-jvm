@@ -265,17 +265,6 @@ public final class Tdfa {
         int startState, int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
         int[] stateFinalOpsByMask, int[] ranges, int[] ops, int[] entryHiPrefix, int[] stateEntryMask,
         int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
-        boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset, boolean pikeCutMatters) {
-        this(tagCount, groupCount, namedGroups, registerCount, finalRegBase, startState, stateCount, stateMeta,
-            stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges, ops, entryHiPrefix, stateEntryMask,
-            stateAcceptMask, longestMatch, stopOnAcceptMask, stopMaskUniform, multiline, unicodeWordBoundary,
-            wordRanges, fixedBase, fixedOffset, pikeCutMatters, null, null, null, null, false);
-    }
-
-    Tdfa(int tagCount, int groupCount, Map<String, Integer> namedGroups, int registerCount, int finalRegBase,
-        int startState, int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
-        int[] stateFinalOpsByMask, int[] ranges, int[] ops, int[] entryHiPrefix, int[] stateEntryMask,
-        int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
         boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset, boolean pikeCutMatters,
         int[] wholeRanges, int[] wholeBase, int[] wholeCount, int[] wholeHiPrefix, boolean wholeSideComplete) {
         this.tagCount = tagCount;
@@ -1031,7 +1020,7 @@ public final class Tdfa {
     //   tdfa.nominimize, tdfa.minimize.max, tdfa.noregopt, tdfa.regopt.max,
     //   tdfa.debug, tdfa.debug.closure,
     //   tdfa.debug.finals                          (compile)
-    //   tdfa.engine, tdfa.gen.debug                                 (facade, per compile)
+    //   tdfa.engine                                                 (facade, per compile)
     // The derived determinization caps (states/kernels/closure/cfg-edges/
     // norm-cells, the search-DFA memo caps) are
     // all linear functions of the two compile budgets / the runtime budget

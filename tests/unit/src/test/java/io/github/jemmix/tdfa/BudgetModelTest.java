@@ -44,7 +44,7 @@ class BudgetModelTest {
     /** The weight model, pinned: every derived default cap is a budget
      *  divided by a weight, and the numbers below are the contract.
      *  (128 MiB / 256 B = 524 288 states — Perl mode / 512 B = 262 144,
-     *  / 80 B = 1 677 721 kernels, / 16 / 80 B = 104 857 closure configs,
+     *  / 80 B = 1 677 721 kernels, closure spike / 16 = 8 MiB,
      *  / 32 B = 4 194 304 CFG edges, / 4 B = 33 554 432 norm cells;
      *  16 MiB partitioned 4/8 rows, 3/8 search blocks, 1/8 walk memo —
      *  see BudgetWeights.) */
@@ -53,21 +53,22 @@ class BudgetModelTest {
         assertThat(BudgetWeights.TNFA_BUILD_ACTION_TICKS).isEqualTo(5);
         assertThat(BudgetWeights.TNFA_EPS_EDGE_BYTES).isEqualTo(64);
         assertThat(BudgetWeights.KERNEL_CONFIG_BYTES).isEqualTo(80);
-        assertThat(Budgets.maxDfaStates()).isEqualTo(524_288);
+        long rm = Budgets.runtimeMemoryBytes();
+        assertThat(Budgets.maxDfaStates(0)).isEqualTo(524_288);
         // Perl mode adds the stop-table surcharge (int[n*64] = 256 B/state):
         assertThat(Budgets.maxDfaStates(BudgetWeights.STOP_TABLE_STATE_BYTES)).isEqualTo(262_144);
         assertThat(Budgets.maxKernelConfigs()).isEqualTo(1_677_721L);
-        assertThat(Budgets.maxClosureConfigs()).isEqualTo(104_857);
+        assertThat(Budgets.maxClosureSpikeBytes()).isEqualTo(8_388_608L);
         assertThat(Budgets.maxCfgEdges()).isEqualTo(4_194_304L);
         assertThat(Budgets.maxMinimizeNormCells()).isEqualTo(33_554_432L);
         // 8 MiB row share (4/8) in weighted rows: fixed 640 B + 8 B/state-word,
         // floored.
-        assertThat(Budgets.sdfaMaxRows(1)).isEqualTo(12_945);
-        assertThat(Budgets.sdfaMaxRows(3125)).isEqualTo(327);
+        assertThat(Budgets.sdfaMaxRows(1, rm)).isEqualTo(12_945);
+        assertThat(Budgets.sdfaMaxRows(3125, rm)).isEqualTo(327);
         // 6 MiB block share (3/8): the walk memo takes the last eighth.
-        assertThat(Budgets.sdfaMaxBlocks()).isEqualTo(2_891);
+        assertThat(Budgets.sdfaMaxBlocks(rm)).isEqualTo(2_891);
         // walk memo: 1/8 = 2 MiB, floored at the 64-block minimum.
-        assertThat(Budgets.walkMaxBytes()).isEqualTo(2_097_152L);
+        assertThat(Budgets.walkMaxBytes(rm)).isEqualTo(2_097_152L);
         // per-engine split: the budget-parameterized variants see half:
         assertThat(Budgets.sdfaMaxRows(1, 8_388_608L)).isEqualTo(6_472);
         assertThat(Budgets.sdfaMaxBlocks(8_388_608L)).isEqualTo(1_445);
@@ -79,11 +80,11 @@ class BudgetModelTest {
     @Test
     void propertiesOverrideAndAreReadFresh() {
         System.setProperty(Budgets.COMPILE_MEMORY_PROP, "4096"); // 16 states
-        assertThat(Budgets.maxDfaStates()).isEqualTo(16);
+        assertThat(Budgets.maxDfaStates(0)).isEqualTo(16);
         System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "7777");
         assertThat(Budgets.compileComputeTicks()).isEqualTo(7_777L);
         System.setProperty(Budgets.RUNTIME_MEMORY_PROP, "217600"); // ~37 blocks
-        assertThat(Budgets.sdfaMaxBlocks()).isEqualTo(37);
+        assertThat(Budgets.sdfaMaxBlocks(Budgets.runtimeMemoryBytes())).isEqualTo(37);
         // and the pipeline sees it on the very next compile:
         assertThatCode(() -> Pattern.compile("ab|cd|ef|gh|ij")).isInstanceOf(PatternSyntaxException.class)
             .hasMessageContaining("pattern too large").hasMessageContaining(Budgets.COMPILE_MEMORY_PROP);

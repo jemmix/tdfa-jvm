@@ -91,7 +91,7 @@ final class TdfaMaterializer {
         long tReg = System.nanoTime();
         int n = det.stateCount;
         if (regoptEnabled && nfa.tagCount > 0 && n > 1 && n <= regoptMaxStates) {
-            Cfg cfg = buildCfg(det.builders, det.accept, nfa.tagCount, nfa.groupCount, det.registerCount);
+            Cfg cfg = buildCfg(det.builders, det.accept, nfa.tagCount, det.registerCount);
             Optimize.optimize(cfg, meter);
             cfgWriteBack(cfg, det.builders);
             finalRegBase = cfg.finalRegBase;
@@ -118,9 +118,8 @@ final class TdfaMaterializer {
      * reachable from its target state through TRANSITIVE zero-op paths —
      * that transitive closure is what register liveness needs.
      */
-    private Cfg buildCfg(List<DfaStateBuilder> builders, BitSet accept, int tagCount, int groupCount,
-        int initialRegCount) {
-        Cfg cfg = new Cfg(tagCount, groupCount, initialRegCount);
+    private Cfg buildCfg(List<DfaStateBuilder> builders, BitSet accept, int tagCount, int initialRegCount) {
+        Cfg cfg = new Cfg(tagCount, initialRegCount);
         int n = builders.size();
         // First pass: create blocks.
         int[][] rangeBlockIds = new int[n][];
@@ -864,12 +863,12 @@ final class TdfaMaterializer {
                     + ((flat.wholeRanges.length + flat.wholeBase.length + flat.wholeCount.length
                         + (flat.wholeHiPrefix != null ? flat.wholeHiPrefix.length : 0)) * 4L)
                     + ",complete=" + flat.wholeSideComplete + "}" : ""));
+        boolean fixed = hasFixed(nfa.fixedBase);
         return new Tdfa(nfa.tagCount, nfa.groupCount, nfa.namedGroups, flat.globalMaxReg, flat.finalRegBase, 0,
             stateCount, flat.meta, flat.base, flat.finalOpsOff, flat.finalOpsByMask, flat.ranges, flat.ops, hiPrefix,
             flat.entryMask, flat.acceptMask, longest, finalStop, uniformStop, nfa.multiline, nfa.unicodeWordBoundary,
-            nfa.wordRanges, hasFixed(nfa.fixedBase) ? nfa.fixedBase : null,
-            hasFixed(nfa.fixedBase) ? nfa.fixedOffset : null, flat.pikeCutMatters, flat.wholeRanges, flat.wholeBase,
-            flat.wholeCount, flat.wholeHiPrefix, flat.wholeSideComplete);
+            nfa.wordRanges, fixed ? nfa.fixedBase : null, fixed ? nfa.fixedOffset : null, flat.pikeCutMatters,
+            flat.wholeRanges, flat.wholeBase, flat.wholeCount, flat.wholeHiPrefix, flat.wholeSideComplete);
     }
 
     /**

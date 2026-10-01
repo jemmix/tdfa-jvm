@@ -72,8 +72,6 @@ public final class CompiledRegex {
             obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
             obs.note("engine", "interpreter");
             return new CompiledRegex(pattern, engine);
-        } catch (PatternSyntaxException e) {
-            throw e;
         } catch (RuntimeException e) {
             throw PatternSyntaxException.translate(e, pattern);
         }

@@ -210,62 +210,58 @@ final class RunnerTables {
      * at emit time and bakes the needle in as a class constant.
      */
     static String detectPrefixNeedle(Tdfa tdfa) {
-        try {
-            int n = tdfa.stateCount;
-            if (n < 2 || tdfa.startStateEntryMask != 0) {
+        int n = tdfa.stateCount;
+        if (n < 2 || tdfa.startStateEntryMask != 0) {
+            return null;
+        }
+        int s = tdfa.startState;
+        if ((tdfa.stateMeta[s] & 1) != 0) {
+            return null; // zero-length matches possible anywhere
+        }
+        StringBuilder sb = new StringBuilder(8);
+        int cap = Math.min(n - 1, PREFIX_NEEDLE_MAX);
+        while (sb.length() < cap) {
+            int meta = tdfa.stateMeta[s];
+            int base = tdfa.stateBase[s], cnt = (meta >>> 1) & 0xFFFF;
+            // Unique extendable exit, if one exists: single BMP
+            // codepoint, mask-free, and every other live exit is an
+            // exact duplicate of it. A conflict (any other live exit)
+            // means two chars/targets lead onward — stop, keep sb.
+            int ch = -1, target = -1;
+            boolean conflict = false;
+            for (int i = 0; i < cnt && !conflict; i++) {
+                int o = (base + i) * 5;
+                if (tdfa.ranges[o + 2] < 0) {
+                    continue; // dead marker: this char never leads onward
+                }
+                boolean singleton =
+                    tdfa.ranges[o + 4] == 0 && tdfa.ranges[o] == tdfa.ranges[o + 1] && tdfa.ranges[o] <= 0xFFFF;
+                if (!singleton) {
+                    conflict = true;
+                } else if (ch < 0) {
+                    ch = tdfa.ranges[o];
+                    target = tdfa.ranges[o + 2];
+                } else if (tdfa.ranges[o] != ch || tdfa.ranges[o + 2] != target) {
+                    conflict = true;
+                }
+            }
+            if (conflict || ch < 0 || (meta & 1) != 0 || tdfa.stateEntryMask[target] != 0) {
+                break; // chain end: divergence, dead-end, accept, or mask
+            }
+            sb.append((char) ch);
+            s = target;
+        }
+        // Same lone-surrogate adjacency bail as the literal needle: two
+        // adjacent LONE symbols re-encoded as a well-formed pair can
+        // never be matched by the codepoint-decoding walk, so the needle
+        // would only produce doomed candidates. Not a usable prefix.
+        for (int i = 0; i < sb.length() - 1; i++) {
+            char c0 = sb.charAt(i), c1 = sb.charAt(i + 1);
+            if (c0 >= 0xD800 && c0 <= 0xDBFF && c1 >= 0xDC00 && c1 <= 0xDFFF) {
                 return null;
             }
-            int s = tdfa.startState;
-            if ((tdfa.stateMeta[s] & 1) != 0) {
-                return null; // zero-length matches possible anywhere
-            }
-            StringBuilder sb = new StringBuilder(8);
-            int cap = Math.min(n - 1, PREFIX_NEEDLE_MAX);
-            while (sb.length() < cap) {
-                int meta = tdfa.stateMeta[s];
-                int base = tdfa.stateBase[s], cnt = (meta >>> 1) & 0xFFFF;
-                // Unique extendable exit, if one exists: single BMP
-                // codepoint, mask-free, and every other live exit is an
-                // exact duplicate of it. A conflict (any other live exit)
-                // means two chars/targets lead onward — stop, keep sb.
-                int ch = -1, target = -1;
-                boolean conflict = false;
-                for (int i = 0; i < cnt && !conflict; i++) {
-                    int o = (base + i) * 5;
-                    if (tdfa.ranges[o + 2] < 0) {
-                        continue; // dead marker: this char never leads onward
-                    }
-                    boolean singleton =
-                        tdfa.ranges[o + 4] == 0 && tdfa.ranges[o] == tdfa.ranges[o + 1] && tdfa.ranges[o] <= 0xFFFF;
-                    if (!singleton) {
-                        conflict = true;
-                    } else if (ch < 0) {
-                        ch = tdfa.ranges[o];
-                        target = tdfa.ranges[o + 2];
-                    } else if (tdfa.ranges[o] != ch || tdfa.ranges[o + 2] != target) {
-                        conflict = true;
-                    }
-                }
-                if (conflict || ch < 0 || (meta & 1) != 0 || tdfa.stateEntryMask[target] != 0) {
-                    break; // chain end: divergence, dead-end, accept, or mask
-                }
-                sb.append((char) ch);
-                s = target;
-            }
-            // Same lone-surrogate adjacency bail as the literal needle: two
-            // adjacent LONE symbols re-encoded as a well-formed pair can
-            // never be matched by the codepoint-decoding walk, so the needle
-            // would only produce doomed candidates. Not a usable prefix.
-            for (int i = 0; i < sb.length() - 1; i++) {
-                char c0 = sb.charAt(i), c1 = sb.charAt(i + 1);
-                if (c0 >= 0xD800 && c0 <= 0xDBFF && c1 >= 0xDC00 && c1 <= 0xDFFF) {
-                    return null;
-                }
-            }
-            return sb.length() > 0 ? sb.toString() : null;
-        } catch (RuntimeException e) {
-            return null; // any surprise shape: no prefix acceleration
         }
+        return sb.length() > 0 ? sb.toString() : null;
     }
 
     static void setBit(long[] bits, int c) {
@@ -307,102 +303,98 @@ final class RunnerTables {
      * at every input length).
      */
     static String detectLiteralNeedle(Tdfa tdfa) {
-        try {
-            if (tdfa.groupCount != 0 || tdfa.tagCount != 0) {
+        if (tdfa.groupCount != 0 || tdfa.tagCount != 0) {
+            return null;
+        }
+        int n = tdfa.stateCount;
+        if (n < 2) {
+            return null;
+        } // single-state: empty/anchor-only regex
+        StringBuilder sb = new StringBuilder(n - 1);
+        int s = tdfa.startState;
+        for (int step = 0; step < n - 1; step++) {
+            int meta = tdfa.stateMeta[s];
+            if ((meta & 1) != 0) {
+                return null;
+            } // accepting mid-chain
+            int cnt = (meta >>> 1) & 0xFFFF;
+            if (cnt != 1) {
+                return null;
+            } // must be exactly one char
+            int o = tdfa.stateBase[s] * 5;
+            int lo = tdfa.ranges[o], hi = tdfa.ranges[o + 1];
+            if (lo != hi || lo > 0xFFFF) {
+                return null;
+            } // single BMP codepoint
+            if (tdfa.ranges[o + 2] < 0) {
+                return null;
+            } // dead
+            if (tdfa.ranges[o + 3] != 0) {
+                return null;
+            } // transition ops
+            if (tdfa.ranges[o + 4] != 0) {
+                return null;
+            } // required mask
+            if (tdfa.stateEntryMask[tdfa.ranges[o + 2]] != 0) {
                 return null;
             }
-            int n = tdfa.stateCount;
-            if (n < 2) {
-                return null;
-            } // single-state: empty/anchor-only regex
-            StringBuilder sb = new StringBuilder(n - 1);
-            int s = tdfa.startState;
-            for (int step = 0; step < n - 1; step++) {
-                int meta = tdfa.stateMeta[s];
-                if ((meta & 1) != 0) {
-                    return null;
-                } // accepting mid-chain
-                int cnt = (meta >>> 1) & 0xFFFF;
-                if (cnt != 1) {
-                    return null;
-                } // must be exactly one char
-                int o = tdfa.stateBase[s] * 5;
-                int lo = tdfa.ranges[o], hi = tdfa.ranges[o + 1];
-                if (lo != hi || lo > 0xFFFF) {
-                    return null;
-                } // single BMP codepoint
-                if (tdfa.ranges[o + 2] < 0) {
-                    return null;
-                } // dead
-                if (tdfa.ranges[o + 3] != 0) {
-                    return null;
-                } // transition ops
-                if (tdfa.ranges[o + 4] != 0) {
-                    return null;
-                } // required mask
-                if (tdfa.stateEntryMask[tdfa.ranges[o + 2]] != 0) {
-                    return null;
-                }
-                sb.append((char) lo);
-                s = tdfa.ranges[o + 2];
-            }
-            // final state: accepting, no mask, no fallback, no final ops, and
-            // NO live outgoing transition (a live self-loop means the regex is
-            // unbounded — e.g. a+ would be misdetected as literal "a",
-            // returning [0,1) for find("a+","aaa") instead of [0,3)).
-            if ((tdfa.stateMeta[s] & 1) == 0) {
-                return null;
-            }
-            if (tdfa.stateAcceptMask[s] != 0) {
-                return null;
-            }
-            // Position-dependent accept (byMask variants): the accept fires
-            // only under some posFlags — the indexOf shortcut can't evaluate
-            // that (e.g. Z(?:\A|\B) would match "Z" via the needle even
-            // though \A and \B both fail at pos 1). Not a literal.
-            {
-                int[] fm = tdfa.stateFinalOpsByMask();
-                if (fm != null) {
-                    for (int M = 0; M < 64; M++) {
-                        if (fm[s * 64 + M] < 0) {
-                            return null;
-                        }
-                    }
-                }
-            }
-            if (tdfa.stateFinalOpsOff[s] != 0) {
-                return null;
-            }
-            if (tdfa.stateEntryMask[s] != 0) {
-                return null;
-            }
-            {
-                int meta = tdfa.stateMeta[s];
-                int base = tdfa.stateBase[s];
-                for (int i = 0; i < ((meta >>> 1) & 0xFFFF); i++) {
-                    if (tdfa.ranges[(base + i) * 5 + 2] >= 0) {
+            sb.append((char) lo);
+            s = tdfa.ranges[o + 2];
+        }
+        // final state: accepting, no mask, no fallback, no final ops, and
+        // NO live outgoing transition (a live self-loop means the regex is
+        // unbounded — e.g. a+ would be misdetected as literal "a",
+        // returning [0,1) for find("a+","aaa") instead of [0,3)).
+        if ((tdfa.stateMeta[s] & 1) == 0) {
+            return null;
+        }
+        if (tdfa.stateAcceptMask[s] != 0) {
+            return null;
+        }
+        // Position-dependent accept (byMask variants): the accept fires
+        // only under some posFlags — the indexOf shortcut can't evaluate
+        // that (e.g. Z(?:\A|\B) would match "Z" via the needle even
+        // though \A and \B both fail at pos 1). Not a literal.
+        {
+            int[] fm = tdfa.stateFinalOpsByMask();
+            if (fm != null) {
+                for (int M = 0; M < 64; M++) {
+                    if (fm[s * 64 + M] < 0) {
                         return null;
                     }
                 }
             }
-            // Lone-surrogate adjacency: the needle is built from single BMP
-            // symbols, each appended as its raw unit. Two adjacent LONE
-            // symbols (high then low) re-encode as a well-formed surrogate
-            // PAIR — the same unit text as the pair codepoint they are not.
-            // Unit-wise indexOf then matches input pairs against what the
-            // alphabet defines as two lone codepoints (e.g.
-            // (?i:\uD800)\uDFFF would match 𐏿 = \uD800\uDFFF whole).
-            // Rejected here; the DFA walk handles the shape correctly (it
-            // decodes).
-            for (int i = 0; i < sb.length() - 1; i++) {
-                char c0 = sb.charAt(i), c1 = sb.charAt(i + 1);
-                if (c0 >= 0xD800 && c0 <= 0xDBFF && c1 >= 0xDC00 && c1 <= 0xDFFF) {
+        }
+        if (tdfa.stateFinalOpsOff[s] != 0) {
+            return null;
+        }
+        if (tdfa.stateEntryMask[s] != 0) {
+            return null;
+        }
+        {
+            int meta = tdfa.stateMeta[s];
+            int base = tdfa.stateBase[s];
+            for (int i = 0; i < ((meta >>> 1) & 0xFFFF); i++) {
+                if (tdfa.ranges[(base + i) * 5 + 2] >= 0) {
                     return null;
                 }
             }
-            return sb.length() > 0 ? sb.toString() : null;
-        } catch (RuntimeException e) {
-            return null; // any surprise shape: not a literal
         }
+        // Lone-surrogate adjacency: the needle is built from single BMP
+        // symbols, each appended as its raw unit. Two adjacent LONE
+        // symbols (high then low) re-encode as a well-formed surrogate
+        // PAIR — the same unit text as the pair codepoint they are not.
+        // Unit-wise indexOf then matches input pairs against what the
+        // alphabet defines as two lone codepoints (e.g.
+        // (?i:\uD800)\uDFFF would match 𐏿 = \uD800\uDFFF whole).
+        // Rejected here; the DFA walk handles the shape correctly (it
+        // decodes).
+        for (int i = 0; i < sb.length() - 1; i++) {
+            char c0 = sb.charAt(i), c1 = sb.charAt(i + 1);
+            if (c0 >= 0xD800 && c0 <= 0xDBFF && c1 >= 0xDC00 && c1 <= 0xDFFF) {
+                return null;
+            }
+        }
+        return sb.length() > 0 ? sb.toString() : null;
     }
 }

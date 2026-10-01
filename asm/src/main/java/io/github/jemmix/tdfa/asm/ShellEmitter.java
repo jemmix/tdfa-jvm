@@ -134,8 +134,8 @@ public final class ShellEmitter {
     /**
      * Emit and instantiate the shell. Returns the generated {@code Pattern}
      * instance as {@link Object} — the facade casts it (it owns the type).
-     * Throws {@link IllegalStateException} on emission problems; the caller
-     * falls back to the shared implementation.
+     * Throws {@link IllegalStateException} on emission problems; failures
+     * propagate to the caller (they are bugs, not shapes to route around).
      */
     private ShellEmitter() {
     }
