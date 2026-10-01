@@ -66,12 +66,19 @@ public interface Pattern extends Serializable {
     /**
      * Flag: enables Unicode-aware versions of the predefined character classes
      * {@code \w}, {@code \d}, {@code \s} and the word-boundary assertion
-     * {@code \b} — matching {@code java.util.regex.Pattern.UNICODE_CHARACTER_CLASS}.
+     * {@code \b}, after {@code java.util.regex.Pattern.UNICODE_CHARACTER_CLASS}.
      *
      * <p>When set, {@code \w} matches {@code [\p{L}\p{N}\p{Mn}\p{Me}\p{Pc}\p{Sc}\p{Sk}]},
      * {@code \d} matches {@code \p{Nd}}, {@code \s} matches the Unicode
      * {@code White_Space} property, and {@code \b} uses the Unicode-aware
      * word-character predicate.
+     *
+     * <p>Known divergence from the JDK flag: the JDK's Unicode {@code \w} is
+     * Alphabetic-based ({@code [\p{Alpha}\p{M}\p{Nd}\p{Pc}\p{IsJoin_Control}]}),
+     * ours is category-based — so {@code Sc}/{@code Sk}/{@code No} are word
+     * chars here but not in the JDK, while {@code Mc}, Join_Control and
+     * Other_Alphabetic codepoints (e.g. U+24B6) are word chars in the JDK
+     * but not here. Pinned in {@code UnicodeBoundaryParityTest}; see TODO.md.
      */
     int UNICODE_CHARACTER_CLASS = 32;
 

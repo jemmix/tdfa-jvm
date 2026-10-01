@@ -6,7 +6,7 @@ git history (TODO.md before 2026-09-30).
 
 ## Correctness
 
-- [ ] Expand parity tests: backrefs, huge counts, nested quantifiers, Unicode boundaries
+- [ ] (?u) word set: match jur UCC exactly (Alpha+M+Nd+Pc+Join_Control; needs Alphabetic/Join_Control tables)
 - [ ] Overnight fuzz soak: whole ladder
 - [ ] Fix POSIX "bcc" corrupt g5 span (empty-iteration final-ops family)
 - [ ] Property shrinking for minimal fuzz repros
