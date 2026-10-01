@@ -59,12 +59,11 @@ public interface RegexEngine {
      * <p>Contract: {@code from} must lie in {@code [0, input.length()]} and
      * {@code input} must be non-null — otherwise implementations throw
      * {@link IndexOutOfBoundsException} / {@link NullPointerException}
-     * respectively. The interpreter enforces the bounds check; the facade's
-     * matchers validate before dispatching, and the code-generated tier
-     * inherits the guarantee through them (calling a generated engine's
-     * {@code match} directly with an out-of-range {@code from} surfaces the
-     * walk's own {@code IndexOutOfBoundsException} — same class, less
-     * polite message). The input must not be mutated during the call.
+     * respectively. Both tiers enforce the bounds check before the walk
+     * (the interpreter inline, the generated ladder via an emitted check
+     * that delegates the identical throw), so an out-of-range {@code from}
+     * never surfaces as a corrupt match or a wrong {@code null}. The input
+     * must not be mutated during the call.
      *
      * <p>The caller's {@link MatchScratch} holds the reusable per-match
      * buffers (register file, simulation sets), so a {@link Matcher}

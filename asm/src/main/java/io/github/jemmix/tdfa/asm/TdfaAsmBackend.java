@@ -165,8 +165,8 @@ public final class TdfaAsmBackend {
             genMatchWhole(cw, owner);
             genMetadataMethods(cw, owner);
         } else {
-            genClinit(cw, tdfa, fastPath);
-            genInit(cw, owner, tdfa, fastPath, memoBudgetBytes);
+            genClinit(cw, tdfa);
+            genInit(cw, owner, tdfa, memoBudgetBytes);
             genMatches(cw, owner);
             genFind(cw, owner);
             genMatch(cw, tdfa, owner);
@@ -178,7 +178,9 @@ public final class TdfaAsmBackend {
             }
             genExtractOne(cw, tdfa, owner, stackRegs);
             genToResult(cw, tdfa, owner);
-            genEntryOkC(cw, owner);
+            if (hasEntryMasks(tdfa)) {
+                genEntryOkC(cw, owner);
+            }
             if (tdfa.stateFinalOpsByMask() != null) {
                 genPhiMasked(cw, tdfa);
             }
@@ -224,19 +226,21 @@ public final class TdfaAsmBackend {
 
     // ===== <clinit> =====
 
-    private static void genClinit(ClassWriter cw, Tdfa tdfa, boolean fastPath) {
+    private static void genClinit(ClassWriter cw, Tdfa tdfa) {
         // Field declarations only; all data flows from the Tdfa arg through <init>.
-        // (Populating ENTRY_MASK/ACCEPT_MASK/IS_ACCEPT/STOP_MASK/ASCII_TARGET/
-        // FIXED_* via per-element IASTORE in <clinit> would exceed the JVM 65 KB
+        // (Populating ENTRY_MASK/ACCEPT_MASK/IS_ACCEPT/STOP_MASK/FIXED_* via
+        // per-element IASTORE in <clinit> would exceed the JVM 65 KB
         // method-size limit on DFAs with many states — e.g. dictionary alternation,
-        // 21 K states × 64 STOP_MASK slots = 1.36 M entries, or fastPath-eligible
-        // wide-ASCII-class patterns like [^u-z]{80}x with 16 K ASCII_TARGET IASTOREs.)
-        for (String f : new String[]{"ENTRY_MASK", "ACCEPT_MASK", "STOP_MASK", "IS_ACCEPT"}) {
-            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, f, "[I", null, null).visitEnd();
+        // 21 K states × 64 STOP_MASK slots = 1.36 M entries.)
+        // ENTRY_MASK (like entryOkC below) only ships when some state actually
+        // carries an entry mask — INLINED classes are fastPath (all masks zero)
+        // and would otherwise retain a table no emitted path reads.
+        if (hasEntryMasks(tdfa)) {
+            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "ENTRY_MASK", "[I", null, null)
+                .visitEnd();
         }
-        if (fastPath) {
-            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "ASCII_TARGET", "[I", null,
-                null).visitEnd();
+        for (String f : new String[]{"ACCEPT_MASK", "STOP_MASK", "IS_ACCEPT"}) {
+            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, f, "[I", null, null).visitEnd();
         }
         boolean hasFixed = tdfa.fixedBase() != null;
         if (hasFixed) {
@@ -257,7 +261,7 @@ public final class TdfaAsmBackend {
 
     // ===== <init> =====
 
-    private static void genInit(ClassWriter cw, String owner, Tdfa tdfa, boolean fastPath, long memoBudgetBytes) {
+    private static void genInit(ClassWriter cw, String owner, Tdfa tdfa, long memoBudgetBytes) {
         // Instance field holding the TdfaRunner: the shared strategy brain
         // (ladder hooks are monomorphic final-class calls) and the full
         // delegate path for everything the generated class doesn't own.
@@ -281,10 +285,13 @@ public final class TdfaAsmBackend {
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "wordRanges", "()[I", false);
             mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "WORD_RANGES", "[I");
         }
-        // ENTRY_MASK = tdfa.stateEntryMask() (reference copy — no per-element bytecode)
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "stateEntryMask", "()[I", false);
-        mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "ENTRY_MASK", "[I");
+        // ENTRY_MASK = tdfa.stateEntryMask() (reference copy — no per-element
+        // bytecode); gated on the same compile-time fact as the field decl.
+        if (hasEntryMasks(tdfa)) {
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "stateEntryMask", "()[I", false);
+            mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "ENTRY_MASK", "[I");
+        }
         // ACCEPT_MASK = tdfa.stateAcceptMask()
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "stateAcceptMask", "()[I", false);
@@ -338,127 +345,12 @@ public final class TdfaAsmBackend {
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "fixedOffset", "()[I", false);
             mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "FIXED_OFFSET", "[I");
         }
-        // ASCII_TARGET (fastPath only): populate via a runtime loop over the
-        // Tdfa ranges. Emitting one IASTORE per ASCII char per state range in
-        // <clinit> would, for wide-ASCII-class patterns like [^u-z]{80}x,
-        // produce ~16 K IASTOREs (~160 KB bytecode) and trip the 65 KB method
-        // limit. Loop body is fixed-size; bytecode is ~100 bytes regardless of state count.
-        //
-        // Pseudo: for s in 0..n-1: meta=stateMeta[s]; base=stateBase[s]; cnt=(meta>>>1)&0xFFFF;
-        //         for i in 0..cnt-1: o=(base+i)*5; lo=max(ranges[o],0); hi=min(ranges[o+1],127);
-        //                            target=ranges[o+2]; if (target<0) continue;
-        //                            for c in lo..hi: ASCII_TARGET[s*128+c] = target;
-        if (fastPath) {
-            // ranges from the Tdfa param (local 14); stateBase hoisted to 16
-            mv.visitVarInsn(Opcodes.ALOAD, 1);
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "ranges", "()[I", false);
-            mv.visitVarInsn(Opcodes.ASTORE, 14);
-            mv.visitVarInsn(Opcodes.ALOAD, 1);
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "stateBase", "()[I", false);
-            mv.visitVarInsn(Opcodes.ASTORE, 16);
-            int tableSize = tdfa.stateCount() * 128;
-            ic(mv, tableSize);
-            mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
-            mv.visitVarInsn(Opcodes.ASTORE, 4); // local 4 = ASCII_TARGET
-            mv.visitVarInsn(Opcodes.ALOAD, 4);
-            mv.visitInsn(Opcodes.ICONST_M1);
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, ARRAYS, "fill", "([II)V", false);
-            // locals: 5=s, 6=cnt, 7=base, 8=i, 9=o, 10=lo, 11=hi, 12=target, 13=c
-            mv.visitInsn(Opcodes.ICONST_0);
-            mv.visitVarInsn(Opcodes.ISTORE, 5);
-            Label sLoop = new Label(), sDone = new Label();
-            mv.visitLabel(sLoop);
-            mv.visitVarInsn(Opcodes.ILOAD, 5);
-            ic(mv, n);
-            mv.visitJumpInsn(Opcodes.IF_ICMPGE, sDone);
-            // cnt = (stateMeta[s] >>> 1) & 0xFFFF
-            mv.visitVarInsn(Opcodes.ALOAD, 15);
-            mv.visitVarInsn(Opcodes.ILOAD, 5);
-            mv.visitInsn(Opcodes.IALOAD);
-            mv.visitInsn(Opcodes.ICONST_1);
-            mv.visitInsn(Opcodes.IUSHR);
-            mv.visitIntInsn(Opcodes.SIPUSH, 0xFFFF);
-            mv.visitInsn(Opcodes.IAND);
-            mv.visitVarInsn(Opcodes.ISTORE, 6);
-            // base = stateBase[s]
-            mv.visitVarInsn(Opcodes.ALOAD, 16);
-            mv.visitVarInsn(Opcodes.ILOAD, 5);
-            mv.visitInsn(Opcodes.IALOAD);
-            mv.visitVarInsn(Opcodes.ISTORE, 7);
-            mv.visitInsn(Opcodes.ICONST_0);
-            mv.visitVarInsn(Opcodes.ISTORE, 8); // i = 0
-            Label iLoop = new Label(), iDone = new Label();
-            mv.visitLabel(iLoop);
-            mv.visitVarInsn(Opcodes.ILOAD, 8);
-            mv.visitVarInsn(Opcodes.ILOAD, 6);
-            mv.visitJumpInsn(Opcodes.IF_ICMPGE, iDone);
-            // o = (base + i) * 5
-            mv.visitVarInsn(Opcodes.ILOAD, 7);
-            mv.visitVarInsn(Opcodes.ILOAD, 8);
-            mv.visitInsn(Opcodes.IADD);
-            mv.visitIntInsn(Opcodes.BIPUSH, 5);
-            mv.visitInsn(Opcodes.IMUL);
-            mv.visitVarInsn(Opcodes.ISTORE, 9);
-            // target = RANGES_TABLE[o+2]
-            mv.visitVarInsn(Opcodes.ALOAD, 14);
-            mv.visitVarInsn(Opcodes.ILOAD, 9);
-            mv.visitInsn(Opcodes.ICONST_2);
-            mv.visitInsn(Opcodes.IADD);
-            mv.visitInsn(Opcodes.IALOAD);
-            mv.visitVarInsn(Opcodes.ISTORE, 12);
-            // if (target < 0) goto iNext
-            Label iNext = new Label();
-            mv.visitVarInsn(Opcodes.ILOAD, 12);
-            mv.visitJumpInsn(Opcodes.IFLT, iNext);
-            // lo = max(RANGES_TABLE[o], 0)
-            mv.visitVarInsn(Opcodes.ALOAD, 14);
-            mv.visitVarInsn(Opcodes.ILOAD, 9);
-            mv.visitInsn(Opcodes.IALOAD);
-            mv.visitInsn(Opcodes.DUP);
-            Label loSet = new Label();
-            mv.visitJumpInsn(Opcodes.IFGE, loSet);
-            mv.visitInsn(Opcodes.POP);
-            mv.visitInsn(Opcodes.ICONST_0);
-            mv.visitLabel(loSet);
-            mv.visitVarInsn(Opcodes.ISTORE, 10);
-            // hi = min(RANGES_TABLE[o+1], 127)
-            mv.visitVarInsn(Opcodes.ALOAD, 14);
-            mv.visitVarInsn(Opcodes.ILOAD, 9);
-            mv.visitInsn(Opcodes.ICONST_1);
-            mv.visitInsn(Opcodes.IADD);
-            mv.visitInsn(Opcodes.IALOAD);
-            mv.visitIntInsn(Opcodes.SIPUSH, 127);
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Math", "min", "(II)I", false);
-            mv.visitVarInsn(Opcodes.ISTORE, 11);
-            // for (c = lo; c <= hi; c++) ASCII_TARGET[s*128 + c] = target
-            mv.visitVarInsn(Opcodes.ILOAD, 10);
-            mv.visitVarInsn(Opcodes.ISTORE, 13);
-            Label cLoop = new Label(), cDone = new Label();
-            mv.visitLabel(cLoop);
-            mv.visitVarInsn(Opcodes.ILOAD, 13);
-            mv.visitVarInsn(Opcodes.ILOAD, 11);
-            mv.visitJumpInsn(Opcodes.IF_ICMPGT, cDone);
-            mv.visitVarInsn(Opcodes.ALOAD, 4);
-            mv.visitVarInsn(Opcodes.ILOAD, 5);
-            mv.visitIntInsn(Opcodes.SIPUSH, 128);
-            mv.visitInsn(Opcodes.IMUL);
-            mv.visitVarInsn(Opcodes.ILOAD, 13);
-            mv.visitInsn(Opcodes.IADD);
-            mv.visitVarInsn(Opcodes.ILOAD, 12);
-            mv.visitInsn(Opcodes.IASTORE);
-            mv.visitIincInsn(13, 1);
-            mv.visitJumpInsn(Opcodes.GOTO, cLoop);
-            mv.visitLabel(cDone);
-            mv.visitLabel(iNext);
-            mv.visitIincInsn(8, 1);
-            mv.visitJumpInsn(Opcodes.GOTO, iLoop);
-            mv.visitLabel(iDone);
-            mv.visitIincInsn(5, 1);
-            mv.visitJumpInsn(Opcodes.GOTO, sLoop);
-            mv.visitLabel(sDone);
-            mv.visitVarInsn(Opcodes.ALOAD, 4);
-            mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "ASCII_TARGET", "[I");
-        }
+        // ASCII_TARGET: deliberately NOT emitted. The generated dispatch
+        // reads targets from the flat ranges tables directly (emitDfaDispatch
+        // and the runner's own tables); a states×128 flat copy was populated
+        // here per construction and read by nothing — 512 B/state retained
+        // per pattern class plus an O(states × ranges × 128) fill loop, pure
+        // overhead on every INLINED class.
         mv.visitInsn(Opcodes.RETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
@@ -546,6 +438,25 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ALOAD, 4);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "length", "()I", false);
         mv.visitVarInsn(Opcodes.ISTORE, 5);
+
+        // from bounds (RegexEngine.match contract): [0, len]. Without this
+        // the inlined walk runs raw — a beyond-length from surfaces as a
+        // corrupt Match[0]=from,from or a wrong null instead of the polite
+        // IndexOutOfBoundsException. The throw itself is built by the
+        // runner's hook so both tiers report the identical message.
+        Label fromOk = new Label(), fromOob = new Label();
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitJumpInsn(Opcodes.IFLT, fromOob);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
+        mv.visitJumpInsn(Opcodes.IF_ICMPLE, fromOk);
+        mv.visitLabel(fromOob);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "fromOutOfBounds", "(II)Ljava/lang/IndexOutOfBoundsException;",
+            false);
+        mv.visitInsn(Opcodes.ATHROW);
+        mv.visitLabel(fromOk);
 
         // No literal-needle ladder here by construction: a DFA with a needle
         // always compiles as DELEGATE (generateBytes), so in the INLINED
@@ -2623,5 +2534,20 @@ public final class TdfaAsmBackend {
             }
         }
         return total;
+    }
+
+    /** Whether any state carries a nonzero entry mask. Always false for
+     *  emitted classes (TdfaRunner.fastPathEligible rejects any nonzero
+     *  mask before INLINED is picked), so ENTRY_MASK and entryOkC ship in
+     *  no generated class today — gated on this fact rather than deleted
+     *  so a future masked INLINED shape keeps its tables and its dispatch
+     *  stays a transcription of the runner walk. */
+    private static boolean hasEntryMasks(Tdfa tdfa) {
+        for (int m : tdfa.stateEntryMask()) {
+            if (m != 0) {
+                return true;
+            }
+        }
+        return false;
     }
 }

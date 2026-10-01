@@ -197,6 +197,7 @@ public final class QuickBench {
     /** Run batches of {@code iters} until {@code budgetNs} elapsed; returns ns/op of the fastest batch. */
     static double runFor(LongSupplier op, int iters, long budgetNs, String name, Long expected) {
         double best = Double.MAX_VALUE;
+        int valid = 0;
         long start = System.nanoTime();
         long sink = 0;
         while (System.nanoTime() - start < budgetNs) {
@@ -208,6 +209,7 @@ public final class QuickBench {
             if (perBatch < 100_000) {
                 continue;
             } // sub-0.1ms batch: timer noise, skip
+            valid++;
             best = Math.min(best, perBatch / iters);
             long check = op.getAsLong();
             if (expected != null && check != expected) {
@@ -218,6 +220,13 @@ public final class QuickBench {
         if (sink == 42) {
             System.err.print("");
         } // keep sink alive
+        if (valid == 0) {
+            // Every batch was skipped as sub-0.1 ms timer noise: reporting the
+            // Double.MAX_VALUE sentinel would poison the row (and, in a gated
+            // position, the landing baseline) with an unmeasured score.
+            throw new IllegalStateException(
+                "no valid batch >= 0.1 ms for " + name + " (iters=" + iters + ", budget=" + budgetNs + " ns)");
+        }
         return best;
     }
 

@@ -14,12 +14,12 @@ Apache 2.0.
   JDKs have tamed many `java.util.regex` blowups; the guarantee here is
   structural, not empirical.
 - **Fast.** Expect **2–6× faster than [re2j](https://github.com/google/re2j)**
-  on short-input search and 2–3× on anchored matches — as a drop-in
+  on short-input search and **4–11× on anchored matches** — as a drop-in
   replacement with identical results. Against `java.util.regex`: at or ahead
-  on search and anchored matching, and **ahead on literal-prefixed log
-  queries** (`ip=…` shapes ride the JIT's vectorized `String.indexOf` on the
-  required literal prefix). Full tables and known gaps:
-  [`BENCHMARKS.md`](BENCHMARKS.md).
+  on search and anchored matching (anchored geomean: ASM 0.22×, VM 0.57×),
+  and **ahead on literal-prefixed log queries** (`ip=…` shapes ride the JIT's
+  vectorized `String.indexOf` on the required literal prefix). Full tables
+  and known gaps: [`BENCHMARKS.md`](BENCHMARKS.md).
 - **Drop-in.** re2j-shaped `Pattern`/`Matcher` API, both leftmost-first
   (default) and leftmost-longest (`LONGEST_MATCH`) semantics.
 
@@ -46,23 +46,25 @@ required literal prefix and beats `java.util.regex` on both backends.
 
 ## Headline numbers
 
-JMH, JDK 26, short inputs, ns/op — lower is better:
+JMH, JDK 26, short inputs, ns/op — lower is better
+([artifact](BENCHMARKS.md), 2026-10-01):
 
 | Engine | `(a\|b)*c` | `(\w+)\s+(\w+)` | IPv4 | `abc` | `(a+)+b` ReDoS¹ |
 |---|---:|---:|---:|---:|---:|
-| tdfa-jvm VM | **68.2** | **174.2** | **152.1** | **28.4** | 293.2 |
-| tdfa-jvm ASM | 97.0 | 186.5 | 158.9 | 30.7 | 308.7 |
-| java.util.regex | 81.2 | 189.7 | 189.6 | 29.8 | **285.3** |
-| re2j 1.8 | 259.9 | 482.3 | 415.2 | 93.5 | 1,101.0 |
+| tdfa-jvm ASM | **17.0** | **64.9** | **40.0** | 44.8 | **16.2** |
+| tdfa-jvm VM | 73.1 | 88.5 | 125.1 | **25.9** | 188.2 |
+| java.util.regex | 123.4 | 75.0 | 94.4 | 40.4 | 1,862.5 |
+| re2j 1.8 | 269.6 | 586.1 | 420.9 | 101.0 | 883.6 |
 
-¹ 20 × `a` + `c`. Every engine here is linear-time on this JDK — the
-no-backtracking guarantee is the point, not this row.
+¹ 20 × `a` + `c` — `java.util.regex` pays its quadratic backtracking (~1.9 µs);
+every engine here that is linear by construction is µs-free.
 
 On unanchored search (the harder regime for DFA engines): geomean **0.75×**
-`java.util.regex` and **0.17×** re2j on short-input `find()`; **0.37–0.51×**
-re2j across the 110-scenario rebar corpus; ~2× re2j on 200 k-line log-field
-extraction. Reproduce with
-`./gradlew :benchmarks:micro:jmh -Pjmh.include='ParameterizedShortInputBench'`.
+`java.util.regex` and **0.17×** re2j on short-input `find()` (ASM; VM 0.94× /
+0.22×); **0.45–0.47×** re2j (VM) / **0.65–0.69×** (ASM) across the
+110-scenario rebar corpus; ~1.3–2× faster than `java.util.regex` on the
+literal-prefixed log-extraction rows (re2j is 4–10× slower there). Reproduce
+with `./gradlew :benchmarks:micro:jmh -PjmhInclude='ParameterizedShortInputBench'`.
 
 ## Quick start
 

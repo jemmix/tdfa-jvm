@@ -4,7 +4,9 @@ All numbers below are from committed artifacts in `benchmarks/` unless noted.
 Environment: JDK 26.0.2, macOS arm64 (Apple M-series; single-user laptop —
 machine drifts ±30 % between runs; every claim here is min-of-N or JMH
 single-shot, and the important comparisons are engine-vs-engine in the same
-run). Re-run 2026-09-03 (post module-restructure + Sept compile/perf rounds).
+run). Rebar/shortfind re-run 2026-09-03 (post module-restructure + Sept
+compile/perf rounds), log-extract 2026-09-29 (literal-prefix scan), anchored
+§1 2026-10-01 (first committed artifact — see its note).
 
 Measurement-context note: tables captured before the 2026-08 module
 restructure (the sub-10 ns anchored-match era) are preserved in this file's
@@ -15,8 +17,8 @@ within one run are the durable claims.
 Reproduce:
 
 ```bash
-./gradlew :benchmarks:micro:jmh -Pjmh.include='ParameterizedShortInputBench'   # anchored short inputs
-./gradlew :benchmarks:micro:jmh -Pjmh.include='ShortFindBench'                 # short-input search
+./gradlew :benchmarks:micro:jmh -PjmhInclude='ParameterizedShortInputBench'   # anchored short inputs
+./gradlew :benchmarks:micro:jmh -PjmhInclude='ShortFindBench'                 # short-input search
 ./scripts/bench-rebar.sh fast|accurate                                          # rebar corpus
 # LogExtractMacro: classpath per scripts/bench-rebar.sh, then
 #   java io.github.jemmix.tdfa.bench.LogExtractMacro
@@ -30,33 +32,32 @@ iterations, OPI 50 M); §1 rows spot-verified with independent longer CLI runs
 ## 1. Anchored short inputs — `ParameterizedShortInputBench` (JMH, ns/op)
 
 Tight loop over `matches()`, per-single-match time via OperationsPerInvocation.
-Table re-captured 2026-09-11 (JDK 26.0.2; the 2026-09-03 table is in git
-history).
+Artifact: `benchmarks/results-anchored-jmh.txt` (2026-10-01, JDK 26.0.2 — the
+first committed artifact for this bench; the pre-2026-09-18 table quoted an
+uncommitted run whose `jur` column was our own engine in jur's calling idiom,
+before the lane fix).
 
 | Engine | `(a\|b)*c` | `(\w+)\s+(\w+)` | IPv4 | `abc` | `(a+)+b` ReDoS¹ |
 |---|---:|---:|---:|---:|---:|
-| tdfa-jvm ASM | 97.0 | 186.5 | 158.9 | 30.7 | 308.7 |
-| tdfa-jvm VM | **68.2** | **174.2** | **152.1** | **28.4** | 293.2 |
-| java.util.regex | 81.2 | 189.7 | 189.6 | 29.8 | **285.3** |
-| re2j 1.8 | 259.9 | 482.3 | 415.2 | 93.5 | 1,101.0 |
-| reggie | 314.6 | 18.0 | 14.3 | 0.04² | 5.7 |
+| tdfa-jvm ASM | **17.0** | **64.9** | **40.0** | 44.8 | **16.2** |
+| tdfa-jvm VM | 73.1 | 88.5 | 125.1 | **25.9** | 188.2 |
+| java.util.regex | 123.4 | 75.0 | 94.4 | 40.4 | 1,862.5 |
+| re2j 1.8 | 269.6 | 586.1 | 420.9 | 101.0 | 883.6 |
+| reggie | 286.5 | 19.5 | 12.7 | 0.03² | 5.2 |
 
-¹ 20 × `a` + `c`. `java.util.regex` no longer blows up exponentially on this
-JDK (285 ns); `re2j` stays linear but 3.6× ASM.
+¹ 20 × `a` + `c`. `java.util.regex` pays its quadratic backtracking here
+(~1.9 µs — the number the fabricated self-race row hid); we and re2j are
+linear by construction.
 ² Reggie special-cases literal patterns to `String.indexOf` (SIMD). We do this
 too when the whole pattern is one literal (disclosed in README) — but not
 per-alternative branch; that is the single-algorithm tradeoff.
 
-**vs re2j: ASM is 2.6–3.6× faster on every anchored shape.**
-**vs java.util.regex: parity** — geomean ASM 1.02× / VM 0.90× jur; faster on
-`ip`/`two`/`lit`, ~1.1–1.2× on `alt` (ASM only) and `redos`. The 2026-09-03
-re-bench's ~70–110 ns tight-loop floor (both tiers 1.2–1.9× slower than jur)
-does **not** reproduce on the 2026-09-11 tree: `-Xlog:jit+inlining=debug`
-shows the facade chain inlining end-to-end in the final C2 compile
-(`Pattern.matches` → generated matcher ctor → `wholeEngine` → generated
-engine `match` → `TdfaRunner.match` → `runStringExtract`), with only the
-`extractFrom` walk leaf out-of-line by design. Retired as a session artifact
-(that session's jur rows also moved −10…−20%); TODO item closed.
+**vs re2j: ASM is 2.3–55× faster on every anchored shape (geomean 11×); VM 3.4–6.6× (geomean 4.3×).**
+**vs java.util.regex: ahead on both tiers** — geomean ASM 0.22× / VM 0.57×
+jur; ASM wins every row except the literal (where the generated shell's
+dispatch layers cost ~19 ns over the bare runner). The pre-fix "parity"
+conclusion was an artifact of the self-race: with a real jur lane, the ReDoS
+row alone moves the geomean from ~1× to ~0.6×/0.2×.
 
 ## 2. Short-input search — `ShortFindBench` (JMH SingleShotTime, ns/op)
 
@@ -85,17 +86,21 @@ unicode-class scans, dense-candidate no-match scans.
 ## 3. rebar corpus — `RebarBench` (110 scenarios, full haystacks, 5 engines)
 
 Count-verified against `java.util.regex`; interleaved passes. Artifacts:
-`benchmarks/results-rebar-fast.txt`, `benchmarks/results-rebar-accurate.txt`.
+`benchmarks/results-rebar-fast.txt`, `benchmarks/results-rebar-accurate.txt`
+(captured 2026-09-04, JDK 26.0.2 — before the literal-prefix scan of §4; the
+literal-prefixed family has improved since).
 
-- Scan geomean vs re2j: **VM 0.35×** (fast) / **0.37×** (accurate); ASM
-  **0.47×** / **0.51×**.
-- Scan geomean vs jur: **VM 0.73×** (fast) / **0.75×** (accurate); ASM
-  1.04× / 1.08× — ASM's fast-mode geomean is dominated by µs-scale micro
+- Scan geomean vs re2j (artifact SUMMARY lines): **VM 0.45×** (fast) /
+  **0.47×** (accurate); ASM **0.65×** / **0.69×**.
+- Scan geomean vs jur: **VM 0.74×** (fast) / **0.76×** (accurate); ASM
+  1.07× / 1.11× — ASM's fast-mode geomean is dominated by µs-scale micro
   rows' cold JIT — a harness artifact, documented in the artifact headers.
-- Per-row (accurate, 93 scannable rows): VM vs re2j **75 W / 4 T / 14 L**;
-  VM vs jur **52 W / 4 T / 47 L** — losses cluster in unicode wide classes
-  (the remaining known gap; the literal-prefixed family got its dedicated
-  fix in §4, 2026-09-29 — these per-row counts predate it).
+- Per-row (accurate artifact, 92 rows where both engines printed a number —
+  count-divergent `*` rows excluded, ties within ±5%): VM vs re2j
+  **74 W / 4 T / 14 L**; VM vs jur **51 W / 4 T / 47 L** — losses cluster
+  in unicode wide classes (the remaining known gap; the literal-prefixed
+  family got its dedicated fix in §4, 2026-09-29 — these per-row counts
+  predate it).
 - The 2026-08-era blowouts are gone or flipped: **dictionary is now a 64×
   WIN vs jur** (373 vs 23,701 ms/MB — the Sep-2 interning/hash-cons rounds),
   i1095-ascii is a win (18.2 vs 30.1 ms/MB), lexer-veryl narrowed 12× → 2.2×.

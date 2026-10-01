@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Strategy conformance: the interpreter and the ASM backend must not only
@@ -123,6 +124,36 @@ class StrategyConformanceTest {
         assertThat(p).hasToString("[a-z]+\\d+");
         var p2 = Pattern.compile("[a-z]+\\d+", 0, TdfaRunner::new);
         assertThat(p).isEqualTo(p2); // state-based equality across impls
+    }
+
+    /** RegexEngine.match's bounds contract at the engine tier: an
+     *  out-of-range {@code from} throws the clean IndexOutOfBoundsException
+     *  with the runner's message, in BOTH tiers. The INLINED ladder walks
+     *  raw without the emitted check — a beyond-length from used to surface
+     *  as a corrupt Match[0]=from,from (empty-match patterns) or a wrong
+     *  null (everything else) instead of the throw. INLINED shapes
+     *  (a*, (a|b)*c, \d+) and one DELEGATE shape (the literal needle) —
+     *  the delegate path was always clean via the embedded runner. */
+    @Test
+    void engineTierFromBoundsContract() {
+        for (String p : new String[]{"a*", "(a|b)*c", "\\d+", "abc"}) {
+            RegexEngine vm = vm(p);
+            RegexEngine asm = asm(p);
+            for (int from : new int[]{-1, 4, 99}) {
+                assertThatThrownBy(() -> asm.match("abc", from, null)).as("asm %s from=%d", p, from)
+                    .isInstanceOf(IndexOutOfBoundsException.class).hasMessage("from: " + from + ", length: 3");
+                assertThatThrownBy(() -> vm.match("abc", from, null)).as("vm %s from=%d", p, from)
+                    .isInstanceOf(IndexOutOfBoundsException.class).hasMessage("from: " + from + ", length: 3");
+            }
+            // from == len stays legal and agrees across tiers:
+            MatchResult a = asm.match("abc", 3, null);
+            MatchResult v = vm.match("abc", 3, null);
+            assertThat(a == null).as("%s from=len nullity", p).isEqualTo(v == null);
+            if (v != null) {
+                assertThat(a.start(0)).isEqualTo(v.start(0));
+                assertThat(a.end(0)).isEqualTo(v.end(0));
+            }
+        }
     }
 
     private static String padTo(String base, int len) {
