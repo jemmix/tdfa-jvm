@@ -3,6 +3,7 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.core.CompiledRegex;
 import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -52,7 +53,7 @@ class ParserHardeningTest {
         System.setProperty("tdfa.budget.compile.memory", "30720");
         try {
             String re = "(".repeat(600) + "a" + ")".repeat(600);
-            assertThatThrownBy(() -> CompiledRegex.compile(re)).isInstanceOf(PatternSyntaxException.class)
+            assertThatThrownBy(() -> CompiledRegex.compile(re)).isInstanceOf(PatternTooLargeException.class)
                 .hasMessageContaining("pattern too large").hasMessageContaining("tdfa.budget.compile.memory");
         } finally {
             System.clearProperty("tdfa.budget.compile.memory");
@@ -71,7 +72,7 @@ class ParserHardeningTest {
         System.setProperty("tdfa.budget.compile.memory", "100000");
         try {
             assertThatThrownBy(() -> CompiledRegex.compile("(?:(?:a{2,1000}))"))
-                .isInstanceOf(PatternSyntaxException.class).hasMessageContaining("pattern too large");
+                .isInstanceOf(PatternTooLargeException.class).hasMessageContaining("pattern too large");
         } finally {
             System.clearProperty("tdfa.budget.compile.memory");
         }

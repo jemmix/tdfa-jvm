@@ -1,5 +1,7 @@
 package io.github.jemmix.tdfa.tdfa;
 
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -361,7 +363,7 @@ final class TdfaStateIndex {
         owner.kernelsTotal += configs.size();
         owner.kernelsWeighted += (long) configs.size() * owner.kernelConfigBytes;
         if (owner.kernels.size() > owner.maxStates || owner.kernelsWeighted > Budgets.compileMemoryBytes()) {
-            throw new IllegalStateException("pattern too large: TDFA determinization budget exceeded ("
+            throw new PatternTooLargeException("pattern too large: TDFA determinization budget exceeded ("
                 + owner.kernels.size() + " states, kernel total " + owner.kernelsTotal + " (" + owner.kernelsWeighted
                 + " weighted bytes), ticks " + owner.meter.spent() + "; caps " + owner.maxStates + " states / "
                 + Budgets.compileMemoryBytes() + " weighted kernel bytes (" + owner.maxKernelsTotal

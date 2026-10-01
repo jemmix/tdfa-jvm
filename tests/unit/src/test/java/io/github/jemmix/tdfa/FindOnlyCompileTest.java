@@ -3,7 +3,7 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.core.CompiledRegex;
 import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.MatchScratch;
-import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -71,7 +71,7 @@ class FindOnlyCompileTest {
      */
     @Test
     void wholeBombCompilesFindOnlyAndFinds() {
-        assertThatThrownBy(() -> Pattern.compile(BOMB)).isInstanceOf(PatternSyntaxException.class)
+        assertThatThrownBy(() -> Pattern.compile(BOMB)).isInstanceOf(PatternTooLargeException.class)
             .hasMessageContaining("whole-match divergence");
         long t0 = System.nanoTime();
         for (boolean vm : new boolean[]{false, true}) {

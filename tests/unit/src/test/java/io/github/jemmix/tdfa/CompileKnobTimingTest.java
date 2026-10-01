@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.CompileObserver;
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
 import io.github.jemmix.tdfa.tdfa.Budgets;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tnfa.Tnfa;
@@ -75,7 +76,7 @@ class CompileKnobTimingTest {
         System.setProperty(Budgets.COMPILE_MEMORY_PROP, "4096");
         try {
             assertThatThrownBy(() -> Tdfa.compile(Tnfa.compile("ab|cd|ef|gh|ij"), false, recording()))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("pattern too large");
+                .isInstanceOf(PatternTooLargeException.class).hasMessageContaining("pattern too large");
         } finally {
             System.clearProperty(Budgets.COMPILE_MEMORY_PROP);
         }

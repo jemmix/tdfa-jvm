@@ -42,29 +42,32 @@ public final class UnicodeProviders {
         if (p != null) {
             return p;
         }
-        if (failure != null) {
-            throw new IllegalStateException("Unicode data provider initialisation failed (property " + PROPERTY_NAME
-                + " = \"" + System.getProperty(PROPERTY_NAME) + "\"); see cause", failure);
-        }
         synchronized (UnicodeProviders.class) {
-            p = cached;
-            if (p != null) {
-                return p;
+            if (cached != null) {
+                return cached;
             }
             if (failure != null) {
-                throw new IllegalStateException("Unicode data provider initialisation failed (property " + PROPERTY_NAME
-                    + " = \"" + System.getProperty(PROPERTY_NAME) + "\"); see cause", failure);
+                throw initFailure(failure);
             }
             try {
                 p = resolve();
                 cached = p;
                 return p;
             } catch (Throwable t) {
+                // Memoize the failure (Throwable, not RuntimeException: a
+                // user provider's static initializer can die with an Error)
+                // so every later get() throws the same diagnosis.
                 failure = t;
-                throw new IllegalStateException("Unicode data provider initialisation failed (property " + PROPERTY_NAME
-                    + " = \"" + System.getProperty(PROPERTY_NAME) + "\"); see cause", t);
+                throw initFailure(t);
             }
         }
+    }
+
+    /** Fresh-wrapped resolution failure — same diagnosis each call, current
+     *  stack. The cause is the memoized original. */
+    private static IllegalStateException initFailure(Throwable cause) {
+        return new IllegalStateException("Unicode data provider initialisation failed (property " + PROPERTY_NAME
+            + " = \"" + System.getProperty(PROPERTY_NAME) + "\"); see cause", cause);
     }
 
     private static UnicodeDataProvider resolve() {

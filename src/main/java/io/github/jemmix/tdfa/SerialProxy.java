@@ -55,18 +55,25 @@ final class SerialProxy implements Serializable {
                 throw new InvalidObjectException(
                     "serialized provider " + cls + " does not implement UnicodeDataProvider");
             }
-            // Convention 1: static UnicodeDataProvider provider() (the shape
-            // of the shipped pinned-table providers, which are singletons;
-            // may be private — same module, opened for reflection).
-            try {
-                Method m = c.getMethod("provider");
-                if (UnicodeDataProvider.class.isAssignableFrom(m.getReturnType())
+            // Convention 1: public static UnicodeDataProvider provider() (the
+            // shape of the shipped pinned-table providers, which are
+            // singletons). Found by scanning, not getMethod: probing with
+            // getMethod would use NoSuchMethodException as control flow for
+            // the absent case. Convention 2 covers non-public construction.
+            boolean viaFactory = false;
+            UnicodeDataProvider fromFactory = null;
+            for (Method m : c.getMethods()) {
+                if ("provider".equals(m.getName()) && m.getParameterCount() == 0
+                    && UnicodeDataProvider.class.isAssignableFrom(m.getReturnType())
                     && Modifier.isStatic(m.getModifiers())) {
                     m.setAccessible(true);
-                    return (UnicodeDataProvider) m.invoke(null);
+                    fromFactory = (UnicodeDataProvider) m.invoke(null);
+                    viaFactory = true;
+                    break;
                 }
-            } catch (NoSuchMethodException expected) {
-                // fall through to convention 2
+            }
+            if (viaFactory) {
+                return fromFactory;
             }
             // Convention 2: no-arg constructor (may be private for singletons).
             Constructor<?> ctor = c.getDeclaredConstructor();

@@ -1,5 +1,7 @@
 package io.github.jemmix.tdfa.tdfa;
 
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
+
 import java.util.Arrays;
 
 /**
@@ -77,7 +79,7 @@ final class HistTable {
      */
     private void charge(long bytes) {
         if ((chargedBytes += bytes) > memBudget) {
-            throw new IllegalStateException("pattern too large: tag histories exceed the compile memory budget ("
+            throw new PatternTooLargeException("pattern too large: tag histories exceed the compile memory budget ("
                 + chargedBytes + " weighted bytes over " + next + " interned sequences — raise -D"
                 + Budgets.COMPILE_MEMORY_PROP + ")");
         }

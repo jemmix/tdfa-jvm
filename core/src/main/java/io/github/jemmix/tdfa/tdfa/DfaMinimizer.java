@@ -1,5 +1,7 @@
 package io.github.jemmix.tdfa.tdfa;
 
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
+
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -69,10 +71,10 @@ final class DfaMinimizer {
      * and without metering would be an unbounded loop inside
      * compile(): near-cap literal-chain DFAs can peel one group per
      * round ⇒ O(n²) sig builds, minutes of unmetered wall time.
-     * Exhaustion propagates as {@link WorkMeter.Exhausted}; the CALLER
-     * degrades to the unminimized DFA instead of failing the compile
-     * (minimization is an optional pass — same semantics as the
-     * norm-cell degrade).
+     * Exhaustion propagates as {@link PatternTooLargeException}; the
+     * CALLER degrades to the unminimized DFA instead of failing the
+     * compile (minimization is an optional pass — same semantics as
+     * the norm-cell degrade).
      */
     final WorkMeter meter;
     /**

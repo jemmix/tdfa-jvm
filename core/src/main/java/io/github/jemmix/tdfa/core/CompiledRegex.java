@@ -55,7 +55,8 @@ public final class CompiledRegex {
         return compile(pattern, CompileOptions.of());
     }
 
-    /** Compile with explicit options. Throws {@link PatternSyntaxException} on malformed patterns. */
+    /** Compile with explicit options. Syntax errors throw {@link PatternSyntaxException};
+     *  budget rejections throw {@link PatternTooLargeException}. */
     public static CompiledRegex compile(String pattern, CompileOptions options) {
         if (pattern == null) {
             throw new NullPointerException("pattern is null");
@@ -63,18 +64,14 @@ public final class CompiledRegex {
         UnicodeDataProvider provider =
             options.unicodeProvider() != null ? options.unicodeProvider() : UnicodeProviders.get();
         CompileObserver obs = options.observer() != null ? options.observer() : CompileObserver.NONE;
-        try {
-            WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
-            Tnfa nfa = Tnfa.compile(pattern, options.isDisableUnicodeGroups(), false, provider, obs, ledger);
-            Tdfa find = Tdfa.compile(nfa, options.isLongestMatch(), obs, ledger.fork(0));
-            long t0 = System.nanoTime();
-            RegexEngine engine = new TdfaRunner(find, Budgets.runtimeMemoryBytes());
-            obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
-            obs.note("engine", "interpreter");
-            return new CompiledRegex(pattern, engine);
-        } catch (RuntimeException e) {
-            throw PatternSyntaxException.translate(e, pattern);
-        }
+        WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
+        Tnfa nfa = Tnfa.compile(pattern, options.isDisableUnicodeGroups(), false, provider, obs, ledger);
+        Tdfa find = Tdfa.compile(nfa, options.isLongestMatch(), obs, ledger.fork(0));
+        long t0 = System.nanoTime();
+        RegexEngine engine = new TdfaRunner(find, Budgets.runtimeMemoryBytes());
+        obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
+        obs.note("engine", "interpreter");
+        return new CompiledRegex(pattern, engine);
     }
 
     public boolean find(CharSequence input) {

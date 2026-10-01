@@ -10,6 +10,11 @@ package io.github.jemmix.tdfa.core;
  * <p>Like re2j's, extends {@link RuntimeException} (matching
  * java.util.regex's checked hierarchy is intentionally avoided so the type
  * is not accidentally caught by code expecting the JDK flavour).
+ *
+ * <p>Raised only by the parser, at the point the malformed syntax is
+ * detected; it propagates to the caller unwrapped. A pattern that parses
+ * but cannot be compiled within budget is a
+ * {@link PatternTooLargeException}, not a syntax error.
  */
 public class PatternSyntaxException extends RuntimeException {
     private static final long serialVersionUID = 1L;
@@ -38,23 +43,5 @@ public class PatternSyntaxException extends RuntimeException {
 
     public int getIndex() {
         return -1;
-    }
-
-    /**
-     * Present a compile-pipeline {@link RuntimeException} as a
-     * {@link PatternSyntaxException}: syntax errors are thrown as
-     * {@code PatternSyntaxException} where they are detected (the parser)
-     * and pass through unwrapped; budget rejections ("pattern too
-     * large" ...) and anything else keep their message (or report as an
-     * internal error), with the original chained as the cause.
-     */
-    public static PatternSyntaxException translate(RuntimeException e, String pattern) {
-        if (e instanceof PatternSyntaxException) {
-            return (PatternSyntaxException) e;
-        }
-        String msg = e.getMessage();
-        PatternSyntaxException pse = new PatternSyntaxException(msg != null ? msg : "internal error", pattern);
-        pse.initCause(e);
-        return pse;
     }
 }

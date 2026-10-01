@@ -5,7 +5,7 @@ import io.github.jemmix.tdfa.core.CompileOptions;
 import io.github.jemmix.tdfa.core.CompiledRegex;
 import io.github.jemmix.tdfa.core.MatchResult;
 import io.github.jemmix.tdfa.core.MatchScratch;
-import io.github.jemmix.tdfa.core.PatternSyntaxException;
+import io.github.jemmix.tdfa.core.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.WholeEngine;
 import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.tdfa.TdfaRunner;
@@ -176,7 +176,7 @@ class PartialWholeTest {
         try {
             Pattern.compile(bomb, CompileOptions.of().observer(r));
             throw new AssertionError("bomb must not compile");
-        } catch (PatternSyntaxException e) {
+        } catch (PatternTooLargeException e) {
             assertThat(e).hasMessageContaining("pattern too large");
         }
         assertThat(r.notes().get("partialWhole")).as("side abandonment is recorded").startsWith("abandoned");
