@@ -876,7 +876,7 @@ public final class Tdfa {
      * artifact: either the pike cut never deleted a continuation, or the
      * partial-whole side table recorded every cut context's uncut
      * transitions (complete exploration). The facade relies on this:
-     * after {@link #compileWithWholeSide} (which always requests the
+     * after {@link Determinizer#compileWithWholeSide(Tnfa, boolean, CompileObserver, WorkMeter)} (which always requests the
      * side), false means the side was abandoned and the compile REJECTS
      * — no second cut-free determinization is attempted.
      */

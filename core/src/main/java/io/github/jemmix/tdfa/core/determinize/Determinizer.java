@@ -63,7 +63,7 @@ public final class Determinizer {
      * higher-priority alternative accepted earlier (e.g. {@code (a|ab)} on
      * {@code "ab"}).
      *
-     * <p>Use {@link #pikeCutMatters()} on the PRUNED artifact of the same
+     * <p>Use {@link Tdfa#pikeCutMatters()} on the PRUNED artifact of the same
      * NFA to decide whether this cut-free form is needed: false means the
      * pruned artifact is identical to this build and may serve whole
      * matching; true means whole matching needs this form.
@@ -85,15 +85,15 @@ public final class Determinizer {
      * Ledger variant of {@link #compile(Tnfa, boolean, CompileObserver)}
      * that ALSO records the partial-whole side table during the pruned
      * determinization: every pike-cut context contributes its UNCUT
-     * transitions to the artifact's whole relation (see {@link #wholeRanges}),
+     * transitions to the artifact's whole relation (see {@link Tdfa#wholeRanges()}),
      * so the ONE artifact serves find() and whole-input walks —
-     * {@link #wholeWalkExact()} then reports whether the side completed.
+     * {@link Tdfa#wholeWalkExact()} then reports whether the side completed.
      * For find-only consumers ({@code io.github.jemmix.tdfa.core.compile.CompiledRegex}) the plain
      * compile is cheaper — the side table has no reader there.
      *
      * <p>The side exploration is bounded (child meter + the compile RAM
      * charge); on exhaustion it is abandoned cleanly and this returns a
-     * plain pruned artifact with {@link #wholeWalkExact()} == false — the
+     * plain pruned artifact with {@link Tdfa#wholeWalkExact()} == false — the
      * facade then REJECTS the compile (the whole surface did not build;
      * {@link #compileUnpruned} remains available to callers building
      * whole artifacts by hand, e.g. as test oracles).
