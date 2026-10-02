@@ -1,8 +1,8 @@
 package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.sim.PikeSim;
-import io.github.jemmix.tdfa.tdfa.Tdfa;
 import io.github.jemmix.tdfa.unicode.v17_0.Unicode17_0;
 import io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0;
 import org.junit.jupiter.api.Test;

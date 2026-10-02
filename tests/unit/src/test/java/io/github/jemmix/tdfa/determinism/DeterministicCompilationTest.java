@@ -1,8 +1,9 @@
 package io.github.jemmix.tdfa.determinism;
 
-import io.github.jemmix.tdfa.core.CompileObserver;
-import io.github.jemmix.tdfa.tdfa.Tdfa;
-import io.github.jemmix.tdfa.tnfa.Tnfa;
+import io.github.jemmix.tdfa.core.determinize.Determinizer;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
+import io.github.jemmix.tdfa.core.report.CompileObserver;
+import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 import org.junit.jupiter.api.Test;
 
 import java.io.BufferedReader;
@@ -44,8 +45,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DeterministicCompilationTest {
     @Test
     void fingerprintsDiscriminateArtifacts() {
-        String capture = ArtifactFingerprint.of(Tdfa.compile(Tnfa.compile("(a)"), false));
-        String captureAb = ArtifactFingerprint.of(Tdfa.compile(Tnfa.compile("(ab)"), false));
+        String capture = ArtifactFingerprint.of(Determinizer.compile(Tnfa.compile("(a)"), false));
+        String captureAb = ArtifactFingerprint.of(Determinizer.compile(Tnfa.compile("(ab)"), false));
         assertThat(capture).as("different patterns must fingerprint differently").isNotEqualTo(captureAb);
         String minimized = DeterminismCorpus.compileFingerprint(new DeterminismCorpus.Entry("probe", "(a|ab)(b|c)",
             DeterminismCorpus.Mode.PERL, DeterminismCorpus.Knob.NONE));
@@ -82,14 +83,15 @@ class DeterministicCompilationTest {
     @Test
     void observerDoesNotAffectArtifact() {
         String pattern = "(a{1,20}){1,20}";
-        String plain = ArtifactFingerprint.of(Tdfa.compile(Tnfa.compile(pattern), false));
+        String plain = ArtifactFingerprint.of(Determinizer.compile(Tnfa.compile(pattern), false));
         int[] stageEvents = {0};
-        String observed = ArtifactFingerprint.of(Tdfa.compile(Tnfa.compile(pattern), false, new CompileObserver() {
-            @Override
-            public void stage(Stage stage, long nanos, int detail) {
-                stageEvents[0]++;
-            }
-        }));
+        String observed =
+            ArtifactFingerprint.of(Determinizer.compile(Tnfa.compile(pattern), false, new CompileObserver() {
+                @Override
+                public void stage(Stage stage, long nanos, int detail) {
+                    stageEvents[0]++;
+                }
+            }));
         assertThat(stageEvents[0]).as("observer must actually have observed stages").isGreaterThan(0);
         assertThat(observed).as("CompileObserver presence must not change the artifact").isEqualTo(plain);
     }

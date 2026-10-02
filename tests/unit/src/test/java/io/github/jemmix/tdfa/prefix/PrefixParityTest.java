@@ -1,6 +1,6 @@
 package io.github.jemmix.tdfa.prefix;
 
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import org.junit.jupiter.api.Test;
 
 import java.util.regex.Pattern;

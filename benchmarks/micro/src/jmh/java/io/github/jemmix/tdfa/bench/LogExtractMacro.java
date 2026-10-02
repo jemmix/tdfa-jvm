@@ -1,6 +1,6 @@
 package io.github.jemmix.tdfa.bench;
 
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 
 import java.util.ArrayList;
 import java.util.List;

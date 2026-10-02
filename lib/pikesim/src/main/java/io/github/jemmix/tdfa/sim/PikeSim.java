@@ -1,8 +1,8 @@
 package io.github.jemmix.tdfa.sim;
 
-import io.github.jemmix.tdfa.tnfa.Tnfa;
-import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
-import io.github.jemmix.tdfa.unicode.UnicodeProviders;
+import io.github.jemmix.tdfa.core.tnfa.Tnfa;
+import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -151,7 +151,7 @@ public final class PikeSim {
         private boolean found;
         /** Next scan start: continuation state. {@code find()} iterates like
          *  the real matchers (advance to match end; +1 UTF-16 unit on an
-         *  empty match, mirroring io.github.jemmix.tdfa.core.Matcher). */
+         *  empty match, mirroring io.github.jemmix.tdfa.core.engine.Matcher). */
         private int from;
 
         // ---- the machine ----

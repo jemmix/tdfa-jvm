@@ -27,8 +27,8 @@ ASSERTJ_JAR = GRADLE_CACHE / 'org.assertj/assertj-core/3.25.3'
 JMH_JAR = next((GRADLE_CACHE / 'org.openjdk.jmh/jmh-core/1.37').glob('*/jmh-core-1.37.jar'))
 
 SOURCES = {
-    'io.github.jemmix.tdfa.tdfa.Tdfa':
-        ROOT / 'core/src/main/java/io/github/jemmix/tdfa/tdfa/Tdfa.java',
+    'io.github.jemmix.tdfa.core.dfa.Tdfa':
+        ROOT / 'core/src/main/java/io/github/jemmix/tdfa/core/dfa/Tdfa.java',
     'io.github.jemmix.tdfa.parity.Re2jOracle':
         ROOT / 'tests/parity/re2j/src/test/java/io/github/jemmix/tdfa/parity/Re2jOracle.java',
 }

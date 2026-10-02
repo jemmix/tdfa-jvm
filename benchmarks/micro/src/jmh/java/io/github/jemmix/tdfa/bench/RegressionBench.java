@@ -1,8 +1,8 @@
 package io.github.jemmix.tdfa.bench;
 
 import io.github.jemmix.tdfa.Pattern;
-import io.github.jemmix.tdfa.core.Matcher;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.engine.Matcher;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;

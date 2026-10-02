@@ -1,9 +1,9 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.CompileOptions;
-import io.github.jemmix.tdfa.core.EmittedSurface;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
-import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.core.compile.CompileOptions;
+import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
+import io.github.jemmix.tdfa.core.emit.EmittedSurface;
+import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
@@ -18,9 +18,9 @@ import java.util.Map;
  * obtain a {@link PatternMatcher} via {@link #matcher(CharSequence)}.
  * Default semantics are leftmost-first (Perl/PCRE/re2j-compatible);
  * {@link #LONGEST_MATCH} selects leftmost-longest. Malformed syntax fails
- * with {@link io.github.jemmix.tdfa.core.PatternSyntaxException}; a pattern
+ * with {@link io.github.jemmix.tdfa.core.parser.PatternSyntaxException}; a pattern
  * that parses but exceeds a resource budget fails with
- * {@link io.github.jemmix.tdfa.core.PatternTooLargeException} (the
+ * {@link io.github.jemmix.tdfa.core.budget.PatternTooLargeException} (the
  * {@code "pattern too large"} family — raise the named {@code -D} property
  * if you legitimately need bigger).
  *
@@ -118,7 +118,7 @@ public interface Pattern extends Serializable {
      * <p>The flag round-trips serialization and participates in
      * {@code equals}/{@code hashCode}: a find-only pattern is not equal to
      * the full compile of the same regex (different capabilities). The core
-     * tier's {@link io.github.jemmix.tdfa.core.CompiledRegex core.CompiledRegex}
+     * tier's {@link io.github.jemmix.tdfa.core.compile.CompiledRegex core.CompiledRegex}
      * is find-only in the same sense, by construction.
      */
     int FIND_ONLY = 64;
@@ -157,7 +157,7 @@ public interface Pattern extends Serializable {
 
     /**
      * Compile with explicit flags, engine factory, and a
-     * {@link io.github.jemmix.tdfa.unicode.UnicodeDataProvider UnicodeDataProvider}
+     * {@link io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider UnicodeDataProvider}
      * for resolving {@code \p{...}} / {@code \P{...}} property classes — e.g. a
      * pinned-Unicode-version provider for reproducible matching across JVMs.
      */

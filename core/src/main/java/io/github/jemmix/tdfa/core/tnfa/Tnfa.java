@@ -1,0 +1,805 @@
+package io.github.jemmix.tdfa.core.tnfa;
+
+import io.github.jemmix.tdfa.core.ast.Ast;
+import io.github.jemmix.tdfa.core.ast.CharClass;
+import io.github.jemmix.tdfa.core.ast.FixedTags;
+import io.github.jemmix.tdfa.core.budget.BudgetWeights;
+import io.github.jemmix.tdfa.core.budget.Budgets;
+import io.github.jemmix.tdfa.core.budget.FrameBudget;
+import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.budget.WorkMeter;
+import io.github.jemmix.tdfa.core.parser.ParseResult;
+import io.github.jemmix.tdfa.core.parser.Parser;
+import io.github.jemmix.tdfa.core.report.CompileObserver;
+import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
+
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.BitSet;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Thompson-style NFA with tagged epsilon transitions.
+ *
+ * Transitions come in two flavors:
+ *  - symbol transitions: (from, to, CharClass)
+ *  - epsilon transitions: (from, to, priority, tag, emptyMask) where:
+ *      tag = 0 (none), +t (set tag t to current pos), -t (clear tag t)
+ *      emptyMask = bit mask of zero-width assertions that gate this ε-edge
+ *
+ * Lower priority = preferred (leftmost-greedy ordering).
+ *
+ * Assertion bits in emptyMask:
+ *   BEGIN_TEXT        = 1   ( ^  or  \A )
+ *   END_TEXT          = 2   ( $  or  \z )
+ *   WORD_BOUNDARY     = 4   ( \b )
+ *   NO_WORD_BOUNDARY  = 8   ( \B )
+ *
+ * Based on paper Algorithm 2 (TNFA construction), simplified: ntags on alternation
+ * paths is included; repetition is handled structurally.
+ *
+ * Construction is iterative (re2j's Compiler is too): an explicit
+ * {@link BuildFrame} worklist — one frame per AST node in progress — drives
+ * the minting of states and edges. The minting ORDER is part of the
+ * contract (pre-body fresh() for repeats, concat children right-to-left,
+ * alt branches left-to-right followed by their ntag chains), because it
+ * fixes state numbering and thus the built NFA bit-for-bit. Nesting depth
+ * (and the multiplicative {n,m} desugaring depth) costs heap, charged to
+ * the transient compile RAM budget ({@link FrameBudget}), never JVM stack.
+ */
+public final class Tnfa {
+    public static final int NO_TAG = 0;
+
+    public final int stateCount;
+    public final int[] epsFrom, epsTo, epsPri, epsTag, epsEmptyMask;
+    public final int[] symFrom, symTo;
+    public final CharClass[] symClass;
+    public final int start, accept;
+    public final int tagCount;
+    public final int groupCount;
+    public final boolean multiline;
+    public final boolean unicodeWordBoundary;
+    public final int[] wordRanges;
+    public final Map<String, Integer> namedGroups;
+    /**
+     * Fixed-tag annotations per tag id (1-based; index 0 unused). {@code fixedBase[t] != 0}
+     * means tag {@code t} was omitted from the NFA and its match-time value should be
+     * reconstructed as {@code tag[fixedBase[t]] - fixedOffset[t]} (or NIL if the base is NIL).
+     * Built by {@link io.github.jemmix.tdfa.core.ast.FixedTags} (BT22 §6.4).
+     */
+    public final int[] fixedBase;
+
+    public final int[] fixedOffset;
+
+    // Zero-width assertion bits. BEGIN_TEXT/END_TEXT are LINE boundaries
+    // (position 0 / end-of-input, plus after/before \n — unconditionally, the
+    // (?m) flavor lives in which bit each ^/$ edge requires); ABS_BEGIN/ABS_END
+    // are absolute (position 0 / end-of-input only).
+    public static final int BEGIN_TEXT = 1;
+    public static final int END_TEXT = 2;
+    public static final int WORD_BOUNDARY = 4;
+    public static final int NO_WORD_BOUNDARY = 8;
+    public static final int ABS_BEGIN = 16;
+    public static final int ABS_END = 32;
+
+    public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
+        int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
+        boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
+        int[] fixedBase, int[] fixedOffset) {
+        this.stateCount = stateCount;
+        this.epsFrom = epsFrom;
+        this.epsTo = epsTo;
+        this.epsPri = epsPri;
+        this.epsTag = epsTag;
+        this.epsEmptyMask = epsEmptyMask;
+        this.symFrom = symFrom;
+        this.symTo = symTo;
+        this.symClass = symClass;
+        this.start = start;
+        this.accept = accept;
+        this.tagCount = tagCount;
+        this.groupCount = groupCount;
+        this.multiline = multiline;
+        this.unicodeWordBoundary = unicodeWordBoundary;
+        this.wordRanges = wordRanges;
+        this.namedGroups = namedGroups;
+        this.fixedBase = fixedBase;
+        this.fixedOffset = fixedOffset;
+    }
+
+    // ====== Builder / construction ======
+
+    public static Tnfa compile(String pattern) {
+        return compile(pattern, false, false, UnicodeProviders.get());
+    }
+
+    public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
+        UnicodeDataProvider provider) {
+        return compile(pattern, disableUnicodeGroups, anchorBoth, provider, null);
+    }
+
+    public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
+        UnicodeDataProvider provider, CompileObserver observer) {
+        return compile(pattern, disableUnicodeGroups, anchorBoth, provider, observer,
+            new WorkMeter(Budgets.compileComputeTicks()));
+    }
+
+    /**
+     * Ledger variant: parse + TNFA build run on the CALLER's work meter
+     * (typically forked from the compile's root ledger — see {@code
+     * WorkMeter#fork}), so front-end work is debited against the same CPU
+     * budget as every determinization attempt of the same compile.
+     */
+    public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
+        UnicodeDataProvider provider, CompileObserver observer, WorkMeter meter) {
+        long t0 = System.nanoTime();
+        // Front-end budget: ONE work meter (CPU, ticks) spans parse + TNFA
+        // build so the pre-determinization surface is bounded too — the
+        // parser's O(universe) fold-range scan ticks it, and the Builder's
+        // state/edge creation ticks it AND accumulates weighted bytes
+        // against the compile RAM budget (nested counted repeats can OOM
+        // the JVM here before any determinization cap fires — e.g.
+        // ((a{300}){300}){300} is rejected as a clean "pattern too large").
+        // Determinization constructs its own meter per attempt (TdfaCompiler).
+        ParseResult parsed = Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth, provider, meter);
+        if (observer != null) {
+            observer.stage(CompileObserver.Stage.PARSE, System.nanoTime() - t0, parsed.tagCount());
+        }
+        long t1 = System.nanoTime();
+        Ast ast = parsed.ast();
+        FixedTags.apply(ast);
+        int tagCount = parsed.tagCount();
+        int[] fixedBase = new int[tagCount + 1];
+        int[] fixedOffset = new int[tagCount + 1];
+        collectFixedAnnotations(ast, fixedBase, fixedOffset);
+        if (Boolean.getBoolean("tdfa.debug")) {
+            int n = 0;
+            for (int t = 1; t <= tagCount; t++) {
+                if (fixedBase[t] != 0) {
+                    n++;
+                }
+            }
+            if (n > 0) {
+                System.err.println("[tdfa] fixed-tags: dropped " + n + "/" + tagCount);
+            }
+        }
+        Builder b = new Builder(meter);
+        int accept = b.fresh();
+        int start = b.build(ast, accept);
+        Tnfa nfa = b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(), parsed.unicodeShorthand(),
+            parsed.unicodeWordRanges(), parsed.namedGroups(), fixedBase, fixedOffset);
+        if (observer != null) {
+            observer.stage(CompileObserver.Stage.TNFA, System.nanoTime() - t1, nfa.stateCount);
+        }
+        return nfa;
+    }
+
+    /** Collect {@link Ast.Tag#fixedOn} / {@link Ast.Tag#fixedOffset} annotations into
+     *  1-indexed arrays for forwarding to the TDFA compiler. Iterative
+     *  worklist — the front-end puts no bound on AST depth, so no walk here
+     *  may consume program stack proportional to it. */
+    private static void collectFixedAnnotations(Ast root, int[] fixedBase, int[] fixedOffset) {
+        ArrayDeque<Ast> work = new ArrayDeque<>();
+        work.push(root);
+        while (!work.isEmpty()) {
+            Ast e = work.pop();
+            if (e instanceof Ast.Tag) {
+                Ast.Tag t = (Ast.Tag) e;
+                if (t.fixedOn != 0) {
+                    fixedBase[t.tag] = t.fixedOn;
+                    fixedOffset[t.tag] = t.fixedOffset;
+                }
+            } else if (e instanceof Ast.Concat) {
+                work.addAll(((Ast.Concat) e).children);
+            } else if (e instanceof Ast.Alt) {
+                work.addAll(((Ast.Alt) e).children);
+            } else if (e instanceof Ast.Repeat) {
+                work.push(((Ast.Repeat) e).body);
+            }
+        }
+    }
+
+    private static final class Builder {
+        final List<int[]> eps = new ArrayList<>(); // [from, to, pri, tag, emptyMask]
+        final List<int[]> syms = new ArrayList<>(); // [from, to]
+        final List<CharClass> symClasses = new ArrayList<>();
+        int counter = 0;
+        /** Shared with the parser (see Tnfa.compile): one CPU budget for
+         *  the whole front-end; every builder action ticks it. */
+        final WorkMeter meter;
+        /** Weighted bytes of everything minted so far (states + edges,
+         *  through BudgetWeights) against the compile RAM budget. */
+        long weightedBytes = 0;
+
+        final long memBudget;
+
+        Builder(WorkMeter meter) {
+            this.meter = meter;
+            this.memBudget = Budgets.compileMemoryBytes();
+        }
+
+        private void charge(int bytes) {
+            if ((weightedBytes += bytes) > memBudget) {
+                throw new PatternTooLargeException(
+                    "pattern too large: TNFA construction exceeds the compile memory budget (" + weightedBytes
+                        + " weighted bytes for " + counter + " states — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
+            }
+        }
+
+        int fresh() {
+            meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(BudgetWeights.TNFA_STATE_BYTES);
+            return counter++;
+        }
+
+        void eps(int from, int to, int pri) {
+            meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(BudgetWeights.TNFA_EPS_EDGE_BYTES);
+            eps.add(new int[]{from, to, pri, NO_TAG, 0});
+        }
+
+        void taggedEps(int from, int to, int pri, int tag) {
+            meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(BudgetWeights.TNFA_EPS_EDGE_BYTES);
+            eps.add(new int[]{from, to, pri, tag, 0});
+        }
+
+        void anchorEps(int from, int to, int pri, int emptyMask) {
+            meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(BudgetWeights.TNFA_EPS_EDGE_BYTES);
+            eps.add(new int[]{from, to, pri, NO_TAG, emptyMask});
+        }
+
+        void sym(int from, int to, CharClass cc) {
+            meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(BudgetWeights.TNFA_SYM_EDGE_BYTES);
+            syms.add(new int[]{from, to});
+            symClasses.add(cc);
+        }
+
+        /** One node in progress on the explicit build stack. DISPATCH frames
+         *  carry a node to enter; the other kinds are continuations that
+         *  resume when the child they spawned completes. */
+        private static final class BuildFrame {
+            static final int DISPATCH = 0; // entering a node
+            static final int CONCAT = 1; // threading children right-to-left
+            static final int ALT = 2; // branches left-to-right, ntag prefixes
+            static final int QUEST = 3; // e? awaiting body entry
+            static final int STAR_NULLABLE = 4; // e* with nullable body: (e+)? shape
+            static final int STAR_PLAIN = 5; // e* with non-nullable body: hub loop
+            static final int PLUS = 6; // e+
+
+            int kind = DISPATCH;
+            Ast node; // DISPATCH/CONCAT/ALT: the node; repeat kinds: the body
+            int entryTo;
+            // repeat priorities (greedy/lazy) and the state freshened pre-body
+            int bodyPri, skipPri;
+            int s; // QUEST: s; STAR_NULLABLE: hub; STAR_PLAIN: s0; PLUS: loopBack
+            int hub; // STAR_PLAIN: the loop hub
+            // CONCAT scratch: children, next index (descending), threaded entry
+            List<Ast> ch;
+            int idx;
+            int cur;
+            // ALT scratch
+            int newStart;
+            List<BitSet> branchGroups;
+            BitSet union;
+        }
+
+        /** Returns entry state of sub-NFA that flows into {@code entryTo}.
+         *  Explicit-frame worklist: a DISPATCH frame enters a node; each
+         *  container/repeat converts to a continuation frame that resumes
+         *  when the child it spawned completes. The order in which
+         *  fresh()/eps()/sym()/anchorEps()/taggedEps() fire is fixed by the
+         *  per-shape dispatch and resume steps below and is part of the
+         *  construction contract (it determines state numbering).
+         *  Continuation frames are charged to the transient compile RAM
+         *  budget while they live on the stack. */
+        int build(Ast root, int entryToRoot) {
+            FrameBudget frames = FrameBudget.create();
+            ArrayDeque<BuildFrame> stack = new ArrayDeque<>();
+            int result = 0;
+            pushNode(stack, root, entryToRoot);
+            while (!stack.isEmpty()) {
+                BuildFrame f = stack.pop();
+                if (f.kind == BuildFrame.DISPATCH) {
+                    Ast e = f.node;
+                    int leaf = buildLeaf(e, f.entryTo);
+                    if (leaf >= 0) {
+                        result = leaf;
+                        continue;
+                    }
+                    if (e instanceof Ast.Concat) {
+                        List<Ast> ch = ((Ast.Concat) e).children;
+                        if (ch.isEmpty()) {
+                            result = f.entryTo;
+                            continue;
+                        }
+                        f.kind = BuildFrame.CONCAT;
+                        f.ch = ch;
+                        f.idx = ch.size() - 1;
+                        f.cur = f.entryTo;
+                        frames.push();
+                        stack.push(f);
+                        pushNode(stack, ch.get(f.idx), f.cur);
+                        continue;
+                    }
+                    if (e instanceof Ast.Alt) {
+                        // Build all alternatives flowing into entryTo with descending priority.
+                        // For POSIX (BT19 §7.3): prepend ntag (negative-tag) sub-automata to each
+                        // branch for groups that exist in OTHER branches but not this one. This
+                        // guarantees the U-tree prefix property and encodes "no match" structurally
+                        // so POSIX comparison can pick the correct alternative.
+                        List<Ast> ch = ((Ast.Alt) e).children;
+                        int newStart = fresh();
+                        // Compute groups per branch and union.
+                        List<BitSet> branchGroups = new ArrayList<>();
+                        BitSet union = new BitSet();
+                        for (Ast child : ch) {
+                            BitSet g = new BitSet();
+                            collectGroups(child, g);
+                            branchGroups.add(g);
+                            union.or(g);
+                        }
+                        if (ch.isEmpty()) {
+                            result = newStart;
+                            continue;
+                        }
+                        f.kind = BuildFrame.ALT;
+                        f.ch = ch;
+                        f.idx = 0;
+                        f.newStart = newStart;
+                        f.branchGroups = branchGroups;
+                        f.union = union;
+                        frames.push();
+                        stack.push(f);
+                        pushNode(stack, ch.get(0), f.entryTo);
+                        continue;
+                    }
+                    // Ast.Repeat — dispatch by shape (see the per-kind resume steps).
+                    Ast.Repeat r = (Ast.Repeat) e;
+                    Ast body = r.body;
+                    int min = r.min, max = r.max;
+                    // Greedy: prefer BODY/REPEAT (pri 1) over SKIP/EXIT (pri 2).
+                    // Lazy:   prefer SKIP/EXIT   (pri 1) over BODY/REPEAT (pri 2).
+                    boolean lazy = !r.greedy;
+                    int bodyPri = lazy ? 2 : 1;
+                    int skipPri = lazy ? 1 : 2;
+                    if (min == 0 && max == 1) {
+                        // e? : newStart -(pri bodyPri)-> body -> entryTo ; newStart -(pri skipPri)-> [ntags] -> entryTo
+                        f.kind = BuildFrame.QUEST;
+                        f.node = body;
+                        f.bodyPri = bodyPri;
+                        f.skipPri = skipPri;
+                        f.s = fresh();
+                        frames.push();
+                        stack.push(f);
+                        pushNode(stack, body, f.entryTo);
+                        continue;
+                    }
+                    if (min == 0 && max == Integer.MAX_VALUE) {
+                        // e* : loop. ntags only on the INITIAL skip (0 iterations); subsequent
+                        // exits from the loop hub do NOT re-emit ntags because the group already
+                        // matched in a prior iteration (BT19 §7.3 — ntag represents no-match).
+                        //
+                        // Topology mirrors re2j's Compiler.star(), which has two shapes:
+                        //
+                        // (a) NON-nullable body — one shared hub that both the body's exit
+                        //     and the initial entry pass through, deciding iterate-vs-exit
+                        //     (re2j Prog loop()). A SPLIT entry/loop variant would let an
+                        //     OUTER repeat's re-entry path (which crosses the group's
+                        //     open-tag edge and arrives at this star's ENTRY node) find it
+                        //     unvisited and steal the ε-closure slot, so the surviving
+                        //     continuation would carry a RE-OPENED group tag — reporting the
+                        //     last iteration's span for shapes like (a*?)*? on "aaa"
+                        //     (g1=[2,3) where re2j reports [0,3)). The shared hub kills the
+                        //     outer re-entry at an already-visited node — re2j's observable
+                        //     priority — and the plain continuation wins.
+                        //
+                        // (b) NULLABLE body — (f+)? (re2j: "When f1 can match an empty
+                        //     string, f1* must be implemented as (f1+)? to get the priority
+                        //     match order correct"): a quest whose body-side enters the
+                        //     plus's body DIRECTLY, with the iterate/exit hub only at the
+                        //     body's exit. This keeps the enter-body-ε-through-exit accept
+                        //     at the TOP of the priority order with the group's close tag
+                        //     traversed (re2j (a*?)* on "aaa" = [0,0) g1=[0,0)), which a
+                        //     plain hub loop cannot: the ε-pass collapses into the hub
+                        //     dedup and the surviving accept loses to the body's rune.
+                        if (isNullable(body)) {
+                            f.kind = BuildFrame.STAR_NULLABLE;
+                            f.node = body;
+                            f.bodyPri = bodyPri;
+                            f.skipPri = skipPri;
+                            f.s = fresh(); // plus loop hub (at body exit)
+                            frames.push();
+                            stack.push(f);
+                            pushNode(stack, body, f.s);
+                        } else {
+                            f.kind = BuildFrame.STAR_PLAIN;
+                            f.node = body;
+                            f.bodyPri = bodyPri;
+                            f.skipPri = skipPri;
+                            f.s = fresh(); // pre-loop decision: initial skip vs enter
+                            f.hub = fresh(); // loop hub: iterate vs exit
+                            frames.push();
+                            stack.push(f);
+                            pushNode(stack, body, f.hub);
+                        }
+                        continue;
+                    }
+                    if (min == 1 && max == Integer.MAX_VALUE) {
+                        // e+ : body followed by e* (the e* uses the lazy/greedy preference)
+                        f.kind = BuildFrame.PLUS;
+                        f.node = body;
+                        f.bodyPri = bodyPri;
+                        f.skipPri = skipPri;
+                        f.s = fresh();
+                        frames.push();
+                        stack.push(f);
+                        pushNode(stack, body, f.s);
+                        continue;
+                    }
+                    // Bounded repetitions {n}, {n,}, {n,m} — desugar via concatenation + tail.
+                    // (We desugar rather than implementing the paper's bounded-rep construction literally;
+                    //  tags are duplicated, which is acceptable for our subset.)
+                    List<Ast> mandatory = new ArrayList<>();
+                    for (int i = 0; i < min; i++) {
+                        mandatory.add(body);
+                    }
+                    Ast mandatoryAst = mandatory.isEmpty() ? new Ast.Empty()
+                        : (mandatory.size() == 1 ? mandatory.get(0) : new Ast.Concat(mandatory));
+                    Ast desugared = mandatoryAst;
+                    // {0,0} falls through as bare Empty: neither the body's tags nor
+                    // its ntags are emitted. Sound because a group's tags are
+                    // syntactically unique (allocated at its '(' alone), so no other
+                    // construction can ever write them — there is no stale value to
+                    // kill, and the group simply reports NIL. The asymmetry with the
+                    // quest case (which meticulously emits ntags) is deliberate: there
+                    // is nothing below an empty body to poison.
+                    if (max == Integer.MAX_VALUE) {
+                        // {n,} = (n-1) copies followed by body+  — NOT body*.
+                        // re2j's Simplify general case ("x{4,} is xxxx+"): a PLUS tail
+                        // guarantees one real iteration, and a nullable body's empty
+                        // RE-iteration is cut by the pike pc-dedup (the plus entry pc
+                        // is revisited), so the last NON-EMPTY capture survives —
+                        // (a?){2,} on "aa" reports g1="a". A STAR tail instead lets
+                        // the greedy first-iteration-empty write an empty capture
+                        // (g1=""), diverging from re2j.
+                        // min >= 2 here ({0,} star and {1,} plus have their own cases).
+                        List<Ast> copies = new ArrayList<>();
+                        for (int i = 0; i < min - 1; i++) {
+                            copies.add(body);
+                        }
+                        Ast copiesAst = copies.isEmpty() ? new Ast.Empty()
+                            : (copies.size() == 1 ? copies.get(0) : new Ast.Concat(copies));
+                        desugared = new Ast.Concat(Collections.unmodifiableList(
+                            Arrays.asList(copiesAst, new Ast.Repeat(body, 1, Integer.MAX_VALUE, r.greedy))));
+                    } else if (max > min) {
+                        // {n,m} = mandatory + RIGHT-NESTED optional suffix (x(x(x)?)?)?,
+                        // exactly re2j Simplify's shape ("x{2,5} = xx(x(x(x)?)?)?").
+                        // A FLAT tail (B?B?B?) is match-equivalent but resolves
+                        // the priority tie "enter the next optional copy" vs "extend the
+                        // current copy's inner lazy body" the OPPOSITE way: nested-lazy
+                        // captures then report the extended span while re2j/JDK report
+                        // the next copy's (e.g. ((a{1,2}?c?){0,5}?)d on "aad": re2j/JDK
+                        // report g2="a" — two outer iterations — a flat tail reports
+                        // g2="aa").
+                        Ast suffix = new Ast.Repeat(body, 0, 1, r.greedy);
+                        for (int i = min + 1; i < max; i++) {
+                            suffix = new Ast.Repeat(
+                                new Ast.Concat(Collections.unmodifiableList(Arrays.asList(body, suffix))), 0, 1,
+                                r.greedy);
+                        }
+                        desugared = new Ast.Concat(Collections.unmodifiableList(Arrays.asList(mandatoryAst, suffix)));
+                    }
+                    // build the desugared form directly into entryTo — pass-through,
+                    // no continuation frame for the Repeat itself.
+                    pushNode(stack, desugared, f.entryTo);
+                    continue;
+                }
+                if (f.kind == BuildFrame.CONCAT) {
+                    // build right-to-left: the completed child's entry becomes the
+                    // next (leftward) child's exit
+                    f.cur = result;
+                    f.idx--;
+                    if (f.idx >= 0) {
+                        stack.push(f);
+                        pushNode(stack, f.ch.get(f.idx), f.cur);
+                    } else {
+                        result = f.cur;
+                        frames.pop();
+                    }
+                    continue;
+                }
+                if (f.kind == BuildFrame.ALT) {
+                    int altStart = result;
+                    // Prepend ntags for missing groups (in union but not in this branch).
+                    BitSet missing = (BitSet) f.union.clone();
+                    missing.andNot(f.branchGroups.get(f.idx));
+                    for (int g = missing.length(); (g = missing.previousSetBit(g - 1)) >= 0;) {
+                        int ntagState = fresh();
+                        int closeTag = 2 * g; // close tag of group g (positive number)
+                        taggedEps(ntagState, altStart, 1, -closeTag); // negative = nil
+                        altStart = ntagState;
+                    }
+                    eps(f.newStart, altStart, f.idx + 1);
+                    f.idx++;
+                    if (f.idx < f.ch.size()) {
+                        stack.push(f);
+                        pushNode(stack, f.ch.get(f.idx), f.entryTo);
+                    } else {
+                        result = f.newStart;
+                        frames.pop();
+                    }
+                    continue;
+                }
+                if (f.kind == BuildFrame.QUEST) {
+                    int bodyStart = result;
+                    eps(f.s, bodyStart, f.bodyPri);
+                    // Initial skip path: prepend ntags for body groups (0 iterations ⇒ no match).
+                    int skipTarget = ntagChain(f.node, f.entryTo);
+                    eps(f.s, skipTarget, f.skipPri);
+                    result = f.s;
+                    frames.pop();
+                    continue;
+                }
+                if (f.kind == BuildFrame.STAR_NULLABLE) {
+                    int bodyStart = result;
+                    int hub = f.s;
+                    eps(hub, bodyStart, f.bodyPri); // iterate (no ntag; group already matched)
+                    eps(hub, f.entryTo, f.skipPri); // or exit (no ntag)
+                    int s0 = fresh(); // quest: skip vs enter the plus
+                    eps(s0, bodyStart, f.bodyPri);
+                    int skipFromStart = ntagChain(f.node, f.entryTo);
+                    eps(s0, skipFromStart, f.skipPri);
+                    result = s0;
+                    frames.pop();
+                    continue;
+                }
+                if (f.kind == BuildFrame.STAR_PLAIN) {
+                    int bodyStart = result;
+                    eps(f.s, f.hub, f.bodyPri); // enter the loop (greedy) / skip (lazy)
+                    int skipFromStart = ntagChain(f.node, f.entryTo);
+                    eps(f.s, skipFromStart, f.skipPri);
+                    eps(f.hub, bodyStart, f.bodyPri); // iterate (no ntag; group already matched)
+                    eps(f.hub, f.entryTo, f.skipPri); // or exit
+                    result = f.s;
+                    frames.pop();
+                    continue;
+                }
+                if (f.kind == BuildFrame.PLUS) {
+                    int bodyStart = result;
+                    eps(f.s, bodyStart, f.bodyPri);
+                    eps(f.s, f.entryTo, f.skipPri);
+                    result = bodyStart;
+                    frames.pop();
+                    continue;
+                }
+                throw new IllegalStateException("unknown build frame kind: " + f.kind);
+            }
+            return result;
+        }
+
+        /** Leaf nodes (nothing to build below them): emit their state/edge and
+         *  return the entry, or -1 when {@code e} is a container
+         *  (Concat/Alt/Repeat) the caller must frame. */
+        private int buildLeaf(Ast e, int entryTo) {
+            if (e instanceof Ast.Empty) {
+                int s = fresh();
+                eps(s, entryTo, 1);
+                return s;
+            }
+            if (e instanceof Ast.Symbol) {
+                int s = fresh();
+                sym(s, entryTo, new CharClass(new int[]{((Ast.Symbol) e).c, ((Ast.Symbol) e).c}, false));
+                return s;
+            }
+            if (e instanceof CharClass) {
+                int s = fresh();
+                sym(s, entryTo, (CharClass) e);
+                return s;
+            }
+            if (e instanceof Ast.Tag) {
+                Ast.Tag t = (Ast.Tag) e;
+                int s = fresh();
+                if (t.fixedOn != 0) {
+                    // Fixed tag: omit from NFA. Position reconstructed at match time
+                    // from tag[fixedOn] - fixedOffset (see MatchResult.reconstructFixed).
+                    eps(s, entryTo, 1);
+                } else {
+                    taggedEps(s, entryTo, 1, t.tag);
+                }
+                return s;
+            }
+            Ast.StartAnchor sa; // ^ or \A
+            if (e instanceof Ast.StartAnchor && (sa = (Ast.StartAnchor) e) != null) {
+                int s = fresh();
+                // Anchor flavor is per-edge (parse-time (?m), group-scoped flags
+                // included): m-^ needs BEGIN_TEXT (line begin, always \n-aware);
+                // plain ^ and \A are position-0 only (ABS_BEGIN).
+                anchorEps(s, entryTo, 1, sa.absolute || !sa.multiline ? ABS_BEGIN : BEGIN_TEXT);
+                return s;
+            }
+            Ast.EndAnchor ea; // $ or \z
+            if (e instanceof Ast.EndAnchor && (ea = (Ast.EndAnchor) e) != null) {
+                int s = fresh();
+                // m-$ needs END_TEXT (line end, always \n-aware); plain $ and \z
+                // are end-of-input only (ABS_END).
+                anchorEps(s, entryTo, 1, ea.absolute || !ea.multiline ? ABS_END : END_TEXT);
+                return s;
+            }
+            if (e instanceof Ast.WordBoundary) { // \b
+                int s = fresh();
+                anchorEps(s, entryTo, 1, WORD_BOUNDARY);
+                return s;
+            }
+            if (e instanceof Ast.NoWordBoundary) { // \B
+                int s = fresh();
+                anchorEps(s, entryTo, 1, NO_WORD_BOUNDARY);
+                return s;
+            }
+            return -1;
+        }
+
+        /** Push a node to enter (leaf or container — decided at dispatch). */
+        private static void pushNode(ArrayDeque<BuildFrame> stack, Ast e, int entryTo) {
+            BuildFrame f = new BuildFrame();
+            f.node = e;
+            f.entryTo = entryTo;
+            stack.push(f);
+        }
+
+        /** Prepend ntag (negative-tag) states for every group in {@code body}
+         *  ahead of {@code target} — descending group number, so a group's
+         *  no-match marker sits closer to the body it belongs to — and
+         *  return the new chain head. */
+        private int ntagChain(Ast body, int target) {
+            BitSet bodyGroups = new BitSet();
+            collectGroups(body, bodyGroups);
+            for (int g = bodyGroups.length(); (g = bodyGroups.previousSetBit(g - 1)) >= 0;) {
+                int ntagState = fresh();
+                taggedEps(ntagState, target, 1, -(2 * g));
+                target = ntagState;
+            }
+            return target;
+        }
+
+        /** Collect group numbers (1-based) used anywhere in the AST subtree.
+         *  Iterative worklist — visitation order is irrelevant (set union). */
+        private static void collectGroups(Ast root, BitSet out) {
+            ArrayDeque<Ast> work = new ArrayDeque<>();
+            work.push(root);
+            while (!work.isEmpty()) {
+                Ast e = work.pop();
+                if (e instanceof Ast.Tag) {
+                    Ast.Tag t = (Ast.Tag) e;
+                    int g = (t.tag + 1) / 2;
+                    out.set(g);
+                } else if (e instanceof Ast.Concat) {
+                    work.addAll(((Ast.Concat) e).children);
+                } else if (e instanceof Ast.Alt) {
+                    work.addAll(((Ast.Alt) e).children);
+                } else if (e instanceof Ast.Repeat) {
+                    work.push(((Ast.Repeat) e).body);
+                }
+            }
+        }
+
+        /** One node in the iterative nullable fold. */
+        private static final class NFrame {
+            Ast node;
+            boolean resumed;
+            List<Ast> ch;
+            int idx;
+        }
+
+        /**
+         * Whether {@code e} can match the empty string (the syntactic analogue
+         * of re2j's {@code Frag.nullable}, which drives its
+         * {@code x* → (x+)?} star compilation for nullable bodies). Anchors and
+         * word boundaries are zero-width, hence nullable; symbol-bearing nodes
+         *  are not. Iterative fold: concat is an AND over children,
+         *  alternation an OR, and a repeat with {@code min > 0} passes its
+         *  body's answer through ({@code min == 0} is nullable without
+         *  visiting the body); the AND/OR folds short-circuit, as the
+         *  semantics permit.
+         */
+        private static boolean isNullable(Ast root) {
+            ArrayDeque<NFrame> stack = new ArrayDeque<>();
+            boolean result = true;
+            NFrame f0 = new NFrame();
+            f0.node = root;
+            stack.push(f0);
+            while (!stack.isEmpty()) {
+                NFrame f = stack.pop();
+                Ast e = f.node;
+                if (!f.resumed) {
+                    if (e instanceof Ast.Symbol || e instanceof CharClass) {
+                        result = false;
+                        continue;
+                    }
+                    if (e instanceof Ast.Repeat) {
+                        if (((Ast.Repeat) e).min == 0) {
+                            result = true;
+                            continue;
+                        }
+                        f.resumed = true; // pass-through: result = body's
+                        stack.push(f);
+                        NFrame c = new NFrame();
+                        c.node = ((Ast.Repeat) e).body;
+                        stack.push(c);
+                        continue;
+                    }
+                    if (e instanceof Ast.Concat || e instanceof Ast.Alt) {
+                        boolean isConcat = e instanceof Ast.Concat;
+                        f.ch = isConcat ? ((Ast.Concat) e).children : ((Ast.Alt) e).children;
+                        f.idx = 0;
+                        f.resumed = true;
+                        if (f.ch.isEmpty()) {
+                            result = isConcat;
+                            continue;
+                        }
+                        stack.push(f);
+                        NFrame c = new NFrame();
+                        c.node = f.ch.get(0);
+                        stack.push(c);
+                        continue;
+                    }
+                    result = true; // Empty, Tag, anchors, word boundaries
+                    continue;
+                }
+                if (e instanceof Ast.Concat) {
+                    if (!result) {
+                        continue;
+                    } // AND: one non-nullable child settles it
+                    f.idx++;
+                    if (f.idx < f.ch.size()) {
+                        stack.push(f);
+                        NFrame c = new NFrame();
+                        c.node = f.ch.get(f.idx);
+                        stack.push(c);
+                    }
+                    continue; // result stays true (child was nullable)
+                }
+                if (e instanceof Ast.Alt) {
+                    if (result) {
+                        continue;
+                    } // OR: one nullable child settles it
+                    f.idx++;
+                    if (f.idx < f.ch.size()) {
+                        stack.push(f);
+                        NFrame c = new NFrame();
+                        c.node = f.ch.get(f.idx);
+                        stack.push(c);
+                    }
+                    // else: result stays false (child was non-nullable)
+                }
+                // Repeat pass-through: result already holds the body's answer
+            }
+            return result;
+        }
+
+        Tnfa build(int start, int accept, int tagCount, int groupCount, boolean multiline, boolean unicodeWordBoundary,
+            int[] wordRanges, Map<String, Integer> namedGroups, int[] fixedBase, int[] fixedOffset) {
+            int n = eps.size();
+            int[] eFrom = new int[n], eTo = new int[n], ePri = new int[n], eTag = new int[n], eEmpty = new int[n];
+            for (int i = 0; i < n; i++) {
+                int[] e = eps.get(i);
+                eFrom[i] = e[0];
+                eTo[i] = e[1];
+                ePri[i] = e[2];
+                eTag[i] = e[3];
+                eEmpty[i] = e[4];
+            }
+            int[] sFrom = syms.stream().mapToInt(a -> a[0]).toArray();
+            int[] sTo = syms.stream().mapToInt(a -> a[1]).toArray();
+            CharClass[] sClass = symClasses.toArray(new CharClass[0]);
+            return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, sFrom, sTo, sClass, start, accept, tagCount,
+                groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset);
+        }
+    }
+}

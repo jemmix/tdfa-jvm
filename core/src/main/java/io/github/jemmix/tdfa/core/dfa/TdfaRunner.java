@@ -1,0 +1,2927 @@
+package io.github.jemmix.tdfa.core.dfa;
+
+import io.github.jemmix.tdfa.core.ast.Alphabet;
+import io.github.jemmix.tdfa.core.budget.Budgets;
+import io.github.jemmix.tdfa.core.emit.EmittedSurface;
+import io.github.jemmix.tdfa.core.engine.MatchResult;
+import io.github.jemmix.tdfa.core.engine.MatchScratch;
+import io.github.jemmix.tdfa.core.engine.RegexEngine;
+import io.github.jemmix.tdfa.core.engine.WholeEngine;
+import io.github.jemmix.tdfa.core.tnfa.Tnfa;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Executes a compiled {@link Tdfa} against an input char sequence using the flat packed arrays.
+ * <p>
+ * Zero-width assertions ( ^ $ \A \z \b \B ) are encoded per-state (entryMask, acceptMask) and
+ * per-transition (requiredMask in {@link Tdfa#ranges}). At every position we compute the set of
+ * flags that hold (BEGIN_TEXT, END_TEXT, WORD_BOUNDARY, NO_WORD_BOUNDARY) and consult these
+ * masks:
+ * - on entering a state, {@code stateEntryMask[state]} must be a subset of positionFlags;
+ * - on taking a transition, the range's {@code requiredMask} must be a subset of positionFlags;
+ * - on declaring a match, {@code stateAcceptMask[state]} must be a subset of positionFlags.
+ * <p>
+ * Tier A optimizations + JIT-friendly shape (post-disassembly analysis):
+ * - Single load per char for accept+dispatch (stateMeta packs all three)
+ * - Skip int[] regs alloc when registerCount == 0
+ * - Lazy accept snapshot
+ * - String specialization
+ */
+public final class TdfaRunner implements RegexEngine, WholeEngine {
+    /**
+     * After this many failed extract walks the candidate loop switches to a
+     * boolean pre-filter per candidate (cheaper to reject, same answer).
+     * Single source of truth: the ASM-emitted candidate loop bakes the same
+     * value into its compare — read this constant at emit time
+     * ({@code TdfaAsmBackend}), never hard-code it.
+     */
+    @EmittedSurface
+    public static final int ADAPTIVE_PREFILTER_AFTER = 3;
+    /**
+     * Failed-walk budget for the literal-prefix candidate scan before it
+     * falls back to the origin-sim/trigger ladder (complete search): bounds
+     * dense-hit adversarial shapes (needle {@code a} on {@code aaaa…} with a
+     * long tail) to a constant number of walks, keeping the ladder linear.
+     * Real prefix queries (ip=-shaped) walk a handful of hits per call.
+     * Single source of truth: the ASM-emitted prefix loop bakes the same
+     * value at emit time — read this constant, never hard-code it.
+     */
+    @EmittedSurface
+    public static final int PREFIX_WALK_BUDGET = 16;
+    /** Literal-prefix scan outcomes: a walk hit; no further hits (no match
+     *  can exist); or the walk budget spent (fall to the next ladder — a
+     *  complete search). */
+    private static final int PREFIX_HIT = 1;
+    private static final int PREFIX_DONE = 0;
+    private static final int PREFIX_EXHAUSTED = -1;
+    /** Sentinel from {@link #prefixScanExtract}: the walk budget is spent —
+     *  keep climbing the ladder (a complete search), do not answer null. */
+    private static final MatchHolder PREFIX_BUDGET_OUT = new MatchHolder(-1, -1, null);
+    /**
+     * Budget-exceeded sentinel for {@link #multiStateLeftmostStart}.
+     */
+    public static final int LSS_BUDGET = -2;
+    /**
+     * Memoized search DFA for unanchored find(): the states of the multi-state
+     * simulation (live-set bitsets, start state re-seeded every position — the
+     * implicit {@code .*?} of unanchored search) interned into flat rows so the
+     * scan loop is ~3 array loads per char instead of a bitset simulation step.
+     *
+     * <p>Row transitions are materialized lazily as deduplicated 512-codepoint
+     * blocks covering the whole BMP ({@code blocks[bits.blockIds[c >>> 9]][c & 511]});
+     * supplementary codepoints are computed per-step without caching (rare).
+     * A block cell is either the next row id, or the kill sentinel {@code KILL}
+     * meaning "every configuration just died; the next row is the pure-seed row
+     * and the caller may advance its match-window bound past this position"
+     * (sound: nothing alive from an earlier start survives a kill).
+     *
+     * <p>Caps bound memory; past the caps the scan falls back to the
+     * unmemoized simulation (still tracking kill points, so the extract
+     * window stays bounded either way).
+     *
+     * <p><b>Soundness</b> — the same over-approximation the origin sim uses
+     * ({@link #multiStateLeftmostStart}): transition/entry masks are ignored
+     * (every matching target followed), and {@code accept} is any live state
+     * with the accept bit — so a trigger can fire without a real match (the
+     * exact extract confirms or continues), but it can never miss one.
+     */
+    static final int SDFA_KILL = -2;
+    /**
+     * Runtime walk tracing ({@code -Dtdfa.trace}). Frozen at class init
+     * ON PURPOSE: it is read in the per-character walk loop, where a
+     * volatile/property read would pollute the hot path — set it before
+     * first use. (Compile knobs, by contrast, are read once per compile;
+     * see the policy note in {@link Tdfa}.)
+     */
+    private static final boolean WTRACE = Boolean.getBoolean("tdfa.trace");
+    /**
+     * DFAs at or below this state count get 256-entry (Latin-1) lookup tables; larger stay 128.
+     */
+    private static final int LATIN1_MAX_STATES = 8192;
+    /**
+     * DFAs above this state count skip the EAGER per-state x latinLimit ASCII
+     * dispatch tables (asciiTarget + asciiRangeFlat ≈ 1 KB/state at the 128-wide
+     * tier) and use the lazy walk blocks / binary search instead. A 234 K-state
+     * DFA would otherwise retain ~228 MB of dispatch tables — more than ALL of
+     * its Tdfa tables combined; every normal post-minimize DFA (e.g. dictionary:
+     * 6.8 K states) stays far below the cap and keeps the direct-dispatch fast
+     * paths.
+     */
+    private static final int ASCII_TABLE_MAX_STATES = 16_384;
+
+    private static final ThreadLocal<ArrayList<Strategy>> TRACE_BUF = ThreadLocal.withInitial(ArrayList::new);
+    // Lazy-DFA memo caps, DERIVED per runner from the match-time RAM budget
+    // ({@link Budgets#runtimeMemoryBytes()}, -Dtdfa.budget.runtime.memory,
+    // default 16 MiB per compiled pattern) through the weight model:
+    // half the budget in rows, half in 512-codepoint blocks.
+    // Past the caps the scan degrades to the unmemoized simulation (still
+    // kill-point aware). Each runner (one per compiled Regex) keeps its own
+    // memo — N live Patterns cost at most N runtime budgets of memo RAM.
+    // The memo is shared across threads matching the same Pattern (safe:
+    // see SearchDfa — locked mutation, snapshot reads), NOT per-thread.
+    // Below SDFA_MIN_WINDOW the raw scan runs unmemoized entirely.
+    private static final int SDFA_MIN_WINDOW = 2048; // below: unmemoized raw scan
+    /**
+     * Origin-sim budget before falling back to the memoized trigger scan.
+     */
+    private static final int LSS_BUDGET_CHARS = 4096;
+    /**
+     * Inputs at or below this length use the first-char-set candidate scan
+     * (bit test per char + exact walk per candidate) instead of the
+     * multi-state simulation. Worst case is O(len²) walk steps (dense
+     * candidates, long failing walks) — 64² = 4K steps bounds it while the
+     * sim stays the better shape for haystack-scale inputs.
+     */
+    private static final int CAND_SCAN_MAX = 64;
+    /**
+     * Enabled by -Dtdfa.trace.strategy=true at startup, or at runtime via
+     * {@link #setTracing(boolean)} (the strategy-conformance test). Volatile
+     * load + never-taken branch is ~free on the hot paths.
+     */
+    private static volatile boolean TRACE = Boolean.getBoolean("tdfa.trace.strategy");
+    /** Forced-strategy hook state (fuzz cross-rung differential; see
+     * {@link #setForcedStrategy}). */
+    private static volatile boolean anyForced;
+    private static final ThreadLocal<Strategy> FORCED = new ThreadLocal<>();
+
+    final int[] stateMeta;
+    final int[] stateBase;
+    final int[] ranges;
+    final int[] ops;
+    final int startState;
+    final boolean rangesDisjoint;
+    final int[] rhp; // tdfa.entryHiPrefix — prefix-max-hi per entry
+    /**
+     * Partial-whole side table (null = none; see Tdfa.wholeRanges): the
+     * whole walk dispatches on these entries for the states in
+     * {@link #wholeBase}, and on {@link #ranges} elsewhere.
+     */
+    final int[] wholeRanges;
+    final int[] wholeBase;
+    final int[] wholeCount;
+    final int[] wholeRhp;
+    /**
+     * This runner's share of the pattern's runtime RAM budget (see the
+     * constructor overload): caps the lazy search-DFA and walk memos.
+     */
+    final long memoBudgetBytes;
+
+    final int stateCount;
+    final int stateWords; // # of 32-bit words in state bitsets
+    final int[] acceptBits; // bitset of accepting states (over-approximate)
+    private final Tdfa tdfa;
+    private final int[] stateFinalOpsOff;
+    private final int[] stateEntryMask;
+    private final int[] stateAcceptMask;
+    /**
+     * Position-aware final-ops table (null = uniform; see Tdfa.stateFinalOpsByMask).
+     */
+    private final int[] finalOpsByMask;
+
+    private final int regSize;
+    private final int startStateEntryMask;
+    private final boolean longestMatch;
+    private final int[] stopOnAcceptMask;
+    /**
+     * Uniform tier of the stop table (1 B/state) — see Tdfa.stopMaskUniform; exclusive with the above.
+     */
+    private final byte[] stopMaskUniform;
+
+    private final WalkIndex walkIdx;
+    /**
+     * Tight 128-entry table for the SIMULATIONS: constant stride keeps the
+     * hot loop's machine code compact (a 256-stride table measurably slows
+     * pure-ASCII scans ~15%); codepoints >= 128 take the binary-search
+     * branch.
+     */
+    private final int[] asciiTarget;
+    /**
+     * Wide Latin-1 (256-entry) table for the WALK paths (extract/matches),
+     * where the doubled span buys direct dispatch on accented text. Same
+     * object as asciiTarget (128) when the DFA is too large for wide tables.
+     */
+    private final int[] latinTarget;
+
+    private final int[] asciiRangeFlat; // flat: [state * latinLimit + c] → range index (-1 = dead)
+    /**
+     * Table span in codepoints: 256 (Latin-1) normally, 128 when stateCount is
+     * large enough that the doubled tables cost real memory (2 tables x
+     * limit ints per state; 21K-state dictionary DFAs would pay ~42 MB at 256).
+     */
+    private final int latinLimit;
+
+    private final boolean fastPath; // true = no masks + disjoint + not multiline
+    private final boolean unicodeWordBoundary;
+    private final int[] wordRanges; // Unicode \w ranges for \b when unicodeWordBoundary is true
+    /**
+     * Whether any mask / stop-table cell actually consults the word-boundary
+     * flags — when false, positionFlags skips both word-class checks.
+     */
+    private final boolean needsWordFlags;
+    /**
+     * Word-class bitset over UTF-16 units (BMP): replaces the ASCII branch
+     * chain / Unicode range binary search with one array load. Supplementary
+     * codepoints still use the range search.
+     */
+    private final long[] wordBits;
+    /**
+     * First-character candidate set over UTF-16 units: a consuming match can
+     * only start at p when input[p] is set (over-approximation when entries
+     * carry required masks — the exact walk confirms). Built only when the
+     * start state is NOT accepting (an accepting start admits zero-length
+     * matches anywhere, which the candidate scan cannot see).
+     */
+    private final long[] startBits;
+    /**
+     * Eager ASCII dispatch tables present (rangesDisjoint ∧ small enough).
+     */
+    private final boolean asciiTables;
+
+    // ===== strategy trace (conformance instrument) =====
+    //
+    // Records WHICH branch of the search ladder served each public entry
+    // call. The interpreter records at its decision points; the ASM backend's
+    // generator emits recordStrategy calls at the same points of its emitted
+    // ladder (single template). The strategy-conformance test asserts both
+    // backends produce identical sequences over a shape x length sweep — the
+    // structural guard against the two ladders drifting (identical results
+    // can hide a different algorithm).
+    // Zero cost when disabled: TRACE is static final, branches prune.
+    // TODO: revisit as first-class internals access (observer/event API) —
+    // see TODO.md "internals access".
+    private final SearchDfa searchDfa;
+    /**
+     * Exact-literal needle when the whole regex is a plain literal string
+     * (single char-chain DFA, no captures/ops/masks): find()/leftmost-start
+     * then use String.indexOf — the JIT's intrinsified, vectorized scan —
+     * instead of DFA stepping. ~0.2 vs ~6.5 ns/char on ASCII haystacks.
+     */
+    private final String literalNeedle;
+    /**
+     * Required literal prefix (see RunnerTables.detectPrefixNeedle): every
+     * match must START by consuming exactly these chars, so String.indexOf
+     * — the JIT's intrinsified, vectorized scan — enumerates exactly the
+     * possible start positions of a match; each hit gets an exact walk
+     * (masks, tags and stop-on-accept all evaluated by the walk). Null when
+     * the DFA has no such chain, or when the whole regex is a plain literal
+     * (literalNeedle already serves that shape).
+     */
+    private final String prefixNeedle;
+
+    @EmittedSurface
+    public TdfaRunner(Tdfa tdfa) {
+        this(tdfa, Budgets.runtimeMemoryBytes());
+    }
+
+    /**
+     * Construct with an explicit lazy-memo budget: the bytes this runner's
+     * search-DFA memo (rows + blocks) and walk-block memo may retain,
+     * partitioned per the weight model (see {@link Budgets}). The facade
+     * derives the budget from the pattern's runtime RAM budget MINUS the
+     * retained artifact tables (the end-of-compile execution-RAM check;
+     * see {@link Budgets#runtimeMemoAllowance(long)}) and hands HALF the
+     * residual to a pattern's SECOND engine (the dedicated whole/anchored
+     * runner beside the find engine), keeping the PATTERN's combined lazy
+     * memos within one {@code tdfa.budget.runtime.memory}; the default
+     * constructor uses the whole budget for the shared-single-engine case
+     * (core-tier callers that skip the facade's check).
+     *
+     * @param memoBudgetBytes lazy-memo byte budget for this runner (&gt;0)
+     */
+    public TdfaRunner(Tdfa tdfa, long memoBudgetBytes) {
+        this.tdfa = tdfa;
+        this.memoBudgetBytes = memoBudgetBytes;
+        this.stateMeta = tdfa.stateMeta;
+        this.stateBase = tdfa.stateBase;
+        this.stateFinalOpsOff = tdfa.stateFinalOpsOff;
+        this.finalOpsByMask = tdfa.stateFinalOpsByMask();
+        this.stateEntryMask = tdfa.stateEntryMask;
+        this.stateAcceptMask = tdfa.stateAcceptMask;
+        this.ranges = tdfa.ranges;
+        this.ops = tdfa.ops;
+        this.wholeRanges = tdfa.wholeRanges;
+        this.wholeBase = tdfa.wholeBase;
+        this.wholeCount = tdfa.wholeCount;
+        this.wholeRhp = tdfa.wholeHiPrefix;
+        this.regSize = tdfa.registerCount;
+        this.startState = tdfa.startState;
+        this.startStateEntryMask = tdfa.startStateEntryMask;
+        this.rangesDisjoint = RunnerTables.checkRangesDisjoint(tdfa);
+        this.rhp = tdfa.entryHiPrefix;
+        this.latinLimit = tdfa.stateCount <= LATIN1_MAX_STATES ? 256 : 128;
+        this.asciiTables = rangesDisjoint && tdfa.stateCount <= ASCII_TABLE_MAX_STATES;
+        if (asciiTables) {
+            this.asciiRangeFlat = RunnerTables.buildAsciiRangeFlat(tdfa, latinLimit);
+            this.latinTarget = RunnerTables.buildAsciiTarget(tdfa, latinLimit);
+            this.asciiTarget = latinLimit == 128 ? latinTarget : RunnerTables.buildAsciiTarget(tdfa, 128);
+        } else {
+            this.asciiRangeFlat = null;
+            this.asciiTarget = null;
+            this.latinTarget = null;
+        }
+        this.fastPath = computeFastPath(tdfa);
+        this.longestMatch = tdfa.longestMatch;
+        this.stopOnAcceptMask = tdfa.stopOnAcceptMask;
+        this.stopMaskUniform = tdfa.stopMaskUniform;
+        this.stateCount = tdfa.stateCount;
+        this.stateWords = (tdfa.stateCount + 31) >>> 5;
+        this.acceptBits = RunnerTables.buildAcceptBits(tdfa);
+        this.searchDfa = new SearchDfa(this, memoBudgetBytes); // after all table fields are assigned
+        this.literalNeedle = RunnerTables.detectLiteralNeedle(tdfa);
+        this.prefixNeedle = this.literalNeedle == null ? RunnerTables.detectPrefixNeedle(tdfa) : null;
+        this.unicodeWordBoundary = tdfa.unicodeWordBoundary;
+        this.wordRanges = tdfa.wordRanges;
+        // Derived, not inferred: the tables themselves declare which posFlag bits
+        // they distinguish (see Tdfa.posFlagDeps) — no per-consumer model to keep in sync.
+        this.needsWordFlags = (tdfa.posFlagDeps() & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY)) != 0;
+        this.wordBits = RunnerTables.buildWordBits(tdfa.unicodeWordBoundary ? tdfa.wordRanges : null);
+        this.startBits =
+            (literalNeedle == null && (tdfa.stateMeta[tdfa.startState] & 1) == 0) ? buildStartBits() : null;
+        this.walkIdx = new WalkIndex(this, memoBudgetBytes);
+    }
+
+    /**
+     * Public stable hook for the ASM backend's delegate-mode decision
+     * (implementation lives in RunnerTables).
+     */
+    public static String detectLiteralNeedle(Tdfa tdfa) {
+        return RunnerTables.detectLiteralNeedle(tdfa);
+    }
+
+    /**
+     * Required literal prefix of the compiled DFA, or null (implementation
+     * lives in RunnerTables). Public stable hook: the ASM backend asks at
+     * emit time so INLINED classes bake the needle in as a class constant —
+     * the emitted prefix loop and the VM's use the same string by
+     * construction.
+     */
+    public static String detectPrefixNeedle(Tdfa tdfa) {
+        return RunnerTables.detectPrefixNeedle(tdfa);
+    }
+
+    /**
+     * Whether an indexOf hit of a prefix needle at {@code idx} is a usable
+     * walk start: not the interior of a surrogate pair (codepoint-boundary
+     * semantics, same rule the candidate scans use) and not ending on the
+     * high half of a pair (the walk decodes the whole pair there and cannot
+     * match the needle's last unit as a lone symbol). Public static: the
+     * ASM-emitted prefix loop calls it for the same guards.
+     */
+    @EmittedSurface
+    public static boolean prefixHitUsable(String s, int idx, int needleLen) {
+        return !RunnerTables.needleEndOverlapsPair(s, idx, needleLen) && !Alphabet.pairInterior(s, idx);
+    }
+
+    // ===== shared candidate-scan loops =====
+    //
+    // Both scans enumerate exactly the positions a leftmost match can start
+    // at and run an exact walk per candidate. The boolean and extract
+    // ladders share them; they differ only in the walk run per candidate —
+    // selected here by the runner's fastPath, since each ladder site is
+    // reached in exactly one mode.
+
+    /** Boolean single-start walk for the scan loops, mode-selected. */
+    private boolean boolWalkAt(String input, int start, int to) {
+        return fastPath ? matchFromFast(input, start, to) : runStringMatchFrom(input, start, to) >= 0;
+    }
+
+    /** Extract single-start walk for the scan loops, mode-selected. */
+    private MatchHolder extractWalkAt(String input, int start, int to, MatchScratch sc) {
+        return fastPath ? tryStartFast(input, start, to, sc) : extractFrom(input, start, to, sc);
+    }
+
+    /**
+     * Literal-prefix candidate scan with boolean walks: every match must
+     * start with the required literal prefix, so indexOf enumerates exactly
+     * the possible starts — no hits means no match. The walk budget bounds
+     * dense-hit adversarial shapes; on exhaustion the caller falls through
+     * to a complete-search ladder.
+     */
+    private int prefixScanBool(String input, int searchFrom, int to) {
+        final String needle = this.prefixNeedle;
+        final int nlen = needle.length();
+        int walks = 0;
+        while (true) {
+            int idx = input.indexOf(needle, searchFrom);
+            if (idx < 0) {
+                return PREFIX_DONE;
+            }
+            searchFrom = idx + 1;
+            if (!prefixHitUsable(input, idx, nlen)) {
+                continue;
+            }
+            if (boolWalkAt(input, idx, to)) {
+                return PREFIX_HIT;
+            }
+            if (++walks > PREFIX_WALK_BUDGET) {
+                return PREFIX_EXHAUSTED;
+            }
+        }
+    }
+
+    /**
+     * Literal-prefix candidate scan with extract walks: indexOf enumerates
+     * exactly the possible starts; after {@link #ADAPTIVE_PREFILTER_AFTER}
+     * failed extract walks each usable hit gets the no-allocation boolean
+     * prefilter first, then the exact extract walk. Returns the match on a
+     * hit, null when no hits remain (no match can exist), or {@link
+     * #PREFIX_BUDGET_OUT} when the walk budget is spent.
+     */
+    private MatchHolder prefixScanExtract(String input, int searchFrom, int to, MatchScratch sc) {
+        final String needle = this.prefixNeedle;
+        final int nlen = needle.length();
+        int walks = 0;
+        while (true) {
+            int idx = input.indexOf(needle, searchFrom);
+            if (idx < 0) {
+                return null;
+            }
+            searchFrom = idx + 1;
+            if (!prefixHitUsable(input, idx, nlen)) {
+                continue;
+            }
+            if (walks >= ADAPTIVE_PREFILTER_AFTER && !boolWalkAt(input, idx, to)) {
+                if (++walks > PREFIX_WALK_BUDGET) {
+                    break;
+                }
+                continue;
+            }
+            MatchHolder h = extractWalkAt(input, idx, to, sc);
+            if (h != null) {
+                return h;
+            }
+            if (++walks > PREFIX_WALK_BUDGET) {
+                break;
+            }
+        }
+        return PREFIX_BUDGET_OUT;
+    }
+
+    /**
+     * First-char-set candidate scan with boolean walks (short inputs): one
+     * bit test per char, exact boolean walk per candidate. Coverage is
+     * complete — startBits is only built when the start state cannot
+     * accept, so every match consumes a first char carrying its bit.
+     */
+    private boolean candScanBool(String input, int from, int to) {
+        final long[] sb = this.startBits;
+        for (int p = from; p < to; p++) {
+            char c = input.charAt(p);
+            if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && (c < 0xDC00 || !Alphabet.pairInterior(input, p))
+                && boolWalkAt(input, p, to)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * First-char-set candidate scan with extract walks (short inputs);
+     * after {@link #ADAPTIVE_PREFILTER_AFTER} failed extract walks the
+     * no-allocation boolean walk pre-filters the remaining candidates
+     * (dense-candidate no-match shapes).
+     */
+    private MatchHolder candScanExtract(String input, int from, int to, MatchScratch sc) {
+        final long[] sb = this.startBits;
+        int fails = 0;
+        for (int p = from; p < to; p++) {
+            char c = input.charAt(p);
+            if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) {
+                continue;
+            }
+            if (c >= 0xDC00 && Alphabet.pairInterior(input, p)) {
+                continue;
+            }
+            if (fails >= ADAPTIVE_PREFILTER_AFTER && !boolWalkAt(input, p, to)) {
+                continue;
+            }
+            MatchHolder h = extractWalkAt(input, p, to, sc);
+            if (h != null) {
+                return h;
+            }
+            fails++;
+        }
+        return null;
+    }
+
+    /**
+     * Record a strategy decision point (no-op unless tracing). Public: the
+     * ASM backend's emitted ladder calls it from generated classes.
+     */
+    @EmittedSurface
+    public static void trace(Strategy s) {
+        if (TRACE) {
+            TRACE_BUF.get().add(s);
+        }
+    }
+
+    /**
+     * Enable/disable strategy tracing at runtime (conformance-test hook).
+     */
+    public static void setTracing(boolean on) {
+        TRACE = on;
+    }
+
+    /**
+     * Snapshot and clear this thread's recorded strategy sequence.
+     */
+    public static List<Strategy> traceSnapshot() {
+        ArrayList<Strategy> buf = TRACE_BUF.get();
+        List<Strategy> out = Collections.unmodifiableList(new ArrayList<>(buf));
+        buf.clear();
+        return out;
+    }
+
+    // ===== forced-strategy hook (fuzz cross-rung differential) =====
+    //
+    // Test-only: starts the VM search ladder AT a given rung instead of at
+    // the top — every rung at or above the forced one is skipped, rungs
+    // below it still run (their natural fall-through, budgets included).
+    // Only the four complete-search rungs are forceable: any of them can
+    // answer any find() alone, so a forced run must return exactly what the
+    // natural ladder returns — the invariant the fuzzer checks per case.
+    // ORIGIN_SIM is valid only on fastPath DFAs (mask-free simulation) and
+    // degrades to the trigger scan otherwise. The ASM tier ignores the hook
+    // entirely: its emitted ladder is frozen at compile time, and parity is
+    // preserved because both ladders must agree with the oracle anyway.
+    // Zero cost when unused: one volatile read per entry call.
+    /**
+     * Force this thread's VM search entries to start at {@code s} (null =
+     * natural ladder). Not consulted by the ASM backend or the anchored
+     * entries ({@code matches()}/{@code lookingAt()}); callers must clear
+     * it in a {@code finally}.
+     */
+    public static void setForcedStrategy(Strategy s) {
+        if (s != null) {
+            anyForced = true;
+        }
+        FORCED.set(s);
+    }
+
+    static Strategy forcedStrategy() {
+        return anyForced ? FORCED.get() : null;
+    }
+
+    /**
+     * Pooled register file for walk leaves: grow-only reuse of
+     * {@code MatchScratch.regs} — the same carrier the interpreter's walks
+     * use — shared with the ASM-generated tier, whose {@code extractOne}/
+     * {@code wholeOne} leaves call this hook by name (INVOKESTATIC, no
+     * receiver: monomorphic by construction). One carrier per
+     * {@link io.github.jemmix.tdfa.core.engine.Matcher} (the caller owns the
+     * lifetime).
+     *
+     * <p>Correctness contract: contents are undefined on take — callers fill
+     * {@code [0, n)} before reading — and callers must clone before the
+     * array escapes (walks clone into their result holder on success). The
+     * returned array may be longer than {@code n} (grown by a
+     * capture-heavier pattern on this carrier); only {@code [0, n)} is
+     * meaningful, and downstream consumers (MatchHolder/MatchResult) index
+     * within the pattern's register count, never the array length.
+     */
+    @EmittedSurface
+    public static int[] takeRegs(int n, MatchScratch sc) {
+        // sc may be null from carrier-free engines' direct callers
+        // (CompiledRegex/findAll shape); allocate a fresh carrier per call.
+        return (sc != null ? sc : new MatchScratch()).takeRegs(n);
+    }
+
+    /**
+     * Set state {@code s} in {@code next} (if absent) with origin {@code o} in
+     * {@code originNext}; min-merge if already present. {@code originNext} is
+     * only read for states whose bit is set in {@code next} (implying a
+     * this-step write), so stale values are never observed.
+     */
+    private static void setOrigin(int[] next, int[] originNext, int s, int o) {
+        int w = s >>> 5, b = 1 << (s & 31);
+        if ((next[w] & b) == 0) {
+            next[w] |= b;
+            originNext[s] = o;
+        } else if (o < originNext[s]) {
+            originNext[s] = o;
+        }
+    }
+
+    private static void applyOps(int[] ops, int opsOff, int[] regs, int pos) {
+        for (int j = opsOff;; j += 3) {
+            int op = ops[j];
+            if (op == Tdfa.OP_END) {
+                return;
+            }
+            int dst = ops[j + 1];
+            if (op == Tdfa.OP_SET_POS) {
+                regs[dst] = pos;
+            } else if (op == Tdfa.OP_COPY) {
+                regs[dst] = regs[ops[j + 2]];
+            } else {
+                regs[dst] = -1;
+            }
+        }
+    }
+
+    @EmittedSurface
+    @Override
+    public int groupCount() {
+        return tdfa.groupCount;
+    }
+
+    @EmittedSurface
+    @Override
+    public Map<String, Integer> namedGroups() {
+        return tdfa.namedGroups;
+    }
+
+    // ===== Lazy search-DFA (trigger scan with kill-point windows) =====
+
+    @EmittedSurface
+    @Override
+    public int programSize() {
+        return tdfa.stateCount;
+    }
+
+    @EmittedSurface
+    @Override
+    public boolean matches(CharSequence input) {
+        if (input instanceof String) {
+            String s = (String) input;
+            if (fastPath) {
+                trace(Strategy.ANCHORED_FAST);
+                return runStringAnchoredFast(s);
+            }
+            trace(Strategy.ANCHORED);
+            return runStringAnchored(s) >= 0;
+        }
+        trace(Strategy.GENERIC);
+        return runGeneric(input, 0, input.length(), true, new MatchScratch()) != null;
+    }
+
+    @EmittedSurface
+    @Override
+    public boolean find(CharSequence input) {
+        if (input instanceof String) {
+            String s = (String) input;
+            Strategy force = forcedStrategy();
+            if (force != null) {
+                return forcedSearch(s, 0, s.length(), new MatchScratch(), force) != null;
+            }
+            int len = s.length();
+            if (literalNeedle != null) {
+                trace(Strategy.LITERAL);
+                return RunnerTables.literalIndexOf(s, literalNeedle, 0) >= 0;
+            }
+            MatchScratch sc = new MatchScratch();
+            if (fastPath) {
+                return runStringFindFast(s, len, sc);
+            }
+            int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? 0 : len;
+            if (maxStart > 0) {
+                // One exact walk from 0 first: for prefix-chain DFAs (e.g.
+                // \p{L}{256}) a match at/near 0 answers in O(len) while the
+                // trigger's raw-scan pre-check is O(len^2) in live-set size.
+                trace(Strategy.EXACT_FROM);
+                if (runStringMatchFrom(s, 0, len) >= 0) {
+                    return true;
+                }
+                // Literal-prefix candidate scan (see prefixScanBool): no
+                // hits ⇒ no match. Budget exhaustion falls through to the
+                // trigger scan + restart loop below.
+                if (prefixNeedle != null) {
+                    trace(Strategy.PREFIX);
+                    int pr = prefixScanBool(s, 1, len);
+                    if (pr == PREFIX_HIT) {
+                        return true;
+                    }
+                    if (pr == PREFIX_DONE) {
+                        return false;
+                    }
+                }
+                // Short inputs: first-char-set candidate scan with exact
+                // (mask-aware) walks instead of the raw-scan simulation.
+                if (startBits != null && len <= CAND_SCAN_MAX) {
+                    trace(Strategy.CAND_SCAN);
+                    return candScanBool(s, 1, len);
+                }
+                int w = triggerScan(s, 0, len, sc);
+                if (w < 0) {
+                    return false;
+                }
+                trace(Strategy.WALK_RESTART);
+                for (int from = Math.max(w, 1); from <= maxStart; from++) {
+                    if (Alphabet.pairInterior(s, from)) {
+                        continue;
+                    }
+                    int res = runStringMatchFrom(s, from, len);
+                    if (res >= 0) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            trace(Strategy.EXACT_FROM);
+            return runStringMatchFrom(s, 0, len) >= 0;
+        }
+        trace(Strategy.GENERIC);
+        return runGeneric(input, 0, input.length(), false, new MatchScratch()) != null;
+    }
+
+    /**
+     * Carrier-aware match: {@code sc} holds this call's reusable buffers
+     * (see {@link MatchScratch}); a {@link io.github.jemmix.tdfa.core.engine.Matcher}
+     * passes its own carrier so iteration pools across calls, carrier-less
+     * callers may pass null (a fresh carrier is allocated on demand).
+     */
+    @EmittedSurface
+    @Override
+    public MatchResult match(CharSequence input, int from, MatchScratch sc) {
+        // Interface contract (see RegexEngine.match): clean bounds failure,
+        // never the walk's raw StringIndexOutOfBoundsException.
+        if (from < 0 || from > input.length()) {
+            throw fromOutOfBounds(from, input.length());
+        }
+        if (sc == null) {
+            sc = new MatchScratch();
+        }
+        MatchHolder h;
+        if (input instanceof String) {
+            String s = (String) input;
+            Strategy force = forcedStrategy();
+            h = force != null ? forcedSearch(s, from, s.length(), sc, force)
+                : fastPath ? runStringExtractFast(s, from, s.length(), sc) : runStringExtract(s, from, s.length(), sc);
+        } else {
+            trace(Strategy.GENERIC);
+            h = runGeneric(input, from, input.length(), false, sc);
+        }
+        if (h == null) {
+            return null;
+        }
+        if (tdfa.fixedBase != null) {
+            MatchResult.reconstructFixed(h.regs, tdfa.finalRegBase, tdfa.fixedBase, tdfa.fixedOffset);
+        }
+        return new MatchResult(h.regs, tdfa.finalRegBase, tdfa.groupCount, h.matchStart, h.matchEnd);
+    }
+
+    /**
+     * The shared out-of-range {@code from} failure: the interpreter checks
+     * inline, and the generated INLINED match ladders link this hook on their
+     * cold branch so both tiers throw the identical polite message instead
+     * of the raw walk failure (a beyond-length {@code from} would otherwise
+     * surface as a corrupt match or a wrong {@code null}).
+     */
+    @EmittedSurface
+    public static IndexOutOfBoundsException fromOutOfBounds(int from, int len) {
+        return new IndexOutOfBoundsException("from: " + from + ", length: " + len);
+    }
+
+    /**
+     * Whole-input match ({@link WholeEngine#matchWhole}): anchored at 0, runs
+     * to end-of-input, and succeeds iff an accept config is ALIVE exactly at
+     * EOF — mid-walk accepts (multiline {@code $}, unanchored prefixes) are
+     * stepped past, never recorded. Requires transitions that keep
+     * full-match continuations past an earlier higher-priority accept
+     * ({@code (a|ab)} on {@code "ab"}): either a cut-free artifact
+     * ({@link Tdfa#compileUnpruned}), a pruned artifact whose cut never
+     * fired, or a pruned artifact with its partial-whole side table — the
+     * walk then dispatches on the side entries of the states whose cut
+     * deleted continuations ({@link Tdfa#wholeRanges}).
+     *
+     * <p>Transition machinery is a verbatim transplant of {@link #extractFrom}'s
+     * (flat dispatch / walk blocks / most-specific-mask ownership with dead
+     * markers, entry masks checked before ops run); only the accept protocol
+     * differs: no stop table, one gate + φ application at EOF.
+     *
+     * <p>Carrier-aware whole match — see {@link #match(CharSequence, int, MatchScratch)}
+     * for the reuse contract.
+     */
+    @EmittedSurface
+    @Override
+    public MatchResult matchWhole(CharSequence input, MatchScratch sc) {
+        trace(input instanceof String ? Strategy.ANCHORED : Strategy.GENERIC);
+        if (sc == null) {
+            sc = new MatchScratch();
+        }
+        MatchHolder h = wholeWalk(input, 0, input.length(), sc);
+        if (h == null) {
+            return null;
+        }
+        if (tdfa.fixedBase != null) {
+            MatchResult.reconstructFixed(h.regs, tdfa.finalRegBase, tdfa.fixedBase, tdfa.fixedOffset);
+        }
+        return new MatchResult(h.regs, tdfa.finalRegBase, tdfa.groupCount, h.matchStart, h.matchEnd);
+    }
+
+    /**
+     * Whole-walk (String and generic CharSequence); null = not a full match. See {@link #matchWhole}.
+     */
+    private MatchHolder wholeWalk(CharSequence input, int from, int to, MatchScratch sc) {
+        final int[] sm = this.stateMeta;
+        final int[] rg = this.ranges;
+        final int[] op = this.ops;
+        final int[] sem = this.stateEntryMask;
+        final int[] sam = this.stateAcceptMask;
+        final int[] arf = this.asciiRangeFlat; // non-null iff rangesDisjoint
+        final int limit = this.latinLimit;
+        final int[] regs;
+        if (regSize == 0) {
+            regs = null;
+        } else {
+            regs = takeRegs(regSize, sc);
+            Arrays.fill(regs, 0, regSize, -1);
+        }
+        int state = startState;
+        int pos = from;
+
+        // Entry check for start state — inline
+        {
+            int entryReq = sem[state];
+            if (entryReq != 0 && (positionFlagsCS(input, pos, to) & entryReq) != entryReq) {
+                return null;
+            }
+        }
+
+        int posFlags = -1;
+        final int[] wrg = this.wholeRanges;
+        final int[] wBase = this.wholeBase;
+        final int[] wCount = this.wholeCount;
+        final int[] wRhp = this.wholeRhp;
+        while (pos < to) {
+            int c = Alphabet.decode(input, pos, to);
+            // Partial-whole side table: states whose pike cut deleted
+            // continuations dispatch on their UNCUT whole relation; every
+            // other state's whole relation IS the pruned one.
+            final int[] table;
+            final int[] tableRhp;
+            int base, count;
+            boolean wholeState = wrg != null && wBase[state] >= 0;
+            if (wholeState) {
+                table = wrg;
+                tableRhp = wRhp;
+                base = wBase[state];
+                count = wCount[state];
+            } else {
+                table = rg;
+                tableRhp = rhp;
+                base = stateBase[state];
+                count = (sm[state] >>> 1) & 0xFFFF;
+            }
+            int chosen = -1, chosenTarget = 0;
+            int ri;
+            if (wholeState) {
+                ri = Integer.MIN_VALUE; // flat/walk tables index the pruned layout
+            } else if (arf != null && c < limit) {
+                // Disjoint ranges: at most one entry contains c, so entry
+                // priority is moot and the flat table is exact.
+                ri = arf[state * limit + c];
+            } else if (rangesDisjoint && c < 0x10000) {
+                ri = walkIdx.walkRangeIndex(state, c);
+                if (ri == -2) {
+                    ri = Integer.MIN_VALUE;
+                }
+            } else {
+                ri = Integer.MIN_VALUE;
+            }
+            if (ri == Integer.MIN_VALUE) {
+                // Binary search rightmost entry with lo <= c, then walk back
+                // while the per-state prefix-max-hi still reaches c; the MOST
+                // SPECIFIC satisfied mask owns the step (see extractFrom).
+                int rlo = 0, rhi = count - 1, anchor = -1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    if (table[(base + mid) * 5] <= c) {
+                        anchor = mid;
+                        rlo = mid + 1;
+                    } else {
+                        rhi = mid - 1;
+                    }
+                }
+                int best = -1, bestSpec = -1;
+                for (int i = anchor; i >= 0 && tableRhp[base + i] >= c; i--) {
+                    int o = (base + i) * 5;
+                    if (c <= table[o + 1]) {
+                        int requiredMask = table[o + 4];
+                        if (requiredMask != 0) {
+                            if (posFlags < 0) {
+                                posFlags = positionFlagsCS(input, pos, to);
+                            }
+                            if ((posFlags & requiredMask) != requiredMask) {
+                                continue;
+                            }
+                        }
+                        int spec = Integer.bitCount(requiredMask);
+                        if (spec >= bestSpec) {
+                            best = i;
+                            bestSpec = spec;
+                        } // >= : lower index wins ties
+                    }
+                }
+                if (best >= 0) {
+                    int o = (base + best) * 5;
+                    int target = table[o + 2];
+                    if (target < 0) {
+                        return null;
+                    } // dead marker of the owning context
+                    chosen = o;
+                    chosenTarget = target;
+                }
+            } else if (ri >= 0) {
+                int o = (base + ri) * 5;
+                int target = table[o + 2];
+                if (target >= 0) {
+                    int requiredMask = table[o + 4];
+                    boolean ok = requiredMask == 0;
+                    if (!ok) {
+                        if (posFlags < 0) {
+                            posFlags = positionFlagsCS(input, pos, to);
+                        }
+                        ok = (posFlags & requiredMask) == requiredMask;
+                    }
+                    if (ok) {
+                        chosen = o;
+                        chosenTarget = target;
+                    }
+                }
+            }
+            if (chosen < 0) {
+                return null;
+            } // dead: no full match through this prefix
+              // Target entry mask is a position predicate, evaluated BEFORE the
+              // transition's ops run (see extractFrom).
+            int width = c > 0xFFFF ? 2 : 1;
+            int entryReqNext = sem[chosenTarget];
+            if (entryReqNext != 0 && (positionFlagsCS(input, pos + width, to) & entryReqNext) != entryReqNext) {
+                return null;
+            }
+            if (regs != null) {
+                int opsOff = table[chosen + 3];
+                if (opsOff != 0) {
+                    applyOps(op, opsOff, regs, pos);
+                }
+            }
+            state = chosenTarget;
+            if (width == 2) {
+                pos++;
+            }
+            pos++;
+            posFlags = -1;
+        }
+        // EOF: an alive accept config here consumed exactly [from, to) — a
+        // full match. Gate and apply the winner's φ reading EOF-time registers.
+        if ((sm[state] & 1) == 0) {
+            return null;
+        }
+        int eofFlags = positionFlagsCS(input, to, to);
+        final int[] fm = this.finalOpsByMask;
+        if (fm != null) {
+            int cell = fm[state * 64 + eofFlags];
+            if (cell < 0) {
+                return null;
+            } // no accept config alive under these posFlags
+            if (regs != null && cell != 0) {
+                applyOps(op, cell, regs, to);
+            }
+        } else {
+            int acceptMask = sam[state];
+            if (acceptMask != 0 && (eofFlags & acceptMask) != acceptMask) {
+                return null;
+            }
+            if (regs != null) {
+                applyFinalOps(state, regs, to);
+            }
+        }
+        return new MatchHolder(from, to, regs == null ? new int[0] : regs.clone());
+    }
+
+    /**
+     * String find with anchor enforcement and register extraction.
+     */
+    private MatchHolder runStringExtract(String input, int from, int to, MatchScratch sc) {
+        int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? 0 : to;
+        // One exact walk from `from` first (match at/near from is the common
+        // case and answers in O(len) — cheaper than any pre-check; see find()).
+        {
+            trace(Strategy.EXACT_FROM);
+            MatchHolder direct = extractFrom(input, from, to, sc);
+            if (direct != null) {
+                return direct;
+            }
+        }
+        // Literal-prefix candidate scan (see prefixScanExtract): no hits ⇒
+        // no match. Budget exhaustion falls through to the trigger scan,
+        // which is a complete search.
+        if (maxStart > 0 && prefixNeedle != null) {
+            trace(Strategy.PREFIX);
+            MatchHolder hp = prefixScanExtract(input, from + 1, to, sc);
+            if (hp != PREFIX_BUDGET_OUT) {
+                return hp; // the hit, or no hits at all — either way decided
+            }
+        }
+        // Short inputs: first-char-set candidate scan with exact (mask-aware)
+        // walks instead of the trigger scan + restart loop. Zero-length
+        // matches are impossible here (startBits is only built when the start
+        // state cannot accept), so bit coverage is complete.
+        if (maxStart > 0 && startBits != null && to - from <= CAND_SCAN_MAX) {
+            trace(Strategy.CAND_SCAN);
+            return candScanExtract(input, from + 1, to, sc);
+        }
+        // Trigger scan: memoized search-DFA pass that both proves no-match and
+        // bounds the restart loop to the kill-point window (no configuration
+        // alive before W can produce a match — see SearchDfa).
+        if (maxStart > 0) {
+            int w = triggerScan(input, from, to, sc);
+            if (w < 0) {
+                return null;
+            }
+            if (w > from + 1) {
+                from = w - 1;
+            }
+        }
+        trace(Strategy.WALK_RESTART);
+        for (int startSearch = from + 1; startSearch <= maxStart; startSearch++) {
+            if (Alphabet.pairInterior(input, startSearch)) {
+                continue;
+            }
+            if (WTRACE) {
+                System.err.println("[walk] === start " + startSearch);
+            }
+            MatchHolder h = extractFrom(input, startSearch, to, sc);
+            if (h != null) {
+                return h;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Forced-strategy search (fuzz cross-rung differential, see
+     * {@link #setForcedStrategy}): answers the same question as the two
+     * ladders above but ENTERS at the forced rung, keeping the natural
+     * fall-through below it. Every path must return exactly what the
+     * natural ladder returns — that equivalence is the invariant the fuzzer
+     * asserts per case.
+     */
+    private MatchHolder forcedSearch(String input, int from, int to, MatchScratch sc, Strategy force) {
+        if (sc == null) {
+            sc = new MatchScratch();
+        }
+        switch (force) {
+            case ORIGIN_SIM :
+                if (fastPath) {
+                    // Verbatim rung 2 of runStringExtractFast: budgeted sim,
+                    // trigger assist on exhaustion, exact walk, defensive
+                    // restart. (The prefix/candidate scans above it are
+                    // skipped — the sim is a complete search on its own.)
+                    trace(Strategy.ORIGIN_SIM);
+                    int leftmost = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS, sc);
+                    if (leftmost == LSS_BUDGET) {
+                        int w = triggerScan(input, from, to, sc);
+                        if (w < 0) {
+                            return null;
+                        }
+                        leftmost = multiStateLeftmostStart(input, w, to, sc);
+                    }
+                    if (leftmost < 0) {
+                        return null;
+                    }
+                    MatchHolder h = tryStartFast(input, leftmost, to, sc);
+                    if (h != null) {
+                        return h;
+                    }
+                    trace(Strategy.WALK_RESTART);
+                    return restartExtract(input, leftmost + 1, to, from, sc);
+                }
+                // The mask-free sim is fastPath-only; degrade to the trigger
+                // scan (the generic ladder's complete search).
+                // fall through
+            case TRIGGER :
+            case RAW_SCAN : {
+                int w = triggerScan(input, from, to, sc, force);
+                if (w < 0) {
+                    return null;
+                }
+                // The caller's `from` gets the same unguarded exact walk the
+                // natural ladders give it first (mid-pair starts included —
+                // find(int) can land there); the restart loop then resumes at
+                // max(from+1, w), mirroring the generic ladder's
+                // `from = w-1; loop from from+1` — which never walks w-1
+                // itself, a potential pair interior.
+                trace(Strategy.EXACT_FROM);
+                MatchHolder h = fastPath ? tryStartFast(input, from, to, sc) : extractFrom(input, from, to, sc);
+                if (h != null) {
+                    return h;
+                }
+                trace(Strategy.WALK_RESTART);
+                int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? from : to;
+                for (int s = Math.max(from + 1, w); s <= maxStart; s++) {
+                    if (Alphabet.pairInterior(input, s)) {
+                        continue;
+                    }
+                    h = fastPath ? tryStartFast(input, s, to, sc) : extractFrom(input, s, to, sc);
+                    if (h != null) {
+                        return h;
+                    }
+                }
+                return null;
+            }
+            case WALK_RESTART :
+            default :
+                return forcedRestart(input, from, to, sc);
+        }
+    }
+
+    /**
+     * The restart floor under a forced entry: an exact walk at every viable
+     * start (the naive complete search). {@code from} itself is walked even
+     * when it sits inside a surrogate pair, mirroring the EXACT_FROM-at-from
+     * call every natural ladder makes; later starts keep the pair-interior
+     * guard.
+     */
+    private MatchHolder forcedRestart(String input, int from, int to, MatchScratch sc) {
+        trace(Strategy.WALK_RESTART);
+        int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? from : to;
+        for (int s = from; s <= maxStart; s++) {
+            if (s > from && Alphabet.pairInterior(input, s)) {
+                continue;
+            }
+            MatchHolder h = fastPath ? tryStartFast(input, s, to, sc) : extractFrom(input, s, to, sc);
+            if (h != null) {
+                return h;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * One exact single-start walk; null = no match starting at startSearch.
+     */
+    private MatchHolder extractFrom(String input, int startSearch, int to, MatchScratch sc) {
+        final int[] sm = this.stateMeta;
+        final int[] rg = this.ranges;
+        final int[] op = this.ops;
+        final int[] sem = this.stateEntryMask;
+        final int[] sam = this.stateAcceptMask;
+        final int[] arf = this.asciiRangeFlat; // non-null iff rangesDisjoint
+        final int limit = this.latinLimit;
+        // Pooled regs (per-call carrier): the candidate-scan loops call this
+        // per candidate and most walks fail — no allocation on that path. The
+        // success path clones (line below) before returning, so the pool is
+        // never handed out.
+        final int[] regs;
+        if (regSize == 0) {
+            regs = null;
+        } else {
+            regs = takeRegs(regSize, sc);
+            Arrays.fill(regs, 0, regSize, -1);
+        }
+        int state = startState;
+        int lastAcceptPos = -1;
+        boolean haveAccept = false;
+        int pos = startSearch;
+
+        // Entry check for start state — inline
+        {
+            int entryReq = sem[state];
+            if (entryReq != 0 && (positionFlags(input, pos, to) & entryReq) != entryReq) {
+                return null;
+            }
+        }
+
+        int posFlags = -1;
+        for (;; pos++) {
+            int meta = sm[state];
+            if (WTRACE) {
+                System.err.println("[walk] pos=" + pos + " state=" + state + " accept=" + ((meta & 1) != 0));
+            }
+            if ((meta & 1) != 0) {
+                final int[] fm = this.finalOpsByMask;
+                if (fm != null) {
+                    // Position-aware table is authoritative: cell >= 0 = an
+                    // accept config is alive under these posFlags (the gate
+                    // the sam-intersection only approximates), cell = its φ.
+                    if (posFlags < 0) {
+                        posFlags = positionFlags(input, pos, to);
+                    }
+                    int cell = fm[state * 64 + posFlags];
+                    if (WTRACE) {
+                        System.err.println("[walk]   fmCell=" + cell + " M=" + Integer.toBinaryString(posFlags));
+                    }
+                    if (cell >= 0) {
+                        lastAcceptPos = pos;
+                        haveAccept = true;
+                        if (regs != null && cell != 0) {
+                            applyOps(op, cell, regs, pos);
+                        }
+                        if (!longestMatch && stopNow(state, posFlags)) {
+                            break;
+                        }
+                    }
+                } else {
+                    int acceptMask = sam[state];
+                    if (acceptMask == 0) {
+                        lastAcceptPos = pos;
+                        haveAccept = true;
+                        if (regs != null) {
+                            applyFinalOps(state, regs, pos);
+                        }
+                        if (!longestMatch) {
+                            // stopNow ignores posFlags when the stop table is
+                            // uniform (assertion-free) — skip the 2×charAt +
+                            // word lookups; other readers recompute lazily.
+                            if (posFlags < 0 && stopMaskUniform == null) {
+                                posFlags = positionFlags(input, pos, to);
+                            }
+                            if (stopNow(state, posFlags)) {
+                                break;
+                            }
+                        }
+                    } else {
+                        if (posFlags < 0) {
+                            posFlags = positionFlags(input, pos, to);
+                        }
+                        if ((posFlags & acceptMask) == acceptMask) {
+                            if (WTRACE) {
+                                System.err.println("[walk]   sam accept M=" + Integer.toBinaryString(posFlags)
+                                    + " stop=" + stopNow(state, posFlags));
+                            }
+                            lastAcceptPos = pos;
+                            haveAccept = true;
+                            if (regs != null) {
+                                applyFinalOps(state, regs, pos);
+                            }
+                            if (!longestMatch && stopNow(state, posFlags)) {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (pos >= to) {
+                break;
+            }
+            int c = Alphabet.decode(input, pos, to);
+            int base = stateBase[state];
+            int count = (meta >>> 1) & 0xFFFF;
+            int chosen = -1, chosenTarget = 0;
+            int ri;
+            if (arf != null && c < limit) {
+                // Disjoint ranges: at most one entry contains c, so entry
+                // priority is moot and the flat table is exact.
+                ri = arf[state * limit + c];
+            } else if (rangesDisjoint && c < 0x10000) {
+                // Beyond the flat table (or tableless giant DFA — dispatch
+                // tables skipped above ASCII_TABLE_MAX_STATES): lazy walk
+                // block (one array load) or, past the block cap, the binary
+                // search below.
+                ri = walkIdx.walkRangeIndex(state, c);
+                if (ri == -2) {
+                    ri = Integer.MIN_VALUE;
+                }
+            } else {
+                ri = Integer.MIN_VALUE;
+            }
+            if (ri == Integer.MIN_VALUE) {
+                // Binary search rightmost entry with lo <= c, then walk back
+                // while the per-state prefix-max-hi still reaches c: visits
+                // exactly the entries that can contain c, in
+                // lowest-index-first priority order.
+                int rlo = 0, rhi = count - 1, anchor = -1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    if (rg[(base + mid) * 5] <= c) {
+                        anchor = mid;
+                        rlo = mid + 1;
+                    } else {
+                        rhi = mid - 1;
+                    }
+                }
+                // Walk back over containing entries. Ownership: the MOST
+                // SPECIFIC satisfied mask wins (popcount of requiredMask);
+                // ties fall to the lowest index (determinizer order). Pure
+                // "lowest index" is wrong once overlapping contexts' ranges
+                // differ in lo — a more-specific (e.g. dead-marker) entry at
+                // a HIGHER lo/index gets shadowed by a broad mask-0 range
+                // (e.g. .+?\b[^\d]* extending past its \b-gated accept
+                // through the lazy body's '.' entry).
+                int best = -1, bestSpec = -1;
+                for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+                    int o = (base + i) * 5;
+                    if (c <= rg[o + 1]) {
+                        int requiredMask = rg[o + 4];
+                        if (requiredMask != 0) {
+                            if (posFlags < 0) {
+                                posFlags = positionFlags(input, pos, to);
+                            }
+                            if ((posFlags & requiredMask) != requiredMask) {
+                                continue;
+                            }
+                        }
+                        int spec = Integer.bitCount(requiredMask);
+                        if (spec >= bestSpec) {
+                            best = i;
+                            bestSpec = spec;
+                        } // >= : lower index wins ties
+                    }
+                }
+                if (best >= 0) {
+                    int o = (base + best) * 5;
+                    int target = rg[o + 2];
+                    if (target < 0) {
+                        // Dead marker of the OWNING context (lowest satisfied):
+                        // no continuation exists under this posFlags — lower-
+                        // specificity ranges belong to contexts not alive here.
+                        if (WTRACE) {
+                            System.err.println("[walk]   c=" + Integer.toHexString(c) + " DEAD idx " + best + " mask="
+                                + Integer.toBinaryString(rg[o + 4]) + " (M=" + Integer.toBinaryString(posFlags) + ")");
+                        }
+                        break;
+                    }
+                    if (WTRACE) {
+                        System.err.println("[walk]   c=" + Integer.toHexString(c) + " pick idx " + best + " lo="
+                            + Integer.toHexString(rg[o]) + " mask=" + Integer.toBinaryString(rg[o + 4]) + " -> "
+                            + target + " (M=" + Integer.toBinaryString(posFlags) + ")");
+                    }
+                    chosen = o;
+                    chosenTarget = target;
+                }
+            } else if (ri >= 0) {
+                int o = (base + ri) * 5;
+                int target = rg[o + 2];
+                if (target >= 0) {
+                    int requiredMask = rg[o + 4];
+                    boolean ok = requiredMask == 0;
+                    if (!ok) {
+                        if (posFlags < 0) {
+                            posFlags = positionFlags(input, pos, to);
+                        }
+                        ok = (posFlags & requiredMask) == requiredMask;
+                    }
+                    if (ok) {
+                        chosen = o;
+                        chosenTarget = target;
+                    }
+                }
+            }
+            if (chosen < 0) {
+                break;
+            }
+            // Target entry mask is a position predicate, evaluated BEFORE the
+            // transition's ops run: a mask-failing transition is never taken,
+            // so its tag writes must not contaminate the register file (a
+            // later-recorded accept would read them — e.g. a skipped group
+            // reporting empty instead of null).
+            int width = c > 0xFFFF ? 2 : 1;
+            int entryReqNext = sem[chosenTarget];
+            if (entryReqNext != 0 && (positionFlags(input, pos + width, to) & entryReqNext) != entryReqNext) {
+                break;
+            }
+            if (regs != null) {
+                int opsOff = rg[chosen + 3];
+                if (opsOff != 0) {
+                    applyOps(op, opsOff, regs, pos);
+                }
+            }
+            state = chosenTarget;
+            if (width == 2) {
+                pos++;
+            }
+            posFlags = -1;
+        }
+        if (!haveAccept) {
+            return null;
+        }
+        int[] r = regs == null ? new int[0] : regs.clone();
+        // Final ops already applied eagerly at accept-record time (BT22's
+        // declaration semantics): they read the accept-time register values.
+        // A lazy replay here would read end-of-walk values — any transition
+        // taken between the accept and the break clobbers working registers
+        // and inverts group spans (group start > end).
+        return new MatchHolder(startSearch, lastAcceptPos, r);
+    }
+
+    /**
+     * Build the first-char candidate bitset from the start state's outgoing
+     * ranges (dead targets excluded; mask-gated entries included — sound
+     * over-approximation, the exact walk confirms). Ranges above the BMP OR
+     * in the high-surrogate block: a supplementary first char begins with a
+     * high surrogate unit, so those positions stay candidates.
+     */
+    private long[] buildStartBits() {
+        final int[] sm = this.stateMeta, rg = this.ranges;
+        int meta = sm[startState];
+        int base = stateBase[startState], cnt = (meta >>> 1) & 0xFFFF;
+        long[] bits = new long[1024];
+        boolean any = false;
+        for (int i = 0; i < cnt; i++) {
+            int o = (base + i) * 5;
+            if (rg[o + 2] < 0) {
+                continue;
+            } // dead: never a first char
+            int lo = Math.max(rg[o], 0), hi = Math.min(rg[o + 1], 0xFFFF);
+            for (int c = lo; c <= hi; c++) {
+                bits[c >>> 6] |= 1L << (c & 63);
+            }
+            if (rg[o + 1] > 0xFFFF) {
+                for (int c = 0xD800; c <= 0xDBFF; c++) {
+                    bits[c >>> 6] |= 1L << (c & 63);
+                }
+            }
+            any = true;
+        }
+        return any ? bits : null;
+    }
+
+    /**
+     * Trigger scan: advance the search DFA over {@code [from, to)}; on the first
+     * position where an accepting state is (over-approximately) live, return the
+     * latest kill-point window start {@code W} ({@code from} if none) — every
+     * surviving configuration started at or after {@code W}, so the exact leftmost
+     * match lies in {@code [W, to]}. Returns -1 when no accept can fire at all.
+     */
+    private int triggerScan(String input, int from, int to, MatchScratch sc) {
+        return triggerScan(input, from, to, sc, null);
+    }
+
+    /**
+     * {@code force} = RAW_SCAN takes the unmemoized path regardless of
+     * window size (forced-strategy hook); TRIGGER still degrades to raw on
+     * a capped memo — the memo cannot grow past its budget.
+     */
+    private int triggerScan(String input, int from, int to, MatchScratch sc, Strategy force) {
+        // Short scans never amortize the memo (block build = 512 interned steps);
+        // short-lived runners would allocate-and-die fat instead. Raw scan keeps
+        // the kill-point window either way.
+        SearchDfa sd = searchDfa;
+        if (force == Strategy.RAW_SCAN || to - from < SDFA_MIN_WINDOW || sd.capped) {
+            trace(Strategy.RAW_SCAN);
+            return rawScan(input, from, to, from, null, sc);
+        }
+        trace(Strategy.TRIGGER);
+        sd.ensureSeed(); // pure-seed row 0, interned once, race-safe
+        int cur = 0;
+        int W = from;
+        for (int pos = from; pos < to;) {
+            if (sd.accept(cur)) {
+                return W;
+            }
+            int c = Alphabet.decode(input, pos, to);
+            int adv = Alphabet.width(c);
+            int v = c < 0x10000 ? sd.bmpTransition(cur, c) : sd.transition(cur, c);
+            if (v == -1) {
+                // Cap: continue unmemoized from pos WITH the exact live set —
+                // restarting from a bare seed would drop configurations started
+                // in [W, pos) that are still alive (and may accept later),
+                // masking real matches.
+                return rawScan(input, pos, to, W, sd.rowWordsOf(cur), sc);
+            }
+            if (v == SDFA_KILL) {
+                W = pos + adv;
+                cur = 0;
+            } else {
+                cur = v;
+            }
+            pos += adv;
+        }
+        return sd.accept(cur) ? W : -1;
+    }
+
+    /**
+     * Uncapped fallback: the unmemoized multi-state simulation with kill-point
+     * tracking (kill = the pre-seed step set is empty). Returns W or -1.
+     */
+    private int rawScan(String input, int from, int to, int wIn, int[] liveIn, MatchScratch sc) {
+        final int nwords = stateWords;
+        int[] live = sc.takeLive(nwords);
+        int[] next = sc.takeNext(nwords);
+        if (liveIn != null) {
+            System.arraycopy(liveIn, 0, live, 0, nwords); // exact continuation
+        } else {
+            Arrays.fill(live, 0, nwords, 0);
+            live[startState >>> 5] |= 1 << (startState & 31);
+        }
+        final int[] sm = stateMeta, rg = ranges, ab = acceptBits;
+        int W = wIn;
+        for (int pos = from; pos <= to; pos++) {
+            for (int w = 0; w < nwords; w++) {
+                if ((live[w] & ab[w]) != 0) {
+                    return W;
+                }
+            }
+            if (pos == to) {
+                break;
+            }
+            int c = Alphabet.decode(input, pos, to);
+            int adv = Alphabet.width(c);
+            Arrays.fill(next, 0, nwords, 0);
+            boolean empty = true;
+            for (int w = 0; w < nwords; w++) {
+                int bits = live[w];
+                while (bits != 0) {
+                    int bit = Integer.numberOfTrailingZeros(bits);
+                    bits &= bits - 1;
+                    int s = (w << 5) + bit;
+                    int meta = sm[s];
+                    int base = stateBase[s];
+                    int count = (meta >>> 1) & 0xFFFF;
+                    int rlo = 0, rhi = count - 1, anchor = -1;
+                    while (rlo <= rhi) {
+                        int mid = (rlo + rhi) >>> 1;
+                        if (rg[(base + mid) * 5] <= c) {
+                            anchor = mid;
+                            rlo = mid + 1;
+                        } else {
+                            rhi = mid - 1;
+                        }
+                    }
+                    for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+                        int mo = (base + i) * 5;
+                        if (c <= rg[mo + 1]) {
+                            int t = rg[mo + 2];
+                            if (t >= 0) {
+                                next[t >>> 5] |= 1 << (t & 31);
+                                empty = false;
+                            }
+                        }
+                    }
+                }
+            }
+            // Always re-seed: after a kill the live set must be the pure seed
+            // (match may start at pos+1), not empty — an empty live set would
+            // kill every subsequent step too and mask real matches.
+            next[startState >>> 5] |= 1 << (startState & 31);
+            if (empty) {
+                W = pos + adv;
+            }
+            int[] tmp = live;
+            live = next;
+            next = tmp;
+            if (adv == 2) {
+                pos++;
+            }
+        }
+        return -1;
+    }
+
+    // ===== ASM ladder hooks: strategy pieces the generated ladder calls.
+    // TdfaRunner is final, so these invokevirtual sites are monomorphic and
+    // inline wherever emitted. The generated ladder mirrors
+    // runStringExtractFast exactly; the strategy-conformance test asserts
+    // trace equality between backends. =====
+
+    /**
+     * Defensive restart walk (sim and walk disagreed on a fast-path DFA):
+     * per-unit scan from {@code fromStart} with the pair-interior guard and
+     * an exact extract at each position. Public: the ASM-emitted ladder
+     * delegates here instead of emitting its own loop — one definition.
+     * {@code sc} may be null (carrier-free engines' cold fallback).
+     */
+    @EmittedSurface
+    public MatchHolder restartExtract(String input, int fromStart, int to, int from0, MatchScratch sc) {
+        if (sc == null) {
+            sc = new MatchScratch();
+        }
+        for (int s = fromStart; s <= to; s++) {
+            if (Alphabet.pairInterior(input, s)) {
+                continue;
+            }
+            MatchHolder h = tryStartFast(input, s, to, sc);
+            if (h != null) {
+                return h;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * First-char candidate bitset, or null when the start state accepts.
+     */
+    @EmittedSurface
+    public long[] startBits() {
+        return startBits;
+    }
+
+    /**
+     * Max input length for the candidate scan.
+     */
+    @EmittedSurface
+    public int candScanMax() {
+        return CAND_SCAN_MAX;
+    }
+
+    /**
+     * Char budget for the origin sim before the trigger fallback.
+     */
+    @EmittedSurface
+    public int originSimBudget() {
+        return LSS_BUDGET_CHARS;
+    }
+
+    /**
+     * Origin-sim leftmost start; {@link #LSS_BUDGET} = budget exhausted.
+     * {@code sc} may be null (carrier-free engines' cold fallback).
+     */
+    @EmittedSurface
+    public int originSimLeftmost(CharSequence input, int from, int to, int budget, MatchScratch sc) {
+        return multiStateLeftmostStart(input, from, to, budget, sc != null ? sc : new MatchScratch());
+    }
+
+    /**
+     * Memoized search-DFA trigger scan: window start W, or -1 = no match.
+     * {@code sc} may be null (carrier-free engines' cold fallback).
+     */
+    @EmittedSurface
+    public int triggerScanTop(String input, int from, int to, MatchScratch sc) {
+        return triggerScan(input, from, to, sc != null ? sc : new MatchScratch());
+    }
+
+    /**
+     * Boolean single-start walk (fastPath only): does a match start at from?
+     */
+    @EmittedSurface
+    public boolean booleanMatchFrom(String input, int from, int to) {
+        return matchFromFast(input, from, to);
+    }
+
+    /**
+     * Multi-state simulation with per-state origin tracking; returns the
+     * leftmost start position of any match in {@code [from, to]}, or -1.
+     *
+     * <p>Only called when {@link #fastPath} holds (disjoint ranges, no entry/
+     * accept/required masks, not multiline) — otherwise the mask-free
+     * transition-following would over-approximate. {@link #stopOnAcceptMask}
+     * (Perl early-stop) only shortens matches, never removes them, so it is
+     * safely ignored here: accept-live at p with origin o implies a match
+     * starting at o exists.
+     *
+     * <p>{@code origin[s]} = smallest seed position from which s is live.
+     * The start state is re-seeded at every position (unanchored search), so
+     * its origin is always {@code from}; state bits and origins move in lockstep:
+     * {@code next} is zeroed each step, so "bit already set in next" exactly
+     * identifies re-reachable states (origin = min) vs first-arrival (origin = set).
+     */
+    private int multiStateLeftmostStart(CharSequence input, int from, int to, MatchScratch sc) {
+        return multiStateLeftmostStart(input, from, to, -1, sc);
+    }
+
+    /**
+     * Budgeted variant: aborts with {@link #LSS_BUDGET} after {@code budget}
+     * chars without an accept (dense matches early-stop far inside; a distant
+     * or absent match is better served by the memoized trigger scan, so the
+     * caller falls back to it instead of bitset-scanning the whole tail).
+     */
+    private int multiStateLeftmostStart(CharSequence input, int from, int to, int budget, MatchScratch sc) {
+        final int nwords = stateWords;
+        if (nwords == 0) {
+            return -1;
+        }
+        final int[] sm = stateMeta;
+        final int[] rg = ranges;
+        final int[] at = asciiTarget;
+        final int[] ab = acceptBits;
+        final int ss = startState;
+
+        int[] live = sc.takeLive(nwords);
+        int[] next = sc.takeNext(nwords);
+        int[] origin = sc.takeOrigin(stateCount);
+        int[] originNext = sc.takeOriginNext(stateCount);
+        // Origins are DOUBLE-BUFFERED with the state sets: origin[] pairs with
+        // live[], originNext[] with next[]. All arrivals in a step write to
+        // originNext (bit test against next), while old-live origins in origin[]
+        // stay readable for the whole step — a single buffer would corrupt a
+        // state's own origin mid-step when another path's arrival (or the fresh
+        // re-seed) targets a still-live state before its self-loop reads it
+        // (e.g. +1/step origin drift on (\d+)\.(\d+)... over "ip=192.168.1.77").
+        // Stale originNext values are never read: a bit present in next implies
+        // a this-step write (first arrival sets, later arrivals min-merge).
+        Arrays.fill(live, 0, nwords, 0);
+        live[ss >>> 5] |= 1 << (ss & 31);
+        origin[ss] = from;
+
+        int best = -1;
+        final int limit = budget < 0 ? Integer.MAX_VALUE : from + budget;
+        for (int pos = from; pos <= to; pos++) {
+            if (best < 0 && pos > limit) {
+                return LSS_BUDGET;
+            }
+            // accept check with origin tracking
+            for (int w = 0; w < nwords; w++) {
+                int bits = live[w] & ab[w];
+                while (bits != 0) {
+                    int bit = Integer.numberOfTrailingZeros(bits);
+                    bits &= bits - 1;
+                    int s = (w << 5) + bit;
+                    if (best < 0 || origin[s] < best) {
+                        best = origin[s];
+                    }
+                }
+            }
+            if (best >= 0) {
+                // Can any future accept beat `best`? Future accept origins are
+                // either origins of currently-live states or seeds > pos.
+                // best==from is the common dense case and stops immediately.
+                int minLive = Integer.MAX_VALUE;
+                for (int w = 0; w < nwords && minLive > best; w++) {
+                    int bits = live[w];
+                    while (bits != 0) {
+                        int bit = Integer.numberOfTrailingZeros(bits);
+                        bits &= bits - 1;
+                        int s = (w << 5) + bit;
+                        if (origin[s] < minLive) {
+                            minLive = origin[s];
+                        }
+                    }
+                }
+                if (best <= pos && best <= minLive) {
+                    return best;
+                }
+            }
+            if (pos == to) {
+                break;
+            }
+
+            int c = Alphabet.decode(input, pos, to);
+            int adv = Alphabet.width(c);
+
+            Arrays.fill(next, 0, nwords, 0); // grown carrier: zero only our prefix
+            if (at != null && c < 128) {
+                for (int w = 0; w < nwords; w++) {
+                    int bits = live[w];
+                    while (bits != 0) {
+                        int bit = Integer.numberOfTrailingZeros(bits);
+                        bits &= bits - 1;
+                        int s = (w << 5) + bit;
+                        int target = at[s * 128 + c];
+                        if (target >= 0) {
+                            setOrigin(next, originNext, target, origin[s]);
+                        }
+                    }
+                }
+            } else {
+                for (int w = 0; w < nwords; w++) {
+                    int bits = live[w];
+                    while (bits != 0) {
+                        int bit = Integer.numberOfTrailingZeros(bits);
+                        bits &= bits - 1;
+                        int s = (w << 5) + bit;
+                        int meta = sm[s];
+                        int base = stateBase[s];
+                        int count = (meta >>> 1) & 0xFFFF;
+                        // rangesDisjoint == true on the fast path — binary search
+                        int rlo = 0, rhi = count - 1;
+                        while (rlo <= rhi) {
+                            int mid = (rlo + rhi) >>> 1;
+                            int mo = (base + mid) * 5;
+                            if (c < rg[mo]) {
+                                rhi = mid - 1;
+                                continue;
+                            }
+                            if (c > rg[mo + 1]) {
+                                rlo = mid + 1;
+                                continue;
+                            }
+                            int target = rg[mo + 2];
+                            if (target >= 0) {
+                                setOrigin(next, originNext, target, origin[s]);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            setOrigin(next, originNext, ss, pos + adv); // unanchored re-seed (min-merge if already re-added)
+
+            int[] tmp = live;
+            live = next;
+            next = tmp;
+            int[] to2 = origin;
+            origin = originNext;
+            originNext = to2;
+            if (adv == 2) {
+                pos++;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Ultra-tight anchored match for DFAs with no masks and disjoint ranges.
+     * Uses a flat precomputed target table: one array load per char.
+     * Falls back to {@link #runStringAnchored} on non-ASCII input.
+     */
+    private boolean runStringAnchoredFast(String input) {
+        final int to = input.length();
+        final int[] sm = this.stateMeta;
+        final int[] at = this.latinTarget;
+        int state = startState;
+        final int limit = this.latinLimit;
+        for (int pos = 0; pos < to; pos++) {
+            char c = input.charAt(pos);
+            if (c >= limit) {
+                return runStringAnchored(input) >= 0;
+            }
+            state = at[state * limit + c];
+            if (state < 0) {
+                return false;
+            }
+        }
+        return (sm[state] & 1) != 0;
+    }
+
+    // ===== Fast paths: no masks, disjoint ranges, ASCII-only =====
+
+    /**
+     * Unanchored boolean search via single-pass multi-state simulation. O(n × |states|).
+     */
+    private boolean runStringFindFast(String input, int to, MatchScratch sc) {
+        // Literal-prefix candidate scan first (see prefixScanBool): no hits ⇒
+        // no match. Budget exhaustion falls through to the ladders below
+        // (complete searches).
+        if (prefixNeedle != null) {
+            trace(Strategy.PREFIX);
+            int pr = prefixScanBool(input, 0, to);
+            if (pr == PREFIX_HIT) {
+                return true;
+            }
+            if (pr == PREFIX_DONE) {
+                return false;
+            }
+        }
+        // Short inputs: first-char-set candidate scan (one bit test per char,
+        // exact walk per candidate) beats the raw-scan live-set simulation.
+        if (startBits != null && to <= CAND_SCAN_MAX) {
+            trace(Strategy.CAND_SCAN);
+            return candScanBool(input, 0, to);
+        }
+        return triggerScan(input, 0, to, sc) >= 0;
+    }
+
+    /**
+     * Tight boolean walk for fastPath DFAs: does some match start exactly at
+     * {@code from}? Flat range-index dispatch below {@code latinLimit},
+     * disjoint binary search above; no regs, no masks (fastPath guarantees
+     * all zero), no PERL stop logic — any accept is a match for boolean
+     * purposes, so the first accepting state returns true. Never called when
+     * the start state accepts (startBits is null then), so no empty-match
+     * check is needed before the first step.
+     */
+    private boolean matchFromFast(String input, int from, int to) {
+        final int[] sm = this.stateMeta;
+        final int[] arf = this.asciiRangeFlat;
+        final int[] rg = this.ranges;
+        final int limit = this.latinLimit;
+        int state = startState;
+        int pos = from;
+        while (pos < to) {
+            int c = Alphabet.decode(input, pos, to);
+            int adv = Alphabet.width(c);
+            int ri;
+            if (c < limit) {
+                ri = arf[state * limit + c];
+            } else if (c < 0x10000) {
+                ri = walkIdx.walkRangeIndex(state, c);
+                if (ri == -2) {
+                    ri = Integer.MIN_VALUE;
+                }
+            } else {
+                ri = Integer.MIN_VALUE;
+            }
+            if (ri == Integer.MIN_VALUE) {
+                int base = stateBase[state], cnt = (sm[state] >>> 1) & 0xFFFF;
+                int rlo = 0, rhi = cnt - 1;
+                ri = -1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    int mo = (base + mid) * 5;
+                    if (c < rg[mo]) {
+                        rhi = mid - 1;
+                        continue;
+                    }
+                    if (c > rg[mo + 1]) {
+                        rlo = mid + 1;
+                        continue;
+                    }
+                    ri = mid;
+                    break;
+                }
+            }
+            if (ri < 0) {
+                return false;
+            }
+            int target = rg[(stateBase[state] + ri) * 5 + 2];
+            if (target < 0) {
+                return false;
+            }
+            state = target;
+            pos += adv;
+            if ((sm[state] & 1) != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Fast extract with register updates.
+     */
+    private MatchHolder runStringExtractFast(String input, int from, int to, MatchScratch sc) {
+        if (literalNeedle != null) {
+            trace(Strategy.LITERAL);
+            int idx = RunnerTables.literalIndexOf(input, literalNeedle, from);
+            return idx < 0 ? null : new MatchHolder(idx, idx + literalNeedle.length(), new int[0]);
+        }
+        // 1) Try ONE single-start walk from `from` — the common short-input case
+        //    (match at/near the start) never needs the simulation at all.
+        trace(Strategy.EXACT_FROM);
+        MatchHolder h = tryStartFast(input, from, to, sc);
+        if (h != null) {
+            return h;
+        }
+        // 1a) Literal-prefix candidate scan (see prefixScanExtract): the
+        //     intrinsified vectorized indexOf beats the per-char ladders
+        //     below on any needle-prefixed shape; no hits ⇒ no match at all
+        //     (the exact walk above ruled out a start at `from`). On budget
+        //     exhaustion fall through to the sim/trigger ladder, a complete
+        //     search from `from`.
+        if (prefixNeedle != null) {
+            trace(Strategy.PREFIX);
+            h = prefixScanExtract(input, from + 1, to, sc);
+            if (h != PREFIX_BUDGET_OUT) {
+                return h; // the hit, or no hits at all — either way decided
+            }
+        }
+        // 1b) Short inputs: first-char-set candidate scan. Coverage is exact
+        //     (start state not accepting — else startBits is null — so every
+        //     match consumes a first char carrying its bit); each candidate
+        //     gets an exact walk, so the first hit is the true leftmost match.
+        if (startBits != null && to - from <= CAND_SCAN_MAX) {
+            trace(Strategy.CAND_SCAN);
+            return candScanExtract(input, from + 1, to, sc);
+        }
+        // 2) No match starting at `from`: budgeted origin-tracking sim. Dense
+        //    matches early-stop inside the budget and never touch the trigger
+        //    (an unconditional pre-scan would double the work on dense findAll
+        //    scans). A distant/absent match exhausts the budget and hands off
+        //    to the memoized trigger scan, which bounds the window to [W, to]
+        //    via kill points; the sim then finishes over just that window.
+        //    Retrying every failed start with a full walk instead costs O(n)
+        //    restarts × O(n) walk = O(n²) on dense-match regexes like
+        //    [a-zA-Z]+ing.
+        trace(Strategy.ORIGIN_SIM);
+        int leftmost = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS, sc);
+        if (leftmost == LSS_BUDGET) {
+            int w = triggerScan(input, from, to, sc);
+            if (w < 0) {
+                return null;
+            }
+            leftmost = multiStateLeftmostStart(input, w, to, sc);
+        }
+        if (leftmost < 0) {
+            return null;
+        }
+        h = tryStartFast(input, leftmost, to, sc);
+        if (h != null) {
+            return h;
+        }
+        // 3) Defensive: the sim and the walk must agree on fast-path DFAs; if
+        //    they ever don't, fall back to the plain per-start restart loop
+        //    rather than return a wrong null.
+        trace(Strategy.WALK_RESTART);
+        return restartExtract(input, leftmost + 1, to, from, sc);
+    }
+
+    /**
+     * One single-start extract walk (no restart loop); null if no match starts
+     * exactly at {@code start}. Non-Latin-1 codepoints mid-walk fall back to
+     * the generic exact walk from the SAME start (single-start semantics —
+     * callers treat null as "no match here", not "no match anywhere").
+     */
+    private MatchHolder tryStartFast(String input, int start, int to, MatchScratch sc) {
+        final int[] sm = this.stateMeta;
+        final int[] arf = this.asciiRangeFlat;
+        final int[] rg = this.ranges;
+        final int[] op = this.ops;
+        // Leftmost-first stopOnAccept: pre-load the mask table when not in
+        // longest-match mode so the inner loop can short-circuit on first
+        // accepting state (matching the slow path).
+        final boolean pm = !this.longestMatch;
+        // Pooled regs (caller's carrier): no allocation on the (frequent)
+        // failed-walk path. On success the array is cloned into the MatchHolder
+        // before returning, so the pool is never handed out. NOTE: the
+        // non-ASCII fallback below re-enters the generic extract path, which
+        // refills the same carrier — safe: it never aliases a live caller's
+        // [0, regSize) window (each taker refills before use).
+        final int[] regs;
+        if (regSize == 0) {
+            regs = null;
+        } else {
+            regs = takeRegs(regSize, sc);
+            Arrays.fill(regs, 0, regSize, -1);
+        }
+        int state = startState;
+        int lastAcceptPos = -1;
+        boolean haveAccept = false;
+        int posFlags = -1; // lazy: -1 means not yet computed for current pos
+        int pos = start;
+        for (; pos <= to; pos++) {
+            int meta = sm[state];
+            if ((meta & 1) != 0) {
+                final int[] fm = this.finalOpsByMask;
+                if (fm != null) {
+                    if (posFlags < 0) {
+                        posFlags = positionFlags(input, pos, to);
+                    }
+                    int cell = fm[state * 64 + posFlags];
+                    // cell < 0 (position-suppressed accept): do NOT record and
+                    // do NOT stop — fall through to the transition, exactly
+                    // like extractFrom (a `continue` here would skip the
+                    // transition and freeze the walk state while pos advanced).
+                    if (cell >= 0) {
+                        haveAccept = true;
+                        lastAcceptPos = pos;
+                        if (regs != null && cell != 0) {
+                            applyOps(op, cell, regs, pos);
+                        }
+                        if (pm && stopNow(state, posFlags)) {
+                            break;
+                        }
+                    }
+                } else {
+                    haveAccept = true;
+                    lastAcceptPos = pos;
+                    if (regs != null) {
+                        applyFinalOps(state, regs, pos);
+                    }
+                    if (pm) {
+                        if (stopMaskUniform == null) {
+                            posFlags = positionFlags(input, pos, to);
+                        }
+                        if (stopNow(state, posFlags)) {
+                            break;
+                        }
+                    }
+                }
+            }
+            if (pos == to) {
+                break;
+            }
+            char c = input.charAt(pos);
+            if (c >= latinLimit) {
+                return extractFrom(input, start, to, sc);
+            }
+            int ri = arf[state * latinLimit + c];
+            if (ri < 0) {
+                break;
+            }
+            int mo = (stateBase[state] + ri) * 5;
+            int target = rg[mo + 2];
+            if (target < 0) {
+                break;
+            }
+            if (regs != null) {
+                int opsOff = rg[mo + 3];
+                if (opsOff != 0) {
+                    applyOps(op, opsOff, regs, pos);
+                }
+            }
+            state = target;
+            // posFlags belongs to the OLD position — invalidate (extractFrom /
+            // matchFrom / anchored / generic all reset here; skipping the
+            // reset feeds stale flags to the next accept / stopNow probe).
+            posFlags = -1;
+        }
+        if (haveAccept) {
+            // Eager finals at accept-record time (see extractFrom).
+            return new MatchHolder(start, lastAcceptPos, regs == null ? new int[0] : regs.clone());
+        }
+        return null;
+    }
+
+    /**
+     * Anchored String match. Returns lastAcceptPos (>=0) on match, -1 on no match. No allocation.
+     */
+    private int runStringAnchored(String input) {
+        final int[] sm = this.stateMeta;
+        final int[] rg = this.ranges;
+        final int[] sem = this.stateEntryMask;
+        final int[] sam = this.stateAcceptMask;
+        final int to = input.length();
+
+        int state = startState;
+        int lastAcceptPos = -1;
+
+        // Entry check for start state — inline
+        {
+            int entryReq = sem[state];
+            if (entryReq != 0 && (positionFlags(input, 0, to) & entryReq) != entryReq) {
+                return -1;
+            }
+        }
+
+        int posFlags = -1; // lazy: -1 means not yet computed for current pos
+        for (int pos = 0; pos <= to; pos++) {
+            int meta = sm[state];
+            if ((meta & 1) != 0) {
+                int acceptMask = sam[state];
+                if (acceptMask == 0) {
+                    lastAcceptPos = pos;
+                } else {
+                    if (posFlags < 0) {
+                        posFlags = positionFlags(input, pos, to);
+                    }
+                    if ((posFlags & acceptMask) == acceptMask) {
+                        lastAcceptPos = pos;
+                    }
+                }
+            }
+            if (pos == to) {
+                break;
+            }
+            int c = Alphabet.decode(input, pos, to);
+            int base = stateBase[state];
+            int count = (meta >>> 1) & 0xFFFF;
+            boolean matched = false;
+            if (asciiTables) {
+                // ASCII fast path: direct table lookup
+                int ri = c < latinLimit ? asciiRangeFlat[state * latinLimit + c] : -2;
+                if (ri >= 0) {
+                    int mo = (base + ri) * 5;
+                    int target = rg[mo + 2];
+                    if (target >= 0) {
+                        int requiredMask = rg[mo + 4];
+                        boolean maskOk = true;
+                        if (requiredMask != 0) {
+                            if (posFlags < 0) {
+                                posFlags = positionFlags(input, pos, to);
+                            }
+                            maskOk = (posFlags & requiredMask) == requiredMask;
+                        }
+                        if (maskOk) {
+                            state = target;
+                            if (c > 0xFFFF) {
+                                pos++;
+                            }
+                            int entryReq = sem[state];
+                            if (entryReq == 0 || (positionFlags(input, pos + 1, to) & entryReq) == entryReq) {
+                                matched = true;
+                            } else {
+                                return lastAcceptPos == to ? lastAcceptPos : -1;
+                            }
+                        }
+                    }
+                } else if (ri == -1) {
+                    break; // dead ASCII char
+                } else {
+                    // Non-ASCII: binary search
+                    int rlo = 0, rhi = count - 1;
+                    while (rlo <= rhi) {
+                        int mid = (rlo + rhi) >>> 1;
+                        int mo = (base + mid) * 5;
+                        if (c < rg[mo]) {
+                            rhi = mid - 1;
+                            continue;
+                        }
+                        if (c > rg[mo + 1]) {
+                            rlo = mid + 1;
+                            continue;
+                        }
+                        int target = rg[mo + 2];
+                        if (target < 0) {
+                            break;
+                        }
+                        int requiredMask = rg[mo + 4];
+                        if (requiredMask != 0) {
+                            if (posFlags < 0) {
+                                posFlags = positionFlags(input, pos, to);
+                            }
+                            if ((posFlags & requiredMask) != requiredMask) {
+                                break;
+                            }
+                        }
+                        state = target;
+                        if (c > 0xFFFF) {
+                            pos++;
+                        }
+                        int entryReq = sem[state];
+                        if (entryReq != 0) {
+                            if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
+                                return lastAcceptPos == to ? lastAcceptPos : -1;
+                            }
+                        }
+                        matched = true;
+                        break;
+                    }
+                }
+            } else {
+                // Non-disjoint state: binary search + prefix-max walk. Ownership
+                // protocol (same as extractFrom / runStringMatchFrom /
+                // runGeneric): the MOST SPECIFIC satisfied mask wins (popcount of
+                // requiredMask), ties to the lowest index; a dead marker of the
+                // OWNING entry kills the walk — no fallthrough to lower-specificity
+                // entries, whose contexts are not alive here. A pure
+                // lowest-index + transparent-dead rule would let matches()
+                // return true where match()/find() find nothing on
+                // overlapping-mask-context patterns.
+                int rlo = 0, rhi = count - 1, anchor = -1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    if (rg[(base + mid) * 5] <= c) {
+                        anchor = mid;
+                        rlo = mid + 1;
+                    } else {
+                        rhi = mid - 1;
+                    }
+                }
+                int chosen = -1, chosenTarget = 0;
+                int best = -1, bestSpec = -1;
+                for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+                    int o = (base + i) * 5;
+                    if (c <= rg[o + 1]) {
+                        int requiredMask = rg[o + 4];
+                        if (requiredMask != 0) {
+                            if (posFlags < 0) {
+                                posFlags = positionFlags(input, pos, to);
+                            }
+                            if ((posFlags & requiredMask) != requiredMask) {
+                                continue;
+                            }
+                        }
+                        int spec = Integer.bitCount(requiredMask);
+                        if (spec >= bestSpec) {
+                            best = i;
+                            bestSpec = spec;
+                        } // >= : lower index wins ties
+                    }
+                }
+                if (best >= 0) {
+                    int o = (base + best) * 5;
+                    int target = rg[o + 2];
+                    if (target >= 0) {
+                        chosen = o;
+                        chosenTarget = target;
+                    }
+                    // target < 0: dead marker of the owning context — leave
+                    // chosen < 0; the walk ends (matched=false) and the final
+                    // lastAcceptPos check decides, exactly like extractFrom's
+                    // loop break.
+                }
+                if (chosen >= 0) {
+                    state = chosenTarget;
+                    if (c > 0xFFFF) {
+                        pos++;
+                    }
+                    int entryReq = sem[state];
+                    if (entryReq != 0) {
+                        if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
+                            return lastAcceptPos == to ? lastAcceptPos : -1;
+                        }
+                    }
+                    matched = true;
+                }
+            }
+            if (!matched) {
+                break;
+            }
+            posFlags = -1;
+        }
+        return lastAcceptPos == to ? lastAcceptPos : -1;
+    }
+
+    /**
+     * String match from position, returns lastAcceptPos or -1. No allocation.
+     */
+    private int runStringMatchFrom(String input, int from, int to) {
+        final int[] sm = this.stateMeta;
+        final int[] rg = this.ranges;
+        final int[] sem = this.stateEntryMask;
+        final int[] sam = this.stateAcceptMask;
+        final int[] arf = this.asciiRangeFlat; // non-null iff rangesDisjoint
+        final int limit = this.latinLimit;
+        int state = startState;
+        int lastAcceptPos = -1;
+        boolean haveAccept = false;
+        int pos = from;
+
+        // Entry check for start state — inline
+        {
+            int entryReq = sem[state];
+            if (entryReq != 0 && (positionFlags(input, pos, to) & entryReq) != entryReq) {
+                return -1;
+            }
+        }
+
+        int posFlags = -1;
+        for (;; pos++) {
+            int meta = sm[state];
+            if ((meta & 1) != 0) {
+                int acceptMask = sam[state];
+                if (acceptMask == 0) {
+                    haveAccept = true;
+                    lastAcceptPos = pos;
+                    if (!longestMatch) {
+                        if (posFlags < 0 && stopMaskUniform == null) {
+                            posFlags = positionFlags(input, pos, to);
+                        }
+                        if (stopNow(state, posFlags)) {
+                            break;
+                        }
+                    }
+                } else {
+                    if (posFlags < 0) {
+                        posFlags = positionFlags(input, pos, to);
+                    }
+                    if ((posFlags & acceptMask) == acceptMask) {
+                        haveAccept = true;
+                        lastAcceptPos = pos;
+                        if (!longestMatch && stopNow(state, posFlags)) {
+                            break;
+                        }
+                    }
+                }
+            }
+            if (pos >= to) {
+                break;
+            }
+            int c = Alphabet.decode(input, pos, to);
+            int base = stateBase[state];
+            int count = (meta >>> 1) & 0xFFFF;
+            boolean matched = false;
+            int riFlat;
+            if (arf != null && c < limit) {
+                riFlat = arf[state * limit + c];
+            } else if (rangesDisjoint && c < 0x10000) {
+                // tableless giant DFA (see ASCII_TABLE_MAX_STATES): walk blocks
+                riFlat = walkIdx.walkRangeIndex(state, c);
+                if (riFlat == -2) {
+                    riFlat = Integer.MIN_VALUE;
+                } // block cap: binary search
+            } else {
+                riFlat = Integer.MIN_VALUE;
+            }
+            if (riFlat != Integer.MIN_VALUE) {
+                // disjoint flat/block lookup: exact (priority moot, single entry)
+                if (riFlat >= 0) {
+                    int mo = (base + riFlat) * 5;
+                    int target = rg[mo + 2];
+                    if (target < 0) {
+                        return haveAccept ? lastAcceptPos : -1;
+                    }
+                    int requiredMask = rg[mo + 4];
+                    if (requiredMask != 0) {
+                        if (posFlags < 0) {
+                            posFlags = positionFlags(input, pos, to);
+                        }
+                        if ((posFlags & requiredMask) != requiredMask) {
+                            return haveAccept ? lastAcceptPos : -1;
+                        }
+                    }
+                    state = target;
+                    if (c > 0xFFFF) {
+                        pos++;
+                    }
+                    int entryReq = sem[state];
+                    if (entryReq != 0) {
+                        if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
+                            return haveAccept ? lastAcceptPos : -1;
+                        }
+                    }
+                    matched = true;
+                }
+            } else if (rangesDisjoint) {
+                int rlo = 0, rhi = count - 1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    int mo = (base + mid) * 5;
+                    if (c < rg[mo]) {
+                        rhi = mid - 1;
+                        continue;
+                    }
+                    if (c > rg[mo + 1]) {
+                        rlo = mid + 1;
+                        continue;
+                    }
+                    int target = rg[mo + 2];
+                    if (target < 0) {
+                        return haveAccept ? lastAcceptPos : -1;
+                    }
+                    int requiredMask = rg[mo + 4];
+                    if (requiredMask != 0) {
+                        if (posFlags < 0) {
+                            posFlags = positionFlags(input, pos, to);
+                        }
+                        if ((posFlags & requiredMask) != requiredMask) {
+                            return haveAccept ? lastAcceptPos : -1;
+                        }
+                    }
+                    state = target;
+                    if (c > 0xFFFF) {
+                        pos++;
+                    }
+                    int entryReq = sem[state];
+                    if (entryReq != 0) {
+                        if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
+                            return haveAccept ? lastAcceptPos : -1;
+                        }
+                    }
+                    matched = true;
+                    break;
+                }
+            } else {
+                // Non-disjoint state: binary search + prefix-max walk.
+                int rlo = 0, rhi = count - 1, anchor = -1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    if (rg[(base + mid) * 5] <= c) {
+                        anchor = mid;
+                        rlo = mid + 1;
+                    } else {
+                        rhi = mid - 1;
+                    }
+                }
+                int chosen = -1, chosenTarget = 0;
+                // Most-specific satisfied mask owns the step (popcount, ties
+                // to lowest index) — see extractFrom for the protocol; no
+                // fallthrough past a dead owning context, no shadowing of
+                // specific entries by broad mask-0 ranges either.
+                int bestSpec = -1;
+                for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+                    int o = (base + i) * 5;
+                    if (c <= rg[o + 1]) {
+                        int requiredMask = rg[o + 4];
+                        if (requiredMask != 0) {
+                            if (posFlags < 0) {
+                                posFlags = positionFlags(input, pos, to);
+                            }
+                            if ((posFlags & requiredMask) != requiredMask) {
+                                continue;
+                            }
+                        }
+                        int spec = Integer.bitCount(requiredMask);
+                        if (spec >= bestSpec) {
+                            chosen = o;
+                            chosenTarget = rg[o + 2];
+                            bestSpec = spec;
+                        }
+                    }
+                }
+                if (chosen < 0 || chosenTarget < 0) {
+                    return haveAccept ? lastAcceptPos : -1; // owning context dead: no fallthrough
+                }
+                {
+                    state = chosenTarget;
+                    if (c > 0xFFFF) {
+                        pos++;
+                    }
+                    int entryReq = sem[state];
+                    if (entryReq != 0) {
+                        if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
+                            return haveAccept ? lastAcceptPos : -1;
+                        }
+                    }
+                    matched = true;
+                }
+            }
+            if (!matched) {
+                break;
+            }
+            posFlags = -1;
+        }
+        return haveAccept ? lastAcceptPos : -1;
+    }
+
+    private MatchHolder runGeneric(CharSequence input, int from, int to, boolean anchored, MatchScratch sc) {
+        // Carrier-regs reuse across restarts (the wholeWalk idiom): failed
+        // restarts pay only the -1 refill, not a fresh allocation per start;
+        // successful escapes clone into the MatchHolder, so reuse is safe.
+        int startSearch = from;
+        while (true) {
+            final int[] regs;
+            if (regSize == 0) {
+                regs = null;
+            } else {
+                regs = takeRegs(regSize, sc);
+                Arrays.fill(regs, 0, regSize, -1);
+            }
+            int state = startState;
+            int lastAcceptPos = -1;
+            boolean haveAccept = false;
+            int pos = startSearch;
+
+            // Entry check for start state — inline
+            {
+                int entryReq = stateEntryMask[state];
+                if (entryReq != 0 && (positionFlagsCS(input, pos, to) & entryReq) != entryReq) {
+                    if (anchored) {
+                        return null;
+                    }
+                    if ((startStateEntryMask & Tnfa.ABS_BEGIN) != 0) {
+                        return null;
+                    }
+                    startSearch++;
+                    if (startSearch > to) {
+                        return null;
+                    }
+                    continue;
+                }
+            }
+
+            int posFlags = -1;
+            for (;; pos++) {
+                int meta = stateMeta[state];
+                if ((meta & 1) != 0) {
+                    final int[] fm = this.finalOpsByMask;
+                    if (fm != null) {
+                        if (posFlags < 0) {
+                            posFlags = positionFlagsCS(input, pos, to);
+                        }
+                        int cell = fm[state * 64 + posFlags];
+                        if (cell >= 0) {
+                            lastAcceptPos = pos;
+                            haveAccept = true;
+                            if (regs != null && cell != 0) {
+                                applyOps(ops, cell, regs, pos);
+                            }
+                            if (!longestMatch && stopNow(state, posFlags)) {
+                                break;
+                            }
+                        }
+                    } else {
+                        int acceptMask = stateAcceptMask[state];
+                        if (acceptMask == 0) {
+                            lastAcceptPos = pos;
+                            haveAccept = true;
+                            if (regs != null) {
+                                applyFinalOps(state, regs, pos);
+                            }
+                            if (!longestMatch) {
+                                if (posFlags < 0) {
+                                    posFlags = positionFlagsCS(input, pos, to);
+                                }
+                                if (stopNow(state, posFlags)) {
+                                    break;
+                                }
+                            }
+                        } else {
+                            if (posFlags < 0) {
+                                posFlags = positionFlagsCS(input, pos, to);
+                            }
+                            if ((posFlags & acceptMask) == acceptMask) {
+                                lastAcceptPos = pos;
+                                haveAccept = true;
+                                if (regs != null) {
+                                    applyFinalOps(state, regs, pos);
+                                }
+                                if (!longestMatch && stopNow(state, posFlags)) {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (pos >= to) {
+                    break;
+                }
+                int c = Alphabet.decode(input, pos, to);
+                int base = stateBase[state];
+                int count = (meta >>> 1) & 0xFFFF;
+                // Binary search + prefix-max walk (CharSequence variant).
+                int rlo = 0, rhi = count - 1, anchor = -1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    if (ranges[(base + mid) * 5] <= c) {
+                        anchor = mid;
+                        rlo = mid + 1;
+                    } else {
+                        rhi = mid - 1;
+                    }
+                }
+                int chosen = -1, chosenTarget = 0;
+                // Most-specific satisfied mask owns the step (popcount, ties
+                // to lowest index) — see extractFrom for the protocol.
+                int bestSpec = -1;
+                for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+                    int o = (base + i) * 5;
+                    if (c <= ranges[o + 1]) {
+                        int requiredMask = ranges[o + 4];
+                        if (requiredMask != 0) {
+                            if (posFlags < 0) {
+                                posFlags = positionFlagsCS(input, pos, to);
+                            }
+                            if ((posFlags & requiredMask) != requiredMask) {
+                                continue;
+                            }
+                        }
+                        int spec = Integer.bitCount(requiredMask);
+                        if (spec >= bestSpec) {
+                            chosen = o;
+                            chosenTarget = ranges[o + 2];
+                            bestSpec = spec;
+                        }
+                    }
+                }
+                if (chosen < 0 || chosenTarget < 0) {
+                    break;
+                }
+                // Mask before ops — see extractFrom.
+                int width = c > 0xFFFF ? 2 : 1;
+                int entryReqNext = stateEntryMask[chosenTarget];
+                if (entryReqNext != 0 && (positionFlagsCS(input, pos + width, to) & entryReqNext) != entryReqNext) {
+                    break;
+                }
+                if (regs != null) {
+                    int opsOff = ranges[chosen + 3];
+                    if (opsOff != 0) {
+                        applyOps(ops, opsOff, regs, pos);
+                    }
+                }
+                state = chosenTarget;
+                if (width == 2) {
+                    pos++;
+                }
+                posFlags = -1;
+            }
+            if (haveAccept) {
+                if (anchored && lastAcceptPos != to) {
+                    return null;
+                }
+                // Eager finals at accept-record time (see extractFrom).
+                return new MatchHolder(startSearch, lastAcceptPos, regs == null ? new int[0] : regs.clone());
+            }
+            if (anchored) {
+                return null;
+            }
+            if ((startStateEntryMask & Tnfa.ABS_BEGIN) != 0) {
+                return null;
+            }
+            startSearch++;
+            if (startSearch > to) {
+                return null;
+            }
+        }
+    }
+
+    /**
+     * Apply an accepting state's φ final ops into {@code regs} at the moment
+     * the accept is recorded (BT22's match-declaration semantics). φ reads the
+     * accept config's WORKING registers, which hold the correct values only at
+     * accept time — any transition taken afterwards may clobber them. Later
+     * accepts overwrite earlier ones (last write wins), so the register file at
+     * walk end already carries the last accept's finals. Both tiers apply φ
+     * eagerly — a lazy ψ replay at walk end would be unsound; with eager
+     * application {@code pos == lastAcceptPos} always holds and φ is the
+     * correct choice.
+     */
+    private void applyFinalOps(int state, int[] regs, int pos) {
+        int foff = stateFinalOpsOff[state];
+        if (foff != 0) {
+            applyOps(ops, foff, regs, pos);
+        }
+    }
+
+    /**
+     * Determine whether to break the match loop on accept, based on the
+     * position-aware per-(state, posFlags) cell of {@link Tdfa#stopOnAcceptMask}:
+     * - {@link Tdfa#NEVER_STOP}: don't stop (sym-bearing config outranks accept
+     * under this posFlags, or accept unreachable).
+     * - 0: stop (accept is the highest-priority live outcome under this posFlags).
+     * The {@code posFlags} argument is unused beyond the array index computed
+     * by the caller; kept for signature parity.
+     */
+    private boolean stopNow(int state, int posFlags) {
+        byte[] u = stopMaskUniform;
+        if (u != null) {
+            return u[state] == 0;
+        }
+        return stopOnAcceptMask[state * 64 + posFlags] != Tdfa.NEVER_STOP;
+    }
+
+    /**
+     * Compute the position-flags for `pos` in a String.
+     */
+    private int positionFlags(String s, int pos, int len) {
+        int flags = 0;
+        if (pos == 0 || (pos > 0 && s.charAt(pos - 1) == '\n')) {
+            flags |= Tnfa.BEGIN_TEXT;
+        }
+        if (pos == len || (pos < len && s.charAt(pos) == '\n')) {
+            flags |= Tnfa.END_TEXT;
+        }
+        if (pos == 0) {
+            flags |= Tnfa.ABS_BEGIN;
+        } // \A: absolute start, never affected by (?m)
+        if (pos == len) {
+            flags |= Tnfa.ABS_END;
+        } // \z: absolute end, never affected by (?m)
+        if (needsWordFlags) {
+            boolean prevWord = isWordBefore(s, pos);
+            boolean currWord = isWordAt(s, pos, len);
+            if (prevWord != currWord) {
+                flags |= Tnfa.WORD_BOUNDARY;
+            } else {
+                flags |= Tnfa.NO_WORD_BOUNDARY;
+            }
+        }
+        return flags;
+    }
+
+    // ===== Zero-width assertion position-flag computation =====
+
+    /**
+     * Same for a generic CharSequence.
+     */
+    private int positionFlagsCS(CharSequence s, int pos, int len) {
+        int flags = 0;
+        if (pos == 0 || (pos > 0 && s.charAt(pos - 1) == '\n')) {
+            flags |= Tnfa.BEGIN_TEXT;
+        }
+        if (pos == len || (pos < len && s.charAt(pos) == '\n')) {
+            flags |= Tnfa.END_TEXT;
+        }
+        if (pos == 0) {
+            flags |= Tnfa.ABS_BEGIN;
+        }
+        if (pos == len) {
+            flags |= Tnfa.ABS_END;
+        }
+        if (needsWordFlags) {
+            boolean prevWord = isWordBefore(s, pos);
+            boolean currWord = isWordAt(s, pos, len);
+            if (prevWord != currWord) {
+                flags |= Tnfa.WORD_BOUNDARY;
+            } else {
+                flags |= Tnfa.NO_WORD_BOUNDARY;
+            }
+        }
+        return flags;
+    }
+
+    /**
+     * Fast-path eligibility of an artifact — the ONE predicate both engine
+     * tiers consult so their fast paths cannot drift: not multiline,
+     * pairwise-disjoint ranges, and no entry / accept / required mask
+     * anywhere. The VM's instance {@link #fastPath} additionally requires
+     * the eager ASCII dispatch tables; the ASM tier additionally applies
+     * its inline-size budget (pickMode).
+     *
+     * <p>NOTE: per-mask final variants (stateFinalOpsByMask != null) do NOT
+     * disqualify — the fast walks' fm branches handle them and match the
+     * mask-aware walks exactly (suppressed-accept fall-through + posFlags
+     * reset). A belt-and-braces exclusion here costs ~10x on anchored
+     * matches() for φ-variant patterns (quick-bench info.anchored.asm).
+     */
+    public static boolean fastPathEligible(Tdfa tdfa) {
+        if (tdfa.multiline || !RunnerTables.checkRangesDisjoint(tdfa)) {
+            return false;
+        }
+        for (int mask : tdfa.stateEntryMask) {
+            if (mask != 0) {
+                return false;
+            }
+        }
+        for (int mask : tdfa.stateAcceptMask) {
+            if (mask != 0) {
+                return false;
+            }
+        }
+        for (int i = 4; i < tdfa.ranges.length; i += 5) {
+            if (tdfa.ranges[i] != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * True if the DFA qualifies for the no-masks fast path: eligible (see
+     * {@link #fastPathEligible}) AND small enough for the eager ASCII
+     * dispatch tables, which the fastPath methods dereference
+     * unconditionally.
+     */
+    private boolean computeFastPath(Tdfa tdfa) {
+        return asciiTables && fastPathEligible(tdfa);
+    }
+
+    /**
+     * RE2's isWordRune: ASCII word chars [_0-9A-Za-z].
+     * When {@link #unicodeWordBoundary} is true, checks the Unicode {@code \w}
+     * ranges (matching {@code java.util.regex} with {@code UNICODE_CHARACTER_CLASS}).
+     * Both via the {@link #wordBits} BMP bitset — one array load.
+     */
+    private boolean isWordChar(char c) {
+        return (wordBits[c >>> 6] >>> (c & 63) & 1L) != 0L;
+    }
+
+    /**
+     * Binary-search the Unicode {@code \w} ranges by CODEPOINT. The ranges include
+     * supplementary codepoints, so decoding a surrogate pair before calling this
+     * recognises supplementary word characters (e.g. U+1D504 MATHEMATICAL FRAKTUR A).
+     */
+    private boolean isUnicodeWordCodepoint(int cp) {
+        int[] wr = wordRanges;
+        if (wr == null) {
+            return false;
+        }
+        int lo = 0, hi = wr.length / 2 - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            int rLo = wr[2 * mid], rHi = wr[2 * mid + 1];
+            if (cp < rLo) {
+                hi = mid - 1;
+            } else if (cp > rHi) {
+                lo = mid + 1;
+            } else {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether the character immediately BEFORE {@code pos} is a word character.
+     * Under {@code (?u)} a supplementary letter's UTF-16 low surrogate at
+     * {@code pos-1} is decoded with its high surrogate at {@code pos-2} first,
+     * so boundaries adjacent to supplementary word chars are computed on the
+     * full codepoint. In ASCII mode surrogate halves are simply non-word.
+     */
+    private boolean isWordBefore(CharSequence s, int pos) {
+        if (pos <= 0) {
+            return false;
+        }
+        char c = s.charAt(pos - 1);
+        if (unicodeWordBoundary && c >= Character.MIN_LOW_SURROGATE && c <= Character.MAX_LOW_SURROGATE && pos >= 2) {
+            char h = s.charAt(pos - 2);
+            if (h >= Character.MIN_HIGH_SURROGATE && h <= Character.MAX_HIGH_SURROGATE) {
+                return isUnicodeWordCodepoint(((h - 0xD800) << 10) + (c - 0xDC00) + 0x10000);
+            }
+        }
+        return isWordChar(c);
+    }
+
+    /**
+     * Whether the character AT {@code pos} is a word character; a high surrogate
+     * at {@code pos} paired with a low surrogate at {@code pos+1} is decoded to
+     * the full codepoint under {@code (?u)}.
+     */
+    private boolean isWordAt(CharSequence s, int pos, int len) {
+        if (pos >= len) {
+            return false;
+        }
+        char c = s.charAt(pos);
+        if (unicodeWordBoundary && c >= Character.MIN_HIGH_SURROGATE && c <= Character.MAX_HIGH_SURROGATE
+            && pos + 1 < len) {
+            char l = s.charAt(pos + 1);
+            if (l >= Character.MIN_LOW_SURROGATE && l <= Character.MAX_LOW_SURROGATE) {
+                return isUnicodeWordCodepoint(((c - 0xD800) << 10) + (l - 0xDC00) + 0x10000);
+            }
+        }
+        return isWordChar(c);
+    }
+
+    /**
+     * Which branch of the search ladder served one public entry call.
+     */
+    public enum Strategy {
+        LITERAL, // literalNeedle -> String.indexOf
+        PREFIX, // required literal prefix -> indexOf candidate walks
+        CAND_SCAN, // first-char-set bit scan + exact walks (short input)
+        EXACT_FROM, // one exact walk from the requested start
+        ORIGIN_SIM, // budgeted origin-tracking multi-state simulation
+        TRIGGER, // memoized search-DFA trigger scan
+        RAW_SCAN, // unmemoized live-set simulation (short window / cap)
+        WALK_RESTART, // defensive per-start restart loop
+        ANCHORED_FAST, // flat-table anchored loop (fastPath)
+        ANCHORED, // generic anchored walk
+        GENERIC // CharSequence (non-String) fallback
+    }
+
+    // ===== per-call scratch (hot-path allocation removal) =====
+    //
+    // Scratch buffers live on the caller's MatchScratch carrier — the re2j /
+    // java.util.regex shape: the stateful Matcher owns its buffers for its
+    // lifetime and passes them down the ladder, so a runner stays immutable
+    // and shareable across threads (re2j semantics: Pattern thread-safe,
+    // Matcher not) with no match-path ThreadLocal: nothing is retained past
+    // the last live Matcher, and virtual threads don't pay a Scratch +
+    // ThreadLocal entry each. Callers without a Matcher (direct engine use)
+    // get a fresh carrier per top-level call — within-call pooling is
+    // preserved either way. Sizes are re-validated on every take; one
+    // carrier grows to the largest need seen and is collected with its
+    // matcher. This eliminates the 4 sim allocations per find()/match()
+    // (O(stateWords + stateCount) each — significant for dictionary-scale
+    // DFAs) and the regs[] allocation on failed single-start walks;
+    // successful walks still clone regs into the returned MatchHolder (it
+    // escapes the runner). regs is also the pool behind the ASM tier's walk
+    // leaves ({@link #takeRegs}) — removing the pool measured ~43 % slower
+    // on the dense extract-restart scan (asmFindAllDense), so it stays.
+    //
+    // No nested aliasing: a holder of pooled regs never calls another taker
+    // while reading its own [0, regSize) window — the one re-entry
+    // (tryStartFast → extractFrom on a non-ASCII char) returns the callee's
+    // result immediately, and every taker refills [0, n) before use.
+    //
+    // The one remaining static, TRACE_BUF (strategy tracing), is only
+    // populated when -Dtdfa.trace.strategy is enabled (a test instrument):
+    // its ThreadLocal entry allocates on the first traced call, never on
+    // normal matching paths.
+}

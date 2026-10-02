@@ -7,7 +7,7 @@ import java.util.List;
 
 /**
  * Test-fixture re-implementation of re2j's package-private {@code RE2} harness
- * API, wrapping the public {@link Pattern}/{@link io.github.jemmix.tdfa.core.Matcher}
+ * API, wrapping the public {@link Pattern}/{@link io.github.jemmix.tdfa.core.engine.Matcher}
  * surface. Exists solely so re2j's vendored ExecTest (and its corpus drivers)
  * compile and run unchanged against this engine; it is not shipped API.
  *
@@ -114,7 +114,7 @@ final class RE2 {
      * Mirrors re2j's {@code RE2.findSubmatchIndex(String)}.
      */
     int[] findSubmatchIndex(String text) {
-        io.github.jemmix.tdfa.core.Matcher m = pat().matcher(text);
+        io.github.jemmix.tdfa.core.engine.Matcher m = pat().matcher(text);
         if (!m.find()) return null;
         int gc = m.groupCount();
         int[] out = new int[2 + 2 * gc];
@@ -135,7 +135,7 @@ final class RE2 {
     /** Find up to {@code cap} successive matches, each as its matched substring. */
     List<String> findAll(String text, int cap) {
         List<String> out = new ArrayList<>();
-        io.github.jemmix.tdfa.core.Matcher m = pat().matcher(text);
+        io.github.jemmix.tdfa.core.engine.Matcher m = pat().matcher(text);
         while (m.find()) {
             out.add(m.group());
             if (out.size() == cap) break;
@@ -146,7 +146,7 @@ final class RE2 {
     /** Find up to {@code cap} successive matches; each as full match + submatch substrings. */
     List<String[]> findAllSubmatch(String text, int cap) {
         List<String[]> out = new ArrayList<>();
-        io.github.jemmix.tdfa.core.Matcher m = pat().matcher(text);
+        io.github.jemmix.tdfa.core.engine.Matcher m = pat().matcher(text);
         while (m.find()) {
             int gc = m.groupCount();
             String[] groups = new String[gc + 1];

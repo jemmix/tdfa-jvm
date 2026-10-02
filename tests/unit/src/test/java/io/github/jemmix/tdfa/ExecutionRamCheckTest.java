@@ -1,11 +1,12 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.CompilationReport;
-import io.github.jemmix.tdfa.core.CompileOptions;
-import io.github.jemmix.tdfa.core.PatternTooLargeException;
-import io.github.jemmix.tdfa.tdfa.Budgets;
-import io.github.jemmix.tdfa.tdfa.Tdfa;
-import io.github.jemmix.tdfa.tnfa.Tnfa;
+import io.github.jemmix.tdfa.core.budget.Budgets;
+import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.compile.CompileOptions;
+import io.github.jemmix.tdfa.core.determinize.Determinizer;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
+import io.github.jemmix.tdfa.core.report.CompilationReport;
+import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -113,10 +114,10 @@ class ExecutionRamCheckTest {
     void retainedTableBytesIsTheFlatAccessorSum() {
         // Perl mode: 5 per-state int tables + flat ranges/prefix/ops +
         // the uniform byte[stateCount] stop tier
-        Tdfa perl = Tdfa.compile(Tnfa.compile("a[bc]*(d|e?)"), false);
+        Tdfa perl = Determinizer.compile(Tnfa.compile("a[bc]*(d|e?)"), false);
         assertThat(perl.retainedTableBytes()).isEqualTo(flatSum(perl) + 16 + perl.stateCount());
         // POSIX (longest) mode: no stop tier at all
-        Tdfa posix = Tdfa.compile(Tnfa.compile("a[bc]*(d|e?)"), true);
+        Tdfa posix = Determinizer.compile(Tnfa.compile("a[bc]*(d|e?)"), true);
         assertThat(posix.retainedTableBytes()).isEqualTo(flatSum(posix));
         // and the allowance derivation clamps at zero:
         assertThat(Budgets.runtimeMemoAllowance(perl.retainedTableBytes()))

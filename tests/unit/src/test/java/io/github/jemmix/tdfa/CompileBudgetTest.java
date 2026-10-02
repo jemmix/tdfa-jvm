@@ -1,9 +1,10 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.PatternTooLargeException;
-import io.github.jemmix.tdfa.tdfa.Tdfa;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import io.github.jemmix.tdfa.tnfa.Tnfa;
+import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.determinize.Determinizer;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -113,7 +114,7 @@ class CompileBudgetTest {
     @Test
     void nestedCountedNowCompiles() {
         long t0 = System.nanoTime();
-        Tdfa find = Tdfa.compile(Tnfa.compile("(a{1,100}){1,100}"), false);
+        Tdfa find = Determinizer.compile(Tnfa.compile("(a{1,100}){1,100}"), false);
         assertThat(new TdfaRunner(find).find("a".repeat(120))).isTrue();
         assertThat((System.nanoTime() - t0) / 1_000_000).as("nested-counted find-artifact compile wall")
             .isLessThan(15_000);

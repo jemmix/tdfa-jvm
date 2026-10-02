@@ -1,11 +1,11 @@
 package io.github.jemmix.tdfa.fuzz;
 
 import com.google.re2j.Re2jUnicodeProvider;
-import io.github.jemmix.tdfa.core.PatternSyntaxException;
-import io.github.jemmix.tdfa.core.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
 import io.github.jemmix.tdfa.parity.LayeredComparator;
 import io.github.jemmix.tdfa.parity.LayeredComparator.Layer;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 import jdk.jfr.Configuration;
 import jdk.jfr.Recording;
 
@@ -656,7 +656,7 @@ public final class DifferentialFuzzer {
      *  spans only — so probe tags are unambiguous in diff reporting. */
     static String compute(io.github.jemmix.tdfa.Pattern p, CharSequence in) {
         StringBuilder sb = new StringBuilder(96);
-        io.github.jemmix.tdfa.core.Matcher m = p.matcher(in);
+        io.github.jemmix.tdfa.core.engine.Matcher m = p.matcher(in);
         boolean found = m.find();
         if (found) {
             spanTdfa(sb.append("F=true "), m);
@@ -672,19 +672,19 @@ public final class DifferentialFuzzer {
             }
         }
         sb.append(n == MAX_MATCHES ? "]+$" : "]");
-        io.github.jemmix.tdfa.core.Matcher mm = p.matcher(in);
+        io.github.jemmix.tdfa.core.engine.Matcher mm = p.matcher(in);
         if (mm.matches()) {
             spanTdfa(sb.append(" M=true "), mm);
         } else {
             sb.append(" M=false");
         }
-        io.github.jemmix.tdfa.core.Matcher ml = p.matcher(in);
+        io.github.jemmix.tdfa.core.engine.Matcher ml = p.matcher(in);
         if (ml.lookingAt()) {
             spanTdfa(sb.append(" L=true "), ml);
         } else {
             sb.append(" L=false");
         }
-        io.github.jemmix.tdfa.core.Matcher mr = p.matcher(in);
+        io.github.jemmix.tdfa.core.engine.Matcher mr = p.matcher(in);
         if (mr.find(in.length() / 2)) {
             spanTdfa(sb.append(" R=true "), mr);
         } else {
@@ -733,7 +733,7 @@ public final class DifferentialFuzzer {
     }
 
     /** {@code s..e (g1s..g1e g2s..g2e ...)}; non-participating group = {@code -}. */
-    static void spanTdfa(StringBuilder sb, io.github.jemmix.tdfa.core.Matcher m) {
+    static void spanTdfa(StringBuilder sb, io.github.jemmix.tdfa.core.engine.Matcher m) {
         sb.append(m.start()).append("..").append(m.end());
         int gc = m.groupCount();
         if (gc > 0) {

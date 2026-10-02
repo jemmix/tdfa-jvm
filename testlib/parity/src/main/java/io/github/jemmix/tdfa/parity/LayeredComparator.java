@@ -1,9 +1,9 @@
 package io.github.jemmix.tdfa.parity;
 
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
 import io.github.jemmix.tdfa.sim.PikeSim;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
-import io.github.jemmix.tdfa.unicode.UnicodeProviders;
 
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;

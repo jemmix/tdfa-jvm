@@ -1,0 +1,19 @@
+package io.github.jemmix.tdfa.core.dfa;
+
+import io.github.jemmix.tdfa.core.emit.EmittedSurface;
+
+/**
+ * Immutable match result carrier (start/end/registers).
+ */
+@EmittedSurface
+public final class MatchHolder {
+    public final int matchStart, matchEnd;
+    public final int[] regs;
+
+    @EmittedSurface
+    public MatchHolder(int s, int e, int[] r) {
+        matchStart = s;
+        matchEnd = e;
+        regs = r;
+    }
+}

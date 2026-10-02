@@ -1,11 +1,12 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.CompileObserver;
-import io.github.jemmix.tdfa.core.PatternTooLargeException;
-import io.github.jemmix.tdfa.tdfa.BudgetWeights;
-import io.github.jemmix.tdfa.tdfa.Budgets;
-import io.github.jemmix.tdfa.tdfa.Tdfa;
-import io.github.jemmix.tdfa.tnfa.Tnfa;
+import io.github.jemmix.tdfa.core.budget.BudgetWeights;
+import io.github.jemmix.tdfa.core.budget.Budgets;
+import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.determinize.Determinizer;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
+import io.github.jemmix.tdfa.core.report.CompileObserver;
+import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -140,13 +141,13 @@ class BudgetModelTest {
             }
         };
         System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "2750000");
-        Tdfa t = Tdfa.compile(Tnfa.compile(suffixChain), false, rec);
+        Tdfa t = Determinizer.compile(Tnfa.compile(suffixChain), false, rec);
         assertThat(notes.get("minimize")).isEqualTo("skipped (compute budget)");
         assertThat(t.stateCount()).isEqualTo(902);
         // with budget to spare, the same pattern minimizes normally:
         System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "8000000");
         notes.clear();
-        Tdfa t2 = Tdfa.compile(Tnfa.compile(suffixChain), false, rec);
+        Tdfa t2 = Determinizer.compile(Tnfa.compile(suffixChain), false, rec);
         assertThat(notes.get("minimize")).isNull();
         assertThat(t2.stateCount()).isEqualTo(902); // chain is already minimal
         // and the artifact is correct through the full facade, at the

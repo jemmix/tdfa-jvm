@@ -2,7 +2,7 @@
 // Source files pinned under vendor/ucd/6.0.0 (sha256 sidecars verified at generation).
 package io.github.jemmix.tdfa.unicode.v6_0;
 
-import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 /**
  * Unicode 6.0.0 tables for the TDFA pipeline: general categories (two-letter and

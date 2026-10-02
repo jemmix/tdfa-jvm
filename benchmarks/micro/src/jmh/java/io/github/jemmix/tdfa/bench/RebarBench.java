@@ -4,13 +4,13 @@ import com.datadoghq.reggie.Reggie;
 import com.datadoghq.reggie.ReggieFlags;
 import com.datadoghq.reggie.runtime.MatchResult;
 import com.datadoghq.reggie.runtime.ReggieMatcher;
-import io.github.jemmix.tdfa.ast.Ast;
-import io.github.jemmix.tdfa.ast.CharClass;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
-import io.github.jemmix.tdfa.parser.Parser;
+import io.github.jemmix.tdfa.core.ast.Ast;
+import io.github.jemmix.tdfa.core.ast.CharClass;
+import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.parser.Parser;
 import io.github.jemmix.tdfa.rebar.Scenario;
 import io.github.jemmix.tdfa.rebar.ScenarioLoader;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -280,7 +280,7 @@ public final class RebarBench {
 
             @Override
             public M matcher(Object p, CharSequence cs) {
-                io.github.jemmix.tdfa.core.Matcher m = ((io.github.jemmix.tdfa.Pattern) p).matcher(cs);
+                io.github.jemmix.tdfa.core.engine.Matcher m = ((io.github.jemmix.tdfa.Pattern) p).matcher(cs);
                 return new ReflectFreeAdapter(m::reset, m::find, m::start, m::end, m::start, m::groupCount);
             }
         };

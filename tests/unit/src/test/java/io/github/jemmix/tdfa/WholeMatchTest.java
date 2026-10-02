@@ -1,14 +1,15 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.CompiledRegex;
-import io.github.jemmix.tdfa.core.MatchResult;
-import io.github.jemmix.tdfa.core.MatchScratch;
-import io.github.jemmix.tdfa.core.PatternTooLargeException;
-import io.github.jemmix.tdfa.core.WholeEngine;
-import io.github.jemmix.tdfa.tdfa.Tdfa;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import io.github.jemmix.tdfa.tnfa.Tnfa;
-import io.github.jemmix.tdfa.unicode.UnicodeProviders;
+import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.compile.CompiledRegex;
+import io.github.jemmix.tdfa.core.determinize.Determinizer;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.engine.MatchResult;
+import io.github.jemmix.tdfa.core.engine.MatchScratch;
+import io.github.jemmix.tdfa.core.engine.WholeEngine;
+import io.github.jemmix.tdfa.core.tnfa.Tnfa;
+import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -232,7 +233,7 @@ class WholeMatchTest {
             java.util.regex.Pattern jur;
             try {
                 Tnfa an = Tnfa.compile(p, false, true, UnicodeProviders.get());
-                anchored = new TdfaRunner(Tdfa.compile(an, false));
+                anchored = new TdfaRunner(Determinizer.compile(an, false));
                 jur = java.util.regex.Pattern.compile(p);
             } catch (RuntimeException e) {
                 continue;

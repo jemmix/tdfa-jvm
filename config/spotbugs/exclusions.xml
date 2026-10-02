@@ -13,36 +13,48 @@
     <!-- Tdfa's flat arrays + TdfaRunner's table fields
          are public API via RegexEngineFactory.create(Tdfa) — 29 live-array
          accessors freeze the internal representation; the (known, counted)
-         exposure reports are excluded by design. -->
-    <Match classregex="^io\.github\.jemmix\.tdfa\.tdfa\.Tdfa$">
-        <Bug pattern="EI_EXPOSE_REP"/>
+         exposure reports are excluded by design. The public construction
+         entries (same exposure class) are the materializer's trusted path:
+         the arrays are pipeline-owned and never mutated post-assembly. -->
+    <Match classregex="^io\.github\.jemmix\.tdfa\.core\.dfa\.Tdfa$">
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
     </Match>
-    <Match classregex="^io\.github\.jemmix\.tdfa\.tdfa\.TdfaRunner$">
+    <Match classregex="^io\.github\.jemmix\.tdfa\.core\.dfa\.TdfaRunner$">
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
+
+    <!-- Shared builder vocabulary (Range/OpSeq/DfaStateBuilder) is public
+         pipeline surface since the core package tree: determinize builds
+         it, regopt rewrites Range.ops in place (BT22 §6.3), the
+         materializer packs from it. The retained/mutated arrays are
+         pipeline-owned by contract — same trusted-tier posture as Tdfa's
+         construction entries above. -->
+    <Match classregex="^io\.github\.jemmix\.tdfa\.core\.dfa\.(Range|OpSeq|DfaStateBuilder)$">
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
     </Match>
 
     <!-- MatchResult's public ctor + register file is
          engine-API surface (reconstructFixed). -->
-    <Match classregex="^io\.github\.jemmix\.tdfa\.core\.MatchResult$">
+    <Match classregex="^io\.github\.jemmix\.tdfa\.core\.engine\.MatchResult$">
         <Bug pattern="EI_EXPOSE_REP2"/>
     </Match>
 
     <!-- ProbeKey.equals is deliberately asymmetric (query side only) —
          documented HashMap-query contract. -->
-    <Match classregex="^io\.github\.jemmix\.tdfa\.tdfa\.TdfaStateIndex\$ProbeKey$">
+    <Match classregex="^io\.github\.jemmix\.tdfa\.core\.determinize\.TdfaStateIndex\$ProbeKey$">
         <Bug pattern="EQ_UNUSUAL,EQ_CHECK_FOR_OPERAND_NOT_COMPATIBLE_WITH_THIS"/>
     </Match>
 
     <!-- ParseResult hands out its unmodifiable views of the named-group map
          (part of the frozen parser API); flagged only by the 4.9.8+ detector
          wave. -->
-    <Match classregex="^io\.github\.jemmix\.tdfa\.parser\.Parser$">
+    <Match classregex="^io\.github\.jemmix\.tdfa\.core\.parser\.Parser$">
         <Bug pattern="EI_EXPOSE_REP"/>
     </Match>
 
     <!-- Builder null-check the compiler proves redundant; freeze-bound code,
          not worth churn. -->
-    <Match classregex="^io\.github\.jemmix\.tdfa\.tnfa\.Tnfa\$Builder$">
+    <Match classregex="^io\.github\.jemmix\.tdfa\.core\.tnfa\.Tnfa\$Builder$">
         <Bug pattern="RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"/>
     </Match>
 

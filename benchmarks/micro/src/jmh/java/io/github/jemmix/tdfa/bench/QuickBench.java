@@ -1,7 +1,7 @@
 package io.github.jemmix.tdfa.bench;
 
 import io.github.jemmix.tdfa.Pattern;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -152,7 +152,7 @@ public final class QuickBench {
 
     static int findAll(Pattern r, String in) {
         int n = 0;
-        for (io.github.jemmix.tdfa.core.Matcher m = r.matcher(in); m.find();) {
+        for (io.github.jemmix.tdfa.core.engine.Matcher m = r.matcher(in); m.find();) {
             n++;
         }
         return n;

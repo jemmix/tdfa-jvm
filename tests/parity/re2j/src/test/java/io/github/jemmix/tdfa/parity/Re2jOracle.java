@@ -1,10 +1,10 @@
 package io.github.jemmix.tdfa.parity;
 
 import com.google.re2j.Re2jUnicodeProvider;
-import io.github.jemmix.tdfa.core.Matcher;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.engine.Matcher;
+import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 import java.util.ArrayList;
 import java.util.List;

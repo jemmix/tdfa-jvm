@@ -1,9 +1,9 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.EmittedSurface;
-import io.github.jemmix.tdfa.core.RegexEngine;
-import io.github.jemmix.tdfa.core.WholeEngine;
-import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.core.emit.EmittedSurface;
+import io.github.jemmix.tdfa.core.engine.RegexEngine;
+import io.github.jemmix.tdfa.core.engine.WholeEngine;
+import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 import java.io.IOException;
 import java.io.ObjectInputStream;

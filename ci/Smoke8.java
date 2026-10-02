@@ -1,12 +1,13 @@
 import io.github.jemmix.tdfa.Pattern;
 import io.github.jemmix.tdfa.PatternMatcher;
 import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
-import io.github.jemmix.tdfa.core.MatchResult;
-import io.github.jemmix.tdfa.core.MatchScratch;
-import io.github.jemmix.tdfa.core.RegexEngine;
-import io.github.jemmix.tdfa.tdfa.Tdfa;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import io.github.jemmix.tdfa.tnfa.Tnfa;
+import io.github.jemmix.tdfa.core.determinize.Determinizer;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.engine.MatchResult;
+import io.github.jemmix.tdfa.core.engine.MatchScratch;
+import io.github.jemmix.tdfa.core.engine.RegexEngine;
+import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 
 /**
  * JDK 8 runtime smoke for the Java 8 floor modules (CI job jars-and-tests).
@@ -37,7 +38,7 @@ public class Smoke8 {
 
         // Core-tier pipeline: parse -> TNFA -> TDFA (leftmost-first).
         Tnfa nfa = Tnfa.compile("(\\w+)-(\\d+)");
-        Tdfa tdfa = Tdfa.compile(nfa);
+        Tdfa tdfa = Determinizer.compile(nfa);
         expect("groupCount", tdfa.groupCount(), 2);
 
         // --- interpreter tier (core) ---
@@ -48,7 +49,7 @@ public class Smoke8 {
         smoke(generated, "asm");
 
         // --- case folding path ((?i) inline-flag prefix, core tables) ---
-        RegexEngine ci = new TdfaRunner(Tdfa.compile(Tnfa.compile("(?i)stra\u00dfe")));
+        RegexEngine ci = new TdfaRunner(Determinizer.compile(Tnfa.compile("(?i)stra\u00dfe")));
         expect("ci real", ci.matches("STRA\u00dfE"), true);
         expect("ci neg", ci.matches("strasse"), false);
 

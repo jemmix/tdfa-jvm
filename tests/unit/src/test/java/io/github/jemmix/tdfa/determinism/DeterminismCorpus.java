@@ -1,7 +1,8 @@
 package io.github.jemmix.tdfa.determinism;
 
-import io.github.jemmix.tdfa.tdfa.Tdfa;
-import io.github.jemmix.tdfa.tnfa.Tnfa;
+import io.github.jemmix.tdfa.core.determinize.Determinizer;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
+import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -81,9 +82,10 @@ final class DeterminismCorpus {
         }
         try {
             return switch (e.mode()) {
-                case PERL -> ArtifactFingerprint.of(Tdfa.compile(Tnfa.compile(e.pattern()), false));
-                case LONGEST -> ArtifactFingerprint.of(Tdfa.compile(Tnfa.compile(e.pattern()), true));
-                case UNPRUNED -> ArtifactFingerprint.of(Tdfa.compileUnpruned(Tnfa.compile(e.pattern()), false, null));
+                case PERL -> ArtifactFingerprint.of(Determinizer.compile(Tnfa.compile(e.pattern()), false));
+                case LONGEST -> ArtifactFingerprint.of(Determinizer.compile(Tnfa.compile(e.pattern()), true));
+                case UNPRUNED ->
+                    ArtifactFingerprint.of(Determinizer.compileUnpruned(Tnfa.compile(e.pattern()), false, null));
             };
         } finally {
             if (prop != null) {

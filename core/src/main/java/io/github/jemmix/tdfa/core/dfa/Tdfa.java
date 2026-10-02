@@ -1,0 +1,935 @@
+package io.github.jemmix.tdfa.core.dfa;
+
+import io.github.jemmix.tdfa.core.determinize.Determinizer;
+import io.github.jemmix.tdfa.core.tnfa.Tnfa;
+
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Map;
+
+/**
+ * Borsotti-Trofimovich 2022 TDFA(1): lookahead-TDFA with register indirection.
+ * <p>
+ * Faithful implementation of paper Algorithm 3 (determinization):
+ * - epsilon_closure(B): DFS over ε-paths in priority order, recording tag sequences in l.
+ * - step_on_symbol(s, a): follows symbol transitions; old l becomes new h.
+ * - transition_regops: allocates one register per (tag, RHS) and emits SET_POS / SET_NIL.
+ * - add_state: dedupe by (NFA states, lookahead tags, register vectors). {@code map}+topo_sort
+ * is the paper's optimization for further state reduction; deferred.
+ * - final_regops: emits final-register SET/COPY ops for the accepting quasi-transition.
+ * <p>
+ * Single-valued tags only (sufficient for j.u.r-style capturing groups).
+ * <p>
+ * Alphabet: equivalence-class partitioned. Each DFA state stores sorted (lo, hi, target, ops)
+ * ranges; runtime does binary search. Collapses 65K chars to a handful of ranges per state
+ * (RE2-style byte-class partitioning).
+ */
+public final class Tdfa {
+    /**
+     * Sentinel for "don't stop on accept" — distinct from 0 (= stop).
+     */
+    public static final int NEVER_STOP = 0x40; // sentinel bit above all real assertion bits (1|2|4|8|16|32)
+
+    public static final int OP_SET_POS = 1;
+    public static final int OP_SET_NIL = 2;
+    public static final int OP_COPY = 3;
+    public static final int OP_END = 0; // terminator for op blocks
+    final int tagCount;
+    final int groupCount;
+    /**
+     * Unmodifiable name&rarr;index map for named capturing groups (from the source pattern).
+     */
+    final Map<String, Integer> namedGroups;
+
+    final int registerCount;
+    /**
+     * Offset of the final-register block within the runtime register file. Working
+     * registers occupy {@code [0..finalRegBase-1]}; final registers (one per tag,
+     * holding the match-end tag offsets read by {@link io.github.jemmix.tdfa.core.engine.MatchResult})
+     * occupy {@code [finalRegBase..finalRegBase+tagCount-1]}. Defaults to
+     * {@code tagCount} (the pre-optimization layout); may be smaller after BT22 §6.3
+     * register optimizations consolidate the working space.
+     */
+    final int finalRegBase;
+
+    final int startState;
+    final int stateCount;
+    /**
+     * Bit mask of zero-width assertions required to ENTER this state. Checked at the
+     * position where the state is entered — per-state and precise, not a
+     * pattern-level summary.
+     * bit 1 = BEGIN_TEXT, bit 2 = END_TEXT, bit 4 = WORD_BOUNDARY, bit 8 = NO_WORD_BOUNDARY,
+     * bit 16 = ABS_BEGIN (\A), bit 32 = ABS_END (\z)
+     */
+    final int[] stateEntryMask;
+    /**
+     * Bit mask required to declare a match in this (accepting) state. Subset of
+     * {@link #stateEntryMask} — per-state and precise, not a pattern-level summary.
+     */
+    final int[] stateAcceptMask;
+    /**
+     * Mask required to take the start state at all — used to limit find() start positions.
+     */
+    final int startStateEntryMask;
+    /**
+     * True iff this TDFA was compiled for leftmost-longest semantics
+     * (re2j {@code LONGEST_MATCH}): the runner keeps stepping past accepts to
+     * find the longest match. False means Perl leftmost-first — the runner
+     * stops at the first accept on the highest-priority path.
+     */
+    final boolean longestMatch;
+    /**
+     * Pike-cut hazard flag, meaningful only for pruned Perl-mode compiles
+     * ({@link Determinizer#compile(Tnfa, boolean)}): true iff the compile-time pike
+     * cut deleted a steppable continuation below an alive accept under
+     * some position-flags — the exact condition under which a whole-input
+     * walk on this artifact could miss accepts ((a|ab) on {@code "ab"}:
+     * the {@code b}-continuation sits below the accept and is cut). When
+     * false, every cut removed only non-steppable configs and this
+     * artifact is identical to the cut-free build, so whole walks on it
+     * are exact. Always false for POSIX and cut-free
+     * ({@linkplain #compileUnpruned unpruned}) compiles.
+     */
+    final boolean pikeCutMatters;
+
+    /**
+     * The partial-whole side table (the "one artifact for find() AND
+     * matches()" form): null when the compile's pike cut never fired on
+     * any state (or the side was abandoned over budget). When non-null,
+     * states listed in {@link #wholeBase} carry their UNCUT
+     * whole-walk relation here (5-int entries like {@link #ranges}: the
+     * cut contexts' uncut targets; uncut contexts mirror {@link #ranges}
+     * — the whole relation of a state without a list IS {@code ranges}),
+     * so whole-input walks on the PRUNED artifact are exact without a
+     * second determinization. The bounded side exploration that records
+     * it runs inside the pruned compile; on exhaustion it is abandoned
+     * and the facade rejects the compile ({@link #wholeWalkExact()}
+     * reports false).
+     */
+    final int[] wholeRanges;
+    /**
+     * [state] → base index into {@link #wholeRanges}, or -1 (whole walks
+     * dispatch on {@link #ranges} for that state). Null iff no side table.
+     */
+    final int[] wholeBase;
+    /**
+     * [state] → entry count in {@link #wholeRanges}. Null iff no side table.
+     */
+    final int[] wholeCount;
+    /**
+     * Per-entry running max of hi within each whole-side state, exactly
+     * {@link #entryHiPrefix}'s layout over {@link #wholeRanges}. Null iff
+     * no side table.
+     */
+    final int[] wholeHiPrefix;
+    /**
+     * True iff the side table completed (its bounded exploration never
+     * exhausted): with {@link #wholeRanges} present, whole-input walks on
+     * this artifact are exact even though {@link #pikeCutMatters} may be
+     * true. See {@link #wholeWalkExact()}.
+     */
+    final boolean wholeSideComplete;
+
+    final boolean multiline;
+    /**
+     * True iff the DFA was compiled with Unicode-aware shorthand ({@code (?u)}),
+     * so {@code \b}/{@code \B} word-boundary checks must use the Unicode
+     * word-character ranges in {@link #wordRanges} instead of ASCII-only.
+     */
+    final boolean unicodeWordBoundary;
+    /**
+     * Unicode {@code \w} ranges for runtime {@code \b} when {@link #unicodeWordBoundary} is true; null otherwise.
+     */
+    final int[] wordRanges;
+    /**
+     * Fixed-tag annotations (BT22 §6.4), forwarded from {@link Tnfa}. Null if no
+     * tags were fixed. Otherwise 1-indexed: {@code fixedBase[t] != 0} means tag
+     * {@code t} was omitted from the NFA and should be reconstructed at match time.
+     */
+    final int[] fixedBase;
+
+    final int[] fixedOffset;
+    /**
+     * Position-aware Perl-mode stop-on-accept decision table.
+     * Indexed as {@code stopOnAcceptMask[state * 64 + posFlags]} where {@code posFlags}
+     * <p>
+     * is the runtime position-flags bitmask ({@code BEGIN_TEXT|END_TEXT|WORD_BOUNDARY|NO_WORD_BOUNDARY|ABS_BEGIN|ABS_END},
+     * 6 bits, 64 possible values). Each cell encodes:
+     * <ul>
+     *   <li>{@code 0} — stop the match loop on accept (accept is the highest-priority
+     *       live outcome under this posFlags);</li>
+     *   <li>{@link #NEVER_STOP} — don't stop (a sym-bearing config outranks accept
+     *       under this posFlags, or accept is unreachable).</li>
+     * </ul>
+     * Position-awareness is required because re2j's densePcs priority depends on
+     * which assertion edges are live at the current cursor — e.g. for
+     * {@code ^((?:$)|.)*} at pos 0 of "a", {@code $} fails so the {@code .}-branch
+     * outranks the skip-exit MATCH (extend); at pos 1 (EOF), {@code $} holds and
+     * the {@code $}-loop-back MATCH outranks {@code .} (stop).
+     * Unused in POSIX mode (all cells stay {@link #NEVER_STOP}).
+     *
+     * <p><b>Storage tiers</b>: patterns without zero-width
+     * assertions — the overwhelming majority, incl. every count-model giant —
+     * have all 64 cells of every state IDENTICAL, so the 2D table (256 B/state;
+     * 60 MB on the 234 K-state bounded-repeat DFA) is stored instead as the
+     * 1 B/state {@link #stopMaskUniform}. POSIX mode stores neither (readers
+     * gate on Perl mode). {@link #stopOnAcceptMask()} materializes the full 2D
+     * form on demand for external consumers (the ASM backend's STOP_MASK).
+     */
+    final int[] stopOnAcceptMask;
+    /**
+     * Uniform tier of the stop table: {@code stopMaskUniform[state] != 0} means
+     * don't-stop (same encoding as {@link #NEVER_STOP} cells); 0 means stop.
+     * Non-null iff Perl mode and every state's 64 posFlags cells are identical;
+     * mutually exclusive with {@link #stopOnAcceptMask}.
+     */
+    final byte[] stopMaskUniform;
+    /**
+     * [state] -> packed (rangeCount << 1) | acceptBit.
+     * One load per char gives accept + rangeCount; the range base is in
+     * {@link #stateBase} (split out so it isn't bit-width-limited — see below).
+     */
+    final int[] stateMeta;
+    /**
+     * [state] -> range base index into {@link #ranges}. Stored separately from
+     * {@link #stateMeta} so it can use the full 32-bit range — packing the
+     * base into stateMeta's spare bits (15) would overflow at ~25 states of
+     * wide Unicode classes like {@code \p{L}} (~1369 ranges per state).
+     */
+    final int[] stateBase;
+
+    // === Flat packed arrays (4 arrays total; per-match regs adds a 5th at runtime) ===
+    /**
+     * [state] -> finalOpsOff (offset into `ops`), 0 if none. Read only once per match.
+     */
+    final int[] stateFinalOpsOff;
+    /**
+     * Position-aware final-ops selection: {@code [state * 64 + posFlags]} →
+     * φ ops offset into {@link #ops}, or {@code -1} when NO accept config is
+     * alive under that posFlags (accept suppressed). Null when every
+     * accepting state is mask-uniform ({@link #stateFinalOpsOff} alone is
+     * then authoritative — the overwhelmingly common case).
+     *
+     * <p>Why: a DFA state may merge several accept configs of different
+     * priority whose zero-width assertions differ. The highest-priority
+     * accept config is the tag-value winner only while its assertions hold;
+     * when the runtime position-flags kill it, priority falls to the next
+     * alive accept config, whose tag outcome may differ (e.g. the skipped
+     * branch of {@code (…)?} reports the group unset). A compile-time-static
+     * φ picks the wrong winner for some positions; this table selects per
+     * position, exactly as {@link #stopOnAcceptMask} does for the
+     * stop-or-extend decision.
+     */
+    final int[] stateFinalOpsByMask;
+    /**
+     * Flat ranges: [lo0, hi0, target0, opsOff0, requiredMask0,
+     * lo1, hi1, target1, opsOff1, requiredMask1, ...].
+     * {@code requiredMask} is the assertion mask that must hold at the source position
+     * for this transition to be live (intersection of source configs' masks).
+     */
+    final int[] ranges;
+    /**
+     * Per-entry running max of hi within each state, index-aligned with ranges
+     * entries (entry i of state s at stateBase[s]+i). Enables lo-binary-search +
+     * prefix-max-terminated backward walk — O(log cnt + overlap) range lookup.
+     */
+    final int[] entryHiPrefix;
+    /**
+     * Flat ops: [op, dst, src, ...] blocks terminated by OP_END=0. Transition ops + final ops share this array.
+     */
+    final int[] ops;
+    /**
+     * Lazily-materialized 2D expansion of {@link #stopMaskUniform}. Volatile so
+     * the filled array is safely published to racing readers (a plain field
+     * could expose default-value cells under the JMM); duplicate
+     * materialization by racing threads is benign, mutation is never intended.
+     */
+    private volatile int[] stopMaskTableCache;
+    /**
+     * Lazily-computed {@link #posFlagDeps()} (benign race; -1 = not computed).
+     */
+    private int posFlagDepsCache = -1;
+
+    public Tdfa(int tagCount, int groupCount, Map<String, Integer> namedGroups, int registerCount, int finalRegBase,
+        int startState, int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
+        int[] stateFinalOpsByMask, int[] ranges, int[] ops, int[] entryHiPrefix, int[] stateEntryMask,
+        int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
+        boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset) {
+        this(tagCount, groupCount, namedGroups, registerCount, finalRegBase, startState, stateCount, stateMeta,
+            stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges, ops, entryHiPrefix, stateEntryMask,
+            stateAcceptMask, longestMatch, stopOnAcceptMask, stopMaskUniform, multiline, unicodeWordBoundary,
+            wordRanges, fixedBase, fixedOffset, false, null, null, null, null, false);
+    }
+
+    public Tdfa(int tagCount, int groupCount, Map<String, Integer> namedGroups, int registerCount, int finalRegBase,
+        int startState, int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
+        int[] stateFinalOpsByMask, int[] ranges, int[] ops, int[] entryHiPrefix, int[] stateEntryMask,
+        int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
+        boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset, boolean pikeCutMatters,
+        int[] wholeRanges, int[] wholeBase, int[] wholeCount, int[] wholeHiPrefix, boolean wholeSideComplete) {
+        this.tagCount = tagCount;
+        this.groupCount = groupCount;
+        this.namedGroups = namedGroups != null ? Collections.unmodifiableMap(namedGroups) : Collections.emptyMap();
+        this.registerCount = registerCount;
+        this.finalRegBase = finalRegBase;
+        this.startState = startState;
+        this.stateCount = stateCount;
+        this.stateMeta = stateMeta;
+        this.stateBase = stateBase;
+        this.stateFinalOpsOff = stateFinalOpsOff;
+        this.stateFinalOpsByMask = stateFinalOpsByMask;
+        this.ranges = ranges;
+        this.entryHiPrefix = entryHiPrefix;
+        this.ops = ops;
+        this.stateEntryMask = stateEntryMask;
+        this.stateAcceptMask = stateAcceptMask;
+        this.longestMatch = longestMatch;
+        this.pikeCutMatters = pikeCutMatters;
+        this.wholeRanges = wholeRanges;
+        this.wholeBase = wholeBase;
+        this.wholeCount = wholeCount;
+        this.wholeHiPrefix = wholeHiPrefix;
+        this.wholeSideComplete = wholeSideComplete;
+        this.stopOnAcceptMask = stopOnAcceptMask;
+        this.stopMaskUniform = stopMaskUniform;
+        this.multiline = multiline;
+        this.unicodeWordBoundary = unicodeWordBoundary;
+        this.wordRanges = wordRanges;
+        this.fixedBase = fixedBase;
+        this.fixedOffset = fixedOffset;
+        // Well-formedness gate: every consumer (VM runner, search-DFA memo,
+        // ASM emitter, minimizer) trusts these arrays. Violations must surface
+        // here, at construction — not as a wrong match 2,000 lines away. Runs
+        // BEFORE any array-indexing field read so every corruption (short
+        // arrays, bad startState) reports as this gate's ISE, never a raw
+        // AIOOBE out of the constructor.
+        validate(startState, stateCount, stateMeta, stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges,
+            entryHiPrefix, ops, stateEntryMask, stateAcceptMask, registerCount, finalRegBase, tagCount);
+        if (wholeRanges != null) {
+            validateWhole(stateCount, wholeRanges, wholeBase, wholeCount, wholeHiPrefix, ops, finalRegBase, tagCount);
+        }
+        this.startStateEntryMask = stateEntryMask[startState];
+    }
+
+    /**
+     * Bits whose flip changes any cell of {@code t} ([state*64 + posFlags]); null-safe.
+     */
+    private static int tableDeps(int[] t) {
+        if (t == null) {
+            return 0;
+        }
+        int deps = 0;
+        int n = t.length / 64;
+        for (int b = 1; b < 64; b <<= 1) {
+            if ((deps & b) != 0) {
+                continue;
+            }
+            for (int s = 0; s < n; s++) {
+                int row = s * 64;
+                for (int m = 0; m < 64; m++) {
+                    if ((m & b) != 0) {
+                        continue;
+                    }
+                    if (t[row + m] != t[row + (m | b)]) {
+                        deps |= b;
+                        break;
+                    }
+                }
+                if ((deps & b) != 0) {
+                    break;
+                }
+            }
+        }
+        return deps;
+    }
+
+    /**
+     * Construction-time invariants of the packed flat arrays. O(states +
+     * entries + ops) once per compile; never on the match path.
+     *
+     * <ul>
+     *   <li>startState inside the state space; per-state arrays exactly
+     *       {@code stateCount} long; hi-prefix table exactly one cell per
+     *       range entry</li>
+     *   <li>per-state range entries: in bounds, codepoint domain, lo ascending
+     *       (the runners' binary search depends on it), prefix-max consistent</li>
+     *   <li>transition targets within the state space (dead marker is exactly
+     *       {@code -1}); ops offsets within ops and blocks OP_END-terminated</li>
+     *   <li>assertion masks limited to the six defined bits; accept ⊆ entry</li>
+     *   <li>final-register block {@code [finalRegBase, finalRegBase+tagCount)}
+     *       fits the register file (dedicated final slots — coalescing finals
+     *       with working registers corrupts the MatchResult readout)</li>
+     * </ul>
+     */
+    private static void validate(int startState, int stateCount, int[] stateMeta, int[] stateBase,
+        int[] stateFinalOpsOff, int[] stateFinalOpsByMask, int[] ranges, int[] entryHiPrefix, int[] ops,
+        int[] stateEntryMask, int[] stateAcceptMask, int registerCount, int finalRegBase, int tagCount) {
+        int entries = ranges.length / 5;
+        if (startState < 0 || startState >= stateCount) {
+            throw new IllegalStateException(
+                "tdfa: startState " + startState + " outside state space [0," + stateCount + ")");
+        }
+        if (stateAcceptMask.length != stateCount) {
+            throw new IllegalStateException(
+                "tdfa: stateAcceptMask length " + stateAcceptMask.length + " != stateCount " + stateCount);
+        }
+        if (stateMeta.length != stateCount) {
+            throw new IllegalStateException(
+                "tdfa: stateMeta length " + stateMeta.length + " != stateCount " + stateCount);
+        }
+        if (stateBase.length != stateCount) {
+            throw new IllegalStateException(
+                "tdfa: stateBase length " + stateBase.length + " != stateCount " + stateCount);
+        }
+        if (stateFinalOpsOff.length != stateCount) {
+            throw new IllegalStateException(
+                "tdfa: stateFinalOpsOff length " + stateFinalOpsOff.length + " != stateCount " + stateCount);
+        }
+        if (stateEntryMask.length != stateCount) {
+            throw new IllegalStateException(
+                "tdfa: stateEntryMask length " + stateEntryMask.length + " != stateCount " + stateCount);
+        }
+        if (entryHiPrefix.length != entries) {
+            throw new IllegalStateException(
+                "tdfa: entryHiPrefix length " + entryHiPrefix.length + " != range entries " + entries);
+        }
+        for (int s = 0; s < stateCount; s++) {
+            int meta = stateMeta[s];
+            int cnt = rangeCount(meta);
+            int base = stateBase[s];
+            if (base < 0 || base + cnt > entries) {
+                throw new IllegalStateException("tdfa: state " + s + " range base/count out of bounds" + " (base="
+                    + base + ", cnt=" + cnt + ", entries=" + entries + ")");
+            }
+            int prevLo = -1;
+            int prefixHi = -1;
+            for (int i = 0; i < cnt; i++) {
+                int o = (base + i) * 5;
+                int lo = ranges[o], hi = ranges[o + 1], target = ranges[o + 2], opsOff = ranges[o + 3],
+                    mask = ranges[o + 4];
+                if (lo < 0 || hi > 0x10FFFF || lo > hi) {
+                    throw new IllegalStateException(
+                        "tdfa: state " + s + " entry " + i + " outside codepoint domain [" + lo + "," + hi + "]");
+                }
+                if (lo < prevLo) {
+                    throw new IllegalStateException("tdfa: state " + s + " entries not lo-ascending at " + i);
+                }
+                prevLo = lo;
+                if (target >= stateCount) {
+                    throw new IllegalStateException(
+                        "tdfa: state " + s + " entry " + i + " target " + target + " beyond state count " + stateCount);
+                }
+                if (target < -1) {
+                    throw new IllegalStateException(
+                        "tdfa: state " + s + " entry " + i + " target " + target + " < -1 (dead marker is exactly -1)");
+                }
+                if (opsOff != 0) {
+                    checkOpsBlock(s, i, opsOff, ops, false, finalRegBase, tagCount);
+                }
+                if ((mask & ~0x3F) != 0) {
+                    throw new IllegalStateException(
+                        "tdfa: state " + s + " entry " + i + " unknown assertion-mask bits");
+                }
+                prefixHi = Math.max(prefixHi, hi);
+                if (entryHiPrefix[base + i] != prefixHi) {
+                    throw new IllegalStateException(
+                        "tdfa: state " + s + " entry " + i + " prefix-max invariant broken");
+                }
+            }
+            if ((stateEntryMask[s] & ~0x3F) != 0) {
+                throw new IllegalStateException("tdfa: state " + s + " entry mask has unknown bits");
+            }
+            int fops = stateFinalOpsOff[s];
+            if (fops != 0 && (fops < 0 || fops >= ops.length)) {
+                throw new IllegalStateException("tdfa: state " + s + " final-ops offset out of bounds");
+            }
+            if (fops != 0) {
+                checkOpsBlock(s, -1, fops, ops, true, finalRegBase, tagCount);
+            }
+        }
+        if (stateFinalOpsByMask != null) {
+            if (stateFinalOpsByMask.length != stateCount * 64) {
+                throw new IllegalStateException("tdfa: final-ops-by-mask table must be stateCount*64");
+            }
+            for (int i = 0; i < stateFinalOpsByMask.length; i++) {
+                int cell = stateFinalOpsByMask[i];
+                // -1 = no accept under that posFlags; otherwise an ops offset
+                // (0 = the reserved empty block: accept fires, no ops).
+                if (cell < -1 || cell >= ops.length) {
+                    throw new IllegalStateException("tdfa: final-ops-by-mask cell out of bounds: " + cell);
+                }
+            }
+        }
+        if (tagCount > 0 && (finalRegBase < 0 || finalRegBase + tagCount > registerCount)) {
+            throw new IllegalStateException("tdfa: final-register block [" + finalRegBase + ","
+                + (finalRegBase + tagCount) + ") exceeds register file of " + registerCount);
+        }
+    }
+
+    /**
+     * Structural check of one ops block at {@code opsOff}: in bounds and
+     * OP_END-terminated on its stride-3 grid (an unterminated block would
+     * otherwise run off {@code ops} as a bare AIOOBE far from the corruption).
+     * For transition blocks ({@code isFinal == false}) with tags: finals are
+     * final-ops-only — transition ops writing the final block would let dead
+     * paths clobber accept-time values (runners apply φ eagerly at
+     * accept-record).
+     */
+    private static void checkOpsBlock(int s, int i, int opsOff, int[] ops, boolean isFinal, int finalRegBase,
+        int tagCount) {
+        if (opsOff < 0 || opsOff >= ops.length) {
+            throw new IllegalStateException(
+                "tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i) + " ops offset out of bounds");
+        }
+        int j = opsOff;
+        while (true) {
+            if (j >= ops.length) {
+                throw new IllegalStateException("tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i)
+                    + " ops block at " + opsOff + " not OP_END-terminated within ops");
+            }
+            if (ops[j] == OP_END) {
+                break;
+            }
+            if (j + 2 >= ops.length) {
+                throw new IllegalStateException("tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i)
+                    + " ops block at " + opsOff + " not OP_END-terminated within ops");
+            }
+            int dst = ops[j + 1];
+            if (!isFinal && tagCount > 0 && dst >= finalRegBase && dst < finalRegBase + tagCount) {
+                throw new IllegalStateException("tdfa: state " + s + " entry " + i
+                    + " transition op writes final register " + dst + " — final block is final-ops-only");
+            }
+            j += 3;
+        }
+    }
+
+    /**
+     * Construction-time invariants of the partial-whole side table (the
+     * same shape of checks {@link #validate} runs over the pruned ranges;
+     * the whole walk's dispatch reads these arrays exactly like the find
+     * walk reads {@code ranges}).
+     */
+    private static void validateWhole(int stateCount, int[] wholeRanges, int[] wholeBase, int[] wholeCount,
+        int[] wholeHiPrefix, int[] ops, int finalRegBase, int tagCount) {
+        if (wholeBase == null || wholeCount == null || wholeHiPrefix == null) {
+            throw new IllegalStateException("tdfa: partial-whole side table present but incomplete");
+        }
+        if (wholeBase.length != stateCount || wholeCount.length != stateCount) {
+            throw new IllegalStateException("tdfa: wholeBase/wholeCount length != stateCount");
+        }
+        int entries = wholeRanges.length / 5;
+        if (wholeHiPrefix.length != entries) {
+            throw new IllegalStateException(
+                "tdfa: wholeHiPrefix length " + wholeHiPrefix.length + " != whole entries " + entries);
+        }
+        for (int s = 0; s < stateCount; s++) {
+            int base = wholeBase[s];
+            if (base < 0) {
+                if (wholeCount[s] != 0) {
+                    throw new IllegalStateException(
+                        "tdfa: whole state " + s + " has no base but count " + wholeCount[s]);
+                }
+                continue;
+            }
+            int cnt = wholeCount[s];
+            if (base + cnt > entries) {
+                throw new IllegalStateException("tdfa: whole state " + s + " base/count out of bounds (base=" + base
+                    + ", cnt=" + cnt + ", entries=" + entries + ")");
+            }
+            int prevLo = -1;
+            int prefixHi = -1;
+            for (int i = 0; i < cnt; i++) {
+                int o = (base + i) * 5;
+                int lo = wholeRanges[o], hi = wholeRanges[o + 1], target = wholeRanges[o + 2],
+                    opsOff = wholeRanges[o + 3], mask = wholeRanges[o + 4];
+                if (lo < 0 || hi > 0x10FFFF || lo > hi) {
+                    throw new IllegalStateException(
+                        "tdfa: whole state " + s + " entry " + i + " outside codepoint domain [" + lo + "," + hi + "]");
+                }
+                if (lo < prevLo) {
+                    throw new IllegalStateException("tdfa: whole state " + s + " entries not lo-ascending at " + i);
+                }
+                prevLo = lo;
+                if (target >= stateCount) {
+                    throw new IllegalStateException("tdfa: whole state " + s + " entry " + i + " target " + target
+                        + " beyond state count " + stateCount);
+                }
+                if (target < -1) {
+                    throw new IllegalStateException(
+                        "tdfa: whole state " + s + " entry " + i + " target " + target + " < -1 (dead marker)");
+                }
+                if (opsOff != 0) {
+                    checkOpsBlock(s, i, opsOff, ops, false, finalRegBase, tagCount);
+                }
+                if ((mask & ~0x3F) != 0) {
+                    throw new IllegalStateException(
+                        "tdfa: whole state " + s + " entry " + i + " unknown assertion-mask bits");
+                }
+                prefixHi = Math.max(prefixHi, hi);
+                if (wholeHiPrefix[base + i] != prefixHi) {
+                    throw new IllegalStateException(
+                        "tdfa: whole state " + s + " entry " + i + " prefix-max invariant broken");
+                }
+            }
+        }
+    }
+
+    /**
+     * Unpack range count from packed stateMeta.
+     */
+    public static int rangeCount(int meta) {
+        return (meta >>> 1) & 0xFFFF;
+    }
+
+    // and external consumers read through these) =====
+    //
+    // Defensive-copy policy (immutability): every array accessor
+    // returns a CLONE. The artifact is shared across threads and its flat
+    // arrays are its entire semantics; a caller mutating a returned array
+    // would corrupt every engine built on this Tdfa. All in-package
+    // consumers (TdfaRunner, DfaMinimizer, the compiler) read the fields
+    // directly and are unaffected; external consumers pay one copy per
+    // accessor call — engine emission and construction are the only callers
+    // and each runs once per compile. The accessors marked
+    // {@code @EmittedSurface} are additionally invoked by name from
+    // generated engine <init>s (see EmittedSurfaceConformanceTest).
+
+    /**
+     * Full 2D stop table for external consumers. Materializes (once) from the
+     * uniform tier if needed; returns null in POSIX mode (no reader may call).
+     * Defensive copy: the materialized table is cached internally; callers
+     * get their own array (the cache stays pristine for the next caller).
+     */
+    @io.github.jemmix.tdfa.core.emit.EmittedSurface
+    public int[] stopOnAcceptMask() {
+        if (stopOnAcceptMask != null) {
+            return stopOnAcceptMask.clone();
+        }
+        byte[] u = stopMaskUniform;
+        if (u == null) {
+            return null;
+        }
+        int[] cache = stopMaskTableCache;
+        if (cache == null) {
+            cache = new int[u.length * 64];
+            for (int s = 0; s < u.length; s++) {
+                Arrays.fill(cache, s * 64, s * 64 + 64, u[s] != 0 ? NEVER_STOP : 0);
+            }
+            stopMaskTableCache = cache;
+        }
+        return cache.clone();
+    }
+
+    /**
+     * The position-flag bits the compiled DFA actually DISTINGUISHES — the
+     * single derived source of truth for what a tier's positionFlags() must
+     * compute. A bit is a dependency iff (a) it appears in some consumed mask
+     * (entry, accept, range-required), or (b) flipping it changes any cell of
+     * an M-indexed table (stop-on-accept, final-ops-by-mask). Uniform tiers
+     * contribute nothing by construction.
+     *
+     * <p>Deriving this per tier (a hand-written "needs word flags" scan
+     * per backend) would answer the same semantic question with
+     * divergent models: a model that misses one table or one bit
+     * combination silently selects wrong table cells. The trim question
+     * "does anything depend on bit b" is answered here GENERICALLY from the
+     * tables themselves, so a new M-indexed consumer is covered the moment it
+     * reads a table that distinguishes b — no model to keep in sync.
+     */
+    public int posFlagDeps() {
+        int deps = posFlagDepsCache;
+        if (deps >= 0) {
+            return deps;
+        }
+        deps = 0;
+        for (int m : stateEntryMask) {
+            deps |= m;
+        }
+        for (int m : stateAcceptMask) {
+            deps |= m;
+        }
+        for (int i = 4; i < ranges.length; i += 5) {
+            deps |= ranges[i];
+        }
+        if (wholeRanges != null) {
+            // A cut context with a dead/empty PRUNED step may contribute
+            // mask bits ONLY through its whole-side entries (e.g. a
+            // residue that continues past an accept gate) — the whole
+            // walk's entry gating depends on them.
+            for (int i = 4; i < wholeRanges.length; i += 5) {
+                deps |= wholeRanges[i];
+            }
+        }
+        deps |= tableDeps(stopOnAcceptMask());
+        deps |= tableDeps(stateFinalOpsByMask());
+        posFlagDepsCache = deps;
+        return deps;
+    }
+
+    /**
+     * Position-aware final-ops table ({@code [state*64+posFlags]} → offset, -1 = accept
+     * suppressed), or null when every accepting state is mask-uniform. Defensive copy.
+     */
+    public int[] stateFinalOpsByMask() {
+        return stateFinalOpsByMask == null ? null : stateFinalOpsByMask.clone();
+    }
+
+    /**
+     * Number of capture tags (2 per group, 1-indexed).
+     */
+    public int tagCount() {
+        return tagCount;
+    }
+
+    /**
+     * Number of capturing groups (excluding group 0).
+     */
+    public int groupCount() {
+        return groupCount;
+    }
+
+    /**
+     * Unmodifiable name&rarr;index map for named capturing groups.
+     */
+    public Map<String, Integer> namedGroups() {
+        return namedGroups;
+    }
+
+    /**
+     * Total register count (working + final blocks).
+     */
+    public int registerCount() {
+        return registerCount;
+    }
+
+    /**
+     * Offset of the final-register block within the runtime register file.
+     */
+    public int finalRegBase() {
+        return finalRegBase;
+    }
+
+    /**
+     * Number of DFA states.
+     */
+    public int stateCount() {
+        return stateCount;
+    }
+
+    /**
+     * Per-state packed metadata: accept bit + range count (see {@link #rangeCount}). Defensive copy.
+     */
+    @io.github.jemmix.tdfa.core.emit.EmittedSurface
+    public int[] stateMeta() {
+        return stateMeta.clone();
+    }
+
+    /**
+     * Per-state base index into {@link #ranges()}. Defensive copy.
+     */
+    @io.github.jemmix.tdfa.core.emit.EmittedSurface
+    public int[] stateBase() {
+        return stateBase.clone();
+    }
+
+    /**
+     * Per-state final-ops offset into {@link #ops()}, 0 if none. Defensive copy.
+     */
+    public int[] stateFinalOpsOff() {
+        return stateFinalOpsOff.clone();
+    }
+
+    /**
+     * Flat transition ranges: [lo, hi, target, opsOff, requiredMask] quintets. Defensive copy.
+     */
+    @io.github.jemmix.tdfa.core.emit.EmittedSurface
+    public int[] ranges() {
+        return ranges.clone();
+    }
+
+    /**
+     * Flat register ops: [op, dst, src] triplets, blocks terminated by {@link #OP_END}. Defensive copy.
+     */
+    public int[] ops() {
+        return ops.clone();
+    }
+
+    /**
+     * Per-state entry assertion masks (BEGIN_TEXT/END_TEXT/WORD_BOUNDARY/...), or null. Defensive copy.
+     */
+    @io.github.jemmix.tdfa.core.emit.EmittedSurface
+    public int[] stateEntryMask() {
+        return stateEntryMask == null ? null : stateEntryMask.clone();
+    }
+
+    /**
+     * Per-state accept assertion masks (subset of {@link #stateEntryMask()}), or null. Defensive copy.
+     */
+    @io.github.jemmix.tdfa.core.emit.EmittedSurface
+    public int[] stateAcceptMask() {
+        return stateAcceptMask == null ? null : stateAcceptMask.clone();
+    }
+
+    /**
+     * True iff compiled for leftmost-longest (LONGEST_MATCH) semantics.
+     */
+    public boolean longestMatch() {
+        return longestMatch;
+    }
+
+    /**
+     * {@code (?m)} — {@code ^}/{@code $} at line boundaries.
+     */
+    public boolean multiline() {
+        return multiline;
+    }
+
+    /**
+     * Unicode-aware word boundary ({@code (?u)}).
+     */
+    public boolean unicodeWordBoundary() {
+        return unicodeWordBoundary;
+    }
+
+    /**
+     * Word-character ranges for Unicode-aware {@code \b}, or {@code null}. Defensive copy.
+     */
+    @io.github.jemmix.tdfa.core.emit.EmittedSurface
+    public int[] wordRanges() {
+        return wordRanges == null ? null : wordRanges.clone();
+    }
+
+    /**
+     * Fixed-tag base annotations (BT22 §6.4), or {@code null} when none fixed. Defensive copy.
+     */
+    @io.github.jemmix.tdfa.core.emit.EmittedSurface
+    public int[] fixedBase() {
+        return fixedBase == null ? null : fixedBase.clone();
+    }
+
+    /**
+     * Fixed-tag offset annotations (BT22 §6.4), or null. Defensive copy.
+     */
+    @io.github.jemmix.tdfa.core.emit.EmittedSurface
+    public int[] fixedOffset() {
+        return fixedOffset == null ? null : fixedOffset.clone();
+    }
+
+    /**
+     * For pruned Perl-mode compiles: whether the pike cut deleted a
+     * steppable continuation (see {@link Tdfa#pikeCutMatters}); false
+     * means whole-input walks on this artifact are exact. Constant false
+     * otherwise.
+     */
+    public boolean pikeCutMatters() {
+        return pikeCutMatters;
+    }
+
+    /**
+     * Weighted flat bytes this artifact retains at execution time: every
+     * packed array field (per-state tables, flat ranges, prefix-max,
+     * ops, position-aware mask tables, word/fixed-tag annotations, the
+     * partial-whole side table) at its flat JVM cost (16 B array header
+     * + 4 B per int cell, 1 B per byte cell). The end-of-compile
+     * execution-RAM check charges this against {@code
+     * tdfa.budget.runtime.memory} (the facade derives the lazy-memo
+     * allowances from the residual); engine-tier tables built FROM these
+     * arrays (dispatch tiers, generated-class statics, the materialized
+     * 2D stop-mask copies) are disclosed construction-time constants
+     * outside the budget — the r11 scope line, see {@link Budgets}.
+     */
+    public long retainedTableBytes() {
+        long b = intBytes(stateMeta.length) + intBytes(stateBase.length) + intBytes(stateFinalOpsOff.length)
+            + intBytes(stateEntryMask.length) + intBytes(stateAcceptMask.length) + intBytes(ranges.length)
+            + intBytes(entryHiPrefix.length) + intBytes(ops.length);
+        if (stateFinalOpsByMask != null) {
+            b += intBytes(stateFinalOpsByMask.length);
+        }
+        if (stopOnAcceptMask != null) {
+            b += intBytes(stopOnAcceptMask.length);
+        }
+        if (stopMaskUniform != null) {
+            b += 16 + stopMaskUniform.length;
+        }
+        if (wordRanges != null) {
+            b += intBytes(wordRanges.length);
+        }
+        if (fixedBase != null) {
+            b += intBytes(fixedBase.length);
+        }
+        if (fixedOffset != null) {
+            b += intBytes(fixedOffset.length);
+        }
+        if (wholeRanges != null) {
+            b += intBytes(wholeRanges.length) + intBytes(wholeBase.length) + intBytes(wholeCount.length)
+                + intBytes(wholeHiPrefix.length);
+        }
+        return b;
+    }
+
+    private static long intBytes(int cells) {
+        return 16L + 4L * cells;
+    }
+
+    /**
+     * Whether whole-input walks ({@code matchWhole}) are EXACT on this
+     * artifact: either the pike cut never deleted a continuation, or the
+     * partial-whole side table recorded every cut context's uncut
+     * transitions (complete exploration). The facade relies on this:
+     * after {@link Determinizer#compileWithWholeSide(Tnfa, boolean, CompileObserver, WorkMeter)} (which always requests the
+     * side), false means the side was abandoned and the compile REJECTS
+     * — no second cut-free determinization is attempted.
+     */
+    public boolean wholeWalkExact() {
+        return !pikeCutMatters || (wholeRanges != null && wholeSideComplete);
+    }
+
+    /**
+     * The partial-whole side table's flat entries ([lo, hi, target,
+     * opsOff, requiredMask] quintets), or null when absent. Defensive copy.
+     */
+    public int[] wholeRanges() {
+        return wholeRanges == null ? null : wholeRanges.clone();
+    }
+
+    /**
+     * [state] → base index into {@link #wholeRanges()}, or -1. Null when
+     * no side table. Defensive copy.
+     */
+    public int[] wholeBase() {
+        return wholeBase == null ? null : wholeBase.clone();
+    }
+
+    /**
+     * [state] → whole-side entry count. Null when no side table. Defensive copy.
+     */
+    public int[] wholeCount() {
+        return wholeCount == null ? null : wholeCount.clone();
+    }
+
+    // ===== compile-knob policy =====
+    //
+    // Every tdfa.* knob that steers COMPILATION is read once per
+    // compilation (at the pipeline stage that consumes it), never frozen in
+    // a static initializer: setting a property takes effect on the next
+    // compile in the same JVM, and tests can vary knobs without forking.
+    // Knobs and their sites:
+    //   tdfa.budget.compile.memory / .compute               (budgets, Budgets —
+    //   tdfa.budget.runtime.memory                            all caps derive)
+    //   tdfa.nominimize, tdfa.minimize.max, tdfa.noregopt, tdfa.regopt.max,
+    //   tdfa.debug, tdfa.debug.closure,
+    //   tdfa.debug.finals                          (compile)
+    //   tdfa.engine                                                 (facade, per compile)
+    // The derived determinization caps (states/kernels/closure/cfg-edges/
+    // norm-cells, the search-DFA memo caps) are
+    // all linear functions of the two compile budgets / the runtime budget
+    // through the weight model (BudgetWeights) — one knob per resource, so
+    // the caps can never drift out of sync with the budgets that derive
+    // them. The only frozen reads are RUNTIME diagnostics on hot loops
+    // (TdfaRunner.WTRACE) and the tdfa.asm.dump emission switch — see
+    // those sites. tdfa.debug has three readers (Tdfa, TdfaCompiler.Builder,
+    // Tnfa) and all read fresh, once per compile — a frozen read anywhere
+    // would produce partial debug output whenever the property is set
+    // after class init.
+
+}

@@ -72,7 +72,7 @@ with `./gradlew :benchmarks:micro:jmh -PjmhInclude='ParameterizedShortInputBench
 
 ```java
 import io.github.jemmix.tdfa.Pattern;
-import io.github.jemmix.tdfa.core.Matcher;
+import io.github.jemmix.tdfa.core.engine.Matcher;
 
 Pattern p = Pattern.compile("(\\w+)@(\\w+)");
 Matcher m = p.matcher("hello user@host bye");

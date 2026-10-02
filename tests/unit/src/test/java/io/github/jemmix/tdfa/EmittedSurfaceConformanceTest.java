@@ -1,15 +1,15 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.EmittedSurface;
-import io.github.jemmix.tdfa.core.MatchResult;
-import io.github.jemmix.tdfa.core.MatchScratch;
-import io.github.jemmix.tdfa.core.Matcher;
-import io.github.jemmix.tdfa.core.RegexEngine;
-import io.github.jemmix.tdfa.core.WholeEngine;
-import io.github.jemmix.tdfa.tdfa.MatchHolder;
-import io.github.jemmix.tdfa.tdfa.Tdfa;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.core.dfa.MatchHolder;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.emit.EmittedSurface;
+import io.github.jemmix.tdfa.core.engine.MatchResult;
+import io.github.jemmix.tdfa.core.engine.MatchScratch;
+import io.github.jemmix.tdfa.core.engine.Matcher;
+import io.github.jemmix.tdfa.core.engine.RegexEngine;
+import io.github.jemmix.tdfa.core.engine.WholeEngine;
+import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.AnnotatedElement;
@@ -111,7 +111,7 @@ class EmittedSurfaceConformanceTest {
 
     @Test
     void shellHooks() throws Exception {
-        // core.Matcher's protected fields, linked from emitted shells (the 7
+        // engine.Matcher's protected fields, linked from emitted shells (the 7
         // bookkeeping fields + the scratch carrier handed to carrier-aware
         // engine calls).
         for (String f : new String[]{"input", "inputLength", "match", "hasMatch", "lastMatchStart", "lastMatchEnd",
