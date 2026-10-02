@@ -1,9 +1,9 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.CompileOptions;
-import io.github.jemmix.tdfa.core.CompiledRegex;
-import io.github.jemmix.tdfa.core.PatternSyntaxException;
-import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.core.compile.CompileOptions;
+import io.github.jemmix.tdfa.core.compile.CompiledRegex;
+import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
+import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 import io.github.jemmix.tdfa.unicode.v17_0.Unicode17_0;
 import io.github.jemmix.tdfa.unicode.v6_0.Unicode6_0;
 import org.junit.jupiter.api.Test;

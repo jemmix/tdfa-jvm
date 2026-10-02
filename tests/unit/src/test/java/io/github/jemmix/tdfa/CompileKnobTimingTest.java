@@ -1,10 +1,11 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.CompileObserver;
-import io.github.jemmix.tdfa.core.PatternTooLargeException;
-import io.github.jemmix.tdfa.tdfa.Budgets;
-import io.github.jemmix.tdfa.tdfa.Tdfa;
-import io.github.jemmix.tdfa.tnfa.Tnfa;
+import io.github.jemmix.tdfa.core.budget.Budgets;
+import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.determinize.Determinizer;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
+import io.github.jemmix.tdfa.core.report.CompileObserver;
+import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -44,14 +45,14 @@ class CompileKnobTimingTest {
     @Test
     void regoptKnobTakesEffectWithoutClassReload() {
         // First compile with the knob unset: regopt runs on tagged patterns.
-        Tdfa.compile(Tnfa.compile("(a+)(b+)"), false, recording());
+        Determinizer.compile(Tnfa.compile("(a+)(b+)"), false, recording());
         assertThat(notes.get("regopt")).startsWith("regs ");
 
         // Set the property AFTER the classes are long initialized —
         // a per-compile read must pick it up on the very next compile.
         System.setProperty("tdfa.noregopt", "true");
         notes.clear();
-        Tdfa.compile(Tnfa.compile("(a+)(b+)"), false, recording());
+        Determinizer.compile(Tnfa.compile("(a+)(b+)"), false, recording());
         assertThat(notes.get("regopt")).isEqualTo("disabled");
     }
 
@@ -61,7 +62,7 @@ class CompileKnobTimingTest {
         // observable via a compile of a minimizable pattern simply succeeding
         // (state count may differ — the knob's effect path is the guard itself).
         System.setProperty("tdfa.nominimize", "true");
-        Tdfa t = Tdfa.compile(Tnfa.compile("a|b|c"), false, recording());
+        Tdfa t = Determinizer.compile(Tnfa.compile("a|b|c"), false, recording());
         assertThat(t.stateCount()).isPositive();
         assertThat(notes.get("regopt")).isNotNull();
     }
@@ -72,14 +73,14 @@ class CompileKnobTimingTest {
         // never class-init frozen. Set AFTER init — the very next compile
         // must see the tightened RAM budget (4096 B / 256 B per state = a
         // 16-state cap), and clearing it must re-admit the pattern.
-        Tdfa.compile(Tnfa.compile("ab|cd"), false, recording()); // warm classes
+        Determinizer.compile(Tnfa.compile("ab|cd"), false, recording()); // warm classes
         System.setProperty(Budgets.COMPILE_MEMORY_PROP, "4096");
         try {
-            assertThatThrownBy(() -> Tdfa.compile(Tnfa.compile("ab|cd|ef|gh|ij"), false, recording()))
+            assertThatThrownBy(() -> Determinizer.compile(Tnfa.compile("ab|cd|ef|gh|ij"), false, recording()))
                 .isInstanceOf(PatternTooLargeException.class).hasMessageContaining("pattern too large");
         } finally {
             System.clearProperty(Budgets.COMPILE_MEMORY_PROP);
         }
-        assertThat(Tdfa.compile(Tnfa.compile("ab|cd|ef|gh|ij"), false, recording()).stateCount()).isPositive();
+        assertThat(Determinizer.compile(Tnfa.compile("ab|cd|ef|gh|ij"), false, recording()).stateCount()).isPositive();
     }
 }

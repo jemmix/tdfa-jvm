@@ -1,9 +1,9 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.CompiledRegex;
-import io.github.jemmix.tdfa.core.MatchResult;
-import io.github.jemmix.tdfa.core.PatternSyntaxException;
-import io.github.jemmix.tdfa.core.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.compile.CompiledRegex;
+import io.github.jemmix.tdfa.core.engine.MatchResult;
+import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;

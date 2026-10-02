@@ -1,8 +1,8 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.CompiledRegex;
-import io.github.jemmix.tdfa.core.MatchResult;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.compile.CompiledRegex;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.engine.MatchResult;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;

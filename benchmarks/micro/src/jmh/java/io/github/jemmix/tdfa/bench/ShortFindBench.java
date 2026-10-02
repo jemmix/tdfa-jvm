@@ -1,7 +1,7 @@
 package io.github.jemmix.tdfa.bench;
 
 import com.datadoghq.reggie.Reggie;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;

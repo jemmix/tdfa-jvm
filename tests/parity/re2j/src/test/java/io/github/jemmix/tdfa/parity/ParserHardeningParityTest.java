@@ -1,6 +1,6 @@
 package io.github.jemmix.tdfa.parity;
 
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 

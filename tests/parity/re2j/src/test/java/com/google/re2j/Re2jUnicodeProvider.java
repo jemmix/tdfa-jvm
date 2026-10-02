@@ -1,6 +1,6 @@
 package com.google.re2j;
 
-import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;

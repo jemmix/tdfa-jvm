@@ -1,9 +1,9 @@
 package io.github.jemmix.tdfa.asm;
 
-import io.github.jemmix.tdfa.core.RegexEngine;
-import io.github.jemmix.tdfa.tdfa.Budgets;
-import io.github.jemmix.tdfa.tdfa.Tdfa;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.budget.Budgets;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.engine.RegexEngine;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -25,10 +25,10 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class TdfaAsmBackend {
 
     private static final AtomicLong COUNTER = new AtomicLong();
-    private static final String ENGINE = "io/github/jemmix/tdfa/core/RegexEngine";
-    private static final String WHOLE = "io/github/jemmix/tdfa/core/WholeEngine";
-    private static final String HOLDER = "io/github/jemmix/tdfa/tdfa/MatchHolder";
-    private static final String RESULT = "io/github/jemmix/tdfa/core/MatchResult";
+    private static final String ENGINE = "io/github/jemmix/tdfa/core/engine/RegexEngine";
+    private static final String WHOLE = "io/github/jemmix/tdfa/core/engine/WholeEngine";
+    private static final String HOLDER = "io/github/jemmix/tdfa/core/dfa/MatchHolder";
+    private static final String RESULT = "io/github/jemmix/tdfa/core/engine/MatchResult";
 
     /** Register-file size ceiling for the stack-register leaves (see
      *  {@link #stackRegsEligible}): 32 = last consistently-winning size
@@ -43,19 +43,19 @@ public final class TdfaAsmBackend {
      *  leaves comfortable headroom for the under-estimate. */
     private static final int INLINE_BUDGET_BYTES = 30_000;
 
-    private static final String SCRATCH = "io/github/jemmix/tdfa/core/MatchScratch";
+    private static final String SCRATCH = "io/github/jemmix/tdfa/core/engine/MatchScratch";
     private static final String SCRATCH_D = "L" + SCRATCH + ";";
     private static final String STR = "java/lang/String";
     private static final String CS_D = "Ljava/lang/CharSequence;";
     private static final String ARRAYS = "java/util/Arrays";
-    private static final String RUNNER = "io/github/jemmix/tdfa/tdfa/TdfaRunner";
+    private static final String RUNNER = "io/github/jemmix/tdfa/core/dfa/TdfaRunner";
     /** Shared alphabet: the emitted ladder guards restarts with the same one
      *  definition the interpreter uses (pair-interior positions are not
      *  codepoint boundaries and cannot start a match). */
-    private static final String ALPHABET = "io/github/jemmix/tdfa/ast/Alphabet";
+    private static final String ALPHABET = "io/github/jemmix/tdfa/core/ast/Alphabet";
 
     private static final String RUNNER_D = "L" + RUNNER + ";";
-    private static final String TDFA = "io/github/jemmix/tdfa/tdfa/Tdfa";
+    private static final String TDFA = "io/github/jemmix/tdfa/core/dfa/Tdfa";
     private static final String TDFA_D = "L" + TDFA + ";";
 
     /** Child loader that can define any number of registered classes for one
@@ -204,7 +204,7 @@ public final class TdfaAsmBackend {
             genMetadataMethods(cw, owner);
             // Carrier-free INLINED classes (stack-register or zero-register
             // leaves): hot paths never take carrier buffers, so tell
-            // core.Matcher not to allocate one at all. The cold fallbacks
+            // engine.Matcher not to allocate one at all. The cold fallbacks
             // (origin sim / trigger scan / restart / non-String delegate)
             // pass the possibly-null carrier into TdfaRunner, which
             // allocates on demand at those entries.

@@ -2,18 +2,19 @@ package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.asm.ShellEmitter;
 import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
-import io.github.jemmix.tdfa.core.CompileObserver;
-import io.github.jemmix.tdfa.core.PatternTooLargeException;
-import io.github.jemmix.tdfa.core.RegexEngine;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
-import io.github.jemmix.tdfa.core.WholeEngine;
-import io.github.jemmix.tdfa.tdfa.Budgets;
-import io.github.jemmix.tdfa.tdfa.Tdfa;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import io.github.jemmix.tdfa.tdfa.WorkMeter;
-import io.github.jemmix.tdfa.tnfa.Tnfa;
-import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
-import io.github.jemmix.tdfa.unicode.UnicodeProviders;
+import io.github.jemmix.tdfa.core.budget.Budgets;
+import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.budget.WorkMeter;
+import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
+import io.github.jemmix.tdfa.core.determinize.Determinizer;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.engine.RegexEngine;
+import io.github.jemmix.tdfa.core.engine.WholeEngine;
+import io.github.jemmix.tdfa.core.report.CompileObserver;
+import io.github.jemmix.tdfa.core.tnfa.Tnfa;
+import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
 
 /**
  * {@link Pattern} compilation: fold the flags into an inline-flag prefix,
@@ -45,7 +46,7 @@ import io.github.jemmix.tdfa.unicode.UnicodeProviders;
  * side table included, must fit {@code tdfa.budget.runtime.memory}; the
  * lazy-memo allowances draw from the residual — "if it compiles, it
  * will execute within budget", see {@link Budgets}). Malformed syntax
- * is a {@link io.github.jemmix.tdfa.core.PatternSyntaxException} raised
+ * is a {@link io.github.jemmix.tdfa.core.parser.PatternSyntaxException} raised
  * by the parser and passes through untouched; anything else is a bug
  * and propagates as itself.
  */
@@ -97,8 +98,8 @@ final class PatternCompiler {
         // attempted and its budget is never drawn.
         WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
         Tnfa nfa = Tnfa.compile(fl, disableUnicodeGroups, false, prov, obs, ledger);
-        Tdfa find = findOnly ? Tdfa.compile(nfa, longest, obs, ledger.fork(0))
-            : Tdfa.compileWithWholeSide(nfa, longest, obs, ledger.fork(0));
+        Tdfa find = findOnly ? Determinizer.compile(nfa, longest, obs, ledger.fork(0))
+            : Determinizer.compileWithWholeSide(nfa, longest, obs, ledger.fork(0));
         if (findOnly) {
             // No whole surface was requested: no exactness gate, no
             // whole engine — the find artifact is all this compile

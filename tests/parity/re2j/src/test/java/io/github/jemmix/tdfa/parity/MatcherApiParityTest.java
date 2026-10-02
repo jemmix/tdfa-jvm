@@ -1,7 +1,7 @@
 package io.github.jemmix.tdfa.parity;
 
-import io.github.jemmix.tdfa.core.Matcher;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
+import io.github.jemmix.tdfa.core.engine.Matcher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -22,7 +22,7 @@ class MatcherApiParityTest {
         return com.google.re2j.Pattern.compile(p).matcher(in);
     }
 
-    private static io.github.jemmix.tdfa.core.Matcher tdfaM(String p, String in, RegexEngineFactory factory) {
+    private static io.github.jemmix.tdfa.core.engine.Matcher tdfaM(String p, String in, RegexEngineFactory factory) {
         return io.github.jemmix.tdfa.Pattern.compile(p, 0, factory).matcher(in);
     }
 

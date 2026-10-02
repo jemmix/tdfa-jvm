@@ -1,14 +1,15 @@
 package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
-import io.github.jemmix.tdfa.core.MatchResult;
-import io.github.jemmix.tdfa.core.MatchScratch;
-import io.github.jemmix.tdfa.core.RegexEngine;
-import io.github.jemmix.tdfa.core.WholeEngine;
-import io.github.jemmix.tdfa.tdfa.Tdfa;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
-import io.github.jemmix.tdfa.tnfa.Tnfa;
-import io.github.jemmix.tdfa.unicode.UnicodeProviders;
+import io.github.jemmix.tdfa.core.determinize.Determinizer;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.engine.MatchResult;
+import io.github.jemmix.tdfa.core.engine.MatchScratch;
+import io.github.jemmix.tdfa.core.engine.RegexEngine;
+import io.github.jemmix.tdfa.core.engine.WholeEngine;
+import io.github.jemmix.tdfa.core.tnfa.Tnfa;
+import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -78,7 +79,7 @@ class StrategyConformanceTest {
 
     private static Tdfa tdfa(String pattern) {
         Tnfa nfa = Tnfa.compile(pattern, false, false, UnicodeProviders.get());
-        return Tdfa.compile(nfa, false);
+        return Determinizer.compile(nfa, false);
     }
 
     @Test

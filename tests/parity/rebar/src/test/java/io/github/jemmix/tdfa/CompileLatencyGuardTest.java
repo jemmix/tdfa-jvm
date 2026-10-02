@@ -1,6 +1,6 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
 import io.github.jemmix.tdfa.rebar.Scenario;
 import io.github.jemmix.tdfa.rebar.ScenarioLoader;
 import org.assertj.core.api.Assertions;

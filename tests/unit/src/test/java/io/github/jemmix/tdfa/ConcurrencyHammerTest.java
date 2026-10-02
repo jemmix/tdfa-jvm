@@ -1,8 +1,8 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.CompiledRegex;
-import io.github.jemmix.tdfa.core.MatchResult;
-import io.github.jemmix.tdfa.core.Matcher;
+import io.github.jemmix.tdfa.core.compile.CompiledRegex;
+import io.github.jemmix.tdfa.core.engine.MatchResult;
+import io.github.jemmix.tdfa.core.engine.Matcher;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;

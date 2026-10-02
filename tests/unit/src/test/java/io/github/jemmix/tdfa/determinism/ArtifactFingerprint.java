@@ -1,6 +1,6 @@
 package io.github.jemmix.tdfa.determinism;
 
-import io.github.jemmix.tdfa.tdfa.Tdfa;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
 
 import java.util.Map;
 import java.util.TreeMap;

@@ -1,11 +1,11 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.EmittedSurface;
-import io.github.jemmix.tdfa.core.Matcher;
+import io.github.jemmix.tdfa.core.emit.EmittedSurface;
+import io.github.jemmix.tdfa.core.engine.Matcher;
 
 /**
  * The stateful matcher a {@link Pattern} produces: find-iteration, groups,
- * replacement. Extends the core-tier {@link io.github.jemmix.tdfa.core.Matcher}
+ * replacement. Extends the core-tier {@link io.github.jemmix.tdfa.core.engine.Matcher}
  * (which carries the full mirror surface and the generated-shell contract)
  * with the pattern back-reference {@link #pattern()}.
  *

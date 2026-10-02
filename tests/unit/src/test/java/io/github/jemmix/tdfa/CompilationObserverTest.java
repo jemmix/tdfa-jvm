@@ -1,9 +1,9 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.CompilationReport;
-import io.github.jemmix.tdfa.core.CompileObserver;
-import io.github.jemmix.tdfa.core.CompileOptions;
-import io.github.jemmix.tdfa.core.CompiledRegex;
+import io.github.jemmix.tdfa.core.compile.CompileOptions;
+import io.github.jemmix.tdfa.core.compile.CompiledRegex;
+import io.github.jemmix.tdfa.core.report.CompilationReport;
+import io.github.jemmix.tdfa.core.report.CompileObserver;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;

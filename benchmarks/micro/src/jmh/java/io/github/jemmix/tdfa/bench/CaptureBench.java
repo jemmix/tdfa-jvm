@@ -3,7 +3,7 @@ package io.github.jemmix.tdfa.bench;
 import com.datadoghq.reggie.Reggie;
 import com.datadoghq.reggie.runtime.ReggieMatcher;
 import io.github.jemmix.tdfa.Pattern;
-import io.github.jemmix.tdfa.tdfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -214,7 +214,7 @@ public class CaptureBench {
     // ============ with group extraction ============
     @Benchmark
     public void tdfaAltStarGroups(Blackhole bh) {
-        io.github.jemmix.tdfa.core.Matcher m = TDFA_ALT_STAR.matcher(IN_ALT_STAR);
+        io.github.jemmix.tdfa.core.engine.Matcher m = TDFA_ALT_STAR.matcher(IN_ALT_STAR);
         m.find();
         if (m != null) {
             bh.consume(m.start(1));
@@ -231,7 +231,7 @@ public class CaptureBench {
 
     @Benchmark
     public void tdfaIpGroups(Blackhole bh) {
-        io.github.jemmix.tdfa.core.Matcher m = TDFA_IP.matcher(IN_IP);
+        io.github.jemmix.tdfa.core.engine.Matcher m = TDFA_IP.matcher(IN_IP);
         m.find();
         if (m != null) {
             bh.consume(m.start(1));

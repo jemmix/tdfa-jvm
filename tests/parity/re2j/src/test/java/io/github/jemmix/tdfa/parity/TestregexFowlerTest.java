@@ -1,9 +1,9 @@
 package io.github.jemmix.tdfa.parity;
 
 import com.google.re2j.Re2jUnicodeProvider;
-import io.github.jemmix.tdfa.core.Matcher;
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
-import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
+import io.github.jemmix.tdfa.core.engine.Matcher;
+import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 

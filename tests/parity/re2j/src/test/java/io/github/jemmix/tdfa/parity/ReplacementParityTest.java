@@ -1,6 +1,6 @@
 package io.github.jemmix.tdfa.parity;
 
-import io.github.jemmix.tdfa.core.RegexEngineFactory;
+import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -21,7 +21,7 @@ class ReplacementParityTest {
 
     private static String tdfaReplaceAll(String pattern, String input, String repl, RegexEngineFactory factory) {
         io.github.jemmix.tdfa.Pattern p = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory);
-        io.github.jemmix.tdfa.core.Matcher m = p.matcher(input);
+        io.github.jemmix.tdfa.core.engine.Matcher m = p.matcher(input);
         return m.replaceAll(repl);
     }
 
@@ -114,7 +114,7 @@ class ReplacementParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void quoteReplacementStatic(RegexEngineFactory factory) {
-        assertThat(io.github.jemmix.tdfa.core.Matcher.quoteReplacement("$1\\2"))
+        assertThat(io.github.jemmix.tdfa.core.engine.Matcher.quoteReplacement("$1\\2"))
             .isEqualTo(com.google.re2j.Matcher.quoteReplacement("$1\\2"));
     }
 

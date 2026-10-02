@@ -1,6 +1,6 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 import java.io.InvalidObjectException;
 import java.io.ObjectStreamException;

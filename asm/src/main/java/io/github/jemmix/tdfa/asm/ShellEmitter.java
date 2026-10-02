@@ -1,8 +1,8 @@
 package io.github.jemmix.tdfa.asm;
 
-import io.github.jemmix.tdfa.core.RegexEngine;
-import io.github.jemmix.tdfa.core.WholeEngine;
-import io.github.jemmix.tdfa.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.core.engine.RegexEngine;
+import io.github.jemmix.tdfa.core.engine.WholeEngine;
+import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -59,11 +59,11 @@ public final class ShellEmitter {
     private static final String PATMAT = "io/github/jemmix/tdfa/PatternMatcher";
     private static final String PATTERN = "io/github/jemmix/tdfa/Pattern";
     // Core-tier types.
-    private static final String ENGINE_ITF = "io/github/jemmix/tdfa/core/RegexEngine";
-    private static final String WHOLE_ITF = "io/github/jemmix/tdfa/core/WholeEngine";
-    private static final String CORE_MATCHER = "io/github/jemmix/tdfa/core/Matcher";
-    private static final String RESULT = "io/github/jemmix/tdfa/core/MatchResult";
-    private static final String SCRATCH = "io/github/jemmix/tdfa/core/MatchScratch";
+    private static final String ENGINE_ITF = "io/github/jemmix/tdfa/core/engine/RegexEngine";
+    private static final String WHOLE_ITF = "io/github/jemmix/tdfa/core/engine/WholeEngine";
+    private static final String CORE_MATCHER = "io/github/jemmix/tdfa/core/engine/Matcher";
+    private static final String RESULT = "io/github/jemmix/tdfa/core/engine/MatchResult";
+    private static final String SCRATCH = "io/github/jemmix/tdfa/core/engine/MatchScratch";
     private static final String SCRATCH_D = "L" + SCRATCH + ";";
     private static final String CS = "Ljava/lang/CharSequence;";
 
@@ -342,7 +342,7 @@ public final class ShellEmitter {
             null);
         cw.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, "eng", engDesc, null, null).visitEnd();
         // (String pattern, int flags, int ps, RegexEngine e, RegexEngine w, UnicodeDataProvider prov, Eng eng)
-        String provDesc = "Lio/github/jemmix/tdfa/unicode/UnicodeDataProvider;";
+        String provDesc = "Lio/github/jemmix/tdfa/core/unicode/UnicodeDataProvider;";
         mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>",
             "(Ljava/lang/String;IIL" + ENGINE_ITF + ";L" + WHOLE_ITF + ";" + provDesc + engDesc + ")V", null, null);
         mv.visitCode();

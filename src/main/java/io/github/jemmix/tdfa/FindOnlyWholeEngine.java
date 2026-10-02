@@ -1,8 +1,8 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.MatchResult;
-import io.github.jemmix.tdfa.core.MatchScratch;
-import io.github.jemmix.tdfa.core.WholeEngine;
+import io.github.jemmix.tdfa.core.engine.MatchResult;
+import io.github.jemmix.tdfa.core.engine.MatchScratch;
+import io.github.jemmix.tdfa.core.engine.WholeEngine;
 
 /**
  * The whole-match non-engine of a {@link Pattern#FIND_ONLY} compile: no
@@ -15,7 +15,7 @@ import io.github.jemmix.tdfa.core.WholeEngine;
  * message, at match time, never at compile time.
  *
  * <p>Per-pattern instance (not a singleton): the message names the pattern.
- * Not a {@link io.github.jemmix.tdfa.core.RegexEngine}: it serves no find
+ * Not a {@link io.github.jemmix.tdfa.core.engine.RegexEngine}: it serves no find
  * surface and must not influence the matcher's scratch-carrier decision.
  */
 final class FindOnlyWholeEngine implements WholeEngine {
