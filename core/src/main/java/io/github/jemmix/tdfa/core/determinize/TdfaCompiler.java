@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.TreeSet;
 
 import static io.github.jemmix.tdfa.core.dfa.Tdfa.NEVER_STOP;
+import static io.github.jemmix.tdfa.core.dfa.Tdfa.OP_APPEND_POS;
 import static io.github.jemmix.tdfa.core.dfa.Tdfa.OP_COPY;
 
 /**
@@ -70,6 +71,16 @@ final class TdfaCompiler {
      * If true, leftmost-longest semantics (keep stepping past accepts); if false, Perl leftmost-first (suppress lower-priority paths past an accept).
      */
     final boolean longest;
+    /**
+     * Multi-valued compile (BT22 §3.1, from {@link Tnfa#multiValuedTags}):
+     * {@code transition_regops} emits an APPEND op per POSITIVE history
+     * occurrence (negative tags never enter histories — the engine's re2j
+     * contract keeps a capture once set, so multi-valued lists record only
+     * real participations), and tryMap rewrites append chains like any
+     * other op (mapped chains become the self-append trivial cycles the
+     * paper's topological sort ignores).
+     */
+    final boolean multi;
     /**
      * Pike-cut-free determinization (see {@link Tdfa#compileUnpruned}):
      * stepping follows every alive config, never cutting below an accept.
@@ -308,6 +319,7 @@ final class TdfaCompiler {
         }
         this.breakpoints = computeBreakpoints();
         this.longest = longestMatch;
+        this.multi = nfa.multiValuedTags;
         this.unpruned = unpruned;
         // The side is recorded whenever requested (pruned Perl mode; the
         // facade always requests, find-only tiers never do).
@@ -1686,6 +1698,16 @@ final class TdfaCompiler {
         if (n < 2) {
             return true;
         }
+        boolean hasAppend = false;
+        for (int[] op : ops) {
+            if (op[0] == OP_APPEND_POS) {
+                hasAppend = true;
+                break;
+            }
+        }
+        if (hasAppend) {
+            return topologicalSortUnits(ops);
+        }
         int maxReg = 0;
         for (int[] op : ops) {
             maxReg = Math.max(maxReg, op[1]);
@@ -1758,6 +1780,123 @@ final class TdfaCompiler {
             ops.set(i, out[i]);
         }
         return !nontrivialCycle;
+    }
+
+    /**
+     * Multi-valued twin of {@link #topologicalSort}: append chains are
+     * scheduled as UNITS under the same READERS-BEFORE-WRITERS rule the
+     * copy-only twin implements (a writer is blocked while any other
+     * pending unit still reads its destination). Every unit — copy or
+     * chain — models the same parallel-assignment semantics: it reads
+     * SOURCE-state registers and writes TARGET-state registers, and a
+     * renamed chain may write a register that another unit's source
+     * lineage still needs to read (the append form of the classic copy
+     * shuffle hazard), so the reader must go first. A chain's leading
+     * {@code dst ← src} append is its only external read; the trailing
+     * {@code dst ← dst} self-appends (the trivial cycles the paper's
+     * topological sort ignores) are internal to the unit. A stall that
+     * leaves more than lone trivial self-units pending is a genuine
+     * cross-unit cycle and rejects the mapping.
+     */
+    private boolean topologicalSortUnits(List<int[]> ops) {
+        int n = ops.size();
+        // Unit boundaries: append chains are maximal runs of append ops
+        // sharing one dst (their construction order); every other op is its
+        // own unit.
+        int[] uStart = new int[n];
+        int[] uEnd = new int[n];
+        int[] uRead = new int[n];
+        int[] uWrite = new int[n];
+        int units = 0;
+        for (int i = 0; i < n;) {
+            int[] op = ops.get(i);
+            int opc = op[0];
+            if (opc == OP_APPEND_POS) {
+                int dst = op[1];
+                int j = i + 1;
+                while (j < n) {
+                    int[] nx = ops.get(j);
+                    if (nx[0] != OP_APPEND_POS || nx[1] != dst) {
+                        break;
+                    }
+                    j++;
+                }
+                uStart[units] = i;
+                uEnd[units] = j;
+                uWrite[units] = dst;
+                uRead[units] = op[2] == dst ? -1 : op[2];
+                units++;
+                i = j;
+            } else {
+                uStart[units] = i;
+                uEnd[units] = i + 1;
+                uWrite[units] = op[1];
+                uRead[units] = opc == OP_COPY && op[2] != op[1] ? op[2] : -1;
+                units++;
+                i++;
+            }
+        }
+        boolean[] emitted = new boolean[units];
+        int[][] out = new int[n][];
+        int w = 0;
+        int remaining = units;
+        boolean progress = true;
+        while (remaining > 0 && progress) {
+            progress = false;
+            for (int u = 0; u < units; u++) {
+                meter.tick();
+                if (emitted[u]) {
+                    continue;
+                }
+                // Readers before writers: u is blocked while any OTHER
+                // pending unit still needs to READ u's destination.
+                boolean blocked = false;
+                for (int v = 0; v < units && !blocked; v++) {
+                    if (v != u && !emitted[v] && uRead[v] == uWrite[u] && uRead[v] >= 0) {
+                        blocked = true;
+                    }
+                }
+                if (blocked) {
+                    continue;
+                }
+                for (int k = uStart[u]; k < uEnd[u]; k++) {
+                    out[w++] = ops.get(k);
+                }
+                emitted[u] = true;
+                remaining--;
+                progress = true;
+            }
+        }
+        if (remaining > 0) {
+            // Cycle remainder: only lone trivial self-units (a self-copy,
+            // or a chain whose own dst is its src) may remain; anything
+            // else is a cross-unit cycle — reject.
+            boolean nontrivial = false;
+            for (int u = 0; u < units; u++) {
+                if (emitted[u]) {
+                    continue;
+                }
+                if (uEnd[u] - uStart[u] != 1) {
+                    nontrivial = true; // a whole chain cannot be a self-unit
+                } else {
+                    int[] op = ops.get(uStart[u]);
+                    if (op[0] == OP_COPY && op[1] != op[2]) {
+                        nontrivial = true;
+                    }
+                }
+                for (int k = uStart[u]; k < uEnd[u]; k++) {
+                    out[w++] = ops.get(k);
+                }
+            }
+            for (int i = 0; i < n; i++) {
+                ops.set(i, out[i]);
+            }
+            return !nontrivial;
+        }
+        for (int i = 0; i < n; i++) {
+            ops.set(i, out[i]);
+        }
+        return true;
     }
 
     /**

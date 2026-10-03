@@ -43,6 +43,7 @@ public final class MatchScratch {
 
     private int[] regs;
     private int[] live, next, origin, originNext;
+    private TagTree tree;
 
     /**
      * Grow-only register file: returns an array of at least {@code n} ints,
@@ -56,6 +57,22 @@ public final class MatchScratch {
             regs = r;
         }
         return r;
+    }
+
+    /**
+     * Multi-valued tag tree (BT22 &sect;3.1), reset to empty on every take:
+     * the caller's walk starts from a clean sequence space and appends as
+     * its register ops execute. One grow-only carrier instance, shared by
+     * the interpreter and the generated tier exactly like {@link #takeRegs};
+     * heads from earlier walks are invalid after the reset by construction.
+     */
+    public TagTree takeTree() {
+        TagTree t = tree;
+        if (t == null) {
+            t = tree = new TagTree();
+        }
+        t.reset();
+        return t;
     }
 
     /**

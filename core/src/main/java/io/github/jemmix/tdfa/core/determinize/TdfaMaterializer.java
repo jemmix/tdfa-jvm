@@ -19,6 +19,7 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 
+import static io.github.jemmix.tdfa.core.dfa.Tdfa.OP_APPEND_POS;
 import static io.github.jemmix.tdfa.core.dfa.Tdfa.OP_COPY;
 import static io.github.jemmix.tdfa.core.dfa.Tdfa.OP_END;
 import static io.github.jemmix.tdfa.core.dfa.Tdfa.OP_SET_NIL;
@@ -96,7 +97,12 @@ final class TdfaMaterializer {
         int finalRegBase = nfa.tagCount;
         long tReg = System.nanoTime();
         int n = det.stateCount;
-        if (regoptEnabled && nfa.tagCount > 0 && n > 1 && n <= regoptMaxStates) {
+        // Multi-valued compiles skip §6.3 by design: liveness/rename over
+        // append ops needs the paper's V[i] = V[j]·h value propagation and
+        // append-vs-everything interference (BT22 §3.3), which the
+        // single-valued passes here do not model. The unoptimized register
+        // layout is exact; the opt-in lane trades registers for correctness.
+        if (regoptEnabled && !nfa.multiValuedTags && nfa.tagCount > 0 && n > 1 && n <= regoptMaxStates) {
             Cfg cfg = buildCfg(det.builders, det.accept, nfa.tagCount, det.registerCount);
             Optimize.optimize(cfg, meter);
             cfgWriteBack(cfg, det.builders);
@@ -110,7 +116,8 @@ final class TdfaMaterializer {
             obs.note("regopt", "regs " + cfg.initialRegCount + "->" + cfg.regCount);
         } else {
             obs.stage(CompileObserver.Stage.REGOPT, System.nanoTime() - tReg, 2 * nfa.tagCount);
-            obs.note("regopt", regoptEnabled ? "skipped (bounds)" : "disabled");
+            obs.note("regopt", !regoptEnabled ? "disabled" : nfa.multiValuedTags ? "skipped (multi-valued)"
+                : "skipped (bounds)");
         }
         return finalRegBase;
     }
@@ -432,7 +439,7 @@ final class TdfaMaterializer {
                         flat.ops[opsHead + 1] = r.ops[j + 1];
                         flat.ops[opsHead + 2] = r.ops[j + 2];
                         flat.globalMaxReg = Math.max(flat.globalMaxReg, r.ops[j + 1] + 1);
-                        if (r.ops[j] == OP_COPY) {
+                        if (r.ops[j] == OP_COPY || r.ops[j] == OP_APPEND_POS) {
                             flat.globalMaxReg = Math.max(flat.globalMaxReg, r.ops[j + 2] + 1);
                         }
                         opsHead += 3;
@@ -467,7 +474,7 @@ final class TdfaMaterializer {
                             flat.ops[opsHead + 1] = r.ops[j + 1];
                             flat.ops[opsHead + 2] = r.ops[j + 2];
                             flat.globalMaxReg = Math.max(flat.globalMaxReg, r.ops[j + 1] + 1);
-                            if (r.ops[j] == OP_COPY) {
+                            if (r.ops[j] == OP_COPY || r.ops[j] == OP_APPEND_POS) {
                                 flat.globalMaxReg = Math.max(flat.globalMaxReg, r.ops[j + 2] + 1);
                             }
                             opsHead += 3;
@@ -488,7 +495,7 @@ final class TdfaMaterializer {
                     flat.ops[opsHead + 1] = f[j + 1];
                     flat.ops[opsHead + 2] = f[j + 2];
                     flat.globalMaxReg = Math.max(flat.globalMaxReg, f[j + 1] + 1);
-                    if (f[j] == OP_COPY) {
+                    if (f[j] == OP_COPY || f[j] == OP_APPEND_POS) {
                         flat.globalMaxReg = Math.max(flat.globalMaxReg, f[j + 2] + 1);
                     }
                     opsHead += 3;
@@ -522,7 +529,7 @@ final class TdfaMaterializer {
                             flat.ops[opsHead + 1] = f[j + 1];
                             flat.ops[opsHead + 2] = f[j + 2];
                             flat.globalMaxReg = Math.max(flat.globalMaxReg, f[j + 1] + 1);
-                            if (f[j] == OP_COPY) {
+                            if (f[j] == OP_COPY || f[j] == OP_APPEND_POS) {
                                 flat.globalMaxReg = Math.max(flat.globalMaxReg, f[j + 2] + 1);
                             }
                             opsHead += 3;
@@ -874,7 +881,8 @@ final class TdfaMaterializer {
             stateCount, flat.meta, flat.base, flat.finalOpsOff, flat.finalOpsByMask, flat.ranges, flat.ops, hiPrefix,
             flat.entryMask, flat.acceptMask, longest, finalStop, uniformStop, nfa.multiline, nfa.unicodeWordBoundary,
             nfa.wordRanges, fixed ? nfa.fixedBase : null, fixed ? nfa.fixedOffset : null, flat.pikeCutMatters,
-            flat.wholeRanges, flat.wholeBase, flat.wholeCount, flat.wholeHiPrefix, flat.wholeSideComplete);
+            flat.wholeRanges, flat.wholeBase, flat.wholeCount, flat.wholeHiPrefix, flat.wholeSideComplete,
+            nfa.multiValuedTags);
     }
 
     /**

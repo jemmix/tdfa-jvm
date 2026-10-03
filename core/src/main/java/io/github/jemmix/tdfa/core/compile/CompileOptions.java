@@ -21,13 +21,15 @@ import java.util.Objects;
 public final class CompileOptions {
 
     private final boolean longestMatch;
+    private final boolean multiValuedTags;
     private final boolean disableUnicodeGroups;
     private final UnicodeDataProvider unicodeProvider;
     private final CompileObserver observer;
 
-    private CompileOptions(boolean longestMatch, boolean disableUnicodeGroups, UnicodeDataProvider unicodeProvider,
-        CompileObserver observer) {
+    private CompileOptions(boolean longestMatch, boolean multiValuedTags, boolean disableUnicodeGroups,
+        UnicodeDataProvider unicodeProvider, CompileObserver observer) {
         this.longestMatch = longestMatch;
+        this.multiValuedTags = multiValuedTags;
         this.disableUnicodeGroups = disableUnicodeGroups;
         this.unicodeProvider = unicodeProvider;
         this.observer = observer;
@@ -35,26 +37,42 @@ public final class CompileOptions {
 
     /** Default options: leftmost-first (Perl) semantics, JDK-default Unicode tables. */
     public static CompileOptions of() {
-        return new CompileOptions(false, false, null, null);
+        return new CompileOptions(false, false, false, null, null);
     }
 
     /** POSIX leftmost-longest match semantics (re2j {@code LONGEST_MATCH}). */
     public CompileOptions longestMatch() {
-        return new CompileOptions(true, disableUnicodeGroups, unicodeProvider, observer);
+        return new CompileOptions(true, multiValuedTags, disableUnicodeGroups, unicodeProvider, observer);
+    }
+
+    /**
+     * Multi-valued tags (BT22 &sect;3.1): every capture tag keeps its whole
+     * offset sequence under repetition (append ops, offset-list registers,
+     * {@code MatchResult.groupSpans} readout). Single-value results are
+     * unchanged; the compile trades the fixed-tag/map/regopt optimizations
+     * for the per-iteration offsets.
+     */
+    public CompileOptions multiValuedTags() {
+        return new CompileOptions(longestMatch, true, disableUnicodeGroups, unicodeProvider, observer);
     }
 
     /** Reject {@code \p{...}} / {@code \P{...}} at compile time (re2j {@code DISABLE_UNICODE_GROUPS}). */
     public CompileOptions disableUnicodeGroups() {
-        return new CompileOptions(longestMatch, true, unicodeProvider, observer);
+        return new CompileOptions(longestMatch, multiValuedTags, true, unicodeProvider, observer);
     }
 
     /** Resolve {@code \p{...}} property classes against the given tables instead of the JDK default. */
     public CompileOptions unicode(UnicodeDataProvider provider) {
-        return new CompileOptions(longestMatch, disableUnicodeGroups, provider, observer);
+        return new CompileOptions(longestMatch, multiValuedTags, disableUnicodeGroups, provider, observer);
     }
 
     public boolean isLongestMatch() {
         return longestMatch;
+    }
+
+    /** Multi-valued tags requested (see {@link #multiValuedTags()}). */
+    public boolean isMultiValuedTags() {
+        return multiValuedTags;
     }
 
     public boolean isDisableUnicodeGroups() {
@@ -68,7 +86,7 @@ public final class CompileOptions {
 
     /** Attach a compilation transparency hook (stage timings, decisions). */
     public CompileOptions observer(CompileObserver obs) {
-        return new CompileOptions(longestMatch, disableUnicodeGroups, unicodeProvider, obs);
+        return new CompileOptions(longestMatch, multiValuedTags, disableUnicodeGroups, unicodeProvider, obs);
     }
 
     /** Configured provider, or {@code null} for the default resolution. */
@@ -88,7 +106,8 @@ public final class CompileOptions {
             return false;
         }
         CompileOptions c = (CompileOptions) o;
-        return longestMatch == c.longestMatch && disableUnicodeGroups == c.disableUnicodeGroups
+        return longestMatch == c.longestMatch && multiValuedTags == c.multiValuedTags
+            && disableUnicodeGroups == c.disableUnicodeGroups
             && Objects.equals(unicodeProvider, c.unicodeProvider)
             // Identity is intentional: the observer is a push hook, not a
             // value — two different hook instances with equal state are
@@ -98,7 +117,8 @@ public final class CompileOptions {
 
     @Override
     public int hashCode() {
-        int h = (longestMatch ? 1 : 0) * 31 + (disableUnicodeGroups ? 1 : 0);
+        int h = (longestMatch ? 1 : 0) * 31 + (multiValuedTags ? 1 : 0);
+        h = h * 31 + (disableUnicodeGroups ? 1 : 0);
         h = h * 31 + (unicodeProvider == null ? 0 : unicodeProvider.hashCode());
         return h * 31 + System.identityHashCode(observer);
     }

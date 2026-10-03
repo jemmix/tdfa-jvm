@@ -3,6 +3,7 @@ package io.github.jemmix.tdfa.core.engine;
 import io.github.jemmix.tdfa.core.emit.EmittedSurface;
 
 import java.util.Arrays;
+import java.util.Objects;
 
 /**
  * A successful match: an immutable snapshot of the whole-match bounds and
@@ -36,17 +37,32 @@ public final class MatchResult {
     private final int groupCount;
     private final int matchStart;
     private final int matchEnd;
+    /**
+     * Multi-valued tag tree (BT22 §3.1); {@code null} on single-valued
+     * compiles. When present, every final-register slot holds a tree HEAD
+     * (0/-1 = empty sequence) and the per-tag single value is the LAST
+     * element of that sequence — identical to what a single-valued compile
+     * of the same pattern reports.
+     */
+    private final TagTree tree;
 
     /** Engine surface (see class doc): builds a snapshot over the runner's
      *  register file. {@code regs} is retained, not copied — runners hand
      *  over ownership of a per-match array. */
     @EmittedSurface
     public MatchResult(int[] regs, int finalRegBase, int groupCount, int matchStart, int matchEnd) {
+        this(regs, finalRegBase, groupCount, matchStart, matchEnd, null);
+    }
+
+    /** Multi-valued twin: {@code tree} is the walk's frozen snapshot (null = single-valued). */
+    @EmittedSurface
+    public MatchResult(int[] regs, int finalRegBase, int groupCount, int matchStart, int matchEnd, TagTree tree) {
         this.regs = regs;
         this.finalRegBase = finalRegBase;
         this.groupCount = groupCount;
         this.matchStart = matchStart;
         this.matchEnd = matchEnd;
+        this.tree = tree;
     }
 
     /** Number of capturing groups, excluding group 0. */
@@ -56,12 +72,50 @@ public final class MatchResult {
 
     /** Tag {@code t} (1-indexed; tag 2i-1 = open of group i, tag 2i = close of
      *  group i). Valid range {@code [1, 2*groupCount()]}; {@code -1} = unset (NIL).
+     *  On a multi-valued compile this is the LAST offset of the tag's
+     *  sequence — the value a single-valued compile reports.
      * @throws IndexOutOfBoundsException outside the valid range. */
     public int tag(int t) {
         if (t < 1 || t > 2 * groupCount) {
             throw new IndexOutOfBoundsException("tag " + t + " (valid: 1.." + 2 * groupCount + ")");
         }
-        return regs[finalRegBase + (t - 1)];
+        int head = regs[finalRegBase + (t - 1)];
+        return tree != null ? tree.last(head) : head;
+    }
+
+    /**
+     * Every participating iteration's span of {@code group}, in match
+     * order — the multi-valued readout (BT22 §3.1). Flat
+     * {@code [s0,e0,s1,e1,…]}, one pair per repetition iteration in which
+     * the group actually matched (bypassed iterations contribute nothing —
+     * the engine's re2j capture contract keeps a value once set, and the
+     * LAST pair is exactly the single-valued {@code start/end} report); a
+     * group that never matched yields a single {@code (-1,-1)} pair.
+     * Group 0 yields exactly the whole-match span. On a single-valued
+     * compile (no tree) this degrades to that one pair.
+     * @throws IndexOutOfBoundsException outside {@code [0, groupCount()]}.
+     */
+    public int[] groupSpans(int group) {
+        if (group < 0 || group > groupCount) {
+            throw new IndexOutOfBoundsException("group " + group);
+        }
+        if (group == 0 || tree == null) {
+            return new int[]{start(group), end(group)};
+        }
+        int[] opens = new int[tree.count(regs[finalRegBase + 2 * (group - 1)])];
+        int[] closes = new int[tree.count(regs[finalRegBase + 2 * group - 1])];
+        int no = tree.collect(regs[finalRegBase + 2 * (group - 1)], opens);
+        int nc = tree.collect(regs[finalRegBase + 2 * group - 1], closes);
+        if (no == 0 && nc == 0) {
+            return new int[]{-1, -1};
+        }
+        int n = Math.max(no, nc);
+        int[] out = new int[2 * n];
+        for (int i = 0; i < n; i++) {
+            out[2 * i] = i < no ? opens[i] : -1;
+            out[2 * i + 1] = i < nc ? closes[i] : -1;
+        }
+        return out;
     }
 
     /** Start offset (inclusive) of {@code group} (0 = whole match); {@code -1} = unset (NIL).
@@ -141,7 +195,7 @@ public final class MatchResult {
         return sb.toString();
     }
 
-    /** Value equality over the snapshot (same bounds and identical tag values). */
+    /** Value equality over the snapshot (same bounds, tag values and tag tree). */
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -152,12 +206,13 @@ public final class MatchResult {
         }
         MatchResult m = (MatchResult) o;
         return finalRegBase == m.finalRegBase && groupCount == m.groupCount && matchStart == m.matchStart
-            && matchEnd == m.matchEnd && Arrays.equals(regs, m.regs);
+            && matchEnd == m.matchEnd && Arrays.equals(regs, m.regs) && Objects.equals(tree, m.tree);
     }
 
     @Override
     public int hashCode() {
         int h = 31 * (31 * (31 * matchStart + matchEnd) + groupCount) + finalRegBase;
-        return 31 * h + Arrays.hashCode(regs);
+        h = 31 * h + Arrays.hashCode(regs);
+        return 31 * h + (tree == null ? 0 : tree.hashCode());
     }
 }

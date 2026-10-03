@@ -279,7 +279,37 @@ final class TdfaStateIndex {
             // members instead of rescanning the whole bucket — the rescan
             // would dominate compile wall time on permutation-heavy
             // patterns (measured 78% in JFR).
-            if (owner.tags == 0) {
+            if (owner.multi) {
+                // Multi-valued compiles get an EXACT-dedup fast path before
+                // the bijection attempt: a canon-equal candidate whose
+                // register vector equals the incoming one is the same state,
+                // ops unchanged (exact register equality implies canon
+                // equality, so only this class can hit). tryMap then serves
+                // the renamed merges — the append ops rewrite like any other
+                // op (only dst), and mapped chains become the self-appends
+                // whose trivial cycles the paper's topological sort ignores;
+                // without the renaming a repeated group would mint a fresh
+                // register per iteration and never merge states at all.
+                int[] compatibles = candidates.byClass.get(canonHash);
+                if (compatibles != null) {
+                    for (int cand : compatibles) {
+                        if (exactRegs(configs, owner.kernels.get(cand))) {
+                            return new AddResult(cand, ops);
+                        }
+                    }
+                    // One bijection attempt on the class representative
+                    // (canon-equal members are interchangeable — see below).
+                    int cand = compatibles[0];
+                    int[] stored = stateClassIds.get(cand);
+                    if (stored != null && stored.length == canon.length
+                        && rangeEquals(canon, 0, canon.length, stored, 0, stored.length)) {
+                        int[] mapped = tryMap(configs, owner.kernels.get(cand), ops);
+                        if (mapped != null) {
+                            return new AddResult(cand, mapped);
+                        }
+                    }
+                }
+            } else if (owner.tags == 0) {
                 for (int cand : candidates.members) {
                     int[] mapped = tryMap(configs, owner.kernels.get(cand), ops);
                     if (mapped != null) {
@@ -373,6 +403,35 @@ final class TdfaStateIndex {
                 + " tagless-equivalent configs) — raise -D" + Budgets.COMPILE_MEMORY_PROP + ")");
         }
         return new AddResult(id, ops);
+    }
+
+    /**
+     * Multi-valued dedup: the incoming closure is EXACTLY the candidate's
+     * kernel — same ordered configs, same register ids per position (the
+     * probe already proved the (state, l, mask, pri) sequences equal, so
+     * only the register vectors need checking).
+     */
+    private static boolean exactRegs(List<Config> configs, TdfaCompiler.Kernel old) {
+        List<Config> k = old.boxed;
+        if (k == null || k.size() != configs.size()) {
+            return false;
+        }
+        for (int i = 0; i < configs.size(); i++) {
+            if (!Arrays.equals(configs.get(i).regs, k.get(i).regs)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Whether any append op in {@code ops} writes register {@code reg}. */
+    private static boolean appendWrites(int reg, List<int[]> ops) {
+        for (int[] o : ops) {
+            if (o[0] == Tdfa.OP_APPEND_POS && o[1] == reg) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -472,11 +531,18 @@ final class TdfaStateIndex {
         }
         // Rewrite ops: replace each op's dst with M[dst]. Each consumed
         // pair is unstamped (the HashMap remove), so a second op hitting
-        // the same dst fails — bijection violations, as before.
+        // the same dst fails — bijection violations, as before. Append
+        // chains are the exception: they hit their dst once per history
+        // occurrence BY DESIGN (one logical assignment), so they keep the
+        // pair stamped — and their prepend copy is skipped below (the
+        // chain establishes the value; a copy would only be overwritten).
         List<int[]> rewritten = new ArrayList<>();
+        boolean hasAppend = false;
         for (int i = 0; i < ops.length; i += 3) {
             owner.meter.tick();
             int op = ops[i], dst = ops[i + 1], src = ops[i + 2];
+            boolean append = op == Tdfa.OP_APPEND_POS;
+            hasAppend |= append;
             if (eN[dst] != stamp) {
                 return null;
             }
@@ -485,8 +551,10 @@ final class TdfaStateIndex {
                 return null;
             }
             rewritten.add(new int[]{op, mapped, src});
-            eN[dst] = 0;
-            eO[mapped] = 0;
+            if (!append) {
+                eN[dst] = 0;
+                eO[mapped] = 0;
+            }
         }
         // Prepend copy ops for remaining bijection pairs (stamped order —
         // first-stamp ascending; the pairs are mutually commutative, order
@@ -500,6 +568,13 @@ final class TdfaStateIndex {
             }
             int oldReg = m[newReg];
             if (eO[oldReg] != stamp) {
+                continue;
+            }
+            // Skip pairs whose register an append chain writes: the new
+            // side's chain was rewritten onto oldReg and establishes the
+            // value there — a prepend copy would be dead, and worse, would
+            // topologically interact with the chain for nothing.
+            if (hasAppend && appendWrites(oldReg, rewritten)) {
                 continue;
             }
             if (newReg != oldReg) {

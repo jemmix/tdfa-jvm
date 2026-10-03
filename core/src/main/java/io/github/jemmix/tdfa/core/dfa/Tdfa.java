@@ -18,7 +18,11 @@ import java.util.Map;
  * is the paper's optimization for further state reduction; deferred.
  * - final_regops: emits final-register SET/COPY ops for the accepting quasi-transition.
  * <p>
- * Single-valued tags only (sufficient for j.u.r-style capturing groups).
+ * Single-valued tags by default (sufficient for j.u.r-style capturing
+ * groups); multi-valued compiles (BT22 &sect;3.1, every tag carries its full
+ * offset sequence under repetition) additionally emit
+ * {@link #OP_APPEND_POS} ops and are flagged
+ * {@link #multiValued()}.
  * <p>
  * Alphabet: equivalence-class partitioned. Each DFA state stores sorted (lo, hi, target, ops)
  * ranges; runtime does binary search. Collapses 65K chars to a handful of ranges per state
@@ -33,6 +37,16 @@ public final class Tdfa {
     public static final int OP_SET_POS = 1;
     public static final int OP_SET_NIL = 2;
     public static final int OP_COPY = 3;
+    /**
+     * Multi-valued append (BT22 §3.1): {@code regs[dst] = tree.append(regs[src], pos)}
+     * — the current position joins the offset sequence held in the per-match
+     * {@link io.github.jemmix.tdfa.core.engine.TagTree}. Only positive
+     * assignments append (the engine's re2j capture contract keeps a value
+     * once set; there is no nil append). The first append of a chain copies
+     * from its source register, so re-running a block recomputes (never
+     * double-appends to) the destination sequence — φ idempotence.
+     */
+    public static final int OP_APPEND_POS = 4;
     public static final int OP_END = 0; // terminator for op blocks
     final int tagCount;
     final int groupCount;
@@ -131,6 +145,14 @@ public final class Tdfa {
     final boolean wholeSideComplete;
 
     final boolean multiline;
+    /**
+     * True iff every tag of this artifact is multi-valued (BT22 §3.1):
+     * transition/final ops may then be {@link #OP_APPEND_POS} and final
+     * registers hold {@link io.github.jemmix.tdfa.core.engine.TagTree}
+     * heads. Single-valued compiles contain no append ops and their final
+     * registers hold plain offsets.
+     */
+    final boolean multiValued;
     /**
      * True iff the DFA was compiled with Unicode-aware shorthand ({@code (?u)}),
      * so {@code \b}/{@code \B} word-boundary checks must use the Unicode
@@ -258,7 +280,7 @@ public final class Tdfa {
         this(tagCount, groupCount, namedGroups, registerCount, finalRegBase, startState, stateCount, stateMeta,
             stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges, ops, entryHiPrefix, stateEntryMask,
             stateAcceptMask, longestMatch, stopOnAcceptMask, stopMaskUniform, multiline, unicodeWordBoundary,
-            wordRanges, fixedBase, fixedOffset, false, null, null, null, null, false);
+            wordRanges, fixedBase, fixedOffset, false, null, null, null, null, false, false);
     }
 
     public Tdfa(int tagCount, int groupCount, Map<String, Integer> namedGroups, int registerCount, int finalRegBase,
@@ -266,7 +288,8 @@ public final class Tdfa {
         int[] stateFinalOpsByMask, int[] ranges, int[] ops, int[] entryHiPrefix, int[] stateEntryMask,
         int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
         boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset, boolean pikeCutMatters,
-        int[] wholeRanges, int[] wholeBase, int[] wholeCount, int[] wholeHiPrefix, boolean wholeSideComplete) {
+        int[] wholeRanges, int[] wholeBase, int[] wholeCount, int[] wholeHiPrefix, boolean wholeSideComplete,
+        boolean multiValued) {
         this.tagCount = tagCount;
         this.groupCount = groupCount;
         this.namedGroups = namedGroups != null ? Collections.unmodifiableMap(namedGroups) : Collections.emptyMap();
@@ -293,6 +316,7 @@ public final class Tdfa {
         this.stopOnAcceptMask = stopOnAcceptMask;
         this.stopMaskUniform = stopMaskUniform;
         this.multiline = multiline;
+        this.multiValued = multiValued;
         this.unicodeWordBoundary = unicodeWordBoundary;
         this.wordRanges = wordRanges;
         this.fixedBase = fixedBase;
@@ -304,9 +328,10 @@ public final class Tdfa {
         // arrays, bad startState) reports as this gate's ISE, never a raw
         // AIOOBE out of the constructor.
         validate(startState, stateCount, stateMeta, stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges,
-            entryHiPrefix, ops, stateEntryMask, stateAcceptMask, registerCount, finalRegBase, tagCount);
+            entryHiPrefix, ops, stateEntryMask, stateAcceptMask, registerCount, finalRegBase, tagCount, multiValued);
         if (wholeRanges != null) {
-            validateWhole(stateCount, wholeRanges, wholeBase, wholeCount, wholeHiPrefix, ops, finalRegBase, tagCount);
+            validateWhole(stateCount, wholeRanges, wholeBase, wholeCount, wholeHiPrefix, ops, finalRegBase, tagCount,
+                multiValued);
         }
         this.startStateEntryMask = stateEntryMask[startState];
     }
@@ -363,7 +388,8 @@ public final class Tdfa {
      */
     private static void validate(int startState, int stateCount, int[] stateMeta, int[] stateBase,
         int[] stateFinalOpsOff, int[] stateFinalOpsByMask, int[] ranges, int[] entryHiPrefix, int[] ops,
-        int[] stateEntryMask, int[] stateAcceptMask, int registerCount, int finalRegBase, int tagCount) {
+        int[] stateEntryMask, int[] stateAcceptMask, int registerCount, int finalRegBase, int tagCount,
+        boolean multiValued) {
         int entries = ranges.length / 5;
         if (startState < 0 || startState >= stateCount) {
             throw new IllegalStateException(
@@ -424,7 +450,7 @@ public final class Tdfa {
                         "tdfa: state " + s + " entry " + i + " target " + target + " < -1 (dead marker is exactly -1)");
                 }
                 if (opsOff != 0) {
-                    checkOpsBlock(s, i, opsOff, ops, false, finalRegBase, tagCount);
+                    checkOpsBlock(s, i, opsOff, ops, false, finalRegBase, tagCount, multiValued);
                 }
                 if ((mask & ~0x3F) != 0) {
                     throw new IllegalStateException(
@@ -444,7 +470,7 @@ public final class Tdfa {
                 throw new IllegalStateException("tdfa: state " + s + " final-ops offset out of bounds");
             }
             if (fops != 0) {
-                checkOpsBlock(s, -1, fops, ops, true, finalRegBase, tagCount);
+                checkOpsBlock(s, -1, fops, ops, true, finalRegBase, tagCount, multiValued);
             }
         }
         if (stateFinalOpsByMask != null) {
@@ -469,14 +495,17 @@ public final class Tdfa {
     /**
      * Structural check of one ops block at {@code opsOff}: in bounds and
      * OP_END-terminated on its stride-3 grid (an unterminated block would
-     * otherwise run off {@code ops} as a bare AIOOBE far from the corruption).
+     * otherwise run off {@code ops} as a bare AIOOBE far from the corruption),
+     * every op code from the defined set, and append ops only on
+     * multi-valued artifacts (a stray append on a single-valued artifact
+     * would hit a null runtime tree).
      * For transition blocks ({@code isFinal == false}) with tags: finals are
      * final-ops-only — transition ops writing the final block would let dead
      * paths clobber accept-time values (runners apply φ eagerly at
      * accept-record).
      */
     private static void checkOpsBlock(int s, int i, int opsOff, int[] ops, boolean isFinal, int finalRegBase,
-        int tagCount) {
+        int tagCount, boolean multiValued) {
         if (opsOff < 0 || opsOff >= ops.length) {
             throw new IllegalStateException(
                 "tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i) + " ops offset out of bounds");
@@ -494,6 +523,11 @@ public final class Tdfa {
                 throw new IllegalStateException("tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i)
                     + " ops block at " + opsOff + " not OP_END-terminated within ops");
             }
+            int opc = ops[j];
+            if (opc != OP_SET_POS && opc != OP_SET_NIL && opc != OP_COPY && (opc != OP_APPEND_POS || !multiValued)) {
+                throw new IllegalStateException("tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i)
+                    + " unknown register op code " + opc);
+            }
             int dst = ops[j + 1];
             if (!isFinal && tagCount > 0 && dst >= finalRegBase && dst < finalRegBase + tagCount) {
                 throw new IllegalStateException("tdfa: state " + s + " entry " + i
@@ -510,7 +544,7 @@ public final class Tdfa {
      * walk reads {@code ranges}).
      */
     private static void validateWhole(int stateCount, int[] wholeRanges, int[] wholeBase, int[] wholeCount,
-        int[] wholeHiPrefix, int[] ops, int finalRegBase, int tagCount) {
+        int[] wholeHiPrefix, int[] ops, int finalRegBase, int tagCount, boolean multiValued) {
         if (wholeBase == null || wholeCount == null || wholeHiPrefix == null) {
             throw new IllegalStateException("tdfa: partial-whole side table present but incomplete");
         }
@@ -559,7 +593,7 @@ public final class Tdfa {
                         "tdfa: whole state " + s + " entry " + i + " target " + target + " < -1 (dead marker)");
                 }
                 if (opsOff != 0) {
-                    checkOpsBlock(s, i, opsOff, ops, false, finalRegBase, tagCount);
+                    checkOpsBlock(s, i, opsOff, ops, false, finalRegBase, tagCount, multiValued);
                 }
                 if ((mask & ~0x3F) != 0) {
                     throw new IllegalStateException(
@@ -775,6 +809,15 @@ public final class Tdfa {
      */
     public boolean longestMatch() {
         return longestMatch;
+    }
+
+    /**
+     * True iff every tag is multi-valued (BT22 §3.1): registers hold offset
+     * sequences (append ops; {@link io.github.jemmix.tdfa.core.engine.MatchResult#groupSpans(int)}
+     * readout) rather than single offsets.
+     */
+    public boolean multiValued() {
+        return multiValued;
     }
 
     /**
