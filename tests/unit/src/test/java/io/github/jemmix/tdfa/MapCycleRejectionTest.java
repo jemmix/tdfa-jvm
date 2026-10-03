@@ -55,17 +55,18 @@ class MapCycleRejectionTest {
         for (String[] c : perlCases) {
             assertGroups(PERL, pat, c[0], parse(c[1]));
         }
-        // re2j LONGEST_MATCH == our POSIX mode, except "bcc": g5 reports the
-        // corrupt span [0,-1] there in BOTH engine generations — a separate
-        // pre-existing empty-iteration/final-ops finding (tracked in TODO's
-        // zero-width families), NOT the map-cycle fix under test.
+        // re2j LONGEST_MATCH == our POSIX mode on every input, "bcc"
+        // included: its old corrupt g5 span [0,-1] — the cyclic-shuffle
+        // half-write surfacing through the {2}-repetition's empty-iteration
+        // final ops — is gone; the rejection fixes it like every other
+        // case (it reproduced one commit before the fix).
         String[][] posixCases = {{"", "0,0,0,0,0,0,-1,-1,-1,-1"}, {"b", "0,1,1,1,1,1,-1,-1,-1,-1"},
             {"c", "0,1,0,1,0,0,0,1,0,0"}, {"bb", "0,2,1,2,-1,-1,-1,-1,-1,-1"}, {"bc", "0,2,1,2,-1,-1,1,2,1,1"},
             {"cb", "0,2,0,2,0,0,1,2,1,2"}, {"cc", "0,2,0,2,0,0,1,2,-1,-1"}, {"bbb", "0,3,1,3,-1,-1,2,3,2,3"},
-            {"bbc", "0,3,1,3,-1,-1,2,3,1,2"}, {"bcb", "0,3,1,3,-1,-1,2,3,2,3"}, {"cbb", "0,3,1,3,-1,-1,2,3,2,3"},
-            {"cbc", "0,3,1,3,-1,-1,2,3,1,2"}, {"ccb", "0,3,1,3,-1,-1,2,3,2,3"}, {"ccc", "0,3,1,3,-1,-1,2,3,0,0"},
-            {"bbbb", "0,4,2,4,-1,-1,3,4,3,4"}, {"bbcb", "0,4,2,4,-1,-1,3,4,3,4"}, {"bcbb", "0,4,2,4,-1,-1,3,4,3,4"},
-            {"cbbc", "0,4,2,4,-1,-1,3,4,2,3"},};
+            {"bbc", "0,3,1,3,-1,-1,2,3,1,2"}, {"bcb", "0,3,1,3,-1,-1,2,3,2,3"}, {"bcc", "0,3,1,3,-1,-1,2,3,-1,-1"},
+            {"cbb", "0,3,1,3,-1,-1,2,3,2,3"}, {"cbc", "0,3,1,3,-1,-1,2,3,1,2"}, {"ccb", "0,3,1,3,-1,-1,2,3,2,3"},
+            {"ccc", "0,3,1,3,-1,-1,2,3,0,0"}, {"bbbb", "0,4,2,4,-1,-1,3,4,3,4"}, {"bbcb", "0,4,2,4,-1,-1,3,4,3,4"},
+            {"bcbb", "0,4,2,4,-1,-1,3,4,3,4"}, {"cbbc", "0,4,2,4,-1,-1,3,4,2,3"},};
         for (String[] c : posixCases) {
             assertGroups(POSIX, pat, c[0], parse(c[1]));
         }

@@ -12,7 +12,6 @@ git history (TODO.md before 2026-09-30).
 - [ ] Oracle-check stretched inputs; compare ASM on them too
 - [ ] Fuzz non-String CharSequence inputs against the reference sim
 - [ ] Fuzz budget-exhaustion paths with shrunk budget knobs
-- [ ] Fix POSIX "bcc" corrupt g5 span (empty-iteration final-ops family)
 - [ ] Property shrinking for minimal fuzz repros
 - [ ] Verify TDFA(1) conformance vs paper wording (lookahead delay)
 - [ ] Multi-valued tags (multiple offsets under repetition)
