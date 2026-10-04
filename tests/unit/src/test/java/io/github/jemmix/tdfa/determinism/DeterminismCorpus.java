@@ -2,6 +2,8 @@ package io.github.jemmix.tdfa.determinism;
 
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
+import io.github.jemmix.tdfa.core.budget.Budgets;
+import io.github.jemmix.tdfa.core.budget.WorkMeter;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 
 import java.util.ArrayList;
@@ -21,7 +23,7 @@ import java.util.List;
  */
 final class DeterminismCorpus {
     enum Mode {
-        PERL, LONGEST, UNPRUNED
+        PERL, LONGEST, UNPRUNED, MULTI
     }
 
     enum Knob {
@@ -64,6 +66,14 @@ final class DeterminismCorpus {
         add(out, "wide-anchors", "(?u)\\b\\w{12,}\\b", Mode.PERL, Knob.NONE);
         add(out, "nominimize", "(a{1,20}){1,20}", Mode.PERL, Knob.NOMINIMIZE);
         add(out, "noregopt", "(a{1,20}){1,20}", Mode.PERL, Knob.NOREGOPT);
+        // Multi-valued lane (BT22 §3.1): append ops, no fixed tags, no
+        // regopt, exact+rename state dedup — its own deterministic branch.
+        add(out, "multi", "(a(b c?)?)+", Mode.MULTI, Knob.NONE);
+        add(out, "multi-alt", "(cat)|(dog)|(bird)|(fish)", Mode.MULTI, Knob.NONE);
+        add(out, "multi-pike", "(a|ab)(c|bcd)", Mode.MULTI, Knob.NONE);
+        add(out, "multi-counted", "(a{1,20}){1,20}", Mode.MULTI, Knob.NONE);
+        add(out, "multi-empty-iter", "(?:.*?9{0,}\b){1,}", Mode.MULTI, Knob.NONE);
+        add(out, "multi-anchors", "(\\B)*\\z", Mode.MULTI, Knob.NONE);
         return out;
     }
 
@@ -86,6 +96,8 @@ final class DeterminismCorpus {
                 case LONGEST -> ArtifactFingerprint.of(Determinizer.compile(Tnfa.compile(e.pattern()), true));
                 case UNPRUNED ->
                     ArtifactFingerprint.of(Determinizer.compileUnpruned(Tnfa.compile(e.pattern()), false, null));
+                case MULTI -> ArtifactFingerprint.of(Determinizer
+                    .compile(Tnfa.compileMulti(e.pattern(), false, null, null, new WorkMeter(Budgets.compileComputeTicks())), false));
             };
         } finally {
             if (prop != null) {

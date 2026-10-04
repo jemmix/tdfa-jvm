@@ -6,6 +6,7 @@ import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.emit.EmittedSurface;
 import io.github.jemmix.tdfa.core.engine.MatchResult;
 import io.github.jemmix.tdfa.core.engine.MatchScratch;
+import io.github.jemmix.tdfa.core.engine.TagTree;
 import io.github.jemmix.tdfa.core.engine.Matcher;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
 import io.github.jemmix.tdfa.core.engine.WholeEngine;
@@ -93,6 +94,8 @@ class EmittedSurfaceConformanceTest {
         hookM(TdfaRunner.class, "programSize");
         hookM(TdfaRunner.class, "trace", TdfaRunner.Strategy.class);
         hookM(TdfaRunner.class, "takeRegs", int.class, MatchScratch.class);
+        hookM(TdfaRunner.class, "takeTree", MatchScratch.class);
+        hookM(TdfaRunner.class, "appendVal", int.class, int.class, TagTree.class);
         hookM(TdfaRunner.class, "fromOutOfBounds", int.class, int.class);
         hookF(TdfaRunner.class, "ADAPTIVE_PREFILTER_AFTER");
     }
@@ -100,13 +103,17 @@ class EmittedSurfaceConformanceTest {
     @Test
     void carrierHooks() {
         hookC(MatchHolder.class, int.class, int.class, int[].class);
+        hookC(MatchHolder.class, int.class, int.class, int[].class, TagTree.class);
         hookF(MatchHolder.class, "matchStart");
         hookF(MatchHolder.class, "matchEnd");
         hookF(MatchHolder.class, "regs");
+        hookF(MatchHolder.class, "tree");
         hookC(MatchResult.class, int[].class, int.class, int.class, int.class, int.class);
+        hookC(MatchResult.class, int[].class, int.class, int.class, int.class, int.class, TagTree.class);
         hookM(MatchResult.class, "reconstructFixed", int[].class, int.class, int[].class, int[].class);
         hookM(MatchResult.class, "start", int.class);
         hookM(MatchResult.class, "end", int.class);
+        hookM(TagTree.class, "snapshot");
     }
 
     @Test

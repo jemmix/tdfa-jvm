@@ -1,5 +1,7 @@
 package io.github.jemmix.tdfa.sim;
 
+import io.github.jemmix.tdfa.core.budget.Budgets;
+import io.github.jemmix.tdfa.core.budget.WorkMeter;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
@@ -133,6 +135,18 @@ public final class PikeSim {
         return new PikeSim(pattern, Tnfa.compile(pattern, false, false, provider, null));
     }
 
+    /**
+     * Multi-valued reference twin (BT22 §3.1): the NFA is built for
+     * multi-valued compiles (no fixed-tag pass) and matchers record the
+     * winning thread's full per-tag write log — {@link
+     * PikeMatcher#spansOf(int)} is the oracle readout the engine lanes'
+     * {@code groupSpans} are checked against.
+     */
+    public static PikeSim compileMulti(String pattern, UnicodeDataProvider provider) {
+        return new PikeSim(pattern, Tnfa.compileMulti(pattern, false, provider, null,
+            new WorkMeter(Budgets.compileComputeTicks())));
+    }
+
     public PikeMatcher matcher(CharSequence input) {
         return new PikeMatcher(this, input);
     }
@@ -159,6 +173,10 @@ public final class PikeSim {
         private boolean recorded;
         private int recEnd = -1;
         private int[] recCap;
+        private int[] recLog;
+        private static final int[] EMPTY_LOG = new int[0];
+        private boolean multiLogs;
+        private int[] matchLog;
         /** Pike matched-break: once a thread records this round, every lower-priority
          *  park and add dies (they can never win — everything below each recorder
          *  is cut; a later record necessarily comes from a thread above). */
@@ -170,6 +188,7 @@ public final class PikeSim {
             this.sim = sim;
             this.input = input;
             this.len = input.length();
+            this.multiLogs = sim.nfa.multiValuedTags;
         }
 
         public PikeMatcher reset() {
@@ -248,6 +267,51 @@ public final class PikeSim {
             return caps();
         }
 
+        /**
+         * Multi-valued readout (BT22 §3.1 oracle): every participating
+         * iteration's span of {@code g}, flat {@code [s0,e0,s1,e1,…]} in
+         * match order; {@code (-1,-1)} when the group never matched. The
+         * winning thread's positive write log is the sequence of (tag, pos)
+         * crossings along its path — the same sequence the engine's append
+         * ops record.
+         */
+        public int[] spansOf(int g) {
+            require();
+            if (g < 0 || g > groupCount()) {
+                throw new IndexOutOfBoundsException("group " + g);
+            }
+            if (g == 0 || matchLog == null) {
+                return new int[]{g == 0 ? matchStart : -1, g == 0 ? matchEnd : -1};
+            }
+            int no = 0, nc = 0;
+            for (int i = 0; i < matchLog.length; i += 2) {
+                if (matchLog[i] == 2 * g - 1) {
+                    no++;
+                } else if (matchLog[i] == 2 * g) {
+                    nc++;
+                }
+            }
+            if (no == 0 && nc == 0) {
+                return new int[]{-1, -1};
+            }
+            int[] opens = new int[no], closes = new int[nc];
+            int io = 0, ic = 0;
+            for (int i = 0; i < matchLog.length; i += 2) {
+                if (matchLog[i] == 2 * g - 1) {
+                    opens[io++] = matchLog[i + 1];
+                } else if (matchLog[i] == 2 * g) {
+                    closes[ic++] = matchLog[i + 1];
+                }
+            }
+            int n = Math.max(no, nc);
+            int[] out = new int[2 * n];
+            for (int i = 0; i < n; i++) {
+                out[2 * i] = i < no ? opens[i] : -1;
+                out[2 * i + 1] = i < nc ? closes[i] : -1;
+            }
+            return out;
+        }
+
         private String group0(int g) {
             if (g == 0) {
                 return input.subSequence(matchStart, matchEnd).toString();
@@ -293,7 +357,7 @@ public final class PikeSim {
             if (TRACE) {
                 System.err.println("[sim] === start " + start);
             }
-            add(queue, sim.nfa.start, start, freshCaps(), visited);
+            add(queue, sim.nfa.start, start, freshCaps(), EMPTY_LOG, visited);
             int pos = start;
             while (!queue.isEmpty()) {
                 if (pos >= len) {
@@ -311,7 +375,7 @@ public final class PikeSim {
                     } // pike cut: threads below the recorder die
                     for (int e : sim.symByState[t.state]) {
                         if (sim.nfa.symClass[e].matches(cp)) {
-                            add(next, sim.nfa.symTo[e], roundPos, t.cap.clone(), seen);
+                            add(next, sim.nfa.symTo[e], roundPos, t.cap.clone(), t.log, seen);
                             if (roundCut) {
                                 break;
                             }
@@ -325,6 +389,7 @@ public final class PikeSim {
                 matchStart = start;
                 matchEnd = recEnd;
                 matchCap = recCap;
+                matchLog = recLog;
                 return true;
             }
             return false;
@@ -342,7 +407,7 @@ public final class PikeSim {
          * this position (pike queue marking — first arrival claims the state
          * with its caps).
          */
-        private void add(List<Parked> queue, int state, int pos, int[] cap, int[] visited) {
+        private void add(List<Parked> queue, int state, int pos, int[] cap, int[] log, int[] visited) {
             if (roundCut || visited[state] != 0) {
                 return;
             }
@@ -356,6 +421,7 @@ public final class PikeSim {
                 recorded = true;
                 recEnd = pos;
                 recCap = cap.clone();
+                recLog = log;
                 roundCut = true;
                 if (TRACE) {
                     System.err.println("[sim] RECORD " + matchStart + ".." + pos);
@@ -393,11 +459,21 @@ public final class PikeSim {
                     int[] c2 = cap.clone();
                     c2[tag] = pos;
                     cap = c2;
+                    if (multiLogs) {
+                        // multi-valued twin of the cap fork: the positive
+                        // write joins THIS thread's (tag, pos) log; negative
+                        // tags never log (same re2j capture contract)
+                        int[] l2 = new int[log.length + 2];
+                        System.arraycopy(log, 0, l2, 0, log.length);
+                        l2[log.length] = tag;
+                        l2[log.length + 1] = pos;
+                        log = l2;
+                    }
                 }
-                add(queue, sim.nfa.epsTo[e], pos, cap, visited);
+                add(queue, sim.nfa.epsTo[e], pos, cap, log, visited);
             }
             if (sim.symByState[state].length > 0) {
-                queue.add(new Parked(state, cap)); // arrays are immutable after fork
+                queue.add(new Parked(state, cap, log)); // arrays are immutable after fork
                 if (TRACE) {
                     System.err.println("[sim] park state=" + state + " pos=" + pos);
                 }
@@ -499,10 +575,14 @@ public final class PikeSim {
     private static final class Parked {
         final int state;
         final int[] cap;
+        /** Multi-valued write log (tag, pos) pairs of the thread's path;
+         *  null on single-valued compiles. Immutable after each fork. */
+        final int[] log;
 
-        Parked(int state, int[] cap) {
+        Parked(int state, int[] cap, int[] log) {
             this.state = state;
             this.cap = cap;
+            this.log = log;
         }
     }
 

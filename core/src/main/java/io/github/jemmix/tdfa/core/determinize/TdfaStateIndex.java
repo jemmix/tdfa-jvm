@@ -279,7 +279,7 @@ final class TdfaStateIndex {
             // members instead of rescanning the whole bucket — the rescan
             // would dominate compile wall time on permutation-heavy
             // patterns (measured 78% in JFR).
-            if (owner.multi) {
+            if (owner.multi && owner.tags > 0) {
                 // Multi-valued compiles get an EXACT-dedup fast path before
                 // the bijection attempt: a canon-equal candidate whose
                 // register vector equals the incoming one is the same state,
@@ -511,9 +511,14 @@ final class TdfaStateIndex {
                 if (owner.meter != null) {
                     owner.meter.tick();
                 } // per (config, tag): the bijection's real unit
-                if ((bits[t >>> 6] >>> (t & 63) & 1L) != 0) {
+                if ((bits[t >>> 6] >>> (t & 63) & 1L) != 0 && !owner.multi) {
                     continue;
                 } // tag is set by transition op
+                // (multi-valued compiles anchor EVERY position — paper §2
+                // map: "history(l,t) = ε or t is a multi-tag": append dsts
+                // carry history, and without anchoring them the ops rewrite
+                // can never map them, so repeated groups would mint fresh
+                // registers forever and states would never merge)
                 int rn = cn.regs[t], ro = co.regs[t];
                 // A register may be new-side of one tag and old-side of
                 // another, so the two sides carry separate epoch arrays.
