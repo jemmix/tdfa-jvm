@@ -44,6 +44,8 @@ public final class TdfaAsmBackend {
     private static final int INLINE_BUDGET_BYTES = 30_000;
 
     private static final String SCRATCH = "io/github/jemmix/tdfa/core/engine/MatchScratch";
+    private static final String TAGTREE = "io/github/jemmix/tdfa/core/engine/TagTree";
+    private static final String TAGTREE_D = "L" + TAGTREE + ";";
     private static final String SCRATCH_D = "L" + SCRATCH + ";";
     private static final String STR = "java/lang/String";
     private static final String CS_D = "Ljava/lang/CharSequence;";
@@ -779,7 +781,14 @@ public final class TdfaAsmBackend {
         mv.visitFieldInsn(Opcodes.GETFIELD, HOLDER, "matchStart", "I");
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, HOLDER, "matchEnd", "I");
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, RESULT, "<init>", "([IIIII)V", false);
+        if (tdfa.multiValued()) {
+            // multi-valued: MatchResult(regs, base, gc, s, e, h.tree)
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, HOLDER, "tree", TAGTREE_D);
+            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, RESULT, "<init>", "([IIIII" + TAGTREE_D + ")V", false);
+        } else {
+            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, RESULT, "<init>", "([IIIII)V", false);
+        }
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitLabel(ret);
         mv.visitInsn(Opcodes.ACONST_NULL);
@@ -1013,6 +1022,10 @@ public final class TdfaAsmBackend {
         // from the walk; the result array is materialized once on success.
         // (The sc carrier param stays: cold delegated paths still use it.)
         final int REGBASE = 19;
+        // Multi-valued walks: the TagTree local (APPEND ops allocate in it;
+        // slot 19 is free because multi artifacts never take stackRegs).
+        final boolean multi = tdfa.multiValued();
+        final int TREE = multi ? 19 : -1;
 
         // Single start: the emitted ladder in genMatch positions every call;
         // the walk itself never restarts (MS = ST = from).
@@ -1074,6 +1087,13 @@ public final class TdfaAsmBackend {
                 mv.visitInsn(Opcodes.ICONST_M1);
                 mv.visitMethodInsn(Opcodes.INVOKESTATIC, ARRAYS, "fill", "([IIII)V", false);
             }
+            if (multi) {
+                // TREE = TdfaRunner.takeTree(sc) — reset per walk, exactly
+                // where the interpreter's walks take it.
+                mv.visitVarInsn(Opcodes.ALOAD, 3);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "takeTree", "(" + SCRATCH_D + ")" + TAGTREE_D, false);
+                mv.visitVarInsn(Opcodes.ASTORE, TREE);
+            }
         }
 
         // Entry check for start state at ST — skip if ENTRY_MASK[0] == 0
@@ -1130,7 +1150,11 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ALOAD, REGS);
             mv.visitVarInsn(Opcodes.ILOAD, POS);
             mv.visitVarInsn(Opcodes.ILOAD, PF);
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phiMasked", "(I[III)Z", false);
+            if (multi) {
+                mv.visitVarInsn(Opcodes.ALOAD, TREE);
+            }
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phiMasked",
+                multi ? "(I[III" + TAGTREE_D + ")Z" : "(I[III)Z", false);
             mv.visitJumpInsn(Opcodes.IFEQ, skipAccept);
         } else {
             mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ACCEPT_MASK", "[I");
@@ -1165,7 +1189,11 @@ public final class TdfaAsmBackend {
                 mv.visitVarInsn(Opcodes.ILOAD, STATE);
                 mv.visitVarInsn(Opcodes.ALOAD, REGS);
                 mv.visitVarInsn(Opcodes.ILOAD, POS);
-                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phi", "(I[II)V", false);
+                if (multi) {
+                    mv.visitVarInsn(Opcodes.ALOAD, TREE);
+                }
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phi",
+                    multi ? "(I[II" + TAGTREE_D + ")V" : "(I[II)V", false);
             }
         }
         if (perl) {
@@ -1197,7 +1225,8 @@ public final class TdfaAsmBackend {
         emitCodePointDecode(mv, IN, C_LV, POS, LEN, T1);
 
         // ===== DFA DISPATCH (TABLESWITCH) =====
-        emitDfaDispatch(mv, tdfa, owner, IN, STATE, POS, LEN, PF, C_LV, REGS, dfaLoop, dfaEnd, op, stackRegs, REGBASE);
+        emitDfaDispatch(mv, tdfa, owner, IN, STATE, POS, LEN, PF, C_LV, REGS, TREE, dfaLoop, dfaEnd, op, stackRegs,
+            REGBASE);
 
         mv.visitLabel(dfaEnd);
 
@@ -1226,13 +1255,19 @@ public final class TdfaAsmBackend {
             // end-of-walk register values — any transition taken between the
             // accept and the break clobbers them, inverting group spans.)
 
-            // return new MatchHolder(start, lastAcceptPos, r)
+            // return new MatchHolder(start, lastAcceptPos, r[, tree.snapshot()])
             mv.visitTypeInsn(Opcodes.NEW, HOLDER);
             mv.visitInsn(Opcodes.DUP);
             mv.visitVarInsn(Opcodes.ILOAD, ST);
             mv.visitVarInsn(Opcodes.ILOAD, LAP);
             mv.visitVarInsn(Opcodes.ALOAD, R);
-            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, HOLDER, "<init>", "(II[I)V", false);
+            if (multi) {
+                mv.visitVarInsn(Opcodes.ALOAD, TREE);
+                mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TAGTREE, "snapshot", "()" + TAGTREE_D, false);
+                mv.visitMethodInsn(Opcodes.INVOKESPECIAL, HOLDER, "<init>", "(II[I" + TAGTREE_D + ")V", false);
+            } else {
+                mv.visitMethodInsn(Opcodes.INVOKESPECIAL, HOLDER, "<init>", "(II[I)V", false);
+            }
             mv.visitInsn(Opcodes.ARETURN);
             mv.visitLabel(noResult);
         }
@@ -1251,7 +1286,7 @@ public final class TdfaAsmBackend {
     // ===== DFA TABLESWITCH + range checks =====
 
     private static void emitDfaDispatch(MethodVisitor mv, Tdfa tdfa, String owner, int IN, int STATE, int POS, int LEN,
-        int PF, int C_LV, int REGS, Label dfaLoop, Label dfaEnd, int[] op, boolean stackRegs, int REGBASE) {
+        int PF, int C_LV, int REGS, int TREE, Label dfaLoop, Label dfaEnd, int[] op, boolean stackRegs, int REGBASE) {
         int nStates = tdfa.stateCount();
         // Hoisted locals: accessors are defensive copies (Tdfa policy) —
         // never call one inside the per-state/per-range emit loops below.
@@ -1355,7 +1390,7 @@ public final class TdfaAsmBackend {
                     if (stackRegs) {
                         emitOpsLocal(mv, op, opsOff, POS, REGBASE);
                     } else {
-                        emitOpsInline(mv, op, opsOff, REGS, POS);
+                        emitOpsInline(mv, op, opsOff, REGS, POS, TREE);
                     }
                 }
 
@@ -1402,13 +1437,17 @@ public final class TdfaAsmBackend {
      */
     private static void genPhi(ClassWriter cw, Tdfa tdfa) {
         int[] op = tdfa.ops(), sfo = tdfa.stateFinalOpsOff(), sm = tdfa.stateMeta();
+        boolean multi = tdfa.multiValued();
         List<int[]> finals = new ArrayList<>();
         for (int s = 0; s < sm.length; s++) {
             if ((sm[s] & 1) != 0 && sfo[s] != 0) {
                 finals.add(new int[]{s, sfo[s]});
             }
         }
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "phi", "(I[II)V", null, null);
+        // Multi-valued artifacts carry the walk's TagTree (slot 3) for
+        // their APPEND finals; single-valued keep the 3-arg form.
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "phi",
+            multi ? "(I[II" + TAGTREE_D + ")V" : "(I[II)V", null, null);
         mv.visitCode();
         if (!finals.isEmpty()) {
             int nf = finals.size();
@@ -1419,12 +1458,12 @@ public final class TdfaAsmBackend {
                 keys[k] = finals.get(k)[0];
                 fl[k] = new Label();
             }
-            // locals: 0=state, 1=regs, 2=pos
+            // locals: 0=state, 1=regs, 2=pos [, 3=tree]
             mv.visitVarInsn(Opcodes.ILOAD, 0);
             mv.visitLookupSwitchInsn(fDef, keys, fl);
             for (int k = 0; k < nf; k++) {
                 mv.visitLabel(fl[k]);
-                emitOpsInline(mv, op, finals.get(k)[1], 1, 2);
+                emitOpsInline(mv, op, finals.get(k)[1], 1, 2, multi ? 3 : -1);
                 mv.visitInsn(Opcodes.RETURN);
             }
             mv.visitLabel(fDef);
@@ -1451,8 +1490,9 @@ public final class TdfaAsmBackend {
                 accStates.add(s);
             }
         }
-        MethodVisitor mv =
-            cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "phiMasked", "(I[III)Z", null, null);
+        boolean multi = tdfa.multiValued();
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "phiMasked",
+            multi ? "(I[III" + TAGTREE_D + ")Z" : "(I[III)Z", null, null);
         mv.visitCode();
         if (!accStates.isEmpty()) {
             int nf = accStates.size();
@@ -1485,7 +1525,8 @@ public final class TdfaAsmBackend {
                     mv.visitLabel(e.getValue());
                     int cell = e.getKey();
                     if (cell > 0) {
-                        emitOpsInline(mv, op, cell, 1, 2);
+                        // locals: 0=state, 1=regs, 2=pos, 3=pf [, 4=tree]
+                        emitOpsInline(mv, op, cell, 1, 2, multi ? 4 : -1);
                     }
                     mv.visitInsn(cell < 0 ? Opcodes.ICONST_0 : Opcodes.ICONST_1);
                     mv.visitInsn(Opcodes.IRETURN);
@@ -1969,7 +2010,7 @@ public final class TdfaAsmBackend {
 
     // ===== register ops (inline, transition) =====
 
-    private static void emitOpsInline(MethodVisitor mv, int[] op, int off, int REGS, int POS) {
+    private static void emitOpsInline(MethodVisitor mv, int[] op, int off, int REGS, int POS, int TREE) {
         int j = off;
         while (op[j] != Tdfa.OP_END) {
             int opc = op[j], dst = op[j + 1], src = op[j + 2];
@@ -1989,6 +2030,18 @@ public final class TdfaAsmBackend {
                 mv.visitVarInsn(Opcodes.ALOAD, REGS);
                 ic(mv, src);
                 mv.visitInsn(Opcodes.IALOAD);
+                mv.visitInsn(Opcodes.IASTORE);
+            } else if (opc == Tdfa.OP_APPEND_POS) {
+                // regs[dst] = TdfaRunner.appendVal(regs[src], pos, tree)
+                // (multi-valued artifacts only — TREE is a valid local there)
+                mv.visitVarInsn(Opcodes.ALOAD, REGS);
+                ic(mv, dst);
+                mv.visitVarInsn(Opcodes.ALOAD, REGS);
+                ic(mv, src);
+                mv.visitInsn(Opcodes.IALOAD);
+                mv.visitVarInsn(Opcodes.ILOAD, POS);
+                mv.visitVarInsn(Opcodes.ALOAD, TREE);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "appendVal", "(II" + TAGTREE_D + ")I", false);
                 mv.visitInsn(Opcodes.IASTORE);
             }
             j += 3;
@@ -2240,6 +2293,10 @@ public final class TdfaAsmBackend {
         // stackRegs: register file in [REGBASE, REGBASE+n) instead of local 5
         final int IN = 0, LEN = 2, STATE = 3, POS = 4, REGS = 5, C_LV = 6, PF = 7;
         final int REGBASE = 9;
+        // Multi-valued walks: the TagTree local (slot 9 is free because
+        // multi artifacts never take stackRegs).
+        final boolean multi = tdfa.multiValued();
+        final int TREE = multi ? 9 : -1;
         mv.visitVarInsn(Opcodes.ALOAD, IN);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "length", "()I", false);
         mv.visitVarInsn(Opcodes.ISTORE, LEN);
@@ -2266,6 +2323,13 @@ public final class TdfaAsmBackend {
             mv.visitInsn(Opcodes.ICONST_M1);
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, ARRAYS, "fill", "([IIII)V", false);
         }
+        if (multi) {
+            // TREE = TdfaRunner.takeTree(sc) — reset per walk (parity with
+            // the interpreter's wholeWalk).
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "takeTree", "(" + SCRATCH_D + ")" + TAGTREE_D, false);
+            mv.visitVarInsn(Opcodes.ASTORE, TREE);
+        }
         // fastPath ⇒ ENTRY_MASK[0] == 0: no start-entry check to emit
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitVarInsn(Opcodes.ISTORE, STATE);
@@ -2283,7 +2347,8 @@ public final class TdfaAsmBackend {
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
         mv.visitVarInsn(Opcodes.ISTORE, C_LV);
         emitCodePointDecode(mv, IN, C_LV, POS, LEN, PF); // PF slot doubles as scratch t1
-        emitDfaDispatch(mv, tdfa, owner, IN, STATE, POS, LEN, PF, C_LV, REGS, loop, dead, op, stackRegs, REGBASE);
+        emitDfaDispatch(mv, tdfa, owner, IN, STATE, POS, LEN, PF, C_LV, REGS, TREE, loop, dead, op, stackRegs,
+            REGBASE);
         mv.visitLabel(dead);
         mv.visitInsn(Opcodes.ACONST_NULL);
         mv.visitInsn(Opcodes.ARETURN);
@@ -2308,7 +2373,11 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ILOAD, LEN);
             mv.visitVarInsn(Opcodes.ALOAD, IN);
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "positionFlagsC", "(IILjava/lang/String;)I", false);
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phiMasked", "(I[III)Z", false);
+            if (multi) {
+                mv.visitVarInsn(Opcodes.ALOAD, TREE);
+            }
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phiMasked",
+                multi ? "(I[III" + TAGTREE_D + ")Z" : "(I[III)Z", false);
             mv.visitJumpInsn(Opcodes.IFEQ, noAcc);
         } else if (tdfa.registerCount() > 0) {
             if (stackRegs) {
@@ -2317,7 +2386,11 @@ public final class TdfaAsmBackend {
                 mv.visitVarInsn(Opcodes.ILOAD, STATE);
                 mv.visitVarInsn(Opcodes.ALOAD, REGS);
                 mv.visitVarInsn(Opcodes.ILOAD, LEN);
-                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phi", "(I[II)V", false);
+                if (multi) {
+                    mv.visitVarInsn(Opcodes.ALOAD, TREE);
+                }
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phi",
+                    multi ? "(I[II" + TAGTREE_D + ")V" : "(I[II)V", false);
             }
         }
         // r = stackRegs ? materialize(locals) : (regs == null ? new int[0] : regs.clone());
@@ -2338,7 +2411,13 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitVarInsn(Opcodes.ILOAD, LEN);
         mv.visitVarInsn(Opcodes.ALOAD, 8);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, HOLDER, "<init>", "(II[I)V", false);
+        if (multi) {
+            mv.visitVarInsn(Opcodes.ALOAD, TREE);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TAGTREE, "snapshot", "()" + TAGTREE_D, false);
+            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, HOLDER, "<init>", "(II[I" + TAGTREE_D + ")V", false);
+        } else {
+            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, HOLDER, "<init>", "(II[I)V", false);
+        }
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitLabel(noAcc);
         mv.visitInsn(Opcodes.ACONST_NULL);
@@ -2440,6 +2519,11 @@ public final class TdfaAsmBackend {
         if (n <= 0 || n > STACK_REGS_MAX) {
             return false;
         }
+        // Multi-valued walks append into the carrier's TagTree — the
+        // stack-register fast path has no tree plumbing.
+        if (tdfa.multiValued()) {
+            return false;
+        }
         return tdfa.stateFinalOpsByMask() == null;
     }
 
@@ -2474,7 +2558,9 @@ public final class TdfaAsmBackend {
                 if (opsOff != 0) {
                     int j = opsOff;
                     while (j < op.length && op[j] != Tdfa.OP_END) {
-                        total += 7;
+                        // appends emit an INVOKESTATIC helper call (~2x a
+                        // plain store op)
+                        total += op[j] == Tdfa.OP_APPEND_POS ? 15 : 7;
                         j += 3;
                     }
                 }
@@ -2484,7 +2570,7 @@ public final class TdfaAsmBackend {
             if (sfo[s] != 0) {
                 int j = sfo[s], ops = 0;
                 while (j < op.length && op[j] != Tdfa.OP_END) {
-                    ops += 7;
+                    ops += op[j] == Tdfa.OP_APPEND_POS ? 15 : 7;
                     j += 3;
                 }
                 total += ops * finalMul;
