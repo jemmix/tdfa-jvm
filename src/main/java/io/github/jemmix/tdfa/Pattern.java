@@ -129,6 +129,27 @@ public interface Pattern extends Serializable {
     int DISABLE_UNICODE_GROUPS = 8;
 
     /**
+     * Flag: multi-valued tags (BT22 &sect;3.1) — every capture group keeps
+     * its whole offset sequence under repetition. Without the flag a group
+     * inside {@code (...)*}/{@code +}/{@code {n,m}} reports only its LAST
+     * iteration's span (j.u.r semantics); with it,
+     * {@link PatternMatcher#groupSpans(int) matcher(...).groupSpans(g)}
+     * returns every iteration's span in match order, one pair per
+     * iteration, {@code (-1,-1)} where the group was bypassed. All
+     * single-value results ({@code group}/{@code start}/{@code end}) are
+     * IDENTICAL to the plain compile of the same pattern — the flag only
+     * adds the per-iteration readout.
+     *
+     * <p>The compile trades the fixed-tag, register-renaming and register
+     * optimizations (BT22 &sect;6.4 / &sect;3.3 map / &sect;6.3) for the
+     * offset lists — multi-valued artifacts can be larger — and every step
+     * of a match appends one node per repeated tag (linear, but a constant
+     * factor over the plain walk). POSIX {@link #LONGEST_MATCH} composes
+     * with this flag.
+     */
+    int MULTI_VALUED_TAGS = 128;
+
+    /**
      * Compile {@code regex} with default flags (leftmost-first, generated engine).
      */
     static Pattern compile(String regex) {
@@ -175,6 +196,9 @@ public interface Pattern extends Serializable {
         int flags = 0;
         if (options.isLongestMatch()) {
             flags |= LONGEST_MATCH;
+        }
+        if (options.isMultiValuedTags()) {
+            flags |= MULTI_VALUED_TAGS;
         }
         if (options.isDisableUnicodeGroups()) {
             flags |= DISABLE_UNICODE_GROUPS;

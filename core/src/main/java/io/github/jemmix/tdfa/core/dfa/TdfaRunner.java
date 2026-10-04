@@ -6,6 +6,7 @@ import io.github.jemmix.tdfa.core.emit.EmittedSurface;
 import io.github.jemmix.tdfa.core.engine.MatchResult;
 import io.github.jemmix.tdfa.core.engine.MatchScratch;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
+import io.github.jemmix.tdfa.core.engine.TagTree;
 import io.github.jemmix.tdfa.core.engine.WholeEngine;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 
@@ -215,7 +216,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      */
     private final int latinLimit;
 
-    private final boolean fastPath; // true = no masks + disjoint + not multiline
+    private final boolean fastPath;
+    /** Multi-valued artifact (BT22 §3.1): walks carry a TagTree for append ops. */
+    private final boolean multi; // true = no masks + disjoint + not multiline
     private final boolean unicodeWordBoundary;
     private final int[] wordRanges; // Unicode \w ranges for \b when unicodeWordBoundary is true
     /**
@@ -326,6 +329,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         }
         this.fastPath = computeFastPath(tdfa);
         this.longestMatch = tdfa.longestMatch;
+        this.multi = tdfa.multiValued;
         this.stopOnAcceptMask = tdfa.stopOnAcceptMask;
         this.stopMaskUniform = tdfa.stopMaskUniform;
         this.stateCount = tdfa.stateCount;
@@ -592,6 +596,27 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     }
 
     /**
+     * Multi-valued tag tree carrier hook: the tree the walk's append ops
+     * allocate in, reset for this walk ({@link MatchScratch#takeTree()}).
+     * Linked by name from generated engines ({@code extractOne}/
+     * {@code wholeOne} leaves); only multi-valued artifacts call it.
+     */
+    @EmittedSurface
+    public static TagTree takeTree(MatchScratch sc) {
+        return (sc != null ? sc : new MatchScratch()).takeTree();
+    }
+
+    /**
+     * One multi-valued append ({@link Tdfa#OP_APPEND_POS}):
+     * {@code tree.append(head, value)} as a static hook the generated
+     * engines link by name.
+     */
+    @EmittedSurface
+    public static int appendVal(int head, int value, TagTree tree) {
+        return tree.append(head, value);
+    }
+
+    /**
      * Set state {@code s} in {@code next} (if absent) with origin {@code o} in
      * {@code originNext}; min-merge if already present. {@code originNext} is
      * only read for states whose bit is set in {@code next} (implying a
@@ -607,7 +632,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         }
     }
 
-    private static void applyOps(int[] ops, int opsOff, int[] regs, int pos) {
+    private static void applyOps(int[] ops, int opsOff, int[] regs, int pos, TagTree tree) {
         for (int j = opsOff;; j += 3) {
             int op = ops[j];
             if (op == Tdfa.OP_END) {
@@ -618,6 +643,12 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 regs[dst] = pos;
             } else if (op == Tdfa.OP_COPY) {
                 regs[dst] = regs[ops[j + 2]];
+            } else if (op == Tdfa.OP_SET_NIL) {
+                regs[dst] = -1;
+            } else if (op == Tdfa.OP_APPEND_POS) {
+                // multi-valued artifacts only (validated at construction);
+                // tree is non-null exactly for those walks
+                regs[dst] = tree.append(regs[ops[j + 2]], pos);
             } else {
                 regs[dst] = -1;
             }
@@ -762,7 +793,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         if (tdfa.fixedBase != null) {
             MatchResult.reconstructFixed(h.regs, tdfa.finalRegBase, tdfa.fixedBase, tdfa.fixedOffset);
         }
-        return new MatchResult(h.regs, tdfa.finalRegBase, tdfa.groupCount, h.matchStart, h.matchEnd);
+        return new MatchResult(h.regs, tdfa.finalRegBase, tdfa.groupCount, h.matchStart, h.matchEnd, h.tree);
     }
 
     /**
@@ -811,7 +842,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         if (tdfa.fixedBase != null) {
             MatchResult.reconstructFixed(h.regs, tdfa.finalRegBase, tdfa.fixedBase, tdfa.fixedOffset);
         }
-        return new MatchResult(h.regs, tdfa.finalRegBase, tdfa.groupCount, h.matchStart, h.matchEnd);
+        return new MatchResult(h.regs, tdfa.finalRegBase, tdfa.groupCount, h.matchStart, h.matchEnd, h.tree);
     }
 
     /**
@@ -826,6 +857,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         final int[] arf = this.asciiRangeFlat; // non-null iff rangesDisjoint
         final int limit = this.latinLimit;
         final int[] regs;
+        final TagTree tree = multi ? takeTree(sc) : null;
         if (regSize == 0) {
             regs = null;
         } else {
@@ -958,7 +990,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             if (regs != null) {
                 int opsOff = table[chosen + 3];
                 if (opsOff != 0) {
-                    applyOps(op, opsOff, regs, pos);
+                    applyOps(op, opsOff, regs, pos, tree);
                 }
             }
             state = chosenTarget;
@@ -981,7 +1013,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 return null;
             } // no accept config alive under these posFlags
             if (regs != null && cell != 0) {
-                applyOps(op, cell, regs, to);
+                applyOps(op, cell, regs, to, tree);
             }
         } else {
             int acceptMask = sam[state];
@@ -989,10 +1021,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 return null;
             }
             if (regs != null) {
-                applyFinalOps(state, regs, to);
+                applyFinalOps(state, regs, to, tree);
             }
         }
-        return new MatchHolder(from, to, regs == null ? new int[0] : regs.clone());
+        return new MatchHolder(from, to, regs == null ? new int[0] : regs.clone(), multi ? tree.snapshot() : null);
     }
 
     /**
@@ -1170,6 +1202,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         // success path clones (line below) before returning, so the pool is
         // never handed out.
         final int[] regs;
+        final TagTree tree = multi ? takeTree(sc) : null;
         if (regSize == 0) {
             regs = null;
         } else {
@@ -1212,7 +1245,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                         lastAcceptPos = pos;
                         haveAccept = true;
                         if (regs != null && cell != 0) {
-                            applyOps(op, cell, regs, pos);
+                            applyOps(op, cell, regs, pos, tree);
                         }
                         if (!longestMatch && stopNow(state, posFlags)) {
                             break;
@@ -1224,7 +1257,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                         lastAcceptPos = pos;
                         haveAccept = true;
                         if (regs != null) {
-                            applyFinalOps(state, regs, pos);
+                            applyFinalOps(state, regs, pos, tree);
                         }
                         if (!longestMatch) {
                             // stopNow ignores posFlags when the stop table is
@@ -1249,7 +1282,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                             lastAcceptPos = pos;
                             haveAccept = true;
                             if (regs != null) {
-                                applyFinalOps(state, regs, pos);
+                                applyFinalOps(state, regs, pos, tree);
                             }
                             if (!longestMatch && stopNow(state, posFlags)) {
                                 break;
@@ -1380,7 +1413,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             if (regs != null) {
                 int opsOff = rg[chosen + 3];
                 if (opsOff != 0) {
-                    applyOps(op, opsOff, regs, pos);
+                    applyOps(op, opsOff, regs, pos, tree);
                 }
             }
             state = chosenTarget;
@@ -1398,7 +1431,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         // A lazy replay here would read end-of-walk values — any transition
         // taken between the accept and the break clobbers working registers
         // and inverts group spans (group start > end).
-        return new MatchHolder(startSearch, lastAcceptPos, r);
+        return new MatchHolder(startSearch, lastAcceptPos, r, multi ? tree.snapshot() : null);
     }
 
     /**
@@ -2013,6 +2046,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         // refills the same carrier — safe: it never aliases a live caller's
         // [0, regSize) window (each taker refills before use).
         final int[] regs;
+        final TagTree tree = multi ? takeTree(sc) : null;
         if (regSize == 0) {
             regs = null;
         } else {
@@ -2041,7 +2075,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                         haveAccept = true;
                         lastAcceptPos = pos;
                         if (regs != null && cell != 0) {
-                            applyOps(op, cell, regs, pos);
+                            applyOps(op, cell, regs, pos, tree);
                         }
                         if (pm && stopNow(state, posFlags)) {
                             break;
@@ -2051,7 +2085,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                     haveAccept = true;
                     lastAcceptPos = pos;
                     if (regs != null) {
-                        applyFinalOps(state, regs, pos);
+                        applyFinalOps(state, regs, pos, tree);
                     }
                     if (pm) {
                         if (stopMaskUniform == null) {
@@ -2082,7 +2116,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             if (regs != null) {
                 int opsOff = rg[mo + 3];
                 if (opsOff != 0) {
-                    applyOps(op, opsOff, regs, pos);
+                    applyOps(op, opsOff, regs, pos, tree);
                 }
             }
             state = target;
@@ -2093,7 +2127,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         }
         if (haveAccept) {
             // Eager finals at accept-record time (see extractFrom).
-            return new MatchHolder(start, lastAcceptPos, regs == null ? new int[0] : regs.clone());
+            return new MatchHolder(start, lastAcceptPos, regs == null ? new int[0] : regs.clone(),
+                multi ? tree.snapshot() : null);
         }
         return null;
     }
@@ -2497,6 +2532,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         int startSearch = from;
         while (true) {
             final int[] regs;
+            final TagTree tree = multi ? takeTree(sc) : null;
             if (regSize == 0) {
                 regs = null;
             } else {
@@ -2540,7 +2576,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                             lastAcceptPos = pos;
                             haveAccept = true;
                             if (regs != null && cell != 0) {
-                                applyOps(ops, cell, regs, pos);
+                                applyOps(ops, cell, regs, pos, tree);
                             }
                             if (!longestMatch && stopNow(state, posFlags)) {
                                 break;
@@ -2552,7 +2588,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                             lastAcceptPos = pos;
                             haveAccept = true;
                             if (regs != null) {
-                                applyFinalOps(state, regs, pos);
+                                applyFinalOps(state, regs, pos, tree);
                             }
                             if (!longestMatch) {
                                 if (posFlags < 0) {
@@ -2570,7 +2606,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                                 lastAcceptPos = pos;
                                 haveAccept = true;
                                 if (regs != null) {
-                                    applyFinalOps(state, regs, pos);
+                                    applyFinalOps(state, regs, pos, tree);
                                 }
                                 if (!longestMatch && stopNow(state, posFlags)) {
                                     break;
@@ -2632,7 +2668,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 if (regs != null) {
                     int opsOff = ranges[chosen + 3];
                     if (opsOff != 0) {
-                        applyOps(ops, opsOff, regs, pos);
+                        applyOps(ops, opsOff, regs, pos, tree);
                     }
                 }
                 state = chosenTarget;
@@ -2646,7 +2682,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                     return null;
                 }
                 // Eager finals at accept-record time (see extractFrom).
-                return new MatchHolder(startSearch, lastAcceptPos, regs == null ? new int[0] : regs.clone());
+                return new MatchHolder(startSearch, lastAcceptPos, regs == null ? new int[0] : regs.clone(),
+                    multi ? tree.snapshot() : null);
             }
             if (anchored) {
                 return null;
@@ -2672,10 +2709,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * application {@code pos == lastAcceptPos} always holds and φ is the
      * correct choice.
      */
-    private void applyFinalOps(int state, int[] regs, int pos) {
+    private void applyFinalOps(int state, int[] regs, int pos, TagTree tree) {
         int foff = stateFinalOpsOff[state];
         if (foff != 0) {
-            applyOps(ops, foff, regs, pos);
+            applyOps(ops, foff, regs, pos, tree);
         }
     }
 
@@ -2799,7 +2836,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * unconditionally.
      */
     private boolean computeFastPath(Tdfa tdfa) {
-        return asciiTables && fastPathEligible(tdfa);
+        // Multi-valued walks carry a TagTree for their append ops; the fast
+        // path's flat-table loop has no tree plumbing — the generic walks
+        // serve multi-valued artifacts.
+        return asciiTables && fastPathEligible(tdfa) && !tdfa.multiValued();
     }
 
     /**

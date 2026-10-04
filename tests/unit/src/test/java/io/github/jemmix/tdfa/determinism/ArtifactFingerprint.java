@@ -30,6 +30,7 @@ final class ArtifactFingerprint {
         f.scalar(t.multiline() ? 1 : 0);
         f.scalar(t.unicodeWordBoundary() ? 1 : 0);
         f.scalar(t.pikeCutMatters() ? 1 : 0);
+        f.scalar(t.multiValued() ? 1 : 0);
         f.array(t.stateMeta());
         f.array(t.stateBase());
         f.array(t.stateFinalOpsOff());

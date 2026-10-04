@@ -62,6 +62,16 @@ public final class Tnfa {
     public final int tagCount;
     public final int groupCount;
     public final boolean multiline;
+    /**
+     * True iff this NFA was built for a multi-valued compile (BT22 §3.1):
+     * the fixed-tag pass was skipped (its single-value reconstruction
+     * cannot serve per-iteration offset sequences) and the determinizer
+     * keeps full occurrence histories, emitting append ops. The flag rides
+     * the NFA — not a separate option plumbed through every determinizer
+     * entry — because it changes the NFA build itself and everything
+     * downstream (determinizer, materializer, artifact) reads one source.
+     */
+    public final boolean multiValuedTags;
     public final boolean unicodeWordBoundary;
     public final int[] wordRanges;
     public final Map<String, Integer> namedGroups;
@@ -90,6 +100,15 @@ public final class Tnfa {
         int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
         boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
         int[] fixedBase, int[] fixedOffset) {
+        this(stateCount, epsFrom, epsTo, epsPri, epsTag, epsEmptyMask, symFrom, symTo, symClass, start, accept,
+            tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
+            false);
+    }
+
+    public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
+        int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
+        boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
+        int[] fixedBase, int[] fixedOffset, boolean multiValuedTags) {
         this.stateCount = stateCount;
         this.epsFrom = epsFrom;
         this.epsTo = epsTo;
@@ -104,6 +123,7 @@ public final class Tnfa {
         this.tagCount = tagCount;
         this.groupCount = groupCount;
         this.multiline = multiline;
+        this.multiValuedTags = multiValuedTags;
         this.unicodeWordBoundary = unicodeWordBoundary;
         this.wordRanges = wordRanges;
         this.namedGroups = namedGroups;
@@ -128,6 +148,12 @@ public final class Tnfa {
             new WorkMeter(Budgets.compileComputeTicks()));
     }
 
+    /** Multi-valued twin of the plain entry (BT22 §3.1; see {@link #multiValuedTags}). */
+    public static Tnfa compileMulti(String pattern, boolean disableUnicodeGroups, UnicodeDataProvider provider,
+        CompileObserver observer, WorkMeter meter) {
+        return compile(pattern, disableUnicodeGroups, false, true, provider, observer, meter);
+    }
+
     /**
      * Ledger variant: parse + TNFA build run on the CALLER's work meter
      * (typically forked from the compile's root ledger — see {@code
@@ -136,6 +162,11 @@ public final class Tnfa {
      */
     public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
         UnicodeDataProvider provider, CompileObserver observer, WorkMeter meter) {
+        return compile(pattern, disableUnicodeGroups, anchorBoth, false, provider, observer, meter);
+    }
+
+    public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
+        boolean multiValuedTags, UnicodeDataProvider provider, CompileObserver observer, WorkMeter meter) {
         long t0 = System.nanoTime();
         // Front-end budget: ONE work meter (CPU, ticks) spans parse + TNFA
         // build so the pre-determinization surface is bounded too — the
@@ -151,11 +182,23 @@ public final class Tnfa {
         }
         long t1 = System.nanoTime();
         Ast ast = parsed.ast();
-        FixedTags.apply(ast);
+        // Multi-valued compiles keep the fixed-tag pass OFF: §6.4 drops the
+        // fixed tags from the NFA and reconstructs ONE offset per tag at
+        // match time — meaningless for a tag whose whole point is its
+        // per-iteration offset SEQUENCE (and a fixed tag whose base is
+        // multi-valued has no single value to derive from).
+        int[] fixedBase;
+        int[] fixedOffset;
+        if (multiValuedTags) {
+            fixedBase = new int[parsed.tagCount() + 1];
+            fixedOffset = new int[parsed.tagCount() + 1];
+        } else {
+            FixedTags.apply(ast);
+            fixedBase = new int[parsed.tagCount() + 1];
+            fixedOffset = new int[parsed.tagCount() + 1];
+            collectFixedAnnotations(ast, fixedBase, fixedOffset);
+        }
         int tagCount = parsed.tagCount();
-        int[] fixedBase = new int[tagCount + 1];
-        int[] fixedOffset = new int[tagCount + 1];
-        collectFixedAnnotations(ast, fixedBase, fixedOffset);
         if (Boolean.getBoolean("tdfa.debug")) {
             int n = 0;
             for (int t = 1; t <= tagCount; t++) {
@@ -171,7 +214,7 @@ public final class Tnfa {
         int accept = b.fresh();
         int start = b.build(ast, accept);
         Tnfa nfa = b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(), parsed.unicodeShorthand(),
-            parsed.unicodeWordRanges(), parsed.namedGroups(), fixedBase, fixedOffset);
+            parsed.unicodeWordRanges(), parsed.namedGroups(), fixedBase, fixedOffset, multiValuedTags);
         if (observer != null) {
             observer.stage(CompileObserver.Stage.TNFA, System.nanoTime() - t1, nfa.stateCount);
         }
@@ -784,7 +827,8 @@ public final class Tnfa {
         }
 
         Tnfa build(int start, int accept, int tagCount, int groupCount, boolean multiline, boolean unicodeWordBoundary,
-            int[] wordRanges, Map<String, Integer> namedGroups, int[] fixedBase, int[] fixedOffset) {
+            int[] wordRanges, Map<String, Integer> namedGroups, int[] fixedBase, int[] fixedOffset,
+            boolean multiValuedTags) {
             int n = eps.size();
             int[] eFrom = new int[n], eTo = new int[n], ePri = new int[n], eTag = new int[n], eEmpty = new int[n];
             for (int i = 0; i < n; i++) {
@@ -799,7 +843,8 @@ public final class Tnfa {
             int[] sTo = syms.stream().mapToInt(a -> a[1]).toArray();
             CharClass[] sClass = symClasses.toArray(new CharClass[0]);
             return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, sFrom, sTo, sClass, start, accept, tagCount,
-                groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset);
+                groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
+                multiValuedTags);
         }
     }
 }

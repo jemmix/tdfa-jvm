@@ -190,6 +190,17 @@ public class Matcher {
         return group(groupIndex(name));
     }
 
+    /**
+     * Every iteration's span of {@code group} (multi-valued readout, BT22
+     * §3.1): flat {@code [s0,e0,s1,e1,…]} in match order, {@code (-1,-1)}
+     * for iterations that bypassed the group. On a single-valued compile
+     * this is just the one reported span.
+     */
+    public int[] groupSpans(int group) {
+        ensureMatch();
+        return match.groupSpans(group);
+    }
+
     public int start(String name) {
         return start(groupIndex(name));
     }

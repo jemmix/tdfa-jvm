@@ -127,4 +127,27 @@ class TdfaValidateHardeningTest {
         Tdfa t = build(a);
         assertThat(t.rangeCount(t.stateMeta()[0])).isEqualTo(1);
     }
+
+    @Test
+    void unknownOpCodeRejected() {
+        Object[] a = validArrays();
+        a[5] = new int[]{0, 0, 0, 1, 0};
+        a[6] = new int[]{0, 7, 2, 0, 0, Tdfa.OP_END}; // op code 7 does not exist
+        a[7] = new int[1];
+        a[1] = new int[]{1 << 1};
+        assertThatThrownBy(() -> build(a)).isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("unknown register op code 7");
+    }
+
+    @Test
+    void appendOpRequiresMultiValuedArtifact() {
+        Object[] a = validArrays();
+        a[5] = new int[]{0, 0, 0, 1, 0};
+        a[6] = new int[]{0, Tdfa.OP_APPEND_POS, 2, 0, 0, Tdfa.OP_END};
+        a[7] = new int[1];
+        a[1] = new int[]{1 << 1};
+        // single-valued artifact: an append op has no runtime tree
+        assertThatThrownBy(() -> build(a)).isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("unknown register op code 4");
+    }
 }

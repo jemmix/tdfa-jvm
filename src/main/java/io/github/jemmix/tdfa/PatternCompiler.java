@@ -52,8 +52,9 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
  */
 final class PatternCompiler {
 
-    private static final int VALID_FLAGS = Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.MULTILINE
-        | Pattern.DISABLE_UNICODE_GROUPS | Pattern.LONGEST_MATCH | Pattern.UNICODE_CHARACTER_CLASS | Pattern.FIND_ONLY;
+    private static final int VALID_FLAGS =
+        Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.MULTILINE | Pattern.DISABLE_UNICODE_GROUPS
+            | Pattern.LONGEST_MATCH | Pattern.UNICODE_CHARACTER_CLASS | Pattern.FIND_ONLY | Pattern.MULTI_VALUED_TAGS;
 
     private PatternCompiler() {
     }
@@ -70,7 +71,7 @@ final class PatternCompiler {
         if ((flags & ~VALID_FLAGS) != 0) {
             throw new IllegalArgumentException(
                 "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS,"
-                    + " LONGEST_MATCH, UNICODE_CHARACTER_CLASS, FIND_ONLY");
+                    + " LONGEST_MATCH, UNICODE_CHARACTER_CLASS, FIND_ONLY, MULTI_VALUED_TAGS");
         }
         String fl = regex;
         if ((flags & Pattern.CASE_INSENSITIVE) != 0) {
@@ -88,6 +89,7 @@ final class PatternCompiler {
         boolean longest = (flags & Pattern.LONGEST_MATCH) != 0;
         boolean disableUnicodeGroups = (flags & Pattern.DISABLE_UNICODE_GROUPS) != 0;
         boolean findOnly = (flags & Pattern.FIND_ONLY) != 0;
+        boolean multiValued = (flags & Pattern.MULTI_VALUED_TAGS) != 0;
         UnicodeDataProvider prov = provider != null ? provider : UnicodeProviders.get();
         CompileObserver obs = observer != null ? observer : CompileObserver.NONE;
         // One CPU ledger for the whole compile. Full compiles: the
@@ -97,7 +99,8 @@ final class PatternCompiler {
         // side table has no reader, so its exploration is not even
         // attempted and its budget is never drawn.
         WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
-        Tnfa nfa = Tnfa.compile(fl, disableUnicodeGroups, false, prov, obs, ledger);
+        Tnfa nfa = multiValued ? Tnfa.compileMulti(fl, disableUnicodeGroups, prov, obs, ledger)
+            : Tnfa.compile(fl, disableUnicodeGroups, false, prov, obs, ledger);
         Tdfa find = findOnly ? Determinizer.compile(nfa, longest, obs, ledger.fork(0))
             : Determinizer.compileWithWholeSide(nfa, longest, obs, ledger.fork(0));
         if (findOnly) {
