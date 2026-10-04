@@ -52,9 +52,9 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
  */
 final class PatternCompiler {
 
-    private static final int VALID_FLAGS = Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.MULTILINE
-        | Pattern.DISABLE_UNICODE_GROUPS | Pattern.LONGEST_MATCH | Pattern.UNICODE_CHARACTER_CLASS | Pattern.FIND_ONLY
-        | Pattern.MULTI_VALUED_TAGS;
+    private static final int VALID_FLAGS =
+        Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.MULTILINE | Pattern.DISABLE_UNICODE_GROUPS
+            | Pattern.LONGEST_MATCH | Pattern.UNICODE_CHARACTER_CLASS | Pattern.FIND_ONLY | Pattern.MULTI_VALUED_TAGS;
 
     private PatternCompiler() {
     }

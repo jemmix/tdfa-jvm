@@ -514,11 +514,11 @@ final class TdfaStateIndex {
                 if ((bits[t >>> 6] >>> (t & 63) & 1L) != 0 && !owner.multi) {
                     continue;
                 } // tag is set by transition op
-                // (multi-valued compiles anchor EVERY position — paper §2
-                // map: "history(l,t) = ε or t is a multi-tag": append dsts
-                // carry history, and without anchoring them the ops rewrite
-                // can never map them, so repeated groups would mint fresh
-                // registers forever and states would never merge)
+                  // (multi-valued compiles anchor EVERY position — paper §2
+                  // map: "history(l,t) = ε or t is a multi-tag": append dsts
+                  // carry history, and without anchoring them the ops rewrite
+                  // can never map them, so repeated groups would mint fresh
+                  // registers forever and states would never merge)
                 int rn = cn.regs[t], ro = co.regs[t];
                 // A register may be new-side of one tag and old-side of
                 // another, so the two sides carry separate epoch arrays.

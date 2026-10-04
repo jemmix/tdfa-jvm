@@ -525,8 +525,8 @@ public final class Tdfa {
             }
             int opc = ops[j];
             if (opc != OP_SET_POS && opc != OP_SET_NIL && opc != OP_COPY && (opc != OP_APPEND_POS || !multiValued)) {
-                throw new IllegalStateException("tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i)
-                    + " unknown register op code " + opc);
+                throw new IllegalStateException(
+                    "tdfa: state " + s + (isFinal ? " final-ops" : " entry " + i) + " unknown register op code " + opc);
             }
             int dst = ops[j + 1];
             if (!isFinal && tagCount > 0 && dst >= finalRegBase && dst < finalRegBase + tagCount) {

@@ -5,8 +5,8 @@ import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.emit.EmittedSurface;
 import io.github.jemmix.tdfa.core.engine.MatchResult;
 import io.github.jemmix.tdfa.core.engine.MatchScratch;
-import io.github.jemmix.tdfa.core.engine.TagTree;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
+import io.github.jemmix.tdfa.core.engine.TagTree;
 import io.github.jemmix.tdfa.core.engine.WholeEngine;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 
@@ -1024,8 +1024,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 applyFinalOps(state, regs, to, tree);
             }
         }
-        return new MatchHolder(from, to, regs == null ? new int[0] : regs.clone(),
-            multi ? tree.snapshot() : null);
+        return new MatchHolder(from, to, regs == null ? new int[0] : regs.clone(), multi ? tree.snapshot() : null);
     }
 
     /**

@@ -107,8 +107,7 @@ public final class CompileOptions {
         }
         CompileOptions c = (CompileOptions) o;
         return longestMatch == c.longestMatch && multiValuedTags == c.multiValuedTags
-            && disableUnicodeGroups == c.disableUnicodeGroups
-            && Objects.equals(unicodeProvider, c.unicodeProvider)
+            && disableUnicodeGroups == c.disableUnicodeGroups && Objects.equals(unicodeProvider, c.unicodeProvider)
             // Identity is intentional: the observer is a push hook, not a
             // value — two different hook instances with equal state are
             // still different options (they observe different people).

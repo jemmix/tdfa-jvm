@@ -1192,8 +1192,8 @@ public final class TdfaAsmBackend {
                 if (multi) {
                     mv.visitVarInsn(Opcodes.ALOAD, TREE);
                 }
-                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phi",
-                    multi ? "(I[II" + TAGTREE_D + ")V" : "(I[II)V", false);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phi", multi ? "(I[II" + TAGTREE_D + ")V" : "(I[II)V",
+                    false);
             }
         }
         if (perl) {
@@ -2347,8 +2347,7 @@ public final class TdfaAsmBackend {
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
         mv.visitVarInsn(Opcodes.ISTORE, C_LV);
         emitCodePointDecode(mv, IN, C_LV, POS, LEN, PF); // PF slot doubles as scratch t1
-        emitDfaDispatch(mv, tdfa, owner, IN, STATE, POS, LEN, PF, C_LV, REGS, TREE, loop, dead, op, stackRegs,
-            REGBASE);
+        emitDfaDispatch(mv, tdfa, owner, IN, STATE, POS, LEN, PF, C_LV, REGS, TREE, loop, dead, op, stackRegs, REGBASE);
         mv.visitLabel(dead);
         mv.visitInsn(Opcodes.ACONST_NULL);
         mv.visitInsn(Opcodes.ARETURN);
@@ -2389,8 +2388,8 @@ public final class TdfaAsmBackend {
                 if (multi) {
                     mv.visitVarInsn(Opcodes.ALOAD, TREE);
                 }
-                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phi",
-                    multi ? "(I[II" + TAGTREE_D + ")V" : "(I[II)V", false);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "phi", multi ? "(I[II" + TAGTREE_D + ")V" : "(I[II)V",
+                    false);
             }
         }
         // r = stackRegs ? materialize(locals) : (regs == null ? new int[0] : regs.clone());

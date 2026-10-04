@@ -81,8 +81,8 @@ class MultiValuedTagsTest {
     void lastPairIsTheSingleValueReport(RegexEngineFactory f) {
         String[] pats = {"(a)+", "(a|b)+", "(?:(a)|(b))+", "(a?)*", "(a){2,4}", "((a)(b))+", "(a*)*", "(x)?(a)+",
             "(a+)(b+)", "((a)|b|c)*", "(a(b?)*)+", "((b|)|c)*", "(?:x|((?:a|bb)+)y)+", "(b|){2,3}"};
-        String[] inputs = {"", "a", "b", "ab", "ba", "aa", "abab", "aab", "abb", "abcab", "abba", "abc", "cbb",
-            "bcc", "cc", "bbbb", "bbbaa"};
+        String[] inputs = {"", "a", "b", "ab", "ba", "aa", "abab", "aab", "abb", "abcab", "abba", "abc", "cbb", "bcc",
+            "cc", "bbbb", "bbbaa"};
         for (String pat : pats) {
             for (int flags : new int[]{0, Pattern.LONGEST_MATCH}) {
                 PatternMatcher mm = m(f, pat, flags, "dummy");
@@ -126,8 +126,8 @@ class MultiValuedTagsTest {
             "((?:(?:(?:c[ab]|(c|.)))*|b)[ab])([ab])(a(?:a|b))", "((((?:a)*cbc|.))+)(c)((c)*)",
             "(((?:(?:\\wb|\\d)|\\s)|(b(?:\\d)?)*)((bb|[ab])|(\\s|(?:\\d){2,4}))(a[ab]|\\w))",
             "((?:((\\w|[ab])(?:b)*(.c|(c)?)|a)){2,4})(a)"};
-        String[] inputs = {"", "b", "c", "bb", "bc", "bcc", "cb", "cc", "aaa", "aaaa", "baaa", "cbcc", "bbaa",
-            "bbac", "acaa", "ccba"};
+        String[] inputs = {"", "b", "c", "bb", "bc", "bcc", "cb", "cc", "aaa", "aaaa", "baaa", "cbcc", "bbaa", "bbac",
+            "acaa", "ccba"};
         for (String pat : pats) {
             for (int flags : new int[]{0, Pattern.LONGEST_MATCH}) {
                 for (String in : inputs) {

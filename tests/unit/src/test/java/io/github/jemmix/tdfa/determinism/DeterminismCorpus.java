@@ -1,9 +1,9 @@
 package io.github.jemmix.tdfa.determinism;
 
-import io.github.jemmix.tdfa.core.determinize.Determinizer;
-import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
+import io.github.jemmix.tdfa.core.determinize.Determinizer;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 
 import java.util.ArrayList;
@@ -96,8 +96,9 @@ final class DeterminismCorpus {
                 case LONGEST -> ArtifactFingerprint.of(Determinizer.compile(Tnfa.compile(e.pattern()), true));
                 case UNPRUNED ->
                     ArtifactFingerprint.of(Determinizer.compileUnpruned(Tnfa.compile(e.pattern()), false, null));
-                case MULTI -> ArtifactFingerprint.of(Determinizer
-                    .compile(Tnfa.compileMulti(e.pattern(), false, null, null, new WorkMeter(Budgets.compileComputeTicks())), false));
+                case MULTI -> ArtifactFingerprint.of(Determinizer.compile(
+                    Tnfa.compileMulti(e.pattern(), false, null, null, new WorkMeter(Budgets.compileComputeTicks())),
+                    false));
             };
         } finally {
             if (prop != null) {

@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.parity;
 
 import io.github.jemmix.tdfa.Pattern;
 import io.github.jemmix.tdfa.PatternMatcher;
+import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.sim.PikeSim;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -30,23 +31,23 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class MultiValuedParityTest {
 
-    static Stream<RegexEngineFactorySrc> engines() {
-        return Re2jOracle.engineFactories().map(f -> new RegexEngineFactorySrc(f));
-    }
-
-    record RegexEngineFactorySrc(io.github.jemmix.tdfa.core.compile.RegexEngineFactory factory) {
-        @Override
-        public String toString() {
-            return String.valueOf(factory);
-        }
-    }
-
     private static final String[] PATTERNS = {"(a)+", "(a|b)+", "(?:(a)|(b))+", "(a?)*", "(a){2,4}", "((a)(b))+",
         "(a*)*", "(x)?(a)+", "a(b)", "(a+)(b+)", "((a)|b|c)*", "(a(b?)*)+", "((b|)|c)*", "(?:x|((?:a|bb)+)y)+",
         "(b|){2,3}", "(ab|a)(b?)+", "(?:(a)|b|(c))*"};
 
     private static final String[] INPUTS = {"", "a", "b", "ab", "ba", "aa", "abab", "aab", "abb", "abcab", "abba",
         "abc", "cbb", "bcc", "cc", "bbbb", "bbbaa", "ababab", "abababab"};
+
+    static Stream<RegexEngineFactorySrc> engines() {
+        return Re2jOracle.engineFactories().map(RegexEngineFactorySrc::new);
+    }
+
+    record RegexEngineFactorySrc(RegexEngineFactory factory) {
+        @Override
+        public String toString() {
+            return String.valueOf(factory);
+        }
+    }
 
     @ParameterizedTest
     @MethodSource("engines")
@@ -92,8 +93,8 @@ class MultiValuedParityTest {
                 }
                 assertSpans(pat, in, tm, oracle);
                 // leftmost-longest
-                PatternMatcher pos = Pattern.compile(pat, Pattern.MULTI_VALUED_TAGS | Pattern.LONGEST_MATCH,
-                    src.factory()).matcher(in);
+                PatternMatcher pos =
+                    Pattern.compile(pat, Pattern.MULTI_VALUED_TAGS | Pattern.LONGEST_MATCH, src.factory()).matcher(in);
                 int[] oraclePos = re2jFindPosix(pat, in);
                 boolean foundPos = pos.find();
                 assertThat(foundPos).as("re2j posix find <%s> <%s>", pat, in).isEqualTo(oraclePos != null);

@@ -116,8 +116,8 @@ final class TdfaMaterializer {
             obs.note("regopt", "regs " + cfg.initialRegCount + "->" + cfg.regCount);
         } else {
             obs.stage(CompileObserver.Stage.REGOPT, System.nanoTime() - tReg, 2 * nfa.tagCount);
-            obs.note("regopt", !regoptEnabled ? "disabled" : nfa.multiValuedTags ? "skipped (multi-valued)"
-                : "skipped (bounds)");
+            obs.note("regopt",
+                !regoptEnabled ? "disabled" : nfa.multiValuedTags ? "skipped (multi-valued)" : "skipped (bounds)");
         }
         return finalRegBase;
     }

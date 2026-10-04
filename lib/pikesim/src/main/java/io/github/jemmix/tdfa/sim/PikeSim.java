@@ -143,8 +143,8 @@ public final class PikeSim {
      * {@code groupSpans} are checked against.
      */
     public static PikeSim compileMulti(String pattern, UnicodeDataProvider provider) {
-        return new PikeSim(pattern, Tnfa.compileMulti(pattern, false, provider, null,
-            new WorkMeter(Budgets.compileComputeTicks())));
+        return new PikeSim(pattern,
+            Tnfa.compileMulti(pattern, false, provider, null, new WorkMeter(Budgets.compileComputeTicks())));
     }
 
     public PikeMatcher matcher(CharSequence input) {
