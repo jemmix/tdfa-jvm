@@ -46,18 +46,12 @@ work item. Literal-prefixed search of medium inputs (the `ip=`-shaped log
 queries that used to lose ~2–4×) now rides `String.indexOf` over the
 required literal prefix and beats `java.util.regex` on both backends.
 
-**Multi-valued tags** (BT22 §3.1): by default a group under repetition
-reports only its LAST iteration's span (j.u.r semantics). Compile with the
-`MULTI_VALUED_TAGS` flag and every group keeps its whole offset sequence:
-`matcher(...).groupSpans(g)` returns one span pair per participating
-iteration, in match order (`(?:(a)|(b))+` on `"abab"` → g1 `[0,1) [2,3)`,
-g2 `[1,2) [3,4)`); single-value results are bit-identical to the plain
-compile, and `LONGEST_MATCH` composes. The compile trades the fixed-tag,
-register-renaming and register-optimization passes for the offset lists
-(artifacts can be larger — a pattern near the budget may reject as "too
-large" where the plain compile fits), and every step of a match appends
-one node per repeated tag — linear, but a constant factor over the plain
-walk. Both tiers and the reference simulator serve the lane identically.
+**Multi-valued tags** (BT22 §3.1): an opt-in flag (`MULTI_VALUED_TAGS`)
+where a group under repetition keeps every iteration's offsets
+(`matcher(...).groupSpans(g)`) — the one capability `java.util.regex` and
+re2j cannot match. Single-value results stay bit-identical. An obscure
+corner, kept deliberately: reasoning, usage examples and costs in
+[`docs/multi-valued-tags.md`](docs/multi-valued-tags.md).
 
 ## Headline numbers
 
