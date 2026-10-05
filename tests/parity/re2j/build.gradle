@@ -121,3 +121,28 @@ tasks.register('fuzz', JavaExec) {
     systemProperty 'fuzz.crossRung.stretch', project.findProperty('fuzz.crossRung.stretch') ?: '1'
     systemProperty 'fuzz.crossRung.stretchEvery', project.findProperty('fuzz.crossRung.stretchEvery') ?: '8'
 }
+
+// Timeboxed fuzz campaigns for the TODO fuzzer items the overnight soak does
+// not cover: (?u) lane vs the java.util.regex oracle, oracle-check stretched
+// inputs (+ ASM), non-String CharSequence inputs vs the PikeSim reference,
+// fact-gated rung families (literal/prefix/cand-scan/anchored-fast).
+// A soak, not a unit test (CampaignSmokeTest gates the harness in CI):
+//   ./gradlew :tests:parity:re2j:camp                              # all modes, 600 s each
+//   ./gradlew :tests:parity:re2j:camp -Pcamp.mode=jur -Pcamp.seconds=600 -Pcamp.seed=42
+//   ./gradlew :tests:parity:re2j:camp -Pcamp.mode=jur -Pcamp.one=<caseSeed>   # replay one case
+// Exits nonzero on hard findings; artifacts land in build/fuzz-camp/<mode>/.
+tasks.register('camp', JavaExec) {
+    group = 'verification'
+    description = 'Fuzz campaigns: (?u) vs jur, stretched oracle+asm, CharSequence vs PikeSim, rung families'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'io.github.jemmix.tdfa.fuzz.CampaignFuzzer'
+    jvmArgs '-Xmx2g'
+    systemProperty 'camp.mode', project.findProperty('camp.mode') ?: 'all'
+    systemProperty 'camp.seconds', project.findProperty('camp.seconds') ?: '600'
+    systemProperty 'camp.seed', project.findProperty('camp.seed') ?: '0'
+    systemProperty 'camp.one', project.findProperty('camp.one') ?: '0'
+    systemProperty 'camp.cases', project.findProperty('camp.cases') ?: '0'
+    def campOut = project.findProperty('camp.out')
+            ?: rootProject.layout.buildDirectory.dir('fuzz-camp').get().asFile.absolutePath
+    systemProperty 'camp.out', campOut
+}
