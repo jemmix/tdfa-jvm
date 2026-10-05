@@ -1,7 +1,10 @@
 package io.github.jemmix.tdfa.fuzz;
 
 import com.google.re2j.Re2jUnicodeProvider;
+import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.determinize.Determinizer;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 import io.github.jemmix.tdfa.sim.PikeSim;
 
 import java.io.IOException;
@@ -13,9 +16,11 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.SplittableRandom;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Timeboxed fuzz campaigns for the TODO.md fuzzer items the overnight
@@ -107,6 +112,22 @@ public final class CampaignFuzzer {
     /** Soft wall guard per case; over it the case is recorded SLOW and skipped. */
     private static final long CASE_SLOW_MS = 3_000;
 
+    // ---- families mode: family-biased shape pools (see genFamilies) ----
+
+    static final String[] PREFIX_TAILS =
+        {"\\w+", "\\d+", "[a-z0-9]{2,}", "(a|b)+", "\\S{1,4}", ".*x", "(?:ab|ba)+", "\\w\\d", "(q|1){2,}"};
+
+    static final String[] CAND_PATTERNS = {"(a|b)+c", "[wx9]{2,}z", "\\w\\s?k", "(ab|ba)*f", "[^a]{1,3}q", "\\d+x?",
+        "(z|9)[a-z]k", "[a-c]{3}[^x]", "(\\w\\d)+e"};
+
+    static final String[] FAST_PATTERNS =
+        {"\\d+", "[a-f0-9]{2,8}", "a+|b+", "\\w\\d\\w", "[0-9]+\\.[0-9]+", "[a-z]+!", "\\d\\s\\d"};
+
+    static final String LIT_ALPHABET = "abz09ZYqw_.";
+
+    /** Input pool for family shapes (ASCII-dominant). */
+    static final String INPUT_ALPHABET = "abz09ZY qw_-.#~\n";
+
     public static void main(String[] argv) throws Exception {
         String mode = System.getProperty("camp.mode", "all");
         long one = Long.getLong("camp.one", 0);
@@ -122,7 +143,7 @@ public final class CampaignFuzzer {
         if (mode.equals("all")) {
             Map<String, Long> seeds = modeSeeds(seed);
             List<Thread> ts = new ArrayList<>();
-            java.util.concurrent.atomic.AtomicLong box = new java.util.concurrent.atomic.AtomicLong();
+            AtomicLong box = new AtomicLong();
             for (var e : seeds.entrySet()) {
                 Thread t = new Thread(() -> box.addAndGet(runMode(e.getKey(), e.getValue(), seconds, maxCases, out)),
                     "camp-" + e.getKey());
@@ -231,9 +252,8 @@ public final class CampaignFuzzer {
         boolean ci = fr.nextInt(10) < 3;
         boolean ds = fr.nextInt(10) < 3;
         boolean ml = fr.nextInt(10) < 3;
-        int tdfaFlags =
-            (ucc ? UCC : 0) | (ci ? DifferentialFuzzer.FLAG_CI : 0) | (ds ? DifferentialFuzzer.FLAG_DOTALL : 0)
-                | (ml ? DifferentialFuzzer.FLAG_MULTILINE : 0);
+        int tdfaFlags = (ucc ? UCC : 0) | (ci ? DifferentialFuzzer.FLAG_CI : 0)
+            | (ds ? DifferentialFuzzer.FLAG_DOTALL : 0) | (ml ? DifferentialFuzzer.FLAG_MULTILINE : 0);
         String input = DifferentialFuzzer.genInput(batch, idx, tdfaFlags);
         int jurFlags = (ucc ? JUR_UCC : 0) | (ci ? JUR_I : 0) | (ds ? JUR_S : 0) | (ml ? JUR_M : 0);
         return new JurCase(pattern, input, tdfaFlags, jurFlags, ucc, ci);
@@ -329,15 +349,13 @@ public final class CampaignFuzzer {
         // Skeleton = protocol with the parenthesized group clauses stripped;
         // equal skeletons mean every overall span agreed and only group
         // bookkeeping diverged.
-        boolean groupParticipation = vm.equals(asm) && sameSkeleton(jur, vm)
-            && c.pattern().matches(".*[*+{].*");
+        boolean groupParticipation = vm.equals(asm) && sameSkeleton(jur, vm) && c.pattern().matches(".*[*+{].*");
         if (surrogate || lineterm || unitBoundary || caretEol || dollarEol || groupParticipation) {
             String fam = surrogate ? "surrogate-code-unit"
                 : lineterm ? "line-terminator-set"
-                    : unitBoundary ? "unit-boundary-positions"
-                        : caretEol ? "caret-after-final-newline"
-                            : dollarEol ? "dollar-before-final-newline" : "group-participation-lineage";
-            counts.soft("KNOWN_" + fam.toUpperCase(java.util.Locale.ROOT));
+                    : unitBoundary ? "unit-boundary-positions" : caretEol ? "caret-after-final-newline"
+                        : dollarEol ? "dollar-before-final-newline" : "group-participation-lineage";
+            counts.soft("KNOWN_" + fam.toUpperCase(Locale.ROOT));
             camp.rec(caseSeed, "JUR_KNOWN (" + fam + ")", kvJur(c, jur, vm, asm));
             return;
         }
@@ -361,8 +379,7 @@ public final class CampaignFuzzer {
                 vm ? io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.tdfaFlags(), TdfaRunner::new, null)
                     : io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.tdfaFlags(), null, null);
             return DifferentialFuzzer.compute(p, c.input());
-        } catch (io.github.jemmix.tdfa.core.parser.PatternSyntaxException
-                | io.github.jemmix.tdfa.core.budget.PatternTooLargeException e) {
+        } catch (io.github.jemmix.tdfa.core.parser.PatternSyntaxException | PatternTooLargeException e) {
             return "<reject:" + DifferentialFuzzer.firstLine(e.getMessage()) + ">";
         } catch (RuntimeException e) {
             return "<exception:" + e.getClass().getSimpleName() + ">";
@@ -512,7 +529,8 @@ public final class CampaignFuzzer {
             return pfx + "_BUDGET";
         }
         if (oracle.startsWith("<reject")) {
-            return asm.startsWith("<reject") && vm.startsWith("<reject") ? null : pfx + "_COMPILE_PARITY (re2j rejects)";
+            return asm.startsWith("<reject") && vm.startsWith("<reject") ? null
+                : pfx + "_COMPILE_PARITY (re2j rejects)";
         }
         if (asm.startsWith("<reject") || vm.startsWith("<reject")) {
             return pfx + "_COMPILE_PARITY (tdfa rejects)";
@@ -591,17 +609,16 @@ public final class CampaignFuzzer {
                 // input actually contains a well-formed pair (an interior to
                 // miss). Everything else stays a hard finding.
                 String pikeStr = guarded(() -> pikeIterate(sim, input));
-                boolean known = pikeStr != null && pikeStr.equals(findIterate(pr.vm, input))
-                    && hasWellFormedPair(input);
+                boolean known =
+                    pikeStr != null && pikeStr.equals(findIterate(pr.vm, input)) && hasWellFormedPair(input);
                 String kind = known ? "SEQ_KNOWN_PAIR_INTERIOR_SCAN" : "SEQ_PATH_MISMATCH";
                 if (known) {
                     counts.soft(kind);
                 } else {
                     counts.hard(kind);
                 }
-                camp.rec(caseSeed, kind, "pattern", pattern, "input", input, "wrapper",
-                    w.getClass().getSimpleName(), "stringVm", vmStr, "stringAsm", asmStr, "wrapVm", wv, "wrapAsm",
-                    wa);
+                camp.rec(caseSeed, kind, "pattern", pattern, "input", input, "wrapper", w.getClass().getSimpleName(),
+                    "stringVm", vmStr, "stringAsm", asmStr, "wrapVm", wv, "wrapAsm", wa);
                 if (!known) {
                     camp.log("HARD %s seed=%d pat=%s in=%s", kind, caseSeed, DifferentialFuzzer.escape(pattern),
                         DifferentialFuzzer.escape(input));
@@ -618,8 +635,8 @@ public final class CampaignFuzzer {
         String asmCs = findIterate(pr.asm, sb);
         if (pike == null || !pike.equals(vmCs) || !pike.equals(asmCs)) {
             counts.hard("SEQ_SIM_MISMATCH");
-            camp.rec(caseSeed, "SEQ_SIM_MISMATCH", "pattern", pattern, "input", input, "pike", pike, "vm", vmCs,
-                "asm", asmCs);
+            camp.rec(caseSeed, "SEQ_SIM_MISMATCH", "pattern", pattern, "input", input, "pike", pike, "vm", vmCs, "asm",
+                asmCs);
             camp.log("HARD SEQ_SIM_MISMATCH seed=%d pat=%s in=%s pike=%s vm=%s", caseSeed,
                 DifferentialFuzzer.escape(pattern), DifferentialFuzzer.escape(input), pike, vmCs);
             return;
@@ -740,21 +757,6 @@ public final class CampaignFuzzer {
 
     // ================ mode: families — fact-gated rung families ================
 
-    static final String[] PREFIX_TAILS =
-        {"\\w+", "\\d+", "[a-z0-9]{2,}", "(a|b)+", "\\S{1,4}", ".*x", "(?:ab|ba)+", "\\w\\d", "(q|1){2,}"};
-
-    static final String[] CAND_PATTERNS =
-        {"(a|b)+c", "[wx9]{2,}z", "\\w\\s?k", "(ab|ba)*f", "[^a]{1,3}q", "\\d+x?", "(z|9)[a-z]k", "[a-c]{3}[^x]",
-            "(\\w\\d)+e"};
-
-    static final String[] FAST_PATTERNS =
-        {"\\d+", "[a-f0-9]{2,8}", "a+|b+", "\\w\\d\\w", "[0-9]+\\.[0-9]+", "[a-z]+!", "\\d\\s\\d"};
-
-    static final String LIT_ALPHABET = "abz09ZYqw_.";
-
-    /** Input pool for family shapes (ASCII-dominant). */
-    static final String INPUT_ALPHABET = "abz09ZY qw_-.#~\n";
-
     record FamCase(String family, String pattern, String input, int flags, boolean matchesProbe) {
     }
 
@@ -779,9 +781,9 @@ public final class CampaignFuzzer {
                 for (int i = 0; i < n; i++) {
                     b.append(LIT_ALPHABET.charAt(r.nextInt(LIT_ALPHABET.length())));
                 }
-                return new FamCase("prefix", io.github.jemmix.tdfa.Pattern.quote(b.toString())
-                    + PREFIX_TAILS[r.nextInt(PREFIX_TAILS.length)], asciiInput(r, 0, 30, b.toString(), 0.6), flags,
-                    false);
+                return new FamCase("prefix",
+                    io.github.jemmix.tdfa.Pattern.quote(b.toString()) + PREFIX_TAILS[r.nextInt(PREFIX_TAILS.length)],
+                    asciiInput(r, 0, 30, b.toString(), 0.6), flags, false);
             }
             case 2 -> { // CAND_SCAN: class/alternation shape, short input
                 return new FamCase("cand-scan", CAND_PATTERNS[r.nextInt(CAND_PATTERNS.length)],
@@ -815,12 +817,12 @@ public final class CampaignFuzzer {
     static void familiesCase(long caseSeed, Camp camp, Counts counts) {
         FamCase c = genFamilies(caseSeed);
         DifferentialFuzzer.Prepared pr = DifferentialFuzzer.prepare(c.pattern(), c.flags());
-        String oracleStr = pr.oracle != null ? guarded(() -> DifferentialFuzzer.compute(pr.oracle, c.input()))
-            : pr.oracleTag;
+        String oracleStr =
+            pr.oracle != null ? guarded(() -> DifferentialFuzzer.compute(pr.oracle, c.input())) : pr.oracleTag;
         String asm = pr.asmTag != null ? pr.asmTag : guarded(() -> DifferentialFuzzer.compute(pr.asm, c.input()));
         String vm = pr.vmTag != null ? pr.vmTag : guarded(() -> DifferentialFuzzer.compute(pr.vm, c.input()));
-        String kind = classifyThreeWay(oracleStr, asm == null ? "<exception:null>" : asm, vm == null
-            ? "<exception:null>" : vm, "FAMILY");
+        String kind = classifyThreeWay(oracleStr, asm == null ? "<exception:null>" : asm,
+            vm == null ? "<exception:null>" : vm, "FAMILY");
         if (kind != null && !kind.contains("BUDGET")) {
             counts.hard(kind);
             camp.rec(caseSeed, kind, "pattern", c.pattern(), "input", c.input(), "flags", c.flags(), "family",
@@ -868,9 +870,8 @@ public final class CampaignFuzzer {
     /** Engine-tier runner at flags=0 for the routing probe (same composition
      * as StrategyConformanceTest: Tnfa → Determinizer → TdfaRunner). */
     static TdfaRunner engineRunner(String pattern) {
-        io.github.jemmix.tdfa.core.tnfa.Tnfa nfa =
-            io.github.jemmix.tdfa.core.tnfa.Tnfa.compile(pattern, false, false, Re2jUnicodeProvider.INSTANCE, null);
-        return new TdfaRunner(io.github.jemmix.tdfa.core.determinize.Determinizer.compile(nfa, false));
+        Tnfa nfa = Tnfa.compile(pattern, false, false, Re2jUnicodeProvider.INSTANCE, null);
+        return new TdfaRunner(Determinizer.compile(nfa, false));
     }
 
     // ================ replay ================
@@ -881,8 +882,8 @@ public final class CampaignFuzzer {
         System.out.println("input:   " + DifferentialFuzzer.escape(c.input()));
         System.out.println("tdfaFlags: " + c.tdfaFlags() + "  jurFlags: " + c.jurFlags());
         try {
-            System.out.println("jur:     " + computeJur(java.util.regex.Pattern.compile(c.pattern(), c.jurFlags()),
-                c.input()));
+            System.out.println(
+                "jur:     " + computeJur(java.util.regex.Pattern.compile(c.pattern(), c.jurFlags()), c.input()));
         } catch (RuntimeException e) {
             System.out.println("jur:     <reject> " + e);
         }
@@ -893,8 +894,8 @@ public final class CampaignFuzzer {
             System.out.println("vm:      <reject> " + DifferentialFuzzer.firstLine(e.getMessage()));
         }
         try {
-            System.out.println("asm:     " + DifferentialFuzzer.compute(
-                io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.tdfaFlags(), null, null), c.input()));
+            System.out.println("asm:     " + DifferentialFuzzer
+                .compute(io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.tdfaFlags(), null, null), c.input()));
         } catch (RuntimeException e) {
             System.out.println("asm:     <reject> " + DifferentialFuzzer.firstLine(e.getMessage()));
         }
@@ -939,9 +940,9 @@ public final class CampaignFuzzer {
         System.out.println("vm(String):      " + findIterate(vm, input));
         System.out.println("pike(wrapper):   " + pikeIterate(sim, new StringBuilder(input)));
         System.out.println("vm(wrapper):     " + findIterate(vm, new StringBuilder(input)));
-        System.out.println("asm(wrapper):    " + findIterate(
-            io.github.jemmix.tdfa.Pattern.compile(pattern, 0, null, Re2jUnicodeProvider.INSTANCE),
-            new StringBuilder(input)));
+        System.out.println("asm(wrapper):    "
+            + findIterate(io.github.jemmix.tdfa.Pattern.compile(pattern, 0, null, Re2jUnicodeProvider.INSTANCE),
+                new StringBuilder(input)));
     }
 
     static void replayFamilies(long caseSeed) {
