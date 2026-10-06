@@ -33,8 +33,10 @@ package io.github.jemmix.tdfa.core.tnfa;
  *   terminator set, anchor end-of-line rules and boundary
  *   discipline to the runner and the ASM emitter.
  * <li><b>Polarity.</b> An axis set selects the RE2-lineage side;
- *   unset selects the java.util.regex-parity side. {@link #RE2} is
- *   every axis set; {@link #of()} every axis unset.
+ *   unset selects the java.util.regex-parity side. {@link #of()} is
+ *   every axis unset, and the withers compose any selection; named
+ *   bundles of axes are selections, and live with the selector —
+ *   the facade's flag surface — not on this type.
  * </ul>
  *
  * <p>Immutable value class — field equality; a wither returns the
@@ -58,14 +60,6 @@ public final class Semantics {
     private static final int EMPTY_ITERATION_SPANS_BIT = 32;
 
     private static final int UNGREEDY_U_BIT = 64;
-
-    private static final int ALL = 127;
-
-    /**
-     * Every axis set: the RE2-lineage side throughout — this
-     * library's historical behavior (re2j parity).
-     */
-    public static final Semantics RE2 = new Semantics(ALL);
 
     private final int bits;
 

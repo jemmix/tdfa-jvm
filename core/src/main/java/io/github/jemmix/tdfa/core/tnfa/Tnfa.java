@@ -104,13 +104,17 @@ public final class Tnfa {
     public static final int ABS_BEGIN = 16;
     public static final int ABS_END = 32;
 
+    /** Every axis set (the RE2-lineage reading): the legacy-overload default. */
+    private static final Semantics ALL_AXES = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
+        .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU();
+
     public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
         int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
         boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
         int[] fixedBase, int[] fixedOffset) {
         this(stateCount, epsFrom, epsTo, epsPri, epsTag, epsEmptyMask, symFrom, symTo, symClass, start, accept,
             tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
-            false, Semantics.RE2);
+            false, ALL_AXES);
     }
 
     public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
@@ -119,7 +123,7 @@ public final class Tnfa {
         int[] fixedBase, int[] fixedOffset, boolean multiValuedTags) {
         this(stateCount, epsFrom, epsTo, epsPri, epsTag, epsEmptyMask, symFrom, symTo, symClass, start, accept,
             tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
-            multiValuedTags, Semantics.RE2);
+            multiValuedTags, ALL_AXES);
     }
 
     public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
@@ -169,7 +173,7 @@ public final class Tnfa {
     /** Multi-valued twin of the plain entry (BT22 §3.1; see {@link #multiValuedTags}). */
     public static Tnfa compileMulti(String pattern, boolean disableUnicodeGroups, UnicodeDataProvider provider,
         CompileObserver observer, WorkMeter meter) {
-        return compile(pattern, disableUnicodeGroups, false, true, Semantics.RE2, provider, observer, meter);
+        return compile(pattern, disableUnicodeGroups, false, true, ALL_AXES, provider, observer, meter);
     }
 
     /** Multi-valued twin with an explicit {@link Semantics} (see {@link #semantics}). */
@@ -191,14 +195,14 @@ public final class Tnfa {
 
     public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
         boolean multiValuedTags, UnicodeDataProvider provider, CompileObserver observer, WorkMeter meter) {
-        return compile(pattern, disableUnicodeGroups, anchorBoth, multiValuedTags, Semantics.RE2, provider, observer,
-            meter);
+        return compile(pattern, disableUnicodeGroups, anchorBoth, multiValuedTags, ALL_AXES, provider, observer, meter);
     }
 
     /**
      * Fullest entry: every pipeline knob, the compile's
      * {@link Semantics} included (see {@link #semantics}); the
-     * legacy overloads above pass {@link Semantics#RE2}.
+     * legacy overloads above pass every axis set (the RE2-lineage
+     * reading).
      */
     public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
         boolean multiValuedTags, Semantics semantics, UnicodeDataProvider provider, CompileObserver observer,
