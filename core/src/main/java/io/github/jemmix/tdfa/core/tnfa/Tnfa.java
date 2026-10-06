@@ -72,6 +72,17 @@ public final class Tnfa {
      * downstream (determinizer, materializer, artifact) reads one source.
      */
     public final boolean multiValuedTags;
+    /**
+     * The compile's JUR-compat semantic-mode selection
+     * ({@code docs/jur-compat-default.md}): one value carrying the seven
+     * opt-out axes so every downstream pivot site (determinizer,
+     * materializer, artifact, runner, ASM emit) reads one source instead
+     * of seven booleans plumbed through every entry. Inert until the
+     * pivots are parameterized to consult it; pre-flip every compile
+     * runs {@link Semantics#RE2} — today's engine has only the set-side
+     * behavior on every axis.
+     */
+    public final Semantics semantics;
     public final boolean unicodeWordBoundary;
     public final int[] wordRanges;
     public final Map<String, Integer> namedGroups;
@@ -102,13 +113,22 @@ public final class Tnfa {
         int[] fixedBase, int[] fixedOffset) {
         this(stateCount, epsFrom, epsTo, epsPri, epsTag, epsEmptyMask, symFrom, symTo, symClass, start, accept,
             tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
-            false);
+            false, Semantics.RE2);
     }
 
     public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
         int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
         boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
         int[] fixedBase, int[] fixedOffset, boolean multiValuedTags) {
+        this(stateCount, epsFrom, epsTo, epsPri, epsTag, epsEmptyMask, symFrom, symTo, symClass, start, accept,
+            tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
+            multiValuedTags, Semantics.RE2);
+    }
+
+    public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
+        int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
+        boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
+        int[] fixedBase, int[] fixedOffset, boolean multiValuedTags, Semantics semantics) {
         this.stateCount = stateCount;
         this.epsFrom = epsFrom;
         this.epsTo = epsTo;
@@ -124,6 +144,7 @@ public final class Tnfa {
         this.groupCount = groupCount;
         this.multiline = multiline;
         this.multiValuedTags = multiValuedTags;
+        this.semantics = semantics;
         this.unicodeWordBoundary = unicodeWordBoundary;
         this.wordRanges = wordRanges;
         this.namedGroups = namedGroups;
@@ -151,7 +172,13 @@ public final class Tnfa {
     /** Multi-valued twin of the plain entry (BT22 §3.1; see {@link #multiValuedTags}). */
     public static Tnfa compileMulti(String pattern, boolean disableUnicodeGroups, UnicodeDataProvider provider,
         CompileObserver observer, WorkMeter meter) {
-        return compile(pattern, disableUnicodeGroups, false, true, provider, observer, meter);
+        return compile(pattern, disableUnicodeGroups, false, true, Semantics.RE2, provider, observer, meter);
+    }
+
+    /** Multi-valued twin with an explicit semantic-mode selection (see {@link #semantics}). */
+    public static Tnfa compileMulti(String pattern, boolean disableUnicodeGroups, Semantics semantics,
+        UnicodeDataProvider provider, CompileObserver observer, WorkMeter meter) {
+        return compile(pattern, disableUnicodeGroups, false, true, semantics, provider, observer, meter);
     }
 
     /**
@@ -167,6 +194,20 @@ public final class Tnfa {
 
     public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
         boolean multiValuedTags, UnicodeDataProvider provider, CompileObserver observer, WorkMeter meter) {
+        return compile(pattern, disableUnicodeGroups, anchorBoth, multiValuedTags, Semantics.RE2, provider, observer,
+            meter);
+    }
+
+    /**
+     * Fullest entry: every pipeline knob, the JUR-compat semantic-mode
+     * selection included (see {@link #semantics}). Pre-flip the facade
+     * always passes {@link Semantics#RE2} — the axes are inert until the
+     * pivots consult them — and the legacy overloads above keep that
+     * default for every other caller.
+     */
+    public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
+        boolean multiValuedTags, Semantics semantics, UnicodeDataProvider provider, CompileObserver observer,
+        WorkMeter meter) {
         long t0 = System.nanoTime();
         // Front-end budget: ONE work meter (CPU, ticks) spans parse + TNFA
         // build so the pre-determinization surface is bounded too — the
@@ -214,7 +255,7 @@ public final class Tnfa {
         int accept = b.fresh();
         int start = b.build(ast, accept);
         Tnfa nfa = b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(), parsed.unicodeShorthand(),
-            parsed.unicodeWordRanges(), parsed.namedGroups(), fixedBase, fixedOffset, multiValuedTags);
+            parsed.unicodeWordRanges(), parsed.namedGroups(), fixedBase, fixedOffset, multiValuedTags, semantics);
         if (observer != null) {
             observer.stage(CompileObserver.Stage.TNFA, System.nanoTime() - t1, nfa.stateCount);
         }
@@ -828,7 +869,7 @@ public final class Tnfa {
 
         Tnfa build(int start, int accept, int tagCount, int groupCount, boolean multiline, boolean unicodeWordBoundary,
             int[] wordRanges, Map<String, Integer> namedGroups, int[] fixedBase, int[] fixedOffset,
-            boolean multiValuedTags) {
+            boolean multiValuedTags, Semantics semantics) {
             int n = eps.size();
             int[] eFrom = new int[n], eTo = new int[n], ePri = new int[n], eTag = new int[n], eEmpty = new int[n];
             for (int i = 0; i < n; i++) {
@@ -844,7 +885,7 @@ public final class Tnfa {
             CharClass[] sClass = symClasses.toArray(new CharClass[0]);
             return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, sFrom, sTo, sClass, start, accept, tagCount,
                 groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
-                multiValuedTags);
+                multiValuedTags, semantics);
         }
     }
 }

@@ -50,9 +50,12 @@ class FlagInteractionParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void unknownFlagRejects(RegexEngineFactory factory) {
-        assertThatThrownBy(() -> io.github.jemmix.tdfa.Pattern.compile("abc", 0x100, factory))
+        // 0x10000, not the historical 0x100: our 256 is now the (valid)
+        // JUR-compat UNIX_LINES bit — unknown-flag parity needs a bit
+        // neither engine defines (re2j tops out below 64K too).
+        assertThatThrownBy(() -> io.github.jemmix.tdfa.Pattern.compile("abc", 0x10000, factory))
             .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> com.google.re2j.Pattern.compile("abc", 0x100))
+        assertThatThrownBy(() -> com.google.re2j.Pattern.compile("abc", 0x10000))
             .isInstanceOf(IllegalArgumentException.class);
     }
 

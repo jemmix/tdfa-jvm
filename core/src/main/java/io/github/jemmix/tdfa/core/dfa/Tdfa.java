@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.core.dfa;
 
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
+import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 
 import java.util.Arrays;
@@ -146,6 +147,16 @@ public final class Tdfa {
 
     final boolean multiline;
     /**
+     * The compile's JUR-compat semantic-mode selection
+     * ({@code docs/jur-compat-default.md}), forwarded from the
+     * {@link Tnfa} like the mode booleans above — one immutable value
+     * carrying the seven opt-out axes, read by the runner (copied into
+     * its final fields) and by the ASM backend at emit time as the pivot
+     * sites are parameterized. Inert until then; pre-flip it is always
+     * {@link Semantics#RE2}.
+     */
+    final Semantics semantics;
+    /**
      * True iff every tag of this artifact is multi-valued (BT22 §3.1):
      * transition/final ops may then be {@link #OP_APPEND_POS} and final
      * registers hold {@link io.github.jemmix.tdfa.core.engine.TagTree}
@@ -280,7 +291,7 @@ public final class Tdfa {
         this(tagCount, groupCount, namedGroups, registerCount, finalRegBase, startState, stateCount, stateMeta,
             stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges, ops, entryHiPrefix, stateEntryMask,
             stateAcceptMask, longestMatch, stopOnAcceptMask, stopMaskUniform, multiline, unicodeWordBoundary,
-            wordRanges, fixedBase, fixedOffset, false, null, null, null, null, false, false);
+            wordRanges, fixedBase, fixedOffset, false, null, null, null, null, false, false, Semantics.RE2);
     }
 
     public Tdfa(int tagCount, int groupCount, Map<String, Integer> namedGroups, int registerCount, int finalRegBase,
@@ -289,7 +300,7 @@ public final class Tdfa {
         int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
         boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset, boolean pikeCutMatters,
         int[] wholeRanges, int[] wholeBase, int[] wholeCount, int[] wholeHiPrefix, boolean wholeSideComplete,
-        boolean multiValued) {
+        boolean multiValued, Semantics semantics) {
         this.tagCount = tagCount;
         this.groupCount = groupCount;
         this.namedGroups = namedGroups != null ? Collections.unmodifiableMap(namedGroups) : Collections.emptyMap();
@@ -316,6 +327,7 @@ public final class Tdfa {
         this.stopOnAcceptMask = stopOnAcceptMask;
         this.stopMaskUniform = stopMaskUniform;
         this.multiline = multiline;
+        this.semantics = semantics;
         this.multiValued = multiValued;
         this.unicodeWordBoundary = unicodeWordBoundary;
         this.wordRanges = wordRanges;
@@ -825,6 +837,15 @@ public final class Tdfa {
      */
     public boolean multiline() {
         return multiline;
+    }
+
+    /**
+     * The JUR-compat semantic-mode selection this artifact was compiled
+     * under ({@code docs/jur-compat-default.md}); inert until the pivot
+     * sites are parameterized, pre-flip always {@link Semantics#RE2}.
+     */
+    public Semantics semantics() {
+        return semantics;
     }
 
     /**

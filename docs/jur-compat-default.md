@@ -1,9 +1,12 @@
 # JUR-compat default — flip the divergence families, invert the flags
 
-Status: **design, not started**. Landing it is only cheap before the first
-Maven publish / 1.0 API lock (both still open in [TODO](../TODO.md)) — after
-that the same flip is a major version. This page is the full accounting:
-what flips, what the API looks like, what it costs, and how it's phased.
+Status: **in progress** — the flag-surface boilerplate is landed (bits,
+`RE2_COMPAT` preset, `Semantics` carrier Tnfa→Tdfa→runner; pre-flip
+no-ops). Landing the rest is only cheap before the first Maven publish /
+1.0 API lock (both still open in [TODO](../TODO.md)) — after that the
+same flip is a major version. This page is the full accounting: what
+flips, what the API looks like, what it costs, and how it's phased; the
+build order lives in the [work breakdown](jur-compat-wbs.md).
 
 ## Scope and terms
 

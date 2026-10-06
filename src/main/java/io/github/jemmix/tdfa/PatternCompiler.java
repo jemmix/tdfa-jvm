@@ -12,6 +12,7 @@ import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
 import io.github.jemmix.tdfa.core.engine.WholeEngine;
 import io.github.jemmix.tdfa.core.report.CompileObserver;
+import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
@@ -52,9 +53,9 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
  */
 final class PatternCompiler {
 
-    private static final int VALID_FLAGS =
-        Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.MULTILINE | Pattern.DISABLE_UNICODE_GROUPS
-            | Pattern.LONGEST_MATCH | Pattern.UNICODE_CHARACTER_CLASS | Pattern.FIND_ONLY | Pattern.MULTI_VALUED_TAGS;
+    private static final int VALID_FLAGS = Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.MULTILINE
+        | Pattern.DISABLE_UNICODE_GROUPS | Pattern.LONGEST_MATCH | Pattern.UNICODE_CHARACTER_CLASS | Pattern.FIND_ONLY
+        | Pattern.MULTI_VALUED_TAGS | Pattern.RE2_COMPAT;
 
     private PatternCompiler() {
     }
@@ -71,8 +72,18 @@ final class PatternCompiler {
         if ((flags & ~VALID_FLAGS) != 0) {
             throw new IllegalArgumentException(
                 "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS,"
-                    + " LONGEST_MATCH, UNICODE_CHARACTER_CLASS, FIND_ONLY, MULTI_VALUED_TAGS");
+                    + " LONGEST_MATCH, UNICODE_CHARACTER_CLASS, FIND_ONLY, MULTI_VALUED_TAGS, or the JUR-compat"
+                    + " opt-outs (UNIX_LINES, UNICODE_CASE, CODEPOINT_BOUNDARIES, EMPTY_LAST_LINE, END_OF_TEXT_ONLY,"
+                    + " EMPTY_ITERATION_SPANS, UNGREEDY_U; preset RE2_COMPAT)");
         }
+        // JUR-compat axes (docs/jur-compat-default.md): the seven opt-out
+        // bits are accepted but do not select yet — today's engine has only
+        // the set-side (re2j-pinned) behavior on every axis, so every
+        // compile runs RE2 semantics and the bits are no-ops. The flip
+        // commit replaces this line with the user-bit mapping (UNIX_LINES
+        // -> .unixLines() etc.); until then this is the whole pre-flip
+        // story, and the bits ride the Tnfa/Tdfa to the pivot sites.
+        Semantics semantics = Semantics.RE2;
         String fl = regex;
         if ((flags & Pattern.CASE_INSENSITIVE) != 0) {
             fl = "(?i)" + fl;
@@ -99,8 +110,8 @@ final class PatternCompiler {
         // side table has no reader, so its exploration is not even
         // attempted and its budget is never drawn.
         WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
-        Tnfa nfa = multiValued ? Tnfa.compileMulti(fl, disableUnicodeGroups, prov, obs, ledger)
-            : Tnfa.compile(fl, disableUnicodeGroups, false, prov, obs, ledger);
+        Tnfa nfa = multiValued ? Tnfa.compileMulti(fl, disableUnicodeGroups, semantics, prov, obs, ledger)
+            : Tnfa.compile(fl, disableUnicodeGroups, false, false, semantics, prov, obs, ledger);
         Tdfa find = findOnly ? Determinizer.compile(nfa, longest, obs, ledger.fork(0))
             : Determinizer.compileWithWholeSide(nfa, longest, obs, ledger.fork(0));
         if (findOnly) {
