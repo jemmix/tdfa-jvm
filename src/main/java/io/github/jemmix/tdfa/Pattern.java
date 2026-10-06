@@ -150,6 +150,105 @@ public interface Pattern extends Serializable {
     int MULTI_VALUED_TAGS = 128;
 
     /**
+     * <b>JUR-compat axes (pre-flip).</b> The seven flags from
+     * {@code UNIX_LINES} through {@code UNGREEDY_U} are the opt-out
+     * bits of the JUR-compat default design
+     * ({@code docs/jur-compat-default.md}): SET selects today's
+     * (re2j-pinned) behavior on that axis, UNSET selects the
+     * {@code java.util.regex}-parity behavior that will become the
+     * default when the design's flip commit lands. Until that flip they
+     * are accepted no-ops — the engine's current default on every axis
+     * already is the set-side behavior, so a compile with or without the
+     * bits is identical; the bits begin selecting when the engine pivots
+     * are parameterized to read them. {@link #RE2_COMPAT} is their OR.
+     * Degenerate combinations ({@code UNIX_LINES} with no
+     * {@code .}/anchors, {@code UNICODE_CASE} without
+     * {@link #CASE_INSENSITIVE}, {@code UNGREEDY_U} with no {@code (?U}
+     * in the pattern) are documented no-ops, not errors. Bit values are
+     * this library's own — names and semantics mirror the JDK flags it
+     * snapped onto, numerics do not.
+     *
+     * <p>This flag: {@code .}, {@code ^} and {@code $} recognize only
+     * {@code \n} as a line terminator — JDK-exact
+     * {@code java.util.regex.Pattern.UNIX_LINES} name and semantics.
+     * Unset (the post-flip default) they recognize the full
+     * {@code java.util.regex} terminator set: {@code \n}, {@code \r},
+     * {@code \r\n}, U+0085, U+2028, U+2029.
+     */
+    int UNIX_LINES = 256;
+
+    /**
+     * Flag: {@link #CASE_INSENSITIVE} folds the full Unicode simple-fold
+     * universe — JDK-exact {@code java.util.regex.Pattern.UNICODE_CASE}
+     * name and semantics. Unset (the post-flip default), bare
+     * {@code CASE_INSENSITIVE} folds ASCII only, like bare
+     * {@code java.util.regex} case-insensitivity; OR this bit in for the
+     * fold-Unicode behavior.
+     */
+    int UNICODE_CASE = 512;
+
+    /**
+     * Flag: codepoint discipline — scans skip surrogate-pair interiors,
+     * matches start and end on codepoint (not UTF-16 unit) edges. Unset
+     * (the post-flip default) is UTF-16 unit semantics, like
+     * {@code java.util.regex}: matches may start and end at any unit,
+     * lone surrogates match as single units, and {@code \b}/{@code \B}
+     * evaluate at every unit position.
+     */
+    int CODEPOINT_BOUNDARIES = 1024;
+
+    /**
+     * Flag: a multiline {@code ^} may match the empty last line after a
+     * trailing line terminator (re2j behavior). Unset (the post-flip
+     * default) it never does, like {@code java.util.regex}: on
+     * {@code "a\n"} a {@code (?m)^} matches at 0 only, never at 2.
+     */
+    int EMPTY_LAST_LINE = 2048;
+
+    /**
+     * Flag: {@code $} matches only at end of input, exactly {@code \z}
+     * (re2j behavior). Unset (the post-flip default) {@code $} may also
+     * match just before a final line terminator, like
+     * {@code java.util.regex}: on {@code "a\n"}, {@code a$} matches
+     * {@code 0..1}.
+     */
+    int END_OF_TEXT_ONLY = 4096;
+
+    /**
+     * Flag: a zero-width final loop iteration reports its group's span —
+     * {@code (\z)*} on {@code ""} yields group 1 = {@code 0..0} (re2j
+     * behavior). Unset (the post-flip default) the group stays
+     * non-participating ({@code -1}), like {@code java.util.regex}.
+     */
+    int EMPTY_ITERATION_SPANS = 8192;
+
+    /**
+     * Flag: {@code (?U)} / {@code (?U:...)} mean ungreedy — quantifiers
+     * default to lazy, a trailing {@code ?} makes them greedy (the
+     * PCRE/RE2 meaning, re2j's today). Unset (the post-flip default)
+     * {@code (?U)} is scoped {@code UNICODE_CASE} instead, per
+     * {@code java.util.regex}. v1 limit: group-scoped {@code (?U:...}
+     * fold upgrades need per-scope fold universes in the parser and are
+     * rejected with a {@code PatternSyntaxException}; top-level
+     * {@code (?U)} only.
+     */
+    int UNGREEDY_U = 16384;
+
+    /**
+     * Preset: preserves pre-flip (re2j-pinned) behavior on all seven
+     * JUR-compat axes — the bitwise OR of {@link #UNIX_LINES},
+     * {@link #UNICODE_CASE}, {@link #CODEPOINT_BOUNDARIES},
+     * {@link #EMPTY_LAST_LINE}, {@link #END_OF_TEXT_ONLY},
+     * {@link #EMPTY_ITERATION_SPANS} and {@link #UNGREEDY_U}. When the
+     * JUR-parity default lands, migrating a pre-flip compile is one OR
+     * with this constant; individual bits restore single axes. A plain
+     * {@code int}, so {@code & ~BIT} subtraction and OR-composition
+     * with the other flags both work.
+     */
+    int RE2_COMPAT = UNIX_LINES | UNICODE_CASE | CODEPOINT_BOUNDARIES | EMPTY_LAST_LINE | END_OF_TEXT_ONLY
+        | EMPTY_ITERATION_SPANS | UNGREEDY_U;
+
+    /**
      * Compile {@code regex} with default flags (leftmost-first, generated engine).
      */
     static Pattern compile(String regex) {

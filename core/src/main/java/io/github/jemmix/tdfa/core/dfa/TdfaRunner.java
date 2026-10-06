@@ -8,6 +8,7 @@ import io.github.jemmix.tdfa.core.engine.MatchScratch;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
 import io.github.jemmix.tdfa.core.engine.TagTree;
 import io.github.jemmix.tdfa.core.engine.WholeEngine;
+import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 
 import java.util.ArrayList;
@@ -219,6 +220,15 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     private final boolean fastPath;
     /** Multi-valued artifact (BT22 §3.1): walks carry a TagTree for append ops. */
     private final boolean multi; // true = no masks + disjoint + not multiline
+    /**
+     * The compile's JUR-compat semantic-mode selection
+     * ({@code docs/jur-compat-default.md}), frozen from the artifact —
+     * the pivot sites (terminator set, anchor EOL rules, per-unit vs
+     * codepoint wordness and scan gating) read their axis here as they
+     * are parameterized. Inert until then; pre-flip always
+     * {@link Semantics#RE2}.
+     */
+    private final Semantics semantics;
     private final boolean unicodeWordBoundary;
     private final int[] wordRanges; // Unicode \w ranges for \b when unicodeWordBoundary is true
     /**
@@ -330,6 +340,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         this.fastPath = computeFastPath(tdfa);
         this.longestMatch = tdfa.longestMatch;
         this.multi = tdfa.multiValued;
+        this.semantics = tdfa.semantics();
         this.stopOnAcceptMask = tdfa.stopOnAcceptMask;
         this.stopMaskUniform = tdfa.stopMaskUniform;
         this.stateCount = tdfa.stateCount;
