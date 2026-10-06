@@ -147,13 +147,11 @@ public final class Tdfa {
 
     final boolean multiline;
     /**
-     * The compile's JUR-compat semantic-mode selection
-     * ({@code docs/jur-compat-default.md}), forwarded from the
-     * {@link Tnfa} like the mode booleans above — one immutable value
-     * carrying the seven opt-out axes, read by the runner (copied into
-     * its final fields) and by the ASM backend at emit time as the pivot
-     * sites are parameterized. Inert until then; pre-flip it is always
-     * {@link Semantics#RE2}.
+     * The compile's {@link Semantics}, forwarded from the
+     * {@link Tnfa} like the mode booleans above — the artifact's
+     * frozen interpretation policy, read by the ASM backend at emit
+     * time and by the runner. See {@link Semantics} for the axis
+     * set, polarity, and membership rule.
      */
     final Semantics semantics;
     /**
@@ -840,9 +838,8 @@ public final class Tdfa {
     }
 
     /**
-     * The JUR-compat semantic-mode selection this artifact was compiled
-     * under ({@code docs/jur-compat-default.md}); inert until the pivot
-     * sites are parameterized, pre-flip always {@link Semantics#RE2}.
+     * The compile's {@link Semantics} — the interpretation policy
+     * frozen on this artifact (see {@link #semantics}).
      */
     public Semantics semantics() {
         return semantics;
