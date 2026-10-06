@@ -52,6 +52,13 @@ shakedown slices add ~10 minutes. CI-gate slices: `FuzzSmokeTest`,
 
 ## Finding 1 — GENERIC rung starts matches inside surrogate pairs
 
+**Status**: fixed — the `runGeneric` restart advance now applies the
+`Alphabet.pairInterior` skip at both of its sites (the entry-check
+restart and the walk-failure restart); pinned by
+`CharSequencePairInteriorTest` and the campaign's `seq` leg, whose
+`SEQ_KNOWN_PAIR_INTERIOR_SCAN` soft lane is retired (wrapper-vs-String
+mismatches are hard findings again).
+
 **Severity**: correctness bug, CharSequence (non-String) inputs only.
 **Surface**: `io.github.jemmix.tdfa.core.dfa.TdfaRunner#runGeneric` — the
 restart loop advances `startSearch++` without the pair-interior skip that

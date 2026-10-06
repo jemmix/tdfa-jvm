@@ -594,35 +594,16 @@ public final class CampaignFuzzer {
             String wv = guarded(() -> DifferentialFuzzer.compute(pr.vm, w));
             String wa = guarded(() -> DifferentialFuzzer.compute(pr.asm, w));
             if (wv == null || wa == null || !wv.equals(vmStr) || !wa.equals(asmStr)) {
-                // KNOWN family (finding, 2026-10-03 campaign — see
-                // docs/fuzz-campaigns-2026-10-03.md): runGeneric's restart
-                // loop advances startSearch without the surrogate-pair-interior
-                // skip the String paths and PikeSim apply, so under non-String
-                // CharSequence inputs matches may START inside well-formed
-                // pairs (lone-low runes matching the low half; empty-capable
-                // patterns like \B matching at interior unit positions; scan
-                // shifts for anything that can start anywhere). Both engine
-                // tiers — ASM delegates CharSequence to the same runner path.
-                // Classification is spec-backed, not shape-guessed: the family
-                // applies only when PikeSim AGREES with the String path (the
-                // spec and the String ladder both implement the skip) and the
-                // input actually contains a well-formed pair (an interior to
-                // miss). Everything else stays a hard finding.
-                String pikeStr = guarded(() -> pikeIterate(sim, input));
-                boolean known =
-                    pikeStr != null && pikeStr.equals(findIterate(pr.vm, input)) && hasWellFormedPair(input);
-                String kind = known ? "SEQ_KNOWN_PAIR_INTERIOR_SCAN" : "SEQ_PATH_MISMATCH";
-                if (known) {
-                    counts.soft(kind);
-                } else {
-                    counts.hard(kind);
-                }
-                camp.rec(caseSeed, kind, "pattern", pattern, "input", input, "wrapper", w.getClass().getSimpleName(),
-                    "stringVm", vmStr, "stringAsm", asmStr, "wrapVm", wv, "wrapAsm", wa);
-                if (!known) {
-                    camp.log("HARD %s seed=%d pat=%s in=%s", kind, caseSeed, DifferentialFuzzer.escape(pattern),
-                        DifferentialFuzzer.escape(input));
-                }
+                // Finding 1 (2026-10-03 campaign) is FIXED: runGeneric's
+                // restart scan skips surrogate-pair interiors exactly like
+                // the String ladders and PikeSim, so wrapper == String
+                // protocol equality holds on both tiers — any mismatch
+                // here is a hard regression.
+                counts.hard("SEQ_PATH_MISMATCH");
+                camp.rec(caseSeed, "SEQ_PATH_MISMATCH", "pattern", pattern, "input", input, "wrapper",
+                    w.getClass().getSimpleName(), "stringVm", vmStr, "stringAsm", asmStr, "wrapVm", wv, "wrapAsm", wa);
+                camp.log("HARD SEQ_PATH_MISMATCH seed=%d pat=%s in=%s", caseSeed, DifferentialFuzzer.escape(pattern),
+                    DifferentialFuzzer.escape(input));
                 return;
             }
         }

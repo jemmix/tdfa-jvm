@@ -2564,6 +2564,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                         return null;
                     }
                     startSearch++;
+                    if (Alphabet.pairInterior(input, startSearch)) {
+                        startSearch++;
+                    }
                     if (startSearch > to) {
                         return null;
                     }
@@ -2701,6 +2704,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 return null;
             }
             startSearch++;
+            if (Alphabet.pairInterior(input, startSearch)) {
+                startSearch++;
+            }
             if (startSearch > to) {
                 return null;
             }
