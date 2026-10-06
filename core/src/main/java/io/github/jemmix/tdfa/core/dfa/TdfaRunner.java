@@ -221,12 +221,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     /** Multi-valued artifact (BT22 §3.1): walks carry a TagTree for append ops. */
     private final boolean multi; // true = no masks + disjoint + not multiline
     /**
-     * The compile's JUR-compat semantic-mode selection
-     * ({@code docs/jur-compat-default.md}), frozen from the artifact —
-     * the pivot sites (terminator set, anchor EOL rules, per-unit vs
-     * codepoint wordness and scan gating) read their axis here as they
-     * are parameterized. Inert until then; pre-flip always
-     * {@link Semantics#RE2}.
+     * The compile's {@link Semantics}, copied from the artifact — the
+     * match-time axes (terminator set, anchor EOL rules, boundary
+     * discipline) belong to this tier. See {@link Semantics} for the
+     * axis set, polarity, and membership rule.
      */
     private final Semantics semantics;
     private final boolean unicodeWordBoundary;

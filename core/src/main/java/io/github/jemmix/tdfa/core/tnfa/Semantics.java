@@ -1,28 +1,42 @@
 package io.github.jemmix.tdfa.core.tnfa;
 
 /**
- * The compile's semantic-mode selection: the seven JUR-compat axes of
- * {@code docs/jur-compat-default.md} ("the flags"), carried as one
- * immutable value instead of seven booleans threaded through every
- * pipeline entry. An axis SET selects the set-side (re2j-pinned)
- * behavior — today's only behavior on every axis; an axis UNSET selects
- * the JUR-parity side that the JUR-compat default flip will make the
- * shipped default. Names and semantics mirror the JDK flags where the
- * axis snapped onto one ({@code UNIX_LINES}, {@code UNICODE_CASE});
- * numerics are this class's own and do not mirror anything.
+ * A compile's interpretation policy: one side of each behavioral
+ * axis. The engine accepts one syntax; the axes are the respects in
+ * which that syntax admits two readings — the RE2 lineage this
+ * library descends from, and java.util.regex parity — carried as one
+ * immutable value instead of one boolean per axis threaded through
+ * every pipeline entry. Names mirror the JDK flag an axis snaps onto
+ * where one exists ({@code UNIX_LINES}, {@code UNICODE_CASE}); bit
+ * values are this class's own.
  *
- * <p>Like {@link Tnfa#multiValuedTags}, the selection rides the
- * {@link Tnfa} — one source, so parser pivots, the determinizer, the
- * materializer and the artifact all read it there — then freezes onto
- * the {@code Tdfa} ({@code semantics()}) and is copied into the
- * runner's final fields for the interpreter's pivot sites; the ASM tier
- * reads the same artifact getters at emit time. The axes are inert
- * until the pivots are parameterized to consult them: pre-flip every
- * compile runs {@link #RE2} regardless of the caller's opt-out bits,
- * and the flip commit is the one line in the facade that starts mapping
- * user bits onto this value.
+ * <p>Contract:
+ * <ul>
+ * <li><b>Compile-global, one source.</b> One value per compile: it
+ *   rides the {@link Tnfa}, freezes onto the {@code Tdfa}
+ *   ({@code semantics()}), and the runner copies it from the
+ *   artifact. Settings that are scoped parser state (inline
+ *   {@code (?i)}/{@code (?m)}/{@code (?s)}), facade capabilities
+ *   ({@code FIND_ONLY}), or single-stage protocol knobs
+ *   ({@code LONGEST_MATCH}, {@code MULTI_VALUED_TAGS}) are not axes
+ *   and never ride here — an axis has consults at more than one
+ *   stage or at match time.
+ * <li><b>Consumed by projection.</b> Each axis belongs to the
+ *   stage(s) that consume it: the fold universe, {@code (?U)}
+ *   meaning and {@code DOT} set belong to the parser; the
+ *   final-iteration span protocol to the determinizer; the
+ *   terminator set, anchor end-of-line rules and boundary
+ *   discipline to the runner and the ASM emitter.
+ * <li><b>Polarity.</b> An axis set selects the RE2-lineage side;
+ *   unset selects the java.util.regex-parity side. {@link #RE2} is
+ *   every axis set; {@link #of()} every axis unset.
+ * </ul>
  *
- * <p>Immutable; value equality (withers get compared in tests).
+ * <p>Immutable value class — field equality; a wither returns the
+ * same instance when its axis is already set. The seven axes below
+ * are the JUR-compat design's
+ * ({@code docs/jur-compat-default.md}); new axes join by the
+ * membership rule above, not by that document.
  */
 public final class Semantics {
 
@@ -43,9 +57,8 @@ public final class Semantics {
     private static final int ALL = 127;
 
     /**
-     * Every axis set: the pre-flip (re2j-pinned) behavior on all seven
-     * axes — the engine's only behavior today, hence the effective
-     * semantics of every compile until the flip.
+     * Every axis set: the RE2-lineage side throughout — this
+     * library's historical behavior (re2j parity).
      */
     public static final Semantics RE2 = new Semantics(ALL);
 
@@ -56,8 +69,8 @@ public final class Semantics {
     }
 
     /**
-     * Every axis unset — the post-flip JUR-parity default. Build the
-     * set side by chaining the axis withers.
+     * Every axis unset — the java.util.regex-parity side throughout.
+     * Build the RE2 side by chaining the axis withers.
      */
     public static Semantics of() {
         return new Semantics(0);

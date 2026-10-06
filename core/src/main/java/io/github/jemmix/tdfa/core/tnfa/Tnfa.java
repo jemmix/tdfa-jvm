@@ -73,14 +73,11 @@ public final class Tnfa {
      */
     public final boolean multiValuedTags;
     /**
-     * The compile's JUR-compat semantic-mode selection
-     * ({@code docs/jur-compat-default.md}): one value carrying the seven
-     * opt-out axes so every downstream pivot site (determinizer,
-     * materializer, artifact, runner, ASM emit) reads one source instead
-     * of seven booleans plumbed through every entry. Inert until the
-     * pivots are parameterized to consult it; pre-flip every compile
-     * runs {@link Semantics#RE2} — today's engine has only the set-side
-     * behavior on every axis.
+     * The compile's {@link Semantics} — its interpretation policy —
+     * riding the NFA beside {@link #multiValuedTags} as the single
+     * source every downstream stage projects from, so no stage needs
+     * a per-axis parameter at its entry. See {@link Semantics} for
+     * the axis set, polarity, and membership rule.
      */
     public final Semantics semantics;
     public final boolean unicodeWordBoundary;
@@ -175,7 +172,7 @@ public final class Tnfa {
         return compile(pattern, disableUnicodeGroups, false, true, Semantics.RE2, provider, observer, meter);
     }
 
-    /** Multi-valued twin with an explicit semantic-mode selection (see {@link #semantics}). */
+    /** Multi-valued twin with an explicit {@link Semantics} (see {@link #semantics}). */
     public static Tnfa compileMulti(String pattern, boolean disableUnicodeGroups, Semantics semantics,
         UnicodeDataProvider provider, CompileObserver observer, WorkMeter meter) {
         return compile(pattern, disableUnicodeGroups, false, true, semantics, provider, observer, meter);
@@ -199,11 +196,9 @@ public final class Tnfa {
     }
 
     /**
-     * Fullest entry: every pipeline knob, the JUR-compat semantic-mode
-     * selection included (see {@link #semantics}). Pre-flip the facade
-     * always passes {@link Semantics#RE2} — the axes are inert until the
-     * pivots consult them — and the legacy overloads above keep that
-     * default for every other caller.
+     * Fullest entry: every pipeline knob, the compile's
+     * {@link Semantics} included (see {@link #semantics}); the
+     * legacy overloads above pass {@link Semantics#RE2}.
      */
     public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
         boolean multiValuedTags, Semantics semantics, UnicodeDataProvider provider, CompileObserver observer,

@@ -76,13 +76,11 @@ final class PatternCompiler {
                     + " opt-outs (UNIX_LINES, UNICODE_CASE, CODEPOINT_BOUNDARIES, EMPTY_LAST_LINE, END_OF_TEXT_ONLY,"
                     + " EMPTY_ITERATION_SPANS, UNGREEDY_U; preset RE2_COMPAT)");
         }
-        // JUR-compat axes (docs/jur-compat-default.md): the seven opt-out
-        // bits are accepted but do not select yet — today's engine has only
-        // the set-side (re2j-pinned) behavior on every axis, so every
-        // compile runs RE2 semantics and the bits are no-ops. The flip
-        // commit replaces this line with the user-bit mapping (UNIX_LINES
-        // -> .unixLines() etc.); until then this is the whole pre-flip
-        // story, and the bits ride the Tnfa/Tdfa to the pivot sites.
+        // JUR-compat (docs/jur-compat-default.md): the seven opt-out
+        // bits are accepted but select nothing yet — the engine
+        // implements only the RE2-lineage side on every axis, so every
+        // compile runs RE2. The flip replaces this line with the
+        // user-bit mapping (UNIX_LINES -> .unixLines() etc.).
         Semantics semantics = Semantics.RE2;
         String fl = regex;
         if ((flags & Pattern.CASE_INSENSITIVE) != 0) {
