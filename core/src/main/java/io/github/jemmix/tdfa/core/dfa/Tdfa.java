@@ -281,6 +281,10 @@ public final class Tdfa {
      */
     private int posFlagDepsCache = -1;
 
+    /** Every axis set (the RE2-lineage reading): the legacy-constructor default. */
+    private static final Semantics ALL_AXES = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
+        .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU();
+
     public Tdfa(int tagCount, int groupCount, Map<String, Integer> namedGroups, int registerCount, int finalRegBase,
         int startState, int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
         int[] stateFinalOpsByMask, int[] ranges, int[] ops, int[] entryHiPrefix, int[] stateEntryMask,
@@ -289,7 +293,7 @@ public final class Tdfa {
         this(tagCount, groupCount, namedGroups, registerCount, finalRegBase, startState, stateCount, stateMeta,
             stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges, ops, entryHiPrefix, stateEntryMask,
             stateAcceptMask, longestMatch, stopOnAcceptMask, stopMaskUniform, multiline, unicodeWordBoundary,
-            wordRanges, fixedBase, fixedOffset, false, null, null, null, null, false, false, Semantics.RE2);
+            wordRanges, fixedBase, fixedOffset, false, null, null, null, null, false, false, ALL_AXES);
     }
 
     public Tdfa(int tagCount, int groupCount, Map<String, Integer> namedGroups, int registerCount, int finalRegBase,

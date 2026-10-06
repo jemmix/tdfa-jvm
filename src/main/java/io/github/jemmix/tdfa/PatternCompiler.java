@@ -57,6 +57,10 @@ final class PatternCompiler {
         | Pattern.DISABLE_UNICODE_GROUPS | Pattern.LONGEST_MATCH | Pattern.UNICODE_CHARACTER_CLASS | Pattern.FIND_ONLY
         | Pattern.MULTI_VALUED_TAGS | Pattern.RE2_COMPAT;
 
+    /** The facade's pre-flip selection: every axis set (the RE2-lineage reading). */
+    private static final Semantics RE2_LANE = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
+        .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU();
+
     private PatternCompiler() {
     }
 
@@ -79,9 +83,9 @@ final class PatternCompiler {
         // JUR-compat (docs/jur-compat-default.md): the seven opt-out
         // bits are accepted but select nothing yet — the engine
         // implements only the RE2-lineage side on every axis, so every
-        // compile runs RE2. The flip replaces this line with the
-        // user-bit mapping (UNIX_LINES -> .unixLines() etc.).
-        Semantics semantics = Semantics.RE2;
+        // compile runs the RE2 lane. The flip replaces this line with
+        // the user-bit mapping (UNIX_LINES -> .unixLines() etc.).
+        Semantics semantics = RE2_LANE;
         String fl = regex;
         if ((flags & Pattern.CASE_INSENSITIVE) != 0) {
             fl = "(?i)" + fl;

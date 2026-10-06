@@ -42,13 +42,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *       shared interpreter);</li>
  *   <li>the bits participate in {@code equals} and serialization (the
  *       flags int is capability identity, the FIND_ONLY contract);</li>
- *   <li>the pipeline carries {@link Semantics#RE2} pre-flip — the
- *       carrier is wired Tnfa &rarr; Tdfa ready for the pivot
- *       parameterization to read, and {@link Semantics} itself is a
- *       well-behaved value class.</li>
+ *   <li>the pipeline carries the every-axis-set value (the RE2-lineage
+ *       reading) pre-flip — the carrier is wired Tnfa &rarr; Tdfa ready
+ *       for the pivot parameterization to read, and {@link Semantics}
+ *       itself is a well-behaved value class.</li>
  * </ul>
  */
 class Re2CompatFlagsTest {
+
+    /** Every axis set (the RE2-lineage reading): the pre-flip pipeline value. */
+    private static final Semantics ALL_AXES = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
+        .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU();
 
     private static final int[] AXES = {Pattern.UNIX_LINES, Pattern.UNICODE_CASE, Pattern.CODEPOINT_BOUNDARIES,
         Pattern.EMPTY_LAST_LINE, Pattern.END_OF_TEXT_ONLY, Pattern.EMPTY_ITERATION_SPANS, Pattern.UNGREEDY_U};
@@ -168,18 +172,18 @@ class Re2CompatFlagsTest {
     @Test
     void pipelineCarriesRe2PreFlip() {
         Tnfa nfa = Tnfa.compile("(?i)a+");
-        assertThat(nfa.semantics).isEqualTo(Semantics.RE2);
-        assertThat(Determinizer.compile(nfa).semantics()).isEqualTo(Semantics.RE2);
+        assertThat(nfa.semantics).isEqualTo(ALL_AXES);
+        assertThat(Determinizer.compile(nfa).semantics()).isEqualTo(ALL_AXES);
         Tnfa explicit = Tnfa.compile("(?i)a+", false, false, false,
             Semantics.of().unixLines().unicodeCase().codepointBoundaries().emptyLastLine().endOfTextOnly()
                 .emptyIterationSpans().ungreedyU(),
             UnicodeProviders.get(), null, new WorkMeter(Budgets.compileComputeTicks()));
-        assertThat(explicit.semantics).isEqualTo(Semantics.RE2);
+        assertThat(explicit.semantics).isEqualTo(ALL_AXES);
         assertThat(explicit.semantics.isUnixLines()).isTrue();
-        assertThat(Semantics.of()).isNotEqualTo(Semantics.RE2);
+        assertThat(Semantics.of()).isNotEqualTo(ALL_AXES);
         Semantics once = Semantics.of().unixLines();
         assertThat(once.unixLines()).isSameAs(once);
-        assertThat(Semantics.RE2.toString()).contains("UNIX_LINES").contains("UNGREEDY_U");
+        assertThat(ALL_AXES.toString()).contains("UNIX_LINES").contains("UNGREEDY_U");
         assertThat(Semantics.of().toString()).isEqualTo("Semantics[]");
     }
 

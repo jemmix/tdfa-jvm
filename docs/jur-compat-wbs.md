@@ -10,7 +10,7 @@ live in git history.
 
 - [x] Flag surface: the seven opt-out bits (`UNIX_LINES` … `UNGREEDY_U`) + `RE2_COMPAT` preset on `Pattern`, whitelisted in `PatternCompiler` — pre-flip accepted no-ops (the current default already is the set-side behavior on every axis)
 - [x] `Semantics` carrier (core.tnfa): rides the `Tnfa` beside `multiValuedTags`, freezes onto `Tdfa` (`semantics()`), copied into `TdfaRunner` — one read site per tier for the pivot gating
-- [x] Pre-flip wiring: every facade compile runs `Semantics.RE2`; the flip is replacing that one line in `PatternCompiler` with the user-bit mapping
+- [x] Pre-flip wiring: every facade compile runs the every-axis-set value (the RE2 lane — `RE2_LANE`, composed from the withers; the type keeps no lineage-named constant); the flip is replacing that one line in `PatternCompiler` with the user-bit mapping
 - [x] No-op equivalence pinned per axis + preset across both engine tiers (`Re2CompatFlagsTest`); unknown-flag parity probe moved off 0x100 (now `UNIX_LINES`)
 
 ## 1. Prerequisite — 0.5 d
@@ -41,7 +41,7 @@ Both behaviors selectable, **default unchanged**; audit every rung × tier × in
 
 ## 5. The flip — 1 d
 
-- [ ] One-line default change in `PatternCompiler` (`Semantics.RE2` → the user-bit mapping); pivot defaults flip with it
+- [ ] One-line default change in `PatternCompiler` (`RE2_LANE` → the user-bit mapping); pivot defaults flip with it
 - [ ] Javadoc rewrite: drop the pre-flip axes note; README names the new default contract
 - [ ] README / `BENCHMARKS.md` re-baseline; decide the `JUR_COMPAT = 0` sugar constant (open decision)
 
