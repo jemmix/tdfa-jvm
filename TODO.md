@@ -36,6 +36,7 @@ git history (TODO.md before 2026-09-30).
 - [ ] TdfaRunner trace → per-engine (test-only)
 - [ ] JPMS module-info
 - [ ] JavaDoc all public API
+- [ ] Re-evaluate `Semantics` scope: parity-axes-only carrier vs absorbing mode knobs (`LONGEST_MATCH`, `MULTI_VALUED_TAGS`); decide before the API lock (breaking after)
 - [ ] Lock 1.0 API stability guarantees
 - [ ] JaCoCo coverage targets
 - [ ] Reproducible jar builds
