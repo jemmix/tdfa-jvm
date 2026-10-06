@@ -15,12 +15,17 @@ package io.github.jemmix.tdfa.core.tnfa;
  * <li><b>Compile-global, one source.</b> One value per compile: it
  *   rides the {@link Tnfa}, freezes onto the {@code Tdfa}
  *   ({@code semantics()}), and the runner copies it from the
- *   artifact. Settings that are scoped parser state (inline
- *   {@code (?i)}/{@code (?m)}/{@code (?s)}), facade capabilities
- *   ({@code FIND_ONLY}), or single-stage protocol knobs
- *   ({@code LONGEST_MATCH}, {@code MULTI_VALUED_TAGS}) are not axes
- *   and never ride here — an axis has consults at more than one
- *   stage or at match time.
+ *   artifact. Membership takes two conditions. <b>Lineage</b>: an
+ *   axis has a defined RE2-lineage side and a
+ *   java.util.regex-parity side — it distinguishes the two readings
+ *   of the one syntax. <b>Reach</b>: consults at more than one
+ *   stage or at match time. Scoped parser state (inline
+ *   {@code (?i)}/{@code (?m)}/{@code (?s)}) fails reach, consumed
+ *   at parse; facade capabilities ({@code FIND_ONLY}) never enter
+ *   core; engine regimes with no lineage counterpart —
+ *   {@code LONGEST_MATCH}, {@code MULTI_VALUED_TAGS} select an
+ *   output protocol, not a reading of the syntax — fail lineage
+ *   however many stages consult them.
  * <li><b>Consumed by projection.</b> Each axis belongs to the
  *   stage(s) that consume it: the fold universe, {@code (?U)}
  *   meaning and {@code DOT} set belong to the parser; the
