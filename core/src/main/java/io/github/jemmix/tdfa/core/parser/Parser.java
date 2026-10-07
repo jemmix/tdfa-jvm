@@ -102,6 +102,11 @@ public final class Parser {
     private static final int[] R_POSIX_XDIGIT = {'0', '9', 'A', 'F', 'a', 'f'};
 
     static final CharClass DOT = new CharClass(new int[]{0, '\n' - 1, '\n' + 1, 0x10FFFF}, false);
+    /** Dot under the full java.util.regex terminator set: excludes
+     *  {@code \n}, {@code \r}, U+0085, U+2028 and U+2029 ({@code \r\n} needs
+     *  no extra case — both halves are excluded as units). */
+    static final CharClass DOT_JUR =
+        new CharClass(new int[]{0, '\n' - 1, 0x0B, '\r' - 1, '\r' + 1, 0x84, 0x86, 0x2027, 0x202A, 0x10FFFF}, false);
     static final CharClass DOTALL = new CharClass(new int[]{0, 0x10FFFF}, false);
     static final CharClass DIGIT = new CharClass(R_DIGIT, false);
     static final CharClass NOT_DIGIT = new CharClass(R_DIGIT, true);
@@ -124,6 +129,12 @@ public final class Parser {
     boolean disableUnicodeGroups = false;
     boolean unicodeShorthand = false;
     UnicodeDataProvider provider;
+    /** The compile's parser-side pivot knobs (see {@link ParseOptions}) —
+     *  projected from the compile's Semantics by {@code Tnfa.compile}.
+     *  Today: the DOT terminator set (UNIX_LINES); the fold universe and
+     *  {@code (?U)} meaning join at their own WBS items. Legacy overloads
+     *  parse the RE2-lane selection. */
+    final ParseOptions options;
     /** Front-end work meter shared with the TNFA builder (see
      *  {@code Tnfa.compile}); meters the O(universe) fold-range scan. */
     final WorkMeter meter;
@@ -131,11 +142,13 @@ public final class Parser {
     private int[] cachedUnicodeWord;
     private int[] cachedUnicodeDigit;
 
-    private Parser(String src, boolean disableUnicodeGroups, UnicodeDataProvider provider, WorkMeter meter) {
+    private Parser(String src, boolean disableUnicodeGroups, UnicodeDataProvider provider, WorkMeter meter,
+        ParseOptions options) {
         this.src = src;
         this.disableUnicodeGroups = disableUnicodeGroups;
         this.provider = provider;
         this.meter = meter;
+        this.options = options;
     }
 
     public static Ast parse(String src) {
@@ -152,10 +165,19 @@ public final class Parser {
     }
 
     /** Metered variant: the caller (Tnfa.compile) shares one CPU budget
-     *  across parse and TNFA construction. */
+     *  across parse and TNFA construction. Legacy semantics: every axis set
+     *  (the RE2-lineage reading). */
     public static ParseResult parseResult(String src, boolean disableUnicodeGroups, boolean anchorBoth,
         UnicodeDataProvider provider, WorkMeter meter) {
-        Parser p = new Parser(src, disableUnicodeGroups, provider, meter);
+        return parseResult(src, disableUnicodeGroups, anchorBoth, ParseOptions.re2Lane(), provider, meter);
+    }
+
+    /** Fullest entry: the parser-side pivot knobs included (see
+     *  {@link ParseOptions}); {@code Tnfa.compile} projects the compile's
+     *  Semantics onto them. */
+    public static ParseResult parseResult(String src, boolean disableUnicodeGroups, boolean anchorBoth,
+        ParseOptions options, UnicodeDataProvider provider, WorkMeter meter) {
+        Parser p = new Parser(src, disableUnicodeGroups, provider, meter, options);
         Ast e = p.parseAlt();
         if (p.pos != p.src.length()) {
             throw fail(p, "unexpected '" + p.cur() + "'");
@@ -337,7 +359,10 @@ public final class Parser {
         }
         if (c == '.') {
             pos++;
-            return dotall ? DOTALL : DOT;
+            // UNIX_LINES axis: the dot skips \n only (the RE2-lineage and the
+            // JDK-flag reading agree); unset recognizes the full
+            // java.util.regex terminator set (DOT_JUR).
+            return dotall ? DOTALL : options.isDotNlOnly() ? DOT : DOT_JUR;
         }
         if (c == '^') {
             pos++;

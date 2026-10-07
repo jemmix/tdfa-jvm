@@ -516,7 +516,7 @@ final class TdfaMaterializer {
             if (sb.finalOpsVariants != null && isAccept) {
                 finalVariantState[s] = true;
                 if (flat.finalOpsByMask == null) {
-                    flat.finalOpsByMask = new int[n * 64];
+                    flat.finalOpsByMask = new int[n * flat.posFlagCells];
                 }
                 int[] variantOff = new int[sb.finalOpsVariants.length];
                 for (int v = 0; v < variantOff.length; v++) {
@@ -537,9 +537,9 @@ final class TdfaMaterializer {
                         flat.ops[opsHead++] = OP_END;
                     }
                 }
-                for (int M = 0; M < 64; M++) {
+                for (int M = 0; M < flat.posFlagCells; M++) {
                     int v = sb.finalMaskVariant[M];
-                    flat.finalOpsByMask[s * 64 + M] = v < 0 ? -1 : variantOff[v];
+                    flat.finalOpsByMask[s * flat.posFlagCells + M] = v < 0 ? -1 : variantOff[v];
                 }
                 if (flat.finalOpsOff[s] == 0 && variantOff.length > 0) {
                     flat.finalOpsOff[s] = variantOff[0];
@@ -548,12 +548,13 @@ final class TdfaMaterializer {
         }
         if (flat.finalOpsByMask != null) {
             // The table is authoritative for every state when present:
-            // uniform accepting states point all 64 cells at their φ;
+            // uniform accepting states point all cells at their φ;
             // non-accepting states stay all -1 (never read).
             for (int s = 0; s < n; s++) {
                 if (!finalVariantState[s]) {
                     int off = (flat.meta[s] & 1) != 0 ? flat.finalOpsOff[s] : -1;
-                    Arrays.fill(flat.finalOpsByMask, s * 64, s * 64 + 64, off);
+                    Arrays.fill(flat.finalOpsByMask, s * flat.posFlagCells, s * flat.posFlagCells + flat.posFlagCells,
+                        off);
                 }
             }
         }
@@ -594,7 +595,7 @@ final class TdfaMaterializer {
             try {
                 DfaMinimizer m = new DfaMinimizer(n, flat.meta, flat.base, flat.finalOpsOff, flat.ranges, flat.ops,
                     flat.entryMask, flat.acceptMask, flat.stopOnAcceptMask, flat.finalOpsByMask, flat.wholeBase,
-                    flat.wholeCount, flat.wholeRanges, longest, meter);
+                    flat.wholeCount, flat.wholeRanges, longest, flat.posFlagCells, meter);
                 partition = m.computePartition();
             } catch (PatternTooLargeException overBudget) {
                 obs.note("minimize", "skipped (compute budget)");
@@ -659,9 +660,10 @@ final class TdfaMaterializer {
         int[] minFinalOpsOff = new int[newN];
         int[] minEntryMask = new int[newN];
         int[] minAcceptMask = new int[newN];
-        int[] minStopMask = flat.stopOnAcceptMask != null ? new int[newN * 64] : null;
+        int cells = flat.posFlagCells;
+        int[] minStopMask = flat.stopOnAcceptMask != null ? new int[newN * cells] : null;
         int[] minRanges = new int[newTotalRanges * 5];
-        int[] minFinalOpsByMask = flat.finalOpsByMask != null ? new int[newN * 64] : null;
+        int[] minFinalOpsByMask = flat.finalOpsByMask != null ? new int[newN * cells] : null;
         int[] minWholeBase = flat.wholeRanges != null ? new int[newN] : null;
         int[] minWholeCount = flat.wholeRanges != null ? new int[newN] : null;
         int[] minWholeRanges = newTotalWholeRanges > 0 ? new int[newTotalWholeRanges * 5] : null;
@@ -678,10 +680,10 @@ final class TdfaMaterializer {
             minEntryMask[g] = flat.entryMask[r];
             minAcceptMask[g] = flat.acceptMask[r];
             if (minStopMask != null) {
-                System.arraycopy(flat.stopOnAcceptMask, r * 64, minStopMask, g * 64, 64);
+                System.arraycopy(flat.stopOnAcceptMask, r * cells, minStopMask, g * cells, cells);
             }
             if (minFinalOpsByMask != null) {
-                System.arraycopy(flat.finalOpsByMask, r * 64, minFinalOpsByMask, g * 64, 64);
+                System.arraycopy(flat.finalOpsByMask, r * cells, minFinalOpsByMask, g * cells, cells);
             }
             int base = flat.base[r];
             int count = rangeCount(flat.meta[r]);
@@ -820,7 +822,7 @@ final class TdfaMaterializer {
      */
     private Tdfa assemble(FlatDfa flat, int[] hiPrefix) {
         int stateCount = flat.stateCount;
-        // Uniformity facts for the stop-table tier: per-state (all 64
+        // Uniformity facts for the stop-table tier: per-state (all
         // posFlags cells identical within each state) and global (... and
         // identical across states).
         boolean perStateUniform = true;
@@ -833,13 +835,14 @@ final class TdfaMaterializer {
         }
         // POSIX has no stop table at all; report the same "uniform"
         // attribution it always had (the all-NEVER_STOP fill it would
-        // trivially satisfy) without the O(n*64) scan.
+        // trivially satisfy) without the O(n*cells) scan.
         if (flat.stopOnAcceptMask != null) {
+            int cells = flat.posFlagCells;
             int globalVal = flat.stopOnAcceptMask.length > 0 ? flat.stopOnAcceptMask[0] : 0;
             for (int s = 0; s < stateCount && perStateUniform; s++) {
-                int v0 = flat.stopOnAcceptMask[s * 64];
-                for (int m = 1; m < 64; m++) {
-                    if (flat.stopOnAcceptMask[s * 64 + m] != v0) {
+                int v0 = flat.stopOnAcceptMask[s * cells];
+                for (int m = 1; m < cells; m++) {
+                    if (flat.stopOnAcceptMask[s * cells + m] != v0) {
                         perStateUniform = false;
                         globalUniform = false;
                         break;
@@ -851,14 +854,14 @@ final class TdfaMaterializer {
             }
         }
         // Storage tier: POSIX -> neither (readers gate on Perl mode);
-        // Perl + per-state-uniform -> byte[n]; general Perl -> int[n*64].
+        // Perl + per-state-uniform -> byte[n]; general Perl -> int[n*cells].
         byte[] uniformStop = null;
         int[] finalStop = null;
         if (!longest) {
             if (perStateUniform) {
                 uniformStop = new byte[stateCount];
                 for (int s = 0; s < stateCount; s++) {
-                    uniformStop[s] = flat.stopOnAcceptMask[s * 64] != 0 ? (byte) 1 : 0;
+                    uniformStop[s] = flat.stopOnAcceptMask[s * flat.posFlagCells] != 0 ? (byte) 1 : 0;
                 }
             } else {
                 finalStop = flat.stopOnAcceptMask;
@@ -882,7 +885,7 @@ final class TdfaMaterializer {
             flat.entryMask, flat.acceptMask, longest, finalStop, uniformStop, nfa.multiline, nfa.unicodeWordBoundary,
             nfa.wordRanges, fixed ? nfa.fixedBase : null, fixed ? nfa.fixedOffset : null, flat.pikeCutMatters,
             flat.wholeRanges, flat.wholeBase, flat.wholeCount, flat.wholeHiPrefix, flat.wholeSideComplete,
-            nfa.multiValuedTags, nfa.semantics);
+            nfa.multiValuedTags, nfa.semantics, flat.posFlagCells);
     }
 
     /**
@@ -961,14 +964,21 @@ final class TdfaMaterializer {
         int[] entryMask;
         int[] acceptMask;
         /**
-         * [state * 64 + posFlags] stop decisions; null in POSIX.
+         * [state * posFlagCells + posFlags] stop decisions; null in POSIX.
          */
         int[] stopOnAcceptMask;
         /**
-         * [state * 64 + posFlags] → final-ops offset or -1; null unless
-         * some state has position-aware φ variants.
+         * [state * posFlagCells + posFlags] → final-ops offset or -1; null
+         * unless some state has position-aware φ variants.
          */
         int[] finalOpsByMask;
+        /**
+         * Cells per state in the posFlags-indexed tables (see
+         * {@link DeterminizedDfa#posFlagCells}); frozen from the
+         * determinized value, read by the flat-table build, the
+         * minimizer rewrite and the artifact assembly.
+         */
+        final int posFlagCells;
         final boolean pikeCutMatters;
         int globalMaxReg;
         int finalRegBase;
@@ -990,6 +1000,7 @@ final class TdfaMaterializer {
             this.entryMask = det.entryMask;
             this.acceptMask = det.acceptMask;
             this.stopOnAcceptMask = det.stopOnAcceptMask;
+            this.posFlagCells = det.posFlagCells;
             this.pikeCutMatters = det.pikeCutMatters;
             this.globalMaxReg = 2 * tagCount; // at least the working + final register blocks
             this.finalRegBase = finalRegBase;

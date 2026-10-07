@@ -17,16 +17,54 @@ live in git history.
 
 - [x] Fix finding 1: CharSequence scan pair-interior skip in `runGeneric` (the `Alphabet.pairInterior` guard) — a live default-lane bug until the flip, a `CODEPOINT_BOUNDARIES`-lane obligation after (`CharSequencePairInteriorTest`; the campaign's `SEQ_KNOWN_PAIR_INTERIOR_SCAN` soft lane retired — seq mismatches are hard again)
 
-## 2. Parameterize the pivots — 3–5 d
+## 2. Parameterize the pivots — landed
 
-Both behaviors selectable, **default unchanged**; audit every rung × tier × input type.
+Both behaviors selectable, **default unchanged** (every facade compile still
+runs the RE2 lane; RE2-lane artifacts are bit-identical to pre-item builds);
+audited every rung × tier × input type (`PivotLanesTest`).
 
-- [ ] Terminator set: `positionFlags`/`positionFlagsCS` (`TdfaRunner`) + parser `DOT` set (`Parser`) select full JUR set vs `\n`-only, gated on the `UNIX_LINES` axis
-- [ ] Anchor EOL rules: caret-after-final-newline (`EMPTY_LAST_LINE`) and dollar-before-final-newline (`END_OF_TEXT_ONLY`) in the same `positionFlags*`; decide the split-vs-`RE2_LINE_ANCHORS`-bundle open question
-- [ ] Per-unit vs codepoint wordness + scan gating: `isWordBefore`/`isWordAt`, `Alphabet.pairInterior` gating (~10 `TdfaRunner` sites, `RunnerTables.needleEndOverlapsPair`, ASM `INVOKESTATIC` helper) on the `CODEPOINT_BOUNDARIES` axis
-- [ ] Thread `Semantics` into `Parser.parseResult` (the parser-side pivots need it: `DOT` set, fold universe, `(?U`)
-- [ ] ASM tier: emit-time specialization per axis (the `genPositionFlagsC(..., boolean, boolean)` template) for every pivot the interpreter gained
-- [ ] Campaign probes both lanes while the shipped default stays RE2
+- [x] Terminator set: `positionFlags`/`positionFlagsCS` (`TdfaRunner`) select
+  full JUR set vs `\n`-only on the `UNIX_LINES` axis; parser `DOT` set the
+  same way — `Semantics` reaches the parser as a projection
+  (`ParseOptions.dotNlOnly`, built in `Tnfa.compile`; the parser package
+  stays below `tnfa` in the layer DAG, so the carrier itself cannot be the
+  parameter). JDK-exact details verified against a live java.util.regex:
+  `(?m)^` never matches at end of input — not even position 0 of an empty
+  input — and `(?m)$`/plain `$` exclude `\r\n` interiors (the `\r` position
+  owns the run).
+- [x] Anchor EOL rules: `EMPTY_LAST_LINE` (caret-after-final-newline) in
+  `BEGIN_TEXT`; `END_OF_TEXT_ONLY` (dollar-before-final-newline = java's
+  `\Z`) as a NEW position bit `Tnfa.FINAL_END` — plain `$` lowers to
+  `FINAL_END` when the axis is unset, to `ABS_END` (today's reading) when
+  set, so the RE2 lane never emits the bit. The posFlags-indexed tables
+  (stop, φ-by-mask, minimizer signatures, ASM `TABLESWITCH`) widened to a
+  per-artifact stride (`Tdfa.posFlagCells()`: 64, or 128 on JUR-`$`
+  compiles) — one decision in the determinizer, every reader takes it from
+  the value chain. **Open question decided: keep the split** (see the
+  design's open decisions).
+- [x] Wordness + scan gating on `CODEPOINT_BOUNDARIES`: the ~10
+  `pairInterior` start gates (candidate scans, restart loops, `runGeneric`
+  reseeds, `RunnerTables.literalIndexOf`, the prefix hooks) select on the
+  axis; `prefixHitUsable` gained a unit-lane twin (`prefixHitUsableUnit` —
+  ASM 9.10.1's frame computation rejects the boolean-arg descriptor). The
+  sim/trigger rungs (origin sim, search-DFA trigger) step codepoints, so
+  under unit semantics BOTH tiers' ladders skip them for the complete
+  restart floor. `isWordBefore`/`isWordAt` keep their decode gate
+  (`unicodeWordBoundary`) — JDK-verified: plain `\b` is per-unit,
+  UCC `\b` decodes pairs, in BOTH lanes; the axis moves start positions,
+  not the word predicate. `needleEndOverlapsPair` is a walk-decode
+  property and stays unconditional.
+- [x] `Semantics` threaded into the parse (the `ParseOptions` projection
+  above); fold universe and `(?U` join at item 3 through the same seam
+- [x] ASM tier: emit-time specialization per axis (`PfAxes` + the shared
+  bit emitters behind `genPositionFlagsC`/`emitPFInline`; FINAL_END,
+  full-set terminator checks, `\r\n` interiors, cand-scan guard, prefix
+  hook selection, rung-2 gating, cell stride) — default-lane bytecode
+  unchanged
+- [x] Campaign probes both lanes (`CampaignFuzzer` jur mode: the RE2-lane
+  case unchanged; a JUR-lane case compiles `Semantics.of()` at the core
+  tier and checks VM==ASM plus the live java.util.regex oracle, with the
+  residual surrogate/fold families soft and everything else hard)
 
 ## 3. Fold + U bits — 1 d
 

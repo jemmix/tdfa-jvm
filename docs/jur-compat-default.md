@@ -71,9 +71,12 @@ Set = today's behavior (the opt-out). Unset = the new JUR-parity default.
 `EMPTY_LAST_LINE` + `END_OF_TEXT_ONLY` are the old bundled
 `FINAL_TERMINATOR_ANCHORS` pair, split: inverted flags should name their own
 positive effect, and "empty last line" and "$ before final newline" are
-different sentences. A single `RE2_LINE_ANCHORS` bundle remains an option if
-review prefers one bit.
-
+different sentences. **Decision (the pivot item): keep the split.** The
+flag surface already shipped the two bits, the effects are independently
+selectable in the pivots (a full-terminator-set + empty-last-line lane is a
+coherent reading no single bundle could express), and `RE2_COMPAT`
+re-composes them; collapsing to one bit now would change the surface for
+no semantic gain. A single `RE2_LINE_ANCHORS` bundle remains off the table.
 ```java
 /** Preserves pre-flip (re2j-pinned) behavior. Migration is one OR. */
 public static final int RE2_COMPAT =
@@ -139,9 +142,8 @@ itself is one small, separately reviewable commit.
 
 ## Open decisions
 
-- Bundle `EMPTY_LAST_LINE` + `END_OF_TEXT_ONLY` into one bit or keep the
-  split (recommended: split — the effects are separable and the names are
-  self-documenting).
+- ~~Bundle `EMPTY_LAST_LINE` + `END_OF_TEXT_ONLY` into one bit or keep the
+  split~~ **Decided with the pivot item: keep the split** (rationale above).
 - Whether `JUR_COMPAT = 0` ships as a self-documenting constant (sugar;
   harmless).
 - Scoped `(?U:...)` fold in v2 vs the v1 top-level-only rejection (v1 limit

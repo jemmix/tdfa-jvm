@@ -227,6 +227,37 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * axis set, polarity, and membership rule.
      */
     private final Semantics semantics;
+    /**
+     * Terminator set of the UNIX_LINES axis: true = {@code \n} only (the
+     * RE2-lineage side); false = the full java.util.regex set
+     * ({@code \n}, {@code \r}, {@code \r\n}, U+0085, U+2028, U+2029).
+     * Selects the BEGIN_TEXT/END_TEXT/FINAL_END computations.
+     */
+    private final boolean nlOnlyTerminators;
+    /**
+     * EMPTY_LAST_LINE axis (set = RE2 side): a multiline {@code ^} may
+     * match the empty last line after a trailing terminator; unset
+     * (java.util.regex) never does — BEGIN_TEXT dies at {@code pos == len}.
+     */
+    private final boolean emptyLastLine;
+    /**
+     * CODEPOINT_BOUNDARIES axis (set = RE2 side): candidate scans and
+     * restart loops skip surrogate-pair interiors; unset (java.util.regex
+     * unit semantics) lets a match start at any UTF-16 unit. The walks
+     * themselves decode codepoints either way — this gates only the
+     * start-position enumerations.
+     */
+    private final boolean scanSkipsPairs;
+    /**
+     * Whether any mask / stop-table cell consults FINAL_END (the JUR
+     * plain-{@code $} predicate) — when true, positionFlags computes it.
+     */
+    private final boolean needsFinalEnd;
+    /**
+     * Cells per state in the posFlags-indexed tables (see
+     * {@link Tdfa#posFlagCells()}); runtime posFlags values stay below it.
+     */
+    private final int posCells;
     private final boolean unicodeWordBoundary;
     private final int[] wordRanges; // Unicode \w ranges for \b when unicodeWordBoundary is true
     /**
@@ -339,6 +370,12 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         this.longestMatch = tdfa.longestMatch;
         this.multi = tdfa.multiValued;
         this.semantics = tdfa.semantics();
+        // Frozen pivot selections (see fields): one read per axis here, none
+        // in the walks.
+        this.nlOnlyTerminators = semantics.isUnixLines();
+        this.emptyLastLine = semantics.isEmptyLastLine();
+        this.scanSkipsPairs = semantics.isCodepointBoundaries();
+        this.posCells = tdfa.posFlagCells();
         this.stopOnAcceptMask = tdfa.stopOnAcceptMask;
         this.stopMaskUniform = tdfa.stopMaskUniform;
         this.stateCount = tdfa.stateCount;
@@ -352,6 +389,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         // Derived, not inferred: the tables themselves declare which posFlag bits
         // they distinguish (see Tdfa.posFlagDeps) — no per-consumer model to keep in sync.
         this.needsWordFlags = (tdfa.posFlagDeps() & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY)) != 0;
+        this.needsFinalEnd = (tdfa.posFlagDeps() & Tnfa.FINAL_END) != 0;
         this.wordBits = RunnerTables.buildWordBits(tdfa.unicodeWordBoundary ? tdfa.wordRanges : null);
         this.startBits =
             (literalNeedle == null && (tdfa.stateMeta[tdfa.startState] & 1) == 0) ? buildStartBits() : null;
@@ -390,6 +428,20 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         return !RunnerTables.needleEndOverlapsPair(s, idx, needleLen) && !Alphabet.pairInterior(s, idx);
     }
 
+    /**
+     * Unit-semantics twin of {@link #prefixHitUsable(String, int, int)} (the
+     * CODEPOINT_BOUNDARIES axis unset): the needle-end guard stays — it is a
+     * walk-decode property (the walk consumes the whole pair a trailing high
+     * surrogate starts) — but hits may sit inside surrogate pairs, so the
+     * start guard is gone. Separate hook (not a boolean argument): the
+     * ASM-emitted prefix loop binds by name+descriptor at emit time, and
+     * ASM's frame computation chokes on the boolean-arg variant.
+     */
+    @EmittedSurface
+    public static boolean prefixHitUsableUnit(String s, int idx, int needleLen) {
+        return !RunnerTables.needleEndOverlapsPair(s, idx, needleLen);
+    }
+
     // ===== shared candidate-scan loops =====
     //
     // Both scans enumerate exactly the positions a leftmost match can start
@@ -425,7 +477,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 return PREFIX_DONE;
             }
             searchFrom = idx + 1;
-            if (!prefixHitUsable(input, idx, nlen)) {
+            if (!(scanSkipsPairs ? prefixHitUsable(input, idx, nlen) : prefixHitUsableUnit(input, idx, nlen))) {
                 continue;
             }
             if (boolWalkAt(input, idx, to)) {
@@ -455,7 +507,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 return null;
             }
             searchFrom = idx + 1;
-            if (!prefixHitUsable(input, idx, nlen)) {
+            if (!(scanSkipsPairs ? prefixHitUsable(input, idx, nlen) : prefixHitUsableUnit(input, idx, nlen))) {
                 continue;
             }
             if (walks >= ADAPTIVE_PREFILTER_AFTER && !boolWalkAt(input, idx, to)) {
@@ -485,8 +537,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         final long[] sb = this.startBits;
         for (int p = from; p < to; p++) {
             char c = input.charAt(p);
-            if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L && (c < 0xDC00 || !Alphabet.pairInterior(input, p))
-                && boolWalkAt(input, p, to)) {
+            if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L
+                && (c < 0xDC00 || !scanSkipsPairs || !Alphabet.pairInterior(input, p)) && boolWalkAt(input, p, to)) {
                 return true;
             }
         }
@@ -507,7 +559,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             if ((sb[c >>> 6] >>> (c & 63) & 1L) == 0L) {
                 continue;
             }
-            if (c >= 0xDC00 && Alphabet.pairInterior(input, p)) {
+            if (scanSkipsPairs && c >= 0xDC00 && Alphabet.pairInterior(input, p)) {
                 continue;
             }
             if (fails >= ADAPTIVE_PREFILTER_AFTER && !boolWalkAt(input, p, to)) {
@@ -712,7 +764,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             int len = s.length();
             if (literalNeedle != null) {
                 trace(Strategy.LITERAL);
-                return RunnerTables.literalIndexOf(s, literalNeedle, 0) >= 0;
+                return RunnerTables.literalIndexOf(s, literalNeedle, 0, scanSkipsPairs) >= 0;
             }
             MatchScratch sc = new MatchScratch();
             if (fastPath) {
@@ -746,13 +798,17 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                     trace(Strategy.CAND_SCAN);
                     return candScanBool(s, 1, len);
                 }
-                int w = triggerScan(s, 0, len, sc);
+                // The trigger scan and the origin sim step CODEPOINTS; under
+                // unit semantics (CODEPOINT_BOUNDARIES unset) their "no match
+                // starts before W" proof would miss interior-unit starts, so
+                // the complete restart loop serves alone from position 1.
+                int w = scanSkipsPairs ? triggerScan(s, 0, len, sc) : 1;
                 if (w < 0) {
                     return false;
                 }
                 trace(Strategy.WALK_RESTART);
                 for (int from = Math.max(w, 1); from <= maxStart; from++) {
-                    if (Alphabet.pairInterior(s, from)) {
+                    if (scanSkipsPairs && Alphabet.pairInterior(s, from)) {
                         continue;
                     }
                     int res = runStringMatchFrom(s, from, len);
@@ -1017,7 +1073,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         int eofFlags = positionFlagsCS(input, to, to);
         final int[] fm = this.finalOpsByMask;
         if (fm != null) {
-            int cell = fm[state * 64 + eofFlags];
+            int cell = fm[state * posCells + eofFlags];
             if (cell < 0) {
                 return null;
             } // no accept config alive under these posFlags
@@ -1070,9 +1126,12 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         }
         // Trigger scan: memoized search-DFA pass that both proves no-match and
         // bounds the restart loop to the kill-point window (no configuration
-        // alive before W can produce a match — see SearchDfa).
+        // alive before W can produce a match — see SearchDfa). Under unit
+        // semantics the proof is codepoint-stepped and would miss
+        // interior-unit starts (see find()), so the restart loop walks every
+        // position instead.
         if (maxStart > 0) {
-            int w = triggerScan(input, from, to, sc);
+            int w = scanSkipsPairs ? triggerScan(input, from, to, sc) : from + 1;
             if (w < 0) {
                 return null;
             }
@@ -1082,7 +1141,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         }
         trace(Strategy.WALK_RESTART);
         for (int startSearch = from + 1; startSearch <= maxStart; startSearch++) {
-            if (Alphabet.pairInterior(input, startSearch)) {
+            if (scanSkipsPairs && Alphabet.pairInterior(input, startSearch)) {
                 continue;
             }
             if (WTRACE) {
@@ -1110,7 +1169,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         }
         switch (force) {
             case ORIGIN_SIM :
-                if (fastPath) {
+                if (fastPath && scanSkipsPairs) {
                     // Verbatim rung 2 of runStringExtractFast: budgeted sim,
                     // trigger assist on exhaustion, exact walk, defensive
                     // restart. (The prefix/candidate scans above it are
@@ -1139,6 +1198,12 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 // fall through
             case TRIGGER :
             case RAW_SCAN : {
+                // Unit semantics: the sim/trigger rungs step codepoints (see
+                // find()); a forced entry under them degrades to the complete
+                // restart floor, mirroring the natural ladder's routing.
+                if (!scanSkipsPairs) {
+                    return forcedRestart(input, from, to, sc);
+                }
                 int w = triggerScan(input, from, to, sc, force);
                 if (w < 0) {
                     return null;
@@ -1157,7 +1222,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 trace(Strategy.WALK_RESTART);
                 int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? from : to;
                 for (int s = Math.max(from + 1, w); s <= maxStart; s++) {
-                    if (Alphabet.pairInterior(input, s)) {
+                    if (scanSkipsPairs && Alphabet.pairInterior(input, s)) {
                         continue;
                     }
                     h = fastPath ? tryStartFast(input, s, to, sc) : extractFrom(input, s, to, sc);
@@ -1184,7 +1249,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         trace(Strategy.WALK_RESTART);
         int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? from : to;
         for (int s = from; s <= maxStart; s++) {
-            if (s > from && Alphabet.pairInterior(input, s)) {
+            if (scanSkipsPairs && s > from && Alphabet.pairInterior(input, s)) {
                 continue;
             }
             MatchHolder h = fastPath ? tryStartFast(input, s, to, sc) : extractFrom(input, s, to, sc);
@@ -1246,7 +1311,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                     if (posFlags < 0) {
                         posFlags = positionFlags(input, pos, to);
                     }
-                    int cell = fm[state * 64 + posFlags];
+                    int cell = fm[state * posCells + posFlags];
                     if (WTRACE) {
                         System.err.println("[walk]   fmCell=" + cell + " M=" + Integer.toBinaryString(posFlags));
                     }
@@ -1625,7 +1690,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             sc = new MatchScratch();
         }
         for (int s = fromStart; s <= to; s++) {
-            if (Alphabet.pairInterior(input, s)) {
+            if (scanSkipsPairs && Alphabet.pairInterior(input, s)) {
                 continue;
             }
             MatchHolder h = tryStartFast(input, s, to, sc);
@@ -1896,6 +1961,17 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             trace(Strategy.CAND_SCAN);
             return candScanBool(input, 0, to);
         }
+        // Unit semantics: the trigger scan steps codepoints (see find());
+        // the complete per-unit walk floor serves instead.
+        if (!scanSkipsPairs) {
+            trace(Strategy.WALK_RESTART);
+            for (int from = 0; from <= to; from++) {
+                if (matchFromFast(input, from, to)) {
+                    return true;
+                }
+            }
+            return false;
+        }
         return triggerScan(input, 0, to, sc) >= 0;
     }
 
@@ -1970,7 +2046,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     private MatchHolder runStringExtractFast(String input, int from, int to, MatchScratch sc) {
         if (literalNeedle != null) {
             trace(Strategy.LITERAL);
-            int idx = RunnerTables.literalIndexOf(input, literalNeedle, from);
+            int idx = RunnerTables.literalIndexOf(input, literalNeedle, from, scanSkipsPairs);
             return idx < 0 ? null : new MatchHolder(idx, idx + literalNeedle.length(), new int[0]);
         }
         // 1) Try ONE single-start walk from `from` — the common short-input case
@@ -2010,6 +2086,13 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         //    Retrying every failed start with a full walk instead costs O(n)
         //    restarts × O(n) walk = O(n²) on dense-match regexes like
         //    [a-zA-Z]+ing.
+        //    Unit semantics (CODEPOINT_BOUNDARIES unset): the sim and the
+        //    trigger step codepoints and would miss interior-unit starts
+        //    (see find()); the complete per-unit restart floor serves.
+        if (!scanSkipsPairs) {
+            trace(Strategy.WALK_RESTART);
+            return restartExtract(input, from + 1, to, from, sc);
+        }
         trace(Strategy.ORIGIN_SIM);
         int leftmost = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS, sc);
         if (leftmost == LSS_BUDGET) {
@@ -2075,7 +2158,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                     if (posFlags < 0) {
                         posFlags = positionFlags(input, pos, to);
                     }
-                    int cell = fm[state * 64 + posFlags];
+                    int cell = fm[state * posCells + posFlags];
                     // cell < 0 (position-suppressed accept): do NOT record and
                     // do NOT stop — fall through to the transition, exactly
                     // like extractFrom (a `continue` here would skip the
@@ -2564,7 +2647,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                         return null;
                     }
                     startSearch++;
-                    if (Alphabet.pairInterior(input, startSearch)) {
+                    if (scanSkipsPairs && Alphabet.pairInterior(input, startSearch)) {
                         startSearch++;
                     }
                     if (startSearch > to) {
@@ -2583,14 +2666,14 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                         if (posFlags < 0) {
                             posFlags = positionFlagsCS(input, pos, to);
                         }
-                        int cell = fm[state * 64 + posFlags];
+                        int cell = fm[state * posCells + posFlags];
                         if (cell >= 0) {
                             lastAcceptPos = pos;
                             haveAccept = true;
                             if (regs != null && cell != 0) {
                                 applyOps(ops, cell, regs, pos, tree);
                             }
-                            if (!longestMatch && stopNow(state, posFlags)) {
+                            if (!anchored && !longestMatch && stopNow(state, posFlags)) {
                                 break;
                             }
                         }
@@ -2602,7 +2685,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                             if (regs != null) {
                                 applyFinalOps(state, regs, pos, tree);
                             }
-                            if (!longestMatch) {
+                            if (!anchored && !longestMatch) {
                                 if (posFlags < 0) {
                                     posFlags = positionFlagsCS(input, pos, to);
                                 }
@@ -2620,7 +2703,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                                 if (regs != null) {
                                     applyFinalOps(state, regs, pos, tree);
                                 }
-                                if (!longestMatch && stopNow(state, posFlags)) {
+                                if (!anchored && !longestMatch && stopNow(state, posFlags)) {
                                     break;
                                 }
                             }
@@ -2704,7 +2787,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 return null;
             }
             startSearch++;
-            if (Alphabet.pairInterior(input, startSearch)) {
+            if (scanSkipsPairs && Alphabet.pairInterior(input, startSearch)) {
                 startSearch++;
             }
             if (startSearch > to) {
@@ -2745,7 +2828,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         if (u != null) {
             return u[state] == 0;
         }
-        return stopOnAcceptMask[state * 64 + posFlags] != Tdfa.NEVER_STOP;
+        return stopOnAcceptMask[state * posCells + posFlags] != Tdfa.NEVER_STOP;
     }
 
     /**
@@ -2753,10 +2836,14 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      */
     private int positionFlags(String s, int pos, int len) {
         int flags = 0;
-        if (pos == 0 || (pos > 0 && s.charAt(pos - 1) == '\n')) {
+        // (emptyLastLine || pos < len): java's (?m)^ never matches at end
+        // of input — not even at position 0 of an EMPTY input ("Perl does
+        // not match ^ at end of input even after newline"); the RE2 side
+        // (axis set) keeps today's unconditional position-0 begin.
+        if ((emptyLastLine || pos < len) && (pos == 0 || lineBegin(s, pos, len))) {
             flags |= Tnfa.BEGIN_TEXT;
         }
-        if (pos == len || (pos < len && s.charAt(pos) == '\n')) {
+        if (pos == len || lineEnd(s, pos, len)) {
             flags |= Tnfa.END_TEXT;
         }
         if (pos == 0) {
@@ -2765,6 +2852,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         if (pos == len) {
             flags |= Tnfa.ABS_END;
         } // \z: absolute end, never affected by (?m)
+        if (needsFinalEnd && finalEnd(s, pos, len)) {
+            flags |= Tnfa.FINAL_END;
+        } // plain $ (END_OF_TEXT_ONLY unset): end, or before the final terminator run
         if (needsWordFlags) {
             boolean prevWord = isWordBefore(s, pos);
             boolean currWord = isWordAt(s, pos, len);
@@ -2784,10 +2874,14 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      */
     private int positionFlagsCS(CharSequence s, int pos, int len) {
         int flags = 0;
-        if (pos == 0 || (pos > 0 && s.charAt(pos - 1) == '\n')) {
+        // (emptyLastLine || pos < len): java's (?m)^ never matches at end
+        // of input — not even at position 0 of an EMPTY input ("Perl does
+        // not match ^ at end of input even after newline"); the RE2 side
+        // (axis set) keeps today's unconditional position-0 begin.
+        if ((emptyLastLine || pos < len) && (pos == 0 || lineBegin(s, pos, len))) {
             flags |= Tnfa.BEGIN_TEXT;
         }
-        if (pos == len || (pos < len && s.charAt(pos) == '\n')) {
+        if (pos == len || lineEnd(s, pos, len)) {
             flags |= Tnfa.END_TEXT;
         }
         if (pos == 0) {
@@ -2795,6 +2889,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         }
         if (pos == len) {
             flags |= Tnfa.ABS_END;
+        }
+        if (needsFinalEnd && finalEnd(s, pos, len)) {
+            flags |= Tnfa.FINAL_END;
         }
         if (needsWordFlags) {
             boolean prevWord = isWordBefore(s, pos);
@@ -2806,6 +2903,145 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             }
         }
         return flags;
+    }
+
+    /**
+     * Line-begin predicate for BEGIN_TEXT ({@code ^} under (?m)), the pos &gt; 0
+     * half — {@code pos == 0} is handled by the callers. Axis-selected:
+     * <ul>
+     * <li>{@code \n}-only (UNIX_LINES set, the RE2 side): after any
+     * {@code \n}, including the trailing one (subject to EMPTY_LAST_LINE).
+     * <li>full java.util.regex set: after any terminator of the set, never
+     * inside a {@code \r\n} pair, and — unless EMPTY_LAST_LINE is set —
+     * never after the trailing terminator (JDK: {@code (?m)^} on
+     * {@code "a\n"} matches at 0 only; on {@code "a\r\nb"} at 0 and 3).
+     * </ul>
+     */
+    private boolean lineBegin(String s, int pos, int len) {
+        char prev = s.charAt(pos - 1);
+        if (nlOnlyTerminators) {
+            return prev == '\n' && (emptyLastLine || pos < len);
+        }
+        if (!isJurTerminator(prev)) {
+            return false;
+        }
+        if (prev == '\r' && pos < len && s.charAt(pos) == '\n') {
+            return false; // interior of a \r\n
+        }
+        return emptyLastLine || pos < len;
+    }
+
+    /** CharSequence twin of {@link #lineBegin(String, int, int)}. */
+    private boolean lineBegin(CharSequence s, int pos, int len) {
+        char prev = s.charAt(pos - 1);
+        if (nlOnlyTerminators) {
+            return prev == '\n' && (emptyLastLine || pos < len);
+        }
+        if (!isJurTerminator(prev)) {
+            return false;
+        }
+        if (prev == '\r' && pos < len && s.charAt(pos) == '\n') {
+            return false; // interior of a \r\n
+        }
+        return emptyLastLine || pos < len;
+    }
+
+    /**
+     * Line-end predicate for END_TEXT ({@code $} under (?m)), the pos &lt; len
+     * half — {@code pos == len} is handled by the callers. Axis-selected:
+     * before any {@code \n} (UNIX_LINES) or any terminator of the full set
+     * minus {@code \r\n} interiors (JDK: {@code (?m)$} on {@code "a\r\nb"}
+     * matches at 1 and 4, never at 2).
+     */
+    private boolean lineEnd(String s, int pos, int len) {
+        char c = s.charAt(pos);
+        if (nlOnlyTerminators) {
+            return c == '\n';
+        }
+        if (!isJurTerminator(c)) {
+            return false;
+        }
+        return !(c == '\n' && pos > 0 && s.charAt(pos - 1) == '\r');
+    }
+
+    /** CharSequence twin of {@link #lineEnd(String, int, int)}. */
+    private boolean lineEnd(CharSequence s, int pos, int len) {
+        char c = s.charAt(pos);
+        if (nlOnlyTerminators) {
+            return c == '\n';
+        }
+        if (!isJurTerminator(c)) {
+            return false;
+        }
+        return !(c == '\n' && pos > 0 && s.charAt(pos - 1) == '\r');
+    }
+
+    /**
+     * FINAL_END predicate (plain {@code $}, END_OF_TEXT_ONLY unset):
+     * end of input, or immediately before the FINAL terminator run —
+     * where a run is a lone terminator or one {@code \r\n} (JDK-exact:
+     * {@code $} on {@code "a\n\n"} matches at 2 and 3; on
+     * {@code "a\r\n"} at 1 and 3; under UNIX_LINES on {@code "a\r\n"}
+     * at 2 and 3 — {@code \r} is then a plain char, so the interior
+     * exclusion is off).
+     */
+    private boolean finalEnd(String s, int pos, int len) {
+        if (pos == len) {
+            return true;
+        }
+        if (pos > len) {
+            return false;
+        }
+        char c = s.charAt(pos);
+        if (nlOnlyTerminators) {
+            return c == '\n' && pos + 1 == len;
+        }
+        if (!isJurTerminator(c)) {
+            return false;
+        }
+        if (c == '\n' && pos > 0 && s.charAt(pos - 1) == '\r') {
+            return false; // interior of the final \r\n — the \r position owns it
+        }
+        if (c == '\r') {
+            if (pos + 1 == len) {
+                return true;
+            }
+            return s.charAt(pos + 1) == '\n' && pos + 2 == len;
+        }
+        return pos + 1 == len; // \n, U+0085, U+2028, U+2029
+    }
+
+    /** CharSequence twin of {@link #finalEnd(String, int, int)}. */
+    private boolean finalEnd(CharSequence s, int pos, int len) {
+        if (pos == len) {
+            return true;
+        }
+        if (pos > len) {
+            return false;
+        }
+        char c = s.charAt(pos);
+        if (nlOnlyTerminators) {
+            return c == '\n' && pos + 1 == len;
+        }
+        if (!isJurTerminator(c)) {
+            return false;
+        }
+        if (c == '\n' && pos > 0 && s.charAt(pos - 1) == '\r') {
+            return false; // interior of the final \r\n — the \r position owns it
+        }
+        if (c == '\r') {
+            if (pos + 1 == len) {
+                return true;
+            }
+            return s.charAt(pos + 1) == '\n' && pos + 2 == len;
+        }
+        return pos + 1 == len; // \n, U+0085, U+2028, U+2029
+    }
+
+    /** Membership in the full java.util.regex line-terminator set
+     *  (character view — {@code \r\n} is two units of one terminator). */
+    private static boolean isJurTerminator(char c) {
+        return c == '\n' || c == '\r' || c == '\u0085' || c == '\u2028' || c == '\u2029';
     }
 
     /**

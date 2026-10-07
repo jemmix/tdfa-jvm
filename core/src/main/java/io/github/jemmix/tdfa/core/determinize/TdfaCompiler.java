@@ -188,6 +188,16 @@ final class TdfaCompiler {
      */
     final int cellCount;
     /**
+     * Cells per state in the posFlags-indexed tables (stop rows, final-φ
+     * variants): 64, or 128 when the NFA gates any ε-edge on
+     * {@link Tnfa#FINAL_END} (the JUR-lane plain-{@code $} bit — never
+     * present in an RE2-lane build, whose artifacts keep the 64-cell
+     * stride bit-for-bit). Derived from the NFA's actual masks, not from
+     * the semantics axis alone, so a JUR-lane pattern without plain
+     * {@code $} stays 64-wide.
+     */
+    final int posFlagCells;
+    /**
      * Number of distinct active edge sets.
      */
     final int activeSetCount;
@@ -307,7 +317,7 @@ final class TdfaCompiler {
         this.maxStates = Budgets.maxDfaStates(longestMatch ? 0 : BudgetWeights.STOP_TABLE_STATE_BYTES);
         this.epsOut = sortedOutgoing(nfa.epsFrom, nfa.epsPri);
         this.symOut = plainOutgoing(nfa.symFrom);
-        this.maskBitset = new long[nfa.stateCount];
+        this.maskBitset = new long[nfa.stateCount * 2];
         this.maskEpoch = new int[nfa.stateCount];
         this.initialRegisters = new int[tags];
         this.finalRegisters = new int[tags];
@@ -327,6 +337,18 @@ final class TdfaCompiler {
         this.maxClosureBytes = Budgets.maxClosureSpikeBytes();
         this.cellCount = breakpoints.length - 1;
         this.activeSetCount = precomputeActiveSets(cellCount);
+        this.posFlagCells = usesFinalEnd(nfa) ? 128 : 64;
+    }
+
+    /** Whether any ε-edge of {@code nfa} is gated on {@link Tnfa#FINAL_END}
+     *  (see {@link #posFlagCells}). */
+    private static boolean usesFinalEnd(Tnfa nfa) {
+        for (int mask : nfa.epsEmptyMask) {
+            if ((mask & Tnfa.FINAL_END) != 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -388,15 +410,18 @@ final class TdfaCompiler {
     }
 
     /**
-     * True iff {@code popped} (bitset of popped mask values, bit m = mask m) has any submask of {@code m} set.
+     * True iff the popped-mask bitset (bit m = mask value m, two words:
+     * masks reach 7 bits — FINAL_END compiles — so word {@code sub >>> 6}
+     * holds bit {@code sub & 63}) has any submask of {@code m} set.
      */
-    private static boolean submaskPopped(long popped, int m) {
+    private static boolean submaskPopped(long poppedLo, long poppedHi, int m) {
         for (int sub = m; sub != 0; sub = (sub - 1) & m) {
-            if ((popped & (1L << sub)) != 0) {
+            long w = sub < 64 ? poppedLo : poppedHi;
+            if ((w & (1L << (sub & 63))) != 0) {
                 return true;
             }
         }
-        return (popped & 1L) != 0; // the empty submask (mask 0) closes the loop
+        return (poppedLo & 1L) != 0; // the empty submask (mask 0) closes the loop
     }
 
     /**
@@ -590,7 +615,7 @@ final class TdfaCompiler {
         int n = kernels.size();
         obs.stage(CompileObserver.Stage.DETERMINIZE, System.nanoTime() - tDet, n);
         return new DeterminizedDfa(n, builders, accept, tables.entryMask, tables.acceptMask, tables.stopOnAcceptMask,
-            tables.pikeCutMatters, nextReg, wholeComplete);
+            posFlagCells, tables.pikeCutMatters, nextReg, wholeComplete);
     }
 
     /**
@@ -881,7 +906,7 @@ final class TdfaCompiler {
             }
         }
         HashMap<Integer, Integer> patIdx = new HashMap<>(8);
-        for (int M = 0; M < 64; M++) {
+        for (int M = 0; M < posFlagCells; M++) {
             int pat = anyZero ? 1 : 0, r = 0;
             for (int i = 0; i < k; i++) {
                 int mi = ctxMasks.get(i);
@@ -1217,13 +1242,15 @@ final class TdfaCompiler {
         int n = kernels.size();
         int[] stateEntryMask = new int[n];
         int[] stateAcceptMask = new int[n];
-        // int[state * 64 + posFlags] encodes 0 (stop) or NEVER_STOP (don't
-        // stop), 64 = 2^6 position-flag bits (BEGIN/END_TEXT, WORD/NO_WORD,
-        // ABS_BEGIN/ABS_END). POSIX (longest) mode never reads this table —
+        // int[state * posFlagCells + posFlags] encodes 0 (stop) or NEVER_STOP
+        // (don't stop); posFlagCells = 2^position-flag bits (BEGIN/END_TEXT,
+        // WORD/NO_WORD, ABS_BEGIN/ABS_END, and FINAL_END for JUR-lane plain-$
+        // compiles). POSIX (longest) mode never reads this table —
         // the artifact stores neither stop tier and every reader gates on
-        // Perl mode — so the n*64 alloc/fill is pure churn there (~25 MB at
-        // 100 K states) and is skipped entirely.
-        int[] stateStopOnAcceptMask = longest ? null : new int[n * 64];
+        // Perl mode — so the n*cells alloc/fill is pure churn there (~25 MB
+        // at 100 K states) and is skipped entirely.
+        int cells = posFlagCells;
+        int[] stateStopOnAcceptMask = longest ? null : new int[n * cells];
         if (stateStopOnAcceptMask != null) {
             Arrays.fill(stateStopOnAcceptMask, NEVER_STOP);
         }
@@ -1232,13 +1259,13 @@ final class TdfaCompiler {
             Kernel k = kernels.get(s);
             int cnt = k.size();
             int entryIntersect = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY
-                | Tnfa.ABS_BEGIN | Tnfa.ABS_END;
+                | Tnfa.ABS_BEGIN | Tnfa.ABS_END | Tnfa.FINAL_END;
             for (int i = 0; i < cnt; i++) {
                 entryIntersect &= k.maskAt(i);
             }
             stateEntryMask[s] = entryIntersect;
             int acceptIntersect = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY
-                | Tnfa.ABS_BEGIN | Tnfa.ABS_END;
+                | Tnfa.ABS_BEGIN | Tnfa.ABS_END | Tnfa.FINAL_END;
             boolean anyAccept = false;
             for (int i = 0; i < cnt; i++) {
                 if (k.stateAt(i) == nfa.accept) {
@@ -1258,7 +1285,7 @@ final class TdfaCompiler {
                     }
                 }
                 if (stateStopOnAcceptMask != null) {
-                    System.arraycopy(stopRowFor(seed, k), 0, stateStopOnAcceptMask, s * 64, 64);
+                    System.arraycopy(stopRowFor(seed, k), 0, stateStopOnAcceptMask, s * cells, cells);
                 }
                 if (!unpruned && !pikeCutMatters) {
                     pikeCutMatters = pikeCutHazard(k);
@@ -1288,9 +1315,9 @@ final class TdfaCompiler {
      */
     @SuppressWarnings("unchecked")
     private int[] stopRowFor(Object seed, Kernel k) {
-        int[] row = new int[64];
+        int[] row = new int[posFlagCells];
         int cnt = k.size();
-        for (int M = 0; M < 64; M++) {
+        for (int M = 0; M < posFlagCells; M++) {
             // seed is int[] (tagless) or List<Config> (tagged) — see stateSeeds
             int[] perStateOrder = seed instanceof int[] ? computePerStateOrder((int[]) seed, M)
                 : computePerStateOrder((List<Config>) seed, M);
@@ -1337,7 +1364,7 @@ final class TdfaCompiler {
      */
     private boolean pikeCutHazard(Kernel k) {
         int cnt = k.size();
-        for (int M = 0; M < 64; M++) {
+        for (int M = 0; M < posFlagCells; M++) {
             int firstAliveAccept = -1;
             for (int i = 0; i < cnt; i++) {
                 if ((k.maskAt(i) & ~M) != 0) {
@@ -1462,9 +1489,10 @@ final class TdfaCompiler {
             }
             if (maskEpoch[c.state] != epoch) {
                 maskEpoch[c.state] = epoch;
-                maskBitset[c.state] = 0L;
+                maskBitset[c.state * 2] = 0L;
+                maskBitset[c.state * 2 + 1] = 0L;
             }
-            maskBitset[c.state] |= 1L << c.emptyMask;
+            maskBitset[c.state * 2 + (c.emptyMask >>> 6)] |= 1L << (c.emptyMask & 63);
             out.add(c);
             // Per-kernel spike bound (weighted bytes): kernelsTotal only
             // counts after addState, so a single closure of a
@@ -1499,11 +1527,11 @@ final class TdfaCompiler {
                 // re-arrivals survive ((?:^|$)+ needs both the BEGIN and END
                 // junction variants); that is the difference from a blanket
                 // state-only dedup, and it is what the position-aware tables
-                // downstream rely on. Masks are 6 bits: exact submask check over a
-                // per-state popped-mask bitset.
+                // downstream rely on. Masks are at most 7 bits: exact submask check
+                // over a per-state popped-mask bitset (two words, see submaskPopped).
                 int edgeEmpty = nfa.epsEmptyMask[idx];
                 int newMask = c.emptyMask | edgeEmpty;
-                if (maskEpoch[to] == epoch && submaskPopped(maskBitset[to], newMask)) {
+                if (maskEpoch[to] == epoch && submaskPopped(maskBitset[to * 2], maskBitset[to * 2 + 1], newMask)) {
                     continue;
                 }
                 long childKey = visitKey(to, newMask);

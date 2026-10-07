@@ -61,6 +61,12 @@ final class DfaMinimizer {
     final int[] wholeBase, wholeCount, wholeRanges;
     final boolean longest;
     /**
+     * Cells per state in the posFlags-indexed tables (stop rows, final-φ
+     * rows) — the stride of {@link #stateStopOnAcceptMask} and
+     * {@link #stateFinalOpsByMask}, from the determinized value.
+     */
+    final int posFlagCells;
+    /**
      * Cap on n×K range-normalization cells. Derived per compile from
      * the compile RAM budget ({@link Budgets#maxMinimizeNormCells()})
      * through the weight model — at the 128 MiB default, 32 M cells =
@@ -105,7 +111,7 @@ final class DfaMinimizer {
 
     DfaMinimizer(int n, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] ranges, int[] ops,
         int[] stateEntryMask, int[] stateAcceptMask, int[] stateStopOnAcceptMask, int[] stateFinalOpsByMask,
-        int[] wholeBase, int[] wholeCount, int[] wholeRanges, boolean longest, WorkMeter meter) {
+        int[] wholeBase, int[] wholeCount, int[] wholeRanges, boolean longest, int posFlagCells, WorkMeter meter) {
         this.n = n;
         this.stateMeta = stateMeta;
         this.stateBase = stateBase;
@@ -120,6 +126,7 @@ final class DfaMinimizer {
         this.wholeCount = wholeRanges == null ? null : wholeCount;
         this.wholeRanges = wholeRanges;
         this.longest = longest;
+        this.posFlagCells = posFlagCells;
         this.meter = meter;
         this.maxNormCells = Budgets.maxMinimizeNormCells();
         this.opsIdAt = new int[ops.length];
@@ -320,14 +327,14 @@ final class DfaMinimizer {
     }
 
     /**
-     * Extra sig slots occupied by the full 64-cell rows (never a summary:
+     * Extra sig slots occupied by the full table rows (never a summary:
      * two states whose rows differ must never share a Moore group — a
      * 32-bit rolling hash would admit birthday collisions (~2⁻³²/pair
      * over distinct rows) and silently merge semantically different
      * states. Exact cells close that hole by construction.)
      */
     int attrExtra() {
-        return (!longest ? 64 : 0) + (stateFinalOpsByMask != null ? 64 : 0);
+        return (!longest ? posFlagCells : 0) + (stateFinalOpsByMask != null ? posFlagCells : 0);
     }
 
     /**
@@ -340,16 +347,16 @@ final class DfaMinimizer {
         sig[i++] = stateAcceptMask[s];
         sig[i++] = (stateMeta[s] >>> 1) & 0xFFFF; // range count (structural disambiguator)
         if (!longest) {
-            int baseSM = s * 64;
-            for (int j = 0; j < 64; j++) {
+            int baseSM = s * posFlagCells;
+            for (int j = 0; j < posFlagCells; j++) {
                 sig[i++] = stateStopOnAcceptMask[baseSM + j];
             }
         }
         if (stateFinalOpsByMask != null) {
             // Variant rows: states with different per-mask φ selections
             // (or different accept suppression) must never merge.
-            int baseFM = s * 64;
-            for (int j = 0; j < 64; j++) {
+            int baseFM = s * posFlagCells;
+            for (int j = 0; j < posFlagCells; j++) {
                 sig[i++] = stateFinalOpsByMask[baseFM + j];
             }
         }

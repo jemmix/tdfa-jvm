@@ -8,6 +8,7 @@ import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.FrameBudget;
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
+import io.github.jemmix.tdfa.core.parser.ParseOptions;
 import io.github.jemmix.tdfa.core.parser.ParseResult;
 import io.github.jemmix.tdfa.core.parser.Parser;
 import io.github.jemmix.tdfa.core.report.CompileObserver;
@@ -94,15 +95,21 @@ public final class Tnfa {
     public final int[] fixedOffset;
 
     // Zero-width assertion bits. BEGIN_TEXT/END_TEXT are LINE boundaries
-    // (position 0 / end-of-input, plus after/before \n — unconditionally, the
-    // (?m) flavor lives in which bit each ^/$ edge requires); ABS_BEGIN/ABS_END
-    // are absolute (position 0 / end-of-input only).
+    // (position 0 / end-of-input, plus after/before a terminator of the
+    // compile's set — the (?m) flavor lives in which bit each ^/$ edge
+    // requires); ABS_BEGIN/ABS_END are absolute (position 0 / end-of-input
+    // only). FINAL_END is the plain-$ end rule: end of input, or immediately
+    // before the final terminator run (java.util.regex $/\Z); it only ever
+    // gates an edge when END_OF_TEXT_ONLY is unset (the RE2-lineage side
+    // lowers plain $ to ABS_END, so the bit never appears there and the
+    // position-flag tables keep their 64-cell stride).
     public static final int BEGIN_TEXT = 1;
     public static final int END_TEXT = 2;
     public static final int WORD_BOUNDARY = 4;
     public static final int NO_WORD_BOUNDARY = 8;
     public static final int ABS_BEGIN = 16;
     public static final int ABS_END = 32;
+    public static final int FINAL_END = 64;
 
     /** Every axis set (the RE2-lineage reading): the legacy-overload default. */
     private static final Semantics ALL_AXES = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
@@ -216,7 +223,12 @@ public final class Tnfa {
         // the JVM here before any determinization cap fires — e.g.
         // ((a{300}){300}){300} is rejected as a clean "pattern too large").
         // Determinization constructs its own meter per attempt (TdfaCompiler).
-        ParseResult parsed = Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth, provider, meter);
+        // Parser-side projection of the compile's Semantics (the carrier
+        // stays here; the parser package sits below tnfa in the layer DAG):
+        // today the DOT terminator set (UNIX_LINES), soon the fold universe
+        // and (?U) meaning at their own WBS items.
+        ParseResult parsed = Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth,
+            ParseOptions.dotNlOnly(semantics.isUnixLines()), provider, meter);
         if (observer != null) {
             observer.stage(CompileObserver.Stage.PARSE, System.nanoTime() - t0, parsed.tagCount());
         }
@@ -250,7 +262,7 @@ public final class Tnfa {
                 System.err.println("[tdfa] fixed-tags: dropped " + n + "/" + tagCount);
             }
         }
-        Builder b = new Builder(meter);
+        Builder b = new Builder(meter, semantics);
         int accept = b.fresh();
         int start = b.build(ast, accept);
         Tnfa nfa = b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(), parsed.unicodeShorthand(),
@@ -294,14 +306,18 @@ public final class Tnfa {
         /** Shared with the parser (see Tnfa.compile): one CPU budget for
          *  the whole front-end; every builder action ticks it. */
         final WorkMeter meter;
+        /** The compile's {@link Semantics}: the plain-$ lowering pivots on
+         *  END_OF_TEXT_ONLY here (ABS_END vs FINAL_END, see buildLeaf). */
+        final Semantics semantics;
         /** Weighted bytes of everything minted so far (states + edges,
          *  through BudgetWeights) against the compile RAM budget. */
         long weightedBytes = 0;
 
         final long memBudget;
 
-        Builder(WorkMeter meter) {
+        Builder(WorkMeter meter, Semantics semantics) {
             this.meter = meter;
+            this.semantics = semantics;
             this.memBudget = Budgets.compileMemoryBytes();
         }
 
@@ -702,17 +718,26 @@ public final class Tnfa {
             if (e instanceof Ast.StartAnchor && (sa = (Ast.StartAnchor) e) != null) {
                 int s = fresh();
                 // Anchor flavor is per-edge (parse-time (?m), group-scoped flags
-                // included): m-^ needs BEGIN_TEXT (line begin, always \n-aware);
-                // plain ^ and \A are position-0 only (ABS_BEGIN).
+                // included): m-^ needs BEGIN_TEXT (line begin, terminator-set-
+                // aware at match time); plain ^ and \A are position-0 only
+                // (ABS_BEGIN).
                 anchorEps(s, entryTo, 1, sa.absolute || !sa.multiline ? ABS_BEGIN : BEGIN_TEXT);
                 return s;
             }
             Ast.EndAnchor ea; // $ or \z
             if (e instanceof Ast.EndAnchor && (ea = (Ast.EndAnchor) e) != null) {
                 int s = fresh();
-                // m-$ needs END_TEXT (line end, always \n-aware); plain $ and \z
-                // are end-of-input only (ABS_END).
-                anchorEps(s, entryTo, 1, ea.absolute || !ea.multiline ? ABS_END : END_TEXT);
+                // Anchor flavor is per-edge (parse-time (?m), group-scoped flags
+                // included): m-$ needs END_TEXT (line end, terminator-set-aware);
+                // \z is end-of-input only (ABS_END). Plain $ is the pivot: the
+                // RE2-lineage side (END_OF_TEXT_ONLY set) reads it as \z
+                // (ABS_END, end-of-input only); the java.util.regex side reads
+                // it as \Z — end of input OR immediately before the final
+                // terminator run — which is its own predicate (FINAL_END), not
+                // expressible over the other bits.
+                int bit =
+                    ea.absolute ? ABS_END : ea.multiline ? END_TEXT : semantics.isEndOfTextOnly() ? ABS_END : FINAL_END;
+                anchorEps(s, entryTo, 1, bit);
                 return s;
             }
             if (e instanceof Ast.WordBoundary) { // \b

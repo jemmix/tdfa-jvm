@@ -164,10 +164,10 @@ final class RunnerTables {
      * FORWARD, so a needle ending on a high half paired with the next unit
      * never matches from any start.
      */
-    static int literalIndexOf(String s, String needle, int from) {
+    static int literalIndexOf(String s, String needle, int from, boolean codepointBoundaries) {
         int idx = s.indexOf(needle, from);
-        while (idx >= 0
-            && (needleEndOverlapsPair(s, idx, needle.length()) || (idx > from && Alphabet.pairInterior(s, idx)))) {
+        while (idx >= 0 && (needleEndOverlapsPair(s, idx, needle.length())
+            || (codepointBoundaries && idx > from && Alphabet.pairInterior(s, idx)))) {
             idx = s.indexOf(needle, idx + 1);
         }
         return idx;
@@ -358,8 +358,9 @@ final class RunnerTables {
         {
             int[] fm = tdfa.stateFinalOpsByMask();
             if (fm != null) {
-                for (int M = 0; M < 64; M++) {
-                    if (fm[s * 64 + M] < 0) {
+                int cells = tdfa.posFlagCells();
+                for (int M = 0; M < cells; M++) {
+                    if (fm[s * cells + M] < 0) {
                         return null;
                     }
                 }
