@@ -1,10 +1,20 @@
 package io.github.jemmix.tdfa.fuzz;
 
 import com.google.re2j.Re2jUnicodeProvider;
+import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
+import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.budget.WorkMeter;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.engine.MatchResult;
+import io.github.jemmix.tdfa.core.engine.RegexEngine;
+import io.github.jemmix.tdfa.core.engine.WholeEngine;
+import io.github.jemmix.tdfa.core.report.CompileObserver;
+import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
+import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
 import io.github.jemmix.tdfa.sim.PikeSim;
 
 import java.io.IOException;
@@ -211,7 +221,10 @@ public final class CampaignFuzzer {
                 long caseSeed = caseSeeds.nextLong() >>> 4;
                 try {
                     switch (mode) {
-                        case "jur" -> jurCase(caseSeed, camp, counts);
+                        case "jur" -> {
+                            jurCase(caseSeed, camp, counts);
+                            jurLaneCase(caseSeed, camp, counts);
+                        }
                         case "stretch" -> stretchCase(caseSeed, camp, counts);
                         case "seq" -> seqCase(caseSeed, camp, counts);
                         case "families" -> familiesCase(caseSeed, camp, counts);
@@ -340,7 +353,11 @@ public final class CampaignFuzzer {
         boolean ml = (c.tdfaFlags() & DifferentialFuzzer.FLAG_MULTILINE) != 0;
         boolean unitBoundary =
             (c.pattern().contains("\\b") || c.pattern().contains("\\B")) && hasWellFormedPair(c.input());
-        boolean caretEol = ml && c.input().endsWith("\n") && c.pattern().contains("^");
+        // the inline (?m:) spelling counts too, and the EMPTY input is the
+        // family's degenerate: java's (?m)^ refuses the sole position (0==len)
+        // where the RE2 lineage matches it — e.g. $(?m:^) on "".
+        boolean caretEol = (ml || c.pattern().contains("(?m")) && (c.input().endsWith("\n") || c.input().isEmpty())
+            && c.pattern().contains("^");
         boolean dollarEol = !ml && c.input().endsWith("\n") && c.pattern().contains("$");
         // f) group participation under iteration of zero-width bodies (e.g.
         // (\z)* on ""): jur's backtracker reports the group non-participating
@@ -363,6 +380,205 @@ public final class CampaignFuzzer {
         camp.rec(caseSeed, kind, kvJur(c, jur, vm, asm));
         camp.log("HARD %s seed=%d pat=%s in=%s%n  jur=%s%n  vm =%s%n  asm=%s", kind, caseSeed,
             DifferentialFuzzer.escape(c.pattern()), DifferentialFuzzer.escape(c.input()), jur, vm, asm);
+    }
+
+    /** Item "parameterize the pivots" of the JUR-compat WBS: the campaign
+     *  probes BOTH lanes while the shipped default stays RE2. The JUR lane
+     *  (core tier, {@code Semantics.of()}) must agree with the java oracle
+     *  on every axis the pivots own — terminator set, EMPTY_LAST_LINE,
+     *  END_OF_TEXT_ONLY (the lineterm/caretEol/dollarEol families) and, at
+     *  span level, the unitBoundary family — so those are HARD here; the
+     *  residual families stay soft (lone-surrogate pattern/input: unit
+     *  semantics match lone surrogates anywhere, java only truly-lone
+     *  ones). CI folds the FULL universe today, so the JUR-lane oracle
+     *  compares under CASE_INSENSITIVE|UNICODE_CASE. */
+    static void jurLaneCase(long caseSeed, Camp camp, Counts counts) {
+        JurCase c = genJur(caseSeed);
+        if (c.pattern().contains("(?U")) {
+            counts.soft("SKIP_UNGREEDY");
+            return;
+        }
+        // JUR-lane compile: same flag→inline-prefix mapping as the facade,
+        // Semantics.of() instead of the pre-flip RE2 lane.
+        String fl = c.pattern();
+        if (c.ci()) {
+            fl = "(?i)" + fl;
+        }
+        if ((c.tdfaFlags() & DifferentialFuzzer.FLAG_DOTALL) != 0) {
+            fl = "(?s)" + fl;
+        }
+        if ((c.tdfaFlags() & DifferentialFuzzer.FLAG_MULTILINE) != 0) {
+            fl = "(?m)" + fl;
+        }
+        if (c.ucc()) {
+            fl = "(?u)" + fl;
+        }
+        Tdfa find;
+        try {
+            WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
+            Tnfa nfa = Tnfa.compile(fl, false, false, false, Semantics.of(), UnicodeProviders.get(),
+                CompileObserver.NONE, ledger);
+            find = Determinizer.compileWithWholeSide(nfa, false, CompileObserver.NONE, ledger.fork(0));
+        } catch (io.github.jemmix.tdfa.core.parser.PatternSyntaxException e) {
+            return; // compile parity is the RE2-lane probe's question
+        } catch (RuntimeException | StackOverflowError e) {
+            counts.soft("JURLANE_BUDGET");
+            return;
+        }
+        String jurLaneVm;
+        String jurLaneAsm;
+        try {
+            jurLaneVm = engineProtocol(new TdfaRunner(find, 1 << 20), c.input());
+            jurLaneAsm = engineProtocol(TdfaAsmBackend.generate(find, 1 << 20), c.input());
+        } catch (RuntimeException | StackOverflowError e) {
+            counts.soft("JURLANE_EXCEPTION");
+            camp.rec(caseSeed, "JURLANE_EXCEPTION", "pattern", c.pattern(), "input", c.input(), "flags", c.tdfaFlags(),
+                "detail", e.getClass().getSimpleName());
+            return;
+        }
+        if (!jurLaneVm.equals(jurLaneAsm)) {
+            counts.hard("JURLANE_VM_ASM");
+            camp.rec(caseSeed, "JURLANE_VM_ASM", "pattern", c.pattern(), "input", c.input(), "flags", c.tdfaFlags(),
+                "vm", jurLaneVm, "asm", jurLaneAsm);
+            camp.log("HARD JURLANE_VM_ASM seed=%d pat=%s in=%s%n  vm =%s%n  asm=%s", caseSeed,
+                DifferentialFuzzer.escape(c.pattern()), DifferentialFuzzer.escape(c.input()), jurLaneVm, jurLaneAsm);
+            return;
+        }
+        // oracle: java.util.regex under the lane's reading; CI folds full
+        int jurFlags = c.jurFlags() | (c.ci() ? JUR_UCASE : 0);
+        String jur;
+        java.util.regex.Pattern jp;
+        try {
+            jp = java.util.regex.Pattern.compile(c.pattern(), jurFlags);
+        } catch (java.util.regex.PatternSyntaxException e) {
+            return;
+        }
+        if (c.ci()) {
+            // Fold-universe disambiguation (the RE2-lane probe's rule): when
+            // java's CI and CI|UNICODE_CASE readings disagree the case is
+            // fold-ambiguous — tdfa's simple-fold universe is a third
+            // reading (İ/ı is fold-inert there) — skip, don't guess. The
+            // same applies to CI over the PREDEFINED classes (\w\W\d\D\s\S):
+            // tdfa fold-expands them ((?i)\W loses ſ), java's readings vary
+            // by flag — the UNICODE_CASE axis owns that universe.
+            boolean predefFold = c.pattern().matches(".*[\\\\][wWdDsS].*");
+            try {
+                String alt =
+                    javaProtocol(java.util.regex.Pattern.compile(c.pattern(), c.jurFlags() | JUR_UCASE), c.input());
+                String plain = javaProtocol(java.util.regex.Pattern.compile(c.pattern(), c.jurFlags()), c.input());
+                if (!alt.equals(plain) || predefFold) {
+                    counts.soft("SKIP_CI_FOLD_AMBIGUOUS");
+                    return;
+                }
+            } catch (RuntimeException | StackOverflowError e) {
+                counts.soft("SKIP_CI_FOLD_AMBIGUOUS");
+                return;
+            }
+        }
+        try {
+            jur = javaProtocol(jp, c.input());
+        } catch (RuntimeException | StackOverflowError e) {
+            counts.soft("JUR_ORACLE_THREW");
+            return;
+        }
+        // Span-level comparison: the engine protocol carries no group
+        // clauses (group-participation parity is the EMPTY_ITERATION_SPANS
+        // item's evidence work), so the oracle's clauses are stripped.
+        if (stripGroups(jur).equals(jurLaneVm)) {
+            counts.ok();
+            return;
+        }
+        // CI + a divergent span starting at a NON-ASCII char: the fold
+        // universes diverge there by construction (java folds ı→i under
+        // CI|UCC; tdfa's simple-fold keeps İ/ı inert) — the UNICODE_CASE
+        // axis owns that universe. Same policy as the probes' fold skips.
+        if (c.ci() && missedSpanStartsNonAscii(jur, jurLaneVm, c.input())) {
+            counts.soft("SKIP_CI_FOLD_AMBIGUOUS");
+            return;
+        }
+        boolean surrogate = hasLoneSurrogate(c.pattern()) || hasLoneSurrogate(c.input())
+            || laneExtrasAllPairInteriors(jur, jurLaneVm, c.input())
+            || negatedClassSurrogateResidual(c.pattern(), c.input());
+        if (surrogate) {
+            counts.soft("KNOWN_SURROGATE (jur lane, residual)");
+            camp.rec(caseSeed, "JURLANE_KNOWN (surrogate-code-unit)", "pattern", c.pattern(), "input", c.input(),
+                "flags", c.tdfaFlags(), "jur", jur, "jurLaneVm", jurLaneVm);
+            return;
+        }
+        counts.hard("JURLANE_MISMATCH");
+        camp.rec(caseSeed, "JURLANE_MISMATCH", "pattern", c.pattern(), "input", c.input(), "flags", c.tdfaFlags(),
+            "jurFlags", jurFlags, "jur", jur, "jurLaneVm", jurLaneVm);
+        camp.log("HARD JURLANE_MISMATCH seed=%d pat=%s in=%s%n  jur=%s%n  lane=%s", caseSeed,
+            DifferentialFuzzer.escape(c.pattern()), DifferentialFuzzer.escape(c.input()), jur, jurLaneVm);
+    }
+
+    /** F+I+M+R protocol at the engine level (the facade wraps these the
+     *  same way; the soak's five-probe L probe has no engine-level
+     *  equivalent and is omitted on both sides). */
+    static String engineProtocol(RegexEngine eng, CharSequence in) {
+        StringBuilder sb = new StringBuilder(96);
+        int from = 0;
+        boolean found = false;
+        int n = 0;
+        while (from <= in.length()) {
+            MatchResult m = eng.match(in, from, null);
+            if (m == null) {
+                break;
+            }
+            if (!found) {
+                sb.append("F=true ");
+                found = true;
+            }
+            if (n < DifferentialFuzzer.MAX_MATCHES) {
+                sb.append(m.start(0)).append("..").append(m.end(0)).append(' ');
+            }
+            n++;
+            from = m.end(0) == m.start(0) ? m.end(0) + 1 : m.end(0);
+        }
+        // M probe: the whole-exact walk (the facade's matches() surface);
+        // RegexEngine.matches()'s boolean walk is documented-approximate
+        // over pike-cut artifacts, which would diverge from the oracle for
+        // non-semantic reasons.
+        boolean m;
+        if (eng instanceof WholeEngine we) {
+            m = we.matchWhole(in, null) != null;
+        } else {
+            m = eng.matches(in);
+        }
+        sb.append(!found ? "F=false" : n == DifferentialFuzzer.MAX_MATCHES ? "(cap)" : "")
+            .append(m ? " M=true" : " M=false");
+        MatchResult r = eng.match(in, in.length() / 2, null);
+        sb.append(" R=").append(r == null ? "-" : r.start(0) + ".." + r.end(0));
+        return sb.toString();
+    }
+
+    /** The same protocol over java.util.regex (find(from)-managed loop). */
+    static String javaProtocol(java.util.regex.Pattern p, CharSequence in) {
+        StringBuilder sb = new StringBuilder(96);
+        int from = 0;
+        boolean found = false;
+        int n = 0;
+        while (from <= in.length()) {
+            java.util.regex.Matcher m = p.matcher(in);
+            if (!m.find(from)) {
+                break;
+            }
+            if (!found) {
+                sb.append("F=true ");
+                found = true;
+            }
+            if (n < DifferentialFuzzer.MAX_MATCHES) {
+                spanJur(sb, m);
+                sb.append(' ');
+            }
+            n++;
+            from = m.end() == m.start() ? m.end() + 1 : m.end();
+        }
+        sb.append(!found ? "F=false" : n == DifferentialFuzzer.MAX_MATCHES ? "(cap)" : "")
+            .append(p.matcher(in).matches() ? " M=true" : " M=false");
+        java.util.regex.Matcher m2 = p.matcher(in);
+        sb.append(" R=").append(m2.find(in.length() / 2) ? m2.start() + ".." + m2.end() : "-");
+        return sb.toString();
     }
 
     private static Object[] kvJur(JurCase c, String jur, String vm, String asm) {
@@ -455,6 +671,153 @@ public final class CampaignFuzzer {
             }
         }
         return false;
+    }
+
+    /**
+     * Feature-level tail of the surrogate residual (the same coarseness the
+     * RE2-lane probe's surrogate feature accepts): with well-formed pairs in
+     * the input and a pattern that can match NON-word/non-digit/non-space
+     * codepoints (negated classes cover the surrogate range), java's
+     * unit-level negated-class behavior and the lane's unit semantics
+     * diverge in ripples the span-level classifier cannot attribute — the
+     * family owns those wholesale. Pivot-relevant shapes (literals, anchors,
+     * dot, word boundaries) are unaffected: they are never negated classes.
+     */
+    static boolean negatedClassSurrogateResidual(String pattern, String input) {
+        if (!hasWellFormedPair(input)) {
+            return false;
+        }
+        return pattern.contains("\\W") || pattern.contains("\\S") || pattern.contains("\\D") || pattern.contains("[^");
+    }
+
+    /**
+     * JUR-lane residual classifier: the LANE's span sequence, with every
+     * interior-started span removed, equals the ORACLE's sequence with every
+     * span shadowed by a removed one removed. java's classes never match a
+     * surrogate unit inside a well-formed pair; the lane's unit semantics
+     * do — an interior-started lane match both adds a span and consumes
+     * past positions the oracle's next match would have started at. Any
+     * other divergence (a lane miss, a different end) is a real finding.
+     */
+    static boolean laneExtrasAllPairInteriors(String jur, String lane, String input) {
+        List<int[]> laneSpans = spansOf(lane);
+        List<int[]> jurSpans = spansOf(stripGroups(jur));
+        if (laneSpans.isEmpty()) {
+            return false; // the lane found nothing: nothing to attribute
+        }
+        // An interior-started lane span the ORACLE also reports is agreed
+        // (java's \B evaluates at every unit, interior included) — only a
+        // lane-ONLY interior span is the residual, and only those shadow.
+        List<int[]> interiorSpans = new ArrayList<>();
+        for (int[] sp : laneSpans) {
+            if (startsInterior(input, sp[0]) && !containsSpan(jurSpans, sp)) {
+                interiorSpans.add(sp);
+            }
+        }
+        if (interiorSpans.isEmpty()) {
+            return false;
+        }
+        List<int[]> laneFiltered = new ArrayList<>();
+        for (int[] sp : laneSpans) {
+            if (!startsInterior(input, sp[0]) || containsSpan(jurSpans, sp)) {
+                laneFiltered.add(sp);
+            }
+        }
+        List<int[]> jurFiltered = new ArrayList<>();
+        for (int[] sp : jurSpans) {
+            if (!shadowed(sp, interiorSpans)) {
+                jurFiltered.add(sp);
+            }
+        }
+        if (laneFiltered.size() != jurFiltered.size()) {
+            return false;
+        }
+        for (int i = 0; i < laneFiltered.size(); i++) {
+            if (laneFiltered.get(i)[0] != jurFiltered.get(i)[0] || laneFiltered.get(i)[1] != jurFiltered.get(i)[1]) {
+                return false;
+            }
+        }
+        // The R probe under the same rule: the lane's restart span equals the
+        // oracle's, or starts interior, or the oracle's is shadowed.
+        int[] rLane = rSpanOf(lane);
+        int[] rJur = rSpanOf(jur);
+        if (rLane == null) {
+            return rJur == null;
+        }
+        return startsInterior(input, rLane[0]) || (rJur != null && rJur[0] == rLane[0] && rJur[1] == rLane[1])
+            || (rJur != null && shadowed(rJur, interiorSpans));
+    }
+
+    /** Shadowed by a removed interior-started lane span? */
+    static boolean shadowed(int[] sp, List<int[]> interiorSpans) {
+        for (int[] is : interiorSpans) {
+            if (sp[0] >= is[0] && sp[0] < is[1]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Exact (start, end) membership. */
+    static boolean containsSpan(List<int[]> spans, int[] sp) {
+        for (int[] x : spans) {
+            if (x[0] == sp[0] && x[1] == sp[1]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Some oracle span the lane does not report starts at a non-ASCII char —
+     * the CI fold-universe residual (İ/ı-style: java folds it under
+     * CI|UNICODE_CHARACTER_CLASS, tdfa's simple-fold keeps it inert).
+     */
+    static boolean missedSpanStartsNonAscii(String jur, String lane, String input) {
+        List<int[]> js = spansOf(stripGroups(jur));
+        List<int[]> ls = spansOf(lane);
+        for (int[] sp : js) {
+            if (!containsSpan(ls, sp) && sp[0] < input.length() && input.charAt(sp[0]) > 0x7F) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Interior unit of a well-formed surrogate pair? */
+    static boolean startsInterior(String input, int st) {
+        return st > 0 && st < input.length() && input.charAt(st) >= 0xDC00 && input.charAt(st) <= 0xDFFF
+            && input.charAt(st - 1) >= 0xD800 && input.charAt(st - 1) <= 0xDBFF;
+    }
+
+    /**
+     * The ordered s..e spans of a protocol's F/I section (the section ends
+     * at the M probe; group clauses are absent in the engine protocol and
+     * stripped from the oracle's by the caller).
+     */
+    static List<int[]> spansOf(String protocol) {
+        int cut = protocol.indexOf(" M=");
+        String fi = cut >= 0 ? protocol.substring(0, cut) : protocol;
+        List<int[]> out = new ArrayList<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+)\\.\\.(\\d+)").matcher(fi);
+        while (m.find()) {
+            out.add(new int[]{Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2))});
+        }
+        return out;
+    }
+
+    /** The R probe's single s..e span, or null for {@code R=-}. */
+    static int[] rSpanOf(String protocol) {
+        int at = protocol.indexOf(" R=");
+        if (at < 0) {
+            return null;
+        }
+        java.util.regex.Matcher m =
+            java.util.regex.Pattern.compile("(\\d+)\\.\\.(\\d+)").matcher(protocol.substring(at));
+        if (!m.find()) {
+            return null;
+        }
+        return new int[]{Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2))};
     }
 
     /** Any well-formed surrogate pair (an interior the scan could miss). */

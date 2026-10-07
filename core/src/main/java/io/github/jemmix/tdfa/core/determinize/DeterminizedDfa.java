@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.core.determinize;
 
 import io.github.jemmix.tdfa.core.dfa.DfaStateBuilder;
+import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 
 import java.util.BitSet;
 import java.util.List;
@@ -36,10 +37,18 @@ final class DeterminizedDfa {
      */
     final int[] acceptMask;
     /**
-     * [state * 64 + posFlags] → 0 (stop on accept) or {@link Tdfa#NEVER_STOP}
+     * [state * posFlagCells + posFlags] → 0 (stop on accept) or {@link Tdfa#NEVER_STOP}
      * (extend). Perl mode only; null in POSIX (no reader exists there).
      */
     final int[] stopOnAcceptMask;
+    /**
+     * Cells per state in the posFlags-indexed tables (64, or 128 when the
+     * compile's NFA gates any edge on {@link Tnfa#FINAL_END} — the JUR-lane
+     * plain-{@code $} bit). Derived once here; every downstream builder and
+     * reader (materializer, minimizer, artifact, runner, ASM emitter) takes
+     * it from the value chain so the stride is one decision, not many.
+     */
+    final int posFlagCells;
     /**
      * True iff the Perl pike cut deleted a steppable continuation below an
      * alive accept in some state — the condition under which whole-input
@@ -62,13 +71,15 @@ final class DeterminizedDfa {
     final boolean wholeSideComplete;
 
     DeterminizedDfa(int stateCount, List<DfaStateBuilder> builders, BitSet accept, int[] entryMask, int[] acceptMask,
-        int[] stopOnAcceptMask, boolean pikeCutMatters, int registerCount, boolean wholeSideComplete) {
+        int[] stopOnAcceptMask, int posFlagCells, boolean pikeCutMatters, int registerCount,
+        boolean wholeSideComplete) {
         this.stateCount = stateCount;
         this.builders = builders;
         this.accept = accept;
         this.entryMask = entryMask;
         this.acceptMask = acceptMask;
         this.stopOnAcceptMask = stopOnAcceptMask;
+        this.posFlagCells = posFlagCells;
         this.pikeCutMatters = pikeCutMatters;
         this.registerCount = registerCount;
         this.wholeSideComplete = wholeSideComplete;

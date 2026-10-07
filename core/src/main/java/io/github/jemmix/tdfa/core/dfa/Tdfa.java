@@ -74,9 +74,17 @@ public final class Tdfa {
      * position where the state is entered — per-state and precise, not a
      * pattern-level summary.
      * bit 1 = BEGIN_TEXT, bit 2 = END_TEXT, bit 4 = WORD_BOUNDARY, bit 8 = NO_WORD_BOUNDARY,
-     * bit 16 = ABS_BEGIN (\A), bit 32 = ABS_END (\z)
+     * bit 16 = ABS_BEGIN (\A), bit 32 = ABS_END (\z), bit 64 = FINAL_END (JUR plain-$;
+     * only compiles whose posFlagCells is 128 can carry it)
      */
     final int[] stateEntryMask;
+    /**
+     * Cells per state in the posFlags-indexed tables ({@link #stopOnAcceptMask},
+     * {@link #stateFinalOpsByMask}): 64, or 128 when the compile's NFA gates
+     * any edge on {@link Tnfa#FINAL_END} (the JUR-lane plain-{@code $} bit).
+     * RE2-lane artifacts are always 64 — the bit never appears there.
+     */
+    final int posFlagCells;
     /**
      * Bit mask required to declare a match in this (accepting) state. Subset of
      * {@link #stateEntryMask} — per-state and precise, not a pattern-level summary.
@@ -182,10 +190,10 @@ public final class Tdfa {
     final int[] fixedOffset;
     /**
      * Position-aware Perl-mode stop-on-accept decision table.
-     * Indexed as {@code stopOnAcceptMask[state * 64 + posFlags]} where {@code posFlags}
+     * Indexed as {@code stopOnAcceptMask[state * posFlagCells + posFlags]} where {@code posFlags}
      * <p>
      * is the runtime position-flags bitmask ({@code BEGIN_TEXT|END_TEXT|WORD_BOUNDARY|NO_WORD_BOUNDARY|ABS_BEGIN|ABS_END},
-     * 6 bits, 64 possible values). Each cell encodes:
+     * plus {@code FINAL_END} on 128-cell artifacts; {@link #posFlagCells} possible values). Each cell encodes:
      * <ul>
      *   <li>{@code 0} — stop the match loop on accept (accept is the highest-priority
      *       live outcome under this posFlags);</li>
@@ -235,7 +243,7 @@ public final class Tdfa {
      */
     final int[] stateFinalOpsOff;
     /**
-     * Position-aware final-ops selection: {@code [state * 64 + posFlags]} →
+     * Position-aware final-ops selection: {@code [state * posFlagCells + posFlags]} →
      * φ ops offset into {@link #ops}, or {@code -1} when NO accept config is
      * alive under that posFlags (accept suppressed). Null when every
      * accepting state is mask-uniform ({@link #stateFinalOpsOff} alone is
@@ -293,7 +301,7 @@ public final class Tdfa {
         this(tagCount, groupCount, namedGroups, registerCount, finalRegBase, startState, stateCount, stateMeta,
             stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges, ops, entryHiPrefix, stateEntryMask,
             stateAcceptMask, longestMatch, stopOnAcceptMask, stopMaskUniform, multiline, unicodeWordBoundary,
-            wordRanges, fixedBase, fixedOffset, false, null, null, null, null, false, false, ALL_AXES);
+            wordRanges, fixedBase, fixedOffset, false, null, null, null, null, false, false, ALL_AXES, 64);
     }
 
     public Tdfa(int tagCount, int groupCount, Map<String, Integer> namedGroups, int registerCount, int finalRegBase,
@@ -302,7 +310,7 @@ public final class Tdfa {
         int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
         boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset, boolean pikeCutMatters,
         int[] wholeRanges, int[] wholeBase, int[] wholeCount, int[] wholeHiPrefix, boolean wholeSideComplete,
-        boolean multiValued, Semantics semantics) {
+        boolean multiValued, Semantics semantics, int posFlagCells) {
         this.tagCount = tagCount;
         this.groupCount = groupCount;
         this.namedGroups = namedGroups != null ? Collections.unmodifiableMap(namedGroups) : Collections.emptyMap();
@@ -335,6 +343,7 @@ public final class Tdfa {
         this.wordRanges = wordRanges;
         this.fixedBase = fixedBase;
         this.fixedOffset = fixedOffset;
+        this.posFlagCells = posFlagCells;
         // Well-formedness gate: every consumer (VM runner, search-DFA memo,
         // ASM emitter, minimizer) trusts these arrays. Violations must surface
         // here, at construction — not as a wrong match 2,000 lines away. Runs
@@ -342,30 +351,31 @@ public final class Tdfa {
         // arrays, bad startState) reports as this gate's ISE, never a raw
         // AIOOBE out of the constructor.
         validate(startState, stateCount, stateMeta, stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges,
-            entryHiPrefix, ops, stateEntryMask, stateAcceptMask, registerCount, finalRegBase, tagCount, multiValued);
+            entryHiPrefix, ops, stateEntryMask, stateAcceptMask, registerCount, finalRegBase, tagCount, multiValued,
+            posFlagCells);
         if (wholeRanges != null) {
             validateWhole(stateCount, wholeRanges, wholeBase, wholeCount, wholeHiPrefix, ops, finalRegBase, tagCount,
-                multiValued);
+                multiValued, posFlagCells);
         }
         this.startStateEntryMask = stateEntryMask[startState];
     }
 
     /**
-     * Bits whose flip changes any cell of {@code t} ([state*64 + posFlags]); null-safe.
+     * Bits whose flip changes any cell of {@code t} ([state*cells + posFlags]); null-safe.
      */
-    private static int tableDeps(int[] t) {
+    private static int tableDeps(int[] t, int cells) {
         if (t == null) {
             return 0;
         }
         int deps = 0;
-        int n = t.length / 64;
-        for (int b = 1; b < 64; b <<= 1) {
+        int n = t.length / cells;
+        for (int b = 1; b < cells; b <<= 1) {
             if ((deps & b) != 0) {
                 continue;
             }
             for (int s = 0; s < n; s++) {
-                int row = s * 64;
-                for (int m = 0; m < 64; m++) {
+                int row = s * cells;
+                for (int m = 0; m < cells; m++) {
                     if ((m & b) != 0) {
                         continue;
                     }
@@ -394,7 +404,8 @@ public final class Tdfa {
      *       (the runners' binary search depends on it), prefix-max consistent</li>
      *   <li>transition targets within the state space (dead marker is exactly
      *       {@code -1}); ops offsets within ops and blocks OP_END-terminated</li>
-     *   <li>assertion masks limited to the six defined bits; accept ⊆ entry</li>
+     *   <li>assertion masks limited to the defined bits (the six universal
+     *       ones, plus FINAL_END on 128-cell artifacts); accept ⊆ entry</li>
      *   <li>final-register block {@code [finalRegBase, finalRegBase+tagCount)}
      *       fits the register file (dedicated final slots — coalescing finals
      *       with working registers corrupts the MatchResult readout)</li>
@@ -403,7 +414,13 @@ public final class Tdfa {
     private static void validate(int startState, int stateCount, int[] stateMeta, int[] stateBase,
         int[] stateFinalOpsOff, int[] stateFinalOpsByMask, int[] ranges, int[] entryHiPrefix, int[] ops,
         int[] stateEntryMask, int[] stateAcceptMask, int registerCount, int finalRegBase, int tagCount,
-        boolean multiValued) {
+        boolean multiValued, int posFlagCells) {
+        if (posFlagCells != 64 && posFlagCells != 128) {
+            throw new IllegalStateException("tdfa: posFlagCells must be 64 or 128, got " + posFlagCells);
+        }
+        // FINAL_END (bit 64) only exists on 128-cell artifacts; the six
+        // universal bits exist on every artifact.
+        int allowedMaskBits = 0x3F | (posFlagCells == 128 ? Tnfa.FINAL_END : 0);
         int entries = ranges.length / 5;
         if (startState < 0 || startState >= stateCount) {
             throw new IllegalStateException(
@@ -466,7 +483,7 @@ public final class Tdfa {
                 if (opsOff != 0) {
                     checkOpsBlock(s, i, opsOff, ops, false, finalRegBase, tagCount, multiValued);
                 }
-                if ((mask & ~0x3F) != 0) {
+                if ((mask & ~allowedMaskBits) != 0) {
                     throw new IllegalStateException(
                         "tdfa: state " + s + " entry " + i + " unknown assertion-mask bits");
                 }
@@ -476,7 +493,7 @@ public final class Tdfa {
                         "tdfa: state " + s + " entry " + i + " prefix-max invariant broken");
                 }
             }
-            if ((stateEntryMask[s] & ~0x3F) != 0) {
+            if ((stateEntryMask[s] & ~allowedMaskBits) != 0) {
                 throw new IllegalStateException("tdfa: state " + s + " entry mask has unknown bits");
             }
             int fops = stateFinalOpsOff[s];
@@ -488,8 +505,8 @@ public final class Tdfa {
             }
         }
         if (stateFinalOpsByMask != null) {
-            if (stateFinalOpsByMask.length != stateCount * 64) {
-                throw new IllegalStateException("tdfa: final-ops-by-mask table must be stateCount*64");
+            if (stateFinalOpsByMask.length != stateCount * posFlagCells) {
+                throw new IllegalStateException("tdfa: final-ops-by-mask table must be stateCount*" + posFlagCells);
             }
             for (int i = 0; i < stateFinalOpsByMask.length; i++) {
                 int cell = stateFinalOpsByMask[i];
@@ -558,7 +575,7 @@ public final class Tdfa {
      * walk reads {@code ranges}).
      */
     private static void validateWhole(int stateCount, int[] wholeRanges, int[] wholeBase, int[] wholeCount,
-        int[] wholeHiPrefix, int[] ops, int finalRegBase, int tagCount, boolean multiValued) {
+        int[] wholeHiPrefix, int[] ops, int finalRegBase, int tagCount, boolean multiValued, int posFlagCells) {
         if (wholeBase == null || wholeCount == null || wholeHiPrefix == null) {
             throw new IllegalStateException("tdfa: partial-whole side table present but incomplete");
         }
@@ -609,7 +626,7 @@ public final class Tdfa {
                 if (opsOff != 0) {
                     checkOpsBlock(s, i, opsOff, ops, false, finalRegBase, tagCount, multiValued);
                 }
-                if ((mask & ~0x3F) != 0) {
+                if ((mask & ~(0x3F | (posFlagCells == 128 ? Tnfa.FINAL_END : 0))) != 0) {
                     throw new IllegalStateException(
                         "tdfa: whole state " + s + " entry " + i + " unknown assertion-mask bits");
                 }
@@ -659,9 +676,10 @@ public final class Tdfa {
         }
         int[] cache = stopMaskTableCache;
         if (cache == null) {
-            cache = new int[u.length * 64];
+            int cells = posFlagCells;
+            cache = new int[u.length * cells];
             for (int s = 0; s < u.length; s++) {
-                Arrays.fill(cache, s * 64, s * 64 + 64, u[s] != 0 ? NEVER_STOP : 0);
+                Arrays.fill(cache, s * cells, s * cells + cells, u[s] != 0 ? NEVER_STOP : 0);
             }
             stopMaskTableCache = cache;
         }
@@ -708,15 +726,25 @@ public final class Tdfa {
                 deps |= wholeRanges[i];
             }
         }
-        deps |= tableDeps(stopOnAcceptMask());
-        deps |= tableDeps(stateFinalOpsByMask());
+        deps |= tableDeps(stopOnAcceptMask(), posFlagCells);
+        deps |= tableDeps(stateFinalOpsByMask(), posFlagCells);
         posFlagDepsCache = deps;
         return deps;
     }
 
     /**
-     * Position-aware final-ops table ({@code [state*64+posFlags]} → offset, -1 = accept
-     * suppressed), or null when every accepting state is mask-uniform. Defensive copy.
+     * Cells per state in the posFlags-indexed tables: 64, or 128 when the
+     * compile gates any edge on FINAL_END (the JUR-lane plain-{@code $}
+     * predicate). Runners and emitters size their cell indexing with this;
+     * runtime posFlags values are always below it.
+     */
+    public int posFlagCells() {
+        return posFlagCells;
+    }
+
+    /**
+     * Position-aware final-ops table ({@code [state*posFlagCells+posFlags]} → offset, -1 =
+     * accept suppressed), or null when every accepting state is mask-uniform. Defensive copy.
      */
     public int[] stateFinalOpsByMask() {
         return stateFinalOpsByMask == null ? null : stateFinalOpsByMask.clone();

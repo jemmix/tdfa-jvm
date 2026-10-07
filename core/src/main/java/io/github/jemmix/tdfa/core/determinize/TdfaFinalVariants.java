@@ -211,11 +211,11 @@ final class TdfaFinalVariants {
      * merge several accept configs of different priority whose zero-width
      * assertions differ; the tag-value winner is the highest-priority
      * accept config ALIVE under the runtime posFlags. When the winner is
-     * the same config for all 64 masks the state is uniform (the common
+     * the same config for all masks the state is uniform (the common
      * case — the first accept config is unconditional) and nothing is
      * stored. Otherwise the per-mask winners' op lists (deduped) land in
      * {@code finalOpsVariants} with {@code finalMaskVariant} as the
-     * [64] selector; materialization turns them into
+     * [posFlagCells] selector; materialization turns them into
      * {@code stateFinalOpsByMask}.
      */
     void computeFinalVariants(DfaStateBuilder sb, List<Config> cfgs) {
@@ -244,10 +244,11 @@ final class TdfaFinalVariants {
     }
 
     void computeFinalVariants(DfaStateBuilder sb, int[] st, int[] mk, IntFunction<Config> at) {
-        owner.meter.tick(64L * st.length); // 64 masks × n aliveness scan — budget-visible
-        int[] winner = new int[64];
+        int cells = owner.posFlagCells;
+        owner.meter.tick((long) cells * st.length); // cells masks × n aliveness scan — budget-visible
+        int[] winner = new int[cells];
         boolean uniform = true;
-        for (int M = 0; M < 64; M++) {
+        for (int M = 0; M < cells; M++) {
             int w = -1;
             for (int i = 0; i < st.length; i++) {
                 if (st[i] != owner.nfa.accept) {
@@ -285,8 +286,8 @@ final class TdfaFinalVariants {
             return;
         }
         List<int[]> variants = new ArrayList<>();
-        int[] maskVariant = new int[64];
-        for (int M = 0; M < 64; M++) {
+        int[] maskVariant = new int[cells];
+        for (int M = 0; M < cells; M++) {
             int w = winner[M];
             if (w < 0) {
                 maskVariant[M] = -1;
