@@ -60,7 +60,6 @@ class PivotLanesTest {
         .endOfTextOnly().emptyIterationSpans().ungreedyU();
     private static final Semantics JUR = Semantics.of();
 
-
     private static final String[] TERM_INPUTS = {"", "\n", "a\n", "a\r", "a\r\n", "a\u0085", "a\u2028", "a\u2029",
         "a\n\n", "a\r\r", "a\r\n\r\n", "a\r\nb", "a\rb", "a\nb", "ab\ncd\r\n"};
 
