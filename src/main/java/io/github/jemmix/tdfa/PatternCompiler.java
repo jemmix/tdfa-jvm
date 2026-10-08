@@ -70,6 +70,17 @@ final class PatternCompiler {
 
     static Pattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider provider,
         CompileObserver observer) {
+        return compile(regex, flags, factory, provider, observer, null);
+    }
+
+    /**
+     * Fullest entry: an explicit {@link Semantics} (the facade options
+     * route — {@code Pattern.compile(regex, CompileOptions)}) selects the
+     * compile's interpretation policy; {@code null} keeps the pre-flip
+     * default lane below.
+     */
+    static Pattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider provider,
+        CompileObserver observer, Semantics explicitSemantics) {
         if (regex == null) {
             throw new NullPointerException("pattern is null");
         }
@@ -83,9 +94,11 @@ final class PatternCompiler {
         // JUR-compat (docs/jur-compat-default.md): the seven opt-out
         // bits are accepted but select nothing yet — the engine
         // implements only the RE2-lineage side on every axis, so every
-        // compile runs the RE2 lane. The flip replaces this line with
-        // the user-bit mapping (UNIX_LINES -> .unixLines() etc.).
-        Semantics semantics = RE2_LANE;
+        // flags-route compile runs the RE2 lane. The flip replaces this
+        // line with the user-bit mapping (UNIX_LINES -> .unixLines() etc.);
+        // until then the CompileOptions route above is the one way a
+        // facade compile selects a lane.
+        Semantics semantics = explicitSemantics != null ? explicitSemantics : RE2_LANE;
         String fl = regex;
         if ((flags & Pattern.CASE_INSENSITIVE) != 0) {
             fl = "(?i)" + fl;

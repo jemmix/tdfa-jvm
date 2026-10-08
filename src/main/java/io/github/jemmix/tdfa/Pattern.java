@@ -80,7 +80,11 @@ public interface Pattern extends Serializable {
      * word-character predicate — the JDK's Alphabetic-based word set, so
      * {@code Mc}, Join_Control (U+200C/U+200D) and Other_Alphabetic
      * codepoints (e.g. U+24B6) are word chars while {@code Sc}/{@code Sk}/
-     * {@code No} are not. Exact membership is universe-dependent: the
+     * {@code No} are not. Like the JDK flag it mirrors, setting it also
+     * makes {@link #CASE_INSENSITIVE} Unicode-aware (the JDK's
+     * {@code UNICODE_CHARACTER_CLASS} implies {@code UNICODE_CASE} folding)
+     * — {@code (?i)} folds the full Unicode simple-fold universe instead
+     * of ASCII only. Exact membership is universe-dependent: the
      * default (JDK-derived) universe equals a same-JVM
      * {@code java.util.regex} oracle by construction; a pinned snapshot
      * universe freezes the same definition at its Unicode version. The
@@ -286,7 +290,10 @@ public interface Pattern extends Serializable {
     }
 
     /**
-     * Compile with explicit options (semantics, tables, observer).
+     * Compile with explicit options (semantics, tables, observer). An
+     * options-carried {@link io.github.jemmix.tdfa.core.tnfa.Semantics
+     * Semantics} selects the compile's interpretation policy (the JUR-compat
+     * axes); absent, the default lane applies.
      */
     static Pattern compile(String regex, CompileOptions options) {
         if (options == null) {
@@ -302,7 +309,8 @@ public interface Pattern extends Serializable {
         if (options.isDisableUnicodeGroups()) {
             flags |= DISABLE_UNICODE_GROUPS;
         }
-        return PatternCompiler.compile(regex, flags, null, options.unicodeProvider(), options.observer());
+        return PatternCompiler.compile(regex, flags, null, options.unicodeProvider(), options.observer(),
+            options.semantics());
     }
 
     /**

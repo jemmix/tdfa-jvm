@@ -66,12 +66,48 @@ audited every rung × tier × input type (`PivotLanesTest`).
   tier and checks VM==ASM plus the live java.util.regex oracle, with the
   residual surrogate/fold families soft and everything else hard)
 
-## 3. Fold + U bits — 1 d
+## 3. Fold + U bits — landed
 
-- [ ] `UNICODE_CASE`: ASCII fold universe at the `Parser.foldUniverse` seam; bare CI folds ASCII, CI|UNICODE_CASE folds full Unicode
-- [ ] `UNIX_LINES` bit activates the terminator-set pivot of item 2
-- [ ] `UNGREEDY_U`: `(?U)`/`(?U:...)` repurpose to scoped Unicode-case; group-scoped use rejects with `PatternSyntaxException` (v1 top-level-only); retire the campaign's `SKIP_UNGREEDY` skip lane
-- [ ] `CompileOptions` withers (or a `semantics(Semantics)` wither) for the core-tier spelling
+Both parser-side axes selectable at the fold and `(?U)` seams, **default
+unchanged** (every facade compile still runs the RE2 lane; the legacy parse
+overloads keep it bit-for-bit); audited in `PivotLanesTest` (JUR lane vs
+the live java.util.regex oracle, RE2 lane vs the facade, the axis-single
+fold lane, the v1 rejections, the facade options route).
+
+- [x] `UNICODE_CASE`: ASCII fold universe at the `Parser.foldUniverse` seam
+  (`CaseFoldTable.asciiFoldRanges`) — bare CI folds the 26 letter pairs
+  and nothing else (JDK-verified against a live java.util.regex: ſ,
+  K U+212A and the Turkic İ/ı pair are all inert under bare CI — İ/ı
+  agree lane-vs-oracle there, the merge needs UNICODE_CASE); the axis set
+  (or a scoped `(?U)` upgrade) folds full — the provider's own universe
+  when it supplies one. JDK finding (the campaign's JUR lane caught it as
+  10 hard mismatches before the fix): `UNICODE_CHARACTER_CLASS` IMPLIES
+  Unicode-aware CI — java under CI|UCC folds the full universe exactly
+  like CI|UNICODE_CASE — so tdfa's `(?u)` widens the fold universe the
+  same way (group-scoped like the flag itself). The `\p{...}` fold twin
+  (`foldTableFor`) is a different seam and stays universe-full in both
+  lanes: the JDK folds property classes under bare CI already. The
+  campaign's JUR-lane oracle compares under plain CASE_INSENSITIVE now
+  (the bare-CI universes agree by construction; UCC lanes fold full on
+  both sides, with the İ/ı full-universe residual still soft).
+- [x] `UNIX_LINES` bit activates the terminator-set pivot of item 2 through
+  the same route — `CompileOptions.semantics(...unixLines())`, the
+  facade's options entry; the int-flag mapping of the axes remains the
+  flip's one-line change.
+- [x] `UNGREEDY_U`: `(?U)`/`(?U:...)` pivot on the axis — set keeps the
+  ungreedy reading (scoped, save/restore, unchanged); unset repurposes
+  `(?U)` to scoped Unicode-case, a point-forward fold-universe upgrade
+  (v1 top-level-only: the colon form, a negated `(?-U)` and any in-group
+  use reject with `PatternSyntaxException` — per-scope fold universes are
+  the v2 work). The campaign's JUR-lane `SKIP_UNGREEDY` skip lane retired:
+  `(?U:...)` shapes reject by design and count soft, a leading `(?U)`
+  translates to the oracle's UNICODE_CASE flag; the RE2-lane probe keeps
+  its skip (the facade reads `(?U:...)` as ungreedy, untranslatable to
+  java until the flip).
+- [x] `CompileOptions` `semantics(Semantics)` wither for the core-tier
+  spelling — honored by `CompiledRegex` and the facade's
+  `Pattern.compile(regex, CompileOptions)` (the one pre-flip way a facade
+  compile leaves the RE2 lane).
 
 ## 4. Family 6 — 2–5 d
 

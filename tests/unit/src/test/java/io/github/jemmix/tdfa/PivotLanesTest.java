@@ -3,11 +3,13 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
+import io.github.jemmix.tdfa.core.compile.CompileOptions;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
 import io.github.jemmix.tdfa.core.engine.WholeEngine;
+import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
 import io.github.jemmix.tdfa.core.report.CompileObserver;
 import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
@@ -18,29 +20,37 @@ import java.nio.CharBuffer;
 import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * WBS item "Parameterize the pivots" — the lane audit. Every pivot
- * (terminator set, EMPTY_LAST_LINE, END_OF_TEXT_ONLY, CODEPOINT_BOUNDARIES)
- * is pinned in BOTH selections across every rung × tier × input type:
+ * WBS items "Parameterize the pivots" + "Fold + U bits" — the lane audit.
+ * Every pivot (terminator set, EMPTY_LAST_LINE, END_OF_TEXT_ONLY,
+ * CODEPOINT_BOUNDARIES, fold universe, {@code (?U)} meaning) is pinned in
+ * BOTH selections across every rung × tier × input type:
  *
  * <ul>
  * <li><b>JUR lane</b> ({@link Semantics#of()}, every axis unset) against
  *     the LIVE {@code java.util.regex} oracle — the parity the lane
  *     promises, verified by construction rather than by transcribed
  *     expectations (the anchor rules themselves were re-verified against a
- *     live JDK when the design was written);</li>
+ *     live JDK when the design was written); bare-CI fold compares under
+ *     plain java CASE_INSENSITIVE (both universes fold the 26 ASCII letter
+ *     pairs and nothing else — İ/ı inert on both sides), and the
+ *     {@code (?U)} reading against java's own spelling of scoped
+ *     UNICODE_CASE (inline {@code (?u)});</li>
  * <li><b>RE2 lane</b> (every axis set — the shipped facade default,
  *     unchanged) against the facade's own engines on the same battery:
  *     the explicit-lane core compile must answer exactly what
  *     {@code Pattern.compile} answers;</li>
- * <li>axis-single hybrid lanes (UNIX_LINES added, EMPTY_LAST_LINE added)
- *     for the separable effects the split bits exist for — hand-pinned, no
- *     JDK equivalent exists; and the CODEPOINT_BOUNDARIES unit-semantics
- *     contract (lone surrogates match at any unit) — hand-pinned for the
+ * <li>axis-single hybrid lanes (UNIX_LINES added, EMPTY_LAST_LINE added,
+ *     UNICODE_CASE added) for the separable effects the split bits exist
+ *     for — the single-axis fold lane against java
+ *     CASE_INSENSITIVE|UNICODE_CASE (İ/ı excluded: tdfa's full universe
+ *     keeps the pair fold-inert, java merges it — the campaign's soft
+ *     fold residual); the unit-semantics contract hand-pinned for the
  *     same reason (java refuses surrogate units inside well-formed pairs
- *     entirely; that residual is the campaign's soft
- *     "surrogate-code-unit" family);</li>
+ *     entirely);</li>
  * <li>every case runs on the interpreter AND the ASM tier (identical
  *     protocol), over String and non-String CharSequence (StringBuilder /
  *     CharBuffer — the GENERIC rung), and the VM tier re-runs under every
@@ -49,10 +59,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * </ul>
  *
  * <p>Not pinned here: the group-participation family (EMPTY_ITERATION_SPANS
- * — a later WBS item) and CI fold (UNICODE_CASE — also later; the JUR-lane
- * oracle below therefore pins fold-free patterns only... plus bare-CI
- * patterns, where tdfa currently folds the full universe: those compare
- * against java CASE_INSENSITIVE|UNICODE_CASE).
+ * — a later WBS item). The facade's {@code CompileOptions.semantics} route
+ * — the one pre-flip way a facade compile leaves the RE2 lane — is pinned
+ * at the bottom (fold, terminator set, and the (?U) v1 rejection through
+ * it).
  */
 class PivotLanesTest {
 
@@ -225,17 +235,30 @@ class PivotLanesTest {
     }
 
     private static void assertOracleParity(String what, String pattern, int jurFlags, Semantics lane, String[] inputs) {
-        Tdfa tdfa = compileTdfa(pattern, lane);
+        assertDualOracleParity(what, pattern, pattern, jurFlags, lane, inputs);
+    }
+
+    /**
+     * Dual-pattern lane parity: the lane pattern and the oracle pattern
+     * spell the SAME reading in the two dialects — used for {@code (?U)}
+     * (scoped Unicode-case in the lane; java's spelling of that reading is
+     * inline {@code (?u)} or the UNICODE_CASE flag on the remainder).
+     */
+    private static void assertDualOracleParity(String what, String lanePattern, String oraclePattern, int jurFlags,
+        Semantics lane, String[] inputs) {
+        Tdfa tdfa = compileTdfa(lanePattern, lane);
         RegexEngine vm = new TdfaRunner(tdfa, 1 << 20);
         RegexEngine asm = TdfaAsmBackend.generate(tdfa, 1 << 20);
-        Pattern oracle = Pattern.compile(pattern, jurFlags);
+        Pattern oracle = Pattern.compile(oraclePattern, jurFlags);
         for (String in : inputs) {
             String vmStr = probe(vm, in);
-            assertThat(probe(asm, in)).as("%s: ASM == VM on %s / %s", what, pattern, esc(in)).isEqualTo(vmStr);
+            assertThat(probe(asm, in)).as("%s: ASM == VM on %s / %s", what, lanePattern, esc(in)).isEqualTo(vmStr);
             CharSequence sbW = new StringBuilder(in);
             CharSequence cbW = CharBuffer.wrap(in);
-            assertThat(probe(vm, sbW)).as("%s: StringBuilder path on %s / %s", what, pattern, esc(in)).isEqualTo(vmStr);
-            assertThat(probe(vm, cbW)).as("%s: CharBuffer path on %s / %s", what, pattern, esc(in)).isEqualTo(vmStr);
+            assertThat(probe(vm, sbW)).as("%s: StringBuilder path on %s / %s", what, lanePattern, esc(in))
+                .isEqualTo(vmStr);
+            assertThat(probe(vm, cbW)).as("%s: CharBuffer path on %s / %s", what, lanePattern, esc(in))
+                .isEqualTo(vmStr);
             for (TdfaRunner.Strategy f : new TdfaRunner.Strategy[]{TdfaRunner.Strategy.ORIGIN_SIM,
                 TdfaRunner.Strategy.TRIGGER, TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART}) {
                 String forced;
@@ -245,9 +268,9 @@ class PivotLanesTest {
                 } finally {
                     TdfaRunner.setForcedStrategy(null);
                 }
-                assertThat(forced).as("%s: forced %s on %s / %s", what, f, pattern, esc(in)).isEqualTo(vmStr);
+                assertThat(forced).as("%s: forced %s on %s / %s", what, f, lanePattern, esc(in)).isEqualTo(vmStr);
             }
-            assertThat(vmStr).as("%s: lane %s vs java.util.regex on %s / %s", what, lane, pattern, esc(in))
+            assertThat(vmStr).as("%s: lane %s vs java.util.regex on %s / %s", what, lane, lanePattern, esc(in))
                 .isEqualTo(javaProbe(oracle, in));
         }
     }
@@ -342,6 +365,96 @@ class PivotLanesTest {
         assertOracleParity("RE2 (?u)\\b", "(?u)\\ba|(?u)a\\b|(?u)\\Bb", Pattern.UNICODE_CHARACTER_CLASS, RE2, inputs);
     }
 
+    // ===== fold universe: JUR lane == java.util.regex, live oracle =====
+
+    @Test
+    void jurBareCiFoldsAsciiLikeJavaUtilRegex() {
+        // Bare CI, the JUR-lane reading: ASCII-only fold — the 26 letter
+        // pairs and nothing else. ſ, K(U+212A), İ and ı are all inert
+        // (İ/ı SAFE in this battery: neither universe folds them without
+        // UNICODE_CASE, so even the Turkic pair agrees lane vs oracle).
+        String[] inputs = {"s", "S", "\u017F", "k", "K", "\u212A", "i", "I", "\u0130", "\u0131", "ab", "AB", "Ab",
+            "Stra\u00dfe", "STRASSE", "\u00e9", "\u00c9", "ss"};
+        for (String pat : new String[]{"(?i)s", "(?i)k", "(?i)i", "(?i)[a-z]+", "(?i)[^s]", "(?i)[^k]", "(?i)\\w",
+            "(?i)Stra\u00dfe", "(?i)[\u00e0-\u00ff]+"}) {
+            assertJurParity("JUR " + pat, pat, 0, inputs);
+        }
+    }
+
+    @Test
+    void unicodeCaseAxisFoldsTheFullUniverseLikeJavaCiUnicodeCase() {
+        // The single-axis fold lane (everything else JUR): CI folds the
+        // full simple-fold universe, java's CASE_INSENSITIVE|UNICODE_CASE.
+        // İ/ı EXCLUDED here by design: tdfa's full universe keeps the pair
+        // fold-inert, java merges it — the campaign's soft fold residual.
+        Semantics lane = JUR.unicodeCase();
+        String[] inputs = {"s", "S", "\u017F", "k", "K", "\u212A", "i", "I", "\u03c3", "\u03c2", "\u03a3", "\u0442",
+            "\u0422", "\u1c85", "\u00e9", "\u00c9", "ab", "AB", "Stra\u00dfe", "STRASSE"};
+        for (String pat : new String[]{"(?i)s", "(?i)k", "(?i)[a-z]+", "(?i)[^s]", "(?i)[^k]", "(?i)Stra\u00dfe",
+            "(?i)\u03c3", "(?i)\u0442", "(?i)[\u00e0-\u00ff]+", "(?i)[\u03b1-\u03c9]"}) {
+            assertOracleParity("JUR+UNICODE_CASE " + pat, pat, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE, lane,
+                inputs);
+        }
+    }
+
+    @Test
+    void jurUccWidensTheFoldUniverseLikeJavaUcc() {
+        // JDK-verified (the campaign found it): UNICODE_CHARACTER_CLASS
+        // IMPLIES Unicode-aware CI — java under CI|UCC folds the full
+        // universe exactly like CI|UNICODE_CASE, so tdfa's (?u) widens
+        // the fold universe in the JUR lane too. İ/ı excluded as above.
+        String[] inputs = {"s", "S", "\u017F", "k", "K", "\u212A", "i", "I", "\u03c3", "\u03c2", "\u03a3", "\u0442",
+            "\u0422", "\u1c85", "\u1c84", "\u00e9", "\u00c9", "ab", "AB"};
+        for (String pat : new String[]{"(?u)(?i)k", "(?u)(?i)s", "(?u)(?i)[a-z]+", "(?u)(?i)[^s]", "(?i)(?u)ks",
+            "(?u)(?i)\u0442", "(?u)(?i)[\u03b1-\u03c9]", "(?u)((?i)k)"}) {
+            assertOracleParity("JUR (?u)CI " + pat, pat, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS,
+                JUR, inputs);
+        }
+        // scoped the other way: CI outside, (?u) inside a group — the
+        // upgrade is group-scoped, the outer atoms fold ASCII
+        String[] midInputs = {"kK", "K\u017F", "k\u017F", "\u212Ak", "ks", "\u017Fs"};
+        assertOracleParity("JUR (?i)((?u)k)s", "(?i)((?u)k)s", 0, JUR, midInputs);
+    }
+
+    // ===== (?U): the java.util.regex reading — scoped Unicode-case =====
+
+    @Test
+    void jurScopedUUpgradesTheFoldUniverse() {
+        // java's own spelling of scoped UNICODE_CASE is inline (?u) (and
+        // the flag for a whole-pattern prefix) — dual-pattern oracle.
+        String[] inputs = {"k", "K", "\u212A", "aK", "ab", "ks", "Ks", "kS", "\u017F", "k\u017F", "\u212Ak", "s\u017F"};
+        assertDualOracleParity("JUR (?U)(?i)k...", "(?U)(?i)ks", "(?u)(?i)ks", 0, JUR, inputs);
+        assertDualOracleParity("JUR (?U) prefix via flags", "(?U)(?i)ks", "ks",
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE, JUR, inputs);
+        // point-forward scoping: atoms BEFORE the upgrade keep the ASCII
+        // universe, atoms after it fold full
+        String[] midInputs = {"ks", "Ks", "kS", "k\u017F", "\u017Fs", "KS", "kk"};
+        assertDualOracleParity("JUR (?i)k(?U)s", "(?i)k(?U)s", "(?i)k(?u)s", 0, JUR, midInputs);
+        // degenerate no-op: (?U) without CI folds nothing
+        assertDualOracleParity("JUR (?U)k no CI", "(?U)k", "k", 0, JUR, midInputs);
+    }
+
+    @Test
+    void v1ScopedURejectionsUnderTheJurReading() {
+        // v1: top-level positive flag-only (?U) alone. The colon form, a
+        // negated (?-U), and any use inside a group (including inside
+        // another flag group's body) reject with PatternSyntaxException.
+        for (String pat : new String[]{"(?U:a)", "(?U:a+)", "((?U)a)", "(a(?U)b)", "(?i:(?U)a)", "(?i-U)a", "(?-U)a",
+            "((?U:a))"}) {
+            assertThatThrownBy(() -> compileTdfa(pat, JUR)).as("JUR lane rejects /%s/", pat)
+                .isInstanceOf(PatternSyntaxException.class);
+        }
+        // the legal spellings compile under the JUR reading ...
+        for (String pat : new String[]{"(?U)a", "(?U)(?i)a", "a|(?U)b", "(?U-s)a", "(?Ui)a", "(?U)a|b"}) {
+            assertThatCode(() -> compileTdfa(pat, JUR)).as("JUR lane accepts /%s/", pat).doesNotThrowAnyException();
+        }
+        // ... and the RE2 reading (the facade's pre-flip lane) keeps every
+        // spelling as scoped ungreedy
+        for (String pat : new String[]{"(?U:a)", "((?U)a)", "(?i-U)a", "(?U)a+"}) {
+            assertThatCode(() -> compileTdfa(pat, RE2)).as("RE2 lane accepts /%s/", pat).doesNotThrowAnyException();
+        }
+    }
+
     // ===== hybrid lanes no JDK flag can express: hand-pinned =====
 
     @Test
@@ -398,11 +511,15 @@ class PivotLanesTest {
         // explicit RE2-lane core compile must answer exactly what the
         // facade answers on the pivot battery (the facade itself is pinned
         // by the re2j parity suites, so this transfers those pins to the
-        // explicit lane).
+        // explicit lane). Fold and (?U) included: plain (?i) folds the
+        // full universe, (?U) spells ungreedy — the item's
+        // default-unchanged contract on the two parser-side axes.
         String[] pats = {"(?m)^", "(?m)$", "$", "^", ".", "a$", "a\\z", "(?m)a$", "x*$", "a$|ab", "\\ba", "(?u)\\ba",
-            "[\uD800-\uDFFF]", "\uDE00"};
+            "[\uD800-\uDFFF]", "\uDE00", "(?i)k", "(?i)[^s]", "(?i)Stra\u00dfe", "(?i)[a-z]+", "(?U)a+", "(?U:a+)b",
+            "(?U)a+?b", "((?U)a)+"};
         String[] inputs = {"", "\n", "a\n", "a\r", "a\r\n", "a\u0085", "a\n\n", "a\r\n\r\n", "a\r\nb", "a\rb", "a\nb",
-            "ab\ncd\r\n", "\uD83D\uDE00", "a\uD83D\uDE00b", "\uD835\uDD4Fa"};
+            "ab\ncd\r\n", "\uD83D\uDE00", "a\uD83D\uDE00b", "\uD835\uDD4Fa", "k", "K", "\u212A", "s", "\u017F",
+            "a\u212A", "s\u017F", "Stra\u00dfe", "STRASSE", "aaa", "aab", "ab"};
         for (String pat : pats) {
             Tdfa tdfa = compileTdfa(pat, RE2);
             RegexEngine vm = new TdfaRunner(tdfa, 1 << 20);
@@ -413,5 +530,40 @@ class PivotLanesTest {
                 assertThat(probe(asm, in)).as("RE2 ASM == facade: %s / %s", pat, esc(in)).isEqualTo(want);
             }
         }
+    }
+
+    // ===== the facade options route: the one pre-flip lane selector =====
+
+    @Test
+    void compileOptionsSemanticsSelectsTheLane() {
+        // CompileOptions.semantics(Semantics) — the core-tier spelling,
+        // honored by the facade options route. The fold axis:
+        io.github.jemmix.tdfa.Pattern jur =
+            io.github.jemmix.tdfa.Pattern.compile("(?i)k", CompileOptions.of().semantics(Semantics.of()));
+        assertThat(jur.matcher("\u212A").find()).as("JUR-lane facade folds ASCII only").isFalse();
+        assertThat(jur.matcher("K").find()).as("JUR-lane facade folds the ASCII pair").isTrue();
+        io.github.jemmix.tdfa.Pattern ucc =
+            io.github.jemmix.tdfa.Pattern.compile("(?i)k", CompileOptions.of().semantics(Semantics.of().unicodeCase()));
+        assertThat(ucc.matcher("\u212A").find()).as("single-axis fold lane folds full").isTrue();
+        io.github.jemmix.tdfa.Pattern re2 = io.github.jemmix.tdfa.Pattern.compile("(?i)k", CompileOptions.of());
+        assertThat(re2.matcher("\u212A").find()).as("default options keep the RE2 lane").isTrue();
+        // UNIX_LINES through the same route activates the item-2
+        // terminator-set pivot — the bit's pre-flip spelling.
+        io.github.jemmix.tdfa.Pattern nl =
+            io.github.jemmix.tdfa.Pattern.compile(".", CompileOptions.of().semantics(Semantics.of().unixLines()));
+        assertThat(nl.matcher("\r").find()).as("unixLines lane: dot skips \\n only").isTrue();
+        io.github.jemmix.tdfa.Pattern jurDot =
+            io.github.jemmix.tdfa.Pattern.compile(".", CompileOptions.of().semantics(Semantics.of()));
+        assertThat(jurDot.matcher("\r").find()).as("JUR lane: dot skips the full terminator set").isFalse();
+        // the (?U) reading through the same route: v1 rejection and the
+        // scoped fold upgrade
+        assertThatThrownBy(
+            () -> io.github.jemmix.tdfa.Pattern.compile("(?U:a)", CompileOptions.of().semantics(Semantics.of())))
+            .as("facade options route: (?U:...) rejects under the JUR reading")
+            .isInstanceOf(PatternSyntaxException.class);
+        io.github.jemmix.tdfa.Pattern up =
+            io.github.jemmix.tdfa.Pattern.compile("(?U)(?i)k", CompileOptions.of().semantics(Semantics.of()));
+        assertThat(up.matcher("\u212A").find()).as("facade options route: (?U) upgrades the fold universe").isTrue();
+        assertThat(up.matcher("\u017F").find()).as("facade options route: (?U) upgrade is literal-scoped").isFalse();
     }
 }

@@ -225,10 +225,12 @@ public final class Tnfa {
         // Determinization constructs its own meter per attempt (TdfaCompiler).
         // Parser-side projection of the compile's Semantics (the carrier
         // stays here; the parser package sits below tnfa in the layer DAG):
-        // today the DOT terminator set (UNIX_LINES), soon the fold universe
-        // and (?U) meaning at their own WBS items.
+        // the DOT terminator set (UNIX_LINES), the fold universe
+        // (UNICODE_CASE) and the (?U) meaning (UNGREEDY_U).
         ParseResult parsed = Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth,
-            ParseOptions.dotNlOnly(semantics.isUnixLines()), provider, meter);
+            ParseOptions.dotNlOnly(semantics.isUnixLines()).unicodeCase(semantics.isUnicodeCase())
+                .ungreedyU(semantics.isUngreedyU()),
+            provider, meter);
         if (observer != null) {
             observer.stage(CompileObserver.Stage.PARSE, System.nanoTime() - t0, parsed.tagCount());
         }

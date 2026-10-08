@@ -2,11 +2,14 @@
 
 Status: **in progress** — the flag-surface boilerplate is landed (bits,
 `RE2_COMPAT` preset, `Semantics` carrier Tnfa→Tdfa→runner; pre-flip
-no-ops). Landing the rest is only cheap before the first Maven publish /
-1.0 API lock (both still open in [TODO](../TODO.md)) — after that the
-same flip is a major version. This page is the full accounting: what
-flips, what the API looks like, what it costs, and how it's phased; the
-build order lives in the [work breakdown](jur-compat-wbs.md).
+no-ops), the match-time pivots are parameterized (both sides selectable,
+default unchanged), and the fold + `(?U)` axes joined them through the
+same `CompileOptions.semantics` route. Landing the rest is only cheap
+before the first Maven publish / 1.0 API lock (both still open in
+[TODO](../TODO.md)) — after that the same flip is a major version. This
+page is the full accounting: what flips, what the API looks like, what it
+costs, and how it's phased; the build order lives in the
+[work breakdown](jur-compat-wbs.md).
 
 ## Scope and terms
 
@@ -128,9 +131,9 @@ Composition rules:
 
 | item | effort |
 |---|---|
-| Fix finding 1 (CharSequence scan pair-interior skip) — prerequisite either way | 0.5 d |
-| Parameterize the pivots: terminator set + anchor EOL rules in `positionFlags*` + `DOT`, per-unit vs codepoint wordness, scan gating — both behaviors selectable, **default unchanged**, campaign probes both lanes | 3–5 d (audit-heavy: every rung × tier × input type) |
-| `UNIX_LINES`, `UNICODE_CASE` bits + ASCII fold universe; `UNGREEDY_U` parse + top-level-only scoped-fold rejection | 1 d |
+| Fix finding 1 (CharSequence scan pair-interior skip) — prerequisite either way — **landed** | 0.5 d |
+| Parameterize the pivots: terminator set + anchor EOL rules in `positionFlags*` + `DOT`, per-unit vs codepoint wordness, scan gating — both behaviors selectable, **default unchanged**, campaign probes both lanes — **landed** | 3–5 d (audit-heavy: every rung × tier × input type) |
+| `UNIX_LINES`, `UNICODE_CASE` bits + ASCII fold universe; `UNGREEDY_U` parse + top-level-only scoped-fold rejection — **landed** (selectable + `CompileOptions.semantics`, default unchanged) | 1 d |
 | Family 6: φ-finals variant suppressing zero-width final-iteration spans | 2–5 d |
 | The flip commit: default changes, `RE2_COMPAT` preset, `PatternCompiler` whitelist, javadoc, README/`BENCHMARKS.md` re-baseline | 1 d |
 | Tests: per-flag unit tests from the campaign replay seeds; jur campaign classifiers → assertions; `DifferentialFuzzer` matrix gains the `RE2_COMPAT` lane; soak + README numbers | 1.5–2 d |

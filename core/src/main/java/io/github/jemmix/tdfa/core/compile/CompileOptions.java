@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.core.compile;
 
 import io.github.jemmix.tdfa.core.report.CompileObserver;
+import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 import java.util.Objects;
@@ -25,24 +26,26 @@ public final class CompileOptions {
     private final boolean disableUnicodeGroups;
     private final UnicodeDataProvider unicodeProvider;
     private final CompileObserver observer;
+    private final Semantics semantics;
 
     private CompileOptions(boolean longestMatch, boolean multiValuedTags, boolean disableUnicodeGroups,
-        UnicodeDataProvider unicodeProvider, CompileObserver observer) {
+        UnicodeDataProvider unicodeProvider, CompileObserver observer, Semantics semantics) {
         this.longestMatch = longestMatch;
         this.multiValuedTags = multiValuedTags;
         this.disableUnicodeGroups = disableUnicodeGroups;
         this.unicodeProvider = unicodeProvider;
         this.observer = observer;
+        this.semantics = semantics;
     }
 
     /** Default options: leftmost-first (Perl) semantics, JDK-default Unicode tables. */
     public static CompileOptions of() {
-        return new CompileOptions(false, false, false, null, null);
+        return new CompileOptions(false, false, false, null, null, null);
     }
 
     /** POSIX leftmost-longest match semantics (re2j {@code LONGEST_MATCH}). */
     public CompileOptions longestMatch() {
-        return new CompileOptions(true, multiValuedTags, disableUnicodeGroups, unicodeProvider, observer);
+        return new CompileOptions(true, multiValuedTags, disableUnicodeGroups, unicodeProvider, observer, semantics);
     }
 
     /**
@@ -53,17 +56,34 @@ public final class CompileOptions {
      * for the per-iteration offsets.
      */
     public CompileOptions multiValuedTags() {
-        return new CompileOptions(longestMatch, true, disableUnicodeGroups, unicodeProvider, observer);
+        return new CompileOptions(longestMatch, true, disableUnicodeGroups, unicodeProvider, observer, semantics);
     }
 
     /** Reject {@code \p{...}} / {@code \P{...}} at compile time (re2j {@code DISABLE_UNICODE_GROUPS}). */
     public CompileOptions disableUnicodeGroups() {
-        return new CompileOptions(longestMatch, multiValuedTags, true, unicodeProvider, observer);
+        return new CompileOptions(longestMatch, multiValuedTags, true, unicodeProvider, observer, semantics);
     }
 
     /** Resolve {@code \p{...}} property classes against the given tables instead of the JDK default. */
     public CompileOptions unicode(UnicodeDataProvider provider) {
-        return new CompileOptions(longestMatch, multiValuedTags, disableUnicodeGroups, provider, observer);
+        return new CompileOptions(longestMatch, multiValuedTags, disableUnicodeGroups, provider, observer, semantics);
+    }
+
+    /**
+     * The compile's interpretation policy — its {@link Semantics} (the
+     * JUR-compat axes: {@code UNIX_LINES}, {@code UNICODE_CASE},
+     * {@code CODEPOINT_BOUNDARIES}, {@code EMPTY_LAST_LINE},
+     * {@code END_OF_TEXT_ONLY}, {@code EMPTY_ITERATION_SPANS},
+     * {@code UNGREEDY_U}). {@code null} (the default) keeps the default
+     * lane — every axis set, the RE2-lineage reading; {@link Semantics#of()}
+     * selects the java.util.regex-parity side throughout, and the withers
+     * compose any per-axis selection. This is the core-tier spelling of
+     * the lane selection; the facade's int-flag mapping of the axes is
+     * the JUR-compat flip's one-line change.
+     */
+    public CompileOptions semantics(Semantics semantics) {
+        return new CompileOptions(longestMatch, multiValuedTags, disableUnicodeGroups, unicodeProvider, observer,
+            semantics);
     }
 
     public boolean isLongestMatch() {
@@ -86,12 +106,17 @@ public final class CompileOptions {
 
     /** Attach a compilation transparency hook (stage timings, decisions). */
     public CompileOptions observer(CompileObserver obs) {
-        return new CompileOptions(longestMatch, multiValuedTags, disableUnicodeGroups, unicodeProvider, obs);
+        return new CompileOptions(longestMatch, multiValuedTags, disableUnicodeGroups, unicodeProvider, obs, semantics);
     }
 
     /** Configured provider, or {@code null} for the default resolution. */
     public CompileObserver observer() {
         return observer;
+    }
+
+    /** Configured interpretation policy, or {@code null} for the default lane (see {@link #semantics(Semantics)}). */
+    public Semantics semantics() {
+        return semantics;
     }
 
     /** Value equality (wither classes get compared in tests; the observer is
@@ -108,6 +133,7 @@ public final class CompileOptions {
         CompileOptions c = (CompileOptions) o;
         return longestMatch == c.longestMatch && multiValuedTags == c.multiValuedTags
             && disableUnicodeGroups == c.disableUnicodeGroups && Objects.equals(unicodeProvider, c.unicodeProvider)
+            && Objects.equals(semantics, c.semantics)
             // Identity is intentional: the observer is a push hook, not a
             // value — two different hook instances with equal state are
             // still different options (they observe different people).
@@ -119,6 +145,7 @@ public final class CompileOptions {
         int h = (longestMatch ? 1 : 0) * 31 + (multiValuedTags ? 1 : 0);
         h = h * 31 + (disableUnicodeGroups ? 1 : 0);
         h = h * 31 + (unicodeProvider == null ? 0 : unicodeProvider.hashCode());
+        h = h * 31 + (semantics == null ? 0 : semantics.hashCode());
         return h * 31 + System.identityHashCode(observer);
     }
 }

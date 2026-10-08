@@ -126,13 +126,25 @@ public final class Parser {
     /** re2j's U flag: quantifiers default to lazy, a trailing ? makes them greedy. */
     boolean ungreedy = false;
 
+    /** The active fold universe at the {@link #foldUniverse} seam (the
+     *  UNICODE_CASE axis): true folds the full Unicode simple-fold
+     *  universe — the RE2-lineage reading, re2j folds full under plain
+     *  (?i); false folds ASCII only until {@code (?u)} widens it (the
+     *  java.util.regex bare-CI reading; JDK {@code UNICODE_CHARACTER_CLASS}
+     *  implies Unicode-aware CI, so the UCC flag widens the fold universe
+     *  exactly like UNICODE_CASE — see {@link #foldUniverse}). Initialized
+     *  from the compile's axis projection; a top-level (?U) under the
+     *  java.util.regex reading upgrades it for the rest of the pattern
+     *  (v1: only ever set at nesting depth 0, so no restore). */
+    boolean unicodeCase;
+
     boolean disableUnicodeGroups = false;
     boolean unicodeShorthand = false;
     UnicodeDataProvider provider;
     /** The compile's parser-side pivot knobs (see {@link ParseOptions}) —
-     *  projected from the compile's Semantics by {@code Tnfa.compile}.
-     *  Today: the DOT terminator set (UNIX_LINES); the fold universe and
-     *  {@code (?U)} meaning join at their own WBS items. Legacy overloads
+     *  projected from the compile's Semantics by {@code Tnfa.compile}:
+     *  the DOT terminator set (UNIX_LINES), the fold universe
+     *  (UNICODE_CASE) and the (?U) meaning (UNGREEDY_U). Legacy overloads
      *  parse the RE2-lane selection. */
     final ParseOptions options;
     /** Front-end work meter shared with the TNFA builder (see
@@ -149,6 +161,7 @@ public final class Parser {
         this.provider = provider;
         this.meter = meter;
         this.options = options;
+        this.unicodeCase = options.isUnicodeCase();
     }
 
     public static Ast parse(String src) {
@@ -318,10 +331,10 @@ public final class Parser {
     /**
      * Expands a literal codepoint under case-insensitive mode into a CharClass,
      * or returns {@code null} if the codepoint should remain a plain literal
-     * (no case-fold equivalents). Full Unicode simple folding via the active
-     * fold universe (see {@link #foldUniverse(int)}), supplementary codepoints
-     * included; the Turkic İ/ı pair is fold-inert by simple-fold semantics
-     * (see {@link CaseFoldTable}).
+     * (no case-fold equivalents). Simple folding via the active fold universe
+     * (see {@link #foldUniverse(int)}), supplementary codepoints included;
+     * under the full universe the Turkic İ/ı pair is fold-inert by
+     * simple-fold semantics (see {@link CaseFoldTable}).
      */
     private Ast caseFoldChar(int cp) {
         // re2j folds FULL Unicode simple folding under plain (?i) — no (?u)
@@ -330,11 +343,25 @@ public final class Parser {
         return ranges != null ? new CharClass(ranges, false) : null;
     }
 
-    /** Fold ranges for {@code cp} under the active fold universe: the
-     *  provider's own when it supplies one (parity tiers pin folding to
-     *  their Unicode snapshot, the oracle bridge to the live oracle), else
-     *  the built-in JDK-derived universe. */
+    /** Fold ranges for {@code cp} under the active fold universe — the
+     *  UNICODE_CASE seam. ASCII-only when neither the axis nor
+     *  {@code (?u)} selects the full universe: the java.util.regex
+     *  bare-CI reading (JDK-exact: the 26 letter pairs, nothing else —
+     *  and JDK-verified that {@code UNICODE_CHARACTER_CLASS} widens CI
+     *  to Unicode-aware folding exactly like {@code UNICODE_CASE}, so
+     *  {@code (?u)} widens this universe too). Otherwise the full
+     *  universe — the provider's own when it supplies one (parity tiers
+     *  pin folding to their Unicode snapshot, the oracle bridge to the
+     *  live oracle), else the built-in JDK-derived universe. The
+     *  {@code \p{...}} fold twin ({@code foldTableFor}) is a different
+     *  seam and stays universe-full in both lanes: the JDK folds
+     *  property classes under bare CI already (verified against a live
+     *  java.util.regex: {@code (?i)\p{Lu}} matches {@code é} without
+     *  UNICODE_CASE). */
     private int[] foldUniverse(int cp) {
+        if (!(unicodeCase || unicodeShorthand)) {
+            return CaseFoldTable.asciiFoldRanges(cp);
+        }
         if (provider != null && provider.suppliesFoldUniverse()) {
             return provider.foldCounterparts(cp);
         }
@@ -510,6 +537,9 @@ public final class Parser {
                 if (peek() == ':') {
                     pos++; // consume ':'
                     capturing = false;
+                    if (ugSet) {
+                        applyUFlag(stack, ug, true);
+                    }
                     if (ciSet) {
                         this.caseInsensitive = ci;
                     }
@@ -522,11 +552,14 @@ public final class Parser {
                     if (usSet) {
                         this.unicodeShorthand = us;
                     }
-                    if (ugSet) {
+                    if (ugSet && options.isUngreedyU()) {
                         this.ungreedy = ug;
                     }
                 } else {
                     expect(')');
+                    if (ugSet) {
+                        applyUFlag(stack, ug, false);
+                    }
                     if (ciSet) {
                         this.caseInsensitive = ci;
                     }
@@ -539,7 +572,7 @@ public final class Parser {
                     if (usSet) {
                         this.unicodeShorthand = us;
                     }
-                    if (ugSet) {
+                    if (ugSet && options.isUngreedyU()) {
                         this.ungreedy = ug;
                     }
                     return new Ast.Empty(); // flag-only group, continue — no frame, no restore
@@ -574,6 +607,34 @@ public final class Parser {
         frames.push();
         stack.push(f);
         return null;
+    }
+
+    /** Apply a parsed {@code U} inline-flag letter per the compile's
+     *  {@code (?U)} reading (the UNGREEDY_U axis, see {@link ParseOptions}).
+     *  Set (the RE2-lineage side): the letter selects ungreedy quantifiers,
+     *  scoped like every inline flag — handled by the caller. Unset (the
+     *  java.util.regex reading): {@code (?U)} is scoped {@code UNICODE_CASE}
+     *  — the fold-universe upgrade from that point on. v1 is top-level
+     *  flag-only: the colon form, a negated {@code (?-U)} and any use
+     *  inside a group reject with a {@link PatternSyntaxException}
+     *  (per-scope fold universes in the parser are the v2 work). */
+    private void applyUFlag(Deque<GroupFrame> stack, boolean on, boolean colonForm) {
+        if (options.isUngreedyU()) {
+            return; // the RE2 reading: the caller applies the letter to `ungreedy`
+        }
+        if (colonForm) {
+            throw fail(this, "invalid or unsupported Perl syntax: group-scoped (?U:...) — v1 supports top-level (?U)"
+                + " only under the java.util.regex reading");
+        }
+        if (!on) {
+            throw fail(this, "invalid or unsupported Perl syntax: (?-U) — v1 supports top-level (?U) only under"
+                + " the java.util.regex reading");
+        }
+        if (stack.size() > 1) {
+            throw fail(this, "invalid or unsupported Perl syntax: (?U) inside a group — v1 supports top-level (?U)"
+                + " only under the java.util.regex reading");
+        }
+        unicodeCase = true;
     }
 
     /** Pop the innermost group at its ')': assemble its alternation, restore
@@ -672,11 +733,13 @@ public final class Parser {
         return new CharClass(arr, negated);
     }
 
-    /** Union of {@code ranges} with every member's full simple-fold orbit (re2j's foldCase).
-     *  Output is sorted by lo with overlapping ranges merged — complementRanges
-     *  and downstream range walkers rely on that. The per-codepoint scan is
-     *  metered: it is O(universe) per wide class under {@code (?i)}, so it
-     *  must be budget-visible CPU work. */
+    /** Union of {@code ranges} with every member's fold orbit under the
+     *  active fold universe (re2j's foldCase under the full lane; the 26
+     *  ASCII letter pairs under the ASCII lane). Output is sorted by lo
+     *  with overlapping ranges merged — complementRanges and downstream
+     *  range walkers rely on that. The per-codepoint scan is metered: it
+     *  is O(universe) per wide class under {@code (?i)}, so it must be
+     *  budget-visible CPU work. */
     private int[] foldExpandRanges(int[] arr) {
         List<int[]> ivs = new ArrayList<>(arr.length);
         for (int i = 0; i < arr.length; i += 2) {
