@@ -49,12 +49,17 @@ import java.util.concurrent.atomic.AtomicLong;
  *       boundaries where jur matches into surrogate-pair interiors, and
  *       jur treats {@code \r} (and U+0085/U+2028/U+2029) as line
  *       terminators where the RE2 lineage sees {@code \n} only. Inline
- *       {@code (?U:...)} groups (tdfa: ungreedy; jur: UNICODE_CHARACTER_CLASS
- *       — untranslatable) are skipped and counted. Under CI the jur answer
- *       is computed under both plain CASE_INSENSITIVE and
+ *       {@code (?U:...)} groups stay skipped on the RE2-lane probe (tdfa:
+ *       ungreedy; jur: UNICODE_CHARACTER_CLASS — untranslatable); the
+ *       JUR-lane probe parses {@code (?U} itself (v1: {@code (?U:...)}
+ *       shapes reject by design and count soft; a leading {@code (?U)}
+ *       translates to the oracle's UNICODE_CASE flag). Under CI the jur
+ *       answer is computed under both plain CASE_INSENSITIVE and
  *       CASE_INSENSITIVE|UNICODE_CASE; disagreement ("fold ambiguous" —
  *       non-ASCII folds involved, the universes legitimately differ) skips
- *       the case rather than guessing a side.</li>
+ *       the case rather than guessing a side; the JUR lane folds ASCII
+ *       under bare CI exactly like the oracle, so its probe compares
+ *       under plain CASE_INSENSITIVE with no fold skip.</li>
  *   <li><b>{@code stretch}</b> — oracle-check stretched inputs and compare
  *       ASM on them too (TODO: "Oracle-check stretched inputs; compare ASM
  *       on them too"). The soak's stretched-input probes compare forced VM
@@ -275,7 +280,12 @@ public final class CampaignFuzzer {
     static void jurCase(long caseSeed, Camp camp, Counts counts) {
         JurCase c = genJur(caseSeed);
         if (c.pattern().contains("(?U")) {
-            counts.soft("SKIP_UNGREEDY"); // tdfa (?U:) = ungreedy; jur (?U:) = UCC — untranslatable
+            // RE2-lane residual (the JUR lane below parses (?U itself since
+            // the fold + U bits item): this probe's tdfa compile is the
+            // facade's pre-flip lane, which reads (?U:...) as ungreedy;
+            // java reads it as UNICODE_CHARACTER_CLASS — untranslatable
+            // until the flip moves the facade to the java reading.
+            counts.soft("SKIP_UNGREEDY");
             return;
         }
         String jur = "<reject>";
@@ -334,6 +344,17 @@ public final class CampaignFuzzer {
             counts.ok();
             return;
         }
+        // g) the İ/ı full-universe residual under UCC-implies-fold (found by
+        // a seed-987654321 run; reproduces on the pre-fold-item tree):
+        // java under CI|UCC folds the Turkic pair into the i-orbit, tdfa's
+        // simple-fold universe keeps it inert (the deliberate
+        // re2j/Go-compatible pin). Flag-CI cases usually skipped earlier by
+        // the disambiguation above; inline (?i:...) + UCC reaches here. A
+        // missed oracle span starting at a non-ASCII char is that family.
+        if ((c.ci() || c.pattern().contains("(?i")) && missedSpanStartsNonAscii(jur, vm, c.input())) {
+            counts.soft("SKIP_CI_FOLD_AMBIGUOUS");
+            return;
+        }
         // Known-family classification (documented semantics, not bugs — jur is
         // a UTF-16 code-unit engine, tdfa keeps the RE2-lineage contract the
         // soak pins against re2j):
@@ -382,22 +403,28 @@ public final class CampaignFuzzer {
             DifferentialFuzzer.escape(c.pattern()), DifferentialFuzzer.escape(c.input()), jur, vm, asm);
     }
 
-    /** Item "parameterize the pivots" of the JUR-compat WBS: the campaign
-     *  probes BOTH lanes while the shipped default stays RE2. The JUR lane
-     *  (core tier, {@code Semantics.of()}) must agree with the java oracle
-     *  on every axis the pivots own — terminator set, EMPTY_LAST_LINE,
-     *  END_OF_TEXT_ONLY (the lineterm/caretEol/dollarEol families) and, at
-     *  span level, the unitBoundary family — so those are HARD here; the
-     *  residual families stay soft (lone-surrogate pattern/input: unit
-     *  semantics match lone surrogates anywhere, java only truly-lone
-     *  ones). CI folds the FULL universe today, so the JUR-lane oracle
-     *  compares under CASE_INSENSITIVE|UNICODE_CASE. */
+    /** Item "parameterize the pivots" + "fold + U bits" of the JUR-compat
+     *  WBS: the campaign probes BOTH lanes while the shipped default stays
+     *  RE2. The JUR lane (core tier, {@code Semantics.of()}) must agree
+     *  with the java oracle on every axis the pivots own — terminator set,
+     *  EMPTY_LAST_LINE, END_OF_TEXT_ONLY (the lineterm/caretEol/dollarEol
+     *  families), the fold universe (bare CI folds ASCII in both, so the
+     *  oracle compares under plain CASE_INSENSITIVE — the universes agree
+     *  by construction, İ/ı inert on both sides) and the (?U) reading
+     *  (SKIP_UNGREEDY retired: (?U:...)/nested spellings reject by design,
+     *  counted soft at the compile; a leading (?U) translates to the
+     *  oracle's UNICODE_CASE flag) — so those are HARD here; the residual
+     *  families stay soft (lone-surrogate pattern/input: unit semantics
+     *  match lone surrogates anywhere, java only truly-lone ones). */
     static void jurLaneCase(long caseSeed, Camp camp, Counts counts) {
         JurCase c = genJur(caseSeed);
-        if (c.pattern().contains("(?U")) {
-            counts.soft("SKIP_UNGREEDY");
-            return;
-        }
+        // SKIP_UNGREEDY retired (fold + U bits): the JUR lane parses (?U
+        // itself. A leading (?U) is the scoped fold upgrade — the oracle's
+        // spelling is the UNICODE_CASE flag on the remainder; any other
+        // (?U spelling the lane ACCEPTS (mid-pattern top-level) has no flag
+        // translation and skips soft below; (?U:...)/nested forms reject
+        // at the compile and are counted there.
+        boolean leadingScopedU = c.pattern().startsWith("(?U)");
         // JUR-lane compile: same flag→inline-prefix mapping as the facade,
         // Semantics.of() instead of the pre-flip RE2 lane.
         String fl = c.pattern();
@@ -420,9 +447,18 @@ public final class CampaignFuzzer {
                 CompileObserver.NONE, ledger);
             find = Determinizer.compileWithWholeSide(nfa, false, CompileObserver.NONE, ledger.fork(0));
         } catch (io.github.jemmix.tdfa.core.parser.PatternSyntaxException e) {
-            return; // compile parity is the RE2-lane probe's question
+            // The lane's only syntax delta is the (?U) v1 limit: top-level
+            // flag-only (?U) alone — every other spelling rejects.
+            if (c.pattern().contains("(?U")) {
+                counts.soft("V1_UNGREEDY_SCOPE");
+            }
+            return; // other compile parity is the RE2-lane probe's question
         } catch (RuntimeException | StackOverflowError e) {
             counts.soft("JURLANE_BUDGET");
+            return;
+        }
+        if (!leadingScopedU && c.pattern().contains("(?U")) {
+            counts.soft("SKIP_SCOPED_U_UNTRANSLATABLE"); // point-forward (?U) has no oracle flag spelling
             return;
         }
         String jurLaneVm;
@@ -444,36 +480,17 @@ public final class CampaignFuzzer {
                 DifferentialFuzzer.escape(c.pattern()), DifferentialFuzzer.escape(c.input()), jurLaneVm, jurLaneAsm);
             return;
         }
-        // oracle: java.util.regex under the lane's reading; CI folds full
-        int jurFlags = c.jurFlags() | (c.ci() ? JUR_UCASE : 0);
+        // oracle: java.util.regex under the lane's reading — bare CI (the
+        // ASCII universe); a leading (?U) upgrade is the UNICODE_CASE flag
+        // on the remainder.
+        String oraclePattern = leadingScopedU ? c.pattern().substring(4) : c.pattern();
+        int jurFlags = c.jurFlags() | (leadingScopedU ? JUR_UCASE : 0);
         String jur;
         java.util.regex.Pattern jp;
         try {
-            jp = java.util.regex.Pattern.compile(c.pattern(), jurFlags);
+            jp = java.util.regex.Pattern.compile(oraclePattern, jurFlags);
         } catch (java.util.regex.PatternSyntaxException e) {
             return;
-        }
-        if (c.ci()) {
-            // Fold-universe disambiguation (the RE2-lane probe's rule): when
-            // java's CI and CI|UNICODE_CASE readings disagree the case is
-            // fold-ambiguous — tdfa's simple-fold universe is a third
-            // reading (İ/ı is fold-inert there) — skip, don't guess. The
-            // same applies to CI over the PREDEFINED classes (\w\W\d\D\s\S):
-            // tdfa fold-expands them ((?i)\W loses ſ), java's readings vary
-            // by flag — the UNICODE_CASE axis owns that universe.
-            boolean predefFold = c.pattern().matches(".*[\\\\][wWdDsS].*");
-            try {
-                String alt =
-                    javaProtocol(java.util.regex.Pattern.compile(c.pattern(), c.jurFlags() | JUR_UCASE), c.input());
-                String plain = javaProtocol(java.util.regex.Pattern.compile(c.pattern(), c.jurFlags()), c.input());
-                if (!alt.equals(plain) || predefFold) {
-                    counts.soft("SKIP_CI_FOLD_AMBIGUOUS");
-                    return;
-                }
-            } catch (RuntimeException | StackOverflowError e) {
-                counts.soft("SKIP_CI_FOLD_AMBIGUOUS");
-                return;
-            }
         }
         try {
             jur = javaProtocol(jp, c.input());
@@ -488,11 +505,15 @@ public final class CampaignFuzzer {
             counts.ok();
             return;
         }
-        // CI + a divergent span starting at a NON-ASCII char: the fold
-        // universes diverge there by construction (java folds ı→i under
-        // CI|UCC; tdfa's simple-fold keeps İ/ı inert) — the UNICODE_CASE
-        // axis owns that universe. Same policy as the probes' fold skips.
-        if (c.ci() && missedSpanStartsNonAscii(jur, jurLaneVm, c.input())) {
+        // Full-fold lane residual (JDK-verified: UCC implies Unicode-aware
+        // CI, so (?u)/(?U) lanes fold like CI|UNICODE_CASE): java merges
+        // the Turkic İ/ı pair into the i-orbit there, tdfa's simple-fold
+        // universe keeps it inert — a missed oracle span starting at a
+        // non-ASCII char is that family, soft. Bare-CI lanes (ASCII
+        // universe both sides) cannot hit it.
+        boolean ciAnywhere = c.ci() || c.pattern().contains("(?i");
+        boolean laneFoldsFull = c.ucc() || leadingScopedU || c.pattern().contains("(?u");
+        if (ciAnywhere && laneFoldsFull && missedSpanStartsNonAscii(jur, jurLaneVm, c.input())) {
             counts.soft("SKIP_CI_FOLD_AMBIGUOUS");
             return;
         }
@@ -770,8 +791,9 @@ public final class CampaignFuzzer {
 
     /**
      * Some oracle span the lane does not report starts at a non-ASCII char —
-     * the CI fold-universe residual (İ/ı-style: java folds it under
-     * CI|UNICODE_CHARACTER_CLASS, tdfa's simple-fold keeps it inert).
+     * the full-universe fold residual (İ/ı-style: java folds it under
+     * CI|UCC — UCC implies Unicode-aware CI — tdfa's simple-fold keeps it
+     * inert). Only consulted on full-fold lanes.
      */
     static boolean missedSpanStartsNonAscii(String jur, String lane, String input) {
         List<int[]> js = spansOf(stripGroups(jur));

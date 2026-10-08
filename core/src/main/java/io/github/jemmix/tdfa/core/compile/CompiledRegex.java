@@ -69,9 +69,20 @@ public final class CompiledRegex {
             options.unicodeProvider() != null ? options.unicodeProvider() : UnicodeProviders.get();
         CompileObserver obs = options.observer() != null ? options.observer() : CompileObserver.NONE;
         WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
-        Tnfa nfa = options.isMultiValuedTags()
-            ? Tnfa.compileMulti(pattern, options.isDisableUnicodeGroups(), provider, obs, ledger)
-            : Tnfa.compile(pattern, options.isDisableUnicodeGroups(), false, provider, obs, ledger);
+        // An explicit Semantics rides the fullest Tnfa entries; null keeps
+        // the default lane (the legacy overloads' every-axis-set value).
+        Tnfa nfa;
+        if (options.semantics() == null) {
+            nfa = options.isMultiValuedTags()
+                ? Tnfa.compileMulti(pattern, options.isDisableUnicodeGroups(), provider, obs, ledger)
+                : Tnfa.compile(pattern, options.isDisableUnicodeGroups(), false, provider, obs, ledger);
+        } else {
+            nfa = options.isMultiValuedTags()
+                ? Tnfa.compileMulti(pattern, options.isDisableUnicodeGroups(), options.semantics(), provider, obs,
+                    ledger)
+                : Tnfa.compile(pattern, options.isDisableUnicodeGroups(), false, false, options.semantics(), provider,
+                    obs, ledger);
+        }
         Tdfa find = Determinizer.compile(nfa, options.isLongestMatch(), obs, ledger.fork(0));
         long t0 = System.nanoTime();
         RegexEngine engine = new TdfaRunner(find, Budgets.runtimeMemoryBytes());

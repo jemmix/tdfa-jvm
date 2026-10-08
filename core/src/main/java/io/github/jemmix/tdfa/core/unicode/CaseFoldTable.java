@@ -116,6 +116,26 @@ public final class CaseFoldTable {
         return idx.get(foldKey(ch));
     }
 
+    /**
+     * The ASCII fold universe — JDK {@code CASE_INSENSITIVE} without
+     * {@code UNICODE_CASE} (JUR bare CI): the 26 letter pairs
+     * {@code a-z}/{@code A-Z} and nothing else. The Kelvin sign, the long
+     * s and the Turkic İ/ı pair are all fold-inert here by construction
+     * (verified against a live java.util.regex). Same shape contract as
+     * {@link #foldRanges(int)}: flattened sorted ranges covering the whole
+     * orbit — including {@code ch} itself — or {@code null} when {@code ch}
+     * has no ASCII case-fold counterparts.
+     */
+    public static int[] asciiFoldRanges(int ch) {
+        if (ch >= 'A' && ch <= 'Z') {
+            return new int[]{ch, ch, ch + 32, ch + 32};
+        }
+        if (ch >= 'a' && ch <= 'z') {
+            return new int[]{ch - 32, ch - 32, ch, ch};
+        }
+        return null;
+    }
+
     private static int foldKey(int cp) {
         // Simple case folding keeps the Turkic İ/ı pair out of the i-orbit
         // (their cross mappings are locale rules, not unconditional ones);
