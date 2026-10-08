@@ -109,9 +109,75 @@ fold lane, the v1 rejections, the facade options route).
   `Pattern.compile(regex, CompileOptions)` (the one pre-flip way a facade
   compile leaves the RE2 lane).
 
-## 4. Family 6 — 2–5 d
+## 4. Family 6 — 2.5–4.5 d, four landable sub-items
 
-- [ ] φ-finals variant suppressing zero-width final-iteration spans (`applyFinalOps`, `TdfaFinalVariants`), mode-gated on the `EMPTY_ITERATION_SPANS` axis so the RE2 lane is untouched — the one research-y item
+Provisional research pinned the rule (one battery, all three engines run
+against it: live JDK 26, stock re2j 1.8, the current engine): java
+compiles a quantified group TWO ways and the two keep different
+zero-width-iteration protocols. Bodies `study()` calls deterministic
+(assertion chains, `()`, fixed-consuming) run as `GroupCurly`, whose
+greedy path rolls a zero-width iteration past `cmin` BACK to the
+pre-curly bounds (the JDK's `Pattern.java`, `GroupCurly.match0`: the
+`k <= 0` break restores the saved pair — `(\b)*` → g1 −1,
+`(\b)+`/`(\b){2}` keep the forced iteration); everything else
+(alternation, optional, variable quantifier anywhere in the body) runs
+as `Prolog`+`Loop`, which reports
+every completed iteration INCLUDING a final zero-width one (`(a*)*` on
+`"aa"` → g1 2..2 — java keeps the empty last iteration). re2j and the
+current engine answered identically on the whole battery (0 diffs —
+the RE2 side is what the soak already pins), and lazy quantifiers agree
+with JUR everywhere (both prefer zero iterations: `(\z)*?` → −1,
+`(a*)*?` → −1). So the axis is two sub-families of opposite polarity,
+both protocol-only (skeletons already agree — the campaign classified
+only group-clause differences):
+
+- **A — suppress** (greedy min-0 quantifier directly on a capture whose
+  body is all-zero-width; alternation defeats the shape — `(\b|)` keeps
+  the span, `(?:(\b))*` too, only the quantified capture itself
+  dissolves): `(\z)*`, `(\b)*`, `()*`, `(\b\b)*`, `(\b){0,2}` — JUR −1,
+  we report the sole zero-width span (0..0). Statically recognizable at
+  the parse; the φ fix is a SET_NIL override for that group's tags.
+- **B — surface** (greedy quantifier directly on a capture whose body
+  can match empty but is NOT deterministic): `(a*)*`, `(a?)*`,
+  `(a|\b)+`, `(a{0,2})*`, `(a*\b)*`, the outer group of `((a)*)*`,
+  `(\b)(a|\b)*` g2 — JUR reports the final zero-width iteration
+  (`(a|\b)*` on `"aa"` → 2..2); we report the earlier maximal iteration
+  (1..2) because the zero-width re-entry dies in the closure's
+  same-position subsumption — its tag writes must surface as a φ
+  SET_POS at the accept position (emptiness gated on assertions, e.g.
+  `a?\b`, rides the posFlags-mask variant machinery; consuming-only
+  emptiness is uniform).
+
+- [ ] 4a — spec + corpus (0.5 d): expand the research summary above
+  into the design doc's family-6 mechanics note (the flag row and
+  critical-path bullet are corrected already); correct the
+  `Semantics.emptyIterationSpans` javadoc (it, too, describes
+  sub-family A only); land the battery as
+  replayable expected-value data verified against the live JDK (both
+  sub-families × greedy/lazy/`?`/`+`/`{m,n}` × named groups × nested
+  composition `((a|\b)*)*`), assertions dark until 4b/4c light them;
+  decide the two documented interactions — the axis under
+  `MULTI_VALUED_TAGS` (does a surfaced zero-width final iteration
+  append a participation) and under `LONGEST_MATCH` (defined or
+  documented no-op).
+- [ ] 4b — sub-family A: suppression (0.5–1 d): static shape mark at
+  the parse/TNFA build + φ override to SET_NIL for the dissolved
+  group's tags on the JUR lane (`TdfaFinalVariants.finalRegopsOf` /
+  the variant tables); RE2-lane artifacts bit-identical; VM + ASM
+  tiers; 4a's A-assertions on.
+- [ ] 4c — sub-family B: surface the final iteration (1–2 d, the
+  determinizer item): detect the cut zero-width re-entry per accepting
+  kernel and emit a φ SET_POS-at-accept override for the quantified
+  group's tags — thread through `TdfaFinalVariants`, materialization
+  (`stateFinalOpsByMask`), minimizer signatures (states differing only
+  in the override must not merge), ASM emission, `applyFinalOps`
+  ordering; 4a's B-assertions on.
+- [ ] 4d — audit + evidence (0.5–1 d): rung × tier × input-type audit
+  (the `PivotLanesTest` battery pattern); the campaign's jur lane stops
+  stripping group clauses (probe + oracle sides) and A/B flip to hard
+  vs the java oracle; re2j-lane slice re-run (RE2 protocol unchanged);
+  meter/budget accounting for the closure analysis;
+  `PivotLanesTest`'s "not pinned here" note removed.
 
 ## 5. The flip — 1 d
 

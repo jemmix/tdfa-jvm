@@ -68,7 +68,7 @@ Set = today's behavior (the opt-out). Unset = the new JUR-parity default.
 | `CODEPOINT_BOUNDARIES` | UTF-16 unit semantics: matches start/end at any unit, lone surrogates match as single units, `\b`/`\B` evaluate at every unit position | codepoint discipline: scans skip pair interiors, boundaries at codepoint edges |
 | `EMPTY_LAST_LINE` | `^`(?m) never matches after a trailing terminator | may match the empty last line |
 | `END_OF_TEXT_ONLY` | `$` may match before the final terminator (no (?m)) | `$` ≡ `\z` |
-| `EMPTY_ITERATION_SPANS` | a zero-width final loop iteration leaves its group non-participating (`(\z)*` on `""` → g1 −1) | reports the span (`0..0`) |
+| `EMPTY_ITERATION_SPANS` | last-completed-iteration protocol: a final zero-width iteration reports its span (`(a*)*` on `"aa"` → g1 `2..2`) EXCEPT all-zero-width min-0 bodies stay non-participating (`(\z)*` on `""` → g1 `−1` — java's `GroupCurly` rollback; see the WBS item 4 research notes) | maximal-iteration protocol: `(a*)*` → g1 `0..2`; a sole zero-width iteration still reports (`(\z)*` → `0..0`) |
 | `UNGREEDY_U` | `(?U:`/`(?U)` = scoped `UNICODE_CASE` | ungreedy (PCRE/RE2 meaning) |
 
 `EMPTY_LAST_LINE` + `END_OF_TEXT_ONLY` are the old bundled
@@ -114,9 +114,13 @@ Composition rules:
   soft-known to hard assertions. README's parity claims need refreshed
   numbers before they can name the new default.
 - **Family 6 goes on the critical path.** `EMPTY_ITERATION_SPANS` unset is
-  default behavior, so the φ-finals protocol change (suppress zero-width
-  final-iteration spans; mode-gated so the RE2 lane is untouched) is
-  mandatory, not an opt-in nicety. It is the one research-y item.
+  default behavior, so the φ-finals protocol change (protocol-only —
+  skeletons already agree; mode-gated so the RE2 lane is untouched) is
+  mandatory, not an opt-in nicety. Provisional research pinned the rule
+  (WBS item 4): java's `GroupCurly`-vs-`Loop` compile split gives the
+  axis two sub-families of opposite polarity — suppress (all-zero-width
+  min-0 bodies → −1) and surface (empty-capable non-deterministic
+  bodies → report the final zero-width iteration).
 - **Most user-visible break is fold.** Current `CASE_INSENSITIVE` compiles
   silently lose non-ASCII folding unless they add `UNICODE_CASE`. The rest
   only bites inputs with `\r`/trailing newlines, lone surrogates/well-formed
@@ -134,7 +138,7 @@ Composition rules:
 | Fix finding 1 (CharSequence scan pair-interior skip) — prerequisite either way — **landed** | 0.5 d |
 | Parameterize the pivots: terminator set + anchor EOL rules in `positionFlags*` + `DOT`, per-unit vs codepoint wordness, scan gating — both behaviors selectable, **default unchanged**, campaign probes both lanes — **landed** | 3–5 d (audit-heavy: every rung × tier × input type) |
 | `UNIX_LINES`, `UNICODE_CASE` bits + ASCII fold universe; `UNGREEDY_U` parse + top-level-only scoped-fold rejection — **landed** (selectable + `CompileOptions.semantics`, default unchanged) | 1 d |
-| Family 6: φ-finals variant suppressing zero-width final-iteration spans | 2–5 d |
+| Family 6: group-participation protocol — two sub-families (suppress the min-0 all-zero-width span; surface the subsumed zero-width final iteration), four sub-items in the [work breakdown](jur-compat-wbs.md) | 2.5–4.5 d |
 | The flip commit: default changes, `RE2_COMPAT` preset, `PatternCompiler` whitelist, javadoc, README/`BENCHMARKS.md` re-baseline | 1 d |
 | Tests: per-flag unit tests from the campaign replay seeds; jur campaign classifiers → assertions; `DifferentialFuzzer` matrix gains the `RE2_COMPAT` lane; soak + README numbers | 1.5–2 d |
 
