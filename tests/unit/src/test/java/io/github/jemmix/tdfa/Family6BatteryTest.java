@@ -21,6 +21,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -128,7 +129,7 @@ class Family6BatteryTest {
             .isEqualTo(r.re2);
     }
 
-    // ===== 3. the JUR-lane assertions — A live (4b), B dark until 4c =====
+    // ===== 3. the JUR-lane assertions — A live (4b), B live (4c) =====
 
     @ParameterizedTest
     @MethodSource("rowsA")
@@ -148,6 +149,39 @@ class Family6BatteryTest {
         }
         assertThat(laneProto(r.pattern, r.input, JUR)).as("%s: JUR lane (B) vs JDK /%s/", r.id, r.pattern)
             .isEqualTo(r.jur);
+    }
+
+    // ===== 4d: the rung × tier × input-type audit (PivotLanes pattern) =====
+
+    /** Every battery row, JUR lane, across every forced search rung of the
+     *  VM tier and the CharSequence wrappers — the pivot audit compressed
+     *  to the family-6 battery. */
+    @ParameterizedTest
+    @MethodSource("rows")
+    void jurLaneRungAndWrapperAudit(Row r) {
+        WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
+        Tnfa nfa =
+            Tnfa.compile(r.pattern, false, false, false, JUR, UnicodeProviders.get(), CompileObserver.NONE, ledger);
+        Tdfa tdfa = Determinizer.compileWithWholeSide(nfa, false, CompileObserver.NONE, ledger.fork(0));
+        TdfaRunner vm = new TdfaRunner(tdfa, 1 << 20);
+        String want = engineProto(vm, r.input);
+        assertThat(engineProto(TdfaAsmBackend.generate(tdfa, 1 << 20), r.input))
+            .as("%s: ASM == VM /%s/", r.id, r.pattern).isEqualTo(want);
+        assertThat(engineProto(vm, new StringBuilder(r.input))).as("%s: StringBuilder /%s/", r.id, r.pattern)
+            .isEqualTo(want);
+        assertThat(engineProto(vm, CharBuffer.wrap(r.input))).as("%s: CharBuffer /%s/", r.id, r.pattern)
+            .isEqualTo(want);
+        for (TdfaRunner.Strategy f : new TdfaRunner.Strategy[]{TdfaRunner.Strategy.ORIGIN_SIM,
+            TdfaRunner.Strategy.TRIGGER, TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART}) {
+            String forced;
+            try {
+                TdfaRunner.setForcedStrategy(f);
+                forced = engineProto(vm, r.input);
+            } finally {
+                TdfaRunner.setForcedStrategy(null);
+            }
+            assertThat(forced).as("%s: forced %s on /%s/", r.id, f, r.pattern).isEqualTo(want);
+        }
     }
 
     // ===== the 4a interactions, sub-family A part (no JDK oracle exists:

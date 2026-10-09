@@ -101,6 +101,22 @@ The battery is landed as replayable expected-value data
 (`tests/unit/src/test/resources/family6-battery.tsv`), its JUR column
 re-verified against the live `java.util.regex` oracle on every test run.
 
+**Mechanics pinned from the JDK source** (`Pattern.java`, JDK 26): the
+`Loop`/`GroupTail` pair keeps a completed zero-width iteration's capture
+on the winning line (`GroupTail` saves/restores around `next`, so a
+SUCCESSFUL continuation keeps the write; the `Loop`'s zero-width
+protection breaks the loop without rolling back), and a body whose only
+empty path is assertion-gated simply FAILS there when the assertion
+fails — `(a|\b)*x` on `"aax"` reports g1 `1..2` (the `\b` re-entry
+never matched; not a protocol case at all). The 4d audit's residual:
+with a CONSUMING TAIL the surfaced span sits at the loop's REST
+position, not the accept position (`(a*)*b` on `"aab"` → g1 `2..2`)
+— expressing that needs the surfaced write to ride the transition φ as
+a position-carrying ε-write (compose with line-merged DFA states), the
+one family-6 slice still answered the RE2 way on the JUR lane. The
+campaign classifies it (`KNOWN_GROUP-PARTICIPATION-TAIL`); everything
+else about family 6 compares HARD against the live oracle.
+
 **Decided interactions** (WBS 4a):
 
 - `MULTI_VALUED_TAGS` — participations mirror the single-value protocol:

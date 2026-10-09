@@ -58,11 +58,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *     compressed to the pivot battery).</li>
  * </ul>
  *
- * <p>Not pinned here: the group-participation family (EMPTY_ITERATION_SPANS
- * — a later WBS item). The facade's {@code CompileOptions.semantics} route
- * — the one pre-flip way a facade compile leaves the RE2 lane — is pinned
- * at the bottom (fold, terminator set, and the (?U) v1 rejection through
- * it).
+ * <p>The group-participation family (EMPTY_ITERATION_SPANS) is pinned in
+ * {@code Family6BatteryTest} — the family-6 battery (both sub-families,
+ * both tiers, the same rung × wrapper audit) since WBS items 4b/4c
+ * landed. The facade's {@code CompileOptions.semantics} route — the one
+ * pre-flip way a facade compile leaves the RE2 lane — is pinned at the
+ * bottom (fold, terminator set, and the (?U) v1 rejection through it).
  */
 class PivotLanesTest {
 

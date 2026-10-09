@@ -188,12 +188,29 @@ everywhere):
   `{n,}`/`{2,}` unbounded-tail rows, nested composition, `(x(y|))*`
   and `(xy*)*` non-nullable-body agrees) + the B interaction pins
   (multi appends the participation, longest composes).
-- [ ] 4d — audit + evidence (0.5–1 d): rung × tier × input-type audit
-  (the `PivotLanesTest` battery pattern); the campaign's jur lane stops
-  stripping group clauses (probe + oracle sides) and A/B flip to hard
-  vs the java oracle; re2j-lane slice re-run (RE2 protocol unchanged);
-  meter/budget accounting for the closure analysis;
-  `PivotLanesTest`'s "not pinned here" note removed.
+- [x] 4d — audit + evidence — landed: the rung × tier × input-type
+  audit runs the whole battery JUR-lane across every forced search
+  rung + StringBuilder/CharBuffer wrappers (both tiers, ASM==VM);
+  the campaign's jur lane compares GROUP CLAUSES HARD (probe and
+  oracle protocols both carry them; span-analysis helpers strip both
+  sides) — 272,869 cases, 0 hard findings; the re2j-lane slice
+  re-ran clean (the jur-mode probe's RE2 half + a 60 s seq campaign:
+  83,655 cases, 0 hard — RE2 protocol unchanged); the closure
+  analysis is meter-visible (`recordCut` ticks per death). The audit
+  FOUND and fixed two 4c attribution bugs (a fuzz case,
+  `(.?)*.`: the surfaced write must belong to the WINNER's line —
+  gated on the winner's own close-tag POS lookahead;
+  `((a)*)*`-vs-`((a*))*`: fresh-mention attribution against the
+  first-popped config's history at the re-arrival state, so
+  seed-inherited writes from earlier positions don't surface) and
+  documented one RESIDUAL: with a consuming tail the surfaced span
+  belongs at the loop's rest position (`(a*)*b` on "aab" → 2..2),
+  which needs the write to ride the transition φ as a
+  position-carrying ε-write — the campaign softens it
+  (`KNOWN_GROUP-PARTICIPATION-TAIL`), the JDK Loop/GroupTail
+  mechanics are pinned in the design note, and
+  `PivotLanesTest`'s "not pinned here" note now points at the
+  family-6 battery.
 
 ## 5. The flip — 1 d
 

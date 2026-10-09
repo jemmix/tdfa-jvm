@@ -413,9 +413,12 @@ public final class CampaignFuzzer {
      *  by construction, İ/ı inert on both sides) and the (?U) reading
      *  (SKIP_UNGREEDY retired: (?U:...)/nested spellings reject by design,
      *  counted soft at the compile; a leading (?U) translates to the
-     *  oracle's UNICODE_CASE flag) — so those are HARD here; the residual
-     *  families stay soft (lone-surrogate pattern/input: unit semantics
-     *  match lone surrogates anywhere, java only truly-lone ones). */
+     *  oracle's UNICODE_CASE flag) — so those are HARD here; and since
+     *  family 6 landed (WBS 4b suppression + 4c surfacing), the GROUP
+     *  clauses compare HARD too — both protocols carry them, no more
+     *  skeleton stripping; the residual families stay soft (lone-surrogate
+     *  pattern/input: unit semantics match lone surrogates anywhere, java
+     *  only truly-lone ones). */
     static void jurLaneCase(long caseSeed, Camp camp, Counts counts) {
         JurCase c = genJur(caseSeed);
         // SKIP_UNGREEDY retired (fold + U bits): the JUR lane parses (?U
@@ -498,11 +501,26 @@ public final class CampaignFuzzer {
             counts.soft("JUR_ORACLE_THREW");
             return;
         }
-        // Span-level comparison: the engine protocol carries no group
-        // clauses (group-participation parity is the EMPTY_ITERATION_SPANS
-        // item's evidence work), so the oracle's clauses are stripped.
-        if (stripGroups(jur).equals(jurLaneVm)) {
+        // Full-protocol comparison, GROUP CLAUSES INCLUDED (WBS 4d: the
+        // family-6 sub-families landed — 4b suppresses the dissolved
+        // pairs, 4c surfaces the cut final iterations — so group
+        // participation is hard evidence, not a stripped skeleton).
+        if (jur.equals(jurLaneVm)) {
             counts.ok();
+            return;
+        }
+        // The family-6 TAIL residual: an unbounded greedy quantified
+        // capture followed by a consuming tail — java's Loop keeps the
+        // final zero-width iteration at the loop's REST position ((a*)*b
+        // on "aab" -> g1 2..2), the surfaced write must ride the
+        // transition φ as a position-carrying ε-write to express that
+        // (the 4d audit's finding); until then the lane answers the
+        // maximal-iteration span there. Skeleton-equal + a quantified
+        // capture in the pattern = this family, soft.
+        if (sameSkeleton(jur, jurLaneVm) && c.pattern().matches(".*\\).*[*+{].*")) {
+            counts.soft("KNOWN_GROUP-PARTICIPATION-TAIL (jur lane, residual)");
+            camp.rec(caseSeed, "JURLANE_KNOWN (group-participation-tail)", "pattern", c.pattern(), "input", c.input(),
+                "flags", c.tdfaFlags(), "jur", jur, "jurLaneVm", jurLaneVm);
             return;
         }
         // Full-fold lane residual (JDK-verified: UCC implies Unicode-aware
@@ -551,7 +569,8 @@ public final class CampaignFuzzer {
                 found = true;
             }
             if (n < DifferentialFuzzer.MAX_MATCHES) {
-                sb.append(m.start(0)).append("..").append(m.end(0)).append(' ');
+                spanEngine(sb, m);
+                sb.append(' ');
             }
             n++;
             from = m.end(0) == m.start(0) ? m.end(0) + 1 : m.end(0);
@@ -571,6 +590,25 @@ public final class CampaignFuzzer {
         MatchResult r = eng.match(in, in.length() / 2, null);
         sb.append(" R=").append(r == null ? "-" : r.start(0) + ".." + r.end(0));
         return sb.toString();
+    }
+
+    /** Per-match group clauses in {@link #spanJur}'s exact format — the
+     *  engine side of the family-6 comparison (WBS 4d: no more skeleton
+     *  stripping; group participation is hard evidence). */
+    static void spanEngine(StringBuilder sb, MatchResult m) {
+        sb.append(m.start(0)).append("..").append(m.end(0));
+        int gc = m.groupCount();
+        if (gc > 0) {
+            sb.append(" (");
+            for (int i = 1; i <= gc; i++) {
+                if (i > 1) {
+                    sb.append(' ');
+                }
+                int s = m.start(i);
+                sb.append(s < 0 ? "-" : s + ".." + m.end(i));
+            }
+            sb.append(')');
+        }
     }
 
     /** The same protocol over java.util.regex (find(from)-managed loop). */
@@ -721,7 +759,7 @@ public final class CampaignFuzzer {
      * other divergence (a lane miss, a different end) is a real finding.
      */
     static boolean laneExtrasAllPairInteriors(String jur, String lane, String input) {
-        List<int[]> laneSpans = spansOf(lane);
+        List<int[]> laneSpans = spansOf(stripGroups(lane));
         List<int[]> jurSpans = spansOf(stripGroups(jur));
         if (laneSpans.isEmpty()) {
             return false; // the lane found nothing: nothing to attribute
@@ -797,7 +835,7 @@ public final class CampaignFuzzer {
      */
     static boolean missedSpanStartsNonAscii(String jur, String lane, String input) {
         List<int[]> js = spansOf(stripGroups(jur));
-        List<int[]> ls = spansOf(lane);
+        List<int[]> ls = spansOf(stripGroups(lane));
         for (int[] sp : js) {
             if (!containsSpan(ls, sp) && sp[0] < input.length() && input.charAt(sp[0]) > 0x7F) {
                 return true;
@@ -814,8 +852,8 @@ public final class CampaignFuzzer {
 
     /**
      * The ordered s..e spans of a protocol's F/I section (the section ends
-     * at the M probe; group clauses are absent in the engine protocol and
-     * stripped from the oracle's by the caller).
+     * at the M probe; both sides' group clauses are stripped by the
+     * caller — the engine protocol carries them since family 6 landed).
      */
     static List<int[]> spansOf(String protocol) {
         int cut = protocol.indexOf(" M=");
