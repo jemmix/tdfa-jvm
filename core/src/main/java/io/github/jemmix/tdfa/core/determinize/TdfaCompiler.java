@@ -215,6 +215,19 @@ final class TdfaCompiler {
     int[] maskEpoch;
     int epochCtr;
     /**
+     * Family 6 cut attribution: the lookahead-history id of the FIRST
+     * config popped at each NFA state in the current closure (epoch-
+     * guarded like {@link #maskEpoch}). The writes a dying re-entry path
+     * added SINCE that first pop are the dying cycle's own — mentions
+     * inherited from the seed's l (writes of EARLIER positions, e.g.
+     * {@code ((a)*)*}'s inner iteration that closed last position) are
+     * not, and crediting them would surface groups whose iteration never
+     * re-entered (the JDK keeps the inner {@code (a)} at its last
+     * consuming span there).
+     */
+    int[] firstPopL;
+    int[] firstPopLEpoch;
+    /**
      * Family 6 sub-family B (EMPTY_ITERATION_SPANS, the JUR lane): the
      * surfaced-final tags ({@link Tnfa#surfaceFinalTags}), or null on
      * the RE2 lane / B-mark-free compiles — gates every cut-recording
@@ -344,6 +357,8 @@ final class TdfaCompiler {
         this.epsOut = sortedOutgoing(nfa.epsFrom, nfa.epsPri);
         this.symOut = plainOutgoing(nfa.symFrom);
         this.maskBitset = new long[nfa.stateCount * 2];
+        this.firstPopL = new int[nfa.stateCount];
+        this.firstPopLEpoch = new int[nfa.stateCount];
         this.surfaceTags = nfa.surfaceFinalTags;
         this.maskEpoch = new int[nfa.stateCount];
         this.initialRegisters = new int[tags];
@@ -468,23 +483,43 @@ final class TdfaCompiler {
      * masks that admit the cut path, and its value is the accept
      * position regardless of which death recorded it.
      */
-    private void recordCut(int epsIdx, int newMask, Config parent) {
+    private void recordCut(int epsIdx, int to, int newMask, Config parent) {
+        meter.tick(); // budget-visible: the death scan is O(deaths × path history)
         int tag = nfa.epsTag[epsIdx];
         if (tag > 0 && surfaceTags[tag]) {
-            recordCutPair(tag, newMask);
+            recordCutPair(tag, newMask); // the dying edge completed the iteration itself
         }
-        if (parent.l != HistTable.EMPTY_ID) {
-            int[] writes = hist.content(parent.l);
-            for (int t : writes) {
-                if (t > 0 && surfaceTags[t]) {
-                    recordCutPair(t, newMask);
-                }
+        if (parent.l == HistTable.EMPTY_ID) {
+            return;
+        }
+        // Fresh-mention attribution: the writes the dying path added since
+        // the FIRST pop at the re-arrival state — the dying cycle's own.
+        // Mentions inherited from that first pop's l (earlier positions'
+        // writes riding the seed) belong to lines that already completed.
+        int[] writes = hist.content(parent.l);
+        int[] baseline =
+            firstPopLEpoch[to] == epochCtr && firstPopL[to] != HistTable.EMPTY_ID ? hist.content(firstPopL[to]) : null;
+        for (int t : writes) {
+            if (t > 0 && surfaceTags[t] && (baseline == null || !mentionsTag(baseline, t))) {
+                recordCutPair(t, newMask);
             }
         }
     }
 
+    private static boolean mentionsTag(int[] seq, int t) {
+        for (int v : seq) {
+            if (v == t) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void recordCutPair(int tag, int newMask) {
         tag = 2 * ((tag + 1) / 2); // normalize to the pair's CLOSE tag — open/close override together
+        if (Boolean.getBoolean("tdfa.debug.finals")) {
+            System.err.println("  [cut] record tag=" + tag + " mask=" + newMask);
+        }
         for (int i = 0; i < cutScratchN; i += 2) {
             if (cutScratch[i] == tag && cutScratch[i + 1] == newMask) {
                 return; // dedup within the closure
@@ -1527,8 +1562,15 @@ final class TdfaCompiler {
             DfaStateBuilder sb = builders.get(s);
             Kernel k = kernels.get(s);
             int[] cutPairs = cutOverrideByState == null ? null : cutOverrideByState[s];
+            if (Boolean.getBoolean("tdfa.debug.finals") && cutPairs != null) {
+                System.err.println("  [finals] state " + s + " cutPairs=" + Arrays.toString(cutPairs));
+            }
             if (k.boxed != null) {
                 sb.finalOpsArr = variants.finalRegops(k.boxed, cutPairs);
+                if (Boolean.getBoolean("tdfa.debug.finals") && cutPairs != null) {
+                    System.err.println("  [finals] state " + s + " ops=" + Arrays.toString(sb.finalOpsArr)
+                        + (sb.finalOpsVariants != null ? " variants=" + Arrays.deepToString(sb.finalOpsVariants) : ""));
+                }
                 variants.computeFinalVariants(sb, k.boxed, cutPairs);
             } else {
                 sb.finalOpsArr = null;
@@ -1610,6 +1652,10 @@ final class TdfaCompiler {
                 maskEpoch[c.state] = epoch;
                 maskBitset[c.state * 2] = 0L;
                 maskBitset[c.state * 2 + 1] = 0L;
+                if (surfaceTags != null) {
+                    firstPopLEpoch[c.state] = epoch;
+                    firstPopL[c.state] = c.l;
+                }
             }
             maskBitset[c.state * 2 + (c.emptyMask >>> 6)] |= 1L << (c.emptyMask & 63);
             out.add(c);
@@ -1652,14 +1698,14 @@ final class TdfaCompiler {
                 int newMask = c.emptyMask | edgeEmpty;
                 if (maskEpoch[to] == epoch && submaskPopped(maskBitset[to * 2], maskBitset[to * 2 + 1], newMask)) {
                     if (surfaceTags != null) {
-                        recordCut(idx, newMask, c);
+                        recordCut(idx, to, newMask, c);
                     }
                     continue;
                 }
                 long childKey = visitKey(to, newMask);
                 if (containsKey(visitedSM, visitedMask, childKey)) {
                     if (surfaceTags != null) {
-                        recordCut(idx, newMask, c);
+                        recordCut(idx, to, newMask, c);
                     }
                     continue;
                 }

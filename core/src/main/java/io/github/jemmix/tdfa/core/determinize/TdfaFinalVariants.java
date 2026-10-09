@@ -376,7 +376,7 @@ final class TdfaFinalVariants {
                     opList.add(new int[]{OP_APPEND_POS, dst, prev});
                     prev = dst;
                 }
-                if (surfaceOverride(cutPairs, t, m)) {
+                if (surfaceOverride(cutPairs, t, m) && mentions(l, 2 * ((t + 1) / 2))) {
                     opList.add(new int[]{OP_APPEND_POS, dst, dst}); // the surfaced participation = pos
                 }
             }
@@ -389,7 +389,7 @@ final class TdfaFinalVariants {
                 opList.add(new int[]{OP_SET_NIL, dst, 0});
                 continue;
             }
-            if (surfaceOverride(cutPairs, t, m)) {
+            if (surfaceOverride(cutPairs, t, m) && lastSign[2 * ((t + 1) / 2) - 1] == TdfaCompiler.TAG_POS) {
                 opList.add(new int[]{OP_SET_POS, dst, 0}); // the surfaced final iteration = the accept position
                 continue;
             }
@@ -412,7 +412,13 @@ final class TdfaFinalVariants {
      * tag — the pair overrides together) surfaces at runtime posFlags
      * {@code m}: some cut path for the tag carried assertions
      * {@code ⊆ m}. {@code cutPairs} is the state's flattened
-     * {@code (tag, mask)} list; null/absent means no cut.
+     * {@code (tag, mask)} list; null/absent means no cut. The caller's
+     * WINNER-LINE test gates the use: the override lands only when the
+     * winner's own lookahead carries the pair's CLOSE tag POS — the
+     * winner's line completed an iteration at the accept position (the
+     * 4d audit: the cut of a LOWER-priority line — or one behind a
+     * consuming tail — must not clobber the winner's already-correct
+     * report; the tail shapes are the family's documented residual).
      */
     private static boolean surfaceOverride(int[] cutPairs, int t, int m) {
         if (cutPairs == null) {
