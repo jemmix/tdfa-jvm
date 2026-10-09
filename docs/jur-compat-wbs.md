@@ -140,7 +140,7 @@ everywhere):
 - [x] 4a — spec + corpus — landed: the mechanics note (sub-families,
   both fix shapes, the decided interactions) lives in the design doc;
   the `Semantics.emptyIterationSpans` javadoc describes both
-  sub-families; the battery is `family6-battery.tsv` (41 shapes — both
+  sub-families; the battery is `family6-battery.tsv` (51 shapes — both
   sub-families × greedy/lazy/`?`/`+`/`{m,n}` × named groups × nested
   composition `((a|\b)*)*` — JUR column re-verified against the live
   JDK on every run, RE2 column pinned on both tiers =
@@ -166,13 +166,28 @@ everywhere):
   shapes: `(\b)*a`, `a(\b)*`, `(\b)*|a`, `(\b)*(a)`, `(?m)(^)*`,
   `(())*`, `((\b)*)*` composition) + the 4a interaction pins (multi ×
   inner-capture spans, longest).
-- [ ] 4c — sub-family B: surface the final iteration (1–2 d, the
-  determinizer item): detect the cut zero-width re-entry per accepting
-  kernel and emit a φ SET_POS-at-accept override for the quantified
-  group's tags — thread through `TdfaFinalVariants`, materialization
-  (`stateFinalOpsByMask`), minimizer signatures (states differing only
-  in the override must not merge), ASM emission, `applyFinalOps`
-  ordering; 4a's B-assertions on.
+- [x] 4c — sub-family B: surface the final iteration — landed: the
+  parser B-marks an UNBOUNDED greedy quantifier directly on a capture
+  whose body is nullable through a choice point (`*`, `+`, `{n,}` —
+  bounded desugars agree already; lazy never marks), marks extending
+  to every capture INSIDE the body (containment: `((a*))*` on "aa"
+  reports BOTH groups 2..2); the determinizer records, per closure,
+  every B-marked tag on a dying zero-width re-entry (the subsumption
+  cut OR the exact (state,mask) revisit — the death can fire anywhere
+  on the cycle, so the edge tag AND the dying path's lookahead history
+  are both consulted, pairs normalized to the close tag, assertion
+  masks accumulated) and binds them to the (deduped) target state;
+  `TdfaFinalVariants` overrides the finals per posFlags mask (single:
+  SET_POS at the accept position; multi: one appended participation —
+  the 4a decisions) — mask-dependent cuts force the variant table
+  even on winner-uniform states; minimizer signatures need no change
+  (the overrides live IN the ops content). RE2 lane: null marks, no
+  recording, bit-identical artifacts (re2j parity suite + battery RE2
+  column re-pinned; a 90 s jur campaign slice: 78,444 cases, 0 hard
+  findings). 4a's B-assertions LIVE (battery at 51 shapes — `+`,
+  `{n,}`/`{2,}` unbounded-tail rows, nested composition, `(x(y|))*`
+  and `(xy*)*` non-nullable-body agrees) + the B interaction pins
+  (multi appends the participation, longest composes).
 - [ ] 4d — audit + evidence (0.5–1 d): rung × tier × input-type audit
   (the `PivotLanesTest` battery pattern); the campaign's jur lane stops
   stripping group clauses (probe + oracle sides) and A/B flip to hard

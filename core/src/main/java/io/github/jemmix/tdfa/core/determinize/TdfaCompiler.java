@@ -215,6 +215,32 @@ final class TdfaCompiler {
     int[] maskEpoch;
     int epochCtr;
     /**
+     * Family 6 sub-family B (EMPTY_ITERATION_SPANS, the JUR lane): the
+     * surfaced-final tags ({@link Tnfa#surfaceFinalTags}), or null on
+     * the RE2 lane / B-mark-free compiles — gates every cut-recording
+     * branch below to a single null test.
+     */
+    final boolean[] surfaceTags;
+    /**
+     * Per-closure scratch for the cut recording: flattened
+     * {@code (tag, assertionMask)} pairs of surfaced-final CLOSE tags
+     * whose zero-width re-entry died at the closure's subsumption cut
+     * (or exact (state,mask) revisit). Reset at every epsilonClosure
+     * entry; bound by the number of distinct B-groups × masks — tiny in
+     * practice, grown geometrically when not.
+     */
+    int[] cutScratch;
+    int cutScratchN;
+    /**
+     * Per-ACCEPTING-state merged cut records (state id → flattened
+     * {@code (tag, mask)} pairs, deduped) — the sub-family B surfacing
+     * overrides in {@link TdfaFinalVariants}. Null array entry = no cut.
+     * Identical kernels produce identical closures (the DFS is a pure
+     * function of the config sequence), so dedup-hit bindings re-write
+     * the same pairs — binding after every addState is idempotent.
+     */
+    int[][] cutOverrideByState;
+    /**
      * One {@link Kernel} per DFA state: the subset-construction closure in
      * boxed form, or its (state, emptyMask) projection once a tagless
      * compile has finished the state.
@@ -318,6 +344,7 @@ final class TdfaCompiler {
         this.epsOut = sortedOutgoing(nfa.epsFrom, nfa.epsPri);
         this.symOut = plainOutgoing(nfa.symFrom);
         this.maskBitset = new long[nfa.stateCount * 2];
+        this.surfaceTags = nfa.surfaceFinalTags;
         this.maskEpoch = new int[nfa.stateCount];
         this.initialRegisters = new int[tags];
         this.finalRegisters = new int[tags];
@@ -422,6 +449,92 @@ final class TdfaCompiler {
             }
         }
         return (poppedLo & 1L) != 0; // the empty submask (mask 0) closes the loop
+    }
+
+    /**
+     * Family 6 sub-family B cut recording (see {@link #surfaceTags}): a
+     * zero-width iteration of a surfaced-final group's quantifier died at
+     * this re-arrival — either the dying ε-edge itself carried the
+     * group's CLOSE tag (the iteration completed, the classic hub
+     * re-entry) or the dying path's lookahead history already carries
+     * the group's tags (the iteration was in progress — the death can
+     * fire anywhere on the cycle, e.g. at an inner star's enter edge
+     * before the wrapper's close-tag edge is ever reached). Each
+     * mentioned group records {@code (tag, assertionMask)} in the
+     * per-closure scratch; the accumulated mask gates the surfacing
+     * override at runtime — where the path's assertions fail, the
+     * zero-width re-entry never happened in java either. Over-recording
+     * is sound for the same reason: the override only lands at runtime
+     * masks that admit the cut path, and its value is the accept
+     * position regardless of which death recorded it.
+     */
+    private void recordCut(int epsIdx, int newMask, Config parent) {
+        int tag = nfa.epsTag[epsIdx];
+        if (tag > 0 && surfaceTags[tag]) {
+            recordCutPair(tag, newMask);
+        }
+        if (parent.l != HistTable.EMPTY_ID) {
+            int[] writes = hist.content(parent.l);
+            for (int t : writes) {
+                if (t > 0 && surfaceTags[t]) {
+                    recordCutPair(t, newMask);
+                }
+            }
+        }
+    }
+
+    private void recordCutPair(int tag, int newMask) {
+        tag = 2 * ((tag + 1) / 2); // normalize to the pair's CLOSE tag — open/close override together
+        for (int i = 0; i < cutScratchN; i += 2) {
+            if (cutScratch[i] == tag && cutScratch[i + 1] == newMask) {
+                return; // dedup within the closure
+            }
+        }
+        if (cutScratch == null) {
+            cutScratch = new int[16];
+        } else if (cutScratchN + 2 > cutScratch.length) {
+            cutScratch = Arrays.copyOf(cutScratch, cutScratch.length * 2);
+        }
+        cutScratch[cutScratchN++] = tag;
+        cutScratch[cutScratchN++] = newMask;
+    }
+
+    /**
+     * Bind the just-computed closure's cut scratch to its (deduped) DFA
+     * state: the pairs merge into {@link #cutOverrideByState} for the
+     * final-φ solving. Identical kernels re-derive identical closures,
+     * so re-binding a dedup hit is an idempotent rewrite.
+     */
+    private void bindCuts(int stateId) {
+        if (surfaceTags == null || cutScratchN == 0) {
+            return;
+        }
+        if (cutOverrideByState == null) {
+            cutOverrideByState = new int[kernels.size()][];
+        } else if (cutOverrideByState.length < kernels.size()) {
+            cutOverrideByState = Arrays.copyOf(cutOverrideByState, kernels.size());
+        }
+        int[] existing = cutOverrideByState[stateId];
+        if (existing == null) {
+            cutOverrideByState[stateId] = Arrays.copyOf(cutScratch, cutScratchN);
+            return;
+        }
+        // merge (dedup) into the existing flat pair list
+        int[] merged = existing;
+        int n = existing.length;
+        outer : for (int i = 0; i < cutScratchN; i += 2) {
+            for (int j = 0; j < n; j += 2) {
+                if (merged[j] == cutScratch[i] && merged[j + 1] == cutScratch[i + 1]) {
+                    continue outer;
+                }
+            }
+            if (n + 2 > merged.length) {
+                merged = Arrays.copyOf(merged, Math.max(merged.length * 2, n + 2));
+            }
+            merged[n++] = cutScratch[i];
+            merged[n++] = cutScratch[i + 1];
+        }
+        cutOverrideByState[stateId] = n == merged.length ? merged : Arrays.copyOf(merged, n);
     }
 
     /**
@@ -635,6 +748,7 @@ final class TdfaCompiler {
             .singletonList(new Config(nfa.start, initialRegisters, HistTable.EMPTY_ID, HistTable.EMPTY_ID, 0)));
         List<Config> initClosure = epsilonClosure(initSeed);
         int startId = index.addState(initClosure, null, initSeed).targetId;
+        bindCuts(startId);
         work.push(startId);
         // PRIMARY phase: the pruned subset construction, exactly as a
         // plain compile — the partial-whole side never runs here, so the
@@ -803,6 +917,7 @@ final class TdfaCompiler {
                     }
                     int[] ops = variants.transitionRegops(closed, sid);
                     TdfaStateIndex.AddResult ar = index.addState(closed, ops, stepped);
+                    bindCuts(ar.targetId);
                     if (!processed.get(ar.targetId)) {
                         work.push(ar.targetId);
                     }
@@ -1039,6 +1154,7 @@ final class TdfaCompiler {
                 }
                 int[] ops = variants.transitionRegops(closed, sid);
                 TdfaStateIndex.AddResult ar = index.addState(closed, ops, stepped);
+                bindCuts(ar.targetId);
                 if (debug) {
                     System.err.println("[tdfa] state " + sid + " on '" + (char) rangeLo + "' (" + rangeLo + ") -> "
                         + ar.targetId + " ops.len=" + ops.length + " mask=" + ctx.orMask);
@@ -1108,6 +1224,7 @@ final class TdfaCompiler {
             }
             int[] opsU = variants.transitionRegops(closedU, sid);
             TdfaStateIndex.AddResult arU = index.addState(closedU, opsU, steppedU);
+            bindCuts(arU.targetId);
             if (!processed.get(arU.targetId)) {
                 work.push(arU.targetId);
             }
@@ -1409,9 +1526,10 @@ final class TdfaCompiler {
             }
             DfaStateBuilder sb = builders.get(s);
             Kernel k = kernels.get(s);
+            int[] cutPairs = cutOverrideByState == null ? null : cutOverrideByState[s];
             if (k.boxed != null) {
-                sb.finalOpsArr = variants.finalRegops(k.boxed);
-                variants.computeFinalVariants(sb, k.boxed);
+                sb.finalOpsArr = variants.finalRegops(k.boxed, cutPairs);
+                variants.computeFinalVariants(sb, k.boxed, cutPairs);
             } else {
                 sb.finalOpsArr = null;
                 variants.computeFinalVariantsPacked(sb, k.packed);
@@ -1435,6 +1553,7 @@ final class TdfaCompiler {
      */
     List<Config> epsilonClosure(List<Config> seed) {
         List<Config> out = new ArrayList<>(seed.size() * 2);
+        cutScratchN = 0;
         // For deterministic exploration we visit (state, mask) pairs — same NFA state
         // can appear with different assertion masks (e.g. loop entered 0 vs 1 times).
         // A visited set keyed only on state would wrongly suppress the second path.
@@ -1532,10 +1651,16 @@ final class TdfaCompiler {
                 int edgeEmpty = nfa.epsEmptyMask[idx];
                 int newMask = c.emptyMask | edgeEmpty;
                 if (maskEpoch[to] == epoch && submaskPopped(maskBitset[to * 2], maskBitset[to * 2 + 1], newMask)) {
+                    if (surfaceTags != null) {
+                        recordCut(idx, newMask, c);
+                    }
                     continue;
                 }
                 long childKey = visitKey(to, newMask);
                 if (containsKey(visitedSM, visitedMask, childKey)) {
+                    if (surfaceTags != null) {
+                        recordCut(idx, newMask, c);
+                    }
                     continue;
                 }
                 int tag = nfa.epsTag[idx];

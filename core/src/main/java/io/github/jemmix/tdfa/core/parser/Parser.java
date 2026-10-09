@@ -329,42 +329,87 @@ public final class Parser {
     }
 
     /**
-     * Family 6 sub-family A (the EMPTY_ITERATION_SPANS axis, unset = the
-     * java.util.regex reading): a greedy min-0 LOOP quantifier
+     * Family 6 (the EMPTY_ITERATION_SPANS axis, unset = the
+     * java.util.regex reading) — both sub-families, marked where the
+     * quantifier text is known to belong to a CAPTURING group's
+     * {@code )} and not to a transparent {@code (?:...)} wrapper
+     * ({@code (?:(\b))*} keeps the span: the capture is not the
+     * quantified atom). Called from {@link #closeGroup} only.
+     *
+     * <p><b>A — dissolve</b>: a greedy min-0 LOOP quantifier
      * ({@code cmax >= 2} or unbounded — {@code ?}/{@code {0,1}} keep the
      * span, and {@code min >= 1} keeps the forced iteration; both
-     * JDK-verified) directly on a CAPTURE whose body is all-zero-width
-     * with no choice points dissolves the group — java's
-     * {@code GroupCurly} rolls the zero-width iteration back to the
-     * pre-curly bounds, so the pair reports NIL at every accept (the
-     * determinizer's φ override). Called from {@link #closeGroup} only —
-     * the one place the parser knows the quantifier text belongs to a
-     * CAPTURING group's {@code )} and not to a transparent
-     * {@code (?:...)} wrapper ({@code (?:(\b))*} keeps the span:
-     * the capture is not the quantified atom). Alternation in the body
-     * ({@code (\b|)*} — sub-family B) and the capture inside a dissolved
-     * pair ({@code ((\b))*} — inner keeps its span) defeat the shape and
-     * stay unmarked. No-op on the RE2-lane reading
+     * JDK-verified) directly on a capture whose body is all-zero-width
+     * with no choice points: java's {@code GroupCurly} rolls the
+     * zero-width iteration back to the pre-curly bounds, so the pair
+     * reports NIL at every accept (the determinizer's φ override). The
+     * capture inside a dissolved pair ({@code ((\b))*} — inner keeps its
+     * span) fails the body test and stays unmarked.
+     *
+     * <p><b>B — surface</b>: an UNBOUNDED greedy quantifier
+     * ({@code *}, {@code +}, {@code {n,}} — the bounded desugars are
+     * structural and agree with the JDK already) directly on a capture
+     * whose body can match empty through a choice point (nullable and
+     * NOT dissolvable): java's {@code Prolog}+{@code Loop} reports the
+     * final zero-width iteration, which the determinizer's closure
+     * subsumption cuts — the accepting kernels where the cut fires
+     * surface the pair's writes as a φ SET_POS at the accept position.
+     * Lazy quantifiers never mark (java's lazy loops prefer exiting —
+     * both engines agree).
+     *
+     * <p>No-op on the RE2-lane reading
      * ({@code ParseOptions.isEmptyIterationSpans()}), so those parses —
      * and their NFA/TDFA artifacts — stay bit-identical.
      */
-    private void markDissolvedGroup(Ast quantified, boolean capturing) {
+    private void markFamily6Groups(Ast quantified, boolean capturing) {
         if (options.isEmptyIterationSpans() || !capturing || !(quantified instanceof Ast.Repeat)) {
             return;
         }
         Ast.Repeat r = (Ast.Repeat) quantified;
-        if (!r.greedy || r.min != 0 || r.max < 2 || !(r.body instanceof Ast.Concat)) {
+        if (!r.greedy || !(r.body instanceof Ast.Concat)) {
             return;
         }
         List<Ast> ch = ((Ast.Concat) r.body).children;
         if (ch.size() != 3 || !(ch.get(0) instanceof Ast.Tag) || !(ch.get(2) instanceof Ast.Tag)) {
             return;
         }
-        if (!dissolvableBody(ch.get(1))) {
+        Ast body = ch.get(1);
+        boolean aShape = r.min == 0 && r.max >= 2 && dissolvableBody(body);
+        boolean bShape = r.max == Integer.MAX_VALUE && nullableBody(body) && !dissolvableBody(body);
+        if (!aShape && !bShape) {
             return;
         }
-        ((Ast.Tag) ch.get(0)).dissolved = true;
-        ((Ast.Tag) ch.get(2)).dissolved = true;
+        ((Ast.Tag) ch.get(0)).dissolved = aShape;
+        ((Ast.Tag) ch.get(0)).surfaceFinal = bShape;
+        ((Ast.Tag) ch.get(2)).dissolved = aShape;
+        ((Ast.Tag) ch.get(2)).surfaceFinal = bShape;
+        if (bShape) {
+            // Containment: every capture INSIDE the B-group's body
+            // participates in the surfaced final zero-width iteration
+            // (((a*))* on "aa": outer AND inner report 2..2 — the whole
+            // traversal is zero-width, so the dying re-entry's writes
+            // cover the inner pair too). JDK-verified; the determinizer
+            // surfaces any marked tag the cut path mentions.
+            markSubtreeSurface(body);
+        }
+    }
+
+    /** Set {@link Ast.Tag#surfaceFinal} on every Tag under {@code e} (see the B-mark). */
+    private static void markSubtreeSurface(Ast e) {
+        Deque<Ast> work = new ArrayDeque<>();
+        work.push(e);
+        while (!work.isEmpty()) {
+            Ast a = work.pop();
+            if (a instanceof Ast.Tag) {
+                ((Ast.Tag) a).surfaceFinal = true;
+            } else if (a instanceof Ast.Concat) {
+                work.addAll(((Ast.Concat) a).children);
+            } else if (a instanceof Ast.Alt) {
+                work.addAll(((Ast.Alt) a).children);
+            } else if (a instanceof Ast.Repeat) {
+                work.push(((Ast.Repeat) a).body);
+            }
+        }
     }
 
     /**
@@ -390,6 +435,87 @@ public final class Parser {
             }
         }
         return true;
+    }
+
+    /**
+     * Whether {@code e} can match the empty string (nullable) — the
+     * sub-family B body test (with {@link #dissolvableBody} false:
+     * emptiness reachable only THROUGH a choice point). The syntactic
+     * twin of the Builder's {@code isNullable}: Concat needs every child,
+     * Alt any branch, a Repeat with {@code min == 0} skips, and one with
+     * {@code min >= 1} inherits the body's nullability. Iterative
+     * post-order AND/OR evaluation — one frame per container, leaf
+     * verdicts inline — so nesting depth costs heap, never JVM stack
+     * (the parser itself is iterative for the same reason).
+     */
+    private static boolean nullableBody(Ast e) {
+        Deque<NFrame> stack = new ArrayDeque<>();
+        NFrame root = new NFrame(e);
+        stack.push(root);
+        while (!stack.isEmpty()) {
+            NFrame f = stack.peek();
+            if (f.children == null) {
+                Ast n = f.node;
+                if (n instanceof Ast.Concat) {
+                    f.children = ((Ast.Concat) n).children;
+                } else if (n instanceof Ast.Alt) {
+                    f.children = ((Ast.Alt) n).children;
+                } else if (n instanceof Ast.Repeat) {
+                    if (((Ast.Repeat) n).min == 0) {
+                        f.finish(true); // can skip the body entirely
+                    } else {
+                        f.children = Collections.singletonList(((Ast.Repeat) n).body);
+                    }
+                } else if (n instanceof Ast.Tag || n instanceof Ast.Empty || n instanceof Ast.StartAnchor
+                    || n instanceof Ast.EndAnchor || n instanceof Ast.WordBoundary || n instanceof Ast.NoWordBoundary) {
+                    f.finish(true); // zero-width
+                } else {
+                    f.finish(false); // Symbol/CharClass consume
+                }
+            }
+            if (f.children != null && f.idx < f.children.size()) {
+                stack.push(new NFrame(f.children.get(f.idx++)));
+                continue;
+            }
+            if (f.children != null && !f.leaf) {
+                // container fold: Concat/Repeat{min>0} need every child, Alt any
+                f.result = f.node instanceof Ast.Alt ? f.trues > 0 : f.falses == 0;
+            }
+            stack.pop();
+            if (!stack.isEmpty()) {
+                stack.peek().tally(f.result);
+            }
+        }
+        return root.result;
+    }
+
+    /** One nullableBody evaluation frame (see there). */
+    private static final class NFrame {
+        final Ast node;
+        List<Ast> children;
+        int idx;
+        int trues;
+        int falses;
+        boolean result;
+        boolean leaf;
+
+        NFrame(Ast node) {
+            this.node = node;
+        }
+
+        void finish(boolean verdict) {
+            children = Collections.emptyList();
+            leaf = true;
+            result = verdict;
+        }
+
+        void tally(boolean childResult) {
+            if (childResult) {
+                trues++;
+            } else {
+                falses++;
+            }
+        }
     }
 
     /**
@@ -725,7 +851,7 @@ public final class Parser {
                     Collections.unmodifiableList(Arrays.asList(new Ast.Tag(f.open), body, new Ast.Tag(f.close))))
                 : body;
         Ast quantified = applyQuantifier(group);
-        markDissolvedGroup(quantified, f.capturing);
+        markFamily6Groups(quantified, f.capturing);
         stack.peek().parts.add(quantified);
     }
 

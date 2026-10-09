@@ -82,12 +82,20 @@ public abstract class Ast {
      *  JUR lane the pair reports NIL at every accept (the determinizer's φ
      *  override; see {@code Tnfa#dissolvedTags}). The fixed-tags pass keeps a
      *  dissolved tag un-fixed and base-free: its final value is protocol-NIL,
-     *  not a reconstructable distance. */
+     *  not a reconstructable distance.
+     *  <p>{@code surfaceFinal} is the family-6 sub-family B twin: the pair
+     *  belongs to a capture under an UNBOUNDED greedy quantifier over an
+     *  empty-capable non-deterministic body — java.util.regex's
+     *  {@code Prolog}+{@code Loop} reports the final zero-width iteration,
+     *  which the determinizer's same-position closure subsumption cuts; the
+     *  accepting kernels where the cut fired surface the pair's writes as a
+     *  φ SET_POS at the accept position (see {@code Tnfa#surfaceFinalTags}). */
     public static final class Tag extends Ast {
         public final int tag;
         public int fixedOn;
         public int fixedOffset;
         public boolean dissolved;
+        public boolean surfaceFinal;
 
         public Tag(int tag) {
             this.tag = tag;

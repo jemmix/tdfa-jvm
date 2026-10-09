@@ -109,6 +109,19 @@ public final class Tnfa {
      * pre-family-6 builds.
      */
     public final boolean[] dissolvedTags;
+    /**
+     * Tags of surfaced-final groups (family 6 sub-family B): a capture
+     * under an UNBOUNDED greedy quantifier ({@code *}, {@code +},
+     * {@code {n,}}) whose body can match empty through a choice point —
+     * java.util.regex's {@code Prolog}+{@code Loop} reports the final
+     * zero-width iteration, which the determinizer's same-position
+     * closure subsumption cuts. The accepting kernels where the cut
+     * fired surface the pair's writes as a final-φ SET_POS at the accept
+     * position (mask-gated by the cut path's assertions). Parser-marked
+     * (1-indexed); {@code null} on the RE2 lane (no cut recording, no
+     * overrides — bit-identical artifacts).
+     */
+    public final boolean[] surfaceFinalTags;
 
     // Zero-width assertion bits. BEGIN_TEXT/END_TEXT are LINE boundaries
     // (position 0 / end-of-input, plus after/before a terminator of the
@@ -137,17 +150,27 @@ public final class Tnfa {
         int[] fixedBase, int[] fixedOffset) {
         this(stateCount, epsFrom, epsTo, epsPri, epsTag, epsEmptyMask, symFrom, symTo, symClass, start, accept,
             tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset, null,
-            false, ALL_AXES);
+            null, false, ALL_AXES);
     }
 
-    /** Legacy convenience (no dissolved groups — the RE2-lane reading). */
+    /** Legacy convenience (no family-6 marks — the RE2-lane reading). */
     public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
         int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
         boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
         int[] fixedBase, int[] fixedOffset, boolean[] dissolvedTags) {
         this(stateCount, epsFrom, epsTo, epsPri, epsTag, epsEmptyMask, symFrom, symTo, symClass, start, accept,
             tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
-            dissolvedTags, false, ALL_AXES);
+            dissolvedTags, null, false, ALL_AXES);
+    }
+
+    /** Legacy convenience (no family-6 marks — the RE2-lane reading). */
+    public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
+        int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
+        boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
+        int[] fixedBase, int[] fixedOffset, boolean[] dissolvedTags, boolean[] surfaceFinalTags) {
+        this(stateCount, epsFrom, epsTo, epsPri, epsTag, epsEmptyMask, symFrom, symTo, symClass, start, accept,
+            tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
+            dissolvedTags, surfaceFinalTags, false, ALL_AXES);
     }
 
     public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
@@ -156,13 +179,14 @@ public final class Tnfa {
         int[] fixedBase, int[] fixedOffset, boolean multiValuedTags) {
         this(stateCount, epsFrom, epsTo, epsPri, epsTag, epsEmptyMask, symFrom, symTo, symClass, start, accept,
             tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset, null,
-            multiValuedTags, ALL_AXES);
+            null, multiValuedTags, ALL_AXES);
     }
 
     public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
         int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
         boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
-        int[] fixedBase, int[] fixedOffset, boolean[] dissolvedTags, boolean multiValuedTags, Semantics semantics) {
+        int[] fixedBase, int[] fixedOffset, boolean[] dissolvedTags, boolean[] surfaceFinalTags,
+        boolean multiValuedTags, Semantics semantics) {
         this.stateCount = stateCount;
         this.epsFrom = epsFrom;
         this.epsTo = epsTo;
@@ -185,6 +209,7 @@ public final class Tnfa {
         this.fixedBase = fixedBase;
         this.fixedOffset = fixedOffset;
         this.dissolvedTags = dissolvedTags;
+        this.surfaceFinalTags = surfaceFinalTags;
     }
 
     // ====== Builder / construction ======
@@ -280,7 +305,8 @@ public final class Tnfa {
             collectFixedAnnotations(ast, fixedBase, fixedOffset);
         }
         int tagCount = parsed.tagCount();
-        boolean[] dissolved = collectDissolved(ast, tagCount);
+        boolean[] dissolved = collectMarked(ast, tagCount, false);
+        boolean[] surfaced = collectMarked(ast, tagCount, true);
         if (Boolean.getBoolean("tdfa.debug")) {
             int n = 0;
             for (int t = 1; t <= tagCount; t++) {
@@ -296,8 +322,8 @@ public final class Tnfa {
         int accept = b.fresh();
         int start = b.build(ast, accept);
         Tnfa nfa = b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(), parsed.unicodeShorthand(),
-            parsed.unicodeWordRanges(), parsed.namedGroups(), fixedBase, fixedOffset, dissolved, multiValuedTags,
-            semantics);
+            parsed.unicodeWordRanges(), parsed.namedGroups(), fixedBase, fixedOffset, dissolved, surfaced,
+            multiValuedTags, semantics);
         if (observer != null) {
             observer.stage(CompileObserver.Stage.TNFA, System.nanoTime() - t1, nfa.stateCount);
         }
@@ -329,26 +355,27 @@ public final class Tnfa {
         }
     }
 
-    /** Collect the parser's family-6 sub-family A marks (see
-     *  {@link Ast.Tag#dissolved}) into a 1-indexed array for the
-     *  determinizer's final-φ override; {@code null} when nothing
-     *  dissolved (every RE2-lane compile — the field stays absent, not
-     *  empty, so identity checks are one reference test). Iterative
-     *  worklist like {@link #collectFixedAnnotations}: pre-desugar AST,
-     *  each Tag visited exactly once, no stack recursion.
+    /** Collect the parser's family-6 marks — sub-family A
+     *  ({@link Ast.Tag#dissolved}) or B ({@link Ast.Tag#surfaceFinal})
+     *  per the flag — into a 1-indexed array for the determinizer's
+     *  final-φ overrides; {@code null} when nothing marked (every
+     *  RE2-lane compile — the field stays absent, not empty, so identity
+     *  checks are one reference test). Iterative worklist like
+     *  {@link #collectFixedAnnotations}: pre-desugar AST, each Tag
+     *  visited exactly once, no stack recursion.
      */
-    private static boolean[] collectDissolved(Ast root, int tagCount) {
-        boolean[] dissolved = null;
+    private static boolean[] collectMarked(Ast root, int tagCount, boolean surface) {
+        boolean[] marked = null;
         ArrayDeque<Ast> work = new ArrayDeque<>();
         work.push(root);
         while (!work.isEmpty()) {
             Ast e = work.pop();
             if (e instanceof Ast.Tag) {
-                if (((Ast.Tag) e).dissolved) {
-                    if (dissolved == null) {
-                        dissolved = new boolean[tagCount + 1];
+                if (surface ? ((Ast.Tag) e).surfaceFinal : ((Ast.Tag) e).dissolved) {
+                    if (marked == null) {
+                        marked = new boolean[tagCount + 1];
                     }
-                    dissolved[((Ast.Tag) e).tag] = true;
+                    marked[((Ast.Tag) e).tag] = true;
                 }
             } else if (e instanceof Ast.Concat) {
                 work.addAll(((Ast.Concat) e).children);
@@ -358,7 +385,7 @@ public final class Tnfa {
                 work.push(((Ast.Repeat) e).body);
             }
         }
-        return dissolved;
+        return marked;
     }
 
     private static final class Builder {
@@ -956,7 +983,7 @@ public final class Tnfa {
 
         Tnfa build(int start, int accept, int tagCount, int groupCount, boolean multiline, boolean unicodeWordBoundary,
             int[] wordRanges, Map<String, Integer> namedGroups, int[] fixedBase, int[] fixedOffset,
-            boolean[] dissolvedTags, boolean multiValuedTags, Semantics semantics) {
+            boolean[] dissolvedTags, boolean[] surfaceFinalTags, boolean multiValuedTags, Semantics semantics) {
             int n = eps.size();
             int[] eFrom = new int[n], eTo = new int[n], ePri = new int[n], eTag = new int[n], eEmpty = new int[n];
             for (int i = 0; i < n; i++) {
@@ -972,7 +999,7 @@ public final class Tnfa {
             CharClass[] sClass = symClasses.toArray(new CharClass[0]);
             return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, sFrom, sTo, sClass, start, accept, tagCount,
                 groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
-                dissolvedTags, multiValuedTags, semantics);
+                dissolvedTags, surfaceFinalTags, multiValuedTags, semantics);
         }
     }
 }

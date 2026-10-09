@@ -45,11 +45,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <li><b>The RE2 lane is pinned.</b> The shipped default answers exactly
  *     the recorded RE2 column on BOTH tiers (and CharSequence wrappers)
  *     — the RE2-lane-unchanged contract the 4b/4c fixes must keep.</li>
- * <li><b>The JUR-lane assertions are dark</b> until their sub-family's
- *     fix lands: {@link #jurLaneSubFamilyA} lights with WBS 4b (the
- *     SET_NIL suppression), {@link #jurLaneSubFamilyB} with 4c (the
- *     surfaced final iteration). Agree-shaped rows pass under either
- *     gate; the divergent rows are why the gates exist.</li>
+ * <li><b>The JUR-lane assertions are LIVE</b> for both sub-families
+ *     (WBS 4b: the parse mark + SET_NIL finals suppression for A; 4c:
+ *     the determinizer cut detection + SET_POS-at-accept surfacing for
+ *     B) — every row on both tiers against the recorded JUR
+ *     column.</li>
  * </ul>
  */
 class Family6BatteryTest {
@@ -57,8 +57,8 @@ class Family6BatteryTest {
     /** WBS 4b: LIVED — the sub-family A suppression (parse mark + SET_NIL φ). */
     private static final boolean SUB_FAMILY_A_LIVE = true;
 
-    /** WBS 4c flips to true when the sub-family B final-iteration surfacing lands. */
-    private static final boolean SUB_FAMILY_B_LIVE = false;
+    /** WBS 4c: LIVED — the determinizer cut detection + SET_POS-at-accept override. */
+    private static final boolean SUB_FAMILY_B_LIVE = true;
 
     record Row(String id, boolean subA, String pattern, String input, String jur, String re2) {
     }
@@ -191,6 +191,42 @@ class Family6BatteryTest {
         PatternMatcher fm = f.matcher("a");
         assertThat(fm.find()).isTrue();
         assertThat(fm.start(1)).as("JUR longest find: dissolved pair reports NIL").isEqualTo(-1);
+    }
+
+    @org.junit.jupiter.api.Test
+    void subFamilyBUnderMultiValuedTagsAppendsTheParticipation() {
+        // 4a decision: the surfaced final zero-width iteration appends a
+        // participation — (a*)* on "aa" keeps BOTH spans, the single-value
+        // read is the last pair; the RE2 lane keeps the maximal-iteration
+        // protocol (one span).
+        io.github.jemmix.tdfa.Pattern jur = io.github.jemmix.tdfa.Pattern.compile("(a*)*",
+            CompileOptions.of().semantics(Semantics.of()).multiValuedTags());
+        PatternMatcher m = jur.matcher("aa");
+        assertThat(m.matches()).as("JUR multi whole").isTrue();
+        assertThat(m.groupSpans(1)).as("JUR multi: both iterations participate").containsExactly(0, 2, 2, 2);
+        assertThat(m.start(1)).as("JUR multi: single value = last pair").isEqualTo(2);
+        io.github.jemmix.tdfa.Pattern re2 =
+            io.github.jemmix.tdfa.Pattern.compile("(a*)*", CompileOptions.of().multiValuedTags());
+        PatternMatcher m2 = re2.matcher("aa");
+        assertThat(m2.matches()).as("RE2 multi whole").isTrue();
+        assertThat(m2.groupSpans(1)).as("RE2 multi: today's protocol unchanged").containsExactly(0, 2);
+    }
+
+    @org.junit.jupiter.api.Test
+    void subFamilyBUnderLongestMatchComposes() {
+        // Same composition as sub-family A: the surfaced iteration is the
+        // one at the WINNING (longest) accept's end position.
+        io.github.jemmix.tdfa.Pattern p = io.github.jemmix.tdfa.Pattern.compile("(a*)*",
+            CompileOptions.of().semantics(Semantics.of()).longestMatch());
+        PatternMatcher m = p.matcher("aa");
+        assertThat(m.matches()).as("JUR longest whole").isTrue();
+        assertThat(m.start(1)).as("JUR longest: surfaced iteration at the accept").isEqualTo(2);
+        assertThat(m.end(1)).isEqualTo(2);
+        PatternMatcher f = p.matcher("aab");
+        assertThat(f.find()).isTrue();
+        assertThat(f.group()).as("JUR longest find: leftmost-longest").isEqualTo("aa");
+        assertThat(f.start(1)).isEqualTo(2);
+        assertThat(f.end(1)).isEqualTo(2);
     }
 
     // ===== protocol helpers (mirror the battery recording format) =====
