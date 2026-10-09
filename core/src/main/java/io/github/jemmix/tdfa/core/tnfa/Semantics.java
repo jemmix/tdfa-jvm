@@ -117,9 +117,18 @@ public final class Semantics {
     }
 
     /**
-     * Axis: a zero-width final loop iteration reports its group's span
-     * ({@code (\z)*} on {@code ""} &rarr; g1 {@code 0..0}); unset leaves
-     * the group non-participating (java.util.regex &rarr; g1 {@code -1}).
+     * Axis: the maximal-iteration span protocol (RE2 lineage); unset is
+     * java.util.regex's, which is two sub-families of opposite polarity
+     * — a greedy min-0 quantifier directly on a capture whose body is
+     * all-zero-width leaves the group non-participating
+     * ({@code (\z)*} on {@code ""} &rarr; g1 {@code -1}, the
+     * {@code GroupCurly} rollback), while a greedy quantifier on an
+     * empty-capable non-deterministic body reports the final
+     * zero-width iteration's span ({@code (a*)*} on {@code "aa"} &rarr;
+     * g1 {@code 2..2}). Set keeps the maximal-iteration protocol
+     * throughout: a sole zero-width iteration reports
+     * ({@code (\z)*} &rarr; g1 {@code 0..0}) and the last consuming
+     * iteration wins ({@code (a*)*} &rarr; g1 {@code 0..2}).
      */
     public Semantics emptyIterationSpans() {
         return with(EMPTY_ITERATION_SPANS_BIT);
