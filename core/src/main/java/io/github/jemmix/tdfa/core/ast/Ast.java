@@ -73,11 +73,21 @@ public abstract class Ast {
      *  the BT22 §6.4 fixed-tags pass (see {@code io.github.jemmix.tdfa.core.ast.FixedTags}).
      *  When {@code fixedOn != 0}, this tag's position can be reconstructed at match
      *  time as {@code tag[fixedOn] - fixedOffset} (or NIL if the base is NIL), so
-     *  the tag is omitted from NFA construction and register allocation. */
+     *  the tag is omitted from NFA construction and register allocation.
+     *  <p>{@code dissolved} is a mutable annotation set by the parser (family 6
+     *  sub-family A, the EMPTY_ITERATION_SPANS axis): the tag pair belongs to a
+     *  capture dissolved by a greedy min-0 loop quantifier over an
+     *  all-zero-width deterministic body — java.util.regex's {@code GroupCurly}
+     *  rolls the zero-width iteration back to the pre-curly bounds, so on the
+     *  JUR lane the pair reports NIL at every accept (the determinizer's φ
+     *  override; see {@code Tnfa#dissolvedTags}). The fixed-tags pass keeps a
+     *  dissolved tag un-fixed and base-free: its final value is protocol-NIL,
+     *  not a reconstructable distance. */
     public static final class Tag extends Ast {
         public final int tag;
         public int fixedOn;
         public int fixedOffset;
+        public boolean dissolved;
 
         public Tag(int tag) {
             this.tag = tag;

@@ -329,6 +329,70 @@ public final class Parser {
     }
 
     /**
+     * Family 6 sub-family A (the EMPTY_ITERATION_SPANS axis, unset = the
+     * java.util.regex reading): a greedy min-0 LOOP quantifier
+     * ({@code cmax >= 2} or unbounded — {@code ?}/{@code {0,1}} keep the
+     * span, and {@code min >= 1} keeps the forced iteration; both
+     * JDK-verified) directly on a CAPTURE whose body is all-zero-width
+     * with no choice points dissolves the group — java's
+     * {@code GroupCurly} rolls the zero-width iteration back to the
+     * pre-curly bounds, so the pair reports NIL at every accept (the
+     * determinizer's φ override). Called from {@link #closeGroup} only —
+     * the one place the parser knows the quantifier text belongs to a
+     * CAPTURING group's {@code )} and not to a transparent
+     * {@code (?:...)} wrapper ({@code (?:(\b))*} keeps the span:
+     * the capture is not the quantified atom). Alternation in the body
+     * ({@code (\b|)*} — sub-family B) and the capture inside a dissolved
+     * pair ({@code ((\b))*} — inner keeps its span) defeat the shape and
+     * stay unmarked. No-op on the RE2-lane reading
+     * ({@code ParseOptions.isEmptyIterationSpans()}), so those parses —
+     * and their NFA/TDFA artifacts — stay bit-identical.
+     */
+    private void markDissolvedGroup(Ast quantified, boolean capturing) {
+        if (options.isEmptyIterationSpans() || !capturing || !(quantified instanceof Ast.Repeat)) {
+            return;
+        }
+        Ast.Repeat r = (Ast.Repeat) quantified;
+        if (!r.greedy || r.min != 0 || r.max < 2 || !(r.body instanceof Ast.Concat)) {
+            return;
+        }
+        List<Ast> ch = ((Ast.Concat) r.body).children;
+        if (ch.size() != 3 || !(ch.get(0) instanceof Ast.Tag) || !(ch.get(2) instanceof Ast.Tag)) {
+            return;
+        }
+        if (!dissolvableBody(ch.get(1))) {
+            return;
+        }
+        ((Ast.Tag) ch.get(0)).dissolved = true;
+        ((Ast.Tag) ch.get(2)).dissolved = true;
+    }
+
+    /**
+     * Whether {@code e} can ONLY match zero-width WITHOUT choice points:
+     * assertion chains, {@code ()}, and nested groups of those (the
+     * {@code study()}-deterministic zero-width bodies java compiles as
+     * {@code GroupCurly}). Consuming atoms, alternation and any repeat
+     * fail — the latter two make the body non-deterministic (sub-family
+     * B even when empty-capable). Iterative worklist: nesting depth must
+     * cost heap, never JVM stack (the parser itself is iterative for the
+     * same reason).
+     */
+    private static boolean dissolvableBody(Ast e) {
+        Deque<Ast> work = new ArrayDeque<>();
+        work.push(e);
+        while (!work.isEmpty()) {
+            Ast a = work.pop();
+            if (a instanceof Ast.Concat) {
+                work.addAll(((Ast.Concat) a).children);
+            } else if (!(a instanceof Ast.Tag || a instanceof Ast.Empty || a instanceof Ast.StartAnchor
+                || a instanceof Ast.EndAnchor || a instanceof Ast.WordBoundary || a instanceof Ast.NoWordBoundary)) {
+                return false; // Symbol/CharClass consume; Alt/Repeat choose
+            }
+        }
+        return true;
+    }
+
+    /**
      * Expands a literal codepoint under case-insensitive mode into a CharClass,
      * or returns {@code null} if the codepoint should remain a plain literal
      * (no case-fold equivalents). Simple folding via the active fold universe
@@ -660,7 +724,9 @@ public final class Parser {
                 ? new Ast.Concat(
                     Collections.unmodifiableList(Arrays.asList(new Ast.Tag(f.open), body, new Ast.Tag(f.close))))
                 : body;
-        stack.peek().parts.add(applyQuantifier(group));
+        Ast quantified = applyQuantifier(group);
+        markDissolvedGroup(quantified, f.capturing);
+        stack.peek().parts.add(quantified);
     }
 
     /** class := '^'? class-item+ ']' */

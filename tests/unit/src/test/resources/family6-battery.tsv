@@ -8,7 +8,7 @@
 #        java's Prolog+Loop surfaces the final zero-width iteration).
 #        Agree-shaped rows (same answer in both protocols) carry the
 #        sub-family of the fix that owns them.
-#   input: "\s" escapes a space (trailing spaces must stay visible).
+#   input: "\s" escapes a space (trailing spaces stay visible), "\n" a newline.
 #   JUR / RE2 protocol: M=<whole spans>|F=<first find from 0>|R=<find from
 #        ceil(len/2)>; spans = g0start,g0end;g1start,g1end;... over ALL
 #        groups, -1,-1 = non-participating, NONE = no match.
@@ -17,8 +17,9 @@
 #   RE2 column recorded from the engine's shipped default lane (VM and ASM
 #        tiers agreed bit-for-bit at record time) and asserted on both
 #        tiers — the RE2-lane-unchanged contract items 4b/4c must keep.
-#   The JUR-lane engine assertions live in Family6BatteryTest, dark per
-#        sub-family until WBS 4b (A) / 4c (B) light them.
+#   The JUR-lane engine assertions live in Family6BatteryTest: sub-family
+#        A is LIVE (WBS 4b — the parse mark + SET_NIL finals override);
+#        sub-family B stays dark until WBS 4c.
 id	sub	pattern	input	JUR	RE2
 A1	A	(\z)*		M=0,0;-1,-1|F=0,0;-1,-1|R=0,0;-1,-1	M=0,0;0,0|F=0,0;0,0|R=0,0;0,0
 A1	A	(\z)*	a	M=NONE|F=0,0;-1,-1|R=0,0;-1,-1	M=NONE|F=0,0;-1,-1|R=0,0;-1,-1
@@ -61,6 +62,35 @@ A14	A	(?:(\b))*	a\sb	M=NONE|F=0,0;0,0|R=1,1;1,1	M=NONE|F=0,0;0,0|R=1,1;1,1
 A15	A	((\b))*		M=0,0;-1,-1;-1,-1|F=0,0;-1,-1;-1,-1|R=0,0;-1,-1;-1,-1	M=0,0;-1,-1;-1,-1|F=0,0;-1,-1;-1,-1|R=0,0;-1,-1;-1,-1
 A15	A	((\b))*	a	M=NONE|F=0,0;-1,-1;0,0|R=0,0;-1,-1;0,0	M=NONE|F=0,0;0,0;0,0|R=0,0;0,0;0,0
 A15	A	((\b))*	a\sb	M=NONE|F=0,0;-1,-1;0,0|R=1,1;-1,-1;1,1	M=NONE|F=0,0;0,0;0,0|R=1,1;1,1;1,1
+A16	A	(())*		M=0,0;-1,-1;0,0|F=0,0;-1,-1;0,0|R=0,0;-1,-1;0,0	M=0,0;0,0;0,0|F=0,0;0,0;0,0|R=0,0;0,0;0,0
+A16	A	(())*	a	M=NONE|F=0,0;-1,-1;0,0|R=0,0;-1,-1;0,0	M=NONE|F=0,0;0,0;0,0|R=0,0;0,0;0,0
+A16	A	(())*	a\sb	M=NONE|F=0,0;-1,-1;0,0|R=1,1;-1,-1;1,1	M=NONE|F=0,0;0,0;0,0|R=1,1;1,1;1,1
+A16	A	(())*	aa	M=NONE|F=0,0;-1,-1;0,0|R=1,1;-1,-1;1,1	M=NONE|F=0,0;0,0;0,0|R=1,1;1,1;1,1
+A17	A	(\b)*|a		M=0,0;-1,-1|F=0,0;-1,-1|R=0,0;-1,-1	M=0,0;-1,-1|F=0,0;-1,-1|R=0,0;-1,-1
+A17	A	(\b)*|a	a	M=0,1;-1,-1|F=0,0;-1,-1|R=0,0;-1,-1	M=0,1;-1,-1|F=0,0;0,0|R=0,0;0,0
+A17	A	(\b)*|a	a\sb	M=NONE|F=0,0;-1,-1|R=1,1;-1,-1	M=NONE|F=0,0;0,0|R=1,1;1,1
+A17	A	(\b)*|a	aa	M=NONE|F=0,0;-1,-1|R=1,1;-1,-1	M=NONE|F=0,0;0,0|R=1,1;-1,-1
+A18	A	(\b)*a	a	M=0,1;-1,-1|F=0,1;-1,-1|R=0,1;-1,-1	M=0,1;0,0|F=0,1;0,0|R=0,1;0,0
+A18	A	(\b)*a	aa	M=NONE|F=0,1;-1,-1|R=1,2;-1,-1	M=NONE|F=0,1;0,0|R=1,2;-1,-1
+A18	A	(\b)*a	a\sb	M=NONE|F=0,1;-1,-1|R=NONE	M=NONE|F=0,1;0,0|R=NONE
+A19	A	a(\b)*	a	M=0,1;-1,-1|F=0,1;-1,-1|R=0,1;-1,-1	M=0,1;1,1|F=0,1;1,1|R=0,1;1,1
+A19	A	a(\b)*	aa	M=NONE|F=0,1;-1,-1|R=1,2;-1,-1	M=NONE|F=0,1;-1,-1|R=1,2;2,2
+A19	A	a(\b)*	a\sb	M=NONE|F=0,1;-1,-1|R=NONE	M=NONE|F=0,1;1,1|R=NONE
+A20	A	(\b){0,1}	a	M=NONE|F=0,0;0,0|R=0,0;0,0	M=NONE|F=0,0;0,0|R=0,0;0,0
+A20	A	(\b){0,1}	aa	M=NONE|F=0,0;0,0|R=1,1;-1,-1	M=NONE|F=0,0;0,0|R=1,1;-1,-1
+A21	A	(\b){0,}	a	M=NONE|F=0,0;-1,-1|R=0,0;-1,-1	M=NONE|F=0,0;0,0|R=0,0;0,0
+A21	A	(\b){0,}	a\sb	M=NONE|F=0,0;-1,-1|R=1,1;-1,-1	M=NONE|F=0,0;0,0|R=1,1;1,1
+A21	A	(\b){0,}	aa	M=NONE|F=0,0;-1,-1|R=1,1;-1,-1	M=NONE|F=0,0;0,0|R=1,1;-1,-1
+A22	A	(?m)(^)*	a	M=NONE|F=0,0;-1,-1|R=0,0;-1,-1	M=NONE|F=0,0;0,0|R=0,0;0,0
+A22	A	(?m)(^)*	aa	M=NONE|F=0,0;-1,-1|R=1,1;-1,-1	M=NONE|F=0,0;0,0|R=1,1;-1,-1
+A22	A	(?m)(^)*	a\sb	M=NONE|F=0,0;-1,-1|R=1,1;-1,-1	M=NONE|F=0,0;0,0|R=1,1;-1,-1
+A22	A	(?m)(^)*	a\nb	M=NONE|F=0,0;-1,-1|R=1,1;-1,-1	M=NONE|F=0,0;0,0|R=1,1;-1,-1
+A23	A	(\b)*(a)	a	M=0,1;-1,-1;0,1|F=0,1;-1,-1;0,1|R=0,1;-1,-1;0,1	M=0,1;0,0;0,1|F=0,1;0,0;0,1|R=0,1;0,0;0,1
+A23	A	(\b)*(a)	aa	M=NONE|F=0,1;-1,-1;0,1|R=1,2;-1,-1;1,2	M=NONE|F=0,1;0,0;0,1|R=1,2;-1,-1;1,2
+A23	A	(\b)*(a)	a\sb	M=NONE|F=0,1;-1,-1;0,1|R=NONE	M=NONE|F=0,1;0,0;0,1|R=NONE
+A24	A	((\b)*)*		M=0,0;0,0;-1,-1|F=0,0;0,0;-1,-1|R=0,0;0,0;-1,-1	M=0,0;0,0;-1,-1|F=0,0;0,0;-1,-1|R=0,0;0,0;-1,-1
+A24	A	((\b)*)*	a	M=NONE|F=0,0;0,0;-1,-1|R=0,0;0,0;-1,-1	M=NONE|F=0,0;0,0;0,0|R=0,0;0,0;0,0
+A24	A	((\b)*)*	a\sb	M=NONE|F=0,0;0,0;-1,-1|R=1,1;1,1;-1,-1	M=NONE|F=0,0;0,0;0,0|R=1,1;1,1;1,1
 B1	B	(a*)*		M=0,0;0,0|F=0,0;0,0|R=0,0;0,0	M=0,0;0,0|F=0,0;0,0|R=0,0;0,0
 B1	B	(a*)*	a	M=0,1;1,1|F=0,1;1,1|R=0,1;1,1	M=0,1;0,1|F=0,1;0,1|R=0,1;0,1
 B1	B	(a*)*	aa	M=0,2;2,2|F=0,2;2,2|R=1,2;2,2	M=0,2;0,2|F=0,2;0,2|R=1,2;1,2

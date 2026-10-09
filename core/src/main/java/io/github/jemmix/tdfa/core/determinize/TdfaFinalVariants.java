@@ -318,16 +318,30 @@ final class TdfaFinalVariants {
      * per history occurrence — re-running the block at a later accept
      * recomputes the same sequence instead of growing it (eager φ
      * idempotence).
+     *
+     * <p>Family 6 sub-family A (the EMPTY_ITERATION_SPANS axis, the JUR
+     * lane): a DISSOLVED tag ({@code owner.nfa.dissolvedTags}) overrides
+     * to unconditional SET_NIL — java's {@code GroupCurly} rolls the
+     * zero-width iteration back to the pre-curly bounds in every accept
+     * context, so the history/working values are never the report. The
+     * multi-valued twin sets the tree head to the empty sequence (a
+     * dissolved group appends no participation — the 4a decision). RE2
+     * lane: {@code dissolvedTags == null}, byte-for-byte the old ops.
      */
     int[] finalRegopsOf(Config c) {
         if (owner.tags == 0) {
             return TdfaCompiler.EMPTY;
         }
+        boolean[] dissolved = owner.nfa.dissolvedTags;
         List<int[]> opList = new ArrayList<>();
         if (owner.multi) {
             int[] l = owner.hist.content(c.l);
             for (int t = 1; t <= owner.tags; t++) {
                 int dst = owner.finalRegisters[t - 1];
+                if (dissolved != null && dissolved[t]) {
+                    opList.add(new int[]{OP_SET_NIL, dst, 0});
+                    continue;
+                }
                 opList.add(new int[]{OP_COPY, dst, c.regs[t - 1]});
                 int prev = dst;
                 for (int v : l) {
@@ -343,6 +357,10 @@ final class TdfaFinalVariants {
         int[] lastSign = owner.hist.lastSign(c.l, owner.tags);
         for (int t = 1; t <= owner.tags; t++) {
             int dst = owner.finalRegisters[t - 1];
+            if (dissolved != null && dissolved[t]) {
+                opList.add(new int[]{OP_SET_NIL, dst, 0});
+                continue;
+            }
             if (lastSign[t - 1] == 0) {
                 opList.add(new int[]{OP_COPY, dst, c.regs[t - 1]});
             } else {

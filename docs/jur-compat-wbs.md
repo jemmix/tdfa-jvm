@@ -140,7 +140,7 @@ everywhere):
 - [x] 4a — spec + corpus — landed: the mechanics note (sub-families,
   both fix shapes, the decided interactions) lives in the design doc;
   the `Semantics.emptyIterationSpans` javadoc describes both
-  sub-families; the battery is `family6-battery.tsv` (32 shapes — both
+  sub-families; the battery is `family6-battery.tsv` (41 shapes — both
   sub-families × greedy/lazy/`?`/`+`/`{m,n}` × named groups × nested
   composition `((a|\b)*)*` — JUR column re-verified against the live
   JDK on every run, RE2 column pinned on both tiers =
@@ -149,11 +149,23 @@ everywhere):
   a surfaced final iteration (B) appends a participation and a
   suppressed one (A) appends nothing; under `LONGEST_MATCH` the
   protocol applies to the reported accept, no separate interplay.
-- [ ] 4b — sub-family A: suppression (0.5–1 d): static shape mark at
-  the parse/TNFA build + φ override to SET_NIL for the dissolved
-  group's tags on the JUR lane (`TdfaFinalVariants.finalRegopsOf` /
-  the variant tables); RE2-lane artifacts bit-identical; VM + ASM
-  tiers; 4a's A-assertions on.
+- [x] 4b — sub-family A: suppression — landed: the parser marks the
+  dissolved pair at `closeGroup` (greedy min-0 loop, `cmax >= 2` or
+  unbounded — `{0,1}`/`?` and `min >= 1` keep, both JDK-verified —
+  directly on a CAPTURE, so `(?:(\b))*` keeps the span; body
+  all-zero-width with no choice points, so `(\b|)*`/`(a?)*` are B) via
+  the new `ParseOptions.emptyIterationSpans` projection; the marks ride
+  the `Tnfa` (`dissolvedTags`) and `TdfaFinalVariants.finalRegopsOf`
+  overrides both φ branches (single: unconditional SET_NIL; multi: the
+  empty tree head — no participation, per the 4a decision); the
+  fixed-tags pass keeps dissolved tags un-fixed and base-free
+  (`((\b))*`: the inner capture reconstructs from ITS close, not the
+  dissolved outer's); RE2 lane parses/artifacts untouched (null marks,
+  bit-identical — the re2j parity suite and the battery's RE2 column
+  re-pin); VM + ASM tiers; 4a's A-assertions LIVE (battery grown to 41
+  shapes: `(\b)*a`, `a(\b)*`, `(\b)*|a`, `(\b)*(a)`, `(?m)(^)*`,
+  `(())*`, `((\b)*)*` composition) + the 4a interaction pins (multi ×
+  inner-capture spans, longest).
 - [ ] 4c — sub-family B: surface the final iteration (1–2 d, the
   determinizer item): detect the cut zero-width re-entry per accepting
   kernel and emit a φ SET_POS-at-accept override for the quantified

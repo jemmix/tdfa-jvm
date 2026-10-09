@@ -28,7 +28,8 @@ package io.github.jemmix.tdfa.core.tnfa;
  *   however many stages consult them.
  * <li><b>Consumed by projection.</b> Each axis belongs to the
  *   stage(s) that consume it: the fold universe, {@code (?U)}
- *   meaning and {@code DOT} set belong to the parser; the
+ *   meaning, {@code DOT} set and the dissolved-group shape mark
+ *   (EMPTY_ITERATION_SPANS sub-family A) belong to the parser; the
  *   final-iteration span protocol to the determinizer; the
  *   terminator set, anchor end-of-line rules and boundary
  *   discipline to the runner and the ASM emitter.

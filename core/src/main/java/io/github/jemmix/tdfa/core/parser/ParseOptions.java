@@ -21,7 +21,7 @@ package io.github.jemmix.tdfa.core.parser;
  */
 public final class ParseOptions {
 
-    private static final ParseOptions RE2_LANE = new ParseOptions(true, true, true);
+    private static final ParseOptions RE2_LANE = new ParseOptions(true, true, true, true);
 
     private final boolean dotNlOnly;
 
@@ -29,10 +29,13 @@ public final class ParseOptions {
 
     private final boolean ungreedyU;
 
-    private ParseOptions(boolean dotNlOnly, boolean unicodeCase, boolean ungreedyU) {
+    private final boolean emptyIterationSpans;
+
+    private ParseOptions(boolean dotNlOnly, boolean unicodeCase, boolean ungreedyU, boolean emptyIterationSpans) {
         this.dotNlOnly = dotNlOnly;
         this.unicodeCase = unicodeCase;
         this.ungreedyU = ungreedyU;
+        this.emptyIterationSpans = emptyIterationSpans;
     }
 
     /**
@@ -52,7 +55,7 @@ public final class ParseOptions {
      * The other axes default to the RE2-side reading.
      */
     public static ParseOptions dotNlOnly(boolean dotNlOnly) {
-        return new ParseOptions(dotNlOnly, true, true);
+        return new ParseOptions(dotNlOnly, true, true, true);
     }
 
     /**
@@ -65,7 +68,7 @@ public final class ParseOptions {
      * implying Unicode-aware CI).
      */
     public ParseOptions unicodeCase(boolean unicodeCase) {
-        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU);
+        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU, emptyIterationSpans);
     }
 
     /**
@@ -76,7 +79,21 @@ public final class ParseOptions {
      * {@code Parser}).
      */
     public ParseOptions ungreedyU(boolean ungreedyU) {
-        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU);
+        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU, emptyIterationSpans);
+    }
+
+    /**
+     * Select the zero-width-iteration span protocol: {@code true} = the
+     * maximal-iteration reading (a sole zero-width iteration reports
+     * {@code 0..0} — the RE2 lineage); {@code false} = java.util.regex's
+     * (family 6): a greedy min-0 loop ({@code cmax >= 2} or unbounded —
+     * {@code {0,1}}/{@code ?} keep the span, JDK-verified) directly on a
+     * capture whose body is all-zero-width and deterministic dissolves
+     * the group — it reports NIL at every accept (the parser marks the
+     * pair; the determinizer's φ overrides the finals).
+     */
+    public ParseOptions emptyIterationSpans(boolean emptyIterationSpans) {
+        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU, emptyIterationSpans);
     }
 
     /** Does the dot skip {@code \n} only (vs the full terminator set)? */
@@ -92,5 +109,10 @@ public final class ParseOptions {
     /** Does {@code (?U)} mean ungreedy (vs scoped Unicode-case)? */
     public boolean isUngreedyU() {
         return ungreedyU;
+    }
+
+    /** Do zero-width loop iterations report their spans (vs sub-family-A dissolution)? */
+    public boolean isEmptyIterationSpans() {
+        return emptyIterationSpans;
     }
 }
