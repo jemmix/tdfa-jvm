@@ -111,55 +111,44 @@ fold lane, the v1 rejections, the facade options route).
 
 ## 4. Family 6 — 2.5–4.5 d, four landable sub-items
 
-Provisional research pinned the rule (one battery, all three engines run
-against it: live JDK 26, stock re2j 1.8, the current engine): java
-compiles a quantified group TWO ways and the two keep different
-zero-width-iteration protocols. Bodies `study()` calls deterministic
-(assertion chains, `()`, fixed-consuming) run as `GroupCurly`, whose
-greedy path rolls a zero-width iteration past `cmin` BACK to the
-pre-curly bounds (the JDK's `Pattern.java`, `GroupCurly.match0`: the
-`k <= 0` break restores the saved pair — `(\b)*` → g1 −1,
-`(\b)+`/`(\b){2}` keep the forced iteration); everything else
-(alternation, optional, variable quantifier anywhere in the body) runs
-as `Prolog`+`Loop`, which reports
-every completed iteration INCLUDING a final zero-width one (`(a*)*` on
-`"aa"` → g1 2..2 — java keeps the empty last iteration). re2j and the
-current engine answered identically on the whole battery (0 diffs —
-the RE2 side is what the soak already pins), and lazy quantifiers agree
-with JUR everywhere (both prefer zero iterations: `(\z)*?` → −1,
-`(a*)*?` → −1). So the axis is two sub-families of opposite polarity,
-both protocol-only (skeletons already agree — the campaign classified
-only group-clause differences):
+The research rule (one battery, all three engines run against it: live
+JDK 26, stock re2j 1.8, the current engine) is now the design doc's
+family-6 mechanics note
+([mechanics](jur-compat-default.md#family-6-mechanics-the-groupcurlyloop-split)):
+java compiles a quantified group TWO ways (`GroupCurly` for
+`study()`-deterministic bodies — greedy zero-width iterations roll back
+past `cmin` to the pre-curly bounds; `Prolog`+`Loop` for everything
+else — every completed iteration reports, a final zero-width one
+included), so the axis is two sub-families of opposite polarity, both
+protocol-only (skeletons already agree; re2j and the engine answered
+identically on the whole battery, and lazy quantifiers agree with JUR
+everywhere):
 
 - **A — suppress** (greedy min-0 quantifier directly on a capture whose
-  body is all-zero-width; alternation defeats the shape — `(\b|)` keeps
-  the span, `(?:(\b))*` too, only the quantified capture itself
-  dissolves): `(\z)*`, `(\b)*`, `()*`, `(\b\b)*`, `(\b){0,2}` — JUR −1,
-  we report the sole zero-width span (0..0). Statically recognizable at
-  the parse; the φ fix is a SET_NIL override for that group's tags.
+  body is all-zero-width; alternation defeats the shape): JUR −1, we
+  report the sole zero-width span. Statically recognizable at the
+  parse; the φ fix is a SET_NIL override for that group's tags.
 - **B — surface** (greedy quantifier directly on a capture whose body
-  can match empty but is NOT deterministic): `(a*)*`, `(a?)*`,
-  `(a|\b)+`, `(a{0,2})*`, `(a*\b)*`, the outer group of `((a)*)*`,
-  `(\b)(a|\b)*` g2 — JUR reports the final zero-width iteration
-  (`(a|\b)*` on `"aa"` → 2..2); we report the earlier maximal iteration
-  (1..2) because the zero-width re-entry dies in the closure's
-  same-position subsumption — its tag writes must surface as a φ
-  SET_POS at the accept position (emptiness gated on assertions, e.g.
-  `a?\b`, rides the posFlags-mask variant machinery; consuming-only
-  emptiness is uniform).
+  can match empty but is NOT deterministic): JUR reports the final
+  zero-width iteration, we report the earlier maximal iteration because
+  the zero-width re-entry dies in the closure's same-position
+  subsumption — its tag writes must surface as a φ SET_POS at the
+  accept position (emptiness gated on assertions, e.g. `a?\b`, rides
+  the posFlags-mask variant machinery; consuming-only emptiness is
+  uniform).
 
-- [ ] 4a — spec + corpus (0.5 d): expand the research summary above
-  into the design doc's family-6 mechanics note (the flag row and
-  critical-path bullet are corrected already); correct the
-  `Semantics.emptyIterationSpans` javadoc (it, too, describes
-  sub-family A only); land the battery as
-  replayable expected-value data verified against the live JDK (both
+- [x] 4a — spec + corpus — landed: the mechanics note (sub-families,
+  both fix shapes, the decided interactions) lives in the design doc;
+  the `Semantics.emptyIterationSpans` javadoc describes both
+  sub-families; the battery is `family6-battery.tsv` (32 shapes — both
   sub-families × greedy/lazy/`?`/`+`/`{m,n}` × named groups × nested
-  composition `((a|\b)*)*`), assertions dark until 4b/4c light them;
-  decide the two documented interactions — the axis under
-  `MULTI_VALUED_TAGS` (does a surfaced zero-width final iteration
-  append a participation) and under `LONGEST_MATCH` (defined or
-  documented no-op).
+  composition `((a|\b)*)*` — JUR column re-verified against the live
+  JDK on every run, RE2 column pinned on both tiers =
+  `Family6BatteryTest`, JUR-lane assertions dark per sub-family until
+  4b/4c light them). Interactions decided: under `MULTI_VALUED_TAGS`
+  a surfaced final iteration (B) appends a participation and a
+  suppressed one (A) appends nothing; under `LONGEST_MATCH` the
+  protocol applies to the reported accept, no separate interplay.
 - [ ] 4b — sub-family A: suppression (0.5–1 d): static shape mark at
   the parse/TNFA build + φ override to SET_NIL for the dissolved
   group's tags on the JUR lane (`TdfaFinalVariants.finalRegopsOf` /

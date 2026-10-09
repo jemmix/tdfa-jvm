@@ -57,6 +57,64 @@ a trailing terminator (only `0..0` on `"a\n"`, nothing at 2); `$` without
 (?m) matches before the final terminator (`0..1` on `"a\n"`); `.` skips
 `\r` and U+0085; `(\z)*` on `""` reports g1 non-participating.
 
+### Family 6 mechanics (the `GroupCurly`/`Loop` split)
+
+Provisional research pinned the rule with one battery run against a live
+JDK, stock re2j 1.8, and this engine (0 diffs between re2j and the engine —
+the RE2 side is what the soak already pins). java compiles a quantified
+capture TWO ways, decided by `study()` determinism of the body:
+
+- **Deterministic bodies** (assertion chains, `()`, fixed-consuming
+  atoms) run as `GroupCurly`, whose greedy path rolls a zero-width
+  iteration past `cmin` BACK to the pre-curly bounds — the `k <= 0` break
+  restores the saved pair in the JDK's `Pattern.java`
+  (`GroupCurly.match0`). So `(\b)*` → g1 −1, while `(\b)+`/`(\b){2}`
+  keep their forced iterations (min ≥ 1 ⇒ the iteration happened).
+- **Everything else** (any alternation, optional, or variable quantifier
+  that can match empty) runs as `Prolog`+`Loop`, which reports every
+  completed iteration INCLUDING a final zero-width one: `(a*)*` on
+  `"aa"` → g1 2..2.
+
+So `EMPTY_ITERATION_SPANS` unset (the JUR default) is two sub-families of
+opposite polarity against today, both protocol-only (skeletons already
+agree — the campaign classified only group-clause differences):
+
+- **A — suppress** (greedy min-0 quantifier directly on a capture whose
+  body is all-zero-width; alternation in the body defeats the shape —
+  `(\b|)*` is sub-family B — and so does indirection — `(?:(\b))*`
+  quantifies the non-capturing group, the capture inside keeps its
+  span): `(\z)*`, `(\b)*`, `()*`, `(\b\b)*`, `(\b){0,2}` — JUR −1
+  where we report the sole zero-width span. Statically recognizable at
+  the parse; the fix is a SET_NIL φ override for the dissolved group's
+  tags (WBS 4b).
+- **B — surface** (greedy quantifier directly on a capture whose body can
+  match empty but is NOT deterministic): `(a*)*`, `(a?)*`, `(a|\b)+`,
+  `(a{0,2})*`, `(a*\b)*`, the outer group of `((a)*)*`, `(\b)(a|\b)*`
+  g2 — JUR reports the final zero-width iteration where we report the
+  earlier maximal iteration, because the determinizer's same-position
+  closure subsumption drops the zero-width re-entry. The fix makes its
+  tag writes surface as a φ SET_POS at the accept position (WBS 4c).
+
+Lazy quantifiers agree with JUR everywhere (both prefer zero iterations:
+`(\z)*?` → −1, `(a*)*?` → −1; forced min iterations report identically).
+The battery is landed as replayable expected-value data
+(`tests/unit/src/test/resources/family6-battery.tsv`), its JUR column
+re-verified against the live `java.util.regex` oracle on every test run.
+
+**Decided interactions** (WBS 4a):
+
+- `MULTI_VALUED_TAGS` — participations mirror the single-value protocol:
+  a surfaced final zero-width iteration (B) appends a participation
+  (`(a*)*` on `"aa"` → g1 spans `0..2`, `2..2`; `start/end` read the
+  last pair `2..2`), and a suppressed sole iteration (A) appends nothing
+  (`groupSpans` → the single `−1,−1` pair). The RE2 lane (axis set)
+  keeps today's multi-valued protocol unchanged.
+- `LONGEST_MATCH` — composes without special cases: the selection mode
+  picks which accept is reported, and the protocol applies to the
+  reported accept exactly as under leftmost-first (A suppression is a
+  static property of the group's shape; B surfacing lands at the winning
+  accept's end position). Documented, no separate interplay.
+
 ## The flags
 
 Set = today's behavior (the opt-out). Unset = the new JUR-parity default.
