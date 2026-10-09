@@ -194,13 +194,16 @@ final class TdfaFinalVariants {
         return false;
     }
 
-    int[] finalRegops(List<Config> configs) {
+    int[] finalRegops(List<Config> configs, int[] cutPairs) {
         if (owner.tags == 0) {
             return TdfaCompiler.EMPTY;
         }
         for (Config c : configs) {
             if (c.state == owner.nfa.accept) {
-                return finalRegopsOf(c);
+                // the uniform block: overrides alive at every runtime mask
+                // (mask-0 entries — the variant machinery forces the table
+                // when any cut carries assertions)
+                return finalRegopsOf(c, cutPairs, 0);
             }
         }
         return TdfaCompiler.EMPTY;
@@ -218,14 +221,14 @@ final class TdfaFinalVariants {
      * [posFlagCells] selector; materialization turns them into
      * {@code stateFinalOpsByMask}.
      */
-    void computeFinalVariants(DfaStateBuilder sb, List<Config> cfgs) {
+    void computeFinalVariants(DfaStateBuilder sb, List<Config> cfgs, int[] cutPairs) {
         int n = cfgs.size();
         int[] st = new int[n], mk = new int[n];
         for (int i = 0; i < n; i++) {
             st[i] = cfgs.get(i).state;
             mk[i] = cfgs.get(i).emptyMask;
         }
-        computeFinalVariants(sb, st, mk, cfgs::get);
+        computeFinalVariants(sb, st, mk, cfgs::get, cutPairs);
     }
 
     /**
@@ -240,10 +243,10 @@ final class TdfaFinalVariants {
             st[i] = pk[i * 2];
             mk[i] = pk[i * 2 + 1];
         }
-        computeFinalVariants(sb, st, mk, i -> null);
+        computeFinalVariants(sb, st, mk, i -> null, null); // tagless: no registers, no cut pairs
     }
 
-    void computeFinalVariants(DfaStateBuilder sb, int[] st, int[] mk, IntFunction<Config> at) {
+    void computeFinalVariants(DfaStateBuilder sb, int[] st, int[] mk, IntFunction<Config> at, int[] cutPairs) {
         int cells = owner.posFlagCells;
         owner.meter.tick((long) cells * st.length); // cells masks × n aliveness scan — budget-visible
         int[] winner = new int[cells];
@@ -264,6 +267,14 @@ final class TdfaFinalVariants {
                 uniform = false;
             }
         }
+        // Sub-family B override uniformity: a cut tag with an assertion
+        // mask A is alive only at M ⊇ A — dead at M=0, so the override
+        // SET differs across masks unless EVERY cut tag has a mask-0
+        // entry (alive at M=0 ⇒ alive at every M). Non-uniform overrides
+        // force the variant table even when the winner config is uniform.
+        if (uniform && !overrideAliveEverywhere(cutPairs)) {
+            uniform = false;
+        }
         if (Boolean.getBoolean("tdfa.debug.finals") && owner.tags > 0) {
             for (int i = 0; i < st.length; i++) {
                 if (st[i] != owner.nfa.accept) {
@@ -283,7 +294,7 @@ final class TdfaFinalVariants {
             }
         }
         if (uniform) {
-            return;
+            return; // the uniform block (finalOpsArr) already carries the overrides
         }
         List<int[]> variants = new ArrayList<>();
         int[] maskVariant = new int[cells];
@@ -293,7 +304,7 @@ final class TdfaFinalVariants {
                 maskVariant[M] = -1;
                 continue;
             }
-            int[] opsArr = finalRegopsOf(at.apply(w));
+            int[] opsArr = finalRegopsOf(at.apply(w), cutPairs, M);
             int v = -1;
             for (int k = 0; k < variants.size(); k++) {
                 if (Arrays.equals(variants.get(k), opsArr)) {
@@ -319,16 +330,30 @@ final class TdfaFinalVariants {
      * recomputes the same sequence instead of growing it (eager φ
      * idempotence).
      *
-     * <p>Family 6 sub-family A (the EMPTY_ITERATION_SPANS axis, the JUR
-     * lane): a DISSOLVED tag ({@code owner.nfa.dissolvedTags}) overrides
-     * to unconditional SET_NIL — java's {@code GroupCurly} rolls the
-     * zero-width iteration back to the pre-curly bounds in every accept
-     * context, so the history/working values are never the report. The
-     * multi-valued twin sets the tree head to the empty sequence (a
-     * dissolved group appends no participation — the 4a decision). RE2
-     * lane: {@code dissolvedTags == null}, byte-for-byte the old ops.
+     * <p>Family 6 (the EMPTY_ITERATION_SPANS axis, the JUR lane), two
+     * override families:
+     * <ul>
+     * <li><b>A — dissolve</b> ({@code owner.nfa.dissolvedTags}): a
+     * DISSOLVED tag overrides to unconditional SET_NIL — java's
+     * {@code GroupCurly} rolls the zero-width iteration back to the
+     * pre-curly bounds in every accept context. The multi-valued twin
+     * sets the tree head to the empty sequence (a dissolved group appends
+     * no participation — the 4a decision).</li>
+     * <li><b>B — surface</b> ({@code cutPairs}, the state's cut records):
+     * a tag whose zero-width re-entry died at the closure's subsumption
+     * cut overrides to SET_POS at the accept position — java's
+     * {@code Prolog}+{@code Loop} reports that final zero-width
+     * iteration. Alive under runtime posFlags {@code M} iff some cut path
+     * recorded for the tag has {@code mask ⊆ M}; the multi-valued twin
+     * appends one participation (COPY + history appends + APPEND of the
+     * accept pos — the 4a decision). The override covers the group's
+     * whole pair (the open tag's write died inside the same cut
+     * path).</li>
+     * </ul>
+     *
+     * <p>RE2 lane: both sets null/absent, byte-for-byte the old ops.
      */
-    int[] finalRegopsOf(Config c) {
+    int[] finalRegopsOf(Config c, int[] cutPairs, int m) {
         if (owner.tags == 0) {
             return TdfaCompiler.EMPTY;
         }
@@ -351,6 +376,9 @@ final class TdfaFinalVariants {
                     opList.add(new int[]{OP_APPEND_POS, dst, prev});
                     prev = dst;
                 }
+                if (surfaceOverride(cutPairs, t, m)) {
+                    opList.add(new int[]{OP_APPEND_POS, dst, dst}); // the surfaced participation = pos
+                }
             }
             return flatten(opList);
         }
@@ -359,6 +387,10 @@ final class TdfaFinalVariants {
             int dst = owner.finalRegisters[t - 1];
             if (dissolved != null && dissolved[t]) {
                 opList.add(new int[]{OP_SET_NIL, dst, 0});
+                continue;
+            }
+            if (surfaceOverride(cutPairs, t, m)) {
+                opList.add(new int[]{OP_SET_POS, dst, 0}); // the surfaced final iteration = the accept position
                 continue;
             }
             if (lastSign[t - 1] == 0) {
@@ -373,6 +405,51 @@ final class TdfaFinalVariants {
             }
         }
         return flatten(opList);
+    }
+
+    /**
+     * Whether tag {@code t} (of the group marked by a recorded cut close
+     * tag — the pair overrides together) surfaces at runtime posFlags
+     * {@code m}: some cut path for the tag carried assertions
+     * {@code ⊆ m}. {@code cutPairs} is the state's flattened
+     * {@code (tag, mask)} list; null/absent means no cut.
+     */
+    private static boolean surfaceOverride(int[] cutPairs, int t, int m) {
+        if (cutPairs == null) {
+            return false;
+        }
+        int close = 2 * ((t + 1) / 2); // the pair's close tag (even)
+        for (int i = 0; i < cutPairs.length; i += 2) {
+            if (cutPairs[i] == close && (cutPairs[i + 1] & ~m) == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Sub-family B uniformity: every distinct cut tag has a mask-0 entry
+     * (alive at M=0, hence at every runtime posFlags). Null/empty pairs
+     * are trivially uniform.
+     */
+    private static boolean overrideAliveEverywhere(int[] cutPairs) {
+        if (cutPairs == null) {
+            return true;
+        }
+        for (int i = 0; i < cutPairs.length; i += 2) {
+            int tag = cutPairs[i];
+            boolean zero = false;
+            for (int j = 0; j < cutPairs.length; j += 2) {
+                if (cutPairs[j] == tag && cutPairs[j + 1] == 0) {
+                    zero = true;
+                    break;
+                }
+            }
+            if (!zero) {
+                return false;
+            }
+        }
+        return true;
     }
 
     int[] flatten(List<int[]> opList) {
