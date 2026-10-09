@@ -213,6 +213,21 @@ public final class FixedTags {
             }
             if (e instanceof Ast.Tag) {
                 Ast.Tag t = (Ast.Tag) e;
+                if (t.dissolved) {
+                    // Family 6 sub-family A: this tag's FINAL value is
+                    // protocol-NIL (the determinizer's φ override on the
+                    // JUR lane), not a reconstructable distance — it must
+                    // keep its own register (never fix onto a base) and
+                    // must not serve as a reconstruction base for anything
+                    // to its left: inner groups keep their spans
+                    // (((\b))* — the capture inside the dissolved pair
+                    // still reports 0..0) while the dissolved pair itself
+                    // reports NIL, so a distance through it is a lie.
+                    rb = NO_BASE;
+                    rd = NAN;
+                    rl = levelDist;
+                    return;
+                }
                 if (baseTag != NO_BASE && dist != NAN && baseTag != t.tag) {
                     t.fixedOn = baseTag;
                     t.fixedOffset = dist;

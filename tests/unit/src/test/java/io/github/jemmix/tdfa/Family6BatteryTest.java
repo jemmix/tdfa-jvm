@@ -3,6 +3,7 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
+import io.github.jemmix.tdfa.core.compile.CompileOptions;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
@@ -53,8 +54,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class Family6BatteryTest {
 
-    /** WBS 4b flips to true when the sub-family A suppression lands. */
-    private static final boolean SUB_FAMILY_A_LIVE = false;
+    /** WBS 4b: LIVED — the sub-family A suppression (parse mark + SET_NIL φ). */
+    private static final boolean SUB_FAMILY_A_LIVE = true;
 
     /** WBS 4c flips to true when the sub-family B final-iteration surfacing lands. */
     private static final boolean SUB_FAMILY_B_LIVE = false;
@@ -91,7 +92,8 @@ class Family6BatteryTest {
                 String[] f = line.split("\t", -1);
                 assertThat(f.length).as("battery row fields: %s", line).isEqualTo(6);
                 assertThat(f[1]).as("sub tag of %s", f[0]).isIn("A", "B");
-                out.add(new Row(f[0], f[1].equals("A"), f[2], f[3].replace("\\s", " "), f[4], f[5]));
+                out.add(
+                    new Row(f[0], f[1].equals("A"), f[2], f[3].replace("\\s", " ").replace("\\n", "\n"), f[4], f[5]));
             }
         } catch (IOException e) {
             throw new IllegalStateException("family6-battery.tsv unreadable", e);
@@ -126,7 +128,7 @@ class Family6BatteryTest {
             .isEqualTo(r.re2);
     }
 
-    // ===== 3. the JUR-lane assertions — dark until 4b/4c light them =====
+    // ===== 3. the JUR-lane assertions — A live (4b), B dark until 4c =====
 
     @ParameterizedTest
     @MethodSource("rowsA")
@@ -146,6 +148,49 @@ class Family6BatteryTest {
         }
         assertThat(laneProto(r.pattern, r.input, JUR)).as("%s: JUR lane (B) vs JDK /%s/", r.id, r.pattern)
             .isEqualTo(r.jur);
+    }
+
+    // ===== the 4a interactions, sub-family A part (no JDK oracle exists:
+    // these pin the DECIDED composition) =====
+
+    @org.junit.jupiter.api.Test
+    void subFamilyAUnderMultiValuedTagsAppendsNoParticipation() {
+        // A dissolved group records NO participation (the single (-1,-1)
+        // pair) on the JUR lane; the RE2 lane keeps today's protocol, and
+        // an INNER capture of the dissolved pair keeps its participations.
+        io.github.jemmix.tdfa.Pattern jur = io.github.jemmix.tdfa.Pattern.compile("(\\b)*",
+            CompileOptions.of().semantics(Semantics.of()).multiValuedTags());
+        PatternMatcher m = jur.matcher("a");
+        assertThat(m.find()).as("JUR multi find").isTrue();
+        assertThat(m.groupSpans(1)).as("JUR multi: dissolved appends nothing").containsExactly(-1, -1);
+        io.github.jemmix.tdfa.Pattern re2 =
+            io.github.jemmix.tdfa.Pattern.compile("(\\b)*", CompileOptions.of().multiValuedTags());
+        PatternMatcher m2 = re2.matcher("a");
+        assertThat(m2.find()).as("RE2 multi find").isTrue();
+        assertThat(m2.groupSpans(1)).as("RE2 multi: the sole zero-width span participates").containsExactly(0, 0);
+        io.github.jemmix.tdfa.Pattern nested = io.github.jemmix.tdfa.Pattern.compile("((\\b))*",
+            CompileOptions.of().semantics(Semantics.of()).multiValuedTags());
+        PatternMatcher m3 = nested.matcher("a");
+        assertThat(m3.find()).as("JUR multi nested find").isTrue();
+        assertThat(m3.groupSpans(1)).as("JUR multi: outer dissolved").containsExactly(-1, -1);
+        assertThat(m3.groupSpans(2)).as("JUR multi: inner capture keeps its span").containsExactly(0, 0);
+    }
+
+    @org.junit.jupiter.api.Test
+    void subFamilyAUnderLongestMatchComposes() {
+        // The protocol applies to the reported accept: LONGEST_MATCH picks
+        // WHICH accept wins, the dissolved pair still reports NIL.
+        io.github.jemmix.tdfa.Pattern p = io.github.jemmix.tdfa.Pattern.compile("a(\\b)*",
+            CompileOptions.of().semantics(Semantics.of()).longestMatch());
+        PatternMatcher m = p.matcher("a");
+        assertThat(m.matches()).as("JUR longest whole").isTrue();
+        assertThat(m.start(1)).as("JUR longest: dissolved pair reports NIL").isEqualTo(-1);
+        assertThat(m.end(1)).isEqualTo(-1);
+        io.github.jemmix.tdfa.Pattern f = io.github.jemmix.tdfa.Pattern.compile("(\\b)*",
+            CompileOptions.of().semantics(Semantics.of()).longestMatch());
+        PatternMatcher fm = f.matcher("a");
+        assertThat(fm.find()).isTrue();
+        assertThat(fm.start(1)).as("JUR longest find: dissolved pair reports NIL").isEqualTo(-1);
     }
 
     // ===== protocol helpers (mirror the battery recording format) =====
