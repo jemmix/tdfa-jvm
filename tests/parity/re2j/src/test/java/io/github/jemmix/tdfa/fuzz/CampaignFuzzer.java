@@ -282,9 +282,8 @@ public final class CampaignFuzzer {
         if (c.pattern().contains("(?U")) {
             // RE2-lane residual (the JUR lane below parses (?U itself since
             // the fold + U bits item): this probe's tdfa compile is the
-            // facade's pre-flip lane, which reads (?U:...) as ungreedy;
-            // java reads it as UNICODE_CHARACTER_CLASS — untranslatable
-            // until the flip moves the facade to the java reading.
+            // facade's RE2_COMPAT lane, which reads (?U:...) as ungreedy;
+            // java reads it as UNICODE_CHARACTER_CLASS — untranslatable.
             counts.soft("SKIP_UNGREEDY");
             return;
         }
@@ -404,8 +403,9 @@ public final class CampaignFuzzer {
     }
 
     /** Item "parameterize the pivots" + "fold + U bits" of the JUR-compat
-     *  WBS: the campaign probes BOTH lanes while the shipped default stays
-     *  RE2. The JUR lane (core tier, {@code Semantics.of()}) must agree
+     *  WBS: the campaign probes BOTH lanes — the JUR lane is the facade
+     *  default since the flip, the RE2 lane its RE2_COMPAT preset. The JUR
+     *  lane (core tier, {@code Semantics.of()}) must agree
      *  with the java oracle on every axis the pivots own — terminator set,
      *  EMPTY_LAST_LINE, END_OF_TEXT_ONLY (the lineterm/caretEol/dollarEol
      *  families), the fold universe (bare CI folds ASCII in both, so the
@@ -429,7 +429,7 @@ public final class CampaignFuzzer {
         // at the compile and are counted there.
         boolean leadingScopedU = c.pattern().startsWith("(?U)");
         // JUR-lane compile: same flag→inline-prefix mapping as the facade,
-        // Semantics.of() instead of the pre-flip RE2 lane.
+        // Semantics.of() — the facade default since the flip.
         String fl = c.pattern();
         if (c.ci()) {
             fl = "(?i)" + fl;
@@ -646,13 +646,19 @@ public final class CampaignFuzzer {
     }
 
     /** tdfa compile + full five-probe protocol on the DEFAULT JDK-derived
-     * universe (provider null — the (?u)-parity construction), rejection/
-     * exception tagged like the soak. */
+     *  universe (provider null — the (?u)-parity construction), rejection/
+     *  exception tagged like the soak. Compiles the RE2 lane
+     *  (RE2_COMPAT): this probe pins the facade's RE2-lineage behavior
+     *  against the jur oracle with the soft known families — the facade
+     *  default is the jur lane itself since the flip (probed separately
+     *  by jurLaneCase). */
     static String runTdfaJdk(JurCase c, boolean vm) {
         try {
-            io.github.jemmix.tdfa.Pattern p =
-                vm ? io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.tdfaFlags(), TdfaRunner::new, null)
-                    : io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.tdfaFlags(), null, null);
+            io.github.jemmix.tdfa.Pattern p = vm
+                ? io.github.jemmix.tdfa.Pattern.compile(c.pattern(),
+                    c.tdfaFlags() | io.github.jemmix.tdfa.Pattern.RE2_COMPAT, TdfaRunner::new, null)
+                : io.github.jemmix.tdfa.Pattern.compile(c.pattern(),
+                    c.tdfaFlags() | io.github.jemmix.tdfa.Pattern.RE2_COMPAT, null, null);
             return DifferentialFuzzer.compute(p, c.input());
         } catch (io.github.jemmix.tdfa.core.parser.PatternSyntaxException | PatternTooLargeException e) {
             return "<reject:" + DifferentialFuzzer.firstLine(e.getMessage()) + ">";
@@ -1292,14 +1298,19 @@ public final class CampaignFuzzer {
             System.out.println("jur:     <reject> " + e);
         }
         try {
-            System.out.println("vm:      " + DifferentialFuzzer.compute(
-                io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.tdfaFlags(), TdfaRunner::new, null), c.input()));
+            System.out
+                .println(
+                    "vm:      " + DifferentialFuzzer.compute(
+                        io.github.jemmix.tdfa.Pattern.compile(c.pattern(),
+                            c.tdfaFlags() | io.github.jemmix.tdfa.Pattern.RE2_COMPAT, TdfaRunner::new, null),
+                        c.input()));
         } catch (RuntimeException e) {
             System.out.println("vm:      <reject> " + DifferentialFuzzer.firstLine(e.getMessage()));
         }
         try {
-            System.out.println("asm:     " + DifferentialFuzzer
-                .compute(io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.tdfaFlags(), null, null), c.input()));
+            System.out
+                .println("asm:     " + DifferentialFuzzer.compute(io.github.jemmix.tdfa.Pattern.compile(c.pattern(),
+                    c.tdfaFlags() | io.github.jemmix.tdfa.Pattern.RE2_COMPAT, null, null), c.input()));
         } catch (RuntimeException e) {
             System.out.println("asm:     <reject> " + DifferentialFuzzer.firstLine(e.getMessage()));
         }
@@ -1339,14 +1350,13 @@ public final class CampaignFuzzer {
         System.out.println("input:   " + DifferentialFuzzer.escape(input));
         PikeSim sim = PikeSim.compile(pattern, Re2jUnicodeProvider.INSTANCE);
         System.out.println("pike(String):    " + pikeIterate(sim, input));
-        io.github.jemmix.tdfa.Pattern vm =
-            io.github.jemmix.tdfa.Pattern.compile(pattern, 0, TdfaRunner::new, Re2jUnicodeProvider.INSTANCE);
+        io.github.jemmix.tdfa.Pattern vm = io.github.jemmix.tdfa.Pattern.compile(pattern,
+            io.github.jemmix.tdfa.Pattern.RE2_COMPAT, TdfaRunner::new, Re2jUnicodeProvider.INSTANCE);
         System.out.println("vm(String):      " + findIterate(vm, input));
         System.out.println("pike(wrapper):   " + pikeIterate(sim, new StringBuilder(input)));
         System.out.println("vm(wrapper):     " + findIterate(vm, new StringBuilder(input)));
-        System.out.println("asm(wrapper):    "
-            + findIterate(io.github.jemmix.tdfa.Pattern.compile(pattern, 0, null, Re2jUnicodeProvider.INSTANCE),
-                new StringBuilder(input)));
+        System.out.println("asm(wrapper):    " + findIterate(io.github.jemmix.tdfa.Pattern.compile(pattern,
+            io.github.jemmix.tdfa.Pattern.RE2_COMPAT, null, Re2jUnicodeProvider.INSTANCE), new StringBuilder(input)));
     }
 
     static void replayFamilies(long caseSeed) {

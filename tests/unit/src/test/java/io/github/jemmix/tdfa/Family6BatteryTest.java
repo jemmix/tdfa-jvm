@@ -43,9 +43,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <li><b>The data is the live JDK.</b> The recorded JUR column is
  *     re-verified against a live {@code java.util.regex} on every run —
  *     the spec source is the oracle itself, never a transcription.</li>
- * <li><b>The RE2 lane is pinned.</b> The shipped default answers exactly
- *     the recorded RE2 column on BOTH tiers (and CharSequence wrappers)
- *     — the RE2-lane-unchanged contract the 4b/4c fixes must keep.</li>
+ * <li><b>Both facade lanes are pinned.</b> Since the flip the shipped
+ *     default answers exactly the recorded JUR column, and the
+ *     {@code RE2_COMPAT} preset answers exactly the recorded RE2
+ *     column — on BOTH tiers (and CharSequence wrappers) — the
+ *     lane-unchanged contract the 4b/4c fixes must keep.</li>
  * <li><b>The JUR-lane assertions are LIVE</b> for both sub-families
  *     (WBS 4b: the parse mark + SET_NIL finals suppression for A; 4c:
  *     the determinizer cut detection + SET_POS-at-accept surfacing for
@@ -112,15 +114,33 @@ class Family6BatteryTest {
             .isEqualTo(r.jur);
     }
 
-    // ===== 2. the RE2 lane is pinned on both tiers =====
+    // ===== 2. both facade lanes are pinned on both tiers =====
 
     @ParameterizedTest
     @MethodSource("rows")
-    void re2LanePinsTheRecordedProtocol(Row r) {
-        // the shipped facade IS the RE2 lane pre-flip; ASM (default) and
-        // VM engine selections, plus the CharSequence wrappers
+    void facadeDefaultPinsTheJurProtocol(Row r) {
+        // post-flip: the plain facade compile IS the JUR lane; ASM
+        // (default) and VM engine selections, plus the CharSequence
+        // wrappers
         io.github.jemmix.tdfa.Pattern asm = io.github.jemmix.tdfa.Pattern.compile(r.pattern);
         io.github.jemmix.tdfa.Pattern vm = io.github.jemmix.tdfa.Pattern.compile(r.pattern, 0, TdfaRunner::new);
+        assertThat(facadeProto(asm, r.input)).as("%s: default ASM tier vs recorded JUR column /%s/", r.id, r.pattern)
+            .isEqualTo(r.jur);
+        assertThat(facadeProto(vm, r.input)).as("%s: default VM tier vs recorded JUR column /%s/", r.id, r.pattern)
+            .isEqualTo(r.jur);
+        assertThat(facadeProto(vm, new StringBuilder(r.input))).as("%s: default VM StringBuilder /%s/", r.id, r.pattern)
+            .isEqualTo(r.jur);
+    }
+
+    @ParameterizedTest
+    @MethodSource("rows")
+    void re2CompatPinsTheRecordedProtocol(Row r) {
+        // the RE2_COMPAT preset is the pre-flip default; ASM (default)
+        // and VM engine selections, plus the CharSequence wrappers
+        io.github.jemmix.tdfa.Pattern asm =
+            io.github.jemmix.tdfa.Pattern.compile(r.pattern, io.github.jemmix.tdfa.Pattern.RE2_COMPAT);
+        io.github.jemmix.tdfa.Pattern vm =
+            io.github.jemmix.tdfa.Pattern.compile(r.pattern, io.github.jemmix.tdfa.Pattern.RE2_COMPAT, TdfaRunner::new);
         assertThat(facadeProto(asm, r.input)).as("%s: RE2 ASM tier vs recorded RE2 column /%s/", r.id, r.pattern)
             .isEqualTo(r.re2);
         assertThat(facadeProto(vm, r.input)).as("%s: RE2 VM tier vs recorded RE2 column /%s/", r.id, r.pattern)
@@ -198,7 +218,7 @@ class Family6BatteryTest {
         assertThat(m.find()).as("JUR multi find").isTrue();
         assertThat(m.groupSpans(1)).as("JUR multi: dissolved appends nothing").containsExactly(-1, -1);
         io.github.jemmix.tdfa.Pattern re2 =
-            io.github.jemmix.tdfa.Pattern.compile("(\\b)*", CompileOptions.of().multiValuedTags());
+            io.github.jemmix.tdfa.Pattern.compile("(\\b)*", CompileOptions.of().semantics(RE2).multiValuedTags());
         PatternMatcher m2 = re2.matcher("a");
         assertThat(m2.find()).as("RE2 multi find").isTrue();
         assertThat(m2.groupSpans(1)).as("RE2 multi: the sole zero-width span participates").containsExactly(0, 0);
@@ -240,7 +260,7 @@ class Family6BatteryTest {
         assertThat(m.groupSpans(1)).as("JUR multi: both iterations participate").containsExactly(0, 2, 2, 2);
         assertThat(m.start(1)).as("JUR multi: single value = last pair").isEqualTo(2);
         io.github.jemmix.tdfa.Pattern re2 =
-            io.github.jemmix.tdfa.Pattern.compile("(a*)*", CompileOptions.of().multiValuedTags());
+            io.github.jemmix.tdfa.Pattern.compile("(a*)*", CompileOptions.of().semantics(RE2).multiValuedTags());
         PatternMatcher m2 = re2.matcher("aa");
         assertThat(m2.matches()).as("RE2 multi whole").isTrue();
         assertThat(m2.groupSpans(1)).as("RE2 multi: today's protocol unchanged").containsExactly(0, 2);

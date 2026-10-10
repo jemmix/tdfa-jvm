@@ -56,7 +56,11 @@ class MultiValuedParityTest {
             PikeSim sim = PikeSim.compileMulti(pat, null);
             for (String in : INPUTS) {
                 PikeSim.PikeMatcher pm = sim.matcher(in);
-                PatternMatcher tm = Pattern.compile(pat, Pattern.MULTI_VALUED_TAGS, src.factory()).matcher(in);
+                // RE2_COMPAT: the sim/reference and re2j columns answer in
+                // the RE2 lineage (the pre-flip default); family-6 protocol
+                // differs on the JUR default lane.
+                PatternMatcher tm =
+                    Pattern.compile(pat, Pattern.MULTI_VALUED_TAGS | Pattern.RE2_COMPAT, src.factory()).matcher(in);
                 boolean simFound = pm.find();
                 assertThat(tm.find()).as("find <%s> <%s>", pat, in).isEqualTo(simFound);
                 if (!simFound) {
@@ -84,7 +88,8 @@ class MultiValuedParityTest {
         for (String pat : PATTERNS) {
             for (String in : INPUTS) {
                 // default (leftmost-first)
-                PatternMatcher tm = Pattern.compile(pat, Pattern.MULTI_VALUED_TAGS, src.factory()).matcher(in);
+                PatternMatcher tm =
+                    Pattern.compile(pat, Pattern.MULTI_VALUED_TAGS | Pattern.RE2_COMPAT, src.factory()).matcher(in);
                 int[] oracle = re2jFind(pat, in);
                 boolean found = tm.find();
                 assertThat(found).as("re2j find <%s> <%s>", pat, in).isEqualTo(oracle != null);
@@ -93,8 +98,9 @@ class MultiValuedParityTest {
                 }
                 assertSpans(pat, in, tm, oracle);
                 // leftmost-longest
-                PatternMatcher pos =
-                    Pattern.compile(pat, Pattern.MULTI_VALUED_TAGS | Pattern.LONGEST_MATCH, src.factory()).matcher(in);
+                PatternMatcher pos = Pattern
+                    .compile(pat, Pattern.MULTI_VALUED_TAGS | Pattern.LONGEST_MATCH | Pattern.RE2_COMPAT, src.factory())
+                    .matcher(in);
                 int[] oraclePos = re2jFindPosix(pat, in);
                 boolean foundPos = pos.find();
                 assertThat(foundPos).as("re2j posix find <%s> <%s>", pat, in).isEqualTo(oraclePos != null);

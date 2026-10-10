@@ -76,8 +76,12 @@ class CompileBudgetTest {
         System.setProperty("tdfa.budget.compile.compute", "10000000");
         try {
             long t0 = System.nanoTime();
-            assertThatCode(() -> Pattern.compile(spinner)).isInstanceOf(PatternTooLargeException.class)
-                .hasMessageContaining("pattern too large").hasMessageContaining("tdfa.budget.compile.compute");
+            // RE2_COMPAT: the fuzz-derived bombs carry (?U:...) spellings
+            // that only the RE2 lane parses (the JUR reading rejects them
+            // as v1 scope violations before any budget fires).
+            assertThatCode(() -> Pattern.compile(spinner, Pattern.RE2_COMPAT))
+                .isInstanceOf(PatternTooLargeException.class).hasMessageContaining("pattern too large")
+                .hasMessageContaining("tdfa.budget.compile.compute");
             assertThat((System.nanoTime() - t0) / 1_000_000).as("wall to work-budget rejection").isLessThan(30_000);
         } finally {
             System.clearProperty("tdfa.budget.compile.compute");
@@ -95,7 +99,7 @@ class CompileBudgetTest {
         System.setProperty("tdfa.budget.compile.memory", MEM_20K_STATES);
         try {
             long t0 = System.nanoTime();
-            assertThatCode(() -> Pattern.compile("(x{2,4}?z|\\D{1,6}?.+$|~|W(?U:9(\\.b~))\\-){4,}"))
+            assertThatCode(() -> Pattern.compile("(x{2,4}?z|\\D{1,6}?.+$|~|W(?U:9(\\.b~))\\-){4,}", Pattern.RE2_COMPAT))
                 .isInstanceOf(PatternTooLargeException.class).hasMessageContaining("pattern too large")
                 .hasMessageContaining("tdfa.budget.compile.memory");
             assertThat((System.nanoTime() - t0) / 1_000_000).as("wall to state-cap rejection").isLessThan(30_000);

@@ -13,13 +13,15 @@ class SplitParityTest {
 
     private static void assertSplit(String pattern, String input, RegexEngineFactory factory) {
         String[] re2j = com.google.re2j.Pattern.compile(pattern).split(input);
-        String[] tdfa = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory).split(input);
+        String[] tdfa = io.github.jemmix.tdfa.Pattern
+            .compile(pattern, io.github.jemmix.tdfa.Pattern.RE2_COMPAT, factory).split(input);
         assertThat(tdfa).as("split \"%s\" on \"%s\"", pattern, input).isEqualTo(re2j);
     }
 
     private static void assertSplit(String pattern, String input, int limit, RegexEngineFactory factory) {
         String[] re2j = com.google.re2j.Pattern.compile(pattern).split(input, limit);
-        String[] tdfa = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory).split(input, limit);
+        String[] tdfa = io.github.jemmix.tdfa.Pattern
+            .compile(pattern, io.github.jemmix.tdfa.Pattern.RE2_COMPAT, factory).split(input, limit);
         assertThat(tdfa).as("split \"%s\" on \"%s\" limit=%d", pattern, input, limit).isEqualTo(re2j);
     }
 

@@ -6,7 +6,7 @@ git history (TODO.md before 2026-09-30).
 
 ## Correctness
 
-- [ ] JUR-compat default: flip the six divergence families, inverted opt-out flags + `RE2_COMPAT` preset ([design](docs/jur-compat-default.md), [work breakdown](docs/jur-compat-wbs.md))
+- [ ] JUR-compat evidence re-base: per-flag unit tests, campaign classifiers → assertions, `RE2_COMPAT` lane in the fuzzer matrix, re-run the re2j-pinned evidence, soak + README numbers (flip landed; [design](docs/jur-compat-default.md), [work breakdown](docs/jur-compat-wbs.md))
 - [ ] Fuzz (?u) lane vs jur oracle (UCC flag in the differential flag matrix)
 - [ ] Overnight soak with cross-rung on; refresh README fuzz numbers
 - [ ] Fuzz families for fact-gated rungs: literal, prefix, cand-scan, anchored-fast

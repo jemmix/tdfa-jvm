@@ -46,9 +46,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 class JdkRegressionCorpusTest {
 
     private static final UnicodeDataProvider UNICODE = Re2jUnicodeProvider.INSTANCE;
-
     private static final int FLAG_I = 1; // facade/re2j CASE_INSENSITIVE
+
     private static final int FLAG_M = 4; // facade/re2j MULTILINE
+
+    /** The lane this gate pins: the RE2-lineage reading re2j answers in
+     *  (the facade's pre-flip default; RE2_COMPAT since the flip). */
+    private static final int RE2_LANE = io.github.jemmix.tdfa.Pattern.RE2_COMPAT;
 
     private static final int JUR_I = java.util.regex.Pattern.CASE_INSENSITIVE;
     private static final int JUR_M = java.util.regex.Pattern.MULTILINE;
@@ -275,7 +279,7 @@ class JdkRegressionCorpusTest {
                 return;
             } // (?u) extension: re2j has no u flag
             try {
-                io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.flags(), factory, UNICODE);
+                io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.flags() | RE2_LANE, factory, UNICODE);
                 record(c, "tdfa accepts but re2j (contract) rejects", null);
             } catch (PatternSyntaxException | PatternTooLargeException e) {
                 bothReject++;
@@ -285,7 +289,7 @@ class JdkRegressionCorpusTest {
 
         io.github.jemmix.tdfa.Pattern tdfaPattern;
         try {
-            tdfaPattern = io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.flags(), factory, UNICODE);
+            tdfaPattern = io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.flags() | RE2_LANE, factory, UNICODE);
         } catch (PatternSyntaxException | PatternTooLargeException e) {
             record(c, "tdfa rejects but re2j (contract) compiles", "reason: " + e.getMessage());
             return;

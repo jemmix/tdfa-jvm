@@ -136,8 +136,11 @@ class CharSequencePairInteriorTest {
         }
     }
 
+    /** RE2_COMPAT: the pair-interior skip is the CODEPOINT_BOUNDARIES-lane
+     *  obligation (the finding-1 fix's lane since the flip); the default
+     *  lane is UTF-16 unit semantics, where interior starts are legal. */
     private static Pattern compile(String regex, boolean vm) {
-        return Pattern.compile(regex, 0, vm ? TdfaRunner::new : null);
+        return Pattern.compile(regex, Pattern.RE2_COMPAT, vm ? TdfaRunner::new : null);
     }
 
     private static CharSequence[] wrappers(String s) {

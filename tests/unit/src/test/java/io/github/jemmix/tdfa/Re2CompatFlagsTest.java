@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
+import io.github.jemmix.tdfa.core.compile.CompileOptions;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.tnfa.Semantics;
@@ -20,12 +21,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The JUR-compat flag-surface boilerplate
- * ({@code docs/jur-compat-default.md}): the seven opt-out bits and the
- * {@code RE2_COMPAT} preset exist, validate, and ride the pipeline
- * (PatternCompiler &rarr; {@code Tnfa.semantics} &rarr;
- * {@code Tdfa.semantics()} &rarr; the runner's frozen field) — but
- * select nothing yet. Pinned here:
+ * The JUR-compat flag surface ({@code docs/jur-compat-default.md}),
+ * post-flip: the seven opt-out bits and the {@code RE2_COMPAT} preset
+ * SELECT — each bit maps onto its {@link Semantics} axis in
+ * {@code PatternCompiler}, the default (no bits) running every axis
+ * unset (the {@code java.util.regex}-parity lane). Pinned here:
  * <ul>
  *   <li>the preset composes: {@code RE2_COMPAT} is exactly the OR of the
  *       seven axis bits, disjoint from the eight pre-existing flags,
@@ -34,23 +34,25 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *       flags) is accepted by every compile spelling and round-trips
  *       {@code flags()}; bits outside the whitelist still reject with
  *       the message naming the new flags;</li>
- *   <li>pre-flip no-op: on a battery spanning all six divergence
- *       families, compiling with any axis bit or the preset is
- *       behavior-identical to compiling without it — {@code matches()},
+ *   <li>the flip: the flags route and the explicit-semantics
+ *       {@code CompileOptions} route are two spellings of one mapping —
+ *       on a battery spanning all six divergence families, compiling
+ *       with a bit (or the preset, or nothing) answers exactly what the
+ *       same-axis explicit-semantics compile answers — {@code matches()},
  *       {@code lookingAt()} and the full {@code find()} scan with every
  *       group span — on both engine tiers (generated shells and the
  *       shared interpreter);</li>
  *   <li>the bits participate in {@code equals} and serialization (the
  *       flags int is capability identity, the FIND_ONLY contract);</li>
- *   <li>the pipeline carries the every-axis-set value (the RE2-lineage
- *       reading) pre-flip — the carrier is wired Tnfa &rarr; Tdfa ready
- *       for the pivot parameterization to read, and {@link Semantics}
- *       itself is a well-behaved value class.</li>
+ *   <li>the pipeline carries the mapped value (Tnfa &rarr; Tdfa &rarr;
+ *       the runner's frozen field) — the CORE tier's legacy overloads
+ *       keep their own RE2-lane default — and {@link Semantics} itself
+ *       is a well-behaved value class.</li>
  * </ul>
  */
 class Re2CompatFlagsTest {
 
-    /** Every axis set (the RE2-lineage reading): the pre-flip pipeline value. */
+    /** Every axis set (the RE2-lineage reading): what the preset maps to. */
     private static final Semantics ALL_AXES = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
         .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU();
 
@@ -66,8 +68,9 @@ class Re2CompatFlagsTest {
      * divergence families + the fold and (?U axes): terminator set,
      * caret/dollar-around-final-terminator, surrogate units and pairs,
      * unit-boundary wordness, group-participation lineage, fold
-     * universe, ungreedy). The no-op property does not depend on what
-     * today's answers ARE — only that the bits do not move them.
+     * universe, ungreedy). The equivalence property does not depend on
+     * what the answers ARE — only that the two spellings of one axis
+     * selection agree (and that different selections may differ).
      */
     private static final String[][] FAMILY_BATTERY = {{".", "a\r\nb"}, {".+", "a\u0085b\u2028c\nd"}, {"(?m)^", "a\n"},
         {"(?m)^b", "a\nb"}, {"a$", "a\n"}, {"(?m)a$", "a\n\n"}, {"\\b", "\uD800x"}, {".", "\uD800"},
@@ -116,29 +119,36 @@ class Re2CompatFlagsTest {
     }
 
     /**
-     * The pre-flip contract: the bits move nothing. Per family battery
-     * entry, per axis bit and the preset (plus one legacy-composed
-     * lane), per engine tier — the whole observable surface (whole
-     * match, lookingAt, find scan with all group spans) equals the
-     * no-bits compile under the same engine.
+     * The flip: the flags bits and the {@code CompileOptions} semantics
+     * are two spellings of one mapping. Per family battery entry, per
+     * lane (no bits — the JUR default; each single axis; the preset),
+     * per engine tier — the whole observable surface (whole match,
+     * lookingAt, find scan with all group spans) of the flags compile
+     * equals the explicit-semantics options compile of the same axis
+     * selection. The legacy MULTILINE|CASE_INSENSITIVE base rides both
+     * sides as the inline {@code (?m)(?i)} prefix (what the flags route
+     * would prepend) — the options route has no flag knob for them.
      */
     @Test
-    void preFlipNoOpEquivalence() {
-        int[] lanes = new int[AXES.length + 2];
-        System.arraycopy(AXES, 0, lanes, 0, AXES.length);
-        lanes[AXES.length] = Pattern.RE2_COMPAT;
-        lanes[AXES.length + 1] = Pattern.RE2_COMPAT | Pattern.MULTILINE | Pattern.CASE_INSENSITIVE;
-        int baseLane = Pattern.MULTILINE | Pattern.CASE_INSENSITIVE;
+    void flagBitsAndExplicitSemanticsSelectTheSameLanes() {
+        Semantics[] lanes = {Semantics.of(), Semantics.of().unixLines(), Semantics.of().unicodeCase(),
+            Semantics.of().codepointBoundaries(), Semantics.of().emptyLastLine(), Semantics.of().endOfTextOnly(),
+            Semantics.of().emptyIterationSpans(), Semantics.of().ungreedyU(), ALL_AXES};
+        int[] bits =
+            {0, Pattern.UNIX_LINES, Pattern.UNICODE_CASE, Pattern.CODEPOINT_BOUNDARIES, Pattern.EMPTY_LAST_LINE,
+                Pattern.END_OF_TEXT_ONLY, Pattern.EMPTY_ITERATION_SPANS, Pattern.UNGREEDY_U, Pattern.RE2_COMPAT};
         for (String[] row : FAMILY_BATTERY) {
-            String regex = row[0];
+            String regex = "(?m)(?i)" + row[0];
             String input = row[1];
             for (boolean vm : new boolean[]{false, true}) {
                 String tier = vm ? "interpreter" : "generated";
-                List<String> expected = observable(compile(regex, baseLane, vm), input);
-                for (int lane : lanes) {
-                    List<String> actual = observable(compile(regex, baseLane | lane, vm), input);
-                    assertThat(actual).as("{} tier: lane 0x{} moved /{}/ on [{}]", tier, Integer.toHexString(lane),
-                        regex, escape(input)).isEqualTo(expected);
+                for (int i = 0; i < bits.length; i++) {
+                    Pattern flags = compile(regex, bits[i], vm);
+                    Pattern options = Pattern.compile(regex, CompileOptions.of().semantics(lanes[i]));
+                    List<String> expected = observable(options, input);
+                    List<String> actual = observable(flags, input);
+                    assertThat(actual).as("{} tier: flags 0x{} vs semantics {} on /{}/ [{}]", tier,
+                        Integer.toHexString(bits[i]), lanes[i], regex, escape(input)).isEqualTo(expected);
                 }
             }
         }
@@ -168,9 +178,14 @@ class Re2CompatFlagsTest {
         assertThat(q).isEqualTo(p);
     }
 
-    /** The carrier is wired end-to-end and pre-flip always RE2; Semantics is a value class. */
+    /**
+     * The carrier is wired end-to-end: the CORE tier's legacy overloads
+     * (no explicit {@link Semantics}) keep their own RE2-lane default —
+     * the facade maps the user bits instead; {@code Semantics} is a
+     * value class.
+     */
     @Test
-    void pipelineCarriesRe2PreFlip() {
+    void coreLegacyOverloadsKeepTheRe2LaneDefault() {
         Tnfa nfa = Tnfa.compile("(?i)a+");
         assertThat(nfa.semantics).isEqualTo(ALL_AXES);
         assertThat(Determinizer.compile(nfa).semantics()).isEqualTo(ALL_AXES);
