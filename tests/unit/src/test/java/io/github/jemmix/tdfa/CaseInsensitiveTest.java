@@ -35,7 +35,11 @@ class CaseInsensitiveTest {
     }
 
     private static Matcher match(String pattern, String input, RegexEngineFactory f) {
-        Matcher m = Pattern.compile(pattern, 0, f).matcher(input);
+        // RE2_COMPAT: this file pins the re2j fold contract — full Unicode
+        // simple folding under plain (?i) — the pre-flip default lane; the
+        // facade default folds ASCII only since the flip (pinned in
+        // PivotLanesTest against the live java.util.regex oracle).
+        Matcher m = Pattern.compile(pattern, Pattern.RE2_COMPAT, f).matcher(input);
         return m.find() ? m : null;
     }
 

@@ -238,7 +238,9 @@ class WholeMatchTest {
             } catch (RuntimeException e) {
                 continue;
             }
-            WholeEngine facadeWhole = ((TDFAPattern) Pattern.compile(p)).wholeEngine();
+            // RE2_COMPAT: the anchored/unpruned artifacts come from the
+            // core-tier legacy compiles (RE2 lane) — same lane both sides.
+            WholeEngine facadeWhole = ((TDFAPattern) Pattern.compile(p, Pattern.RE2_COMPAT)).wholeEngine();
             for (String s : inputs) {
                 MatchResult am = anchored.matchWhole(s, new MatchScratch());
                 MatchResult fm = facadeWhole.matchWhole(s, new MatchScratch());

@@ -212,11 +212,25 @@ everywhere):
   `PivotLanesTest`'s "not pinned here" note now points at the
   family-6 battery.
 
-## 5. The flip — 1 d
+## 5. The flip — landed
 
-- [ ] One-line default change in `PatternCompiler` (`RE2_LANE` → the user-bit mapping); pivot defaults flip with it
-- [ ] Javadoc rewrite: drop the pre-flip axes note; README names the new default contract
-- [ ] README / `BENCHMARKS.md` re-baseline; decide the `JUR_COMPAT = 0` sugar constant (open decision)
+- [x] One-line default change in `PatternCompiler` (`RE2_LANE` → the user-bit
+  mapping, `semanticsOf(flags)`); pivot defaults flip with it — the no-bits
+  compile runs every axis unset, `RE2_COMPAT` (the bits' OR) is the pre-flip
+  default in one constant, and the `CompileOptions` route's null default
+  rides the same lane. The re2j-parity suites (corpus gates, LayeredComparator,
+  the fuzz harnesses) compile the preset lane; the facade default is pinned
+  to the battery JUR columns (`Family6BatteryTest`) and to the flags↔semantics
+  mapping equivalence (`Re2CompatFlagsTest`).
+- [x] Javadoc rewrite: drop the pre-flip axes note; README names the new
+  default contract (the Drop-in bullet: java.util.regex parity on every
+  axis, seven opt-out bits, `RE2_COMPAT` migration)
+- [x] README / `BENCHMARKS.md` re-baseline; decide the `JUR_COMPAT = 0` sugar
+  constant (**decided: not shipping** — plain `0` already reads as
+  all-axes-JUR; harmless sugar can join later if the flag surface ever
+  wants it). `BENCHMARKS.md` carries the lane note: all committed artifacts
+  are pre-flip (RE2-lane = today's `RE2_COMPAT`); the numbers refresh is
+  item 6's soak.
 
 ## 6. Evidence re-base — 1.5–2 d
 

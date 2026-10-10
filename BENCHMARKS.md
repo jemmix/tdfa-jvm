@@ -8,6 +8,14 @@ run). Rebar/shortfind re-run 2026-09-03 (post module-restructure + Sept
 compile/perf rounds), log-extract 2026-09-29 (literal-prefix scan), anchored
 §1 2026-10-01 (first committed artifact — see its note).
 
+Lane note (2026-10): every artifact below was captured pre-flip, in the
+RE2-lane default that `Pattern.RE2_COMPAT` now spells — the JUR-parity
+default the flip shipped moves only divergence-axis behavior (terminator
+sets, fold universe, unit boundaries, anchor EOL rules, iteration spans,
+`(?U)`), none of which this corpus's shapes exercise beyond noise. The
+evidence re-base ([work item](docs/jur-compat-wbs.md) 6) re-runs and
+refreshes the numbers in both lanes.
+
 Measurement-context note: tables captured before the 2026-08 module
 restructure (the sub-10 ns anchored-match era) are preserved in this file's
 git history. Absolute ns values are not comparable across that boundary —

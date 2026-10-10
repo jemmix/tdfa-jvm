@@ -187,7 +187,11 @@ public final class LayeredComparator {
     static String engineProtocol(String p, String in, boolean vm, UnicodeDataProvider provider) {
         io.github.jemmix.tdfa.Pattern pat;
         try {
-            pat = io.github.jemmix.tdfa.Pattern.compile(p, 0, vm ? TdfaRunner::new : null, provider);
+            // RE2_COMPAT: this comparator's contract is the re2j/sim
+            // lineage (R and S answer RE2); the facade default is
+            // java.util.regex parity since the JUR-compat flip.
+            pat = io.github.jemmix.tdfa.Pattern.compile(p, io.github.jemmix.tdfa.Pattern.RE2_COMPAT,
+                vm ? TdfaRunner::new : null, provider);
         } catch (Throwable t) {
             return "<reject>";
         }

@@ -69,7 +69,10 @@ class PartialWholeTest {
     @Test
     void sideTableWholeWalkMatchesUnprunedAndAnchoredArtifacts() {
         for (String p : CATALOG) {
-            WholeEngine facadeWhole = ((TDFAPattern) Pattern.compile(p)).wholeEngine();
+            // RE2_COMPAT: compared against core-tier legacy compiles
+            // (Tnfa.compile overloads default to the RE2 lane) — same
+            // lane on both sides.
+            WholeEngine facadeWhole = ((TDFAPattern) Pattern.compile(p, Pattern.RE2_COMPAT)).wholeEngine();
             TdfaRunner unpruned;
             TdfaRunner anchored;
             try {
@@ -105,7 +108,7 @@ class PartialWholeTest {
             WholeEngine facadeWhole;
             TdfaRunner unpruned;
             try {
-                facadeWhole = ((TDFAPattern) Pattern.compile(p)).wholeEngine();
+                facadeWhole = ((TDFAPattern) Pattern.compile(p, Pattern.RE2_COMPAT)).wholeEngine();
                 Tnfa nfa = Tnfa.compile(p, false, false, UnicodeProviders.get());
                 unpruned = new TdfaRunner(Determinizer.compileUnpruned(nfa, false, null));
             } catch (RuntimeException e) {
@@ -254,7 +257,7 @@ class PartialWholeTest {
     private static List<String> findResults(String p, Void unused) {
         List<String> out = new ArrayList<>();
         for (String s : INPUTS) {
-            PatternMatcher m = Pattern.compile(p).matcher(s);
+            PatternMatcher m = Pattern.compile(p, Pattern.RE2_COMPAT).matcher(s);
             StringBuilder row = new StringBuilder();
             while (m.find()) {
                 row.append('[').append(m.start()).append(',').append(m.end()).append(')');
@@ -288,7 +291,7 @@ class PartialWholeTest {
 
     private static List<String> wholeResults(String p, Void unused) {
         List<String> out = new ArrayList<>();
-        WholeEngine w = ((TDFAPattern) Pattern.compile(p)).wholeEngine();
+        WholeEngine w = ((TDFAPattern) Pattern.compile(p, Pattern.RE2_COMPAT)).wholeEngine();
         for (String s : INPUTS) {
             out.add(span(w.matchWhole(s, new MatchScratch())));
         }

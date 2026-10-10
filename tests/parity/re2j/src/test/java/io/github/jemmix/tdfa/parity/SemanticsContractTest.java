@@ -39,7 +39,10 @@ class SemanticsContractTest {
     }
 
     private static String tdfaProtocol(String p, String in, RegexEngineFactory f) {
-        var m = io.github.jemmix.tdfa.Pattern.compile(p, 0, f, Re2jUnicodeProvider.INSTANCE).matcher(in);
+        // RE2_COMPAT: this suite pins the re2j contract (the pre-flip
+        // default lane); the facade default is java.util.regex parity.
+        var m = io.github.jemmix.tdfa.Pattern
+            .compile(p, io.github.jemmix.tdfa.Pattern.RE2_COMPAT, f, Re2jUnicodeProvider.INSTANCE).matcher(in);
         if (!m.find()) {
             return "no";
         }

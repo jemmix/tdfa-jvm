@@ -14,14 +14,23 @@ Apache 2.0.
   JDKs have tamed many `java.util.regex` blowups; the guarantee here is
   structural, not empirical.
 - **Fast.** Expect **2–6× faster than [re2j](https://github.com/google/re2j)**
-  on short-input search and **4–11× on anchored matches** — as a drop-in
-  replacement with identical results. Against `java.util.regex`: at or ahead
-  on search and anchored matching (anchored geomean: ASM 0.22×, VM 0.57×),
-  and **ahead on literal-prefixed log queries** (`ip=…` shapes ride the JIT's
-  vectorized `String.indexOf` on the required literal prefix). Full tables
-  and known gaps: [`BENCHMARKS.md`](BENCHMARKS.md).
+  on short-input search and **4–11× on anchored matches** — with identical
+  results in the RE2 lane (see drop-in below). Against `java.util.regex`: at
+  or ahead on search and anchored matching (anchored geomean: ASM 0.22×,
+  VM 0.57×), and **ahead on literal-prefixed log queries** (`ip=…` shapes
+  ride the JIT's vectorized `String.indexOf` on the required literal
+  prefix). Full tables and known gaps: [`BENCHMARKS.md`](BENCHMARKS.md).
 - **Drop-in.** re2j-shaped `Pattern`/`Matcher` API, both leftmost-first
-  (default) and leftmost-longest (`LONGEST_MATCH`) semantics.
+  (default) and leftmost-longest (`LONGEST_MATCH`). The default
+  interpretation now matches `java.util.regex` on every axis the two
+  lineages diverge: bare `CASE_INSENSITIVE` folds ASCII only, the full
+  `java.util.regex` line-terminator set, UTF-16 unit boundaries, `(?m)^`
+  never matching a trailing empty line, `$` matching before a final line
+  terminator, the `java.util.regex` zero-width-iteration group protocol,
+  and `(?U)` as scoped Unicode-case. Seven opt-out bits (`UNIX_LINES` …
+  `UNGREEDY_U`) restore the RE2 side per axis; `RE2_COMPAT` (their OR)
+  restores it wholesale — migrating a pre-flip compile is one OR
+  ([design](docs/jur-compat-default.md)).
 
 The trade: compilation is eager and slower — ~290 µs (VM) / ~1.3 ms (ASM) per
 pattern cold, vs ~16 µs for `java.util.regex` (~32–38 µs steady-state). The
@@ -104,8 +113,11 @@ back to a slower engine.
 
 ## How it's tested
 
-- **5.7 M** differential cases from RE2's exhaustive test suite: 0 failures.
-- **~300 M** differential fuzz cases vs re2j (overnight soaks): 0 divergences.
+- **5.7 M** differential cases from RE2's exhaustive test suite: 0 failures
+  (pinned in the `RE2_COMPAT` lane since the JUR-default flip — the evidence
+  re-base is the open [work item](docs/jur-compat-wbs.md)).
+- **~300 M** differential fuzz cases vs re2j (overnight soaks): 0 divergences
+  (same lane note).
 - re2j-parity suites, Glenn Fowler's testregex corpus, OpenJDK's
   `java.util.regex` regression corpus, and a layered oracle (re2j / reference
   Pike VM / VM / ASM) that pins any divergence to a single layer.

@@ -57,11 +57,41 @@ final class PatternCompiler {
         | Pattern.DISABLE_UNICODE_GROUPS | Pattern.LONGEST_MATCH | Pattern.UNICODE_CHARACTER_CLASS | Pattern.FIND_ONLY
         | Pattern.MULTI_VALUED_TAGS | Pattern.RE2_COMPAT;
 
-    /** The facade's pre-flip selection: every axis set (the RE2-lineage reading). */
-    private static final Semantics RE2_LANE = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
-        .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU();
-
     private PatternCompiler() {
+    }
+
+    /**
+     * The user-bit mapping: each JUR-compat opt-out bit sets its axis;
+     * no bits is the default lane — every axis unset, the
+     * {@code java.util.regex}-parity reading throughout. The
+     * {@link Pattern#RE2_COMPAT} preset is the seven bits' OR, so it
+     * restores the pre-flip (re2j-lineage) default through the same
+     * mapping.
+     */
+    private static Semantics semanticsOf(int flags) {
+        Semantics s = Semantics.of();
+        if ((flags & Pattern.UNIX_LINES) != 0) {
+            s = s.unixLines();
+        }
+        if ((flags & Pattern.UNICODE_CASE) != 0) {
+            s = s.unicodeCase();
+        }
+        if ((flags & Pattern.CODEPOINT_BOUNDARIES) != 0) {
+            s = s.codepointBoundaries();
+        }
+        if ((flags & Pattern.EMPTY_LAST_LINE) != 0) {
+            s = s.emptyLastLine();
+        }
+        if ((flags & Pattern.END_OF_TEXT_ONLY) != 0) {
+            s = s.endOfTextOnly();
+        }
+        if ((flags & Pattern.EMPTY_ITERATION_SPANS) != 0) {
+            s = s.emptyIterationSpans();
+        }
+        if ((flags & Pattern.UNGREEDY_U) != 0) {
+            s = s.ungreedyU();
+        }
+        return s;
     }
 
     static Pattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider provider) {
@@ -76,8 +106,9 @@ final class PatternCompiler {
     /**
      * Fullest entry: an explicit {@link Semantics} (the facade options
      * route — {@code Pattern.compile(regex, CompileOptions)}) selects the
-     * compile's interpretation policy; {@code null} keeps the pre-flip
-     * default lane below.
+     * compile's interpretation policy; {@code null} maps the user's
+     * JUR-compat flag bits (the default lane is every axis unset —
+     * {@code java.util.regex} parity).
      */
     static Pattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider provider,
         CompileObserver observer, Semantics explicitSemantics) {
@@ -91,14 +122,13 @@ final class PatternCompiler {
                     + " opt-outs (UNIX_LINES, UNICODE_CASE, CODEPOINT_BOUNDARIES, EMPTY_LAST_LINE, END_OF_TEXT_ONLY,"
                     + " EMPTY_ITERATION_SPANS, UNGREEDY_U; preset RE2_COMPAT)");
         }
-        // JUR-compat (docs/jur-compat-default.md): the seven opt-out
-        // bits are accepted but select nothing yet — the engine
-        // implements only the RE2-lineage side on every axis, so every
-        // flags-route compile runs the RE2 lane. The flip replaces this
-        // line with the user-bit mapping (UNIX_LINES -> .unixLines() etc.);
-        // until then the CompileOptions route above is the one way a
-        // facade compile selects a lane.
-        Semantics semantics = explicitSemantics != null ? explicitSemantics : RE2_LANE;
+        // JUR-compat (docs/jur-compat-default.md), post-flip: the seven
+        // opt-out bits map onto the axes — a bit set restores the
+        // RE2-lineage side of that axis, unset selects the
+        // java.util.regex-parity side, and the default compile (no bits,
+        // no explicit semantics) runs every axis unset. RE2_COMPAT (the
+        // bits' OR) is the pre-flip default in one constant.
+        Semantics semantics = explicitSemantics != null ? explicitSemantics : semanticsOf(flags);
         String fl = regex;
         if ((flags & Pattern.CASE_INSENSITIVE) != 0) {
             fl = "(?i)" + fl;

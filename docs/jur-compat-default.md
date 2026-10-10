@@ -1,10 +1,12 @@
 # JUR-compat default — flip the divergence families, invert the flags
 
-Status: **in progress** — the flag-surface boilerplate is landed (bits,
-`RE2_COMPAT` preset, `Semantics` carrier Tnfa→Tdfa→runner; pre-flip
-no-ops), the match-time pivots are parameterized (both sides selectable,
-default unchanged), and the fold + `(?U)` axes joined them through the
-same `CompileOptions.semantics` route. Landing the rest is only cheap
+Status: **flipped** — the JUR-parity default landed (the `PatternCompiler`
+user-bit mapping; `RE2_COMPAT` is the pre-flip default in one constant),
+with every pivot parameterized and family 6 in. Remaining open work is the
+evidence re-base (per-flag unit tests, campaign classifiers → assertions,
+the `RE2_COMPAT` lane in the fuzzer matrix, the re2j-pinned evidence re-run,
+soak + README numbers — item 6 of the
+[work breakdown](jur-compat-wbs.md)). Landing the rest is only cheap
 before the first Maven publish / 1.0 API lock (both still open in
 [TODO](../TODO.md)) — after that the same flip is a major version. This
 page is the full accounting: what flips, what the API looks like, what it
@@ -212,8 +214,8 @@ Composition rules:
 | Fix finding 1 (CharSequence scan pair-interior skip) — prerequisite either way — **landed** | 0.5 d |
 | Parameterize the pivots: terminator set + anchor EOL rules in `positionFlags*` + `DOT`, per-unit vs codepoint wordness, scan gating — both behaviors selectable, **default unchanged**, campaign probes both lanes — **landed** | 3–5 d (audit-heavy: every rung × tier × input type) |
 | `UNIX_LINES`, `UNICODE_CASE` bits + ASCII fold universe; `UNGREEDY_U` parse + top-level-only scoped-fold rejection — **landed** (selectable + `CompileOptions.semantics`, default unchanged) | 1 d |
-| Family 6: group-participation protocol — two sub-families (suppress the min-0 all-zero-width span; surface the subsumed zero-width final iteration), four sub-items in the [work breakdown](jur-compat-wbs.md) | 2.5–4.5 d |
-| The flip commit: default changes, `RE2_COMPAT` preset, `PatternCompiler` whitelist, javadoc, README/`BENCHMARKS.md` re-baseline | 1 d |
+| Family 6: group-participation protocol — two sub-families (suppress the min-0 all-zero-width span; surface the subsumed zero-width final iteration), four sub-items in the [work breakdown](jur-compat-wbs.md) — **landed** | 2.5–4.5 d |
+| The flip commit: default changes, `RE2_COMPAT` preset, `PatternCompiler` whitelist, javadoc, README/`BENCHMARKS.md` re-baseline — **landed** | 1 d |
 | Tests: per-flag unit tests from the campaign replay seeds; jur campaign classifiers → assertions; `DifferentialFuzzer` matrix gains the `RE2_COMPAT` lane; soak + README numbers | 1.5–2 d |
 
 Total ≈ **1.5–2 weeks** focused. Ordering inside it: everything up to and
@@ -225,7 +227,9 @@ itself is one small, separately reviewable commit.
 
 - ~~Bundle `EMPTY_LAST_LINE` + `END_OF_TEXT_ONLY` into one bit or keep the
   split~~ **Decided with the pivot item: keep the split** (rationale above).
-- Whether `JUR_COMPAT = 0` ships as a self-documenting constant (sugar;
-  harmless).
+- ~~Whether `JUR_COMPAT = 0` ships as a self-documenting constant (sugar;
+  harmless)~~ **Decided with the flip: not shipping** — plain `0` already
+  reads as all-axes-JUR; harmless sugar can join later if the flag surface
+  ever wants it.
 - Scoped `(?U:...)` fold in v2 vs the v1 top-level-only rejection (v1 limit
   above).

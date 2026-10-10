@@ -24,7 +24,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 class CountedRepeatCaptureTest {
 
     private static String g1(String pattern, String input) {
-        var m = Pattern.compile(pattern).matcher(input);
+        // RE2_COMPAT: pins the maximal-iteration (re2j) protocol — the
+        // java.util.regex lane surfaces the final zero-width iteration.
+        var m = Pattern.compile(pattern, Pattern.RE2_COMPAT).matcher(input);
         assertThat(m.find()).as("find(%s on %s)", pattern, input).isTrue();
         return m.group(1);
     }
@@ -56,7 +58,7 @@ class CountedRepeatCaptureTest {
         // it — but pin the interpreter explicitly; the ASM tier is the
         // facade default used by g1() above.
         String pat = "(a?){2,}";
-        var interp = Pattern.compile(pat, 0, TdfaRunner::new);
+        var interp = Pattern.compile(pat, Pattern.RE2_COMPAT, TdfaRunner::new);
         var m = interp.matcher("aa");
         assertThat(m.find()).isTrue();
         assertThat(m.group(1)).isEqualTo("a");

@@ -39,10 +39,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *     pairs and nothing else — İ/ı inert on both sides), and the
  *     {@code (?U)} reading against java's own spelling of scoped
  *     UNICODE_CASE (inline {@code (?u)});</li>
- * <li><b>RE2 lane</b> (every axis set — the shipped facade default,
- *     unchanged) against the facade's own engines on the same battery:
- *     the explicit-lane core compile must answer exactly what
- *     {@code Pattern.compile} answers;</li>
+ * <li><b>RE2 lane</b> (every axis set — the facade's {@code RE2_COMPAT}
+ *     lane since the flip) against the facade's own engines on the same
+ *     battery: the explicit-lane core compile must answer exactly what
+ *     {@code Pattern.compile(regex, RE2_COMPAT)} answers;</li>
  * <li>axis-single hybrid lanes (UNIX_LINES added, EMPTY_LAST_LINE added,
  *     UNICODE_CASE added) for the separable effects the split bits exist
  *     for — the single-axis fold lane against java
@@ -61,9 +61,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <p>The group-participation family (EMPTY_ITERATION_SPANS) is pinned in
  * {@code Family6BatteryTest} — the family-6 battery (both sub-families,
  * both tiers, the same rung × wrapper audit) since WBS items 4b/4c
- * landed. The facade's {@code CompileOptions.semantics} route — the one
- * pre-flip way a facade compile leaves the RE2 lane — is pinned at the
- * bottom (fold, terminator set, and the (?U) v1 rejection through it).
+ * landed. The facade's {@code CompileOptions.semantics} route — the
+ * core-tier spelling of the lane selection — is pinned at the bottom
+ * (fold, terminator set, and the (?U) v1 rejection through it).
  */
 class PivotLanesTest {
 
@@ -166,9 +166,9 @@ class PivotLanesTest {
         return sb.toString();
     }
 
-    /** The facade's own engines (RE2 lane pre-flip) on the same protocol. */
-    private static String facadeProbe(String pattern, CharSequence in) {
-        io.github.jemmix.tdfa.Pattern p = io.github.jemmix.tdfa.Pattern.compile(pattern);
+    /** The facade's own engines (a flags lane) on the same protocol. */
+    private static String facadeProbe(String pattern, int flags, CharSequence in) {
+        io.github.jemmix.tdfa.Pattern p = io.github.jemmix.tdfa.Pattern.compile(pattern, flags);
         StringBuilder sb = new StringBuilder(48);
         int from = 0;
         boolean found = false;
@@ -449,7 +449,7 @@ class PivotLanesTest {
         for (String pat : new String[]{"(?U)a", "(?U)(?i)a", "a|(?U)b", "(?U-s)a", "(?Ui)a", "(?U)a|b"}) {
             assertThatCode(() -> compileTdfa(pat, JUR)).as("JUR lane accepts /%s/", pat).doesNotThrowAnyException();
         }
-        // ... and the RE2 reading (the facade's pre-flip lane) keeps every
+        // ... and the RE2 reading (the facade's RE2_COMPAT lane) keeps every
         // spelling as scoped ungreedy
         for (String pat : new String[]{"(?U:a)", "((?U)a)", "(?i-U)a", "(?U)a+"}) {
             assertThatCode(() -> compileTdfa(pat, RE2)).as("RE2 lane accepts /%s/", pat).doesNotThrowAnyException();
@@ -504,17 +504,17 @@ class PivotLanesTest {
             new String[]{"F=true [2..5) M=false R=[2..5)"});
     }
 
-    // ===== RE2 lane: the shipped default is untouched =====
+    // ===== RE2 lane: the facade's RE2_COMPAT preset is untouched =====
 
     @Test
     void re2ExplicitLaneMatchesTheFacade() {
-        // The facade pre-flip wiring runs the RE2 lane on every compile; an
-        // explicit RE2-lane core compile must answer exactly what the
-        // facade answers on the pivot battery (the facade itself is pinned
-        // by the re2j parity suites, so this transfers those pins to the
-        // explicit lane). Fold and (?U) included: plain (?i) folds the
-        // full universe, (?U) spells ungreedy — the item's
-        // default-unchanged contract on the two parser-side axes.
+        // Post-flip the facade maps the user bits: RE2_COMPAT (the seven
+        // bits' OR) runs the RE2 lane, so an explicit RE2-lane core
+        // compile must answer exactly what the preset facade compile
+        // answers on the pivot battery (the re2j parity suites pin the
+        // same lane against live re2j). Fold and (?U) included: plain
+        // (?i) folds the full universe, (?U) spells ungreedy — the
+        // lane-unchanged contract on the two parser-side axes.
         String[] pats = {"(?m)^", "(?m)$", "$", "^", ".", "a$", "a\\z", "(?m)a$", "x*$", "a$|ab", "\\ba", "(?u)\\ba",
             "[\uD800-\uDFFF]", "\uDE00", "(?i)k", "(?i)[^s]", "(?i)Stra\u00dfe", "(?i)[a-z]+", "(?U)a+", "(?U:a+)b",
             "(?U)a+?b", "((?U)a)+"};
@@ -526,14 +526,14 @@ class PivotLanesTest {
             RegexEngine vm = new TdfaRunner(tdfa, 1 << 20);
             RegexEngine asm = TdfaAsmBackend.generate(tdfa, 1 << 20);
             for (String in : inputs) {
-                String want = facadeProbe(pat, in);
+                String want = facadeProbe(pat, io.github.jemmix.tdfa.Pattern.RE2_COMPAT, in);
                 assertThat(probe(vm, in)).as("RE2 core == facade: %s / %s", pat, esc(in)).isEqualTo(want);
                 assertThat(probe(asm, in)).as("RE2 ASM == facade: %s / %s", pat, esc(in)).isEqualTo(want);
             }
         }
     }
 
-    // ===== the facade options route: the one pre-flip lane selector =====
+    // ===== the facade options route: the core-tier lane spelling =====
 
     @Test
     void compileOptionsSemanticsSelectsTheLane() {
@@ -546,10 +546,15 @@ class PivotLanesTest {
         io.github.jemmix.tdfa.Pattern ucc =
             io.github.jemmix.tdfa.Pattern.compile("(?i)k", CompileOptions.of().semantics(Semantics.of().unicodeCase()));
         assertThat(ucc.matcher("\u212A").find()).as("single-axis fold lane folds full").isTrue();
-        io.github.jemmix.tdfa.Pattern re2 = io.github.jemmix.tdfa.Pattern.compile("(?i)k", CompileOptions.of());
-        assertThat(re2.matcher("\u212A").find()).as("default options keep the RE2 lane").isTrue();
+        io.github.jemmix.tdfa.Pattern deft = io.github.jemmix.tdfa.Pattern.compile("(?i)k", CompileOptions.of());
+        assertThat(deft.matcher("\u212A").find()).as("default options are the JUR lane (ASCII fold)").isFalse();
+        io.github.jemmix.tdfa.Pattern re2 = io.github.jemmix.tdfa.Pattern.compile("(?i)k",
+            CompileOptions.of().semantics(Semantics.of().unixLines().unicodeCase().codepointBoundaries().emptyLastLine()
+                .endOfTextOnly().emptyIterationSpans().ungreedyU()));
+        assertThat(re2.matcher("\u212A").find()).as("all-axes options fold full").isTrue();
         // UNIX_LINES through the same route activates the item-2
-        // terminator-set pivot — the bit's pre-flip spelling.
+        // terminator-set pivot — the bit's flags spelling composes the
+        // same way.
         io.github.jemmix.tdfa.Pattern nl =
             io.github.jemmix.tdfa.Pattern.compile(".", CompileOptions.of().semantics(Semantics.of().unixLines()));
         assertThat(nl.matcher("\r").find()).as("unixLines lane: dot skips \\n only").isTrue();

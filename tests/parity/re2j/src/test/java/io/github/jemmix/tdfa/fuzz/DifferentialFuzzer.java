@@ -480,13 +480,18 @@ public final class DifferentialFuzzer {
         Prepared p = new Prepared();
         p.pattern = pattern;
         p.flags = flags;
+        // This fuzzer's oracle is re2j, so the tdfa side runs the RE2
+        // lane (RE2_COMPAT — the pre-flip default; the facade default is
+        // java.util.regex parity since the JUR-compat flip). The matrix
+        // gaining a default-lane case is the evidence re-base work item.
+        int lane = flags | io.github.jemmix.tdfa.Pattern.RE2_COMPAT;
         try {
             p.oracle = com.google.re2j.Pattern.compile(pattern, flags);
         } catch (RuntimeException e) {
             p.oracleTag = "<reject>";
         }
         try {
-            p.asm = io.github.jemmix.tdfa.Pattern.compile(pattern, flags, null, Re2jUnicodeProvider.INSTANCE);
+            p.asm = io.github.jemmix.tdfa.Pattern.compile(pattern, lane, null, Re2jUnicodeProvider.INSTANCE);
         } catch (PatternSyntaxException | PatternTooLargeException e) {
             p.asmTag = "<reject:" + firstLine(e.getMessage()) + ">";
         } catch (RuntimeException e) {
@@ -494,7 +499,7 @@ public final class DifferentialFuzzer {
             p.asmExc = "asm " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage());
         }
         try {
-            p.vm = io.github.jemmix.tdfa.Pattern.compile(pattern, flags, TdfaRunner::new, Re2jUnicodeProvider.INSTANCE);
+            p.vm = io.github.jemmix.tdfa.Pattern.compile(pattern, lane, TdfaRunner::new, Re2jUnicodeProvider.INSTANCE);
         } catch (PatternSyntaxException | PatternTooLargeException e) {
             p.vmTag = "<reject:" + firstLine(e.getMessage()) + ">";
         } catch (RuntimeException e) {

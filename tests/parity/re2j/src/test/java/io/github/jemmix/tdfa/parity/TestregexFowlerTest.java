@@ -229,10 +229,11 @@ class TestregexFowlerTest {
         return digits.isEmpty() ? Integer.MAX_VALUE : Integer.parseInt(digits);
     }
 
-    /** Full span array from our engine (LONGEST_MATCH), or null on no-match. */
+    /** Full span array from our engine (LONGEST_MATCH), or null on no-match.
+     *  RE2_COMPAT: the re2j contract lane (the pre-flip default). */
     static int[][] tdfaSpans(String regex, String subject, int cap, RegexEngineFactory factory) {
-        io.github.jemmix.tdfa.Pattern p =
-            io.github.jemmix.tdfa.Pattern.compile(regex, io.github.jemmix.tdfa.Pattern.LONGEST_MATCH, factory, UNICODE);
+        io.github.jemmix.tdfa.Pattern p = io.github.jemmix.tdfa.Pattern.compile(regex,
+            io.github.jemmix.tdfa.Pattern.LONGEST_MATCH | io.github.jemmix.tdfa.Pattern.RE2_COMPAT, factory, UNICODE);
         Matcher m = p.matcher(subject);
         if (!m.find()) {
             return null;
@@ -299,7 +300,8 @@ class TestregexFowlerTest {
             re2jThrows = true;
         }
         try {
-            io.github.jemmix.tdfa.Pattern.compile(wrapped, io.github.jemmix.tdfa.Pattern.LONGEST_MATCH, factory,
+            io.github.jemmix.tdfa.Pattern.compile(wrapped,
+                io.github.jemmix.tdfa.Pattern.LONGEST_MATCH | io.github.jemmix.tdfa.Pattern.RE2_COMPAT, factory,
                 UNICODE);
             oursThrows = false;
         } catch (RuntimeException e) {
