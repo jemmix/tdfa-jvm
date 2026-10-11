@@ -6,7 +6,7 @@ git history (TODO.md before 2026-09-30).
 
 ## Correctness
 
-- [ ] JUR-compat evidence re-base: per-flag unit tests, campaign classifiers → assertions, `RE2_COMPAT` lane in the fuzzer matrix, re-run the re2j-pinned evidence, soak + README numbers (flip landed; [design](docs/jur-compat-default.md), [work breakdown](docs/jur-compat-wbs.md))
+- [ ] JUR-compat evidence re-base: per-flag unit tests, campaign classifiers → assertions, `RE2_COMPAT` + `(?u)` lanes in the fuzzer matrix, jur twins for the re2j parity suites, re-run the re2j-pinned evidence, both-lane soak + README numbers (flip landed; [design](docs/jur-compat-default.md), [work breakdown](docs/jur-compat-wbs.md))
 - [ ] Fuzz (?u) lane vs jur oracle (UCC flag in the differential flag matrix)
 - [ ] Overnight soak with cross-rung on; refresh README fuzz numbers
 - [ ] Fuzz families for fact-gated rungs: literal, prefix, cand-scan, anchored-fast
@@ -37,6 +37,7 @@ git history (TODO.md before 2026-09-30).
 - [ ] JPMS module-info
 - [ ] JavaDoc all public API
 - [ ] Re-evaluate `Semantics` scope: parity-axes-only carrier vs absorbing mode knobs (`LONGEST_MATCH`, `MULTI_VALUED_TAGS`); decide before the API lock (breaking after)
+- [ ] Evaluate one `Pattern` + opt-out bits vs separate jur-compat/re2j-compat `Pattern` surfaces; decide before the API lock ([design](docs/jur-compat-default.md), [work breakdown](docs/jur-compat-wbs.md))
 - [ ] Lock 1.0 API stability guarantees
 - [ ] JaCoCo coverage targets
 - [ ] Reproducible jar builds
