@@ -2,11 +2,14 @@
 
 Status: **flipped** — the JUR-parity default landed (the `PatternCompiler`
 user-bit mapping; `RE2_COMPAT` is the pre-flip default in one constant),
-with every pivot parameterized and family 6 in. Remaining open work is the
-evidence re-base (per-flag unit tests, campaign classifiers → assertions,
-the `RE2_COMPAT` lane in the fuzzer matrix, the re2j-pinned evidence re-run,
-soak + README numbers — item 6 of the
-[work breakdown](jur-compat-wbs.md)). Landing the rest is only cheap
+with every pivot parameterized and family 6 in. Remaining open work
+([work breakdown](jur-compat-wbs.md)): the evidence re-base (per-flag
+unit tests, campaign classifiers → assertions, the `RE2_COMPAT` + `(?u)`
+lanes in the fuzzer matrix, the re2j-pinned evidence re-run, soak + README
+numbers — item 6), the jur twins for the re2j parity suites (every
+translatable suite also pinned against the live `java.util.regex` oracle —
+item 7), and the one-`Pattern`-vs-two-surfaces evaluation (item 8).
+Landing the rest is only cheap
 before the first Maven publish / 1.0 API lock (both still open in
 [TODO](../TODO.md)) — after that the same flip is a major version. This
 page is the full accounting: what flips, what the API looks like, what it
@@ -88,14 +91,15 @@ agree — the campaign classified only group-clause differences):
   span): `(\z)*`, `(\b)*`, `()*`, `(\b\b)*`, `(\b){0,2}` — JUR −1
   where we report the sole zero-width span. Statically recognizable at
   the parse; the fix is a SET_NIL φ override for the dissolved group's
-  tags (WBS 4b).
+  tags (the parse-mark suppression — landed).
 - **B — surface** (greedy quantifier directly on a capture whose body can
   match empty but is NOT deterministic): `(a*)*`, `(a?)*`, `(a|\b)+`,
   `(a{0,2})*`, `(a*\b)*`, the outer group of `((a)*)*`, `(\b)(a|\b)*`
   g2 — JUR reports the final zero-width iteration where we report the
   earlier maximal iteration, because the determinizer's same-position
   closure subsumption drops the zero-width re-entry. The fix makes its
-  tag writes surface as a φ SET_POS at the accept position (WBS 4c).
+  tag writes surface as a φ SET_POS at the accept position (the
+  determinizer cut surfacing — landed).
 
 Lazy quantifiers agree with JUR everywhere (both prefer zero iterations:
 `(\z)*?` → −1, `(a*)*?` → −1; forced min iterations report identically).
@@ -119,7 +123,7 @@ one family-6 slice still answered the RE2 way on the JUR lane. The
 campaign classifies it (`KNOWN_GROUP-PARTICIPATION-TAIL`); everything
 else about family 6 compares HARD against the live oracle.
 
-**Decided interactions** (WBS 4a):
+**Decided interactions**:
 
 - `MULTI_VALUED_TAGS` — participations mirror the single-value protocol:
   a surfaced final zero-width iteration (B) appends a participation
@@ -144,7 +148,7 @@ Set = today's behavior (the opt-out). Unset = the new JUR-parity default.
 | `CODEPOINT_BOUNDARIES` | UTF-16 unit semantics: matches start/end at any unit, lone surrogates match as single units, `\b`/`\B` evaluate at every unit position | codepoint discipline: scans skip pair interiors, boundaries at codepoint edges |
 | `EMPTY_LAST_LINE` | `^`(?m) never matches after a trailing terminator | may match the empty last line |
 | `END_OF_TEXT_ONLY` | `$` may match before the final terminator (no (?m)) | `$` ≡ `\z` |
-| `EMPTY_ITERATION_SPANS` | last-completed-iteration protocol: a final zero-width iteration reports its span (`(a*)*` on `"aa"` → g1 `2..2`) EXCEPT all-zero-width min-0 bodies stay non-participating (`(\z)*` on `""` → g1 `−1` — java's `GroupCurly` rollback; see the WBS item 4 research notes) | maximal-iteration protocol: `(a*)*` → g1 `0..2`; a sole zero-width iteration still reports (`(\z)*` → `0..0`) |
+| `EMPTY_ITERATION_SPANS` | last-completed-iteration protocol: a final zero-width iteration reports its span (`(a*)*` on `"aa"` → g1 `2..2`) EXCEPT all-zero-width min-0 bodies stay non-participating (`(\z)*` on `""` → g1 `−1` — java's `GroupCurly` rollback; see the family-6 mechanics note) | maximal-iteration protocol: `(a*)*` → g1 `0..2`; a sole zero-width iteration still reports (`(\z)*` → `0..0`) |
 | `UNGREEDY_U` | `(?U:`/`(?U)` = scoped `UNICODE_CASE` | ungreedy (PCRE/RE2 meaning) |
 
 `EMPTY_LAST_LINE` + `END_OF_TEXT_ONLY` are the old bundled
@@ -192,8 +196,8 @@ Composition rules:
 - **Family 6 goes on the critical path.** `EMPTY_ITERATION_SPANS` unset is
   default behavior, so the φ-finals protocol change (protocol-only —
   skeletons already agree; mode-gated so the RE2 lane is untouched) is
-  mandatory, not an opt-in nicety. Provisional research pinned the rule
-  (WBS item 4): java's `GroupCurly`-vs-`Loop` compile split gives the
+  mandatory, not an opt-in nicety. Provisional research pinned the rule:
+  java's `GroupCurly`-vs-`Loop` compile split gives the
   axis two sub-families of opposite polarity — suppress (all-zero-width
   min-0 bodies → −1) and surface (empty-capable non-deterministic
   bodies → report the final zero-width iteration).
@@ -214,14 +218,18 @@ Composition rules:
 | Fix finding 1 (CharSequence scan pair-interior skip) — prerequisite either way — **landed** | 0.5 d |
 | Parameterize the pivots: terminator set + anchor EOL rules in `positionFlags*` + `DOT`, per-unit vs codepoint wordness, scan gating — both behaviors selectable, **default unchanged**, campaign probes both lanes — **landed** | 3–5 d (audit-heavy: every rung × tier × input type) |
 | `UNIX_LINES`, `UNICODE_CASE` bits + ASCII fold universe; `UNGREEDY_U` parse + top-level-only scoped-fold rejection — **landed** (selectable + `CompileOptions.semantics`, default unchanged) | 1 d |
-| Family 6: group-participation protocol — two sub-families (suppress the min-0 all-zero-width span; surface the subsumed zero-width final iteration), four sub-items in the [work breakdown](jur-compat-wbs.md) — **landed** | 2.5–4.5 d |
+| Family 6: group-participation protocol — two sub-families (suppress the min-0 all-zero-width span; surface the subsumed zero-width final iteration), four landable sub-items (the WBS's item-4 essays live in its git history) — **landed** | 2.5–4.5 d |
 | The flip commit: default changes, `RE2_COMPAT` preset, `PatternCompiler` whitelist, javadoc, README/`BENCHMARKS.md` re-baseline — **landed** | 1 d |
 | Tests: per-flag unit tests from the campaign replay seeds; jur campaign classifiers → assertions; `DifferentialFuzzer` matrix gains the `RE2_COMPAT` lane; soak + README numbers | 1.5–2 d |
+| Parity suites vs both oracles: jur twins for the re2j parity suites — every translatable case also runs the default lane against the live `java.util.regex` oracle ([work breakdown](jur-compat-wbs.md) item 7) | 1–1.5 d |
+| One `Pattern` or two: evaluate separate jur-compat / re2j-compat surfaces vs the bits-and-preset surface — decide before the API lock ([work breakdown](jur-compat-wbs.md) item 8) | 0.5 d |
 
-Total ≈ **1.5–2 weeks** focused. Ordering inside it: everything up to and
-including the flip commit is landable with default behavior unchanged (the
-flags exist, the campaign probes both lanes, nothing flips), so the flip
-itself is one small, separately reviewable commit.
+Total ≈ **1.5–2 weeks** focused through the flip (landed); the open tail
+(item 6 + the two items below it) adds ≈ 3–4 d. Ordering inside it:
+everything up to and including the flip commit was landable with default
+behavior unchanged (the flags exist, the campaign probes both lanes,
+nothing flips), so the flip itself was one small, separately reviewable
+commit.
 
 ## Open decisions
 
@@ -233,3 +241,9 @@ itself is one small, separately reviewable commit.
   ever wants it.
 - Scoped `(?U:...)` fold in v2 vs the v1 top-level-only rejection (v1 limit
   above).
+- One `Pattern` or two: whether the jur-compat and re2j-compat readings
+  belong on one surface (today's shape — the seven opt-out bits + the
+  `RE2_COMPAT` preset) or on separate `Pattern` surfaces each owning their
+  default outright. Open — the evaluation is
+  [work breakdown](jur-compat-wbs.md) item 8; must land before the 1.0 API
+  lock (breaking after).
