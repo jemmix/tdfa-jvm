@@ -222,7 +222,7 @@ Composition rules:
 | The flip commit: default changes, `RE2_COMPAT` preset, `PatternCompiler` whitelist, javadoc, README/`BENCHMARKS.md` re-baseline — **landed** | 1 d |
 | Tests: per-flag unit tests from the campaign replay seeds; jur campaign classifiers → assertions; `DifferentialFuzzer` matrix gains the `RE2_COMPAT` lane; soak + README numbers | 1.5–2 d |
 | Parity suites vs both oracles: jur twins for the re2j parity suites — every translatable case also runs the default lane against the live `java.util.regex` oracle ([work breakdown](jur-compat-wbs.md) item 7) | 1–1.5 d |
-| One `Pattern` or two: evaluate separate jur-compat / re2j-compat surfaces vs the bits-and-preset surface — decide before the API lock ([work breakdown](jur-compat-wbs.md) item 8) | 0.5 d |
+| One `Pattern` or two: evaluate separate jur-compat / re2j-compat surfaces vs the bits-and-preset surface — decide before the API lock ([work breakdown](jur-compat-wbs.md) item 8) — **decided: two surfaces** ([split design](re2j-surface-split.md)) | 0.5 d |
 
 Total ≈ **1.5–2 weeks** focused through the flip (landed); the open tail
 (item 6 + the two items below it) adds ≈ 3–4 d. Ordering inside it:
@@ -241,9 +241,11 @@ commit.
   ever wants it.
 - Scoped `(?U:...)` fold in v2 vs the v1 top-level-only rejection (v1 limit
   above).
-- One `Pattern` or two: whether the jur-compat and re2j-compat readings
+- ~~One `Pattern` or two: whether the jur-compat and re2j-compat readings
   belong on one surface (today's shape — the seven opt-out bits + the
   `RE2_COMPAT` preset) or on separate `Pattern` surfaces each owning their
-  default outright. Open — the evaluation is
-  [work breakdown](jur-compat-wbs.md) item 8; must land before the 1.0 API
-  lock (breaking after).
+  default outright~~ **Decided: two surfaces** — the jur facade keeps the
+  root module, the re2j reading moves to its own `re2j/` gradle module with
+  the seven bits + preset leaving the public API; the
+  [split design](re2j-surface-split.md) is the full accounting and its
+  [work breakdown](re2j-surface-split-wbs.md) the execution.
