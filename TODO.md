@@ -37,7 +37,7 @@ git history (TODO.md before 2026-09-30).
 - [ ] JPMS module-info
 - [ ] JavaDoc all public API
 - [ ] Re-evaluate `Semantics` scope: parity-axes-only carrier vs absorbing mode knobs (`LONGEST_MATCH`, `MULTI_VALUED_TAGS`); decide before the API lock (breaking after)
-- [ ] Evaluate one `Pattern` + opt-out bits vs separate jur-compat/re2j-compat `Pattern` surfaces; decide before the API lock ([design](docs/jur-compat-default.md), [work breakdown](docs/jur-compat-wbs.md))
+- [ ] Two-`Pattern`-surface split: fold the compile machinery into `core.compile` (+ emit SPI), add the `re2j/` surface module, trim the seven opt-out bits + `RE2_COMPAT` from the facade, migrate consumers — decided, execution open ([design](docs/re2j-surface-split.md), [work breakdown](docs/re2j-surface-split-wbs.md)); gates the 1.0 API lock
 - [ ] Lock 1.0 API stability guarantees
 - [ ] JaCoCo coverage targets
 - [ ] Reproducible jar builds
