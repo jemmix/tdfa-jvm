@@ -9,7 +9,7 @@ compile/perf rounds), log-extract 2026-09-29 (literal-prefix scan), anchored
 §1 2026-10-01 (first committed artifact — see its note).
 
 Lane note (2026-10): every artifact below was captured pre-flip, in the
-RE2-lane default that `Pattern.RE2_COMPAT` now spells — the JUR-parity
+RE2-lane default that the `tdfa-re2j` surface now spells — the JUR-parity
 default the flip shipped moves only divergence-axis behavior (terminator
 sets, fold universe, unit boundaries, anchor EOL rules, iteration spans,
 `(?U)`), none of which this corpus's shapes exercise beyond noise. The

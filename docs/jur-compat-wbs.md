@@ -38,11 +38,11 @@ opt-out ceremony; open questions: what happens to the seven public bits,
 the `CompileOptions.semantics` route, japicmp surface cost, README/javadoc
 narrative).
 
-- [x] Evaluate and decide — **decided: two surfaces** (the jur facade
-  keeps the root module; the re2j reading moves to its own `re2j/` module,
-  the seven bits + `RE2_COMPAT` preset leave the public API). The design,
-  rejected alternatives, and execution live in
-  [re2j-surface-split.md](re2j-surface-split.md) /
-  [its work breakdown](re2j-surface-split-wbs.md); still gates the
-  [TODO](../TODO.md) `Semantics`-scope re-evaluation and the 1.0 API-lock
-  item (breaking after)
+- [x] Evaluate and decide — **decided: two surfaces, landed (2026-10-13)**
+  (the jur facade keeps the root module; the re2j reading ships from its own
+  `re2j/` module, the seven bits + `RE2_COMPAT` preset are gone from the
+  public API, the machinery lives in `core.compile` behind a two-method emit
+  SPI). The split's design + work breakdown pages are retired (landed); the
+  `surface-split/*` squash commits carry the design accounting and the
+  closed open decisions (re2j flag roster, shared matcher typing,
+  split-before-namespace-move sequencing)

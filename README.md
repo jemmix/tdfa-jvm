@@ -20,16 +20,19 @@ Apache 2.0.
   VM 0.57×), and **ahead on literal-prefixed log queries** (`ip=…` shapes
   ride the JIT's vectorized `String.indexOf` on the required literal
   prefix). Full tables and known gaps: [`BENCHMARKS.md`](BENCHMARKS.md).
-- **Drop-in.** re2j-shaped `Pattern`/`Matcher` API, both leftmost-first
-  (default) and leftmost-longest (`LONGEST_MATCH`). The default
-  interpretation now matches `java.util.regex` on every axis the two
-  lineages diverge: bare `CASE_INSENSITIVE` folds ASCII only, the full
-  `java.util.regex` line-terminator set, UTF-16 unit boundaries, `(?m)^`
-  never matching a trailing empty line, `$` matching before a final line
-  terminator, the `java.util.regex` zero-width-iteration group protocol,
-  and `(?U)` as scoped Unicode-case. Seven opt-out bits (`UNIX_LINES` …
-  `UNGREEDY_U`) restore the RE2 side per axis; `RE2_COMPAT` (their OR)
-  restores it wholesale — migrating a pre-flip compile is one OR
+- **Drop-in, per lineage.** re2j-shaped `Pattern`/`Matcher` API, both
+  leftmost-first (default) and leftmost-longest (`LONGEST_MATCH`) — one
+  surface per reading. The root facade (`io.github.jemmix.tdfa.Pattern`)
+  is the `java.util.regex` interpretation: bare `CASE_INSENSITIVE` folds
+  ASCII only, the full `java.util.regex` line-terminator set, UTF-16 unit
+  boundaries, `(?m)^` never matching a trailing empty line, `$` matching
+  before a final line terminator, the `java.util.regex`
+  zero-width-iteration group protocol, and `(?U)` as scoped Unicode-case.
+  The RE2-lineage reading of every one of those axes ships as its own
+  module — `tdfa-re2j` (`io.github.jemmix.tdfa.re2j.Pattern`) — with the
+  lane baked in: no preset OR, no per-axis ceremony, un-gettable-wrong.
+  Per-axis mixed probes remain available through
+  `CompileOptions.semantics`
   ([design](docs/jur-compat-default.md)).
 
 The trade: compilation is eager and slower — ~290 µs (VM) / ~1.3 ms (ASM) per
@@ -96,9 +99,10 @@ while (m.find())
     System.out.println(m.group(1) + " @ " + m.group(2));
 ```
 
-Modules: `tdfa` (facade, the API above) · `tdfa-asm` (default backend:
-per-pattern JVM bytecode) · `tdfa-core` (interpreter-only, zero dependencies,
-Java 8 floor). Prefer zero code generation? Run with `-Dtdfa.engine=VM`.
+Modules: `tdfa` (facade, the jur-parity API above) · `tdfa-re2j` (the
+re2j-parity surface) · `tdfa-asm` (default backend: per-pattern JVM
+bytecode) · `tdfa-core` (interpreter-only, zero dependencies, Java 8
+floor). Prefer zero code generation? Run with `-Dtdfa.engine=VM`.
 
 ## Supported syntax
 
@@ -114,8 +118,9 @@ back to a slower engine.
 ## How it's tested
 
 - **5.7 M** differential cases from RE2's exhaustive test suite: 0 failures
-  (pinned in the `RE2_COMPAT` lane since the JUR-default flip — the evidence
-  re-base is the open [work item](docs/jur-compat-wbs.md)).
+  (pinned in the re2j lane — the `tdfa-re2j` surface — since the
+  JUR-default flip; the evidence re-base is the open
+  [work item](docs/jur-compat-wbs.md)).
 - **~300 M** differential fuzz cases vs re2j (overnight soaks): 0 divergences
   (same lane note).
 - re2j-parity suites, Glenn Fowler's testregex corpus, OpenJDK's

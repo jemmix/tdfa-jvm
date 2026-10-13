@@ -42,7 +42,7 @@ case 7: /* ... */
 
         <h2>The shell: devirtualizing the API</h2>
         <p>
-            The backend also emits the <code>Pattern</code>/<code>Matcher</code> pair — <code>GenNNNPattern extends TDFAPattern</code> and <code>GenNNNMatcher extends PatternMatcher</code> — with the engine typed as the <em>concrete final class</em>. The point is call-site quality: <code>Matcher.find()</code> calls into the strategy ladder and the walk leaf "with a statically-known final receiver, so the whole chain devirtualizes and inlines with no megamorphic hop." The ASM module compiles against core only, with facade types appearing as descriptor strings — keeping the module graph acyclic (<code>facade → asm → core</code>).
+            The backend also emits the <code>Pattern</code>/<code>Matcher</code> pair — <code>GenNNNPattern extends TDFAPattern</code> and <code>GenNNNMatcher extends PatternMatcher</code> — with the engine typed as the <em>concrete final class</em>. The point is call-site quality: <code>Matcher.find()</code> calls into the strategy ladder and the walk leaf "with a statically-known final receiver, so the whole chain devirtualizes and inlines with no megamorphic hop." The ASM module compiles against core only, with the machinery (core.compile) pattern/matcher types appearing as descriptor strings — keeping the module graph acyclic (<code>facade → asm → core</code>, with the surfaces wiring the backend in through the core.compile SPI).
         </p>
 
         <h2>Generated code as a naming contract</h2>

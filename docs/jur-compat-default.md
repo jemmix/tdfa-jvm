@@ -222,7 +222,7 @@ Composition rules:
 | The flip commit: default changes, `RE2_COMPAT` preset, `PatternCompiler` whitelist, javadoc, README/`BENCHMARKS.md` re-baseline — **landed** | 1 d |
 | Tests: per-flag unit tests from the campaign replay seeds; jur campaign classifiers → assertions; `DifferentialFuzzer` matrix gains the `RE2_COMPAT` lane; soak + README numbers | 1.5–2 d |
 | Parity suites vs both oracles: jur twins for the re2j parity suites — every translatable case also runs the default lane against the live `java.util.regex` oracle ([work breakdown](jur-compat-wbs.md) item 7) | 1–1.5 d |
-| One `Pattern` or two: evaluate separate jur-compat / re2j-compat surfaces vs the bits-and-preset surface — decide before the API lock ([work breakdown](jur-compat-wbs.md) item 8) — **decided: two surfaces** ([split design](re2j-surface-split.md)) | 0.5 d |
+| One `Pattern` or two: evaluate separate jur-compat / re2j-compat surfaces vs the bits-and-preset surface — decide before the API lock ([work breakdown](jur-compat-wbs.md) item 8) — **decided: two surfaces, landed** (the retired split design lives in the `surface-split/*` squash commits) | 0.5 d |
 
 Total ≈ **1.5–2 weeks** focused through the flip (landed); the open tail
 (item 6 + the two items below it) adds ≈ 3–4 d. Ordering inside it:
@@ -244,8 +244,10 @@ commit.
 - ~~One `Pattern` or two: whether the jur-compat and re2j-compat readings
   belong on one surface (today's shape — the seven opt-out bits + the
   `RE2_COMPAT` preset) or on separate `Pattern` surfaces each owning their
-  default outright~~ **Decided: two surfaces** — the jur facade keeps the
-  root module, the re2j reading moves to its own `re2j/` gradle module with
-  the seven bits + preset leaving the public API; the
-  [split design](re2j-surface-split.md) is the full accounting and its
-  [work breakdown](re2j-surface-split-wbs.md) the execution.
+  default outright~~ **Decided: two surfaces, landed (2026-10-13)** — the
+  jur facade keeps the root module, the re2j reading ships from its own
+  `re2j/` gradle module (`io.github.jemmix.tdfa.re2j.Pattern`, the lane
+  baked in) with the seven bits + preset gone from the public API; the
+  machinery lives in `core.compile` behind a two-method emit SPI. The
+  split's design + work breakdown pages are retired (landed); see the
+  `surface-split/*` squash commits for the full accounting.

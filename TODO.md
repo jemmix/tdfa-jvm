@@ -6,7 +6,7 @@ git history (TODO.md before 2026-09-30).
 
 ## Correctness
 
-- [ ] JUR-compat evidence re-base: per-flag unit tests, campaign classifiers → assertions, `RE2_COMPAT` + `(?u)` lanes in the fuzzer matrix, jur twins for the re2j parity suites, re-run the re2j-pinned evidence, both-lane soak + README numbers (flip landed; [design](docs/jur-compat-default.md), [work breakdown](docs/jur-compat-wbs.md))
+- [ ] JUR-compat evidence re-base: per-flag unit tests, campaign classifiers → assertions, the re2j-surface + `(?u)` lanes in the fuzzer matrix, jur twins for the re2j parity suites, re-run the re2j-pinned evidence, both-lane soak + README numbers (flip + two-surface split landed; [design](docs/jur-compat-default.md), [work breakdown](docs/jur-compat-wbs.md))
 - [ ] Fuzz (?u) lane vs jur oracle (UCC flag in the differential flag matrix)
 - [ ] Overnight soak with cross-rung on; refresh README fuzz numbers
 - [ ] Fuzz families for fact-gated rungs: literal, prefix, cand-scan, anchored-fast
@@ -37,8 +37,14 @@ git history (TODO.md before 2026-09-30).
 - [ ] JPMS module-info
 - [ ] JavaDoc all public API
 - [ ] Re-evaluate `Semantics` scope: parity-axes-only carrier vs absorbing mode knobs (`LONGEST_MATCH`, `MULTI_VALUED_TAGS`); decide before the API lock (breaking after)
-- [ ] Two-`Pattern`-surface split: fold the compile machinery into `core.compile` (+ emit SPI), add the `re2j/` surface module, trim the seven opt-out bits + `RE2_COMPAT` from the facade, migrate consumers — decided, execution open ([design](docs/re2j-surface-split.md), [work breakdown](docs/re2j-surface-split-wbs.md)); gates the 1.0 API lock
-- [ ] Lock 1.0 API stability guarantees
+")
+open(f,'w').write(s); print('TODO done')
+
+# --- ci.yml comments ---
+f='.github/workflows/ci.yml'
+s=open(f).read()
+s=s.replace(# Floor policy: core+asm+facade+re2j ship Java 8 bytecode; pikesim/unicode
+# ship Java 25 (latest LTS). Three jobs:- [ ] Lock 1.0 API stability guarantees
 - [ ] JaCoCo coverage targets
 - [ ] Reproducible jar builds
 - [ ] GraalVM native-image compatibility

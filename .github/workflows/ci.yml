@@ -1,17 +1,17 @@
 name: ci
 
 # Deliberately minimal and boring.
-# Floor policy: core+asm+facade ship Java 8 bytecode; pikesim/unicode ship
-# Java 25 (latest LTS). Three jobs:
+# Floor policy: core+asm+facade+re2j ship Java 8 bytecode; pikesim/unicode
+# ship Java 25 (latest LTS). Three jobs:
 #   check: full gate on a current JDK (everything; EP lint runs inside
 #       compile via --release cross-compilation),
 #   spotbugs: JDK 25 (4.9.x cannot scan JDK 26 runtime classes; the build
 #       self-skips it there, so this row is where it actually ENFORCES),
-#   jars-and-tests: THE floor proof — core+asm+facade compiled by a REAL
-#       JDK 8 javac (Gradle toolchain, -PrealJdk8), the rest by JDK 25; then
-#       the unit tests are compiled AND run on JDK 25 against the packaged
-#       jars (-PagainstJars); then a runtime smoke compiled+run on the JDK 8
-#       itself against the core+asm+facade jars.
+#   jars-and-tests: THE floor proof — core+asm+facade+re2j compiled by a
+#       REAL JDK 8 javac (Gradle toolchain, -PrealJdk8), the rest by JDK 25;
+#       then the unit tests are compiled AND run on JDK 25 against the
+#       packaged jars (-PagainstJars); then a runtime smoke compiled+run on
+#       the JDK 8 itself against the core+asm+facade+re2j jars.
 # Actions are pinned by commit SHA; bump deliberately.
 
 on:
@@ -80,18 +80,18 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         with:
           validate-wrappers: true
-      # Builds all six shipped jars (core+asm+facade via a real JDK 8 javac;
+      # Builds all seven shipped jars (core+asm+facade+re2j via a real JDK 8 javac;
       # the rest via JDK 25 / --release 25) and runs the unit suite against
       # the PACKAGED jars on the JDK 25 daemon. BytecodeFloorTest then pins
       # the very jars this job produces.
-      - name: Build jars (core+asm+facade with real JDK 8 javac) + unit tests vs jars (JDK 25)
+      - name: Build jars (core+asm+facade+re2j with real JDK 8 javac) + unit tests vs jars (JDK 25)
         run: ./gradlew :tests:unit:test -PrealJdk8 -PagainstJars --stacktrace
       - name: Switch to a real JDK 8
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: '8'
-      - name: Smoke on JDK 8 (compile + run against the core+asm+facade jars)
+      - name: Smoke on JDK 8 (compile + run against the core+asm+facade+re2j jars)
         run: |
           set -euxo pipefail
           java -version
