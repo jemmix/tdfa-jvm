@@ -1,7 +1,7 @@
 package io.github.jemmix.tdfa.parity;
 
 import io.github.jemmix.tdfa.Pattern;
-import io.github.jemmix.tdfa.PatternMatcher;
+import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.sim.PikeSim;
 import org.junit.jupiter.params.ParameterizedTest;

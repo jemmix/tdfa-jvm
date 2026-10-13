@@ -11,11 +11,11 @@ rejected alternatives, the collision, the break). Feeds the
 
 Landable with zero behavior change; everything downstream re-points.
 
-- [ ] Move `TDFAPattern`, `PatternCompiler`, `PatternMatcher`, `SerialProxy`, `FindOnlyWholeEngine` → `core.compile` (public-but-internal, documented not-shipped)
-- [ ] Two-method SPI in `core.compile` (generate + emit), implemented in `:asm`, wired by the surfaces' `compile` — the machinery's only asm touch is `PatternCompiler.java:238`/`:263`
-- [ ] Re-point `ShellEmitter` descriptors (`TDFAPattern`/`PatternMatcher`/`Pattern$Utf8` → `core.compile` names); keep the `io.github.jemmix.tdfa.gen` shell package
-- [ ] `writeReplace` stays public (cross-package shell inheritance)
-- [ ] Re-pin `EmittedSurfaceConformanceTest`, `PatternSerializationTest`, `EmittedBytecodePolicyTest`; full `./gradlew check`, both backends
+- [x] Move `TDFAPattern`, `PatternCompiler`, `PatternMatcher`, `SerialProxy`, `FindOnlyWholeEngine` → `core.compile` (public-but-internal, documented not-shipped)
+- [x] Two-method SPI in `core.compile` (generate + emit), implemented in `:asm`, wired by the surfaces' `compile` — the machinery's only asm touch is `PatternCompiler.java:238`/`:263`
+- [x] Re-point `ShellEmitter` descriptors (`TDFAPattern`/`PatternMatcher`/`Pattern$Utf8` → `core.compile` names); keep the `io.github.jemmix.tdfa.gen` shell package
+- [x] `writeReplace` stays public (cross-package shell inheritance)
+- [x] Re-pin `EmittedSurfaceConformanceTest`, `PatternSerializationTest`, `EmittedBytecodePolicyTest`; full `./gradlew check`, both backends
 
 ## 1. The `:re2j` surface
 

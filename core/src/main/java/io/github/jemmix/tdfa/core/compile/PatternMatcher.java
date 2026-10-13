@@ -1,27 +1,32 @@
-package io.github.jemmix.tdfa;
+package io.github.jemmix.tdfa.core.compile;
 
 import io.github.jemmix.tdfa.core.emit.EmittedSurface;
 import io.github.jemmix.tdfa.core.engine.Matcher;
 
 /**
- * The stateful matcher a {@link Pattern} produces: find-iteration, groups,
- * replacement. Extends the core-tier {@link io.github.jemmix.tdfa.core.engine.Matcher}
- * (which carries the full mirror surface and the generated-shell contract)
- * with the pattern back-reference {@link #pattern()}.
+ * The stateful matcher every surface's {@code Pattern} produces:
+ * find-iteration, groups, replacement. Extends the core-tier
+ * {@link Matcher} (which carries the full mirror surface and the
+ * generated-shell contract) with the pattern back-reference
+ * {@link #pattern()}.
  *
  * <p><b>Thread safety:</b> NOT thread-safe — a matcher carries match
  * iteration state (current match, append position); create one per thread
- * (or {@link #reset()} between sequential uses). The input
+ * (or {@code reset()} between sequential uses). The input
  * {@link CharSequence} must not be mutated while the matcher is in use:
  * {@code length()} is cached at construction and indices are re-read during
  * matching, so concurrent mutation produces unspecified results.
  *
  * <p>Public because generated per-pattern shells (defined in a child
  * classloader) extend this class and their matchers call its constructor.
+ *
+ * <p>Public-but-internal: machinery tier ({@code core.compile}), shared
+ * by both surfaces — the surfaces' {@code Pattern} interfaces are the
+ * shipped API.
  */
 public class PatternMatcher extends Matcher {
 
-    private final Pattern pattern;
+    private final TDFAPattern pattern;
 
     @EmittedSurface // emitted shells super-ctor call
     public PatternMatcher(TDFAPattern pattern, CharSequence input) {
@@ -30,9 +35,11 @@ public class PatternMatcher extends Matcher {
     }
 
     /**
-     * Returns this matcher's {@link Pattern}.
+     * Returns this matcher's {@link TDFAPattern} (the machinery-level
+     * pattern view — the compiled engines, the surface, the state the
+     * matchers were built from).
      */
-    public Pattern pattern() {
+    public TDFAPattern pattern() {
         return pattern;
     }
 }

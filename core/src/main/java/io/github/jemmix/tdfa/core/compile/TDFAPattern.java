@@ -1,4 +1,4 @@
-package io.github.jemmix.tdfa;
+package io.github.jemmix.tdfa.core.compile;
 
 import io.github.jemmix.tdfa.core.emit.EmittedSurface;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
@@ -7,27 +7,35 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
+import java.io.Serializable;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Shared {@link Pattern} implementation: holds the compiled engines and the
- * pattern/flags state. Used directly on the interpreter path and as the
- * emission-failure fallback; generated per-pattern shells
- * ({@code GenNNNPattern}) extend it, declaring a public final engine field
- * of the concrete (or {@link RegexEngine}) type that their matchers call
- * directly.
+ * Shared {@code Pattern} machinery implementation: holds the compiled
+ * engines and the pattern/flags state of every surface's patterns. Used
+ * directly on the interpreter path (wrapped by each surface's
+ * not-generated carrier) and as the emission-failure fallback base;
+ * generated per-pattern shells ({@code GenNNNPattern}) extend it,
+ * implement their surface's {@code Pattern} interface, and declare a
+ * public final engine field of the concrete (or {@link RegexEngine})
+ * type that their matchers call directly.
  *
  * <p>Public because generated shells are defined in a child classloader
  * (a different runtime package) and must subclass and call into it.
  *
+ * <p>Public-but-internal: machinery tier ({@code core.compile}) — the
+ * surfaces' {@code Pattern} interfaces are the shipped API, this class
+ * is their shared brain and is not itself shipped API.
+ *
  * <p><b>Thread safety:</b> instances are immutable after construction
- * and safe for concurrent use from multiple threads. The {@link
- * PatternMatcher matchers} they produce are NOT thread-safe — one matcher
- * per thread.
+ * and safe for concurrent use from multiple threads. The
+ * {@link PatternMatcher matchers} they produce are NOT thread-safe —
+ * one matcher per thread.
  */
-public class TDFAPattern implements Pattern {
+public class TDFAPattern implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
@@ -54,16 +62,20 @@ public class TDFAPattern implements Pattern {
      * and resolves per the UnicodeDataProvider serialization convention.
      */
     private transient UnicodeDataProvider provider;
+    /** The surface this pattern compiled through — the lane identity
+     *  (serialization target, equality axis, shell interface). */
+    private final PatternSurface surface;
 
     @EmittedSurface // shells super-ctor call: signature feeds ShellEmitter descriptor
     public TDFAPattern(String pattern, int flags, int programSize, RegexEngine engine, WholeEngine wholeEngine,
-        UnicodeDataProvider provider) {
+        UnicodeDataProvider provider, PatternSurface surface) {
         this.pattern = pattern;
         this.flags = flags;
         this.programSize = programSize;
         this.engine = engine;
         this.wholeEngine = wholeEngine;
         this.provider = provider;
+        this.surface = surface;
     }
 
     /**
@@ -81,9 +93,17 @@ public class TDFAPattern implements Pattern {
     }
 
     /**
+     * The surface this pattern compiled through ({@code PatternSurface}
+     * machinery identity: lane, roster, recompile target).
+     */
+    public PatternSurface surface() {
+        return surface;
+    }
+
+    /**
      * Engine for {@code matches()}: whole-exact over the one artifact
      * (its side table when the pike cut bit), compiled eagerly — or, on
-     * {@link Pattern#FIND_ONLY} compiles, the refusing non-engine whose
+     * {@code FIND_ONLY} compiles, the refusing non-engine whose
      * {@code matchWhole} throws {@link UnsupportedOperationException}
      * (nothing whole was built; see {@link FindOnlyWholeEngine}).
      */
@@ -92,32 +112,36 @@ public class TDFAPattern implements Pattern {
         return wholeEngine;
     }
 
-    @Override
     public PatternMatcher matcher(CharSequence input) {
         return new PatternMatcher(this, input);
     }
 
-    @Override
     public PatternMatcher matcher(byte[] input) {
-        return new PatternMatcher(this, Pattern.Utf8.decode(input));
+        return new PatternMatcher(this, decodeUtf8(input));
     }
 
-    @Override
+    /**
+     * UTF-8 decode shared by the {@code byte[]} overloads (re2j's
+     * {@code MatcherInput.utf8}) — linked by name from the emitted
+     * shells' {@code matcher(byte[])} overrides.
+     */
+    @EmittedSurface
+    public static String decodeUtf8(byte[] bytes) {
+        return new String(bytes, StandardCharsets.UTF_8);
+    }
+
     public boolean matches(String input) {
         return matcher(input).matches();
     }
 
-    @Override
     public boolean matches(byte[] input) {
-        return matches(Pattern.Utf8.decode(input));
+        return matches(decodeUtf8(input));
     }
 
-    @Override
     public String[] split(String input) {
         return split(input, 0);
     }
 
-    @Override
     public String[] split(String input, int limit) {
         PatternMatcher m = matcher(input);
         List<String> result = new ArrayList<>();
@@ -164,18 +188,18 @@ public class TDFAPattern implements Pattern {
         return result.toArray(new String[0]);
     }
 
-    @Override
     public void reset() {
     }
 
     /**
-     * Serialize as the {@link SerialProxy} — pattern+flags+provider identity,
-     * recompiled on read. Generated subclasses' classes live in child loaders
-     * that won't exist in the reading process, so the state proxy is the only
-     * stable form. The pinned provider (if any) round-trips as its class
-     * name, resolved per the UnicodeDataProvider serialization convention; a
-     * pattern compiled against the process default serializes without a
-     * provider and recompiles against the READER's default.
+     * Serialize as the {@link SerialProxy} — surface + pattern + flags +
+     * provider identity, recompiled on read. Generated subclasses'
+     * classes live in child loaders that won't exist in the reading
+     * process, so the state proxy is the only stable form. The pinned
+     * provider (if any) round-trips as its class name, resolved per the
+     * UnicodeDataProvider serialization convention; a pattern compiled
+     * against the process default serializes without a provider and
+     * recompiles against the READER's default.
      */
     // PUBLIC, not private: Java serialization only inherits writeReplace
     // across package boundaries when it is non-private — generated shells
@@ -184,41 +208,38 @@ public class TDFAPattern implements Pattern {
     // raw fields (including the non-serializable engine) hit the wire and
     // serialization throws NotSerializableException.
     public Object writeReplace() {
-        return new SerialProxy(pattern, flags, provider == null ? null : provider.getClass().getName());
+        return new SerialProxy(surface.id(), surface.triggerClass(), pattern, flags,
+            provider == null ? null : provider.getClass().getName());
     }
 
     /**
-     * Recompile the (transient) engines after deserialization, from {@code pattern}+{@code flags}.
+     * Recompile the (transient) engines after deserialization, from
+     * {@code pattern}+{@code flags} through this pattern's surface.
      */
     private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
         in.defaultReadObject();
-        TDFAPattern tmp = (TDFAPattern) Pattern.compile(pattern, flags, null, provider);
+        TDFAPattern tmp = surface.recompile(pattern, flags, provider);
         this.engine = tmp.engine;
         this.wholeEngine = tmp.wholeEngine;
         this.provider = tmp.provider;
     }
 
-    @Override
     public int programSize() {
         return programSize;
     }
 
-    @Override
     public String pattern() {
         return pattern;
     }
 
-    @Override
     public int flags() {
         return flags;
     }
 
-    @Override
     public int groupCount() {
         return engine.groupCount();
     }
 
-    @Override
     public Map<String, Integer> namedGroups() {
         return engine.namedGroups();
     }
@@ -230,20 +251,23 @@ public class TDFAPattern implements Pattern {
 
     @Override
     public boolean equals(Object o) {
-        // State-based equality across implementations (shared and generated):
-        // re2j semantics — same pattern string + same flags.
+        // State-based equality across implementations (shared, wrapped and
+        // generated): re2j semantics — same pattern string + same flags —
+        // AND the same surface: a jur-surface and a re2j-surface compile
+        // of the same regex+flags answer in different lanes and are never
+        // equal.
         if (this == o) {
             return true;
         }
-        if (!(o instanceof Pattern)) {
+        if (!(o instanceof TDFAPattern)) {
             return false;
         }
-        Pattern p = (Pattern) o;
-        return flags == p.flags() && pattern.equals(p.pattern());
+        TDFAPattern p = (TDFAPattern) o;
+        return surface == p.surface && flags == p.flags && pattern.equals(p.pattern);
     }
 
     @Override
     public int hashCode() {
-        return 31 * pattern.hashCode() + flags;
+        return 31 * (31 * pattern.hashCode() + flags) + surface.id().hashCode();
     }
 }

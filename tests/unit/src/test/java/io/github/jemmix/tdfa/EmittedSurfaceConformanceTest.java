@@ -1,5 +1,8 @@
 package io.github.jemmix.tdfa;
 
+import io.github.jemmix.tdfa.core.compile.PatternMatcher;
+import io.github.jemmix.tdfa.core.compile.PatternSurface;
+import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.MatchHolder;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
@@ -119,7 +122,7 @@ class EmittedSurfaceConformanceTest {
     }
 
     @Test
-    void shellHooks() throws Exception {
+    void shellHooks() {
         // engine.Matcher's protected fields, linked from emitted shells (the 7
         // bookkeeping fields + the scratch carrier handed to carrier-aware
         // engine calls).
@@ -130,11 +133,12 @@ class EmittedSurfaceConformanceTest {
         // Carrier itself: its name is baked into the emitters' method
         // descriptors (match/matchWhole/takeRegs/extractOne/wholeOne).
         hookC(MatchScratch.class);
-        // Facade ctors linked by descriptor from ShellEmitter.
+        // Machinery ctors/members linked by descriptor from ShellEmitter
+        // (core.compile since the two-surface split).
         hookC(TDFAPattern.class, String.class, int.class, int.class, RegexEngine.class, WholeEngine.class,
-            UnicodeDataProvider.class);
+            UnicodeDataProvider.class, PatternSurface.class);
         hookC(PatternMatcher.class, TDFAPattern.class, CharSequence.class);
-        hookM(Class.forName("io.github.jemmix.tdfa.Pattern$Utf8"), "decode", byte[].class);
+        hookM(TDFAPattern.class, "decodeUtf8", byte[].class);
     }
 
     @Test

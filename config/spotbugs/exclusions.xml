@@ -70,10 +70,24 @@
         <Bug pattern="DE_MIGHT_IGNORE"/>
     </Match>
 
-    <!-- PatternMatcher exposes its Pattern (the facade's matcher surface is
-         the frozen re2j-shaped API). -->
-    <Match classregex="^io\.github\.jemmix\.tdfa\.PatternMatcher$">
-        <Bug pattern="EI_EXPOSE_REP"/>
+    <!-- PatternMatcher exposes its TDFAPattern (the shared machinery
+         matcher surface is the frozen re2j-shaped API both surfaces
+         serve); the ctor-stored pattern is pipeline-owned (effectively
+         immutable — same trusted-tier posture as Tdfa's construction
+         entries above). -->
+    <Match classregex="^io\.github\.jemmix\.tdfa\.core\.compile\.PatternMatcher$">
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
+
+    <!-- TDFAPattern's non-transient `surface` field (PatternSurface, not
+         Serializable): every TDFAPattern serialization is intercepted by
+         the public writeReplace (inherited by the generated shells) and
+         replaced by the surface-aware SerialProxy BEFORE any field hits
+         the wire — the surface travels as id + trigger-class strings and
+         the proxy's recompile reconstitutes it. The field can never
+         reach a stream. -->
+    <Match classregex="^io\.github\.jemmix\.tdfa\.core\.compile\.TDFAPattern$">
+        <Bug pattern="SE_BAD_FIELD"/>
     </Match>
 
 </FindBugsFilter>
