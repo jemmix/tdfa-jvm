@@ -1,5 +1,4 @@
 import io.github.jemmix.tdfa.Pattern;
-import io.github.jemmix.tdfa.PatternMatcher;
 import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
