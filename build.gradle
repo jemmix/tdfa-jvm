@@ -1,11 +1,12 @@
 plugins {
     id 'java-library'
     // Static analysis, versions declared here and
-    // inherited by :core and :asm. Kept deliberately minimal and centralized:
+    // inherited by :core, :asm and :re2j. Kept deliberately minimal and
+    // centralized:
     // ErrorProne (compile-time semantic checks, also usable as a plain javac
     // plugin — decade-stable invocation) and SpotBugs (bytecode analysis over
     // the jar, also runnable standalone via `java -jar spotbugs.jar -textui`).
-    // Applied only to the three library modules (facade, core, asm) —
+    // Applied only to the four library modules (facade, core, asm, re2j) —
     // tests/benchmarks stay lint-free.
     id 'net.ltgt.errorprone' version '5.1.1'
     id 'com.github.spotbugs' version '6.5.11'
