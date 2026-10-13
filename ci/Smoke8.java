@@ -12,11 +12,12 @@ import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 /**
  * JDK 8 runtime smoke for the Java 8 floor modules (CI job jars-and-tests).
  * Compiled AND run on a real JDK 8 against the
- * core, asm, and facade jars — the three modules that ship Java 8 bytecode.
- * The facade's only runtime dependencies are core and asm (plus asm 9.9.1
- * itself, major 49), so the whole public API loads and runs on 8: the user
- * tier (Pattern/PatternMatcher — default engine path generates the
- * per-pattern ASM shell on the JDK 8 runtime, emitted V1_8) plus the
+ * core, asm, facade, and re2j-surface jars — the four modules that ship
+ * Java 8 bytecode. The facade's and the re2j surface's only runtime
+ * dependencies are core and asm (plus asm 9.9.1 itself, major 49), so the
+ * whole public API loads and runs on 8: the user tier
+ * (Pattern/PatternMatcher, both surfaces — default engine path generates
+ * the per-pattern ASM shell on the JDK 8 runtime, emitted V1_8) plus the
  * core-tier pipeline directly (parse/TNFA/TDFA, the table interpreter
  * TdfaRunner). pikesim and the unicode data modules ship Java 25 bytecode
  * and cannot load on 8 by design. Exits non-zero on any mismatch.
@@ -79,6 +80,18 @@ public class Smoke8 {
         expect("facade split [0]", parts.length > 0 ? parts[0] : null, "");
         expect("facade split [1]", parts.length > 1 ? parts[1] : null, " ");
         expect("facade split [2]", parts.length > 2 ? parts[2] : null, " ");
+
+        // --- re2j surface tier: the other Pattern, same runtime ---
+        // The RE2-lineage reading is baked in (no preset bits): a$ matches
+        // at end of text only — the jur facade default below answers the
+        // java.util.regex reading (before a final terminator too).
+        io.github.jemmix.tdfa.re2j.Pattern r = io.github.jemmix.tdfa.re2j.Pattern.compile("a$");
+        expect("re2j find eot", r.matcher("a\n").find(), false);
+        expect("re2j find", r.matcher("a").find(), true);
+        PatternMatcher rm = io.github.jemmix.tdfa.re2j.Pattern.compile("(\\w+)-(\\d+)").matcher("order-77!");
+        expect("re2j find g", rm.find(), true);
+        expect("re2j g1", rm.group(1), "order");
+        expect("re2j jur contrast", io.github.jemmix.tdfa.Pattern.compile("a$").matcher("a\n").find(), true);
 
         if (failures > 0) {
             System.err.println("SMOKE8 FAILURES: " + failures);

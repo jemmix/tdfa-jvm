@@ -34,11 +34,11 @@ Landable with zero behavior change; everything downstream re-points.
 
 ## 4. Consumer migration (~37 files)
 
-- [ ] `tests/unit` (14): preset deletion; `Re2CompatFlagsTest` dissolves; `PivotLanesTest` mixed-axis probes move to `CompileOptions`
-- [ ] `tests/parity/re2j` (~15): oracles, parity suites, fuzzers — the `RE2_COMPAT` lane becomes the re2j-surface lane (campaign matrix axis included)
-- [ ] `tests/parity/re2j-suite`: the `RE2.java` fixture (rides item 3's rename)
-- [ ] `testlib/parity`: `LayeredComparator`
-- [ ] Audit `benchmarks/micro` + `ci/Smoke8.java` (expected: no `RE2_COMPAT` usage; Smoke8 gains a re2j-surface smoke)
+- [x] `tests/unit` (14): preset deletion; `Re2CompatFlagsTest` dissolves; `PivotLanesTest` mixed-axis probes move to `CompileOptions`
+- [x] `tests/parity/re2j` (~15): oracles, parity suites, fuzzers — the `RE2_COMPAT` lane becomes the re2j-surface lane (campaign matrix axis included)
+- [x] `tests/parity/re2j-suite`: the `RE2.java` fixture (rides item 3's rename)
+- [x] `testlib/parity`: `LayeredComparator`
+- [x] Audit `benchmarks/micro` + `ci/Smoke8.java` (expected: no `RE2_COMPAT` usage; Smoke8 gains a re2j-surface smoke)
 
 ## 5. Gradle / CI / docs
 

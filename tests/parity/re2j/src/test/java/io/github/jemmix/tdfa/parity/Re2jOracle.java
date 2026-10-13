@@ -24,10 +24,9 @@ public final class Re2jOracle {
     /** re2j-exact Unicode tables so parity tests are bit-exact against re2j, not JDK-version-dependent. */
     private static final UnicodeDataProvider UNICODE = Re2jUnicodeProvider.INSTANCE;
 
-    /** The lane this suite pins: tdfa under the JUR-compat opt-out preset,
-     *  i.e. the RE2-lineage reading re2j answers in (the pre-flip default);
-     *  the facade default is java.util.regex parity since the flip. */
-    private static final int RE2_LANE = io.github.jemmix.tdfa.Pattern.RE2_COMPAT;
+    /** The lane this suite pins: tdfa under the re2j surface, i.e. the
+     *  RE2-lineage reading re2j answers in (baked in as the surface
+     *  default); the facade default is java.util.regex parity. */
 
     private Re2jOracle() {
     }
@@ -112,11 +111,11 @@ public final class Re2jOracle {
      *  the engine-truth lane: what the library does when not pinned to an
      *  oracle/snapshot fold universe. */
     public static int[] tdfaFindDefaultUniverse(String pattern, String input) {
-        return tdfaSpans(io.github.jemmix.tdfa.Pattern.compile(pattern, RE2_LANE, null, null).matcher(input));
+        return tdfaSpans(io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, null, null).matcher(input));
     }
 
     public static int[] tdfaFind(String pattern, String input, RegexEngineFactory factory) {
-        Matcher m = io.github.jemmix.tdfa.Pattern.compile(pattern, RE2_LANE, factory, UNICODE).matcher(input);
+        Matcher m = io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, factory, UNICODE).matcher(input);
         return tdfaSpans(m);
     }
 
@@ -141,8 +140,8 @@ public final class Re2jOracle {
     }
 
     public static int[] tdfaFindPosix(String pattern, String input, RegexEngineFactory factory) {
-        Matcher m = io.github.jemmix.tdfa.Pattern
-            .compile(pattern, io.github.jemmix.tdfa.Pattern.LONGEST_MATCH | RE2_LANE, factory, UNICODE).matcher(input);
+        Matcher m = io.github.jemmix.tdfa.re2j.Pattern
+            .compile(pattern, io.github.jemmix.tdfa.re2j.Pattern.LONGEST_MATCH, factory, UNICODE).matcher(input);
         if (!m.find()) {
             return null;
         }
@@ -164,7 +163,7 @@ public final class Re2jOracle {
 
     public static List<String> tdfaFindAll(String pattern, String input, RegexEngineFactory factory) {
         List<String> out = new ArrayList<>();
-        Matcher m = io.github.jemmix.tdfa.Pattern.compile(pattern, RE2_LANE, factory, UNICODE).matcher(input);
+        Matcher m = io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, factory, UNICODE).matcher(input);
         while (m.find()) {
             out.add(m.group());
         }
@@ -193,7 +192,7 @@ public final class Re2jOracle {
 
     public static void assertSameCompileSuccess(String pattern, RegexEngineFactory factory) {
         com.google.re2j.Pattern.compile(pattern);
-        io.github.jemmix.tdfa.Pattern.compile(pattern, RE2_LANE, factory, UNICODE);
+        io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, factory, UNICODE);
     }
 
     public static void assertSameCompileReject(String pattern, RegexEngineFactory factory) {
@@ -204,7 +203,7 @@ public final class Re2jOracle {
             re2jThrew = true;
         }
         try {
-            io.github.jemmix.tdfa.Pattern.compile(pattern, RE2_LANE, factory, UNICODE);
+            io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, factory, UNICODE);
         } catch (Exception e) {
             tdfaThrew = true;
         }

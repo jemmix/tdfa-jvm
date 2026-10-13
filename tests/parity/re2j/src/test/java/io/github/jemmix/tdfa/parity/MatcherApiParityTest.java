@@ -23,9 +23,9 @@ class MatcherApiParityTest {
     }
 
     private static io.github.jemmix.tdfa.core.engine.Matcher tdfaM(String p, String in, RegexEngineFactory factory) {
-        // RE2_COMPAT: the re2j contract lane (the pre-flip default) —
+        // re2j surface (the baked-in lane) —
         // this file's surrogate battery pins codepoint-discipline scans.
-        return io.github.jemmix.tdfa.Pattern.compile(p, io.github.jemmix.tdfa.Pattern.RE2_COMPAT, factory).matcher(in);
+        return io.github.jemmix.tdfa.re2j.Pattern.compile(p, 0, factory).matcher(in);
     }
 
     @ParameterizedTest

@@ -1,6 +1,6 @@
 package io.github.jemmix.tdfa.re2jsuite;
 
-import io.github.jemmix.tdfa.Pattern;
+import io.github.jemmix.tdfa.re2j.Pattern;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -93,21 +93,21 @@ final class RE2 {
     private RE2(String pattern, boolean posix) {
         this.pattern = pattern;
         this.longest = posix;
-        // RE2_COMPAT: this suite pins re2j's own corpus against re2j
-        // behavior — the lane re2j answers in (the pre-flip default);
-        // the facade default is java.util.regex parity since the flip.
-        if (posix) this.posixPat = Pattern.compile(pattern, Pattern.LONGEST_MATCH | Pattern.RE2_COMPAT);
-        else this.perlPat = Pattern.compile(pattern, Pattern.RE2_COMPAT);
+        // re2j surface: this suite pins re2j's own corpus against re2j
+        // behavior — the lane the surface bakes in; the facade default is
+        // java.util.regex parity.
+        if (posix) this.posixPat = Pattern.compile(pattern, Pattern.LONGEST_MATCH);
+        else this.perlPat = Pattern.compile(pattern);
     }
 
     private Pattern pat() {
         if (longest) {
             Pattern p = posixPat;
-            if (p == null) { p = Pattern.compile(pattern, Pattern.LONGEST_MATCH | Pattern.RE2_COMPAT); posixPat = p; }
+            if (p == null) { p = Pattern.compile(pattern, Pattern.LONGEST_MATCH); posixPat = p; }
             return p;
         }
         Pattern p = perlPat;
-        if (p == null) { p = Pattern.compile(pattern, Pattern.RE2_COMPAT); perlPat = p; }
+        if (p == null) { p = Pattern.compile(pattern); perlPat = p; }
         return p;
     }
 
