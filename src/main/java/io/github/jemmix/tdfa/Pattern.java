@@ -22,9 +22,12 @@ import java.util.Map;
  * interpretation matches {@code java.util.regex} on every axis it
  * diverges from the RE2 lineage on (line terminators, bare-CI fold
  * universe, UTF-16 unit boundaries, anchor end-of-line rules,
- * zero-width iteration spans, {@code (?U)}); the seven JUR-compat
- * opt-out bits below restore the RE2 side per axis, and
- * {@link #RE2_COMPAT} restores it wholesale. Malformed syntax fails
+ * zero-width iteration spans, {@code (?U)}); the RE2-lineage reading of
+ * those axes ships as its own surface — the {@code :re2j} module's
+ * {@code io.github.jemmix.tdfa.re2j.Pattern}, with the lane baked in —
+ * and a per-axis mixed probe remains available through
+ * {@link CompileOptions#semantics(io.github.jemmix.tdfa.core.tnfa.Semantics)}.
+ * Malformed syntax fails
  * with {@link io.github.jemmix.tdfa.core.parser.PatternSyntaxException}; a pattern
  * that parses but exceeds a resource budget fails with
  * {@link io.github.jemmix.tdfa.core.budget.PatternTooLargeException} (the
@@ -159,102 +162,6 @@ public interface Pattern extends Serializable {
      * with this flag.
      */
     int MULTI_VALUED_TAGS = PatternSurface.MULTI_VALUED_TAGS;
-
-    /**
-     * <b>JUR-compat axes.</b> The seven flags from {@code UNIX_LINES}
-     * through {@code UNGREEDY_U} are the opt-out bits of the JUR-compat
-     * default design ({@code docs/jur-compat-default.md}): UNSET (the
-     * default) selects {@code java.util.regex}-parity behavior on that
-     * axis, SET selects the RE2-lineage (re2j-pinned) behavior this
-     * library shipped before the flip. {@link #RE2_COMPAT} is their OR.
-     * Degenerate combinations ({@code UNIX_LINES} with no
-     * {@code .}/anchors, {@code UNICODE_CASE} without
-     * {@link #CASE_INSENSITIVE}, {@code UNGREEDY_U} with no {@code (?U}
-     * in the pattern) are documented no-ops, not errors. Bit values are
-     * this library's own — names and semantics mirror the JDK flags it
-     * snapped onto, numerics do not.
-     *
-     * <p>This flag: {@code .}, {@code ^} and {@code $} recognize only
-     * {@code \n} as a line terminator — JDK-exact
-     * {@code java.util.regex.Pattern.UNIX_LINES} name and semantics.
-     * Unset (the default) they recognize the full
-     * {@code java.util.regex} terminator set: {@code \n}, {@code \r},
-     * {@code \r\n}, U+0085, U+2028, U+2029.
-     */
-    int UNIX_LINES = PatternSurface.UNIX_LINES;
-
-    /**
-     * Flag: {@link #CASE_INSENSITIVE} folds the full Unicode simple-fold
-     * universe — JDK-exact {@code java.util.regex.Pattern.UNICODE_CASE}
-     * name and semantics. Unset (the default), bare
-     * {@code CASE_INSENSITIVE} folds ASCII only, like bare
-     * {@code java.util.regex} case-insensitivity; OR this bit in for the
-     * fold-Unicode behavior.
-     */
-    int UNICODE_CASE = PatternSurface.UNICODE_CASE;
-
-    /**
-     * Flag: codepoint discipline — scans skip surrogate-pair interiors,
-     * matches start and end on codepoint (not UTF-16 unit) edges. Unset
-     * (the default) is UTF-16 unit semantics, like
-     * {@code java.util.regex}: matches may start and end at any unit,
-     * lone surrogates match as single units, and {@code \b}/{@code \B}
-     * evaluate at every unit position.
-     */
-    int CODEPOINT_BOUNDARIES = PatternSurface.CODEPOINT_BOUNDARIES;
-
-    /**
-     * Flag: a multiline {@code ^} may match the empty last line after a
-     * trailing line terminator (re2j behavior). Unset (the default) it
-     * never does, like {@code java.util.regex}: on {@code "a\n"} a
-     * {@code (?m)^} matches at 0 only, never at 2.
-     */
-    int EMPTY_LAST_LINE = PatternSurface.EMPTY_LAST_LINE;
-
-    /**
-     * Flag: {@code $} matches only at end of input, exactly {@code \z}
-     * (re2j behavior). Unset (the default) {@code $} may also match just
-     * before a final line terminator, like {@code java.util.regex}: on
-     * {@code "a\n"}, {@code a$} matches {@code 0..1}.
-     */
-    int END_OF_TEXT_ONLY = PatternSurface.END_OF_TEXT_ONLY;
-
-    /**
-     * Flag: a zero-width final loop iteration reports its group's span —
-     * {@code (\z)*} on {@code ""} yields group 1 = {@code 0..0} (re2j
-     * behavior). Unset (the default) follows {@code java.util.regex}'s
-     * two sub-families: a greedy min-0 quantifier directly on a capture
-     * whose body is all-zero-width leaves the group non-participating
-     * ({@code -1}), while an empty-capable non-deterministic body
-     * reports the final zero-width iteration's span
-     * ({@code (a*)*} on {@code "aa"} &rarr; group 1 {@code 2..2}).
-     */
-    int EMPTY_ITERATION_SPANS = PatternSurface.EMPTY_ITERATION_SPANS;
-
-    /**
-     * Flag: {@code (?U)} / {@code (?U:...)} mean ungreedy — quantifiers
-     * default to lazy, a trailing {@code ?} makes them greedy (the
-     * PCRE/RE2 meaning, re2j's reading). Unset (the default)
-     * {@code (?U)} is scoped {@code UNICODE_CASE} instead, per
-     * {@code java.util.regex}. v1 limit: group-scoped {@code (?U:...}
-     * fold upgrades need per-scope fold universes in the parser and are
-     * rejected with a {@code PatternSyntaxException}; top-level
-     * {@code (?U)} only.
-     */
-    int UNGREEDY_U = PatternSurface.UNGREEDY_U;
-
-    /**
-     * Preset: preserves the pre-flip (re2j-pinned) behavior on all seven
-     * JUR-compat axes — the bitwise OR of {@link #UNIX_LINES},
-     * {@link #UNICODE_CASE}, {@link #CODEPOINT_BOUNDARIES},
-     * {@link #EMPTY_LAST_LINE}, {@link #END_OF_TEXT_ONLY},
-     * {@link #EMPTY_ITERATION_SPANS} and {@link #UNGREEDY_U}. Migrating
-     * a pre-flip compile is one OR with this constant; individual bits
-     * restore single axes. A plain {@code int}, so {@code & ~BIT}
-     * subtraction and OR-composition with the other flags both work.
-     */
-    int RE2_COMPAT = UNIX_LINES | UNICODE_CASE | CODEPOINT_BOUNDARIES | EMPTY_LAST_LINE | END_OF_TEXT_ONLY
-        | EMPTY_ITERATION_SPANS | UNGREEDY_U;
 
     /**
      * Compile {@code regex} with default flags (leftmost-first, generated engine).

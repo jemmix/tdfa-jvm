@@ -40,10 +40,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *     pairs and nothing else — İ/ı inert on both sides), and the
  *     {@code (?U)} reading against java's own spelling of scoped
  *     UNICODE_CASE (inline {@code (?u)});</li>
- * <li><b>RE2 lane</b> (every axis set — the facade's {@code RE2_COMPAT}
+ * <li><b>RE2 lane</b> (every axis set — the re2j surface's
  *     lane since the flip) against the facade's own engines on the same
  *     battery: the explicit-lane core compile must answer exactly what
- *     {@code Pattern.compile(regex, RE2_COMPAT)} answers;</li>
+ *     re2j-surface compile answers;</li>
  * <li>axis-single hybrid lanes (UNIX_LINES added, EMPTY_LAST_LINE added,
  *     UNICODE_CASE added) for the separable effects the split bits exist
  *     for — the single-axis fold lane against java
@@ -458,7 +458,7 @@ class PivotLanesTest {
         for (String pat : new String[]{"(?U)a", "(?U)(?i)a", "a|(?U)b", "(?U-s)a", "(?Ui)a", "(?U)a|b"}) {
             assertThatCode(() -> compileTdfa(pat, JUR)).as("JUR lane accepts /%s/", pat).doesNotThrowAnyException();
         }
-        // ... and the RE2 reading (the facade's RE2_COMPAT lane) keeps every
+        // ... and the RE2 reading (the re2j surface lane) keeps every
         // spelling as scoped ungreedy
         for (String pat : new String[]{"(?U:a)", "((?U)a)", "(?i-U)a", "(?U)a+"}) {
             assertThatCode(() -> compileTdfa(pat, RE2)).as("RE2 lane accepts /%s/", pat).doesNotThrowAnyException();

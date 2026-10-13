@@ -76,7 +76,7 @@ class CompileBudgetTest {
         System.setProperty("tdfa.budget.compile.compute", "10000000");
         try {
             long t0 = System.nanoTime();
-            // RE2_COMPAT: the fuzz-derived bombs carry (?U:...) spellings
+            // re2j surface: the fuzz-derived bombs carry (?U:...) spellings
             // that only the RE2 lane parses (the JUR reading rejects them
             // as v1 scope violations before any budget fires).
             assertThatCode(() -> io.github.jemmix.tdfa.re2j.Pattern.compile(spinner))

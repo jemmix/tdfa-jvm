@@ -240,7 +240,7 @@ class WholeMatchTest {
             } catch (RuntimeException e) {
                 continue;
             }
-            // RE2_COMPAT: the anchored/unpruned artifacts come from the
+            // re2j surface: the anchored/unpruned artifacts come from the
             // core-tier legacy compiles (RE2 lane) — same lane both sides.
             WholeEngine facadeWhole = ((TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(p)).wholeEngine();
             for (String s : inputs) {
