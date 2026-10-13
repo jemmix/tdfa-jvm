@@ -117,13 +117,13 @@ copy_map_for() {
     case "$1" in
         re2j)
             cat <<'MAP'
-re2j/java/com/google/re2j/Utils.java java io/github/jemmix/tdfa/re2j/Utils.java
-re2j/java/com/google/re2j/Unicode.java java io/github/jemmix/tdfa/re2j/Unicode.java
-re2j/java/com/google/re2j/UnicodeTables.java java io/github/jemmix/tdfa/re2j/UnicodeTables.java
-re2j/java/com/google/re2j/Characters.java java io/github/jemmix/tdfa/re2j/Characters.java
-re2j/javatests/com/google/re2j/ExecTest.java java io/github/jemmix/tdfa/re2j/ExecTest.java
-re2j/javatests/com/google/re2j/Strconv.java java io/github/jemmix/tdfa/re2j/Strconv.java
-re2j/javatests/com/google/re2j/UNIXBufferedReader.java java io/github/jemmix/tdfa/re2j/UNIXBufferedReader.java
+re2j/java/com/google/re2j/Utils.java java io/github/jemmix/tdfa/re2jsuite/Utils.java
+re2j/java/com/google/re2j/Unicode.java java io/github/jemmix/tdfa/re2jsuite/Unicode.java
+re2j/java/com/google/re2j/UnicodeTables.java java io/github/jemmix/tdfa/re2jsuite/UnicodeTables.java
+re2j/java/com/google/re2j/Characters.java java io/github/jemmix/tdfa/re2jsuite/Characters.java
+re2j/javatests/com/google/re2j/ExecTest.java java io/github/jemmix/tdfa/re2jsuite/ExecTest.java
+re2j/javatests/com/google/re2j/Strconv.java java io/github/jemmix/tdfa/re2jsuite/Strconv.java
+re2j/javatests/com/google/re2j/UNIXBufferedReader.java java io/github/jemmix/tdfa/re2jsuite/UNIXBufferedReader.java
 re2j/testdata/re2-search.txt resources re2-search.txt
 MAP
             ;;

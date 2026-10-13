@@ -30,7 +30,7 @@ Landable with zero behavior change; everything downstream re-points.
 
 ## 3. Vendored package rename
 
-- [ ] `io.github.jemmix.tdfa.re2j` (vendored test package) → `io.github.jemmix.tdfa.re2jsuite`: `scripts/vendor.sh` copy map, `01-package-rewrite.patch`, the `RE2.java` fixture + module glue — must precede item 1 on the same classpath
+- [x] `io.github.jemmix.tdfa.re2j` (vendored test package) → `io.github.jemmix.tdfa.re2jsuite`: `scripts/vendor.sh` copy map, `01-package-rewrite.patch`, the `RE2.java` fixture + module glue — must precede item 1 on the same classpath
 
 ## 4. Consumer migration (~37 files)
 

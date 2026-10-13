@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Oracle helpers: compile each pattern in both com.google.re2j (upstream) and
- * io.github.jemmix.tdfa.re2j (our shim), then compare results.
+ * io.github.jemmix.tdfa.re2jsuite (our shim), then compare results.
  *
  * Every tdfa helper accepts an {@link RegexEngineFactory} so tests can run on both
  * ASM and VM backends via {@code @MethodSource("engineFactories")}.
