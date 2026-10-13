@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.parity;
 
 import com.google.re2j.Re2jUnicodeProvider;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
+import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.engine.Matcher;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -230,10 +231,10 @@ class TestregexFowlerTest {
     }
 
     /** Full span array from our engine (LONGEST_MATCH), or null on no-match.
-     *  RE2_COMPAT: the re2j contract lane (the pre-flip default). */
+     *  re2j surface: the re2j contract lane (baked in). */
     static int[][] tdfaSpans(String regex, String subject, int cap, RegexEngineFactory factory) {
-        io.github.jemmix.tdfa.Pattern p = io.github.jemmix.tdfa.Pattern.compile(regex,
-            io.github.jemmix.tdfa.Pattern.LONGEST_MATCH | io.github.jemmix.tdfa.Pattern.RE2_COMPAT, factory, UNICODE);
+        TDFAPattern p = (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(regex,
+            io.github.jemmix.tdfa.re2j.Pattern.LONGEST_MATCH, factory, UNICODE);
         Matcher m = p.matcher(subject);
         if (!m.find()) {
             return null;
@@ -300,9 +301,8 @@ class TestregexFowlerTest {
             re2jThrows = true;
         }
         try {
-            io.github.jemmix.tdfa.Pattern.compile(wrapped,
-                io.github.jemmix.tdfa.Pattern.LONGEST_MATCH | io.github.jemmix.tdfa.Pattern.RE2_COMPAT, factory,
-                UNICODE);
+            io.github.jemmix.tdfa.re2j.Pattern.compile(wrapped, io.github.jemmix.tdfa.re2j.Pattern.LONGEST_MATCH,
+                factory, UNICODE);
             oursThrows = false;
         } catch (RuntimeException e) {
             oursThrows = true;

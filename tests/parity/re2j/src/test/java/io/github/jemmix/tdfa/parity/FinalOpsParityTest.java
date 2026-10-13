@@ -40,9 +40,8 @@ class FinalOpsParityTest {
     }
 
     private static String tdfaProtocol(String pattern, String input, RegexEngineFactory factory) {
-        // RE2_COMPAT: the re2j contract lane (the pre-flip default).
-        var m = io.github.jemmix.tdfa.Pattern
-            .compile(pattern, io.github.jemmix.tdfa.Pattern.RE2_COMPAT, factory, Re2jUnicodeProvider.INSTANCE)
+        // re2j surface: the re2j contract lane (baked in).
+        var m = io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, factory, Re2jUnicodeProvider.INSTANCE)
             .matcher(input);
         StringBuilder sb = new StringBuilder();
         boolean found = m.find();

@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.fuzz;
 
 import com.google.re2j.Re2jUnicodeProvider;
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
 import io.github.jemmix.tdfa.parity.LayeredComparator;
@@ -468,10 +469,10 @@ public final class DifferentialFuzzer {
         int flags;
         com.google.re2j.Pattern oracle;
         String oracleTag;
-        io.github.jemmix.tdfa.Pattern asm;
+        TDFAPattern asm;
         String asmTag;
         String asmExc;
-        io.github.jemmix.tdfa.Pattern vm;
+        TDFAPattern vm;
         String vmTag;
         String vmExc;
     }
@@ -480,18 +481,18 @@ public final class DifferentialFuzzer {
         Prepared p = new Prepared();
         p.pattern = pattern;
         p.flags = flags;
-        // This fuzzer's oracle is re2j, so the tdfa side runs the RE2
-        // lane (RE2_COMPAT — the pre-flip default; the facade default is
-        // java.util.regex parity since the JUR-compat flip). The matrix
-        // gaining a default-lane case is the evidence re-base work item.
-        int lane = flags | io.github.jemmix.tdfa.Pattern.RE2_COMPAT;
+        // This fuzzer's oracle is re2j, so the tdfa side compiles through
+        // the re2j surface (the lane baked in; the facade default is
+        // java.util.regex parity). The matrix gaining a default-lane case
+        // is the evidence re-base work item.
         try {
             p.oracle = com.google.re2j.Pattern.compile(pattern, flags);
         } catch (RuntimeException e) {
             p.oracleTag = "<reject>";
         }
         try {
-            p.asm = io.github.jemmix.tdfa.Pattern.compile(pattern, lane, null, Re2jUnicodeProvider.INSTANCE);
+            p.asm = (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, flags, null,
+                Re2jUnicodeProvider.INSTANCE);
         } catch (PatternSyntaxException | PatternTooLargeException e) {
             p.asmTag = "<reject:" + firstLine(e.getMessage()) + ">";
         } catch (RuntimeException e) {
@@ -499,7 +500,8 @@ public final class DifferentialFuzzer {
             p.asmExc = "asm " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage());
         }
         try {
-            p.vm = io.github.jemmix.tdfa.Pattern.compile(pattern, lane, TdfaRunner::new, Re2jUnicodeProvider.INSTANCE);
+            p.vm = (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, flags, TdfaRunner::new,
+                Re2jUnicodeProvider.INSTANCE);
         } catch (PatternSyntaxException | PatternTooLargeException e) {
             p.vmTag = "<reject:" + firstLine(e.getMessage()) + ">";
         } catch (RuntimeException e) {
@@ -558,7 +560,7 @@ public final class DifferentialFuzzer {
         }
     }
 
-    static void runForced(io.github.jemmix.tdfa.Pattern vm, CharSequence in, String base, Outcome o, String tag) {
+    static void runForced(TDFAPattern vm, CharSequence in, String base, Outcome o, String tag) {
         // Idempotent-on; the per-case snapshots below (same worker thread as
         // the normal probes) bound every thread's trace buffer.
         TdfaRunner.setTracing(true);
@@ -619,7 +621,7 @@ public final class DifferentialFuzzer {
         return Math.floorMod(h, STRETCH_EVERY) == 0;
     }
 
-    static String runEngine(io.github.jemmix.tdfa.Pattern p, String tag, String exc, String engTag, Case c, Outcome o) {
+    static String runEngine(TDFAPattern p, String tag, String exc, String engTag, Case c, Outcome o) {
         if (tag != null) {
             if (exc != null) {
                 o.exceptions.add(exc);
@@ -659,7 +661,7 @@ public final class DifferentialFuzzer {
      *  Fresh matchers for M/L/R keep the probes independent (attribution
      *  reads off the diverged probe tag). No free text in the format —
      *  spans only — so probe tags are unambiguous in diff reporting. */
-    static String compute(io.github.jemmix.tdfa.Pattern p, CharSequence in) {
+    static String compute(TDFAPattern p, CharSequence in) {
         StringBuilder sb = new StringBuilder(96);
         io.github.jemmix.tdfa.core.engine.Matcher m = p.matcher(in);
         boolean found = m.find();

@@ -1,7 +1,9 @@
 package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.compile.PatternMatcher;
+import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.re2j.Pattern;
 import org.junit.jupiter.api.Test;
 
 import java.nio.CharBuffer;
@@ -42,7 +44,7 @@ class CharSequencePairInteriorTest {
         String input = "a\uD801\uDC21zz";
         for (boolean vm : new boolean[]{false, true}) {
             String tier = vm ? "interpreter" : "generated";
-            Pattern p = compile("\uDC21", vm);
+            TDFAPattern p = compile("\uDC21", vm);
             assertThat(p.matcher(input).find()).as("{} tier: String", tier).isFalse();
             for (CharSequence w : wrappers(input)) {
                 assertThat(p.matcher(w).find()).as("{} tier: {} wrapper", tier, w.getClass().getSimpleName()).isFalse();
@@ -57,7 +59,7 @@ class CharSequencePairInteriorTest {
         List<String> expected = List.of("0..0", "1..1", "5..5", "6..6");
         for (boolean vm : new boolean[]{false, true}) {
             String tier = vm ? "interpreter" : "generated";
-            Pattern p = compile("\\B", vm);
+            TDFAPattern p = compile("\\B", vm);
             assertThat(iterate(p, input)).as("{} tier: String", tier).isEqualTo(expected);
             for (CharSequence w : wrappers(input)) {
                 assertThat(iterate(p, w)).as("{} tier: {} wrapper", tier, w.getClass().getSimpleName())
@@ -80,7 +82,7 @@ class CharSequencePairInteriorTest {
         for (String regex : patterns) {
             for (String input : inputs) {
                 for (boolean vm : new boolean[]{false, true}) {
-                    Pattern p = compile(regex, vm);
+                    TDFAPattern p = compile(regex, vm);
                     List<String> expected = iterate(p, input);
                     for (CharSequence w : wrappers(input)) {
                         assertThat(iterate(p, w)).as("{} tier: /{}/ on [{}] via {}", vm ? "interpreter" : "generated",
@@ -96,15 +98,15 @@ class CharSequencePairInteriorTest {
     void firstMatchNeverStartsAtInterior() {
         for (boolean vm : new boolean[]{false, true}) {
             String tier = vm ? "interpreter" : "generated";
-            Pattern dot = compile(".", vm);
+            TDFAPattern dot = compile(".", vm);
             PatternMatcher md = dot.matcher(new StringBuilder("a\uD801\uDC21zz"));
             assertThat(md.find()).as("{} tier", tier).isTrue();
             assertThat(md.start() + ".." + md.end()).as("{} tier: first match", tier).isEqualTo("0..1");
-            Pattern pair = compile(".", vm);
+            TDFAPattern pair = compile(".", vm);
             PatternMatcher mp = pair.matcher(new StringBuilder("\uD801\uDC21zz"));
             assertThat(mp.find()).as("{} tier", tier).isTrue();
             assertThat(mp.start() + ".." + mp.end()).as("{} tier: pair as one codepoint", tier).isEqualTo("0..2");
-            Pattern tail = compile("z+", vm);
+            TDFAPattern tail = compile("z+", vm);
             PatternMatcher mt = tail.matcher(new StringBuilder("\uD801\uDC21zz"));
             assertThat(mt.find()).as("{} tier", tier).isTrue();
             assertThat(mt.start() + ".." + mt.end()).as("{} tier", tier).isEqualTo("2..4");
@@ -121,7 +123,7 @@ class CharSequencePairInteriorTest {
         String input = "a\uD801\uDC21zz"; // pair interior at 2
         for (boolean vm : new boolean[]{false, true}) {
             String tier = vm ? "interpreter" : "generated";
-            Pattern p = compile("\uDC21", vm);
+            TDFAPattern p = compile("\uDC21", vm);
             PatternMatcher str = p.matcher(input);
             assertThat(str.find(2)).as("{} tier: String find(2)", tier).isTrue();
             assertThat(str.start() + ".." + str.end()).as("{} tier: String span", tier).isEqualTo("2..3");
@@ -137,18 +139,18 @@ class CharSequencePairInteriorTest {
         }
     }
 
-    /** RE2_COMPAT: the pair-interior skip is the CODEPOINT_BOUNDARIES-lane
-     *  obligation (the finding-1 fix's lane since the flip); the default
-     *  lane is UTF-16 unit semantics, where interior starts are legal. */
-    private static Pattern compile(String regex, boolean vm) {
-        return Pattern.compile(regex, Pattern.RE2_COMPAT, vm ? TdfaRunner::new : null);
+    /** re2j surface: the pair-interior skip is the CODEPOINT_BOUNDARIES-lane
+     *  obligation (the finding-1 fix's lane since the flip); the facade
+     *  default is UTF-16 unit semantics, where interior starts are legal. */
+    private static TDFAPattern compile(String regex, boolean vm) {
+        return (TDFAPattern) Pattern.compile(regex, 0, vm ? TdfaRunner::new : null);
     }
 
     private static CharSequence[] wrappers(String s) {
         return new CharSequence[]{new StringBuilder(s), CharBuffer.wrap(s), new CharArraySeq(s)};
     }
 
-    private static List<String> iterate(Pattern p, CharSequence in) {
+    private static List<String> iterate(TDFAPattern p, CharSequence in) {
         List<String> out = new ArrayList<>();
         PatternMatcher m = p.matcher(in);
         while (m.find()) {

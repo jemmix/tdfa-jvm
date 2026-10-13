@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa.parity;
 
+import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
@@ -185,13 +186,12 @@ public final class LayeredComparator {
     }
 
     static String engineProtocol(String p, String in, boolean vm, UnicodeDataProvider provider) {
-        io.github.jemmix.tdfa.Pattern pat;
+        TDFAPattern pat;
         try {
-            // RE2_COMPAT: this comparator's contract is the re2j/sim
-            // lineage (R and S answer RE2); the facade default is
-            // java.util.regex parity since the JUR-compat flip.
-            pat = io.github.jemmix.tdfa.Pattern.compile(p, io.github.jemmix.tdfa.Pattern.RE2_COMPAT,
-                vm ? TdfaRunner::new : null, provider);
+            // re2j surface: this comparator's contract is the re2j/sim
+            // lineage (R and S answer RE2) — the lane the surface bakes
+            // in; the facade default is java.util.regex parity.
+            pat = (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(p, 0, vm ? TdfaRunner::new : null, provider);
         } catch (Throwable t) {
             return "<reject>";
         }

@@ -5,6 +5,7 @@ import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
 import io.github.jemmix.tdfa.core.compile.CompileOptions;
 import io.github.jemmix.tdfa.core.compile.PatternMatcher;
+import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
@@ -46,7 +47,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *     the spec source is the oracle itself, never a transcription.</li>
  * <li><b>Both facade lanes are pinned.</b> Since the flip the shipped
  *     default answers exactly the recorded JUR column, and the
- *     {@code RE2_COMPAT} preset answers exactly the recorded RE2
+ *     re2j surface answers exactly the recorded RE2
  *     column — on BOTH tiers (and CharSequence wrappers) — the
  *     lane-unchanged contract the 4b/4c fixes must keep.</li>
  * <li><b>The JUR-lane assertions are LIVE</b> for both sub-families
@@ -123,8 +124,8 @@ class Family6BatteryTest {
         // post-flip: the plain facade compile IS the JUR lane; ASM
         // (default) and VM engine selections, plus the CharSequence
         // wrappers
-        io.github.jemmix.tdfa.Pattern asm = io.github.jemmix.tdfa.Pattern.compile(r.pattern);
-        io.github.jemmix.tdfa.Pattern vm = io.github.jemmix.tdfa.Pattern.compile(r.pattern, 0, TdfaRunner::new);
+        TDFAPattern asm = (TDFAPattern) io.github.jemmix.tdfa.Pattern.compile(r.pattern);
+        TDFAPattern vm = (TDFAPattern) io.github.jemmix.tdfa.Pattern.compile(r.pattern, 0, TdfaRunner::new);
         assertThat(facadeProto(asm, r.input)).as("%s: default ASM tier vs recorded JUR column /%s/", r.id, r.pattern)
             .isEqualTo(r.jur);
         assertThat(facadeProto(vm, r.input)).as("%s: default VM tier vs recorded JUR column /%s/", r.id, r.pattern)
@@ -135,13 +136,11 @@ class Family6BatteryTest {
 
     @ParameterizedTest
     @MethodSource("rows")
-    void re2CompatPinsTheRecordedProtocol(Row r) {
-        // the RE2_COMPAT preset is the pre-flip default; ASM (default)
+    void re2SurfacePinsTheRecordedProtocol(Row r) {
+        // the re2j surface is the pre-flip default's home; ASM (default)
         // and VM engine selections, plus the CharSequence wrappers
-        io.github.jemmix.tdfa.Pattern asm =
-            io.github.jemmix.tdfa.Pattern.compile(r.pattern, io.github.jemmix.tdfa.Pattern.RE2_COMPAT);
-        io.github.jemmix.tdfa.Pattern vm =
-            io.github.jemmix.tdfa.Pattern.compile(r.pattern, io.github.jemmix.tdfa.Pattern.RE2_COMPAT, TdfaRunner::new);
+        TDFAPattern asm = (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(r.pattern);
+        TDFAPattern vm = (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(r.pattern, 0, TdfaRunner::new);
         assertThat(facadeProto(asm, r.input)).as("%s: RE2 ASM tier vs recorded RE2 column /%s/", r.id, r.pattern)
             .isEqualTo(r.re2);
         assertThat(facadeProto(vm, r.input)).as("%s: RE2 VM tier vs recorded RE2 column /%s/", r.id, r.pattern)
@@ -305,7 +304,7 @@ class Family6BatteryTest {
         return sb.toString();
     }
 
-    private static String facadeProto(io.github.jemmix.tdfa.Pattern p, CharSequence input) {
+    private static String facadeProto(TDFAPattern p, CharSequence input) {
         PatternMatcher mm = p.matcher(input);
         String m = mm.matches() ? spans(mm) : "NONE";
         PatternMatcher f = p.matcher(input);

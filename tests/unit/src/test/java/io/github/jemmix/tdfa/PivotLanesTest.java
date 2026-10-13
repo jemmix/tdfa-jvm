@@ -4,6 +4,7 @@ import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
 import io.github.jemmix.tdfa.core.compile.CompileOptions;
+import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
@@ -168,7 +169,15 @@ class PivotLanesTest {
 
     /** The facade's own engines (a flags lane) on the same protocol. */
     private static String facadeProbe(String pattern, int flags, CharSequence in) {
-        io.github.jemmix.tdfa.Pattern p = io.github.jemmix.tdfa.Pattern.compile(pattern, flags);
+        return patternProbe((TDFAPattern) io.github.jemmix.tdfa.Pattern.compile(pattern, flags), in);
+    }
+
+    /** The re2j surface's own engines (the lane baked in) on the same protocol. */
+    private static String re2jProbe(String pattern, CharSequence in) {
+        return patternProbe((TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(pattern), in);
+    }
+
+    private static String patternProbe(TDFAPattern p, CharSequence in) {
         StringBuilder sb = new StringBuilder(48);
         int from = 0;
         boolean found = false;
@@ -504,16 +513,15 @@ class PivotLanesTest {
             new String[]{"F=true [2..5) M=false R=[2..5)"});
     }
 
-    // ===== RE2 lane: the facade's RE2_COMPAT preset is untouched =====
+    // ===== RE2 lane: the re2j surface's preset is untouched =====
 
     @Test
-    void re2ExplicitLaneMatchesTheFacade() {
-        // Post-flip the facade maps the user bits: RE2_COMPAT (the seven
-        // bits' OR) runs the RE2 lane, so an explicit RE2-lane core
-        // compile must answer exactly what the preset facade compile
-        // answers on the pivot battery (the re2j parity suites pin the
-        // same lane against live re2j). Fold and (?U) included: plain
-        // (?i) folds the full universe, (?U) spells ungreedy — the
+    void re2ExplicitLaneMatchesTheRe2jSurface() {
+        // Post-split the re2j surface bakes the lane in, so an explicit
+        // RE2-lane core compile must answer exactly what the surface
+        // compile answers on the pivot battery (the re2j parity suites
+        // pin the same lane against live re2j). Fold and (?U) included:
+        // plain (?i) folds the full universe, (?U) spells ungreedy — the
         // lane-unchanged contract on the two parser-side axes.
         String[] pats = {"(?m)^", "(?m)$", "$", "^", ".", "a$", "a\\z", "(?m)a$", "x*$", "a$|ab", "\\ba", "(?u)\\ba",
             "[\uD800-\uDFFF]", "\uDE00", "(?i)k", "(?i)[^s]", "(?i)Stra\u00dfe", "(?i)[a-z]+", "(?U)a+", "(?U:a+)b",
@@ -526,11 +534,32 @@ class PivotLanesTest {
             RegexEngine vm = new TdfaRunner(tdfa, 1 << 20);
             RegexEngine asm = TdfaAsmBackend.generate(tdfa, 1 << 20);
             for (String in : inputs) {
-                String want = facadeProbe(pat, io.github.jemmix.tdfa.Pattern.RE2_COMPAT, in);
+                String want = re2jProbe(pat, in);
                 assertThat(probe(vm, in)).as("RE2 core == facade: %s / %s", pat, esc(in)).isEqualTo(want);
                 assertThat(probe(asm, in)).as("RE2 ASM == facade: %s / %s", pat, esc(in)).isEqualTo(want);
             }
         }
+    }
+
+    // ===== the core tier's lane defaults survive the split =====
+
+    @Test
+    void coreLegacyOverloadsKeepTheRe2LaneDefault() {
+        // The core pipeline's legacy overloads default to the RE2 lane
+        // (the lineage the engine descends from); the surfaces map or
+        // bake their lane instead, and Semantics is a value class.
+        Tnfa nfa = Tnfa.compile("(?i)a+");
+        assertThat(nfa.semantics).isEqualTo(RE2);
+        assertThat(Determinizer.compile(nfa).semantics()).isEqualTo(RE2);
+        Tnfa explicit = Tnfa.compile("(?i)a+", false, false, false, RE2, UnicodeProviders.get(), null,
+            new WorkMeter(Budgets.compileComputeTicks()));
+        assertThat(explicit.semantics).isEqualTo(RE2);
+        assertThat(explicit.semantics.isUnixLines()).isTrue();
+        assertThat(Semantics.of()).isNotEqualTo(RE2);
+        Semantics once = Semantics.of().unixLines();
+        assertThat(once.unixLines()).isSameAs(once);
+        assertThat(RE2.toString()).contains("UNIX_LINES").contains("UNGREEDY_U");
+        assertThat(Semantics.of().toString()).isEqualTo("Semantics[]");
     }
 
     // ===== the facade options route: the core-tier lane spelling =====

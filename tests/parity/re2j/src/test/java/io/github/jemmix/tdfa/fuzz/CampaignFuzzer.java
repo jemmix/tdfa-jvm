@@ -5,6 +5,7 @@ import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
+import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
@@ -282,7 +283,7 @@ public final class CampaignFuzzer {
         if (c.pattern().contains("(?U")) {
             // RE2-lane residual (the JUR lane below parses (?U itself since
             // the fold + U bits item): this probe's tdfa compile is the
-            // facade's RE2_COMPAT lane, which reads (?U:...) as ungreedy;
+            // re2j-surface lane, which reads (?U:...) as ungreedy;
             // java reads it as UNICODE_CHARACTER_CLASS — untranslatable.
             counts.soft("SKIP_UNGREEDY");
             return;
@@ -404,7 +405,7 @@ public final class CampaignFuzzer {
 
     /** Item "parameterize the pivots" + "fold + U bits" of the JUR-compat
      *  WBS: the campaign probes BOTH lanes — the JUR lane is the facade
-     *  default since the flip, the RE2 lane its RE2_COMPAT preset. The JUR
+     *  default since the flip, the RE2 lane the re2j surface. The JUR
      *  lane (core tier, {@code Semantics.of()}) must agree
      *  with the java oracle on every axis the pivots own — terminator set,
      *  EMPTY_LAST_LINE, END_OF_TEXT_ONLY (the lineterm/caretEol/dollarEol
@@ -648,17 +649,21 @@ public final class CampaignFuzzer {
     /** tdfa compile + full five-probe protocol on the DEFAULT JDK-derived
      *  universe (provider null — the (?u)-parity construction), rejection/
      *  exception tagged like the soak. Compiles the RE2 lane
-     *  (RE2_COMPAT): this probe pins the facade's RE2-lineage behavior
+     *  (the re2j surface): this probe pins the RE2-lineage behavior
      *  against the jur oracle with the soft known families — the facade
      *  default is the jur lane itself since the flip (probed separately
      *  by jurLaneCase). */
     static String runTdfaJdk(JurCase c, boolean vm) {
+        // The re2j surface's roster has no UNICODE_CHARACTER_CLASS bit (the
+        // lane's class sets are the re2j reading) — spell the jur matrix's
+        // UCC draw as the inline (?u) prefix the facade bit used to expand
+        // to, and drop the bit before the compile.
+        String pattern = (c.tdfaFlags() & UCC) != 0 ? "(?u)" + c.pattern() : c.pattern();
+        int flags = c.tdfaFlags() & ~UCC;
         try {
-            io.github.jemmix.tdfa.Pattern p = vm
-                ? io.github.jemmix.tdfa.Pattern.compile(c.pattern(),
-                    c.tdfaFlags() | io.github.jemmix.tdfa.Pattern.RE2_COMPAT, TdfaRunner::new, null)
-                : io.github.jemmix.tdfa.Pattern.compile(c.pattern(),
-                    c.tdfaFlags() | io.github.jemmix.tdfa.Pattern.RE2_COMPAT, null, null);
+            TDFAPattern p =
+                (TDFAPattern) (vm ? io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, flags, TdfaRunner::new, null)
+                    : io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, flags, null, null));
             return DifferentialFuzzer.compute(p, c.input());
         } catch (io.github.jemmix.tdfa.core.parser.PatternSyntaxException | PatternTooLargeException e) {
             return "<reject:" + DifferentialFuzzer.firstLine(e.getMessage()) + ">";
@@ -1073,7 +1078,7 @@ public final class CampaignFuzzer {
 
     /** F + I probes only (the sim has no matches/lookingAt), span format
      * identical to the soak protocol so strings compare directly. */
-    static String findIterate(io.github.jemmix.tdfa.Pattern p, CharSequence in) {
+    static String findIterate(TDFAPattern p, CharSequence in) {
         StringBuilder sb = new StringBuilder(96);
         io.github.jemmix.tdfa.core.engine.Matcher m = p.matcher(in);
         boolean found = m.find();
@@ -1298,19 +1303,15 @@ public final class CampaignFuzzer {
             System.out.println("jur:     <reject> " + e);
         }
         try {
-            System.out
-                .println(
-                    "vm:      " + DifferentialFuzzer.compute(
-                        io.github.jemmix.tdfa.Pattern.compile(c.pattern(),
-                            c.tdfaFlags() | io.github.jemmix.tdfa.Pattern.RE2_COMPAT, TdfaRunner::new, null),
-                        c.input()));
+            System.out.println("vm:      " + DifferentialFuzzer.compute((TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern
+                .compile(c.pattern(), c.tdfaFlags(), TdfaRunner::new, null), c.input()));
         } catch (RuntimeException e) {
             System.out.println("vm:      <reject> " + DifferentialFuzzer.firstLine(e.getMessage()));
         }
         try {
-            System.out
-                .println("asm:     " + DifferentialFuzzer.compute(io.github.jemmix.tdfa.Pattern.compile(c.pattern(),
-                    c.tdfaFlags() | io.github.jemmix.tdfa.Pattern.RE2_COMPAT, null, null), c.input()));
+            System.out.println("asm:     " + DifferentialFuzzer.compute(
+                (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(c.pattern(), c.tdfaFlags(), null, null),
+                c.input()));
         } catch (RuntimeException e) {
             System.out.println("asm:     <reject> " + DifferentialFuzzer.firstLine(e.getMessage()));
         }
@@ -1350,13 +1351,14 @@ public final class CampaignFuzzer {
         System.out.println("input:   " + DifferentialFuzzer.escape(input));
         PikeSim sim = PikeSim.compile(pattern, Re2jUnicodeProvider.INSTANCE);
         System.out.println("pike(String):    " + pikeIterate(sim, input));
-        io.github.jemmix.tdfa.Pattern vm = io.github.jemmix.tdfa.Pattern.compile(pattern,
-            io.github.jemmix.tdfa.Pattern.RE2_COMPAT, TdfaRunner::new, Re2jUnicodeProvider.INSTANCE);
+        TDFAPattern vm = (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, TdfaRunner::new,
+            Re2jUnicodeProvider.INSTANCE);
         System.out.println("vm(String):      " + findIterate(vm, input));
         System.out.println("pike(wrapper):   " + pikeIterate(sim, new StringBuilder(input)));
         System.out.println("vm(wrapper):     " + findIterate(vm, new StringBuilder(input)));
-        System.out.println("asm(wrapper):    " + findIterate(io.github.jemmix.tdfa.Pattern.compile(pattern,
-            io.github.jemmix.tdfa.Pattern.RE2_COMPAT, null, Re2jUnicodeProvider.INSTANCE), new StringBuilder(input)));
+        System.out.println("asm(wrapper):    " + findIterate(
+            (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, null, Re2jUnicodeProvider.INSTANCE),
+            new StringBuilder(input)));
     }
 
     static void replayFamilies(long caseSeed) {

@@ -8,6 +8,7 @@ repositories {
 
 dependencies {
     testImplementation project(':')
+    testImplementation project(':re2j')
     testImplementation platform('org.junit:junit-bom:5.10.2'),
             'org.junit.jupiter:junit-jupiter',
             'junit:junit:4.13.2',

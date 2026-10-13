@@ -3,6 +3,7 @@ package io.github.jemmix.tdfa.parity;
 import com.google.re2j.Re2jUnicodeProvider;
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
+import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
@@ -51,8 +52,7 @@ class JdkRegressionCorpusTest {
     private static final int FLAG_M = 4; // facade/re2j MULTILINE
 
     /** The lane this gate pins: the RE2-lineage reading re2j answers in
-     *  (the facade's pre-flip default; RE2_COMPAT since the flip). */
-    private static final int RE2_LANE = io.github.jemmix.tdfa.Pattern.RE2_COMPAT;
+     *  (the re2j surface's baked-in default). */
 
     private static final int JUR_I = java.util.regex.Pattern.CASE_INSENSITIVE;
     private static final int JUR_M = java.util.regex.Pattern.MULTILINE;
@@ -279,7 +279,7 @@ class JdkRegressionCorpusTest {
                 return;
             } // (?u) extension: re2j has no u flag
             try {
-                io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.flags() | RE2_LANE, factory, UNICODE);
+                io.github.jemmix.tdfa.re2j.Pattern.compile(c.pattern(), c.flags(), factory, UNICODE);
                 record(c, "tdfa accepts but re2j (contract) rejects", null);
             } catch (PatternSyntaxException | PatternTooLargeException e) {
                 bothReject++;
@@ -287,9 +287,10 @@ class JdkRegressionCorpusTest {
             return;
         }
 
-        io.github.jemmix.tdfa.Pattern tdfaPattern;
+        TDFAPattern tdfaPattern;
         try {
-            tdfaPattern = io.github.jemmix.tdfa.Pattern.compile(c.pattern(), c.flags() | RE2_LANE, factory, UNICODE);
+            tdfaPattern =
+                (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(c.pattern(), c.flags(), factory, UNICODE);
         } catch (PatternSyntaxException | PatternTooLargeException e) {
             record(c, "tdfa rejects but re2j (contract) compiles", "reason: " + e.getMessage());
             return;

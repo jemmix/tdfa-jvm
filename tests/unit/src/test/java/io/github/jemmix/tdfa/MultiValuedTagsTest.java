@@ -41,11 +41,12 @@ class MultiValuedTagsTest {
     }
 
     private static PatternMatcher m(RegexEngineFactory f, String pat, int flags, CharSequence in) {
-        // RE2_COMPAT: the span batteries pin the maximal-iteration (re2j)
+        // re2j surface: the span batteries pin the maximal-iteration (re2j)
         // protocol — the java.util.regex default lane surfaces the final
         // zero-width participation (pinned for that lane in
         // Family6BatteryTest).
-        return Pattern.compile(pat, Pattern.MULTI_VALUED_TAGS | flags | Pattern.RE2_COMPAT, f).matcher(in);
+        return io.github.jemmix.tdfa.re2j.Pattern
+            .compile(pat, io.github.jemmix.tdfa.re2j.Pattern.MULTI_VALUED_TAGS | flags, f).matcher(in);
     }
 
     @ParameterizedTest
@@ -92,7 +93,7 @@ class MultiValuedTagsTest {
             for (int flags : new int[]{0, Pattern.LONGEST_MATCH}) {
                 PatternMatcher mm = m(f, pat, flags, "dummy");
                 for (String in : inputs) {
-                    PatternMatcher single = Pattern.compile(pat, flags | Pattern.RE2_COMPAT, f).matcher(in);
+                    PatternMatcher single = io.github.jemmix.tdfa.re2j.Pattern.compile(pat, flags, f).matcher(in);
                     PatternMatcher multi = m(f, pat, flags, in);
                     boolean fs = single.find();
                     boolean fm = multi.find();
@@ -136,7 +137,7 @@ class MultiValuedTagsTest {
         for (String pat : pats) {
             for (int flags : new int[]{0, Pattern.LONGEST_MATCH}) {
                 for (String in : inputs) {
-                    PatternMatcher single = Pattern.compile(pat, flags | Pattern.RE2_COMPAT, f).matcher(in);
+                    PatternMatcher single = io.github.jemmix.tdfa.re2j.Pattern.compile(pat, flags, f).matcher(in);
                     PatternMatcher multi = m(f, pat, flags, in);
                     boolean fs = single.find();
                     boolean fm = multi.find();
