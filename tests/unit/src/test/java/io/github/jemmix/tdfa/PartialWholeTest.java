@@ -72,7 +72,7 @@ class PartialWholeTest {
     @Test
     void sideTableWholeWalkMatchesUnprunedAndAnchoredArtifacts() {
         for (String p : CATALOG) {
-            // RE2_COMPAT: compared against core-tier legacy compiles
+            // re2j surface: compared against core-tier legacy compiles
             // (Tnfa.compile overloads default to the RE2 lane) — same
             // lane on both sides.
             WholeEngine facadeWhole = ((TDFAPattern) Pattern.compile(p)).wholeEngine();

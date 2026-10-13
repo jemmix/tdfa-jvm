@@ -26,7 +26,7 @@ Landable with zero behavior change; everything downstream re-points.
 
 ## 2. Facade flag trim
 
-- [ ] Remove the seven opt-out bits + `RE2_COMPAT` from the facade `Pattern`; `VALID_FLAGS` shrinks; javadoc re-narrative
+- [x] Remove the seven opt-out bits + `RE2_COMPAT` from the facade `Pattern`; `VALID_FLAGS` shrinks; javadoc re-narrative
 
 ## 3. Vendored package rename
 
