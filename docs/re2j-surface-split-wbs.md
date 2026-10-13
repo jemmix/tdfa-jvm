@@ -19,10 +19,10 @@ Landable with zero behavior change; everything downstream re-points.
 
 ## 1. The `:re2j` surface
 
-- [ ] `re2j/` module (`:re2j`, Java 8, `api :core` + `:asm`), package `io.github.jemmix.tdfa.re2j`, `Automatic-Module-Name`
-- [ ] `Pattern` with the re2j `Semantics` preset baked in; flag roster per the design's open decision 1
-- [ ] `CompileOptions.semantics` public on both surfaces (the per-axis escape hatch)
-- [ ] Surface-aware `SerialProxy` (records surface + flags, recompiles on read)
+- [x] `re2j/` module (`:re2j`, Java 8, `api :core` + `:asm`), package `io.github.jemmix.tdfa.re2j`, `Automatic-Module-Name`
+- [x] `Pattern` with the re2j `Semantics` preset baked in; flag roster per the design's open decision 1
+- [x] `CompileOptions.semantics` public on both surfaces (the per-axis escape hatch)
+- [x] Surface-aware `SerialProxy` (records surface + flags, recompiles on read)
 
 ## 2. Facade flag trim
 

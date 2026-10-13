@@ -8,6 +8,7 @@ repositories {
 
 dependencies {
     testImplementation project(':')
+    testImplementation project(':re2j')
     testImplementation project(':unicode:v6_0')
     testImplementation project(':unicode:v17_0')
     // For BytecodeFloorTest: every shipped module must be on the test
@@ -20,12 +21,12 @@ dependencies {
 }
 
 // CI jar pipeline (-PagainstJars): compile and
-// run the unit tests against the PACKAGED jars of the six shipped modules
+// run the unit tests against the PACKAGED jars of the seven shipped modules
 // instead of their classes dirs — the exact artifact set a consumer
 // receives. DoFirst classpath swap (CI runs fresh; not an up-to-date-safe
 // local dev mode).
 if (project.hasProperty('againstJars')) {
-    def shippedPaths = [':', ':core', ':asm', ':lib:pikesim', ':unicode:v6_0', ':unicode:v17_0']
+    def shippedPaths = [':', ':core', ':asm', ':re2j', ':lib:pikesim', ':unicode:v6_0', ':unicode:v17_0']
     def shipped = shippedPaths.collect { project.findProject(it) }
     // String paths resolve lazily — the sibling projects may not be
     // configured yet when this script evaluates.

@@ -26,7 +26,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Bytecode floor per shipped module: core,
- * asm, and the facade must be class-file major version 52 or lower —
+ * asm, the facade, and the re2j surface must be class-file major version 52
+ * or lower —
  * loadable by a Java 8 runtime — while pikesim and the unicode data
  * modules ship as Java 25 bytecode (latest LTS, major 69).
  *
@@ -53,6 +54,7 @@ class BytecodeFloorTest {
     private static final Object[][] ANCHORS = {{Pattern.class, MAJOR_JAVA_8}, // facade
         {Tdfa.class, MAJOR_JAVA_8}, // core
         {TdfaAsmBackend.class, MAJOR_JAVA_8}, // asm
+        {io.github.jemmix.tdfa.re2j.Pattern.class, MAJOR_JAVA_8}, // re2j surface
         {PikeSim.class, MAJOR_JAVA_25}, // lib:pikesim
         {Unicode6_0.class, MAJOR_JAVA_25}, // unicode:v6_0
         {Unicode17_0.class, MAJOR_JAVA_25}, // unicode:v17_0
