@@ -91,7 +91,7 @@ public class Smoke8 {
         PatternMatcher rm = io.github.jemmix.tdfa.re2j.Pattern.compile("(\\w+)-(\\d+)").matcher("order-77!");
         expect("re2j find g", rm.find(), true);
         expect("re2j g1", rm.group(1), "order");
-        expect("re2j jur contrast", p.matcher("a").find(), true);
+        expect("re2j jur contrast", io.github.jemmix.tdfa.Pattern.compile("a$").matcher("a\n").find(), true);
 
         if (failures > 0) {
             System.err.println("SMOKE8 FAILURES: " + failures);
