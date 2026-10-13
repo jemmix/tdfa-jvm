@@ -1,0 +1,77 @@
+plugins {
+    id 'java-library'
+    id 'net.ltgt.errorprone'
+    id 'com.github.spotbugs'
+}
+
+group = 'io.github.jemmix'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // The re2j surface: a thin Pattern interface over the shared
+    // core.compile machinery. api :core (the machinery + SPI types) and
+    // :asm (AsmEngineBackend, wired in one line by the surface's
+    // registration) — same edges as the jur facade at the root.
+    api project(':core')
+    api project(':asm')
+    errorprone 'com.google.errorprone:error_prone_core:2.50.0'
+    spotbugs 'com.github.spotbugs:spotbugs:4.9.8'
+}
+
+jar {
+    manifest {
+        attributes 'Automatic-Module-Name': 'io.github.jemmix.tdfa.re2j'
+    }
+}
+
+// Java 8 floor, two enforcement modes (see the root build.gradle for the
+// full account): default cross-compiles with --release 8; -PrealJdk8 pins
+// a real JDK 8 javac (the CI jar pipeline).
+def realJdk8 = providers.gradleProperty('realJdk8').isPresent()
+if (realJdk8) {
+    java.toolchain.languageVersion = JavaLanguageVersion.of(8)
+}
+
+tasks.withType(JavaCompile).configureEach {
+    if (realJdk8) {
+        options.errorprone.enabled = false
+    } else {
+        it.options.release = 8
+    }
+    options.encoding = 'UTF-8'
+    options.debug = true
+    // Style-modernization checks disabled on a freeze-bound codebase (see
+    // the root build.gradle for the full account).
+    options.errorprone {
+        disable 'PatternMatchingInstanceof'
+        disable 'StatementSwitchToExpressionSwitch'
+    }
+}
+
+// SpotBugs: hard-fails on findings AND on analysis errors (never a false
+// green); exclusions are exclusively documented design decisions — see
+// config/spotbugs/exclusions.xml. Self-skips on JDK >= 26 (see root).
+tasks.withType(com.github.spotbugs.snom.SpotBugsTask).configureEach {
+    ignoreFailures = false
+    excludeFilter = rootProject.file('config/spotbugs/exclusions.xml')
+    onlyIf {
+        if (org.gradle.api.JavaVersion.current().majorVersion.toInteger() >= 26) {
+            logger.lifecycle("spotbugs: skipped - SpotBugs 4.9.x cannot scan JDK 26 runtime classes; run scripts/lint-spotbugs.sh on JDK <= 25")
+            false
+        } else {
+            true
+        }
+    }
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
