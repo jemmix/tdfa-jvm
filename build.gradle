@@ -37,8 +37,10 @@ repositories {
 dependencies {
     // Evergreen pipeline + core API tier (interpreter reference implementation).
     api project(':core')
-    // Per-pattern bytecode generation backend; the facade orchestrates it
-    // directly (no engine SPI — the module graph is the strategy).
+    // Per-pattern bytecode generation backend. Reached through the
+    // core.compile EngineBackend SPI: the surface wires AsmEngineBackend
+    // into its PatternSurface registration — one line, and the machinery
+    // itself never links a backend (the module graph stays the strategy).
     api project(':asm')
     errorprone 'com.google.errorprone:error_prone_core:2.50.0'
     spotbugs 'com.github.spotbugs:spotbugs:4.9.8'

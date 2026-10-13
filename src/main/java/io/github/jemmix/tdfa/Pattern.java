@@ -1,12 +1,13 @@
 package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.compile.CompileOptions;
+import io.github.jemmix.tdfa.core.compile.PatternMatcher;
+import io.github.jemmix.tdfa.core.compile.PatternSurface;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
-import io.github.jemmix.tdfa.core.emit.EmittedSurface;
+import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 import java.io.Serializable;
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 /**
@@ -57,22 +58,22 @@ public interface Pattern extends Serializable {
     /**
      * Flag: case insensitive matching.
      */
-    int CASE_INSENSITIVE = 1;
+    int CASE_INSENSITIVE = PatternSurface.CASE_INSENSITIVE;
 
     /**
      * Flag: dot ({@code .}) matches all characters, including newline.
      */
-    int DOTALL = 2;
+    int DOTALL = PatternSurface.DOTALL;
 
     /**
      * Flag: multiline matching ({@code ^}/{@code $} at line boundaries).
      */
-    int MULTILINE = 4;
+    int MULTILINE = PatternSurface.MULTILINE;
 
     /**
      * Flag: matches longest possible string (leftmost-longest).
      */
-    int LONGEST_MATCH = 16;
+    int LONGEST_MATCH = PatternSurface.LONGEST_MATCH;
 
     /**
      * Flag: enables Unicode-aware versions of the predefined character classes
@@ -96,7 +97,7 @@ public interface Pattern extends Serializable {
      * universe freezes the same definition at its Unicode version. The
      * exact set is differentially pinned in {@code UnicodeBoundaryParityTest}.
      */
-    int UNICODE_CHARACTER_CLASS = 32;
+    int UNICODE_CHARACTER_CLASS = PatternSurface.UNICODE_CHARACTER_CLASS;
 
     /**
      * Flag: compile for find-shaped matching only — the whole-match machinery
@@ -131,12 +132,12 @@ public interface Pattern extends Serializable {
      * tier's {@link io.github.jemmix.tdfa.core.compile.CompiledRegex core.CompiledRegex}
      * is find-only in the same sense, by construction.
      */
-    int FIND_ONLY = 64;
+    int FIND_ONLY = PatternSurface.FIND_ONLY;
 
     /**
      * Flag: disable Unicode groups ({@code \p{...}} / {@code \P{...}} rejected at compile time, like re2j).
      */
-    int DISABLE_UNICODE_GROUPS = 8;
+    int DISABLE_UNICODE_GROUPS = PatternSurface.DISABLE_UNICODE_GROUPS;
 
     /**
      * Flag: multi-valued tags (BT22 &sect;3.1) — every capture group keeps
@@ -157,7 +158,7 @@ public interface Pattern extends Serializable {
      * factor over the plain walk). POSIX {@link #LONGEST_MATCH} composes
      * with this flag.
      */
-    int MULTI_VALUED_TAGS = 128;
+    int MULTI_VALUED_TAGS = PatternSurface.MULTI_VALUED_TAGS;
 
     /**
      * <b>JUR-compat axes.</b> The seven flags from {@code UNIX_LINES}
@@ -180,7 +181,7 @@ public interface Pattern extends Serializable {
      * {@code java.util.regex} terminator set: {@code \n}, {@code \r},
      * {@code \r\n}, U+0085, U+2028, U+2029.
      */
-    int UNIX_LINES = 256;
+    int UNIX_LINES = PatternSurface.UNIX_LINES;
 
     /**
      * Flag: {@link #CASE_INSENSITIVE} folds the full Unicode simple-fold
@@ -190,7 +191,7 @@ public interface Pattern extends Serializable {
      * {@code java.util.regex} case-insensitivity; OR this bit in for the
      * fold-Unicode behavior.
      */
-    int UNICODE_CASE = 512;
+    int UNICODE_CASE = PatternSurface.UNICODE_CASE;
 
     /**
      * Flag: codepoint discipline — scans skip surrogate-pair interiors,
@@ -200,7 +201,7 @@ public interface Pattern extends Serializable {
      * lone surrogates match as single units, and {@code \b}/{@code \B}
      * evaluate at every unit position.
      */
-    int CODEPOINT_BOUNDARIES = 1024;
+    int CODEPOINT_BOUNDARIES = PatternSurface.CODEPOINT_BOUNDARIES;
 
     /**
      * Flag: a multiline {@code ^} may match the empty last line after a
@@ -208,7 +209,7 @@ public interface Pattern extends Serializable {
      * never does, like {@code java.util.regex}: on {@code "a\n"} a
      * {@code (?m)^} matches at 0 only, never at 2.
      */
-    int EMPTY_LAST_LINE = 2048;
+    int EMPTY_LAST_LINE = PatternSurface.EMPTY_LAST_LINE;
 
     /**
      * Flag: {@code $} matches only at end of input, exactly {@code \z}
@@ -216,7 +217,7 @@ public interface Pattern extends Serializable {
      * before a final line terminator, like {@code java.util.regex}: on
      * {@code "a\n"}, {@code a$} matches {@code 0..1}.
      */
-    int END_OF_TEXT_ONLY = 4096;
+    int END_OF_TEXT_ONLY = PatternSurface.END_OF_TEXT_ONLY;
 
     /**
      * Flag: a zero-width final loop iteration reports its group's span —
@@ -228,7 +229,7 @@ public interface Pattern extends Serializable {
      * reports the final zero-width iteration's span
      * ({@code (a*)*} on {@code "aa"} &rarr; group 1 {@code 2..2}).
      */
-    int EMPTY_ITERATION_SPANS = 8192;
+    int EMPTY_ITERATION_SPANS = PatternSurface.EMPTY_ITERATION_SPANS;
 
     /**
      * Flag: {@code (?U)} / {@code (?U:...)} mean ungreedy — quantifiers
@@ -240,7 +241,7 @@ public interface Pattern extends Serializable {
      * rejected with a {@code PatternSyntaxException}; top-level
      * {@code (?U)} only.
      */
-    int UNGREEDY_U = 16384;
+    int UNGREEDY_U = PatternSurface.UNGREEDY_U;
 
     /**
      * Preset: preserves the pre-flip (re2j-pinned) behavior on all seven
@@ -284,12 +285,12 @@ public interface Pattern extends Serializable {
 
     /**
      * Compile with explicit flags, engine factory, and a
-     * {@link io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider UnicodeDataProvider}
+     * {@link UnicodeDataProvider UnicodeDataProvider}
      * for resolving {@code \p{...}} / {@code \P{...}} property classes — e.g. a
      * pinned-Unicode-version provider for reproducible matching across JVMs.
      */
     static Pattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider unicodeProvider) {
-        return PatternCompiler.compile(regex, flags, factory, unicodeProvider);
+        return (Pattern) Surfaces.JUR.compile(regex, flags, factory, unicodeProvider, null, null);
     }
 
     /**
@@ -312,7 +313,7 @@ public interface Pattern extends Serializable {
         if (options.isDisableUnicodeGroups()) {
             flags |= DISABLE_UNICODE_GROUPS;
         }
-        return PatternCompiler.compile(regex, flags, null, options.unicodeProvider(), options.observer(),
+        return (Pattern) Surfaces.JUR.compile(regex, flags, null, options.unicodeProvider(), options.observer(),
             options.semantics());
     }
 
@@ -340,7 +341,7 @@ public interface Pattern extends Serializable {
         if (regex == null) {
             throw new NullPointerException("pattern is null");
         }
-        return PatternCompiler.compile(regex, flags | FIND_ONLY, null, null);
+        return (Pattern) Surfaces.JUR.compile(regex, flags | FIND_ONLY, null, null, null, null);
     }
 
     /**
@@ -356,7 +357,7 @@ public interface Pattern extends Serializable {
      * text, not raw byte offsets.
      */
     static boolean matches(String regex, byte[] input) {
-        return matches(regex, Utf8.decode(input));
+        return matches(regex, TDFAPattern.decodeUtf8(input));
     }
 
     /**
@@ -444,17 +445,4 @@ public interface Pattern extends Serializable {
      * Unmodifiable name&rarr;index map for named capturing groups.
      */
     Map<String, Integer> namedGroups();
-
-    /**
-     * UTF-8 decode shared by the byte[] overloads (re2j's {@code MatcherInput.utf8}).
-     */
-    @EmittedSurface
-    final class Utf8 {
-        private Utf8() {
-        }
-
-        public static String decode(byte[] bytes) {
-            return new String(bytes, StandardCharsets.UTF_8);
-        }
-    }
 }

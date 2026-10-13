@@ -55,7 +55,7 @@ class PackageLayeringTest {
             {"tnfa", "parser", "ast", "budget", "unicode", "report"}, {"engine", "emit"},
             {"dfa", "engine", "emit", "ast", "tnfa", "budget"}, {"regopt", "dfa", "budget"},
             {"determinize", "tnfa", "ast", "regopt", "dfa", "budget", "report"},
-            {"compile", "engine", "dfa", "determinize", "tnfa", "budget", "unicode", "report"},};
+            {"compile", "engine", "dfa", "determinize", "tnfa", "budget", "unicode", "report", "emit"},};
         for (String[] e : edges) {
             SortedSet<String> deps = new TreeSet<>();
             for (int i = 1; i < e.length; i++) {

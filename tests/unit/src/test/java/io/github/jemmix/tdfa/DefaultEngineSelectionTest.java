@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa;
 
+import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,8 +35,11 @@ class DefaultEngineSelectionTest {
         try {
             System.setProperty("tdfa.engine", "VM");
             Pattern p = Pattern.compile("abc");
+            // The no-codegen path hands out the surface's wrapped machinery
+            // instance (VmPattern) — not a generated shell, not the bare
+            // machinery class either.
             assertThat(p).isInstanceOf(TDFAPattern.class);
-            assertThat(p.getClass()).isEqualTo(TDFAPattern.class);
+            assertThat(p.getClass()).isEqualTo(VmPattern.class);
             assertThat(p.matcher("abc").matches()).isTrue();
         } finally {
             restore(prev);

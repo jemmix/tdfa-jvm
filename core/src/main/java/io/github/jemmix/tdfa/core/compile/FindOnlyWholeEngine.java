@@ -1,12 +1,12 @@
-package io.github.jemmix.tdfa;
+package io.github.jemmix.tdfa.core.compile;
 
 import io.github.jemmix.tdfa.core.engine.MatchResult;
 import io.github.jemmix.tdfa.core.engine.MatchScratch;
 import io.github.jemmix.tdfa.core.engine.WholeEngine;
 
 /**
- * The whole-match non-engine of a {@link Pattern#FIND_ONLY} compile: no
- * whole machinery was attempted (the compile produced the plain find
+ * The whole-match non-engine of a {@code FIND_ONLY} compile: no whole
+ * machinery was attempted (the compile produced the plain find
  * artifact), so the whole surface refuses loudly instead of answering
  * wrong. Every whole-input entry point funnels here —
  * {@code Pattern.matches(...)} and {@code Matcher.matches()} on both engine
@@ -17,8 +17,11 @@ import io.github.jemmix.tdfa.core.engine.WholeEngine;
  * <p>Per-pattern instance (not a singleton): the message names the pattern.
  * Not a {@link io.github.jemmix.tdfa.core.engine.RegexEngine}: it serves no find
  * surface and must not influence the matcher's scratch-carrier decision.
+ *
+ * <p>Public-but-internal: machinery tier ({@code core.compile}) — not
+ * shipped API.
  */
-final class FindOnlyWholeEngine implements WholeEngine {
+public final class FindOnlyWholeEngine implements WholeEngine {
 
     private final String pattern;
 

@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.compile.CompileOptions;
 import io.github.jemmix.tdfa.core.compile.CompiledRegex;
+import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.engine.MatchResult;

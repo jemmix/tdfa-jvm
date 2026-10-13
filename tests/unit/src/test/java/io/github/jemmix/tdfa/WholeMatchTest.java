@@ -2,6 +2,8 @@ package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.compile.CompiledRegex;
+import io.github.jemmix.tdfa.core.compile.PatternMatcher;
+import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;

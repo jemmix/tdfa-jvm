@@ -1,11 +1,8 @@
-package io.github.jemmix.tdfa;
+package io.github.jemmix.tdfa.core.compile;
 
-import io.github.jemmix.tdfa.asm.ShellEmitter;
-import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
-import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
@@ -18,26 +15,28 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
 
 /**
- * {@link Pattern} compilation: fold the flags into an inline-flag prefix,
- * parse to a TNFA, determinize once, and translate the artifact to an
- * engine through one source ({@code -Dtdfa.engine=VM} interpreter, a
- * custom {@link RegexEngineFactory}, or per-pattern ASM generation).
- * The single artifact serves find() AND matches(): the pruned
- * determinization records a partial-whole side table at every pike-cut
- * point (the uncut continuations whole-input walks need). When that
- * bounded side exploration exhausts its budget, the compile FAILS with
- * the standard "pattern too large" family — accept-only-what-ships, the
- * same compile-time budget contract the find artifact always had; there
- * is no second cut-free determinization (its ledger arithmetic is doomed:
- * it would redo the primary prefix plus the divergence that just
- * exhausted the side's half of the remaining ticks, on the half left).
+ * The compile machinery behind every {@code Pattern} surface: fold the
+ * surface's flags into an inline-flag prefix, parse to a TNFA,
+ * determinize once, and translate the artifact to an engine through one
+ * source ({@code -Dtdfa.engine=VM} interpreter, a custom
+ * {@link RegexEngineFactory}, or per-pattern ASM generation via the
+ * surface's {@link EngineBackend}). The single artifact serves find()
+ * AND matches(): the pruned determinization records a partial-whole side
+ * table at every pike-cut point (the uncut continuations whole-input
+ * walks need). When that bounded side exploration exhausts its budget,
+ * the compile FAILS with the standard "pattern too large" family —
+ * accept-only-what-ships, the same compile-time budget contract the find
+ * artifact always had; there is no second cut-free determinization (its
+ * ledger arithmetic is doomed: it would redo the primary prefix plus the
+ * divergence that just exhausted the side's half of the remaining ticks,
+ * on the half left).
  *
- * <p>The find-only escape hatch ({@link Pattern#FIND_ONLY} /
- * {@link Pattern#compileFind}): consumers who never call whole-input
- * methods compile the SAME pipeline minus the whole machinery — the plain
- * pruned determinization, no side table recorded, no exactness gate, no
- * whole engine translation. Patterns whose whole divergence would reject
- * a full compile are accepted; the whole surface on the result refuses
+ * <p>The find-only escape hatch ({@code FIND_ONLY} /
+ * {@code compileFind}): consumers who never call whole-input methods
+ * compile the SAME pipeline minus the whole machinery — the plain pruned
+ * determinization, no side table recorded, no exactness gate, no whole
+ * engine translation. Patterns whose whole divergence would reject a
+ * full compile are accepted; the whole surface on the result refuses
  * with {@link UnsupportedOperationException} (see
  * {@link FindOnlyWholeEngine}).
  *
@@ -47,105 +46,92 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
  * side table included, must fit {@code tdfa.budget.runtime.memory}; the
  * lazy-memo allowances draw from the residual — "if it compiles, it
  * will execute within budget", see {@link Budgets}). Malformed syntax
- * is a {@link io.github.jemmix.tdfa.core.parser.PatternSyntaxException} raised
- * by the parser and passes through untouched; anything else is a bug
- * and propagates as itself.
+ * is a {@link io.github.jemmix.tdfa.core.parser.PatternSyntaxException}
+ * raised by the parser and passes through untouched; anything else is a
+ * bug and propagates as itself.
+ *
+ * <p>Public-but-internal: machinery tier ({@code core.compile}),
+ * entered by the surfaces' compile entry points only — not shipped API.
  */
-final class PatternCompiler {
-
-    private static final int VALID_FLAGS = Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.MULTILINE
-        | Pattern.DISABLE_UNICODE_GROUPS | Pattern.LONGEST_MATCH | Pattern.UNICODE_CHARACTER_CLASS | Pattern.FIND_ONLY
-        | Pattern.MULTI_VALUED_TAGS | Pattern.RE2_COMPAT;
+public final class PatternCompiler {
 
     private PatternCompiler() {
     }
 
     /**
-     * The user-bit mapping: each JUR-compat opt-out bit sets its axis;
-     * no bits is the default lane — every axis unset, the
-     * {@code java.util.regex}-parity reading throughout. The
-     * {@link Pattern#RE2_COMPAT} preset is the seven bits' OR, so it
-     * restores the pre-flip (re2j-lineage) default through the same
-     * mapping.
+     * The user-bit mapping: each JUR-compat opt-out bit sets its axis,
+     * on top of the surface's default lane; no bits is that default —
+     * for the jur surface every axis unset (the
+     * {@code java.util.regex}-parity reading throughout), for the re2j
+     * surface the RE2-lineage reading throughout (which the bits then
+     * cannot move — its roster does not carry them).
      */
-    private static Semantics semanticsOf(int flags) {
-        Semantics s = Semantics.of();
-        if ((flags & Pattern.UNIX_LINES) != 0) {
+    static Semantics semanticsOf(int flags, PatternSurface surface) {
+        Semantics s = surface.defaultSemantics();
+        if ((flags & PatternSurface.UNIX_LINES) != 0) {
             s = s.unixLines();
         }
-        if ((flags & Pattern.UNICODE_CASE) != 0) {
+        if ((flags & PatternSurface.UNICODE_CASE) != 0) {
             s = s.unicodeCase();
         }
-        if ((flags & Pattern.CODEPOINT_BOUNDARIES) != 0) {
+        if ((flags & PatternSurface.CODEPOINT_BOUNDARIES) != 0) {
             s = s.codepointBoundaries();
         }
-        if ((flags & Pattern.EMPTY_LAST_LINE) != 0) {
+        if ((flags & PatternSurface.EMPTY_LAST_LINE) != 0) {
             s = s.emptyLastLine();
         }
-        if ((flags & Pattern.END_OF_TEXT_ONLY) != 0) {
+        if ((flags & PatternSurface.END_OF_TEXT_ONLY) != 0) {
             s = s.endOfTextOnly();
         }
-        if ((flags & Pattern.EMPTY_ITERATION_SPANS) != 0) {
+        if ((flags & PatternSurface.EMPTY_ITERATION_SPANS) != 0) {
             s = s.emptyIterationSpans();
         }
-        if ((flags & Pattern.UNGREEDY_U) != 0) {
+        if ((flags & PatternSurface.UNGREEDY_U) != 0) {
             s = s.ungreedyU();
         }
         return s;
     }
 
-    static Pattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider provider) {
-        return compile(regex, flags, factory, provider, null);
-    }
-
-    static Pattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider provider,
-        CompileObserver observer) {
-        return compile(regex, flags, factory, provider, observer, null);
-    }
-
     /**
-     * Fullest entry: an explicit {@link Semantics} (the facade options
-     * route — {@code Pattern.compile(regex, CompileOptions)}) selects the
-     * compile's interpretation policy; {@code null} maps the user's
-     * JUR-compat flag bits (the default lane is every axis unset —
-     * {@code java.util.regex} parity).
+     * The one machinery entry: an explicit {@link Semantics} (the
+     * surfaces' options route — {@code compile(regex, CompileOptions)})
+     * selects the compile's interpretation policy; {@code null} maps the
+     * user's flag bits onto the {@link PatternSurface surface's} default
+     * lane.
      */
-    static Pattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider provider,
-        CompileObserver observer, Semantics explicitSemantics) {
+    public static TDFAPattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider provider,
+        CompileObserver observer, Semantics explicitSemantics, PatternSurface surface) {
         if (regex == null) {
             throw new NullPointerException("pattern is null");
         }
-        if ((flags & ~VALID_FLAGS) != 0) {
-            throw new IllegalArgumentException(
-                "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS,"
-                    + " LONGEST_MATCH, UNICODE_CHARACTER_CLASS, FIND_ONLY, MULTI_VALUED_TAGS, or the JUR-compat"
-                    + " opt-outs (UNIX_LINES, UNICODE_CASE, CODEPOINT_BOUNDARIES, EMPTY_LAST_LINE, END_OF_TEXT_ONLY,"
-                    + " EMPTY_ITERATION_SPANS, UNGREEDY_U; preset RE2_COMPAT)");
+        if ((flags & ~surface.validFlags()) != 0) {
+            throw new IllegalArgumentException(surface.flagsMessage());
         }
         // JUR-compat (docs/jur-compat-default.md), post-flip: the seven
         // opt-out bits map onto the axes — a bit set restores the
         // RE2-lineage side of that axis, unset selects the
-        // java.util.regex-parity side, and the default compile (no bits,
-        // no explicit semantics) runs every axis unset. RE2_COMPAT (the
-        // bits' OR) is the pre-flip default in one constant.
-        Semantics semantics = explicitSemantics != null ? explicitSemantics : semanticsOf(flags);
+        // java.util.regex-parity side, and the surface's default lane
+        // runs wherever no bit speaks. RE2_COMPAT (the bits' OR) was the
+        // pre-flip default in one constant; the re2j surface bakes the
+        // same lane in as its default.
+        Semantics semantics = explicitSemantics != null ? explicitSemantics : semanticsOf(flags, surface);
         String fl = regex;
-        if ((flags & Pattern.CASE_INSENSITIVE) != 0) {
+        if ((flags & PatternSurface.CASE_INSENSITIVE) != 0) {
             fl = "(?i)" + fl;
         }
-        if ((flags & Pattern.DOTALL) != 0) {
+        if ((flags & PatternSurface.DOTALL) != 0) {
             fl = "(?s)" + fl;
         }
-        if ((flags & Pattern.MULTILINE) != 0) {
+        if ((flags & PatternSurface.MULTILINE) != 0) {
             fl = "(?m)" + fl;
         }
-        if ((flags & Pattern.UNICODE_CHARACTER_CLASS) != 0) {
+        if ((flags & PatternSurface.UNICODE_CHARACTER_CLASS) != 0) {
             fl = "(?u)" + fl;
         }
-        boolean longest = (flags & Pattern.LONGEST_MATCH) != 0;
-        boolean disableUnicodeGroups = (flags & Pattern.DISABLE_UNICODE_GROUPS) != 0;
-        boolean findOnly = (flags & Pattern.FIND_ONLY) != 0;
-        boolean multiValued = (flags & Pattern.MULTI_VALUED_TAGS) != 0;
+        boolean longest = (flags & PatternSurface.LONGEST_MATCH) != 0;
+        boolean disableUnicodeGroups = (flags & PatternSurface.DISABLE_UNICODE_GROUPS) != 0;
+        boolean findOnly = (flags & PatternSurface.FIND_ONLY) != 0;
+        boolean multiValued = (flags & PatternSurface.MULTI_VALUED_TAGS) != 0;
         UnicodeDataProvider prov = provider != null ? provider : UnicodeProviders.get();
         CompileObserver obs = observer != null ? observer : CompileObserver.NONE;
         // One CPU ledger for the whole compile. Full compiles: the
@@ -170,8 +156,8 @@ final class PatternCompiler {
             // (2026-09-15 contract): reject here rather than attempting
             // a doomed cut-free second determinization (it would redo
             // the primary prefix PLUS the divergence that just
-            // exhausted the side's half of the remaining ticks — it
-            // can never fit).
+            // exhausted the side's half of the remaining ticks — it can
+            // never fit).
             throw new PatternTooLargeException("pattern too large: whole-match divergence exceeds the compile"
                 + " budget (partial-whole side abandoned) — raise -D" + Budgets.COMPILE_COMPUTE_PROP + " / -D"
                 + Budgets.COMPILE_MEMORY_PROP + " if you need this pattern, or compile find-shaped-only via"
@@ -214,28 +200,30 @@ final class PatternCompiler {
         //
         // -Dtdfa.engine=VM bypasses the translation entirely (and the
         // shell below): the shared interpreter serves the find surface
-        // (and the FIND_ONLY refusal, when set).
+        // (and the FIND_ONLY refusal, when set). The caller wraps the
+        // bare result into its surface type.
         if (vmSwitched()) {
             long t0 = System.nanoTime();
             TdfaRunner eng = new TdfaRunner(find, memoBudget);
             obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
             obs.note("engine", "shared-interpreter (tdfa.engine=VM)");
             WholeEngine wholeEng = findOnly ? new FindOnlyWholeEngine(regex) : eng;
-            return new TDFAPattern(regex, flags, ps, eng, wholeEng, provider);
+            return new TDFAPattern(regex, flags, ps, eng, wholeEng, provider, surface);
         }
         long t0 = System.nanoTime();
-        RegexEngine eng = engineOf(find, factory, memoBudget);
+        RegexEngine eng = engineOf(find, factory, memoBudget, surface.backend());
         WholeEngine wholeEng = findOnly ? new FindOnlyWholeEngine(regex) : wholeOf(eng, find, memoBudget);
         obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
 
         // Shell around the engines — concrete-typed for generated ones
         // (the engine's own class names the shell's field type and
-        // classes). Emission failures propagate like engine-emission
+        // classes), implementing the compile's surface interface.
+        // Emission failures propagate like engine-emission
         // failures (see engineOf): they are bugs, not shapes to route
         // around.
         String owner = factory == null ? eng.getClass().getName().replace('.', '/') : null;
-        Pattern p =
-            (Pattern) ShellEmitter.emit(new ShellEmitter.Spec(regex, flags, ps, eng, wholeEng, owner, provider));
+        TDFAPattern p = (TDFAPattern) surface.backend()
+            .emit(new ShellSpec(regex, flags, ps, eng, wholeEng, owner, provider, surface));
         obs.note("engine", factory == null ? "generated" : "byo-shell");
         return p;
     }
@@ -252,15 +240,16 @@ final class PatternCompiler {
 
     /**
      * The compile's engine source, applied to every artifact of the compile:
-     * the custom factory's engine, or a generated per-pattern class. Emission
-     * failures (IllegalStateException, LinkageError from broken generated
-     * bytecode) propagate — they are bugs, not shapes to route around.
+     * the custom factory's engine, or the surface backend's per-pattern
+     * generated class. Emission failures (IllegalStateException,
+     * LinkageError from broken generated bytecode) propagate — they are
+     * bugs, not shapes to route around.
      */
-    private static RegexEngine engineOf(Tdfa tdfa, RegexEngineFactory factory, long memoBudget) {
+    private static RegexEngine engineOf(Tdfa tdfa, RegexEngineFactory factory, long memoBudget, EngineBackend backend) {
         if (factory != null) {
             return factory.create(tdfa);
         }
-        return TdfaAsmBackend.generate(tdfa, memoBudget);
+        return backend.generate(tdfa, memoBudget);
     }
 
     /**
