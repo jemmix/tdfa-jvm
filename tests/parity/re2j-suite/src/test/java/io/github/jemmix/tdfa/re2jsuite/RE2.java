@@ -1,4 +1,4 @@
-package io.github.jemmix.tdfa.re2j;
+package io.github.jemmix.tdfa.re2jsuite;
 
 import io.github.jemmix.tdfa.Pattern;
 
