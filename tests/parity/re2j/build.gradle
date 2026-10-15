@@ -74,13 +74,17 @@ test {
     }
 }
 
-// Overnight differential soak: tdfa (both engines) vs re2j oracle.
+// Overnight differential soak, BOTH lanes since the evidence re-base: the
+// per-batch lane draw mixes the re2j surface vs the re2j (patched) oracle
+// and the jur facade vs live java.util.regex; summary.txt splits per-lane
+// counts. Pin one lane for lane-pure evidence (-Pfuzz.lane=re2j|jur).
 // The oracle is our patched re2j fork by default (built on demand); pass
 // -Pfuzz.pristineOracle=true to soak against released re2j 1.8 instead.
-//   ./gradlew :tests:parity:re2j:fuzz                      # 8h, logs to build/fuzz
+//   ./gradlew :tests:parity:re2j:fuzz                      # 8h both lanes, logs to build/fuzz
 //   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.minutes=60 -Pfuzz.seed=42 -Pfuzz.out=/tmp/soak
+//   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.lane=re2j     # lane-pure re2j evidence
 // Chunked soak (hang-leak containment, shared out dir via append):
-//   scripts/fuzz-soak.sh [iters=480] [minutes=1] [out=build/fuzz] [seedBase]
+//   scripts/fuzz-soak.sh [iters=480] [minutes=1] [out=build/fuzz] [seedBase] [-Pfuzz.lane=...]
 // Reproduce a failures.ndjson line turnkey:
 //   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.one=<caseSeed>
 // Exits nonzero if any divergence found.
@@ -121,6 +125,11 @@ tasks.register('fuzz', JavaExec) {
     systemProperty 'fuzz.crossRung', project.findProperty('fuzz.crossRung') ?: '1'
     systemProperty 'fuzz.crossRung.stretch', project.findProperty('fuzz.crossRung.stretch') ?: '1'
     systemProperty 'fuzz.crossRung.stretchEvery', project.findProperty('fuzz.crossRung.stretchEvery') ?: '8'
+    // Lane axis (evidence re-base): mix (default) draws the lane per batch —
+    // jur facade vs live java.util.regex beside the re2j surface vs re2j;
+    // pin for a lane-pure soak (re-running the re2j-pinned evidence, or a
+    // jur-only night): -Pfuzz.lane=jur | -Pfuzz.lane=re2j
+    systemProperty 'fuzz.lane', project.findProperty('fuzz.lane') ?: 'mix'
 }
 
 // Timeboxed fuzz campaigns for the TODO fuzzer items the overnight soak does
