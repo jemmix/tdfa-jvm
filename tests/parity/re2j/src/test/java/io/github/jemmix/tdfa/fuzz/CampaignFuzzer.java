@@ -29,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.SplittableRandom;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -60,7 +61,14 @@ import java.util.concurrent.atomic.AtomicLong;
  *       non-ASCII folds involved, the universes legitimately differ) skips
  *       the case rather than guessing a side; the JUR lane folds ASCII
  *       under bare CI exactly like the oracle, so its probe compares
- *       under plain CASE_INSENSITIVE with no fold skip.</li>
+ *       under plain CASE_INSENSITIVE with no fold skip. Since the
+ *       evidence re-base (WBS item 6) the JUR-lane probe compares HARD
+ *       against the oracle on everything — the İ/ı full-fold residual is
+ *       FIXED (the jur surface's default fold universe is the
+ *       java.util.regex reading) and the two remaining residuals are
+ *       conscious domain exclusions (SKIP kinds whose set
+ *       {@code CampaignSmokeTest} asserts): the family-6 tail slice and
+ *       the surrogate-unit-semantics family.</li>
  *   <li><b>{@code stretch}</b> — oracle-check stretched inputs and compare
  *       ASM on them too (TODO: "Oracle-check stretched inputs; compare ASM
  *       on them too"). The soak's stretched-input probes compare forced VM
@@ -161,8 +169,9 @@ public final class CampaignFuzzer {
             List<Thread> ts = new ArrayList<>();
             AtomicLong box = new AtomicLong();
             for (var e : seeds.entrySet()) {
-                Thread t = new Thread(() -> box.addAndGet(runMode(e.getKey(), e.getValue(), seconds, maxCases, out)),
-                    "camp-" + e.getKey());
+                Thread t =
+                    new Thread(() -> box.addAndGet(runMode(e.getKey(), e.getValue(), seconds, maxCases, out).hard),
+                        "camp-" + e.getKey());
                 t.setDaemon(true);
                 ts.add(t);
                 t.start();
@@ -172,7 +181,7 @@ public final class CampaignFuzzer {
             }
             hard = box.get();
         } else {
-            hard = runMode(mode, seed, seconds, maxCases, out);
+            hard = runMode(mode, seed, seconds, maxCases, out).hard;
         }
         System.out.printf("%n==== camp done (%s): %d hard findings ====%n", mode, hard);
         System.exit(hard > 0 ? 1 : 0);
@@ -198,8 +207,10 @@ public final class CampaignFuzzer {
     }
 
     /** Scoped compile budget, same contract as the soak: budget monsters
-     * reject in seconds instead of burning the campaign. */
-    static long runMode(String mode, long seed, long seconds, long maxCases, Path outRoot) {
+     *  reject in seconds instead of burning the campaign. Returns the
+     *  run's {@link Counts} — the smoke gate reads the soft-kind set to
+     *  assert the enumerated domain boundary. */
+    static Counts runMode(String mode, long seed, long seconds, long maxCases, Path outRoot) {
         long fuzzWork = DifferentialFuzzer.fuzzWorkBudget();
         String prevWork =
             fuzzWork > 0 ? System.setProperty("tdfa.budget.compile.compute", Long.toString(fuzzWork)) : null;
@@ -214,7 +225,7 @@ public final class CampaignFuzzer {
         }
     }
 
-    private static long runModeScoped(String mode, long seed, long seconds, long maxCases, Path outRoot) {
+    private static Counts runModeScoped(String mode, long seed, long seconds, long maxCases, Path outRoot) {
         Camp camp = new Camp(outRoot, mode);
         Counts counts = new Counts();
         try {
@@ -254,7 +265,7 @@ public final class CampaignFuzzer {
             camp.writeSummary(counts);
             camp.close();
         }
-        return counts.hard;
+        return counts;
     }
 
     // ================ mode: jur — the (?u) lane vs java.util.regex ================
@@ -410,16 +421,18 @@ public final class CampaignFuzzer {
      *  with the java oracle on every axis the pivots own — terminator set,
      *  EMPTY_LAST_LINE, END_OF_TEXT_ONLY (the lineterm/caretEol/dollarEol
      *  families), the fold universe (bare CI folds ASCII in both, so the
-     *  oracle compares under plain CASE_INSENSITIVE — the universes agree
-     *  by construction, İ/ı inert on both sides) and the (?U) reading
-     *  (SKIP_UNGREEDY retired: (?U:...)/nested spellings reject by design,
-     *  counted soft at the compile; a leading (?U) translates to the
-     *  oracle's UNICODE_CASE flag) — so those are HARD here; and since
+     *  oracle compares under plain CASE_INSENSITIVE; full-fold lanes —
+     *  (?u)/(?U)/UCC — fold the java.util.regex reading incl. the merged
+     *  İ/ı orbit since the evidence re-base, so those compare HARD too)
+     *  and the (?U) reading (SKIP_UNGREEDY retired: (?U:...)/nested
+     *  spellings reject by design, counted soft at the compile; a leading
+     *  (?U) translates to the oracle's UNICODE_CASE flag) — and since
      *  family 6 landed (WBS 4b suppression + 4c surfacing), the GROUP
      *  clauses compare HARD too — both protocols carry them, no more
-     *  skeleton stripping; the residual families stay soft (lone-surrogate
-     *  pattern/input: unit semantics match lone surrogates anywhere, java
-     *  only truly-lone ones). */
+     *  skeleton stripping. The evidence-re-base residuals are conscious
+     *  domain exclusions (SKIP kinds, asserted by CampaignSmokeTest):
+     *  the family-6 TAIL slice and the surrogate-unit-semantics family —
+     *  see the reclassification block inside. */
     static void jurLaneCase(long caseSeed, Camp camp, Counts counts) {
         JurCase c = genJur(caseSeed);
         // SKIP_UNGREEDY retired (fold + U bits): the JUR lane parses (?U
@@ -457,8 +470,20 @@ public final class CampaignFuzzer {
                 counts.soft("V1_UNGREEDY_SCOPE");
             }
             return; // other compile parity is the RE2-lane probe's question
-        } catch (RuntimeException | StackOverflowError e) {
+        } catch (PatternTooLargeException | StackOverflowError e) {
             counts.soft("JURLANE_BUDGET");
+            return;
+        } catch (RuntimeException e) {
+            // The evidence-re-base flip: a non-budget RuntimeException at
+            // the lane compile is an engine/harness BUG, not a budget
+            // rejection — the crash class the old catch-all soft used to
+            // hide (the cutOverrideByState AIOOBE lived here until the
+            // jur-lane matrix surfaced it).
+            counts.hard("JURLANE_COMPILE_EXCEPTION");
+            camp.rec(caseSeed, "JURLANE_COMPILE_EXCEPTION", "pattern", c.pattern(), "input", c.input(), "flags",
+                c.tdfaFlags(), "detail", e + " @ " + firstFrame(e));
+            camp.log("HARD JURLANE_COMPILE_EXCEPTION seed=%d pat=%s%n  %s", caseSeed,
+                DifferentialFuzzer.escape(c.pattern()), e);
             return;
         }
         if (!leadingScopedU && c.pattern().contains("(?U")) {
@@ -510,38 +535,48 @@ public final class CampaignFuzzer {
             counts.ok();
             return;
         }
-        // The family-6 TAIL residual: an unbounded greedy quantified
+        // The evidence re-base reclassifications (WBS item 6: "fixed or
+        // consciously reclassified, none left soft by default"). Both
+        // residuals below are DOCUMENTED domain exclusions — SKIP kinds,
+        // not KNOWN divergences: a skip means "this shape is outside the
+        // compared domain", a known-family pass would swallow divergence.
+        // The skip set is asserted (CampaignSmokeTest pins the soft-kind
+        // allowlist), so a new soft kind cannot appear silently.
+        //
+        // (1) The family-6 TAIL residual: an unbounded greedy quantified
         // capture followed by a consuming tail — java's Loop keeps the
         // final zero-width iteration at the loop's REST position ((a*)*b
         // on "aab" -> g1 2..2), the surfaced write must ride the
         // transition φ as a position-carrying ε-write to express that
-        // (the 4d audit's finding); until then the lane answers the
-        // maximal-iteration span there. Skeleton-equal + a quantified
-        // capture in the pattern = this family, soft.
+        // (the 4d audit's finding); until that engine work lands the lane
+        // answers the maximal-iteration span there. Skeleton-equal (the
+        // overall spans DID compare, above) + a quantified capture in the
+        // pattern = this family — everything else about family 6 stays
+        // hard.
         if (sameSkeleton(jur, jurLaneVm) && c.pattern().matches(".*\\).*[*+{].*")) {
-            counts.soft("KNOWN_GROUP-PARTICIPATION-TAIL (jur lane, residual)");
-            camp.rec(caseSeed, "JURLANE_KNOWN (group-participation-tail)", "pattern", c.pattern(), "input", c.input(),
+            counts.soft("SKIP_GROUP_PARTICIPATION_TAIL");
+            camp.rec(caseSeed, "JURLANE_SKIP (group-participation-tail)", "pattern", c.pattern(), "input", c.input(),
                 "flags", c.tdfaFlags(), "jur", jur, "jurLaneVm", jurLaneVm);
             return;
         }
-        // Full-fold lane residual (JDK-verified: UCC implies Unicode-aware
-        // CI, so (?u)/(?U) lanes fold like CI|UNICODE_CASE): java merges
-        // the Turkic İ/ı pair into the i-orbit there, tdfa's simple-fold
-        // universe keeps it inert — a missed oracle span starting at a
-        // non-ASCII char is that family, soft. Bare-CI lanes (ASCII
-        // universe both sides) cannot hit it.
-        boolean ciAnywhere = c.ci() || c.pattern().contains("(?i");
-        boolean laneFoldsFull = c.ucc() || leadingScopedU || c.pattern().contains("(?u");
-        if (ciAnywhere && laneFoldsFull && missedSpanStartsNonAscii(jur, jurLaneVm, c.input())) {
-            counts.soft("SKIP_CI_FOLD_AMBIGUOUS");
-            return;
-        }
+        // (2) The lone-surrogate family: the JUR lane's CODEPOINT_
+        // BOUNDARIES-unset axis semantics are unit-level by design —
+        // matches start/end at any unit and classes match surrogate
+        // units anywhere, lone or the halves of a well-formed pair —
+        // while java's UTF-16 discipline never matches a surrogate unit
+        // inside a well-formed pair (live-JDK verified; the RE2-lane
+        // probe's own surrogate family and DifferentialFuzzer's
+        // knownDivergence doc the same discipline). The \b/\B wordness
+        // twin joins it (codepoint-decoded wordness at pair units vs
+        // java's per-unit). A pair-aware JUR reading is the open engine
+        // work that would un-skip this.
         boolean surrogate = hasLoneSurrogate(c.pattern()) || hasLoneSurrogate(c.input())
             || laneExtrasAllPairInteriors(jur, jurLaneVm, c.input())
-            || negatedClassSurrogateResidual(c.pattern(), c.input());
+            || negatedClassSurrogateResidual(c.pattern(), c.input())
+            || boundarySurrogateResidual(c.pattern(), c.input());
         if (surrogate) {
-            counts.soft("KNOWN_SURROGATE (jur lane, residual)");
-            camp.rec(caseSeed, "JURLANE_KNOWN (surrogate-code-unit)", "pattern", c.pattern(), "input", c.input(),
+            counts.soft("SKIP_SURROGATE_UNIT_SEMANTICS");
+            camp.rec(caseSeed, "JURLANE_SKIP (surrogate-unit-semantics)", "pattern", c.pattern(), "input", c.input(),
                 "flags", c.tdfaFlags(), "jur", jur, "jurLaneVm", jurLaneVm);
             return;
         }
@@ -750,14 +785,34 @@ public final class CampaignFuzzer {
      * codepoints (negated classes cover the surrogate range), java's
      * unit-level negated-class behavior and the lane's unit semantics
      * diverge in ripples the span-level classifier cannot attribute — the
-     * family owns those wholesale. Pivot-relevant shapes (literals, anchors,
-     * dot, word boundaries) are unaffected: they are never negated classes.
+     * family owns those wholesale. Bracket classes with surrogate-crossing
+     * ranges join them (found by the evidence-re-base matrix: a lane extra
+     * starting at a pair's HIGH unit — the lane's unit semantics match each
+     * surrogate unit of a well-formed pair against a surrogate-covering
+     * class where java's pair-aware classes never match). Pivot-relevant
+     * shapes (literals, anchors, dot) are unaffected: literals are covered
+     * by the lone-surrogate predicate, and the dot consumes the pair as one
+     * unit on both sides.
      */
     static boolean negatedClassSurrogateResidual(String pattern, String input) {
         if (!hasWellFormedPair(input)) {
             return false;
         }
-        return pattern.contains("\\W") || pattern.contains("\\S") || pattern.contains("\\D") || pattern.contains("[^");
+        return pattern.contains("\\W") || pattern.contains("\\S") || pattern.contains("\\D") || pattern.contains("[^")
+            || pattern.contains("[");
+    }
+
+    /**
+     * The \b/\B twin of the surrogate residual: the lane evaluates boundary
+     * wordness CODEPOINT-decoded at pair positions (a pair encoding a
+     * letter reads word on its high unit) where java's per-unit wordness
+     * reads the lone surrogate unit non-word — java and the lane disagree
+     * on \b at exactly those positions (found by the evidence-re-base
+     * matrix: {@code [b-c…]*\B} iterating an extra empty at a high unit).
+     * Any \b/\B pattern over a well-formed-pair input is the family.
+     */
+    static boolean boundarySurrogateResidual(String pattern, String input) {
+        return (pattern.contains("\\b") || pattern.contains("\\B")) && hasWellFormedPair(input);
     }
 
     /**
@@ -918,7 +973,10 @@ public final class CampaignFuzzer {
     // ================ mode: stretch — oracle + ASM on stretched inputs ================
 
     static void stretchCase(long caseSeed, Camp camp, Counts counts) {
-        DifferentialFuzzer.Case c = DifferentialFuzzer.generate(caseSeed);
+        // RE2J-pinned generation: this mode's oracle is re2j (the soak's
+        // stretched-input probes), so the flags are the re2j-lane draw
+        // (LONGEST, never UCC) regardless of the batch's lane draw.
+        DifferentialFuzzer.Case c = DifferentialFuzzer.generate(caseSeed, DifferentialFuzzer.Lane.RE2J);
         if (c.input().isEmpty()) {
             counts.soft("SKIP_EMPTY");
             return;
@@ -1318,7 +1376,7 @@ public final class CampaignFuzzer {
     }
 
     static void replayStretch(long caseSeed) {
-        DifferentialFuzzer.Case c = DifferentialFuzzer.generate(caseSeed);
+        DifferentialFuzzer.Case c = DifferentialFuzzer.generate(caseSeed, DifferentialFuzzer.Lane.RE2J);
         System.out.println("pattern: " + DifferentialFuzzer.escape(c.pattern()));
         System.out.println("input:   " + DifferentialFuzzer.escape(c.input()));
         System.out.println("flags:   " + c.flags());
@@ -1408,6 +1466,14 @@ public final class CampaignFuzzer {
 
         void route(String r) {
             routes.merge(r, 1L, Long::sum);
+        }
+
+        /** The soft-kind set of the run — asserted against the enumerated
+         *  domain boundary by {@code CampaignSmokeTest} (the evidence
+         *  re-base flip: no soft kind may appear that is not consciously
+         *  enumerated here). */
+        Set<String> softKinds() {
+            return soft.keySet();
         }
 
         @Override
