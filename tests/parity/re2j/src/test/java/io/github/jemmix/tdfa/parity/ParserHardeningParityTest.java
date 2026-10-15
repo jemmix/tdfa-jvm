@@ -353,9 +353,9 @@ class ParserHardeningParityTest {
         JurOracle.assertSameCompileReject("\\x{110000}", factory);
         JurOracle.assertSameCompileReject("\\x{1100000}", factory);
         JurOracle.assertSameCompileSuccess("\\x{10FFFF}", factory);
-        // deep nesting: the JDK parser handles it too
-        JurOracle.assertSameFind("(?:".repeat(1000) + "a" + ")".repeat(1000), "a", factory);
-        JurOracle.assertSameFind("(".repeat(400) + "a" + ")".repeat(400), "a", factory); // all 400 spans
-        JurOracle.assertSameFind("(?:" + "(".repeat(300) + "a" + ")".repeat(300) + ")+", "aaa", factory);
+        // deep nesting stays RE2-lane-pinned: the JDK's recursive parser
+        // overflows its thread stack at a few hundred groups (it converts
+        // the StackOverflowError to a PatternSyntaxException — observed on
+        // CI runners), so depth is environment-dependent, not an oracle cell
     }
 }
