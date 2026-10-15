@@ -9,6 +9,14 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
 
 /**
  * Escape sequence parity: control chars, octal, hex, \C, \Q...\E, special chars.
+ *
+ * <p>Jur twin below — the standard escapes, hex and quoting translate
+ * whole; {\v}'s tested cell agrees though the JDK's {@code \v} is the
+ * broader vertical-whitespace class (a semantic divergence outside this
+ * cell); the escape-rejection roster splits three ways: shared malformed
+ * spellings ({@code \E}, {@code \K}, {@code \C}, hex errors), JDK-only
+ * syntax we reject ({@code \R}, {@code \e}, bare backrefs), and our
+ * re2j-lineage octal reading the JDK (26+) rejects ({@code \0}).
  */
 class EscapeParityTest {
 
@@ -248,5 +256,54 @@ class EscapeParityTest {
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void escapeERejects(RegexEngineFactory factory) {
         assertSameCompileReject("\\e", factory);
+    }
+
+    /** Jur twin: the translatable cells + the documented escape divergences. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwin(RegexEngineFactory factory) {
+        JurOracle.assertSameFind("\\n", "\n", factory);
+        JurOracle.assertSameFind("\\t", "\t", factory);
+        JurOracle.assertSameFind("\\r", "\r", factory);
+        JurOracle.assertSameFind("\\f", "\f", factory);
+        JurOracle.assertSameFind("\\a", "\u0007", factory);
+        JurOracle.assertSameFind("\\v", "\u000B", factory); // shared cell; JDK \v = vertical whitespace class
+        JurOracle.assertSameFind("\\\\", "\\", factory);
+        JurOracle.assertSameFind("\\x41", "A", factory);
+        JurOracle.assertSameFind("\\x{41}", "A", factory);
+        JurOracle.assertSameFind("\\x{3B1}", "\u03B1", factory);
+        // \12 / \101 stay RE2-lane-pinned: the JDK reads digit escapes
+        // without a leading zero as BACKREFS (octal needs \0 there), so
+        // they never match there; the leading-zero spelling agrees:
+        JurOracle.assertSameFind("\\.", ".", factory);
+        JurOracle.assertSameFind("\\*", "*", factory);
+        JurOracle.assertSameFind("\\+", "+", factory);
+        JurOracle.assertSameFind("\\?", "?", factory);
+        JurOracle.assertSameFind("\\(\\)", "()", factory);
+        JurOracle.assertSameFind("\\[", "[", factory);
+        JurOracle.assertSameFind("\\{", "{", factory);
+        JurOracle.assertSameFind("\\|", "|", factory);
+        JurOracle.assertSameFind("\\$", "$", factory);
+        JurOracle.assertSameFind("\\^", "^", factory);
+        JurOracle.assertSameFind("\\Qa.b*c\\E", "a.b*c", factory);
+        JurOracle.assertSameFind("\\Qabc", "abc", factory);
+        JurOracle.assertSameFind("x\\Qa.b\\Ey", "xa.by", factory);
+        JurOracle.assertSameFind("\\Q[()]\\E", "[()]", factory);
+        JurOracle.assertSameFind("\\012", "\n", factory);
+        JurOracle.assertSameFind("\\Q\\E", "", factory);
+        JurOracle.assertSameFind("\\Qa\\E\\Qb\\E", "ab", factory);
+        // shared malformed spellings: both reject
+        JurOracle.assertSameCompileReject("\\E", factory);
+        JurOracle.assertSameCompileReject("\\K", factory);
+        JurOracle.assertSameCompileReject("\\C", factory);
+        JurOracle.assertSameCompileReject("\\x{}", factory);
+        JurOracle.assertSameCompileReject("\\x", factory);
+        JurOracle.assertSameCompileReject("\\x{FFFFFFFF}", factory);
+        // JDK-only syntax we reject (DFA discipline / no such escape)
+        JurOracle.assertDivergentReject("\\R", factory); // JDK: any linebreak
+        JurOracle.assertDivergentReject("\\e", factory); // JDK: escape char
+        JurOracle.assertDivergentReject("\\1", factory); // bare backref, no groups
+        // our octal reading the JDK (26+) rejects
+        JurOracle.assertDivergentAccept("\\0", factory);
     }
 }

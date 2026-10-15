@@ -83,6 +83,116 @@ class FinalOpsParityTest {
         return sb.toString();
     }
 
+    // ---- jur twins: the same protocols vs the live java.util.regex ----
+
+    private static String jurProtocol(String pattern, String input) {
+        var m = java.util.regex.Pattern.compile(pattern).matcher(input);
+        StringBuilder sb = new StringBuilder();
+        boolean found = m.find();
+        sb.append(found ? "true " + m.group() : "false").append(' ').append(m.groupCount());
+        if (found) {
+            for (int i = 1; i <= m.groupCount(); i++) {
+                String g = m.group(i);
+                if (g != null) {
+                    sb.append(" <").append(g).append('>');
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String facadeProtocol(String pattern, String input, RegexEngineFactory factory) {
+        var m = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory).matcher(input);
+        StringBuilder sb = new StringBuilder();
+        boolean found = m.find();
+        sb.append(found ? "true " + m.group() : "false").append(' ').append(m.groupCount());
+        if (found) {
+            for (int i = 1; i <= m.groupCount(); i++) {
+                String g = m.group(i);
+                if (g != null) {
+                    sb.append(" <").append(g).append('>');
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    /** Jur twin assert: default (JUR) lane vs the live java.util.regex oracle, group clauses carried. */
+    private static void assertSameGroupsJur(String pattern, String input, RegexEngineFactory factory) {
+        assertThat(facadeProtocol(pattern, input, factory))
+            .as("jur pattern=\"%s\" input-encoded=\"%s\" [%s]", pattern, escape(input), factory)
+            .isEqualTo(jurProtocol(pattern, input));
+    }
+
+    /** Jur twin of the skipped-group, empty-iteration and anchor families
+     *  (the family-6 shapes the JDK reports null-group for — the RE2 lane
+     *  pins the other way above); the full-simple-fold section is the
+     *  bare-CI ASCII-fold twin (both sides no-match on ſ/kelvin cells),
+     *  and the group-scoped multiline anchors translate whole. The
+     *  lone-surrogate cells stay re2j-lane-pinned (the known scan
+     *  residual). */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwinFinalOps(RegexEngineFactory factory) {
+        // skipped-group family
+        assertSameGroupsJur("(\\b)?", " ", factory);
+        assertSameGroupsJur("(\\b)?", "x", factory); // boundary holds: group participates
+        assertSameGroupsJur("(\\z)*", "b", factory);
+        assertSameGroupsJur("(a\\z)*", "b", factory);
+        assertSameGroupsJur("(b\\z)*", "b", factory); // one real iteration
+        assertSameGroupsJur("(\\W?){3,}", "€一x", factory);
+        assertSameGroupsJur("(.?){3,}a", "zza", factory);
+        assertSameGroupsJur("(.{0,5}){3,}", "-~x", factory);
+        assertSameGroupsJur("(\\w(\\b)?)+", "ab cd", factory);
+        assertSameGroupsJur("($)?", "x", factory);
+        assertSameGroupsJur("(\\A)?.+", "ab", factory);
+        assertSameGroupsJur("(\\A)?", "ab", factory);
+        assertSameGroupsJur("(\\z)?", "ab", factory);
+        assertSameGroupsJur("(\\b)*", " ", factory);
+        assertSameGroupsJur("(\\b){0,1}", " ", factory);
+        assertSameGroupsJur("(\\A)??.+", "ab", factory);
+        // stop-or-extend through assertions
+        assertSameGroupsJur("[^0x]+\\b\\W", "abz c", factory);
+        assertSameGroupsJur("\\D+?\\s*\\B", "a\u00df#", factory);
+        assertSameGroupsJur("(?:..{3,5}?\\B)+\\S", "ab\u00df#", factory);
+        // empty-iteration cut
+        assertSameGroupsJur("(?:.*?9{0,}\\b){1,}", "99x", factory);
+        assertSameGroupsJur("(?:.*?9*\\b){1,}", "99x", factory);
+        assertSameGroupsJur("(?:^|$)+$", "a", factory);
+        assertSameGroupsJur("(?:(?:^)|(?:$))+$", "ab", factory);
+        assertSameGroupsJur("(?:\\b)+$", "a b", factory);
+        assertSameGroupsJur("(?:a{0,}){1,}b", "ab", factory);
+        // empty-iteration captures under post-loop anchors (the JDK-null family)
+        assertSameGroupsJur("(\\B)*\\z", "!", factory);
+        assertSameGroupsJur("(\\B)*\\z", "a!", factory);
+        assertSameGroupsJur("(\\b)*\\z", "a", factory);
+        assertSameGroupsJur("(\\B)*$", "!", factory);
+        assertSameGroupsJur("((\\B))*\\z", "!", factory);
+        assertSameGroupsJur("()(\\B)*\\z", "!", factory);
+        assertSameGroupsJur("(\\B)*(?:\\z|!)", "!", factory);
+        assertSameGroupsJur("(\\B)*?\\z", "!", factory); // lazy exit-first
+        assertSameGroupsJur("(\\B)(\\B)*\\z", "!", factory);
+        assertSameGroupsJur("(\\B|)*\\z", "!", factory);
+        assertSameGroupsJur("(?:(\\B)x|y)\\z", "y", factory);
+        assertSameGroupsJur("(?:(\\B)x|y)\\z", "yx", factory);
+        // bare-CI fold: both sides ASCII-only (ſ/kelvin no-match everywhere)
+        assertSameGroupsJur("(?i)s", "\u017f", factory);
+        assertSameGroupsJur("(?i:S)", "a\u017fb", factory);
+        assertSameGroupsJur("(?i)k", "\u212a", factory);
+        assertSameGroupsJur("(?i)[s]", "\u017f", factory);
+        assertSameGroupsJur("(?i)[a-z]", "\u017f", factory);
+        assertSameGroupsJur("(?i)\\w+", "a\u017fb", factory);
+        assertSameGroupsJur("(?i)\\d", "9", factory);
+        assertSameGroupsJur("(?i)\\s", " ", factory);
+        // group-scoped multiline anchors
+        assertSameGroupsJur("(?m:\\S.$)", "ab\ncd", factory);
+        assertSameGroupsJur("\\S(?m:$)", "ab\ncd", factory);
+        assertSameGroupsJur("(?m:$)", "ab\ncd", factory);
+        assertSameGroupsJur("\\D(?m:\\S.$)", "ab\ncd", factory);
+        assertSameGroupsJur("(?m:^\\w)", "ab\ncd", factory);
+        assertSameGroupsJur("$x(?m:$)", "x\ny", factory);
+    }
+
     // ---- the skipped-group family: zero-width content under a quantifier ----
 
     @ParameterizedTest

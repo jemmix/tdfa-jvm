@@ -27,6 +27,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>Plus a deterministic randomized differential sweep: small random
  * alternation/quantifier/group patterns over a 3-char alphabet, fixed seed —
  * regenerable failures.
+ *
+ * <p>RE2-lane-pinned by construction (WBS item 7): {@code LONGEST_MATCH}
+ * has no JDK reading — the java.util.regex oracle cannot be asked a
+ * leftmost-longest question, so no jur twin exists for this suite.
  */
 class LongestMatchParityTest {
 

@@ -28,6 +28,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * is deliberately not run on those shapes: the divergence is the budget
  * class, not a result mismatch; re2j is invoked only where parity is the
  * claim.
+ *
+ * <p>Jur twin below: the match-parity cells translate whole (the JDK has
+ * no 1000 cap); the budget class is the same documented divergence the
+ * re2j lane pins — the JDK compiles the bombs, we reject
+ * ({@link JurOracle#assertDivergentReject}).
  */
 class HugeCountParityTest {
 
@@ -133,5 +138,31 @@ class HugeCountParityTest {
     void cubedCountBombRejectsCleanly(RegexEngineFactory factory) {
         assertThatThrownBy(() -> Pattern.compile("((a{300}){300}){300}", 0, factory, null))
             .isInstanceOf(PatternTooLargeException.class).hasMessageContaining("pattern too large");
+    }
+
+    /** Jur twin: match parity at/over the cap + the budget-class divergence. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwin(RegexEngineFactory factory) {
+        JurOracle.assertSameFind("a{1000}", A1000, factory);
+        JurOracle.assertSameFind("a{1000}", A999, factory);
+        JurOracle.assertSameFind("(a{500}){2}", A1000, factory);
+        JurOracle.assertSameFind("(a{500}){2}", A999, factory);
+        JurOracle.assertSameFind("(a{500}){3}", "a".repeat(1500), factory); // effective 1500 > cap
+        JurOracle.assertSameFind("(a{750}){2}", "a".repeat(1499), factory);
+        JurOracle.assertSameFind("(a{1000}){2}", A1001, factory); // needs 2000 a's
+        JurOracle.assertSameFind("(a{10}){100}", A1000, factory); // g1 = last "aaaaaaaaaa"
+        JurOracle.assertSameFind("(a{3}){999}", "a".repeat(2997), factory); // g1 = last "aaa"
+        JurOracle.assertSameFind("((a{10}){10}){10}", A1000, factory);
+        JurOracle.assertSameFind("((a{5}){2}){100}", A1000, factory);
+        // (a{3,5}){100} on 400 a's stays RE2-lane-pinned: the JDK's
+        // backtracker is EXPONENTIAL on the range-product shape (no linear
+        // guarantee — the pathology this engine exists to avoid); the
+        // oracle is not asked that cell
+        // the budget class: the JDK compiles all of these, we reject cleanly
+        JurOracle.assertDivergentReject("(a{1000}){1000}", factory);
+        JurOracle.assertDivergentReject("(a{2,3}){1000}", factory);
+        JurOracle.assertDivergentReject("(a{0,1000}){1000}", factory);
+        JurOracle.assertDivergentReject("((a{300}){300}){300}", factory);
     }
 }

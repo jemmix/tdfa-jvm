@@ -36,6 +36,10 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
  * PikeSim (over the same Tnfa) agrees with re2j on every case here — these
  * pins are determinizer-side; a PikeSim disagreement would relocate the bug
  * to the Tnfa/parser.
+ *
+ * <p>Jur twins (WBS item 7): the same cases pin the default (JUR) lane
+ * against the live {@code java.util.regex} oracle — anchors and assertion
+ * contexts translate whole.
  */
 class AnchorContextParityTest {
 
@@ -53,6 +57,18 @@ class AnchorContextParityTest {
         assertSameFind("(^|\\b\u6f22)_", "_", factory);
         assertSameFind("((((\\b))))*^.", "b", factory);
         assertSameFind("(?:\\b(j)|^z)", "z", factory);
+        // jur twin: default lane vs live java.util.regex
+        JurOracle.assertSameFind("(\\b)?^[\\d]", "0", factory);
+        JurOracle.assertSameFind("(\\A|\\B\u6f22)\u017f", "\u017f", factory);
+        JurOracle.assertSameFind("((\\B){0,}\\A) ", " ", factory);
+        JurOracle.assertSameFind("((?m:^))?^.", "\u00e9", factory);
+        JurOracle.assertSameFind("(\\B)?\\A.", "\udc00", factory);
+        JurOracle.assertSameFind("(\\B\udc21|\\A)\u3042", "\u3042", factory);
+        JurOracle.assertSameFind("((\\B\udc00|\\A|w)).", "\ud800", factory);
+        JurOracle.assertSameFind("(\\Bm|(?:\\A\\D))", " ", factory);
+        JurOracle.assertSameFind("(^|\\b\u6f22)_", "_", factory);
+        JurOracle.assertSameFind("((((\\b))))*^.", "b", factory);
+        JurOracle.assertSameFind("(?:\\b(j)|^z)", "z", factory);
     }
 
     @ParameterizedTest
@@ -62,6 +78,10 @@ class AnchorContextParityTest {
         assertSameFind("(?:(?:^|\\z))\\b", "\u03a9z", factory);
         assertSameFind("(?m:\\A.|(^))\\S", "\u00e9", factory);
         assertSameFind("(?m:(\\A.|(^)))", " ", factory); // alternation priority among zero-width arms
+        JurOracle.assertSameFind("Z(?:\\A|\\B)", "Z", factory);
+        JurOracle.assertSameFind("(?:(?:^|\\z))\\b", "\u03a9z", factory);
+        JurOracle.assertSameFind("(?m:\\A.|(^))\\S", "\u00e9", factory);
+        JurOracle.assertSameFind("(?m:(\\A.|(^)))", " ", factory);
     }
 
     /**
@@ -95,5 +115,22 @@ class AnchorContextParityTest {
         assertSameFind("[d-\ud835\udd04]??\\B\ud800?", "\udc21", factory);
         assertSameFind("[0-\ud83d\udca9]{0,}?\\B\udc07*", "\udfff", factory);
         assertSameFind("(.{1,}?\\b]{0,})", "\udc00b", factory);
+        // jur twin
+        JurOracle.assertSameFind(".+?\\b[^\\d]*", "\u00df9", factory); // [0,1) not [0,2)
+        JurOracle.assertSameFind(".{0,}?\\B\\S?", " ", factory);
+        JurOracle.assertSameFind("\\D??(?:\\b)]?", "b", factory);
+        JurOracle.assertSameFind("\\S+?\\bW?", "\udc00_", factory);
+        JurOracle.assertSameFind("\\W??(\\B)[\udfff]*", "\ud800\udfff", factory);
+        JurOracle.assertSameFind("\\D*?\\B(?:\udfff)?", "\ud800\udc21", factory);
+        JurOracle.assertSameFind("\\s??\\B(.)?", "\n", factory);
+        JurOracle.assertSameFind(".*?\\B]?", "\udc02", factory);
+        JurOracle.assertSameFind("(\\A(\udc21){0,}|.){1}", "\udca9", factory);
+        JurOracle.assertSameFind("((\\B|.))~*", "\udc07", factory);
+        JurOracle.assertSameFind(".+?\\B(9){0,}", "\\t~", factory);
+        JurOracle.assertSameFind("\\S{2,}?(\\B)~{0,}", "\udc07\udc21\udfff", factory);
+        JurOracle.assertSameFind("(.??)\\B(s)*", "\udfff", factory);
+        JurOracle.assertSameFind("[d-\ud835\udd04]??\\B\ud800?", "\udc21", factory);
+        JurOracle.assertSameFind("[0-\ud83d\udca9]{0,}?\\B\udc07*", "\udfff", factory);
+        JurOracle.assertSameFind("(.{1,}?\\b]{0,})", "\udc00b", factory);
     }
 }

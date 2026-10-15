@@ -94,6 +94,55 @@ class ZeroWidthExhaustiveTest {
             .as("sim-vs-re2j pattern=\"%s\" input-encoded=\"%s\"", c.pattern(), escape(c.input())).isEqualTo(expected);
     }
 
+    /**
+     * Jur twin (WBS item 7): the same exhaustive zero-width corner vs the
+     * live {@code java.util.regex} oracle on the jur facade, group clauses
+     * carried (the family-6 shape). The PikeSim audit column is re2j-lane
+     * machinery (same Tnfa, RE2 reading) and stays in the test above.
+     */
+    @ParameterizedTest
+    @MethodSource("cases")
+    void zeroWidthCornerMatchesJur(Case c, RegexEngineFactory factory) {
+        String expected = jurProtocol(c.pattern(), c.input());
+        String actual = facadeProtocol(c.pattern(), c.input(), factory);
+        assertThat(actual).as("jur pattern=\"%s\" input-encoded=\"%s\" [%s]", c.pattern(), escape(c.input()), factory)
+            .isEqualTo(expected);
+    }
+
+    /** The live java.util.regex oracle in this test's protocol. */
+    private static String jurProtocol(String pattern, String input) {
+        var m = java.util.regex.Pattern.compile(pattern).matcher(input);
+        StringBuilder sb = new StringBuilder();
+        boolean found = m.find();
+        sb.append(found ? "true " + m.group() : "false").append(' ').append(m.groupCount());
+        if (found) {
+            for (int i = 1; i <= m.groupCount(); i++) {
+                String g = m.group(i);
+                if (g != null) {
+                    sb.append(" <").append(g).append('>');
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    /** The jur facade (default lane) in this test's protocol. */
+    private static String facadeProtocol(String pattern, String input, RegexEngineFactory factory) {
+        var m = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory).matcher(input);
+        StringBuilder sb = new StringBuilder();
+        boolean found = m.find();
+        sb.append(found ? "true " + m.group() : "false").append(' ').append(m.groupCount());
+        if (found) {
+            for (int i = 1; i <= m.groupCount(); i++) {
+                String g = m.group(i);
+                if (g != null) {
+                    sb.append(" <").append(g).append('>');
+                }
+            }
+        }
+        return sb.toString();
+    }
+
     /** PikeSim reference in this test's protocol — the audit's fourth column. */
     private static String simProtocol(String pattern, String input) {
         var m = PikeSim.compile(pattern, Re2jUnicodeProvider.INSTANCE).matcher(input);

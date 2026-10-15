@@ -30,7 +30,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * (soft) for insight</b> — our contract is re2j drop-in parity, and Fowler's
  * X/Open leftmost-longest submatch rules are stricter than RE2-family
  * behavior in documented places (see {@code docs/re-interpretation.html} in
- * the vendored tree).
+  * the vendored tree).
+  *
+  * <p>RE2-lane-pinned (WBS item 7): the hard gate runs in
+  * {@code LONGEST_MATCH}, which has no JDK reading — no jur twin for this
+  * corpus.
  *
  * <p>Files: {@code basic}, {@code forcedassoc}, {@code leftassoc},
  * {@code nullsubexpr}, {@code repetition} (spec files).

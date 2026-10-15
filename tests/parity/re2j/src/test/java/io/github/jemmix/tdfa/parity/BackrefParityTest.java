@@ -15,6 +15,12 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
  * {@code \12}) stay octal character escapes regardless of how many groups
  * precede them, and {@code \8}/{@code \9} (never backrefs in any engine)
  * reject.
+ *
+ * <p>Jur twins: the JDK oracle ACCEPTS backreferences — the rejections pin
+ * as the documented accept/reject divergence (DFA discipline,
+ * {@link JurOracle#assertDivergentReject}), while the octal fallback
+ * translates except where the JDK's parser prefers the backref reading
+ * ({@code (a)\10} reads as backref-1 + literal {@code 0} there).
  */
 class BackrefParityTest {
 
@@ -99,5 +105,30 @@ class BackrefParityTest {
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void nulEscapeMatchesNul(RegexEngineFactory factory) {
         assertSameFind("\\0", "\0", factory);
+    }
+
+    /**
+     * Jur twin: the JDK accepts every backref spelling (divergence pinned);
+     * the named-backref {@code \k<n>} spelling it shares with re2j — both
+     * reject; the octal fallback agrees except the {@code (a)\10} reading
+     * (the JDK prefers the backref-1 + literal interpretation there, so
+     * those cells stay RE2-lane-pinned).
+     */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwin(RegexEngineFactory factory) {
+        JurOracle.assertDivergentReject("(a)\\1", factory); // JDK: backref; us: reject
+        JurOracle.assertDivergentReject("(a)(b)\\2\\1", factory);
+        JurOracle.assertDivergentReject("\\1(a)", factory); // JDK compiles (forward ref)
+        JurOracle.assertDivergentReject("(a)\\1?", factory);
+        JurOracle.assertDivergentReject("(?<n>a)\\k<n>", factory); // \k<n>: JDK rejects too — but as a
+        JurOracle.assertSameCompileReject("\\k<n>", factory); // shared malformed spelling
+        // ((a)\10 / (a)(b)\12 stay RE2-lane-pinned: the JDK parser prefers
+        // the backref reading there (backref-1 + literal digit), not octal)
+        JurOracle.assertDivergentReject("\\8", factory); // JDK: literal-ish escape; us: reject
+        JurOracle.assertDivergentReject("\\9", factory);
+        // bare \0: the JDK (26+) rejects it as an illegal octal escape —
+        // the facade keeps the re2j reading (NUL); a documented divergence
+        JurOracle.assertDivergentAccept("\\0", factory);
     }
 }

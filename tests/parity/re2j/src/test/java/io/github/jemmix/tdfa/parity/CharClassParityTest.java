@@ -12,6 +12,15 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
 /**
  * Character class parity: [abc], [a-z], [^...], POSIX classes, Unicode \p{},
  * shorthand \d\w\s inside classes, leading-] edge cases.
+ *
+ * <p>Jur twin below — classes, ranges, negation, Unicode general
+ * categories and edges translate whole. RE2-lane-pinned (documented
+ * divergences, no jur comparison): the POSIX bracket spellings
+ * {@code [[:alpha:]]} (the JDK parses them as a plain class + literal
+ * tail, not a POSIX class), the bare Unicode script names
+ * {@code \p{Greek}}/{@code \p{Latin}}/... (the JDK needs
+ * {@code \p{IsGreek}}), {@code \p{Any}} and {@code \p{^Nd}} (RE2-lineage
+ * spellings the JDK rejects — pinned as divergent-accept).
  */
 class CharClassParityTest {
 
@@ -739,5 +748,94 @@ class CharClassParityTest {
     void longInputFind(RegexEngineFactory factory) {
         String in = "a".repeat(10000) + "b";
         assertSameFind("a+b", in, factory);
+    }
+
+    /** Jur twin: the translatable cases against the live java.util.regex oracle. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwinTranslatableCases(RegexEngineFactory factory) {
+        JurOracle.assertSameFind("[abc]", "a", factory);
+        JurOracle.assertSameFind("[abc]", "d", factory);
+        JurOracle.assertSameFind("[a-z]", "f", factory);
+        JurOracle.assertSameFind("[A-Z]", "G", factory);
+        JurOracle.assertSameFind("[^abc]", "d", factory);
+        JurOracle.assertSameFind("[^abc]", "a", factory);
+        JurOracle.assertSameFind("[^0-9]", "x", factory);
+        JurOracle.assertSameFind("[\\d]", "5", factory);
+        JurOracle.assertSameFind("[\\w]", "_", factory);
+        JurOracle.assertSameFind("[\\s]", " ", factory);
+        JurOracle.assertSameFind("[a-zA-Z0-9_]", "Z", factory);
+        JurOracle.assertSameFind("[]]", "]", factory);
+        JurOracle.assertSameFind("[]a]", "]", factory);
+        JurOracle.assertSameFind("[^]]", "a", factory);
+        JurOracle.assertSameFind("\\p{L}", "A", factory);
+        JurOracle.assertSameFind("\\p{Lu}", "A", factory);
+        JurOracle.assertSameFind("\\p{Ll}", "a", factory);
+        JurOracle.assertSameFind("\\p{Nd}", "5", factory);
+        JurOracle.assertSameFind("\\P{Nd}", "x", factory);
+        JurOracle.assertSameFind("\\pL", "A", factory);
+        JurOracle.assertSameFind("[^a-z]", "A", factory);
+        JurOracle.assertSameFind("[^.]", "x", factory);
+        JurOracle.assertSameFind("[a-]", "-", factory);
+        JurOracle.assertSameFind("[-a]", "-", factory);
+        JurOracle.assertSameAllMatches("[aeiou]", "hello world", factory);
+        JurOracle.assertSameAllMatches("[^aeiou ]", "hello world", factory);
+        JurOracle.assertSameFind("\\x{10000}", new String(Character.toChars(0x10000)), factory);
+        // the general-category table, category by category
+        JurOracle.assertSameFind("\\p{N}", "5", factory);
+        JurOracle.assertSameFind("\\p{Nl}", "\u2160", factory); // Roman numeral I
+        JurOracle.assertSameFind("\\p{No}", "\u00BD", factory); // ½
+        JurOracle.assertSameFind("\\p{M}", "\u0300", factory); // combining grave
+        JurOracle.assertSameFind("\\p{Mn}", "\u0300", factory);
+        JurOracle.assertSameFind("\\p{S}", "+", factory);
+        JurOracle.assertSameFind("\\p{Sm}", "+", factory);
+        JurOracle.assertSameFind("\\p{Sc}", "$", factory);
+        JurOracle.assertSameFind("\\p{Sk}", "\u005E", factory); // circumflex
+        JurOracle.assertSameFind("\\p{P}", ".", factory);
+        JurOracle.assertSameFind("\\p{Pd}", "-", factory);
+        JurOracle.assertSameFind("\\p{Pc}", "_", factory);
+        JurOracle.assertSameFind("\\p{Z}", " ", factory);
+        JurOracle.assertSameFind("\\p{Zs}", " ", factory);
+        JurOracle.assertSameFind("\\p{C}", "\u0000", factory);
+        JurOracle.assertSameFind("\\p{Cf}", "\u200B", factory); // zero-width space
+        JurOracle.assertSameFind("\\p{Cc}", "\u0001", factory);
+        JurOracle.assertSameFind("\\p{Lo}", "\u4E00", factory); // CJK ideograph
+        JurOracle.assertSameFind("\\p{Lm}", "\u02B0", factory); // modifier letter
+        JurOracle.assertSameFind("\\p{Lt}", "\u01C5", factory); // titlecase letter (DZ)
+        JurOracle.assertSameFind("\\p{Ps}", "(", factory);
+        JurOracle.assertSameFind("\\p{Pe}", ")", factory);
+        JurOracle.assertSameFind("\\p{Pi}", "\u201C", factory); // initial quote
+        JurOracle.assertSameFind("\\p{Pf}", "\u201D", factory); // final quote
+        JurOracle.assertSameFind("\\p{Po}", ".", factory);
+        JurOracle.assertSameFind("\\p{Mc}", "\u0903", factory); // spacing combining mark
+        JurOracle.assertSameFind("\\p{Me}", "\u0488", factory); // enclosing mark
+        JurOracle.assertSameFind("\\p{So}", "\u263A", factory); // other symbol ☺
+        JurOracle.assertSameFind("\\p{Zl}", "\u2028", factory); // line separator
+        JurOracle.assertSameFind("\\p{Zp}", "\u2029", factory); // paragraph separator
+        JurOracle.assertSameFind("\\p{Co}", "\uE000", factory); // private use
+        JurOracle.assertSameFind("[\\x00]", "\u0000", factory);
+        JurOracle.assertSameFind("[.]", ".", factory);
+        JurOracle.assertSameFind("[+]", "+", factory);
+        JurOracle.assertSameFind("[|]", "|", factory);
+        JurOracle.assertSameFind("[(]", "(", factory);
+        JurOracle.assertSameFind("\\p{So}", new String(Character.toChars(0x1F600)), factory); // supplementary
+        JurOracle.assertSameFind("\\777", "\u00FF", factory); // both read 0o777 past the wrap cell
+        JurOracle.assertSameCompileSuccess("\\x{D800}", factory); // lone surrogate in pattern: both OK
+        JurOracle.assertSameFind("\\x{D800}", "\uD800", factory);
+        JurOracle.assertSameCompileReject("[\\b]", factory); // backspace-in-class: both reject
+        JurOracle.assertDivergentReject("\\N{LATIN SMALL LETTER A}", factory); // JDK \N{} named char; us reject
+        // RE2-lineage spellings the JDK rejects (kept by the shared parser)
+        JurOracle.assertDivergentAccept("\\p{Any}", factory);
+        JurOracle.assertDivergentAccept("\\p{^Nd}", factory);
+        JurOracle.assertDivergentAccept("\\p{Greek}", factory);
+        JurOracle.assertDivergentAccept("\\p{Latin}", factory);
+        JurOracle.assertDivergentAccept("\\p{Cyrillic}", factory);
+        JurOracle.assertDivergentAccept("\\p{Han}", factory);
+        JurOracle.assertDivergentAccept("\\p{Hiragana}", factory);
+        JurOracle.assertDivergentAccept("\\p{Katakana}", factory);
+        JurOracle.assertDivergentAccept("\\p{Arabic}", factory);
+        JurOracle.assertDivergentAccept("\\p{Hebrew}", factory);
+        String in = "a".repeat(10000) + "b";
+        JurOracle.assertSameFind("a+b", in, factory);
     }
 }

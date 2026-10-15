@@ -123,9 +123,11 @@ back to a slower engine.
   [work item](docs/jur-compat-wbs.md)).
 - **~300 M** differential fuzz cases vs re2j (overnight soaks): 0 divergences
   (same lane note).
-- re2j-parity suites, Glenn Fowler's testregex corpus, OpenJDK's
-  `java.util.regex` regression corpus, and a layered oracle (re2j / reference
-  Pike VM / VM / ASM) that pins any divergence to a single layer.
+- re2j-parity suites — each translatable case ALSO pinned against the live
+  `java.util.regex` oracle on the jur facade (the default lane) — Glenn
+  Fowler's testregex corpus, OpenJDK's `java.util.regex` regression corpus,
+  and a layered oracle (re2j / reference Pike VM / VM / ASM) that pins any
+  divergence to a single layer.
 
 ## Build & test
 

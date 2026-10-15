@@ -21,6 +21,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * reports null for the empty-iteration capture family and matches {@code $}
  * before a final newline) are annotated at the matrix, not diluted from it:
  * our oracle is re2j.
+ *
+ * <p>Jur twins below: the SAME matrices re-run with the live
+ * {@code java.util.regex} oracle on the jur facade — the JDK-side readings
+ * of the very cells the re2j lane pins the other way (the empty-iteration
+ * captures the JDK reports null for, the {@code $}-before-final-newline
+ * cell), i.e. both lanes' contracts side by side.
  */
 class SemanticsContractTest {
 
@@ -36,6 +42,40 @@ class SemanticsContractTest {
             g1 = "-";
         }
         return m.start() + ".." + m.end() + " g1=" + g1;
+    }
+
+    private static String jurProtocol(String p, String in) {
+        var m = java.util.regex.Pattern.compile(p).matcher(in);
+        if (!m.find()) {
+            return "no";
+        }
+        String g1;
+        try {
+            g1 = m.group(1) == null ? "null" : "'" + m.group(1) + "'";
+        } catch (RuntimeException e) {
+            g1 = "-";
+        }
+        return m.start() + ".." + m.end() + " g1=" + g1;
+    }
+
+    private static String facadeProtocol(String p, String in, RegexEngineFactory f) {
+        var m = io.github.jemmix.tdfa.Pattern.compile(p, 0, f).matcher(in);
+        if (!m.find()) {
+            return "no";
+        }
+        String g1;
+        try {
+            g1 = m.group(1) == null ? "null" : "'" + m.group(1) + "'";
+        } catch (RuntimeException e) {
+            g1 = "-";
+        }
+        return m.start() + ".." + m.end() + " g1=" + g1;
+    }
+
+    private static void assertMatchesJur(String pattern, String input, RegexEngineFactory factory) {
+        assertThat(facadeProtocol(pattern, input, factory))
+            .as("jur pattern=\"%s\" input-encoded=\"%s\" [%s]", pattern, escape(input), factory)
+            .isEqualTo(jurProtocol(pattern, input));
     }
 
     private static String tdfaProtocol(String p, String in, RegexEngineFactory f) {
@@ -132,6 +172,54 @@ class SemanticsContractTest {
             {"(?:x?){1,}y", "y"},};
         for (String[] c : m) {
             assertMatchesRe2j(c[0], c[1], factory);
+        }
+    }
+
+    // ---- jur twins: the same three matrices vs the live java.util.regex ----
+
+    /** Jur twin of the folding matrix: bare (?i) folds ASCII on both sides. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwinFoldingMatrix(RegexEngineFactory factory) {
+        String[][] m = {{"(?i)s", "ſ"}, {"(?i)s", "S"}, {"(?i:S)", "aſb"}, {"(?i:ſ)", "s"}, {"(?i)k", "\u212a"},
+            {"(?i)[s]", "ſ"}, {"(?i)[a-z]", "ſ"}, {"(?i)[a-z]", "\u212a"}, {"(?i)[^s]", "ſ"}, {"(?i)[^S]", "ſ"},
+            {"(?i)\\w+", "aſb"}, {"(?i)\\w", "\u212a"}, {"(?i)\\W", "ſ"}, {"(?i:\\W+)", "aſb"}, {"(?i)[\\W]", "ſ"},
+            {"(?i)[^\\w]", "ſ"}, {"(?i)s\\b", "aſ"}, {"(?i)\\w\\b", "ſ"}, {"(?i)\\d", "9"}, {"(?i)\\s", " "},
+            {"(?i)\ud801\udc21", "\ud801\udc01"}, {"\\w+", "aſb"}, {"\\W", "ſ"},};
+        for (String[] c : m) {
+            assertMatchesJur(c[0], c[1], factory);
+        }
+    }
+
+    /** Jur twin of the anchor matrix — incl. the $-before-final-newline cell
+     *  the re2j lane pins the other way. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwinAnchorMatrix(RegexEngineFactory factory) {
+        String[][] m = {{"(?m:$)", "ab\ncd"}, {"(?m:\\S.$)", "ab\ncd"}, {"\\S(?m:$)", "ab\ncd"},
+            {"\\D(?m:\\S.$)", "ab\ncd"}, {"(?m:^\\w)", "ab\ncd"}, {"(?m:^)", "ab\ncd"}, {"^\\w", "ab\ncd"},
+            {"\\w$", "ab\ncd"}, {"\\w$", "ab"}, {"\\w$", "ab\n"}, // the JDK's $-before-final-\n cell
+            {"\\A\\w", "ab"}, {"\\w\\z", "ab"}, {"(?m:\\w$)", "ab\ncd"}, {"(?:(?m:$)|x)", "ab\nx"},
+            {"(?:(?:^)|(?:$))+$", "a"}, {"(?:^|$)+$", "a"},};
+        for (String[] c : m) {
+            assertMatchesJur(c[0], c[1], factory);
+        }
+    }
+
+    /** Jur twin of the loop-discipline matrix: the empty-iteration capture
+     *  cells the JDK reports null for (family 6, sub-family A) — the
+     *  consuming-TAIL shapes stay out (the group-participation-tail
+     *  residual, see NestedQuantifierParityTest). */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwinLoopDisciplineMatrix(RegexEngineFactory factory) {
+        String[][] m = {{"(?:.*?9{0,}\\b){1,}", "99x"}, {"(?:.*?9*\\b){1,}", "99x"}, {"(?:.*?\\b){1,}", "99x"},
+            {"(?:9*\\b){1,}", "99x"}, {"(\\B)*\\z", "!"}, {"(\\B)*\\z", "a!"}, {"(\\b)*\\z", "a"}, {"(\\B)*$", "!"},
+            {"((\\B))*\\z", "!"}, {"(\\B)*?", "!"}, {"(\\B)*?\\z", "!"}, {"(\\B)(\\B)*\\z", "!"}, {"(\\B|)*\\z", "!"},
+            {"(?:(\\B)x|y)\\z", "y"}, {"(?:(\\B)x|y)\\z", "yx"}, {"(?:\\b)+$", "a b"}, {"(?:a{0,}){1,}b", "ab"},
+            {"(?:x?){1,}y", "y"},};
+        for (String[] c : m) {
+            assertMatchesJur(c[0], c[1], factory);
         }
     }
 }

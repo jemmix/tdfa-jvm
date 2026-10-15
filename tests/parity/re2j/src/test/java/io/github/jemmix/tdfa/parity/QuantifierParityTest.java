@@ -11,6 +11,13 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFindPosix;
 
 /**
  * Quantifier parity: greedy, lazy, bounded repetition, alternation priority.
+ *
+ * <p>Jur twin below: every match-shape case translates; the POSIX
+ * leftmost-longest probes and {@code a{,3}} are RE2-lane-pinned (no JDK
+ * reading: {@code LONGEST_MATCH} has no JDK flag, and the JDK rejects the
+ * {@code {,n}} spelling outright); possessive spellings are the documented
+ * accept/reject divergence (the JDK compiles them — our DFA discipline
+ * rejects, pinned by {@link JurOracle#assertDivergentReject}).
  */
 class QuantifierParityTest {
 
@@ -320,5 +327,71 @@ class QuantifierParityTest {
     void capturePersistsAcrossSkippedIterations(RegexEngineFactory factory) {
         assertSameFind("((a)?x){2}", "axax", factory);
         assertSameFind("((a)|b)+", "ab", factory);
+    }
+
+    /** Jur twin: the translatable cases against the live java.util.regex oracle. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwinTranslatableCases(RegexEngineFactory factory) {
+        JurOracle.assertSameFind("a*", "aaa", factory);
+        JurOracle.assertSameFind("a*", "bbb", factory);
+        JurOracle.assertSameFind("a+", "aaa", factory);
+        JurOracle.assertSameFind("a+", "bbb", factory);
+        JurOracle.assertSameFind("ab?", "ab", factory);
+        JurOracle.assertSameFind("ab?", "ac", factory);
+        JurOracle.assertSameFind("a*?", "aaa", factory);
+        JurOracle.assertSameFind("a+?", "aaa", factory);
+        JurOracle.assertSameFind("ab??", "ab", factory);
+        JurOracle.assertSameFind("a{3}", "aaaa", factory);
+        JurOracle.assertSameFind("a{3}", "aa", factory);
+        JurOracle.assertSameFind("a{2,}", "aaaaa", factory);
+        JurOracle.assertSameFind("a{2,4}", "aaaaaa", factory);
+        JurOracle.assertSameFind("a{2,4}a", "aaaaaa", factory);
+        JurOracle.assertSameFind("(a?){2,}", "aa", factory); // g1="a", not ""
+        JurOracle.assertSameFind("(a?){2,}", "aab", factory);
+        JurOracle.assertSameFind("(.?){2,}", "xy", factory); // g1="y"
+        JurOracle.assertSameFind("(.{0,2}){2,}", "abc", factory); // g1="c"
+        JurOracle.assertSameFind("(a?){3,}", "aaaa", factory);
+        JurOracle.assertSameFind("((a)?){2,}", "aa", factory); // nested group
+        // (a?){2,}b on "aab": the consuming-TAIL residual (JDK reports the
+        // empty final iteration's g1 2..2) — documented in
+        // NestedQuantifierParityTest's jur twin; the no-tail cells agree:
+        JurOracle.assertSameFind("x(a?){2,}", "xaa", factory); // leading context
+        JurOracle.assertSameFind("(a{0,}){2,}", "aa", factory); // star body: g1="" in BOTH
+        JurOracle.assertSameFind("(a??){2,}", "aa", factory);
+        JurOracle.assertSameFind("(a?){2,}?", "aab", factory); // lazy open counted
+        JurOracle.assertSameFind("(.{0,2}){2,}?", "abcd", factory);
+        JurOracle.assertSameFind("(\\W?){2,}", "!!", factory); // class body: g1="!" (last non-empty)
+        JurOracle.assertSameFind("(a?){2,}", "b", factory); // empty match, g1="" in both
+        JurOracle.assertSameFind("a{2,4}?a", "aaaaaa", factory);
+        JurOracle.assertSameFind("a{0}", "aaa", factory);
+        JurOracle.assertSameFind("(ab){2}", "abab", factory);
+        JurOracle.assertSameFind("(ab){2}", "aba", factory);
+        JurOracle.assertSameFind("a.*b", "aXbYb", factory);
+        JurOracle.assertSameFind("a.*?b", "aXbYb", factory);
+        JurOracle.assertSameFind("(a|ab)", "ab", factory);
+        JurOracle.assertSameFind("(ab|a)", "ab", factory);
+        JurOracle.assertSameFind("(a*)+", "aaa", factory);
+        JurOracle.assertSameFind("(cat|dog)+", "catdogcat", factory);
+        JurOracle.assertSameFind("[0-9]+", "abc123def", factory);
+        JurOracle.assertSameAllMatches("a+?", "aaa", factory);
+        JurOracle.assertSameAllMatches("a+", "aaa", factory);
+        JurOracle.assertSameFind("(|a)", "a", factory);
+        JurOracle.assertSameFind("(a|)", "a", factory);
+        JurOracle.assertSameFind("^a*", "aaa", factory);
+        JurOracle.assertSameFind("(a+)+b", "aaab", factory);
+        JurOracle.assertSameFind("a{0,0}", "aaa", factory);
+        JurOracle.assertSameFind("a{5}", "aaaaa", factory);
+        JurOracle.assertSameFind("((a{1,2}?c?){0,5}?)d", "aad", factory);
+        JurOracle.assertSameFind("((.{1,5}?[ \n\ud807\udc07\\s]?){0,5}?)z", "\u6f22\u03a9z", factory);
+        JurOracle.assertSameFind("((a)?x){2}", "axax", factory);
+        JurOracle.assertSameFind("((a)|b)+", "ab", factory);
+        // RE2-lane-pinned (no jur reading): a{,3} — the JDK rejects the
+        // spelling; the facade parses it as the literal "a{,3}" (divergence
+        // pinned in ParserHardeningParityTest's jur twin)
+        JurOracle.assertDivergentReject("a++", factory); // JDK possessive, we reject
+        JurOracle.assertDivergentReject("a?+", factory);
+        JurOracle.assertDivergentReject("a{2,3}+", factory);
+        JurOracle.assertSameCompileReject("a{3,2}", factory); // inverted range: both reject
     }
 }

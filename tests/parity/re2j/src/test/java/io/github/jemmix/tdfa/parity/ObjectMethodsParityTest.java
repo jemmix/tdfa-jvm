@@ -13,6 +13,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * Object method parity: toString(), equals(), hashCode(), pattern(),
  * flags(), quote().
+ *
+ * <p>Jur twin below, where the JDK oracle has a comparable cell:
+ * toString()/pattern()/null-compile. The rest of the suite stays
+ * facade-vs-re2j: {@code flags()} numerics deliberately do NOT mirror the
+ * JDK's (documented — MULTILINE is 4 here, 8 there), {@code quote()}
+ * escapes per-meta re2j-style where the JDK wraps in {@code \Q...\E}, and
+ * equals/hashCode are facade-internal.
  */
 class ObjectMethodsParityTest {
 
@@ -184,5 +191,18 @@ class ObjectMethodsParityTest {
     void patternSerializable() {
         var p = io.github.jemmix.tdfa.Pattern.compile("abc");
         assertThat(p).isInstanceOf(Serializable.class);
+    }
+
+    /** Jur twin: the JDK-comparable object-method cells. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwin(RegexEngineFactory factory) {
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("a(b)c", 0, factory).toString())
+            .isEqualTo(java.util.regex.Pattern.compile("a(b)c").toString()); // both = pattern()
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("a(b)c", 0, factory).pattern())
+            .isEqualTo(java.util.regex.Pattern.compile("a(b)c").pattern());
+        assertThatThrownBy(() -> java.util.regex.Pattern.compile(null)).isInstanceOf(NullPointerException.class); // matches our compileNullRejects above
+        assertThat(io.github.jemmix.tdfa.Pattern.matches("abc", "abc"))
+            .isEqualTo(java.util.regex.Pattern.matches("abc", "abc"));
     }
 }
