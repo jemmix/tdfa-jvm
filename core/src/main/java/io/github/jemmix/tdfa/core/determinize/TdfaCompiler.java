@@ -1570,7 +1570,14 @@ final class TdfaCompiler {
             }
             DfaStateBuilder sb = builders.get(s);
             Kernel k = kernels.get(s);
-            int[] cutPairs = cutOverrideByState == null ? null : cutOverrideByState[s];
+            // Growth guard: bindCuts sizes cutOverrideByState to the kernel
+            // count AT BIND TIME; kernels discovered after the last bind
+            // (no cut pairs of their own) sit beyond the array's tail —
+            // null there, exactly like the never-bound case (found by the
+            // evidence-re-base jur-lane matrix: a nested-quantifier shape
+            // whose cut binds all happened before late whole-side states).
+            int[] cutPairs =
+                cutOverrideByState == null || s >= cutOverrideByState.length ? null : cutOverrideByState[s];
             if (Boolean.getBoolean("tdfa.debug.finals") && cutPairs != null) {
                 System.err.println("  [finals] state " + s + " cutPairs=" + Arrays.toString(cutPairs));
             }
