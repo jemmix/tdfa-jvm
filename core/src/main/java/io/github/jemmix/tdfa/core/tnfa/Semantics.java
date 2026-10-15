@@ -63,6 +63,8 @@ public final class Semantics {
 
     private static final int UNGREEDY_U_BIT = 64;
 
+    private static final int SPACE_RE2_BIT = 128;
+
     private final int bits;
 
     private Semantics(int bits) {
@@ -144,6 +146,19 @@ public final class Semantics {
         return with(UNGREEDY_U_BIT);
     }
 
+    /**
+     * Axis: the ASCII {@code \s}/{@code \S} table keeps the RE2-lineage
+     * reading (re2j's {@code [\t\n\f\r ]} — U+000B is NOT whitespace);
+     * unset is java.util.regex's {@code [ \t\n\x0B\f\r]} (U+000B is
+     * whitespace). The Unicode ({@code (?u)}) {@code \s} table is
+     * lineage-shared ({@code IsWhite_Space} includes U+0009-U+000D) and
+     * is unaffected. Found by the WBS item-7 parity-suite widening: the
+     * JUR default had silently kept re2j's table.
+     */
+    public Semantics spaceRe2() {
+        return with(SPACE_RE2_BIT);
+    }
+
     private Semantics with(int bit) {
         return (bits & bit) != 0 ? this : new Semantics(bits | bit);
     }
@@ -183,6 +198,11 @@ public final class Semantics {
         return (bits & UNGREEDY_U_BIT) != 0;
     }
 
+    /** Axis set? (ASCII {@code \s} excludes U+000B — the re2j table.) */
+    public boolean isSpaceRe2() {
+        return (bits & SPACE_RE2_BIT) != 0;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -203,9 +223,9 @@ public final class Semantics {
     public String toString() {
         StringBuilder sb = new StringBuilder("Semantics[");
         String[] names = {"UNIX_LINES", "UNICODE_CASE", "CODEPOINT_BOUNDARIES", "EMPTY_LAST_LINE", "END_OF_TEXT_ONLY",
-            "EMPTY_ITERATION_SPANS", "UNGREEDY_U"};
+            "EMPTY_ITERATION_SPANS", "UNGREEDY_U", "SPACE_RE2"};
         int[] axisBits = {UNIX_LINES_BIT, UNICODE_CASE_BIT, CODEPOINT_BOUNDARIES_BIT, EMPTY_LAST_LINE_BIT,
-            END_OF_TEXT_ONLY_BIT, EMPTY_ITERATION_SPANS_BIT, UNGREEDY_U_BIT};
+            END_OF_TEXT_ONLY_BIT, EMPTY_ITERATION_SPANS_BIT, UNGREEDY_U_BIT, SPACE_RE2_BIT};
         boolean first = true;
         for (int i = 0; i < names.length; i++) {
             if ((bits & axisBits[i]) != 0) {

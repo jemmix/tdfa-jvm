@@ -66,9 +66,14 @@ public final class Parser {
     private static final int[] R_NOT_DIGIT = {0, '/', ':', 0x10FFFF};
     private static final int[] R_WORD = {'a', 'z', 'A', 'Z', '0', '9', '_', '_'};
     private static final int[] R_NOT_WORD = {0, '/', ':', '@', '[', '^', '`', '`', '{', 0x10FFFF};
-    // re2j's \s = [\t\n\f\r ] — note: no \v (U+000B), unlike POSIX [:space:].
+    // re2j's \s = [\t\n\f\r ] — note: no \v (U+000B), unlike POSIX [:space:]
+    // and unlike java.util.regex's ASCII \s = [ \t\n\x0B\f\r] (the JDK
+    // includes VT). Lane-selected (the SPACE_RE2 axis): the RE2 lineage
+    // keeps re2j's table, the JUR default mirrors the JDK's.
     private static final int[] R_SPACE = {'\t', '\n', '\f', '\r', ' ', ' '};
     private static final int[] R_NOT_SPACE = {0, '\t' - 1, 0x0B, 0x0B, '\r' + 1, ' ' - 1, ' ' + 1, 0x10FFFF};
+    private static final int[] R_SPACE_JDK = {'\t', '\r', ' ', ' '}; // \t\n\x0B\f\r and space
+    private static final int[] R_NOT_SPACE_JDK = {0, '\t' - 1, '\r' + 1, ' ' - 1, ' ' + 1, 0x10FFFF};
 
     // Unicode IsWhite_Space property (java.util.regex \s with UNICODE_CHARACTER_CLASS).
     private static final int[] R_UNICODE_SPACE = {'\t', '\r', // U+0009-U+000D (HT, LF, VT, FF, CR)
@@ -102,6 +107,7 @@ public final class Parser {
     private static final int[] R_POSIX_XDIGIT = {'0', '9', 'A', 'F', 'a', 'f'};
 
     static final CharClass DOT = new CharClass(new int[]{0, '\n' - 1, '\n' + 1, 0x10FFFF}, false);
+
     /** Dot under the full java.util.regex terminator set: excludes
      *  {@code \n}, {@code \r}, U+0085, U+2028 and U+2029 ({@code \r\n} needs
      *  no extra case — both halves are excluded as units). */
@@ -112,8 +118,12 @@ public final class Parser {
     static final CharClass NOT_DIGIT = new CharClass(R_DIGIT, true);
     static final CharClass WORD = new CharClass(R_WORD, false);
     static final CharClass NOT_WORD = new CharClass(R_WORD, true);
+    // The \s table is lane-selected (the SPACE_RE2 axis): re2j's without
+    // U+000B, or the JDK's with it (see R_SPACE / R_SPACE_JDK).
     static final CharClass WHITESPACE = new CharClass(R_SPACE, false);
     static final CharClass NOT_WHITESPACE = new CharClass(R_SPACE, true);
+    static final CharClass WHITESPACE_JDK = new CharClass(R_SPACE_JDK, false);
+    static final CharClass NOT_WHITESPACE_JDK = new CharClass(R_SPACE_JDK, true);
 
     private final String src;
     private int pos = 0;
@@ -988,9 +998,9 @@ public final class Parser {
                 case 'W' :
                     return ci ? complementRanges(foldExpandRanges(R_WORD)) : R_NOT_WORD;
                 case 's' :
-                    return R_SPACE;
+                    return options.isSpaceRe2() ? R_SPACE : R_SPACE_JDK;
                 case 'S' :
-                    return R_NOT_SPACE;
+                    return options.isSpaceRe2() ? R_NOT_SPACE : R_NOT_SPACE_JDK;
                 default :
                     return null;
             }
@@ -1035,9 +1045,9 @@ public final class Parser {
                 case 'W' :
                     return NOT_WORD;
                 case 's' :
-                    return WHITESPACE;
+                    return options.isSpaceRe2() ? WHITESPACE : WHITESPACE_JDK;
                 case 'S' :
-                    return NOT_WHITESPACE;
+                    return options.isSpaceRe2() ? NOT_WHITESPACE : NOT_WHITESPACE_JDK;
                 default :
                     throw new IllegalStateException("not a shorthand: \\" + c);
             }

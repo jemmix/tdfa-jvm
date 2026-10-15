@@ -63,7 +63,7 @@ public final class PatternSurface {
     /** Multi-valued tags (BT22 &sect;3.1) — per-iteration group spans. */
     public static final int MULTI_VALUED_TAGS = 128;
 
-    // The seven JUR-compat axis bits: a set bit selects the RE2-lineage
+    // The JUR-compat axis bits: a set bit selects the RE2-lineage
     // side of that axis (see Semantics). The jur facade exposed them (and
     // their OR) as opt-out flags before the two-surface split; post-split
     // they are machinery-internal vocabulary — no surface accepts them,
@@ -91,10 +91,15 @@ public final class PatternSurface {
     /** Axis bit: {@code (?U)} means ungreedy (the PCRE/RE2 reading). */
     public static final int UNGREEDY_U = 16384;
 
-    /** The seven axis bits' OR — the machinery-side spelling of the
-     *  pre-split {@code RE2_COMPAT} preset mask. */
+    /** Axis bit: the ASCII {@code \s}/{@code \S} table excludes U+000B (re2j's). */
+    public static final int SPACE_RE2 = 32768;
+
+    /** The axis bits' OR — the machinery-side spelling of the
+     *  pre-split {@code RE2_COMPAT} preset mask (the original seven; the
+     *  {@code SPACE_RE2} axis joined after the split, found by the WBS
+     *  item-7 parity-suite widening). */
     public static final int RE2_AXES = UNIX_LINES | UNICODE_CASE | CODEPOINT_BOUNDARIES | EMPTY_LAST_LINE
-        | END_OF_TEXT_ONLY | EMPTY_ITERATION_SPANS | UNGREEDY_U;
+        | END_OF_TEXT_ONLY | EMPTY_ITERATION_SPANS | UNGREEDY_U | SPACE_RE2;
 
     private static final Map<String, PatternSurface> REGISTERED = new ConcurrentHashMap<>();
 

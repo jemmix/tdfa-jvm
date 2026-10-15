@@ -69,7 +69,7 @@ class Family6BatteryTest {
     }
 
     private static final Semantics RE2 = Semantics.of().unixLines().unicodeCase().codepointBoundaries().emptyLastLine()
-        .endOfTextOnly().emptyIterationSpans().ungreedyU();
+        .endOfTextOnly().emptyIterationSpans().ungreedyU().spaceRe2();
 
     private static final Semantics JUR = Semantics.of();
 

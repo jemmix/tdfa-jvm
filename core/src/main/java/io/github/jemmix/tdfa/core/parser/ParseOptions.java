@@ -8,7 +8,7 @@ package io.github.jemmix.tdfa.core.parser;
  * {@code tnfa} in the core layer DAG while the parser's behavior stays
  * selectable per compile.
  *
- * <p>Immutable value class. The three axes (each names the behavior
+ * <p>Immutable value class. The axes (each names the behavior
  * {@code true} selects):
  * <ul>
  * <li>the {@code DOT} terminator set (the UNIX_LINES axis — {@code \n}
@@ -16,12 +16,14 @@ package io.github.jemmix.tdfa.core.parser;
  * <li>the fold universe (the UNICODE_CASE axis — full Unicode simple
  *     folding, or ASCII-only, the java.util.regex bare-CI reading);
  * <li>the {@code (?U)} meaning (the UNGREEDY_U axis — PCRE/RE2 ungreedy,
- *     or scoped Unicode-case, the java.util.regex reading).
+ *     or scoped Unicode-case, the java.util.regex reading);
+ * <li>the ASCII {@code \s} table (the SPACE_RE2 axis — re2j's
+ *     {@code [\t\n\f\r ]} without U+000B, or java.util.regex's with it).
  * </ul>
  */
 public final class ParseOptions {
 
-    private static final ParseOptions RE2_LANE = new ParseOptions(true, true, true, true);
+    private static final ParseOptions RE2_LANE = new ParseOptions(true, true, true, true, true);
 
     private final boolean dotNlOnly;
 
@@ -31,11 +33,15 @@ public final class ParseOptions {
 
     private final boolean emptyIterationSpans;
 
-    private ParseOptions(boolean dotNlOnly, boolean unicodeCase, boolean ungreedyU, boolean emptyIterationSpans) {
+    private final boolean spaceRe2;
+
+    private ParseOptions(boolean dotNlOnly, boolean unicodeCase, boolean ungreedyU, boolean emptyIterationSpans,
+        boolean spaceRe2) {
         this.dotNlOnly = dotNlOnly;
         this.unicodeCase = unicodeCase;
         this.ungreedyU = ungreedyU;
         this.emptyIterationSpans = emptyIterationSpans;
+        this.spaceRe2 = spaceRe2;
     }
 
     /**
@@ -55,7 +61,7 @@ public final class ParseOptions {
      * The other axes default to the RE2-side reading.
      */
     public static ParseOptions dotNlOnly(boolean dotNlOnly) {
-        return new ParseOptions(dotNlOnly, true, true, true);
+        return new ParseOptions(dotNlOnly, true, true, true, true);
     }
 
     /**
@@ -68,7 +74,7 @@ public final class ParseOptions {
      * implying Unicode-aware CI).
      */
     public ParseOptions unicodeCase(boolean unicodeCase) {
-        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU, emptyIterationSpans);
+        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU, emptyIterationSpans, spaceRe2);
     }
 
     /**
@@ -79,7 +85,17 @@ public final class ParseOptions {
      * {@code Parser}).
      */
     public ParseOptions ungreedyU(boolean ungreedyU) {
-        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU, emptyIterationSpans);
+        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU, emptyIterationSpans, spaceRe2);
+    }
+
+    /**
+     * Select the ASCII {@code \s}/{@code \S} table: {@code true} =
+     * re2j's {@code [\t\n\f\r ]} (U+000B is NOT whitespace — the
+     * RE2-lineage reading); {@code false} = java.util.regex's
+     * {@code [ \t\n\x0B\f\r]} (U+000B IS whitespace).
+     */
+    public ParseOptions spaceRe2(boolean spaceRe2) {
+        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU, emptyIterationSpans, spaceRe2);
     }
 
     /**
@@ -93,7 +109,12 @@ public final class ParseOptions {
      * pair; the determinizer's φ overrides the finals).
      */
     public ParseOptions emptyIterationSpans(boolean emptyIterationSpans) {
-        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU, emptyIterationSpans);
+        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU, emptyIterationSpans, spaceRe2);
+    }
+
+    /** Does the ASCII {@code \s} exclude U+000B (re2j's table, vs the JDK's)? */
+    public boolean isSpaceRe2() {
+        return spaceRe2;
     }
 
     /** Does the dot skip {@code \n} only (vs the full terminator set)? */

@@ -9,7 +9,8 @@ import io.github.jemmix.tdfa.core.tnfa.Semantics;
  * module bakes into every compile — the RE2-lineage reading throughout
  * (every axis set: {@code \n}-only terminators, full-Unicode bare fold,
  * codepoint boundaries, empty-last-line caret, end-of-text dollar,
- * maximal-iteration spans, ungreedy {@code (?U)}), the re2j flag
+ * maximal-iteration spans, ungreedy {@code (?U)}, re2j's ASCII
+ * {@code \s} table without U+000B), the re2j flag
  * roster. Loaded on first compile (and by the serialization proxy, by
  * name); registers exactly once per process.
  */
@@ -28,9 +29,9 @@ final class Surfaces {
     private Surfaces() {
     }
 
-    /** The RE2-lineage lane: all seven JUR-compat axes set. */
+    /** The RE2-lineage lane: every JUR-compat axis set. */
     private static Semantics re2() {
         return Semantics.of().unixLines().unicodeCase().codepointBoundaries().emptyLastLine().endOfTextOnly()
-            .emptyIterationSpans().ungreedyU();
+            .emptyIterationSpans().ungreedyU().spaceRe2();
     }
 }
