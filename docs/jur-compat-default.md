@@ -2,14 +2,16 @@
 
 Status: **flipped** — the JUR-parity default landed (the `PatternCompiler`
 user-bit mapping; `RE2_COMPAT` is the pre-flip default in one constant),
-with every pivot parameterized and family 6 in. Remaining open work
-([work breakdown](jur-compat-wbs.md)): the evidence re-base (per-flag
-unit tests, campaign classifiers → assertions, the `RE2_COMPAT` + `(?u)`
-lanes in the fuzzer matrix, the re2j-pinned evidence re-run, soak + README
-numbers — item 6), the jur twins for the re2j parity suites (every
-translatable suite also pinned against the live `java.util.regex` oracle —
-item 7), and the one-`Pattern`-vs-two-surfaces evaluation (item 8).
-Landing the rest is only cheap
+with every pivot parameterized and family 6 in. The evidence re-base
+landed except its overnight tail (per-flag unit tests, campaign
+classifiers flipped to hard assertions with the İ/ı residual FIXED — the
+fold universe rides the surface default — and tail/surrogate consciously
+reclassified as asserted domain exclusions; the re2j + `(?u)` lanes in
+the fuzzer matrix; the 5.7 M exhaustive evidence re-run in the RE2 lane;
+[WBS item 6](jur-compat-wbs.md)). Still open: the both-lane overnight
+soak + README numbers (item 6's tail), the jur twins for the re2j parity
+suites (every translatable suite also pinned against the live
+`java.util.regex` oracle — item 7). Landing the rest is only cheap
 before the first Maven publish / 1.0 API lock (both still open in
 [TODO](../TODO.md)) — after that the same flip is a major version. This
 page is the full accounting: what flips, what the API looks like, what it
@@ -120,8 +122,10 @@ position, not the accept position (`(a*)*b` on `"aab"` → g1 `2..2`)
 — expressing that needs the surfaced write to ride the transition φ as
 a position-carrying ε-write (compose with line-merged DFA states), the
 one family-6 slice still answered the RE2 way on the JUR lane. The
-campaign classifies it (`KNOWN_GROUP-PARTICIPATION-TAIL`); everything
-else about family 6 compares HARD against the live oracle.
+evidence re-base reclassified it a conscious domain exclusion
+(`SKIP_GROUP_PARTICIPATION_TAIL`, reached only with skeleton-equal
+protocols); everything else about family 6 compares HARD against the
+live oracle.
 
 **Decided interactions**:
 
@@ -198,9 +202,17 @@ Composition rules:
   re2j-pinned evidence (5.7 M RE2 exhaustive cases, ~300 M fuzz) moves to
   the `RE2_COMPAT` lane unchanged (same bits, same code paths — re-gated,
   re-run) while the new default lane's oracle becomes `java.util.regex`.
-  The jur campaign harness is that spec: its six classifiers flip from
-  soft-known to hard assertions. README's parity claims need refreshed
-  numbers before they can name the new default.
+  The jur campaign harness is that spec, and since the evidence re-base
+  its JUR-lane classifiers ARE hard assertions — the İ/ı full-fold
+  residual fixed by making the fold universe ride the surface default
+  (the jur surface's JDK provider folds the java.util.regex reading,
+  the re2j surface pins the built-in RE2-lineage reading; bare CI stays
+  ASCII everywhere), the family-6 tail and surrogate-unit residuals
+  consciously reclassified as asserted domain exclusions, and
+  `DifferentialFuzzer`'s matrix carrying both lanes beside the flag
+  bits. The 5.7 M exhaustive leg re-ran clean in the RE2 lane; README's
+  parity claims need the refreshed overnight numbers before they can
+  name the new default.
 - **Family 6 goes on the critical path.** `EMPTY_ITERATION_SPANS` unset is
   default behavior, so the φ-finals protocol change (protocol-only —
   skeletons already agree; mode-gated so the RE2 lane is untouched) is
