@@ -3,6 +3,7 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.asm.AsmEngineBackend;
 import io.github.jemmix.tdfa.core.compile.PatternSurface;
 import io.github.jemmix.tdfa.core.tnfa.Semantics;
+import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
 
 /**
  * The jur surface's registration: the compile lane and flag roster the
@@ -21,7 +22,7 @@ final class Surfaces {
         "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS,"
             + " LONGEST_MATCH, UNICODE_CHARACTER_CLASS, FIND_ONLY, MULTI_VALUED_TAGS (the jur facade; the RE2"
             + " reading ships as the :re2j surface, and per-axis probes ride CompileOptions.semantics)",
-        AsmEngineBackend.INSTANCE, VmPattern::new);
+        AsmEngineBackend.INSTANCE, VmPattern::new, UnicodeProviders::get);
 
     private Surfaces() {
     }

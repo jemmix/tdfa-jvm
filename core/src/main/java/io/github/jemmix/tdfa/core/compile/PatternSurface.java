@@ -6,6 +6,7 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
 /**
@@ -123,8 +124,18 @@ public final class PatternSurface {
     /** Wraps a bare machinery instance into the surface's Pattern type (the no-codegen paths). */
     private final UnaryOperator<TDFAPattern> noCodegenWrapper;
 
+    /** The Unicode source a provider-less compile through this surface
+     *  resolves to — the surface's fold-universe default: the jur surface
+     *  the property resolution (JDK tables, java.util.regex folds), the
+     *  re2j surface the same tables under the built-in RE2-lineage fold
+     *  reading (İ/ı inert — its oracle's orbits). Lazy: the supplier runs
+     *  per compile, so provider selection (and its failure memo) stays
+     *  on the normal path. */
+    private final Supplier<UnicodeDataProvider> defaultProvider;
+
     private PatternSurface(String id, String triggerClass, String patternInterface, Semantics defaultSemantics,
-        int validFlags, String flagsMessage, EngineBackend backend, UnaryOperator<TDFAPattern> noCodegenWrapper) {
+        int validFlags, String flagsMessage, EngineBackend backend, UnaryOperator<TDFAPattern> noCodegenWrapper,
+        Supplier<UnicodeDataProvider> defaultProvider) {
         this.id = id;
         this.triggerClass = triggerClass;
         this.patternInterface = patternInterface;
@@ -133,6 +144,7 @@ public final class PatternSurface {
         this.flagsMessage = flagsMessage;
         this.backend = backend;
         this.noCodegenWrapper = noCodegenWrapper;
+        this.defaultProvider = defaultProvider;
     }
 
     /**
@@ -143,9 +155,9 @@ public final class PatternSurface {
      */
     public static PatternSurface register(String id, String triggerClass, String patternInterface,
         Semantics defaultSemantics, int validFlags, String flagsMessage, EngineBackend backend,
-        UnaryOperator<TDFAPattern> noCodegenWrapper) {
+        UnaryOperator<TDFAPattern> noCodegenWrapper, Supplier<UnicodeDataProvider> defaultProvider) {
         PatternSurface s = new PatternSurface(id, triggerClass, patternInterface, defaultSemantics, validFlags,
-            flagsMessage, backend, noCodegenWrapper);
+            flagsMessage, backend, noCodegenWrapper, defaultProvider);
         PatternSurface prev = REGISTERED.putIfAbsent(id, s);
         if (prev != null) {
             throw new IllegalStateException(
@@ -237,6 +249,12 @@ public final class PatternSurface {
     /** The engine backend this surface's compiles are served by. */
     public EngineBackend backend() {
         return backend;
+    }
+
+    /** The Unicode source a provider-less compile through this surface
+     *  resolves to (the surface's fold-universe default). */
+    public Supplier<UnicodeDataProvider> defaultProvider() {
+        return defaultProvider;
     }
 
     @Override

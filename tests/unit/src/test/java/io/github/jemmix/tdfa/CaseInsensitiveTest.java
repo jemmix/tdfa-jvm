@@ -97,6 +97,30 @@ class CaseInsensitiveTest {
         assertThat(containsCp(i, 0x0131)).as("i-orbit must not contain ı").isFalse();
     }
 
+    /** The java.util.regex reading of the same universe (the jur surface's
+     *  default fold universe since the evidence re-base): under full fold
+     *  the JDK's locale-independent case mappings merge the Turkic pair
+     *  into the i-orbit — live-verified against
+     *  CASE_INSENSITIVE|UNICODE_CASE. */
+    @Test
+    void foldTableJavaReadingMergesTurkicIPair() {
+        assertThat(CaseFoldTable.foldRangesJava(0x0130)).as("İ folds under the java reading").isNotNull();
+        assertThat(CaseFoldTable.foldRangesJava(0x0131)).as("ı folds under the java reading").isNotNull();
+        int[] i = CaseFoldTable.foldRangesJava('i');
+        assertThat(i).isNotNull();
+        assertThat(containsCp(i, 'i')).isTrue();
+        assertThat(containsCp(i, 'I')).isTrue();
+        assertThat(containsCp(i, 0x0130)).as("java reading: i-orbit contains İ").isTrue();
+        assertThat(containsCp(i, 0x0131)).as("java reading: i-orbit contains ı").isTrue();
+        assertThat(containsCp(CaseFoldTable.foldRangesJava(0x0130), 'i')).as("İ's orbit contains i").isTrue();
+        // every other orbit is reading-independent (the pin is the only delta)
+        for (int cp : new int[]{'s', 'S', 0x017F, 'k', 'K', 0x212A, 0x03A9, 0x03C9, 0x0442, 0x1C80, '5', '!'}) {
+            int[] re2 = CaseFoldTable.foldRanges(cp);
+            int[] jdk = CaseFoldTable.foldRangesJava(cp);
+            assertThat(jdk).as("reading of U+%04X", cp).isEqualTo(re2);
+        }
+    }
+
     /** Cyrillic historic letters (U+1C80..U+1C88, Unicode 9.0) fold onto
      *  their partner letters — full modern orbits, both directions. */
     @Test
