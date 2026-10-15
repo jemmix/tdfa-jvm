@@ -6,9 +6,9 @@ git history (TODO.md before 2026-09-30).
 
 ## Correctness
 
-- [ ] JUR-compat evidence re-base: per-flag unit tests, campaign classifiers → assertions, the re2j-surface + `(?u)` lanes in the fuzzer matrix, re-run the re2j-pinned evidence, both-lane soak + README numbers — the jur twins for the re2j parity suites landed ([design](docs/jur-compat-default.md), [work breakdown](docs/jur-compat-wbs.md))
-- [ ] Fuzz (?u) lane vs jur oracle (UCC flag in the differential flag matrix)
-- [ ] Overnight soak with cross-rung on; refresh README fuzz numbers
+- [ ] JUR-compat evidence re-base tail: both-lane overnight soak + README numbers (per-flag unit tests, the classifier flip — İ/ı fixed, tail/surrogate reclassified as asserted domain exclusions — the re2j-surface + `(?u)` lanes in the fuzzer matrix, and the 5.7 M exhaustive re-run landed; the jur twins for the re2j parity suites landed with item 7; [design](docs/jur-compat-default.md), [work breakdown](docs/jur-compat-wbs.md))
+- [x] Fuzz (?u) lane vs jur oracle (UCC flag in the differential flag matrix — the jur lane's flag draw since the evidence re-base)
+- [ ] Overnight soak with cross-rung on, both lanes (`-Pfuzz.lane` pins; mix by default); refresh README fuzz numbers
 - [ ] Fuzz families for fact-gated rungs: literal, prefix, cand-scan, anchored-fast
 - [ ] Oracle-check stretched inputs; compare ASM on them too
 - [ ] Fuzz non-String CharSequence inputs against the reference sim

@@ -12,7 +12,6 @@ import io.github.jemmix.tdfa.core.report.CompileObserver;
 import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
-import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
 
 /**
  * The compile machinery behind every {@code Pattern} surface: fold the
@@ -135,7 +134,13 @@ public final class PatternCompiler {
         boolean disableUnicodeGroups = (flags & PatternSurface.DISABLE_UNICODE_GROUPS) != 0;
         boolean findOnly = (flags & PatternSurface.FIND_ONLY) != 0;
         boolean multiValued = (flags & PatternSurface.MULTI_VALUED_TAGS) != 0;
-        UnicodeDataProvider prov = provider != null ? provider : UnicodeProviders.get();
+        // Provider-less compiles resolve to the SURFACE's default — the
+        // fold-universe seam: the jur surface the property resolution (JDK
+        // tables, java.util.regex folds incl. the merged İ/ı orbit), the
+        // re2j surface the same tables under the built-in RE2-lineage
+        // reading (İ/ı inert, its oracle's orbits). An explicit provider is
+        // never wrapped.
+        UnicodeDataProvider prov = provider != null ? provider : surface.defaultProvider().get();
         CompileObserver obs = observer != null ? observer : CompileObserver.NONE;
         // One CPU ledger for the whole compile. Full compiles: the
         // front-end and the find determinization with its partial-whole

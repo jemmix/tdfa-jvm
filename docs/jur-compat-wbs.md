@@ -10,12 +10,12 @@ consequences, decided open questions).
 
 ## 6. Evidence re-base
 
-- [ ] Per-flag unit tests from the campaign replay seeds
-- [ ] jur campaign classifiers flip from soft-known to hard assertions (each residual — group-participation-tail, İ/ı full-fold, lone-surrogate — fixed or consciously reclassified, none left soft by default)
-- [ ] `DifferentialFuzzer` matrix gains the `RE2_COMPAT` lane (lane becomes a matrix axis beside the flag bits; the jur side needs the campaign's flag translation)
-- [ ] `(?u)`/UCC flag in the differential matrix vs the jur oracle — the [TODO](../TODO.md) "Fuzz (?u) lane vs jur oracle" item joins this program
-- [ ] Re-run the re2j-pinned evidence (5.7 M exhaustive, ~300 M fuzz) in the `RE2_COMPAT` lane
-- [ ] Overnight soak + README numbers refresh, both lanes (re2j vs `RE2_COMPAT`, jur vs the default lane)
+- [x] Per-flag unit tests from the campaign replay seeds (`PerFlagReplayTest` — the finding-2 representative seeds + a deterministic per-axis sweep, every flag setting, jur facade both tiers vs the live oracle; divergences allowed only inside the asserted domain boundary)
+- [x] jur campaign classifiers flip from soft-known to hard assertions (each residual — group-participation-tail, İ/ı full-fold, lone-surrogate — fixed or consciously reclassified, none left soft by default) — **İ/ı FIXED** (the fold universe rides the surface default: the jur surface's JDK provider folds the java.util.regex reading — İ/ı merged into the i-orbit under full fold — while the re2j surface pins the built-in RE2-lineage reading, so each surface folds its oracle's orbits); **tail + surrogate reclassified** as conscious domain exclusions (SKIP kinds, not KNOWN divergences: `SKIP_GROUP_PARTICIPATION_TAIL` — the 4d ε-write engine work stays open; `SKIP_SURROGATE_UNIT_SEMANTICS` — the lane's designed unit semantics vs java's pair-aware discipline, covering lone surrogates, pair-interior spans, surrogate-covering classes incl. `[a-b]` ranges and the `\b`/`\B` codepoint-wordness twin; a pair-aware JUR reading stays open). `CampaignSmokeTest` asserts the enumerated soft-kind allowlist — no soft kind can appear silently, and the campaign's compile catch-all no longer swallows non-budget exceptions (the flip surfaced and fixed a real `cutOverrideByState` AIOOBE, pinned in `CutSurfacingStateGrowthTest`)
+- [x] `DifferentialFuzzer` matrix gains the `RE2_COMPAT` lane (lane becomes a matrix axis beside the flag bits; the jur side needs the campaign's flag translation) — post-split the axis is re2j-surface-vs-re2j beside jur-facade-vs-`java.util.regex`, drawn per batch from its own stream (patterns/flags replay-stable), pin via `-Pfuzz.lane=re2j|jur`
+- [x] `(?u)`/UCC flag in the differential matrix vs the jur oracle — the [TODO](../TODO.md) "Fuzz (?u) lane vs jur oracle" item joins this program (the jur lane's flag draw: CI/DOTALL/MULTILINE/UCC, no LONGEST; leading `(?U)` → the oracle's UNICODE_CASE)
+- [x] Re-run the re2j-pinned evidence — exhaustive part: **5,826,402 RE2-exhaustive cases, 0 failures, both tiers** (ASM + VM), through the re2j surface (the RE2 lane) post-split and post-fold-fix; dev slices: ~568k mixed-lane cases and ~643k jur-pinned cases with zero divergences outside the asserted skips + the documented budget class
+- [ ] Re-run the ~300 M fuzz leg in the re2j lane + jur leg vs the default lane — overnight soak, both lanes (`scripts/fuzz-soak.sh` mixes both by default; `-Pfuzz.lane=re2j`/`=jur` pin a lane-pure run), then the README numbers refresh
 
 ## 7. Parity suites vs both oracles
 

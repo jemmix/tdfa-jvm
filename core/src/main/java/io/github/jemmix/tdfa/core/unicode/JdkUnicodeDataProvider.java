@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.IntFunction;
 
 /**
  * {@link UnicodeDataProvider} backed by the JDK's bundled Unicode database
@@ -20,6 +21,14 @@ import java.util.Map;
  * separate {@code tdfa-unicode-re2j} jar that ports re2j's tables verbatim
  * (set the {@value UnicodeProviders#PROPERTY_NAME} property to that
  * provider's class name).
+ *
+ * <p><b>Fold universe:</b> this provider supplies its own — the
+ * {@code java.util.regex} reading ({@link CaseFoldTable#foldRangesJava}:
+ * the Turkic İ/ı pair merged into the i-orbit, what a same-JVM
+ * {@code java.util.regex} answers under CASE_INSENSITIVE|UNICODE_CASE),
+ * for literal/class folds and the {@code \p{...}} fold twin alike. The
+ * jur surface's default lane resolves here; the re2j surface pins the
+ * RE2-lineage reading instead (see {@link Re2jUniverseProvider}).
  */
 final class JdkUnicodeDataProvider implements UnicodeDataProvider {
     static final JdkUnicodeDataProvider INSTANCE = new JdkUnicodeDataProvider();
@@ -149,6 +158,16 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
     }
 
     @Override
+    public boolean suppliesFoldUniverse() {
+        return true;
+    }
+
+    @Override
+    public int[] foldCounterparts(int cp) {
+        return CaseFoldTable.foldRangesJava(cp);
+    }
+
+    @Override
     public int[] foldTableFor(String name) {
         int[] table = tableFor(name);
         if (table == null) {
@@ -173,7 +192,7 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
             if (cached != null) {
                 return cached.length == 0 ? null : cached;
             }
-            int[] result = buildFoldTable(table);
+            int[] result = buildFoldTable(table, CaseFoldTable::foldRangesJava);
             ft.put(name, result == null ? new int[0] : result);
             return result;
         }
@@ -181,20 +200,20 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
 
     /**
      * Build fold counterpart ranges for the given property table: codepoints NOT in
-     * the table that are case-fold-equivalent (per {@link CaseFoldTable}) to a
-     * codepoint that IS in the table. The fold relation is symmetric and includes
-     * multi-member groups (s/S/ſ, k/K/K), so both directions are covered: for
-     * {@code \p{Lu}} this adds the lowercase counterparts ('a' for 'A'), for
-     * {@code \p{Ll}} the uppercase ones ('A' for 'a'), and for either the extra
-     * group members (ſ for s/S).
+     * the table that are case-fold-equivalent (per {@code foldFn}'s reading)
+     * to a codepoint that IS in the table. The fold relation is symmetric and
+     * includes multi-member groups (s/S/ſ, k/K/K), so both directions are
+     * covered: for {@code \p{Lu}} this adds the lowercase counterparts ('a'
+     * for 'A'), for {@code \p{Ll}} the uppercase ones ('A' for 'a'), and for
+     * either the extra group members (ſ for s/S).
      *
      * <p>BMP only, matching the other tables' fold scope.
      */
-    private static int[] buildFoldTable(int[] table) {
+    static int[] buildFoldTable(int[] table, IntFunction<int[]> foldFn) {
         ArrayList<int[]> ranges = new ArrayList<>();
         int rangeStart = -1;
         for (int cp = 0; cp <= 0xFFFF; cp++) {
-            if (!inRange(table, cp) && foldEquivalentInRange(cp, table)) {
+            if (!inRange(table, cp) && foldEquivalentInRange(cp, table, foldFn)) {
                 if (rangeStart < 0) {
                     rangeStart = cp;
                 }
@@ -215,8 +234,8 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
     }
 
     /** True iff any fold-group member of {@code cp} (other than itself) is in the table. */
-    private static boolean foldEquivalentInRange(int cp, int[] table) {
-        int[] fr = CaseFoldTable.foldRanges(cp);
+    private static boolean foldEquivalentInRange(int cp, int[] table, IntFunction<int[]> foldFn) {
+        int[] fr = foldFn.apply(cp);
         if (fr == null) {
             return false;
         }

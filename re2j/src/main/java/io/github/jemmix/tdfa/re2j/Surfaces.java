@@ -3,6 +3,7 @@ package io.github.jemmix.tdfa.re2j;
 import io.github.jemmix.tdfa.asm.AsmEngineBackend;
 import io.github.jemmix.tdfa.core.compile.PatternSurface;
 import io.github.jemmix.tdfa.core.tnfa.Semantics;
+import io.github.jemmix.tdfa.core.unicode.Re2jUniverseProvider;
 
 /**
  * The re2j surface's registration: the compile lane and flag roster this
@@ -24,7 +25,7 @@ final class Surfaces {
         "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS,"
             + " LONGEST_MATCH, FIND_ONLY, MULTI_VALUED_TAGS (the re2j surface compiles the RE2 lane throughout;"
             + " there are no JUR-compat opt-out bits here)",
-        AsmEngineBackend.INSTANCE, VmPattern::new);
+        AsmEngineBackend.INSTANCE, VmPattern::new, Re2jUniverseProvider::instance);
 
     private Surfaces() {
     }

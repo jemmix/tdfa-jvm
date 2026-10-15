@@ -26,15 +26,23 @@ import java.util.Map;
  * {@code toUpperCase('ı') = 'I'} would merge {I, i, İ, ı} into one orbit.
  * re2j (CASE_ORBIT self-entries) and Go's {@code unicode.SimpleFold} both
  * keep the pair fold-inert, so {@link #foldKey} pins both codepoints to
- * themselves.
+ * themselves — that is the {@link #foldRanges} (RE2-lineage) reading.
+ * {@code java.util.regex} under CASE_INSENSITIVE|UNICODE_CASE folds the
+ * JDK way (İ/ı merged into the i-orbit — live-JDK verified), which is the
+ * {@link #foldRangesJava} reading the jur surface's default provider
+ * supplies; the two surfaces pick their oracle's orbit (see
+ * {@code Re2jUniverseProvider}).
  *
- * <p>The table is built lazily on first use (one pass over 0..0x10FFFF) and
- * cached for the JVM lifetime.
+ * <p>Both indexes are built lazily on first use (one pass over 0..0x10FFFF
+ * each) and cached for the JVM lifetime.
  */
 public final class CaseFoldTable {
 
     /** Published index (built once; volatile for safe lazy publication). */
     private static volatile FoldIndex index;
+
+    /** The java-reading twin (İ/ı merged; see {@link #foldRangesJava}). */
+    private static volatile FoldIndex javaIndex;
 
     private CaseFoldTable() {
     }
@@ -92,28 +100,49 @@ public final class CaseFoldTable {
 
     /**
      * Returns flattened ranges (lo0, hi0, lo1, hi1, ...) of ALL codepoints —
-     * BMP and supplementary — that are case-fold-equivalent to {@code ch}, or
-     * {@code null} if {@code ch} has no case-fold equivalents beyond itself
-     * (digits, punctuation, etc.).
+     * BMP and supplementary — that are case-fold-equivalent to {@code ch} under
+     * the <b>RE2-lineage reading</b> (the Turkic İ/ı pair fold-inert — re2j
+     * and Go parity), or {@code null} if {@code ch} has no case-fold
+     * equivalents beyond itself (digits, punctuation, etc.).
      *
      * <p><b>Provenance:</b> the table is derived at runtime from the running
      * JDK's {@link Character} simple case mappings, so fold orbits can vary
      * with the JVM's Unicode version — unlike the pinnable
      * {@code UnicodeDataProvider} tables used for {@code \p{...}} classes.
-     * The İ/ı pin below is the one deliberate divergence.
+     * The İ/ı pin is the one deliberate divergence from those mappings.
      */
     public static int[] foldRanges(int ch) {
         FoldIndex idx = index;
-        if (idx == null) {
-            synchronized (CaseFoldTable.class) {
-                idx = index;
-                if (idx == null) {
-                    idx = new FoldIndex(buildFolded());
+        return (idx == null ? publish(false) : idx).get(foldKey(ch, false));
+    }
+
+    /**
+     * The {@code java.util.regex} reading of the same universe: what a live
+     * JDK answers under CASE_INSENSITIVE|UNICODE_CASE, where the Turkic
+     * İ/ı pair merges into the i-orbit (the JDK's locale-independent case
+     * mappings — live-verified: {@code (?iu)i} matches İ and ı). This is
+     * the reading the jur surface's default fold universe supplies; same
+     * shape contract as {@link #foldRanges(int)}.
+     */
+    public static int[] foldRangesJava(int ch) {
+        FoldIndex idx = javaIndex;
+        return (idx == null ? publish(true) : idx).get(foldKey(ch, true));
+    }
+
+    /** Double-checked lazy publication of the requested reading's index. */
+    private static FoldIndex publish(boolean javaReading) {
+        synchronized (CaseFoldTable.class) {
+            FoldIndex idx = javaReading ? javaIndex : index;
+            if (idx == null) {
+                idx = new FoldIndex(buildFolded(javaReading));
+                if (javaReading) {
+                    javaIndex = idx;
+                } else {
                     index = idx;
                 }
             }
+            return idx;
         }
-        return idx.get(foldKey(ch));
     }
 
     /**
@@ -136,23 +165,25 @@ public final class CaseFoldTable {
         return null;
     }
 
-    private static int foldKey(int cp) {
+    private static int foldKey(int cp, boolean javaReading) {
         // Simple case folding keeps the Turkic İ/ı pair out of the i-orbit
         // (their cross mappings are locale rules, not unconditional ones);
         // JDK case mapping is locale-independent and links ı→I, which would
         // over-merge {I, i, İ, ı} into one fold orbit. re2j and Go both keep
-        // the pair fold-inert — pin both to inert singleton orbits.
-        if (cp == 0x130 || cp == 0x131) {
+        // the pair fold-inert — the RE2 reading pins both to inert singleton
+        // orbits; the java reading lets the JDK mappings speak (what
+        // java.util.regex answers under CI|UNICODE_CASE).
+        if (!javaReading && (cp == 0x130 || cp == 0x131)) {
             return cp;
         }
         return Character.toUpperCase(Character.toLowerCase(cp));
     }
 
     /** Grouped, merged fold orbits (multi-member keys only) — input to {@link FoldIndex}. */
-    private static Map<Integer, int[]> buildFolded() {
+    private static Map<Integer, int[]> buildFolded(boolean javaReading) {
         Map<Integer, ArrayList<Integer>> groups = new HashMap<>();
         for (int cp = 0; cp <= 0x10FFFF; cp++) {
-            int fk = foldKey(cp);
+            int fk = foldKey(cp, javaReading);
             groups.computeIfAbsent(fk, k -> new ArrayList<>()).add(cp);
         }
         Map<Integer, int[]> out = new HashMap<>();

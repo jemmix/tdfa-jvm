@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -11,35 +13,69 @@ import static org.assertj.core.api.Assertions.assertThat;
  * The campaign harness's own gate, mirroring {@link FuzzSmokeTest}: a
  * fixed-seed slice of every mode must be free of HARD findings, so the
  * generators, lane plumbing and classification cannot rot between campaign
- * runs. Soft kinds (known jur divergence families, budget rejections,
- * skips) are expected and unasserted — inspect the mode dir under
- * {@code build/fuzz-camp} for their counts. A failure here is either a real
- * divergence or broken harness plumbing; {@code -Pcamp.mode=<m>
- * -Pcamp.one=<caseSeed>} replays the recorded case.
+ * runs. A failure here is either a real divergence or broken harness
+ * plumbing; {@code -Pcamp.mode=<m> -Pcamp.one=<caseSeed>} replays the
+ * recorded case.
+ *
+ * <p>Since the evidence re-base (WBS item 6) the SOFT kind set is asserted
+ * too — the "classifiers flip from soft-known to hard assertions" gate:
+ * every soft kind must be a member of the consciously enumerated domain
+ * boundary below (skips the harness documents, budget rejections, oracle
+ * limits, and the re2j surface's by-design divergence families on the
+ * RE2-lane probe). The JUR-lane probe has NO known-divergence softs left:
+ * the İ/ı full-fold residual is fixed (the jur surface's default fold
+ * universe is the java.util.regex reading), and the family-6 tail +
+ * surrogate-unit residuals are reclassified as SKIP domain exclusions. A
+ * new soft kind fails this test until it is consciously classified and
+ * enumerated here.
  */
 class CampaignSmokeTest {
 
+    /** The jur mode's enumerated soft kinds (the asserted domain boundary).
+     * RE2-lane probe: the re2j surface's documented divergence families vs
+     * the jur oracle (KNOWN_*), the fold-ambiguity and untranslatable-(?U
+     * skips, and the compile/exception/budget guards. JUR-lane probe:
+     * SKIP_* domain exclusions and guards only — no KNOWN_ kind may appear
+     * on the lane. */
+    private static final Set<String> JUR_SOFT = Set.of(
+        // RE2-lane probe (jurCase): re2j reading vs jur oracle, by design
+        "KNOWN_SURROGATE-CODE-UNIT", "KNOWN_LINE-TERMINATOR-SET", "KNOWN_UNIT-BOUNDARY-POSITIONS",
+        "KNOWN_CARET-AFTER-FINAL-NEWLINE", "KNOWN_DOLLAR-BEFORE-FINAL-NEWLINE", "KNOWN_GROUP-PARTICIPATION-LINEAGE",
+        "SKIP_UNGREEDY", "SKIP_CI_FOLD_AMBIGUOUS", "BUDGET", "JUR_ORACLE_THREW", "JUR_EXCEPTION",
+        // JUR-lane probe (jurLaneCase): domain exclusions + guards
+        "V1_UNGREEDY_SCOPE", "SKIP_SCOPED_U_UNTRANSLATABLE", "SKIP_GROUP_PARTICIPATION_TAIL",
+        "SKIP_SURROGATE_UNIT_SEMANTICS", "JURLANE_BUDGET", "JURLANE_EXCEPTION");
+
+    private static final Map<String, Set<String>> MODE_SOFT =
+        Map.of("jur", JUR_SOFT, "stretch", Set.of("SKIP_EMPTY", "THREW", "SLOW", "STRETCH_BUDGET"), "seq",
+            Set.of("SIM_REJECT", "BUDGET", "SEQ_COMPILE"), "families", Set.of("FAMILY_BUDGET", "GATE_MISS_literal",
+                "GATE_MISS_prefix", "GATE_MISS_cand-scan", "GATE_MISS_anchored-fast"));
+
+    private static CampaignFuzzer.Counts clean(String mode, Path tmp) {
+        CampaignFuzzer.Counts c = CampaignFuzzer.runMode(mode, 0xCAFEBABEL, 60, 400, tmp);
+        assertThat(c.hard).as("hard findings (inspect %s/%s/failures.ndjson)", tmp, mode).isZero();
+        assertThat(c.softKinds()).as("%s: soft kinds outside the enumerated domain boundary", mode)
+            .isSubsetOf(MODE_SOFT.get(mode));
+        return c;
+    }
+
     @Test
     void jurSliceIsClean(@TempDir Path tmp) {
-        assertThat(CampaignFuzzer.runMode("jur", 0xCAFEBABEL, 60, 400, tmp))
-            .as("hard findings (inspect %s/jur/failures.ndjson)", tmp).isZero();
+        clean("jur", tmp);
     }
 
     @Test
     void stretchSliceIsClean(@TempDir Path tmp) {
-        assertThat(CampaignFuzzer.runMode("stretch", 0xCAFEBABEL, 60, 400, tmp))
-            .as("hard findings (inspect %s/stretch/failures.ndjson)", tmp).isZero();
+        clean("stretch", tmp);
     }
 
     @Test
     void seqSliceIsClean(@TempDir Path tmp) {
-        assertThat(CampaignFuzzer.runMode("seq", 0xCAFEBABEL, 60, 400, tmp))
-            .as("hard findings (inspect %s/seq/failures.ndjson)", tmp).isZero();
+        clean("seq", tmp);
     }
 
     @Test
     void familiesSliceIsClean(@TempDir Path tmp) {
-        assertThat(CampaignFuzzer.runMode("families", 0xCAFEBABEL, 60, 400, tmp))
-            .as("hard findings (inspect %s/families/failures.ndjson)", tmp).isZero();
+        clean("families", tmp);
     }
 }

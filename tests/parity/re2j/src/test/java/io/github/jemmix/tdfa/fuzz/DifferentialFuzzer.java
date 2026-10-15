@@ -38,17 +38,33 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Differential fuzzer: random patterns over the supported grammar, random
  * inputs biased toward the historically painful shapes (supplementary
- * codepoints, lone surrogates, boundaries), compared against the re2j oracle
- * through the public facade — BOTH engines (ASM generated tier and VM
- * interpreter) per case, under a per-batch random compile-flag matrix
- * (CASE_INSENSITIVE / DOTALL / MULTILINE / LONGEST_MATCH — same bit values
- * in both libraries; 40% of batches stay at flags=0 so the unflagged regime
- * keeps steady coverage). The contract is re2j's observable behavior:
- * compile-accept/reject parity plus a five-probe span protocol compared for
- * exact equality — first {@code find()} with overall and per-group spans
- * (spans strictly subsume group texts), full {@code find()} iteration on the
- * same matcher (continuation + empty-match advance), {@code matches()},
- * {@code lookingAt()}, and {@code find(len/2)} restart.
+ * codepoints, lone surrogates, boundaries), compared against a differential
+ * oracle through the public surfaces — BOTH engines (ASM generated tier and
+ * VM interpreter) per case, under a per-batch random compile-flag matrix
+ * BESIDE a per-batch LANE draw (the evidence re-base matrix axis): the
+ * <b>re2j lane</b> compiles the tdfa side through the re2j surface against
+ * the re2j oracle (CASE_INSENSITIVE / DOTALL / MULTILINE / LONGEST_MATCH —
+ * same bit values in both libraries; 40% of batches stay at flags=0 so the
+ * unflagged regime keeps steady coverage), the <b>jur lane</b> compiles
+ * through the jur facade (the default lane) against the live
+ * {@code java.util.regex} oracle with the campaign's flag translation
+ * (CASE_INSENSITIVE / DOTALL / MULTILINE / UNICODE_CHARACTER_CLASS — the
+ * {@code (?u)} lane; no LONGEST, jur has no equivalent; a leading
+ * {@code (?U)} translates to the oracle's UNICODE_CASE flag). The contract
+ * is each oracle's observable behavior: compile-accept/reject parity plus a
+ * five-probe span protocol compared for exact equality — first
+ * {@code find()} with overall and per-group spans (spans strictly subsume
+ * group texts), full {@code find()} iteration on the same matcher
+ * (continuation + empty-match advance), {@code matches()}, {@code
+ * lookingAt()}, and {@code find(len/2)} restart.
+ *
+ * <p>On the jur lane the two evidence-re-base residuals are conscious
+ * domain exclusions (mirroring {@code CampaignFuzzer.jurLaneCase}; WBS item
+ * 6): the family-6 tail slice and the surrogate-unit-semantics family —
+ * recorded as {@code JURLANE_SKIP} records and counted, not failed. The
+ * İ/ı full-fold residual is FIXED (the jur surface's default fold universe
+ * is the java.util.regex reading). Everything else on the lane compares
+ * hard: compile parity, group clauses, terminator set, anchors, fold.
  *
  * <p>A soak, not a unit test. Run via the {@code fuzz} Gradle task:
  * <pre>
@@ -158,20 +174,40 @@ public final class DifferentialFuzzer {
     private static int ciSuppAvoided; // informational; generation-side counters
     private static int ciRangeAvoided; // (known-gap / oracle-hang constructs not generated)
 
-    // ---- compile-flag matrix ----
+    // ---- compile-flag matrix + the lane axis ----
 
     /** Matrix bits (identical values in tdfa and re2j 1.8, verified against
      *  both Pattern classes — the drop-in contract extends to flag values).
-     *  Excluded: {@code UNICODE_CHARACTER_CLASS} (tdfa-only, no re2j oracle)
-     *  and {@code DISABLE_UNICODE_GROUPS} (inert until \p{} generation lands:
-     *  both engines only differ on \p{} acceptance, which the generator never
-     *  emits — dead entropy today; revisit if the generator ever emits
-     *  \p{}). */
+     *  Excluded: {@code UNICODE_CHARACTER_CLASS} on the RE2J lane
+     *  (tdfa-only, no re2j oracle; the jur lane draws it — its oracle
+     *  translates it) and {@code DISABLE_UNICODE_GROUPS} (inert until
+     *  \p{} generation lands: both engines only differ on \p{} acceptance,
+     *  which the generator never emits — dead entropy today; revisit if
+     *  the generator ever emits \p{}). */
     static final int FLAG_CI = io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE;
 
     static final int FLAG_DOTALL = io.github.jemmix.tdfa.Pattern.DOTALL;
+
     static final int FLAG_MULTILINE = io.github.jemmix.tdfa.Pattern.MULTILINE;
+
     static final int FLAG_LONGEST = io.github.jemmix.tdfa.Pattern.LONGEST_MATCH;
+
+    /** The jur lane's UCC draw ({@code (?u)}) — a jur-facade bit whose
+     *  oracle translation is java.util.regex's UNICODE_CHARACTER_CLASS
+     *  (the TODO "Fuzz (?u) lane vs jur oracle" item joined this matrix
+     *  with the evidence re-base). */
+    static final int FLAG_UCC = io.github.jemmix.tdfa.Pattern.UNICODE_CHARACTER_CLASS;
+
+    /** The campaign's jur flag translation (CampaignFuzzer.genJur). */
+    static final int JUR_I = java.util.regex.Pattern.CASE_INSENSITIVE;
+
+    static final int JUR_S = java.util.regex.Pattern.DOTALL;
+
+    static final int JUR_M = java.util.regex.Pattern.MULTILINE;
+
+    static final int JUR_UCC = java.util.regex.Pattern.UNICODE_CHARACTER_CLASS;
+
+    static final int JUR_UCASE = java.util.regex.Pattern.UNICODE_CASE;
 
     /** Batched generation (generator v3): caseSeed → batch = floorDiv(s, K),
      *  index = floorMod(s, K). The pattern is a pure function of the batch,
@@ -181,6 +217,30 @@ public final class DifferentialFuzzer {
      *  inputs: compile+codegen is ~45% of per-case cost, matching is µs.
      *  Generator version bump — pre-v3 caseSeeds are dead. */
     static final int BATCH_K = 8;
+
+    /** The lane axis (WBS item 6): which surface the tdfa side compiles
+     *  through and which oracle answers. Drawn per batch beside the flag
+     *  bits from an independent stream (pure function of the batch, so
+     *  replay holds), or pinned via {@code -Pfuzz.lane} for a lane-pure
+     *  soak (re-running the re2j-pinned evidence, or a jur-only night). */
+    enum Lane {
+        RE2J, JUR
+    }
+
+    /** Lane draw: a fresh stream per batch (its own salt — the flag
+     *  stream's draws are untouched, so pre-existing caseSeeds keep their
+     *  patterns AND flags). p=½ per lane: one overnight soak evidences
+     *  both lanes; summary.txt splits the counts. */
+    static Lane genLane(long batch) {
+        return new SplittableRandom(batch ^ 0x4C414E45L).nextBoolean() ? Lane.JUR : Lane.RE2J; // "LANE"
+    }
+
+    /** The lane a batch runs under: the {@code fuzz.lane} pin ({@code mix}
+     *  default) over the per-batch draw. */
+    static Lane laneOf(long batch) {
+        String pin = System.getProperty("fuzz.lane", "mix");
+        return "jur".equalsIgnoreCase(pin) ? Lane.JUR : "re2j".equalsIgnoreCase(pin) ? Lane.RE2J : genLane(batch);
+    }
 
     public static void main(String[] argv) throws Exception {
         long one = Long.getLong("fuzz.one", 0);
@@ -198,7 +258,7 @@ public final class DifferentialFuzzer {
                 Case c = generate(one);
                 System.out.println("pattern: " + escape(c.pattern()));
                 System.out.println("input:   " + escape(c.input()));
-                System.out.println("flags:   " + c.flags());
+                System.out.println("flags:   " + c.flags() + "  lane: " + c.lane());
                 Outcome o = runOne(c);
                 System.out.println("oracle:  " + o.oracle);
                 System.out.println("asm:     " + o.asm);
@@ -245,13 +305,13 @@ public final class DifferentialFuzzer {
      *  the main thread records them normally and attributes the hang to the exact
      *  caseSeed (batch*K + prog). Returns false on timeout; the sacrificed worker
      *  is handed back via {@code workerOut} for the post-mortem stack. */
-    static boolean runBatchWatched(String pattern, int flags, String[] inputs, Outcome[] os, AtomicInteger prog,
-        Thread[] workerOut) throws InterruptedException {
+    static boolean runBatchWatched(String pattern, int flags, Lane lane, String[] inputs, Outcome[] os,
+        AtomicInteger prog, Thread[] workerOut) throws InterruptedException {
         Thread worker = new Thread(() -> {
-            Prepared pr = prepare(pattern, flags);
+            Prepared pr = prepare(pattern, flags, lane);
             for (int i = 0; i < inputs.length; i++) {
                 prog.set(i);
-                os[i] = matchCase(pr, new Case(pattern, inputs[i], flags));
+                os[i] = matchCase(pr, new Case(pattern, inputs[i], flags, lane));
             }
         }, "fuzz-case");
         worker.setDaemon(true);
@@ -292,8 +352,8 @@ public final class DifferentialFuzzer {
     }
 
     /** One in-flight batch. */
-    private record BatchJob(long batch, int flags, String pattern, String[] inputs, Outcome[] os, AtomicInteger prog,
-        Thread[] worker, Future<Boolean> done) {
+    private record BatchJob(long batch, int flags, Lane lane, String pattern, String[] inputs, Outcome[] os,
+        AtomicInteger prog, Thread[] worker, Future<Boolean> done) {
     }
 
     /** Fuzz-scoped compile work budget (ticks, wall-clock-free: the same
@@ -367,8 +427,8 @@ public final class DifferentialFuzzer {
                         }
                         boolean done;
                         try {
-                            done = runBatchWatched(job.pattern(), job.flags(), job.inputs(), job.os(), job.prog(),
-                                job.worker());
+                            done = runBatchWatched(job.pattern(), job.flags(), job.lane(), job.inputs(), job.os(),
+                                job.prog(), job.worker());
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
                             break;
@@ -415,7 +475,8 @@ public final class DifferentialFuzzer {
         // >>> 4 keeps batch*8+i < 2^63 (>>> 3 was wrong: batches ≥ 2^60
         // wrapped negative — bijective and replayable, but confusing in logs).
         long batch = master.nextLong() >>> 4;
-        int flags = genFlags(batch);
+        Lane lane = laneOf(batch);
+        int flags = genFlags(batch, lane);
         String pattern = genPattern(batch);
         // pattern-level generation guards fold once per batch
         r.ciSuppAvoidedTotal += ciSuppAvoided;
@@ -428,10 +489,10 @@ public final class DifferentialFuzzer {
         AtomicInteger prog = new AtomicInteger(-1);
         Thread[] worker = new Thread[1];
         if (pool != null) {
-            Future<Boolean> fut = pool.submit(() -> runBatchWatched(pattern, flags, inputs, os, prog, worker));
-            return new BatchJob(batch, flags, pattern, inputs, os, prog, worker, fut);
+            Future<Boolean> fut = pool.submit(() -> runBatchWatched(pattern, flags, lane, inputs, os, prog, worker));
+            return new BatchJob(batch, flags, lane, pattern, inputs, os, prog, worker, fut);
         }
-        return new BatchJob(batch, flags, pattern, inputs, os, prog, worker, null);
+        return new BatchJob(batch, flags, lane, pattern, inputs, os, prog, worker, null);
     }
 
     /** Record a finished (or hung) batch: prefix outcomes, hang attribution
@@ -447,8 +508,8 @@ public final class DifferentialFuzzer {
             int victim = k < 0 ? 0 : k; // -1 = compile hang: replay head case (fuzz.one recompiles)
             if (r.cases < maxCases || maxCases <= 0) {
                 r.hangs++;
-                logs.hang(batch * BATCH_K + victim, new Case(job.pattern(), job.inputs()[victim], job.flags()), r,
-                    job.worker()[0]);
+                logs.hang(batch * BATCH_K + victim,
+                    new Case(job.pattern(), job.inputs()[victim], job.flags(), job.lane()), r, job.worker()[0]);
                 r.cases++;
             }
         }
@@ -456,18 +517,22 @@ public final class DifferentialFuzzer {
 
     // ---- one case ----
 
-    record Case(String pattern, String input, int flags) {
+    record Case(String pattern, String input, int flags, Lane lane) {
     }
 
     /** Engines compiled once per batch. A non-null tag means the compile
      *  path produced that protocol string for EVERY input (rejection, or a
      *  compile-time runtime exception); exc carries the exception detail
      *  lines to attach to each Outcome — the same strings a per-case
-     *  compile path would emit. */
+     *  compile path would emit. The oracle column is the lane's: re2j on
+     *  the RE2J lane, a compiled {@code java.util.regex} Pattern on the
+     *  JUR lane ({@link #jurFlags} carries its translated flag bits). */
     static final class Prepared {
         String pattern;
         int flags;
+        Lane lane = Lane.RE2J;
         com.google.re2j.Pattern oracle;
+        java.util.regex.Pattern jurOracle;
         String oracleTag;
         TDFAPattern asm;
         String asmTag;
@@ -477,14 +542,64 @@ public final class DifferentialFuzzer {
         String vmExc;
     }
 
+    /** The oracle pattern a JUR-lane compile compares against (a leading
+     *  {@code (?U)} — the lane's scoped fold upgrade — has no
+     *  java.util.regex spelling and translates to UNICODE_CASE on the
+     *  remainder; other {@code (?U} spellings are the classifier's domain
+     *  exclusions). */
+    static String jurOraclePattern(String pattern) {
+        return pattern.startsWith("(?U)") ? pattern.substring(4) : pattern;
+    }
+
+    static int jurFlags(int flags, String pattern) {
+        int jf = (flags & FLAG_CI) != 0 ? JUR_I : 0;
+        jf |= (flags & FLAG_DOTALL) != 0 ? JUR_S : 0;
+        jf |= (flags & FLAG_MULTILINE) != 0 ? JUR_M : 0;
+        jf |= (flags & FLAG_UCC) != 0 ? JUR_UCC : 0;
+        jf |= pattern.startsWith("(?U)") ? JUR_UCASE : 0;
+        return jf;
+    }
+
     static Prepared prepare(String pattern, int flags) {
+        return prepare(pattern, flags, Lane.RE2J);
+    }
+
+    static Prepared prepare(String pattern, int flags, Lane lane) {
         Prepared p = new Prepared();
         p.pattern = pattern;
         p.flags = flags;
-        // This fuzzer's oracle is re2j, so the tdfa side compiles through
-        // the re2j surface (the lane baked in; the facade default is
-        // java.util.regex parity). The matrix gaining a default-lane case
-        // is the evidence re-base work item.
+        p.lane = lane;
+        if (lane == Lane.JUR) {
+            // The jur lane: tdfa through the jur facade (the default lane,
+            // provider-less — the facade's java-reading default fold
+            // universe), oracle the live java.util.regex under the
+            // campaign's flag translation.
+            try {
+                p.jurOracle = java.util.regex.Pattern.compile(jurOraclePattern(pattern), jurFlags(flags, pattern));
+            } catch (RuntimeException e) {
+                p.oracleTag = "<reject>";
+            }
+            try {
+                p.asm = (TDFAPattern) io.github.jemmix.tdfa.Pattern.compile(pattern, flags, null, null);
+            } catch (PatternSyntaxException | PatternTooLargeException e) {
+                p.asmTag = "<reject:" + firstLine(e.getMessage()) + ">";
+            } catch (RuntimeException e) {
+                p.asmTag = "<exception:" + e.getClass().getSimpleName() + ">";
+                p.asmExc = "asm " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage());
+            }
+            try {
+                p.vm = (TDFAPattern) io.github.jemmix.tdfa.Pattern.compile(pattern, flags, TdfaRunner::new, null);
+            } catch (PatternSyntaxException | PatternTooLargeException e) {
+                p.vmTag = "<reject:" + firstLine(e.getMessage()) + ">";
+            } catch (RuntimeException e) {
+                p.vmTag = "<exception:" + e.getClass().getSimpleName() + ">";
+                p.vmExc = "vm " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage());
+            }
+            return p;
+        }
+        // The re2j lane: the tdfa side compiles through the re2j surface
+        // (the lane baked in; the facade default is java.util.regex parity)
+        // and re2j is the oracle.
         try {
             p.oracle = com.google.re2j.Pattern.compile(pattern, flags);
         } catch (RuntimeException e) {
@@ -515,7 +630,17 @@ public final class DifferentialFuzzer {
      *  identical to what a per-case compile path produces. */
     static Outcome matchCase(Prepared pr, Case c) {
         Outcome o = new Outcome(c);
-        if (pr.oracle != null) {
+        if (pr.lane == Lane.JUR) {
+            if (pr.jurOracle != null) {
+                try {
+                    o.oracle = compute(pr.jurOracle, c.input());
+                } catch (RuntimeException | StackOverflowError e) {
+                    o.oracle = "<exception:" + e.getClass().getSimpleName() + ">";
+                }
+            } else {
+                o.oracle = pr.oracleTag;
+            }
+        } else if (pr.oracle != null) {
             try {
                 o.oracle = compute(pr.oracle, c.input());
             } catch (RuntimeException e) {
@@ -637,7 +762,7 @@ public final class DifferentialFuzzer {
     }
 
     static Outcome runOne(Case c) {
-        return matchCase(prepare(c.pattern(), c.flags()), c);
+        return matchCase(prepare(c.pattern(), c.flags(), c.lane()), c);
     }
 
     // ---- match protocol ----
@@ -739,6 +864,49 @@ public final class DifferentialFuzzer {
         return sb.toString();
     }
 
+    /** The five-probe protocol over the jur oracle — same span format as
+     *  the engine and re2j protocols, so the strings compare directly
+     *  ({@link CampaignFuzzer#javaProtocol} is the F+I+M+R engine-level
+     *  twin). */
+    static String compute(java.util.regex.Pattern p, CharSequence in) {
+        StringBuilder sb = new StringBuilder(96);
+        java.util.regex.Matcher m = p.matcher(in);
+        boolean found = m.find();
+        if (found) {
+            CampaignFuzzer.spanJur(sb.append("F=true "), m);
+        } else {
+            sb.append("F=false");
+        }
+        sb.append(" I=[");
+        int n = 0;
+        if (found) {
+            CampaignFuzzer.spanJur(sb, m);
+            while (++n < MAX_MATCHES && m.find()) {
+                CampaignFuzzer.spanJur(sb, m);
+            }
+        }
+        sb.append(n == MAX_MATCHES ? "]+$" : "]");
+        java.util.regex.Matcher mm = p.matcher(in);
+        if (mm.matches()) {
+            CampaignFuzzer.spanJur(sb.append(" M=true "), mm);
+        } else {
+            sb.append(" M=false");
+        }
+        java.util.regex.Matcher ml = p.matcher(in);
+        if (ml.lookingAt()) {
+            CampaignFuzzer.spanJur(sb.append(" L=true "), ml);
+        } else {
+            sb.append(" L=false");
+        }
+        java.util.regex.Matcher mr = p.matcher(in);
+        if (mr.find(in.length() / 2)) {
+            CampaignFuzzer.spanJur(sb.append(" R=true "), mr);
+        } else {
+            sb.append(" R=false");
+        }
+        return sb.toString();
+    }
+
     /** {@code s..e (g1s..g1e g2s..g2e ...)}; non-participating group = {@code -}. */
     static void spanTdfa(StringBuilder sb, io.github.jemmix.tdfa.core.engine.Matcher m) {
         sb.append(m.start()).append("..").append(m.end());
@@ -820,6 +988,15 @@ public final class DifferentialFuzzer {
      *  independently (p=½): every flag in ~30% of batches, all-four in
      *  ~3.75%. */
     static int genFlags(long batch) {
+        return genFlags(batch, Lane.RE2J);
+    }
+
+    /** The lane-aware draw: the SAME stream per batch (the ci guard in
+     *  {@link #genPattern} reads the lane-blind view, so a batch's pattern
+     *  is lane-independent); the fourth bit is LONGEST on the re2j lane and
+     *  UCC ({@code (?u)}) on the jur lane — jur has no longest reading,
+     *  and UCC has no re2j oracle. */
+    static int genFlags(long batch, Lane lane) {
         SplittableRandom rnd = new SplittableRandom(batch ^ 0x6D69786C6F6E676DL);
         if (rnd.nextInt(10) < 4) {
             return 0;
@@ -835,16 +1012,24 @@ public final class DifferentialFuzzer {
             f |= FLAG_MULTILINE;
         }
         if (rnd.nextBoolean()) {
-            f |= FLAG_LONGEST;
+            f |= lane == Lane.JUR ? FLAG_UCC : FLAG_LONGEST;
         }
         return f;
     }
 
+    /** Soak semantics: the lane is the batch's draw (or the {@code fuzz.lane}
+     *  pin) — what {@code fuzz.one} replays. Campaign callers that compare
+     *  against the re2j oracle pin {@link Lane#RE2J} instead. */
     static Case generate(long caseSeed) {
         long batch = Math.floorDiv(caseSeed, BATCH_K);
+        return generate(caseSeed, laneOf(batch));
+    }
+
+    static Case generate(long caseSeed, Lane lane) {
+        long batch = Math.floorDiv(caseSeed, BATCH_K);
         int idx = (int) Math.floorMod(caseSeed, BATCH_K);
-        int flags = genFlags(batch);
-        return new Case(genPattern(batch), genInput(batch, idx, flags), flags);
+        int flags = genFlags(batch, lane);
+        return new Case(genPattern(batch), genInput(batch, idx, flags), flags, lane);
     }
 
     static String genPattern(long batch) {
@@ -1154,6 +1339,12 @@ public final class DifferentialFuzzer {
         final long masterSeed;
         long cases, failures, bothReject, flagged, ciSuppAvoidedTotal, ciRangeAvoidedTotal, knownDivergence;
         long crossRung, crossRouting;
+        long jurCases, jurFailures, jurSkipped;
+        /** Recorded-records cap per JURLANE_SKIP reason (the count keeps
+         *  running; overnight the skip kinds are frequent — the v1 (?U)
+         *  rejections alone are ~7% of jur cases — and every skip is
+         *  reproducible from its caseSeed once the shape is known). */
+        final Map<String, Integer> jurSkipRecorded = new LinkedHashMap<>();
         final Map<Layer, Integer> layerCounts = new EnumMap<>(Layer.class);
         long hangs, hangsOurs, hangsOracle;
         double casesPerMinute;
@@ -1168,10 +1359,16 @@ public final class DifferentialFuzzer {
             if (o.c.flags() != 0) {
                 flagged++;
             }
+            if (o.c.lane() == Lane.JUR) {
+                jurCases++;
+            }
             if (!o.cross.isEmpty()) {
                 // Cross-rung findings are oracle-independent (VM vs itself);
                 // no known-divergence classification, no layered attribution.
                 failures++;
+                if (o.c.lane() == Lane.JUR) {
+                    jurFailures++;
+                }
                 boolean routing = o.cross.get(0).startsWith("ROUTED");
                 if (routing) {
                     crossRouting++;
@@ -1189,6 +1386,21 @@ public final class DifferentialFuzzer {
                 return;
             }
             if (o.failed()) {
+                // The jur lane first: the evidence-re-base domain exclusions
+                // (CampaignFuzzer.jurLaneCase's reclassifications — WBS item
+                // 6) and the jur-oracle's own limits. Everything else on the
+                // lane is hard: no known-divergence swallow exists there.
+                if (o.c.lane() == Lane.JUR) {
+                    String skip = jurLaneDomain(o);
+                    if (skip != null) {
+                        jurSkipped++;
+                        if (jurSkipRecorded.merge(skip, 1, Integer::sum) <= 8) {
+                            logs.failure(caseSeed, o, "JURLANE_SKIP (" + skip + ")", "JUR");
+                        }
+                        return;
+                    }
+                    jurFailures++;
+                }
                 // Known-divergence classification is RELEASED-oracle-only: it
                 // documents the released re2j lone-surrogate bugs, and the
                 // patched fork exists to fix them — under it, every
@@ -1197,16 +1409,17 @@ public final class DifferentialFuzzer {
                 // self-consistent, oracle alone differs); classification
                 // without it would misattribute real findings whose pattern
                 // merely contains a lone surrogate.
-                String known = RELEASED_ORACLE ? knownDivergence(o) : null;
+                String known = o.c.lane() == Lane.RE2J && RELEASED_ORACLE ? knownDivergence(o) : null;
                 // Layered attribution (failure path only — zero soak cost):
                 // re2j/sim/vm/asm vote; the verdict names the failing layer.
-                // Runs at flags=0 only: its four columns have no flag
-                // plumbing, and attributing a flags≠0 case at flags=0 would
-                // name a layer under different semantics — worse than no
-                // attribution. Those records carry layer=FLAGS; fuzz.one
-                // replay shows the full picture for triage.
+                // Runs at flags=0 on the RE2J lane only: its four columns
+                // have no flag plumbing (and no jur reading — the comparator
+                // compiles the re2j lineage), so attributing anything else
+                // would name a layer under different semantics — worse than
+                // no attribution. Those records carry layer=FLAGS (JUR);
+                // fuzz.one replay shows the full picture for triage.
                 String layerStr = "FLAGS";
-                if (o.c.flags() == 0) {
+                if (o.c.flags() == 0 && o.c.lane() == Lane.RE2J) {
                     var report = LAYERED.compare(o.c.pattern(), o.c.input());
                     layerStr = report.layer().name();
                     layerCounts.merge(report.layer(), 1, Integer::sum);
@@ -1246,6 +1459,51 @@ public final class DifferentialFuzzer {
             } else if (o.oracle.startsWith("<")) {
                 bothReject++;
             }
+        }
+
+        /**
+         * The jur lane's domain exclusions — the asserted reclassifications
+         * of the evidence re-base (the same predicates
+         * {@code CampaignFuzzer.jurLaneCase} applies; WBS item 6). A skip
+         * means "outside the compared domain", never a divergence pass:
+         * budget rejections and engine findings stay findings (identical
+         * treatment to the re2j lane). Null = the divergence is real.
+         * <ul>
+         *   <li><b>oracle-threw</b> — java.util.regex blew up at match time
+         *       (backtracker StackOverflowError): an oracle limit, not a
+         *       divergence (the campaign's JUR_ORACLE_THREW soft).</li>
+         *   <li><b>scoped-U-untranslatable</b> — non-leading {@code (?U}
+         *       spellings: the v1 top-level-only limit rejects
+         *       {@code (?U:...)} shapes the oracle accepts, and a
+         *       point-forward {@code (?U)} has no oracle flag spelling.</li>
+         *   <li><b>group-participation-tail</b> — the family-6 tail slice
+         *       (the 4d audit's position-carrying ε-write gap); reached only
+         *       with skeleton-equal protocols, so the overall spans already
+         *       compared clean.</li>
+         *   <li><b>surrogate-unit-semantics</b> — the lane's designed unit
+         *       semantics vs java's pair-aware UTF-16 discipline (java's
+         *       classes never match a surrogate unit inside a well-formed
+         *       pair; a pair-aware JUR reading is the open engine work).</li>
+         * </ul>
+         */
+        static String jurLaneDomain(Outcome o) {
+            String p = o.c.pattern();
+            if (o.oracle.startsWith("<exception")) {
+                return "oracle-threw";
+            }
+            if (!p.startsWith("(?U)") && p.contains("(?U")) {
+                return "scoped-U-untranslatable";
+            }
+            if (CampaignFuzzer.sameSkeleton(o.oracle, o.vm) && p.matches(".*\\).*[*+{].*")) {
+                return "group-participation-tail";
+            }
+            if (CampaignFuzzer.hasLoneSurrogate(p) || CampaignFuzzer.hasLoneSurrogate(o.c.input())
+                || CampaignFuzzer.laneExtrasAllPairInteriors(o.oracle, o.vm, o.c.input())
+                || CampaignFuzzer.negatedClassSurrogateResidual(p, o.c.input())
+                || CampaignFuzzer.boundarySurrogateResidual(p, o.c.input())) {
+                return "surrogate-unit-semantics";
+            }
+            return null;
         }
 
         /**
@@ -1422,10 +1680,10 @@ public final class DifferentialFuzzer {
             // humongous-GC hang signature) visible without progress.log
             // cross-referencing.
             failures.println("{\"caseSeed\":" + caseSeed + ",\"ts\":\"" + TS_FMT.format(Instant.now()) + "\",\"upMs\":"
-                + RUNTIME_MX.getUptime() + ",\"flags\":" + o.c.flags() + ",\"kind\":\"" + kind.replace('"', '\'')
-                + "\",\"layer\":\"" + layer + "\"" + ",\"pattern\":\"" + escape(o.c.pattern()) + "\",\"input\":\""
-                + escape(o.c.input()) + "\",\"oracle\":\"" + escape(o.oracle) + "\",\"asm\":\"" + escape(o.asm)
-                + "\",\"vm\":\"" + escape(o.vm) + "\""
+                + RUNTIME_MX.getUptime() + ",\"lane\":\"" + o.c.lane() + "\",\"flags\":" + o.c.flags() + ",\"kind\":\""
+                + kind.replace('"', '\'') + "\",\"layer\":\"" + layer + "\"" + ",\"pattern\":\"" + escape(o.c.pattern())
+                + "\",\"input\":\"" + escape(o.c.input()) + "\",\"oracle\":\"" + escape(o.oracle) + "\",\"asm\":\""
+                + escape(o.asm) + "\",\"vm\":\"" + escape(o.vm) + "\""
                 + (o.exceptions.isEmpty() ? ""
                     : ",\"ex\":" + o.exceptions.stream().map(e -> "\"" + escape(e) + "\"").toList())
                 + (o.cross.isEmpty() ? "" : ",\"cross\":" + o.cross.stream().map(e -> "\"" + escape(e) + "\"").toList())
@@ -1475,7 +1733,7 @@ public final class DifferentialFuzzer {
                 }
             }
             failures.println("{\"caseSeed\":" + caseSeed + ",\"ts\":\"" + TS_FMT.format(Instant.now()) + "\",\"upMs\":"
-                + RUNTIME_MX.getUptime() + ",\"flags\":" + c.flags() + ",\"kind\":\"HANG_"
+                + RUNTIME_MX.getUptime() + ",\"lane\":\"" + c.lane() + "\",\"flags\":" + c.flags() + ",\"kind\":\"HANG_"
                 + (ours ? "ENGINE" : "ORACLE") + "\",\"cpuMs\":" + cpuMs + ",\"verdict\":\"" + verdict + "\""
                 + ",\"pattern\":\"" + escape(c.pattern()) + "\",\"input\":\"" + escape(c.input()) + "\",\"stack\":\""
                 + escape(st.toString()) + "\"}");
@@ -1497,12 +1755,19 @@ public final class DifferentialFuzzer {
         void summary(Results r) {
             try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(dir.resolve("summary.txt")))) {
                 w.println("masterSeed: " + r.masterSeed);
-                w.println("oracle: " + (RELEASED_ORACLE ? "re2j 1.8 released"
-                    : "re2j 1.8 patched fork (known-divergence classifier off)"));
+                w.println("lane pin: " + System.getProperty("fuzz.lane", "mix") + " (per-batch draw; jur = facade"
+                    + " vs live java.util.regex, re2j = re2j surface vs re2j)");
+                w.println("oracle: "
+                    + (RELEASED_ORACLE ? "re2j 1.8 released"
+                        : "re2j 1.8 patched fork (known-divergence classifier off)")
+                    + " + live java.util.regex (jur" + " lane)");
                 w.println("cases: " + r.cases + "  failures: " + r.failures + "  bothReject: " + r.bothReject
                     + "  flagged: " + r.flagged + "  knownDivergence: " + r.knownDivergence + "  hangsEngine: "
                     + r.hangsOurs + "  hangsOracle: " + r.hangsOracle + "  crossRung: " + r.crossRung
                     + "  crossRouting: " + r.crossRouting);
+                w.println("jur lane: cases=" + r.jurCases + "  failures=" + r.jurFailures + "  domainSkips="
+                    + r.jurSkipped + " (by reason: " + r.jurSkipRecorded + ")    re2j lane: cases="
+                    + (r.cases - r.jurCases) + "  failures=" + (r.failures - r.jurFailures));
                 w.printf("rate: %.1f cases/min%n", r.casesPerMinute);
                 w.println("ciSuppAvoided (known-gap constructs not generated): " + r.ciSuppAvoidedTotal
                     + "  ciWideRangeAvoided (oracle-hang guard): " + r.ciRangeAvoidedTotal);

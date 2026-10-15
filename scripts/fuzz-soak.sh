@@ -3,6 +3,14 @@
 #
 #   scripts/fuzz-soak.sh [iterations=480] [minutes-per-iter=1] [out=build/fuzz] [seed-base=random] [extra gradle args...]
 #
+# Both lanes since the evidence re-base: the per-batch lane draw mixes the
+# re2j surface vs the re2j (patched) oracle and the jur facade vs live
+# java.util.regex; summary.txt splits per-lane counts (roughly half each).
+# Lane-pure soaks (re-running the re2j-pinned ~300 M evidence, or a jur-only
+# night) pass the pin through as extra gradle args:
+#   scripts/fuzz-soak.sh 480 1 build/fuzz-re2j 4242 -Pfuzz.lane=re2j
+#   scripts/fuzz-soak.sh 480 1 build/fuzz-jur   4243 -Pfuzz.lane=jur
+#
 # Why chunked: a hang under the per-case watchdog sacrifices its worker thread
 # (daemon, left running). A single 8h JVM leaks those threads — they steal CPU
 # and heap until the run degrades or OOMs. One JVM per iteration bounds every

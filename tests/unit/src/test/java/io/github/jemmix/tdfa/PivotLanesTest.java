@@ -47,11 +47,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <li>axis-single hybrid lanes (UNIX_LINES added, EMPTY_LAST_LINE added,
  *     UNICODE_CASE added) for the separable effects the split bits exist
  *     for — the single-axis fold lane against java
- *     CASE_INSENSITIVE|UNICODE_CASE (İ/ı excluded: tdfa's full universe
- *     keeps the pair fold-inert, java merges it — the campaign's soft
- *     fold residual); the unit-semantics contract hand-pinned for the
- *     same reason (java refuses surrogate units inside well-formed pairs
- *     entirely);</li>
+ *     CASE_INSENSITIVE|UNICODE_CASE (İ/ı included: the jur surface's
+ *     default fold universe is the java.util.regex reading since the
+ *     evidence re-base; the re2j surface keeps the pair inert — pinned
+ *     in jurFoldUniverseMergesTheTurkicIPairLikeJava); the unit-semantics
+ *     contract hand-pinned for the same reason (java refuses surrogate
+ *     units inside well-formed pairs entirely);</li>
  * <li>every case runs on the interpreter AND the ASM tier (identical
  *     protocol), over String and non-String CharSequence (StringBuilder /
  *     CharBuffer — the GENERIC rung), and the VM tier re-runs under every
@@ -395,13 +396,17 @@ class PivotLanesTest {
     void unicodeCaseAxisFoldsTheFullUniverseLikeJavaCiUnicodeCase() {
         // The single-axis fold lane (everything else JUR): CI folds the
         // full simple-fold universe, java's CASE_INSENSITIVE|UNICODE_CASE.
-        // İ/ı EXCLUDED here by design: tdfa's full universe keeps the pair
-        // fold-inert, java merges it — the campaign's soft fold residual.
+        // İ/ı INCLUDED since the evidence re-base: the jur surface's
+        // default fold universe is the java.util.regex reading (the pair
+        // merged into the i-orbit) while the re2j surface keeps the
+        // RE2-lineage reading (inert) — pinned surface-split in
+        // jurFoldUniverseMergesTheTurkicIPairLikeJava below.
         Semantics lane = JUR.unicodeCase();
-        String[] inputs = {"s", "S", "\u017F", "k", "K", "\u212A", "i", "I", "\u03c3", "\u03c2", "\u03a3", "\u0442",
-            "\u0422", "\u1c85", "\u00e9", "\u00c9", "ab", "AB", "Stra\u00dfe", "STRASSE"};
-        for (String pat : new String[]{"(?i)s", "(?i)k", "(?i)[a-z]+", "(?i)[^s]", "(?i)[^k]", "(?i)Stra\u00dfe",
-            "(?i)\u03c3", "(?i)\u0442", "(?i)[\u00e0-\u00ff]+", "(?i)[\u03b1-\u03c9]"}) {
+        String[] inputs = {"s", "S", "\u017F", "k", "K", "\u212A", "i", "I", "\u0130", "\u0131", "\u03c3", "\u03c2",
+            "\u03a3", "\u0442", "\u0422", "\u1c85", "\u00e9", "\u00c9", "ab", "AB", "Stra\u00dfe", "STRASSE"};
+        for (String pat : new String[]{"(?i)s", "(?i)k", "(?i)i", "(?i)[a-z]+", "(?i)[^s]", "(?i)[^k]", "(?i)[^i]",
+            "(?i)Stra\u00dfe", "(?i)\u03c3", "(?i)\u0442", "(?i)[\u00e0-\u00ff]+", "(?i)[\u03b1-\u03c9]",
+            "(?i)[i\u0131]"}) {
             assertOracleParity("JUR+UNICODE_CASE " + pat, pat, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE, lane,
                 inputs);
         }
@@ -412,11 +417,12 @@ class PivotLanesTest {
         // JDK-verified (the campaign found it): UNICODE_CHARACTER_CLASS
         // IMPLIES Unicode-aware CI — java under CI|UCC folds the full
         // universe exactly like CI|UNICODE_CASE, so tdfa's (?u) widens
-        // the fold universe in the JUR lane too. İ/ı excluded as above.
-        String[] inputs = {"s", "S", "\u017F", "k", "K", "\u212A", "i", "I", "\u03c3", "\u03c2", "\u03a3", "\u0442",
-            "\u0422", "\u1c85", "\u1c84", "\u00e9", "\u00c9", "ab", "AB"};
-        for (String pat : new String[]{"(?u)(?i)k", "(?u)(?i)s", "(?u)(?i)[a-z]+", "(?u)(?i)[^s]", "(?i)(?u)ks",
-            "(?u)(?i)\u0442", "(?u)(?i)[\u03b1-\u03c9]", "(?u)((?i)k)"}) {
+        // the fold universe in the JUR lane too. İ/ı included as above
+        // (the java-reading default fold universe).
+        String[] inputs = {"s", "S", "\u017F", "k", "K", "\u212A", "i", "I", "\u0130", "\u0131", "\u03c3", "\u03c2",
+            "\u03a3", "\u0442", "\u0422", "\u1c85", "\u1c84", "\u00e9", "\u00c9", "ab", "AB"};
+        for (String pat : new String[]{"(?u)(?i)k", "(?u)(?i)s", "(?u)(?i)i", "(?u)(?i)[a-z]+", "(?u)(?i)[^s]",
+            "(?u)(?i)[^i]", "(?i)(?u)ks", "(?u)(?i)\u0442", "(?u)(?i)[\u03b1-\u03c9]", "(?u)((?i)k)"}) {
             assertOracleParity("JUR (?u)CI " + pat, pat, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS,
                 JUR, inputs);
         }
@@ -424,6 +430,33 @@ class PivotLanesTest {
         // upgrade is group-scoped, the outer atoms fold ASCII
         String[] midInputs = {"kK", "K\u017F", "k\u017F", "\u212Ak", "ks", "\u017Fs"};
         assertOracleParity("JUR (?i)((?u)k)s", "(?i)((?u)k)s", 0, JUR, midInputs);
+    }
+
+    // ===== the İ/ı fold split: each surface its oracle's orbit =====
+
+    @Test
+    void jurFoldUniverseMergesTheTurkicIPairLikeJava() {
+        // The evidence re-base İ/ı fix: the JUR lane's full fold universe
+        // is the java.util.regex reading (İ/ı merged into the i-orbit
+        // under UNICODE_CASE / UCC / a leading (?U) upgrade), the re2j
+        // surface's the RE2-lineage reading (inert — what its live oracle
+        // answers). Bare CI stays ASCII in both (İ/ı inert everywhere).
+        String[] uccInputs = {"\u0130", "\u0131", "i", "I"};
+        assertOracleParity("JUR (?iu)i", "(?iu)i", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS, JUR,
+            uccInputs);
+        assertOracleParity("JUR (?iu)\\u0130", "(?iu)\u0130", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE,
+            JUR.unicodeCase(), uccInputs);
+        assertDualOracleParity("JUR (?U)(?i)i", "(?U)(?i)i", "i", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE, JUR,
+            uccInputs);
+        // the facade's own default compile folds the same way
+        io.github.jemmix.tdfa.Pattern jurUcc = io.github.jemmix.tdfa.Pattern.compile("i",
+            io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE | io.github.jemmix.tdfa.Pattern.UNICODE_CHARACTER_CLASS);
+        assertThat(jurUcc.matcher("\u0130").find()).as("facade CI|UCC folds İ into the i-orbit").isTrue();
+        assertThat(jurUcc.matcher("\u0131").find()).as("facade CI|UCC folds ı into the i-orbit").isTrue();
+        // ... and the re2j surface keeps the pair inert under its full fold
+        io.github.jemmix.tdfa.re2j.Pattern re2Ci = io.github.jemmix.tdfa.re2j.Pattern.compile("(?i)i");
+        assertThat(re2Ci.matcher("\u0130").find()).as("re2j surface plain (?i) keeps İ inert").isFalse();
+        assertThat(re2Ci.matcher("\u0131").find()).as("re2j surface plain (?i) keeps ı inert").isFalse();
     }
 
     // ===== (?U): the java.util.regex reading — scoped Unicode-case =====
