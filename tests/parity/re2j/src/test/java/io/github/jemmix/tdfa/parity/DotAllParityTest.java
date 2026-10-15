@@ -10,6 +10,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Dotall parity: (?s) flag, DOTALL mode flag, dot matching newline.
+ *
+ * <p>Jur twin below — every case translates (incl. the DOTALL flag bit via
+ * {@link JurOracle#jdkFlags(int)}).
  */
 class DotAllParityTest {
 
@@ -90,5 +93,23 @@ class DotAllParityTest {
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void dotAllScopedMultiline(RegexEngineFactory factory) {
         assertSameFind("(?m)^(?s:.)$", "a\nb", factory);
+    }
+
+    /** Jur twin: the whole suite against the live java.util.regex oracle. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwinAllCases(RegexEngineFactory factory) {
+        JurOracle.assertSameFind("a.c", "abc", factory);
+        JurOracle.assertSameFind("a.c", "a\nc", factory);
+        JurOracle.assertSameFind("(?s)a.c", "a\nc", factory);
+        JurOracle.assertSameFind("(?s).+", "a\nb\nc", factory);
+        JurOracle.assertSameFind("(?s).", "\n", io.github.jemmix.tdfa.Pattern.DOTALL, factory);
+        JurOracle.assertSameFind("a(?s:.)c", "a\nc", factory);
+        JurOracle.assertSameFind("(?s)a.c|def", "a\nc", factory);
+        JurOracle.assertSameFind("(?s)a(?-s).c", "a\nc", factory);
+        JurOracle.assertSameAllMatches("(?s).", "ab\ncd", factory);
+        JurOracle.assertSameFind("(?s)a.c", "a\rc", factory);
+        JurOracle.assertSameFind("(?ms)^.$", "a\nb", factory);
+        JurOracle.assertSameFind("(?m)^(?s:.)$", "a\nb", factory);
     }
 }

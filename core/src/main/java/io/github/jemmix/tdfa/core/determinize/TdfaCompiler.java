@@ -1555,6 +1555,15 @@ final class TdfaCompiler {
      */
     private void solveFinalOps() {
         int n = kernels.size();
+        // states discovered after the last cut binding never grew the
+        // table (bindCuts returns early when no cuts were recorded for
+        // them) — grow to the final kernel count so the reads below see
+        // null (no override) instead of falling off the end. Found by the
+        // WBS item-7 jur twins: (.{0,5}){3,} records cuts early, then the
+        // bounded-repeat desugar discovers later kernels.
+        if (cutOverrideByState != null && cutOverrideByState.length < n) {
+            cutOverrideByState = Arrays.copyOf(cutOverrideByState, n);
+        }
         for (int s = 0; s < n; s++) {
             if (!accept.get(s)) {
                 continue;

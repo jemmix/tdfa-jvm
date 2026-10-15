@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa.parity;
 
+import io.github.jemmix.tdfa.Pattern;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -33,7 +34,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       {@code Re2jUnicodeProvider} bridge (folding follows the oracle's
  *       own universe by construction), and modern-orbit behavior under the
  *       default universe (engine truth, JDK parity).
- * </ul>
+ *   </ul>
+ *
+ * <p>Jur twins below — bare {@code (?i)} folds ASCII only on both sides,
+ * so the Turkic İ/ı cells translate whole (the İ/ı residual is the
+ * {@code (?iu)} full-fold family: the JDK folds İ/ı into the i-orbit
+ * under {@code UNICODE_CASE} while our default universe keeps simple-fold
+ * orbits — excluded per the WBS evidence-re-base residual list). The
+ * historic-Cyrillic cells twin under the {@code UNICODE_CHARACTER_CLASS}
+ * flag: the default (JDK-derived) universe folds the modern orbits
+ * exactly like the live JDK.
  */
 class FoldCaseParityTest {
 
@@ -121,5 +131,31 @@ class FoldCaseParityTest {
             .isNull();
         // ... while the default universe folds modern (see above) — the
         // documented, deliberate gap between the two lanes.
+    }
+
+    /**
+     * Jur twin, Turkic İ/ı under bare {@code (?i)} (ASCII fold — both
+     * sides keep İ/ı out of the i-orbit), and the historic-Cyrillic
+     * modern orbits under {@code (?u)} (the JDK folds them on a
+     * contemporary JDK, and so does the JDK-derived default universe).
+     * The İ/ı cells under {@code (?iu)} are the known full-fold residual
+     * — excluded (class javadoc).
+     */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwin(RegexEngineFactory factory) {
+        for (String p : new String[]{"(?i)i", "(?i)I", "(?i)\u0130", "(?i)\u0131", "(?i)[i\u0131]"}) {
+            for (String in : new String[]{"i", "I", "\u0130", "\u0131", "x"}) {
+                JurOracle.assertSameFind(p, in, factory);
+            }
+        }
+        int ucc = Pattern.UNICODE_CHARACTER_CLASS;
+        JurOracle.assertSameFind("(?u)\u0442", "\u1C85", ucc, factory); // modern orbit, both directions
+        JurOracle.assertSameFind("(?u)\u1C85", "\u0442", ucc, factory);
+        JurOracle.assertSameFind("(?u)\u1C80", "\u0432", ucc, factory);
+        JurOracle.assertSameFind("(?u)\u1C80", "\u1C80", ucc, factory); // self-match holds everywhere
+        // NB: no inline-(?u) divergence pin — this JDK (26) compiles
+        // (?u) too, so the spelling is not a clean either/or cell; the
+        // flag-bit route above is the translatable twin
     }
 }

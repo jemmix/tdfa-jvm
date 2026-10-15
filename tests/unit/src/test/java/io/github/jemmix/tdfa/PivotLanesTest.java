@@ -69,7 +69,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class PivotLanesTest {
 
     private static final Semantics RE2 = Semantics.of().unixLines().unicodeCase().codepointBoundaries().emptyLastLine()
-        .endOfTextOnly().emptyIterationSpans().ungreedyU();
+        .endOfTextOnly().emptyIterationSpans().ungreedyU().spaceRe2();
     private static final Semantics JUR = Semantics.of();
 
     private static final String[] TERM_INPUTS = {"", "\n", "a\n", "a\r", "a\r\n", "a\u0085", "a\u2028", "a\u2029",
@@ -579,7 +579,7 @@ class PivotLanesTest {
         assertThat(deft.matcher("\u212A").find()).as("default options are the JUR lane (ASCII fold)").isFalse();
         io.github.jemmix.tdfa.Pattern re2 = io.github.jemmix.tdfa.Pattern.compile("(?i)k",
             CompileOptions.of().semantics(Semantics.of().unixLines().unicodeCase().codepointBoundaries().emptyLastLine()
-                .endOfTextOnly().emptyIterationSpans().ungreedyU()));
+                .endOfTextOnly().emptyIterationSpans().ungreedyU().spaceRe2()));
         assertThat(re2.matcher("\u212A").find()).as("all-axes options fold full").isTrue();
         // UNIX_LINES through the same route activates the item-2
         // terminator-set pivot — the bit's flags spelling composes the

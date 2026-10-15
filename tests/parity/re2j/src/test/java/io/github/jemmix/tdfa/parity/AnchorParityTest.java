@@ -9,6 +9,10 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
 
 /**
  * Anchor parity: ^ $ \A \z \b \B, multiline behavior.
+ *
+ * <p>Jur twin below: every case in this suite translates, so the default
+ * (JUR) lane is pinned against the live {@code java.util.regex} oracle on
+ * the same cases (WBS item 7).
  */
 class AnchorParityTest {
 
@@ -232,5 +236,46 @@ class AnchorParityTest {
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void startEndAnchorOnNewline(RegexEngineFactory factory) {
         assertSameFind("^$", "\n", factory);
+    }
+
+    /** Jur twin: the whole suite against the live java.util.regex oracle. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwinAllCases(RegexEngineFactory factory) {
+        JurOracle.assertSameFind("^abc", "abc", factory);
+        JurOracle.assertSameFind("^abc", "xabc", factory);
+        JurOracle.assertSameFind("abc$", "abc", factory);
+        JurOracle.assertSameFind("abc$", "abcd", factory);
+        JurOracle.assertSameFind("^abc$", "abc", factory);
+        JurOracle.assertSameFind("^abc$", "abcd", factory);
+        JurOracle.assertSameFind("\\Aabc", "abc", factory);
+        JurOracle.assertSameFind("abc\\z", "abc", factory);
+        JurOracle.assertSameFind("(^abc)", "abc", factory);
+        JurOracle.assertSameFind("(^)?abc", "abc", factory);
+        JurOracle.assertSameFind("\\bword\\b", "a word here", factory);
+        JurOracle.assertSameFind("\\bword", "word here", factory);
+        JurOracle.assertSameFind("word\\b", "the word", factory);
+        JurOracle.assertSameFind("\\bword\\b", "xwordx", factory);
+        JurOracle.assertSameFind("\\Bword", "xword", factory);
+        JurOracle.assertSameFind("\\Bword", " word", factory);
+        JurOracle.assertSameAllMatches("^a", "aaa", factory);
+        JurOracle.assertSameFind("(?m)^abc", "def\nabc", factory);
+        JurOracle.assertSameFind("(?m)abc$", "abc\ndef", factory);
+        JurOracle.assertSameAllMatches("(?m)^.", "ab\ncd\nef", factory);
+        JurOracle.assertSameFind("abc$", "abc\n", factory);
+        JurOracle.assertSameFind("abc$", "abc", factory);
+        JurOracle.assertSameFind("(?m)^abc", "def\r\nabc", factory);
+        JurOracle.assertSameFind("(?m)abc$", "abc\r\ndef", factory);
+        JurOracle.assertSameFind("(?m)\\Aabc", "def\nabc", factory);
+        JurOracle.assertSameFind("(?m)abc\\z", "abc\ndef", factory);
+        JurOracle.assertSameAllMatches("(?m)^\\w+", "ab\ncd\nef", factory);
+        JurOracle.assertSameFind("(?m)\\Aabc", "abc", factory);
+        JurOracle.assertSameFind("(?m)abc\\z", "abc", factory);
+        JurOracle.assertSameFind("(?m)\\Aabc", "abc\ndef", factory);
+        JurOracle.assertSameFind("(?m)abc\\z", "def\nabc", factory);
+        JurOracle.assertSameFind("^$", "", factory);
+        JurOracle.assertSameFind("\\A\\z", "", factory);
+        JurOracle.assertSameFind("\\A\\z", "a", factory);
+        JurOracle.assertSameFind("^$", "\n", factory);
     }
 }

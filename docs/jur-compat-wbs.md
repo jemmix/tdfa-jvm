@@ -24,9 +24,41 @@ pin the `RE2_COMPAT` lane against re2j; post-flip that oracle monopoly is
 historical. Widen every suite that translates to ALSO pin the default
 (JUR) lane against the live `java.util.regex` oracle.
 
-- [ ] `JurOracle` beside `Re2jOracle`: default-lane facade compile + the bit↔JDK-flag translation (`CASE_INSENSITIVE`/`DOTALL`/`MULTILINE`/`UNIX_LINES`/`UNICODE_CASE`/`UNICODE_CHARACTER_CLASS` map; `LONGEST_MATCH`, `MULTI_VALUED_TAGS`, `FIND_ONLY`, `DISABLE_UNICODE_GROUPS` and the RE2-only spellings — ungreedy `(?U:` — have no jur reading)
-- [ ] Adopt the jur twin per suite as appropriate: translatable cases run both lanes on both engine factories (ASM + VM); re2j-only shapes (POSIX longest, ungreedy `(?U`, re2j-specific accept/reject) document themselves RE2-lane-pinned
-- [ ] Group-protocol comparison on the jur side carries group clauses (the family-6 battery's live-JDK re-verification is the shape — no skeleton stripping)
+- [x] `JurOracle` beside `Re2jOracle`: default-lane facade compile + the
+  bit↔JDK-flag translation (`CASE_INSENSITIVE`/`DOTALL`/`MULTILINE`/
+  `UNIX_LINES`/`UNICODE_CASE`/`UNICODE_CHARACTER_CLASS` map — the last two
+  ride the `CompileOptions.semantics` route, ASM-only;
+  `LONGEST_MATCH`, `MULTI_VALUED_TAGS`, `FIND_ONLY`, `DISABLE_UNICODE_GROUPS`
+  and the RE2-only spellings — ungreedy `(?U:` — have no jur reading and
+  reject in the translation) — **landed (2026-10-15)**
+- [x] Adopt the jur twin per suite as appropriate: translatable cases run
+  both lanes on both engine factories (ASM + VM); re2j-only shapes (POSIX
+  longest, ungreedy `(?U`, re2j-specific accept/reject) document themselves
+  RE2-lane-pinned — **landed (2026-10-15)**: twins in 18 suites
+  (`JurOracle` `jurTwin*` methods); RE2-lane-pinned by construction:
+  `LongestMatchParityTest`, `MultiValuedParityTest`, `TestregexFowlerTest`
+  (documented in their javadocs); `JdkRegressionCorpusTest` already layers
+  both oracles; accept/reject divergences pinned both ways
+  (`assertDivergentReject`/`assertDivergentAccept`: JDK-only syntax we
+  reject — backrefs, lookarounds, possessives, `\R`/`\e`; our RE2-lineage
+  spellings the JDK rejects — `(?P<>)`, POSIX brackets, bare script names,
+  `\p{Any}`/`\p{^X}`, digit-first group names, `\0`/`\12`-style octals,
+  lenient dangling-`$` replacements, all-delimiter splits)
+- [x] Group-protocol comparison on the jur side carries group clauses (the
+  family-6 battery's live-JDK re-verification is the shape — no skeleton
+  stripping) — **landed (2026-10-15)**: `JurOracle` spans + the
+  `SemanticsContract`/`FinalOps`/`ZeroWidthExhaustive` jur protocols carry
+  every group clause
+
+Findings the widening surfaced (fixed here): the `\s`-vs-`\u000B` cell
+silently kept re2j's table under the JUR default — now the `SPACE_RE2`
+axis (design doc's flags table; re2j surface sets it, jur default mirrors
+the JDK); and a `TdfaCompiler.solveFinalOps` crash (cut-override table
+sized before late kernels — `(.{0,5}){3,}`), unreachable on the RE2 lane
+because the family-6 marks never fire there. Residual twins exclude and
+document: the campaign's known soft list (group-participation-tail —
+incl. `(X)*tail` and the nested-loop inner-capture quirk — İ/ı
+full-fold, lone-surrogate scans), which item 6 owns.
 
 ## 8. One `Pattern` or two — decide before the API lock
 

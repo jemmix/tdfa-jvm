@@ -10,6 +10,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * Replacement API parity: replaceAll, replaceFirst, appendReplacement,
  * appendTail, quoteReplacement with $N backreferences.
+ *
+ * <p>Jur twin below — the replacement grammar translates except the
+ * lenient-dangling-{@code $} cells: the JDK THROWS on a trailing or
+ * non-digit {@code $} where the re2j lineage passes it through literally
+ * (documented divergence, pinned both ways).
  */
 class ReplacementParityTest {
 
@@ -23,6 +28,22 @@ class ReplacementParityTest {
         io.github.jemmix.tdfa.Pattern p = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory);
         io.github.jemmix.tdfa.core.engine.Matcher m = p.matcher(input);
         return m.replaceAll(repl);
+    }
+
+    private static String jurReplaceAll(String pattern, String input, String repl) {
+        return java.util.regex.Pattern.compile(pattern).matcher(input).replaceAll(repl);
+    }
+
+    private static String facadeReplaceAll(String pattern, String input, String repl, RegexEngineFactory factory) {
+        return io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory).matcher(input).replaceAll(repl);
+    }
+
+    private static String jurReplaceFirst(String pattern, String input, String repl) {
+        return java.util.regex.Pattern.compile(pattern).matcher(input).replaceFirst(repl);
+    }
+
+    private static String facadeReplaceFirst(String pattern, String input, String repl, RegexEngineFactory factory) {
+        return io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory).matcher(input).replaceFirst(repl);
     }
 
     private static String re2jReplaceFirst(String pattern, String input, String repl) {
@@ -214,5 +235,59 @@ class ReplacementParityTest {
     void replaceAllBackslashZero(RegexEngineFactory factory) {
         String p = "a", in = "banana", repl = "\\0";
         assertThat(tdfaReplaceAll(p, in, repl, factory)).isEqualTo(re2jReplaceAll(p, in, repl));
+    }
+
+    /** Jur twin: the shared replacement grammar against the live java.util.regex oracle. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwin(RegexEngineFactory factory) {
+        assertThat(facadeReplaceAll("a", "banana", "X", factory)).isEqualTo(jurReplaceAll("a", "banana", "X"));
+        assertThat(facadeReplaceAll("(\\w+)", "hello world", "[$1]", factory))
+            .isEqualTo(jurReplaceAll("(\\w+)", "hello world", "[$1]"));
+        assertThat(facadeReplaceAll("\\d", "a1b2c3", "#", factory)).isEqualTo(jurReplaceAll("\\d", "a1b2c3", "#"));
+        assertThat(facadeReplaceAll("xyz", "abc", "Y", factory)).isEqualTo(jurReplaceAll("xyz", "abc", "Y"));
+        assertThat(facadeReplaceAll("x", "axb", "\\$", factory)).isEqualTo(jurReplaceAll("x", "axb", "\\$"));
+        assertThat(facadeReplaceFirst("a", "banana", "X", factory)).isEqualTo(jurReplaceFirst("a", "banana", "X"));
+        assertThat(facadeReplaceFirst("(\\w)(\\w)", "abcd", "$2$1", factory))
+            .isEqualTo(jurReplaceFirst("(\\w)(\\w)", "abcd", "$2$1"));
+        assertThat(facadeReplaceFirst("xyz", "abc", "Y", factory)).isEqualTo(jurReplaceFirst("xyz", "abc", "Y"));
+        // appendReplacement/appendTail loop
+        var jSb = new StringBuilder();
+        var jM = java.util.regex.Pattern.compile("(\\w+)").matcher("hello world");
+        while (jM.find()) {
+            jM.appendReplacement(jSb, "[$1]");
+        }
+        jM.appendTail(jSb);
+        var tSb = new StringBuilder();
+        var tM = io.github.jemmix.tdfa.Pattern.compile("(\\w+)", 0, factory).matcher("hello world");
+        while (tM.find()) {
+            tM.appendReplacement(tSb, "[$1]");
+        }
+        tM.appendTail(tSb);
+        assertThat(tSb.toString()).isEqualTo(jSb.toString());
+        assertThat(io.github.jemmix.tdfa.core.engine.Matcher.quoteReplacement("$1\\2"))
+            .isEqualTo(java.util.regex.Matcher.quoteReplacement("$1\\2"));
+        assertThat(facadeReplaceAll("(\\w+)", "test", "<$0>", factory))
+            .isEqualTo(jurReplaceAll("(\\w+)", "test", "<$0>"));
+        assertThat(facadeReplaceAll("a", "aaa", "\\\\", factory)).isEqualTo(jurReplaceAll("a", "aaa", "\\\\"));
+        assertThat(facadeReplaceAll("(?<word>\\w+)", "hello world", "[${word}]", factory))
+            .isEqualTo(jurReplaceAll("(?<word>\\w+)", "hello world", "[${word}]"));
+        assertThat(facadeReplaceAll("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)", "abcdefghij", "$10", factory))
+            .isEqualTo(jurReplaceAll("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)", "abcdefghij", "$10"));
+        assertThat(facadeReplaceAll("(a)|(b)", "b", "$1-$2", factory))
+            .isEqualTo(jurReplaceAll("(a)|(b)", "b", "$1-$2"));
+        assertThat(facadeReplaceAll("a", "", "X", factory)).isEqualTo(jurReplaceAll("a", "", "X"));
+        assertThat(facadeReplaceAll("xyz", "abc", "Y", factory)).isEqualTo(jurReplaceAll("xyz", "abc", "Y"));
+        assertThat(facadeReplaceAll("a", "banana", "\\0", factory)).isEqualTo(jurReplaceAll("a", "banana", "\\0"));
+        // group-ref out of range: both throw
+        assertThatThrownBy(() -> facadeReplaceAll("(a)", "a", "$2", factory))
+            .isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> jurReplaceAll("(a)", "a", "$2")).isInstanceOf(IndexOutOfBoundsException.class);
+        // the lenient dangling-$ divergence: we pass it through (re2j
+        // lineage), the JDK throws IllegalArgumentException
+        assertThat(facadeReplaceAll("a", "banana", "x$", factory)).isEqualTo("bx$nx$nx$");
+        assertThatThrownBy(() -> jurReplaceAll("a", "banana", "x$")).isInstanceOf(IllegalArgumentException.class);
+        assertThat(facadeReplaceAll("a", "banana", "x$y", factory)).isEqualTo("bx$ynx$ynx$y");
+        assertThatThrownBy(() -> jurReplaceAll("a", "banana", "x$y")).isInstanceOf(IllegalArgumentException.class);
     }
 }

@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa.parity;
 
+import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.core.engine.Matcher;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * Matcher API parity: matches(), lookingAt(), find(), find(int), group(int),
  * reset(), stateful iteration, zero-width advance.
+ *
+ * <p>Jur twin below — the matcher-protocol cells (state machine, zero-width
+ * advance, exception contracts) against the live java.util.regex oracle on
+ * the jur facade. The surrogate battery stays re2j-lane-pinned: the JDK 26
+ * scan also skips pair interiors, but the lone-surrogate scan cells are the
+ * campaign's known soft residual (documented in the jur twin's exclusions).
  */
 class MatcherApiParityTest {
 
@@ -26,6 +33,14 @@ class MatcherApiParityTest {
         // re2j surface (the baked-in lane) —
         // this file's surrogate battery pins codepoint-discipline scans.
         return io.github.jemmix.tdfa.re2j.Pattern.compile(p, 0, factory).matcher(in);
+    }
+
+    private static java.util.regex.Matcher jurM(String p, String in) {
+        return java.util.regex.Pattern.compile(p).matcher(in);
+    }
+
+    private static PatternMatcher facadeM(String p, String in, RegexEngineFactory factory) {
+        return io.github.jemmix.tdfa.Pattern.compile(p, 0, factory).matcher(in);
     }
 
     @ParameterizedTest
@@ -506,5 +521,150 @@ class MatcherApiParityTest {
         assertThat(tdfaM("a\uD800", "a\uD800\uDC00", factory).find(1)).isFalse();
         assertThat(tdfaM("a\uD800", "a\uD800\uDC00", factory).find()).isFalse();
         assertThat(tdfaM("(a\uD800)", "a\uD800\uDC00", factory).find()).isFalse();
+    }
+
+    /**
+     * Jur twin: the matcher protocol against the live java.util.regex
+     * oracle — whole/lookingAt/find state, find(int), group readout,
+     * reset, iteration and the zero-width advance, plus the exception
+     * contracts. Lone-surrogate scan cells excluded (the known soft
+     * residual); the explicit interior start AGREES (both honor it).
+     */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwinMatcherProtocol(RegexEngineFactory factory) {
+        assertThat(facadeM("abc", "abc", factory).matches()).isEqualTo(jurM("abc", "abc").matches());
+        assertThat(facadeM("abc", "abcd", factory).matches()).isEqualTo(jurM("abc", "abcd").matches());
+        assertThat(facadeM("abc", "xabc", factory).matches()).isEqualTo(jurM("abc", "xabc").matches());
+        assertThat(facadeM("abc", "abcdef", factory).lookingAt()).isEqualTo(jurM("abc", "abcdef").lookingAt());
+        assertThat(facadeM("abc", "xabc", factory).lookingAt()).isEqualTo(jurM("abc", "xabc").lookingAt());
+        var jf = jurM("\\d+", "abc123def456");
+        var tf = facadeM("\\d+", "abc123def456", factory);
+        assertThat(tf.find()).isEqualTo(jf.find());
+        assertThat(tf.start()).isEqualTo(jf.start());
+        assertThat(tf.end()).isEqualTo(jf.end());
+        var ji = jurM("\\d+", "a1b2c3");
+        var ti = facadeM("\\d+", "a1b2c3", factory);
+        while (ji.find() && ti.find()) {
+            assertThat(ti.group()).as("group").isEqualTo(ji.group());
+            assertThat(ti.start()).as("start").isEqualTo(ji.start());
+        }
+        assertThat(ji.find()).isEqualTo(ti.find());
+        var j4 = jurM("\\d+", "12ab34");
+        var t4 = facadeM("\\d+", "12ab34", factory);
+        j4.find(4);
+        t4.find(4);
+        assertThat(t4.group()).isEqualTo(j4.group());
+        var jg = jurM("(\\w+)@(\\w+)", "user@host");
+        var tg = facadeM("(\\w+)@(\\w+)", "user@host", factory);
+        jg.find();
+        tg.find();
+        assertThat(tg.group(1)).isEqualTo(jg.group(1));
+        assertThat(tg.group(2)).isEqualTo(jg.group(2));
+        assertThat(facadeM("(a)(b)(c)", "abc", factory).groupCount()).isEqualTo(jurM("(a)(b)(c)", "abc").groupCount());
+        var tr = facadeM("\\d", "a1b2", factory);
+        tr.find();
+        tr.reset();
+        var jr = jurM("\\d", "a1b2");
+        assertThat(tr.find()).isEqualTo(jr.find());
+        assertThat(tr.start()).isEqualTo(jr.start());
+        var trn = facadeM("\\d", "a1b2", factory);
+        trn.find();
+        trn.reset("x3y4");
+        var jrn = jurM("\\d", "x3y4");
+        assertThat(trn.find()).isEqualTo(jrn.find());
+        assertThat(trn.group()).isEqualTo(jrn.group());
+        // zero-width advance: same iteration protocol
+        var jz = jurM("a*", "aaabbb");
+        var tz = facadeM("a*", "aaabbb", factory);
+        List<String> jzMatches = new ArrayList<>();
+        List<String> tzMatches = new ArrayList<>();
+        while (jz.find()) {
+            jzMatches.add(jz.group());
+        }
+        while (tz.find()) {
+            tzMatches.add(tz.group());
+        }
+        assertThat(tzMatches).isEqualTo(jzMatches);
+        assertThat(facadeM("xyz", "abc", factory).find()).isEqualTo(jurM("xyz", "abc").find());
+        var jo = jurM("a(b)?c", "ac");
+        var to = facadeM("a(b)?c", "ac", factory);
+        jo.find();
+        to.find();
+        assertThat(to.group(1)).isEqualTo(jo.group(1)); // null vs null
+        // stateful: lookingAt then find
+        var jl = jurM("\\w+", "hello world");
+        var tl = facadeM("\\w+", "hello world", factory);
+        jl.lookingAt();
+        tl.lookingAt();
+        assertThat(tl.group()).isEqualTo(jl.group());
+        jl.find();
+        tl.find();
+        assertThat(tl.group()).isEqualTo(jl.group());
+        // find(2) then find
+        var j2 = jurM("\\w", "abcd");
+        var t2 = facadeM("\\w", "abcd", factory);
+        j2.find(2);
+        t2.find(2);
+        assertThat(t2.group()).isEqualTo(j2.group());
+        j2.find();
+        t2.find();
+        assertThat(t2.group()).isEqualTo(j2.group());
+        // whole-match with alternation + groups
+        var jm = jurM("(a|ab)", "ab");
+        var tm = facadeM("(a|ab)", "ab", factory);
+        assertThat(tm.matches()).isEqualTo(jm.matches());
+        assertThat(tm.group(0)).isEqualTo(jm.group(0));
+        assertThat(tm.group(1)).isEqualTo(jm.group(1));
+        // ten groups
+        String ten = "(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)";
+        var j10 = jurM(ten, "abcdefghij");
+        var t10 = facadeM(ten, "abcdefghij", factory);
+        j10.find();
+        t10.find();
+        for (int i = 0; i <= 10; i++) {
+            assertThat(t10.group(i)).as("group " + i).isEqualTo(j10.group(i));
+        }
+        JurOracle.assertSameFind("a*", "", factory);
+        JurOracle.assertSameFind("", "abc", factory);
+        JurOracle.assertSameFind("a.b", "a\u0000b", factory);
+        assertThat(facadeM("a*", "", factory).matches()).isEqualTo(jurM("a*", "").matches());
+        assertThat(facadeM("a*", "", factory).lookingAt()).isEqualTo(jurM("a*", "").lookingAt());
+        assertThat(facadeM("a", "xyz", factory).find(3)).isEqualTo(jurM("a", "xyz").find(3));
+        // exception contracts
+        assertThatThrownBy(() -> facadeM("a", "abc", factory).find(-1)).isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> jurM("a", "abc").find(-1)).isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> facadeM("a", "abc", factory).find(10)).isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> jurM("a", "abc").find(10)).isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> facadeM("a", "abc", factory).start()).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> jurM("a", "abc").start()).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> facadeM("a", "abc", factory).group()).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> jurM("a", "abc").group()).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> {
+            var m = facadeM("(a)", "a", factory);
+            m.find();
+            m.group(99);
+        }).isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> {
+            var m = jurM("(a)", "a");
+            m.find();
+            m.group(99);
+        }).isInstanceOf(IndexOutOfBoundsException.class);
+        assertThatThrownBy(() -> {
+            var m = facadeM("(?<x>a)", "a", factory);
+            m.find();
+            m.group("y");
+        }).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> {
+            var m = jurM("(?<x>a)", "a");
+            m.find();
+            m.group("y");
+        }).isInstanceOf(IllegalArgumentException.class);
+        // the explicit pair-interior start: both honor it
+        String pair = "\uD800\uDC00";
+        var tp = facadeM("\uDC00", pair, factory);
+        assertThat(tp.find(1)).as("explicit interior start honored (jur)").isTrue();
+        assertThat(tp.start()).isEqualTo(1);
+        assertThat(jurM("\uDC00", pair).find(1)).as("the JDK honors it too").isTrue();
     }
 }

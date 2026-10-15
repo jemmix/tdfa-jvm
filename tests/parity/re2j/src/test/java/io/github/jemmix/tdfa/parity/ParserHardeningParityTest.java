@@ -20,6 +20,13 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
  *    overflow messages (clean errors, never a raw NumberFormatException
  *    or a silent Arabic-Indic-digit misparse).
  * All expectations verified against vendored re2j 1.8.
+ *
+ * <p>Jur twins: the scoped-flag semantics and most malformed rejections
+ * are shared with the JDK; the documented divergences pin as such — the
+ * JDK compiles quantifier-on-quantifier chains ({@code a*{2}},
+ * {@code a{2}{3}}) and possessives, has no 1000 repeat cap, and rejects
+ * the bare-brace spellings we read as literals plus digit-first group
+ * names we accept.
  */
 class ParserHardeningParityTest {
 
@@ -293,5 +300,62 @@ class ParserHardeningParityTest {
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void deepNestingWithQuantifiersParity(RegexEngineFactory factory) {
         assertSameFind("(?:" + "(".repeat(300) + "a" + ")".repeat(300) + ")+", "aaa", factory);
+    }
+
+    /** Jur twin: shared rejections/semantics + the documented divergences. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwin(RegexEngineFactory factory) {
+        // scoped inline flags: the JDK restores at ')' exactly the same way
+        JurOracle.assertSameFind("((?i)a)b", "Ab", factory); // b NOT folded
+        JurOracle.assertSameFind("((?i)a)b", "AB", factory); // no match
+        JurOracle.assertSameFind("(?:(?i)a)b", "AB", factory);
+        JurOracle.assertSameFind("(?i:a)b", "AB", factory);
+        JurOracle.assertSameFind("(((?i)a))b", "AB", factory);
+        JurOracle.assertSameFind("(?i)(a)b", "AB", factory); // set before group: applies after too
+        JurOracle.assertSameFind("(?i)((?-i)a)b", "Ab", factory);
+        JurOracle.assertSameFind("(?i)((?-i)a)b", "aB", factory); // b still folded (outer i)
+        JurOracle.assertSameFind("((?m)a)b$", "ab\n", factory); // $ absolute: no match
+        JurOracle.assertSameFind("(?m:(a)b)$", "ab\ncd", factory); // $ line-flavored inside
+        JurOracle.assertSameFind("((?s).)x", "\nx", factory);
+        JurOracle.assertSameFind("((?s)\\w)x", "\nx", factory); // \w unaffected by s
+        // missing argument to repetition: shared rejections
+        JurOracle.assertSameCompileReject("*a", factory);
+        JurOracle.assertSameCompileReject("+a", factory);
+        JurOracle.assertSameCompileReject("?a", factory);
+        JurOracle.assertSameCompileReject("(+a)", factory);
+        JurOracle.assertSameCompileReject("a|*b", factory);
+        JurOracle.assertDivergentReject("{2}a", factory); // JDK 26 reads the leading brace literally; we reject
+        JurOracle.assertDivergentAccept("a{", factory); // we read the lone brace literally; JDK 26 rejects it
+        JurOracle.assertSameFind("()*", "", factory);
+        JurOracle.assertSameFind("(?:)*", "", factory);
+        // nested repetition: shared rejections + the JDK-side chains
+        JurOracle.assertSameCompileReject("a**", factory);
+        JurOracle.assertSameCompileReject("a???", factory);
+        JurOracle.assertSameCompileReject("a?*", factory);
+        JurOracle.assertDivergentReject("a*{2}", factory); // JDK compiles the chain; we reject
+        JurOracle.assertDivergentReject("a{2}{3}", factory);
+        JurOracle.assertSameFind("ab??", "ab", factory);
+        JurOracle.assertSameFind("a{2,4}?", "aaaa", factory);
+        // repeat-cap: our 1000 budget vs the JDK's none
+        JurOracle.assertSameCompileSuccess("a{1000}", factory);
+        JurOracle.assertSameCompileSuccess("a{1000,}", factory);
+        JurOracle.assertDivergentReject("a{1001}", factory); // budget cap: JDK compiles
+        JurOracle.assertDivergentReject("a{0,1001}", factory);
+        JurOracle.assertSameCompileReject("a{2147483648}", factory); // int overflow: both reject
+        JurOracle.assertDivergentAccept("a{٥}", factory); // non-ASCII digits: we literal, JDK 26 rejects
+        // group-name validity: shared rejections + our digit-first extension
+        JurOracle.assertSameCompileReject("(?<a b>x)", factory);
+        JurOracle.assertSameCompileReject("(?<a-b>x)", factory);
+        JurOracle.assertSameCompileReject("(?<>x)", factory);
+        JurOracle.assertDivergentAccept("(?<1a>x)", factory); // JDK requires letter-first
+        // hex hygiene: shared
+        JurOracle.assertSameCompileReject("\\x{110000}", factory);
+        JurOracle.assertSameCompileReject("\\x{1100000}", factory);
+        JurOracle.assertSameCompileSuccess("\\x{10FFFF}", factory);
+        // deep nesting stays RE2-lane-pinned: the JDK's recursive parser
+        // overflows its thread stack at a few hundred groups (it converts
+        // the StackOverflowError to a PatternSyntaxException — observed on
+        // CI runners), so depth is environment-dependent, not an oracle cell
     }
 }

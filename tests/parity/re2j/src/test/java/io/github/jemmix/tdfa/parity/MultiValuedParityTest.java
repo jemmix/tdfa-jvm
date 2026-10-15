@@ -25,9 +25,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * must equal BOTH engine lanes' {@code groupSpans} exactly (Perl mode —
  * the reference implements leftmost-first priority).</li>
  * <li><b>R column (re2j)</b> — the multi-valued compile's SINGLE-value
- * results must equal re2j's, in default and LONGEST_MATCH modes: the
- * opt-in lane adds the offset lists without moving one reported span.</li>
+ *     results must equal re2j's, in default and LONGEST_MATCH modes: the
+ *     opt-in lane adds the offset lists without moving one reported span.</li>
  * </ul>
+ *
+ * <p>RE2-lane-pinned by construction (WBS item 7):
+ * {@code MULTI_VALUED_TAGS} has no JDK reading (the oracle reports single
+ * values only), so no jur twin exists for this suite.
  */
 class MultiValuedParityTest {
 

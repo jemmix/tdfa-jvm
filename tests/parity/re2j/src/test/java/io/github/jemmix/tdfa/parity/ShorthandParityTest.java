@@ -10,6 +10,10 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
 /**
  * Shorthand class parity: \d \D \w \W \s \S inside and outside character classes,
  * as atoms and under quantifiers.
+ *
+ * <p>Jur twin below — the whole suite translates: the JDK's bare
+ * {@code \d \w \s} defaults are ASCII exactly like the JUR lane's (the
+ * {@code (?u)} divergences live in UnicodeBoundaryParityTest).
  */
 class ShorthandParityTest {
 
@@ -241,5 +245,48 @@ class ShorthandParityTest {
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void spaceBom(RegexEngineFactory factory) {
         assertSameFind("\\s", "\uFEFF", factory);
+    }
+
+    /** Jur twin: the whole suite against the live java.util.regex oracle. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwinAllCases(RegexEngineFactory factory) {
+        JurOracle.assertSameFind("\\d", "5", factory);
+        JurOracle.assertSameFind("\\d", "x", factory);
+        JurOracle.assertSameFind("\\D", "x", factory);
+        JurOracle.assertSameFind("\\D", "5", factory);
+        JurOracle.assertSameFind("\\w", "a", factory);
+        JurOracle.assertSameFind("\\w", "_", factory);
+        JurOracle.assertSameFind("\\w", "!", factory);
+        JurOracle.assertSameFind("\\W", "!", factory);
+        JurOracle.assertSameFind("\\s", " ", factory);
+        JurOracle.assertSameFind("\\s", "\t", factory);
+        JurOracle.assertSameFind("\\s", "\n", factory);
+        JurOracle.assertSameFind("\\S", "x", factory);
+        JurOracle.assertSameFind("[\\d]", "7", factory);
+        JurOracle.assertSameFind("[\\w]", "z", factory);
+        JurOracle.assertSameFind("[\\s]", "\t", factory);
+        JurOracle.assertSameFind("[\\w\\s]", " ", factory);
+        JurOracle.assertSameFind("[\\d\\w]", "a", factory);
+        JurOracle.assertSameFind("[^\\d]", "a", factory);
+        JurOracle.assertSameFind("\\d+", "12345", factory);
+        JurOracle.assertSameFind("\\w*", "hello_world", factory);
+        JurOracle.assertSameFind("\\s+", "   ", factory);
+        JurOracle.assertSameAllMatches("\\d", "a1b2c3", factory);
+        JurOracle.assertSameAllMatches("\\w+", "hello world foo", factory);
+        JurOracle.assertSameFind("(\\w+)@(\\w+)\\.(\\w+)", "user@host.com", factory);
+        JurOracle.assertSameFind("(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "192.168.1.1", factory);
+        JurOracle.assertSameFind("\\s", "\r", factory);
+        JurOracle.assertSameFind("\\s", "\f", factory);
+        JurOracle.assertSameFind("\\s", "\u000B", factory);
+        JurOracle.assertSameFind("\\w", "\u00E9", factory); // é: ASCII \w in both lanes
+        JurOracle.assertSameFind("\\w", "\u0660", factory); // Arabic-Indic zero
+        JurOracle.assertSameFind("\\d", "\u0660", factory);
+        JurOracle.assertSameFind("\\W", "\u00E9", factory);
+        JurOracle.assertSameFind("\\s", "\u00A0", factory);
+        JurOracle.assertSameFind("\\s", "\u2028", factory);
+        JurOracle.assertSameFind("\\s", "\u2029", factory);
+        JurOracle.assertSameFind("\\s", "\u0085", factory);
+        JurOracle.assertSameFind("\\s", "\uFEFF", factory);
     }
 }

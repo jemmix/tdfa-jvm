@@ -8,6 +8,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Pattern.split() parity: basic split, limit, trailing-empty handling.
+ *
+ * <p>Jur twin below — the JDK shares the split contract (trailing-empty
+ * omission at limit 0, negative limits keep them, zero-width patterns);
+ * every case translates.
  */
 class SplitParityTest {
 
@@ -21,6 +25,18 @@ class SplitParityTest {
         String[] re2j = com.google.re2j.Pattern.compile(pattern).split(input, limit);
         String[] tdfa = io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, factory).split(input, limit);
         assertThat(tdfa).as("split \"%s\" on \"%s\" limit=%d", pattern, input, limit).isEqualTo(re2j);
+    }
+
+    private static void assertJurSplit(String pattern, String input, RegexEngineFactory factory) {
+        String[] jur = java.util.regex.Pattern.compile(pattern).split(input);
+        String[] tdfa = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory).split(input);
+        assertThat(tdfa).as("jur split \"%s\" on \"%s\"", pattern, input).isEqualTo(jur);
+    }
+
+    private static void assertJurSplit(String pattern, String input, int limit, RegexEngineFactory factory) {
+        String[] jur = java.util.regex.Pattern.compile(pattern).split(input, limit);
+        String[] tdfa = io.github.jemmix.tdfa.Pattern.compile(pattern, 0, factory).split(input, limit);
+        assertThat(tdfa).as("jur split \"%s\" on \"%s\" limit=%d", pattern, input, limit).isEqualTo(jur);
     }
 
     @ParameterizedTest
@@ -137,5 +153,34 @@ class SplitParityTest {
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void splitZeroWidthWithLimit(RegexEngineFactory factory) {
         assertSplit("a*", "aaabbb", 3, factory);
+    }
+
+    /** Jur twin: the whole suite against the live java.util.regex oracle. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwinAllCases(RegexEngineFactory factory) {
+        assertJurSplit(",", "a,b,c", factory);
+        assertJurSplit("\\s+", "a b c", factory);
+        assertJurSplit("x", "abc", factory);
+        assertJurSplit(",", "", factory);
+        assertJurSplit(",", "a,b,", factory);
+        assertJurSplit(",", "a,b,,,", factory);
+        assertJurSplit(",", ",a", factory);
+        // all-delimiter input: we keep one empty segment (re2j lineage),
+        // the JDK drops every trailing empty — documented divergence
+        assertThat(io.github.jemmix.tdfa.Pattern.compile(",", 0, factory).split(",,")).isEqualTo(new String[]{""});
+        assertThat(java.util.regex.Pattern.compile(",").split(",,")).isEmpty();
+        assertThat(io.github.jemmix.tdfa.Pattern.compile(".", 0, factory).split("abc")).isEqualTo(new String[]{""}); // "." on "abc": the same family
+        assertThat(java.util.regex.Pattern.compile(".").split("abc")).isEmpty();
+        assertJurSplit("\\W+", "hello, world! foo", factory);
+        assertJurSplit(",", "a,b,c", 2, factory);
+        assertJurSplit(",", "a,b,c", 1, factory);
+        assertJurSplit(",", "a,b,c,", 0, factory);
+        assertJurSplit(",", "a,b,c", 10, factory);
+        assertJurSplit(",", "a,b,c,,,", -1, factory);
+        assertJurSplit("a*", "aaabbb", factory); // zero-width: ["", "", "b", "b", "b"]
+        assertJurSplit("", "abc", factory);
+        assertJurSplit("\\x00", "a\u0000b", factory);
+        assertJurSplit("a*", "aaabbb", 3, factory);
     }
 }

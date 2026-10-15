@@ -142,7 +142,7 @@ public final class Tnfa {
 
     /** Every axis set (the RE2-lineage reading): the legacy-overload default. */
     private static final Semantics ALL_AXES = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
-        .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU();
+        .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU().spaceRe2();
 
     public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
         int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
@@ -281,7 +281,8 @@ public final class Tnfa {
         // (UNICODE_CASE) and the (?U) meaning (UNGREEDY_U).
         ParseResult parsed = Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth,
             ParseOptions.dotNlOnly(semantics.isUnixLines()).unicodeCase(semantics.isUnicodeCase())
-                .ungreedyU(semantics.isUngreedyU()).emptyIterationSpans(semantics.isEmptyIterationSpans()),
+                .ungreedyU(semantics.isUngreedyU()).emptyIterationSpans(semantics.isEmptyIterationSpans())
+                .spaceRe2(semantics.isSpaceRe2()),
             provider, meter);
         if (observer != null) {
             observer.stage(CompileObserver.Stage.PARSE, System.nanoTime() - t0, parsed.tagCount());

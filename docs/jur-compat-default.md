@@ -150,6 +150,14 @@ Set = today's behavior (the opt-out). Unset = the new JUR-parity default.
 | `END_OF_TEXT_ONLY` | `$` may match before the final terminator (no (?m)) | `$` ≡ `\z` |
 | `EMPTY_ITERATION_SPANS` | last-completed-iteration protocol: a final zero-width iteration reports its span (`(a*)*` on `"aa"` → g1 `2..2`) EXCEPT all-zero-width min-0 bodies stay non-participating (`(\z)*` on `""` → g1 `−1` — java's `GroupCurly` rollback; see the family-6 mechanics note) | maximal-iteration protocol: `(a*)*` → g1 `0..2`; a sole zero-width iteration still reports (`(\z)*` → `0..0`) |
 | `UNGREEDY_U` | `(?U:`/`(?U)` = scoped `UNICODE_CASE` | ungreedy (PCRE/RE2 meaning) |
+| `SPACE_RE2` | ASCII `\s`/`\S` = `[ \t\n\x0B\f\r]` (U+000B is whitespace — the JDK's table) | re2j's `[\t\n\f\r ]` (no U+000B) |
+
+`SPACE_RE2` joined after the two-surface split — found by the WBS item-7
+parity-suite widening (the `\s`-vs-`\u000B` cell silently kept re2j's table
+under the JUR default). Same shape as the other axes (machinery bit
+`PatternSurface.SPACE_RE2`, `Semantics.spaceRe2()`, parser-selected table;
+the re2j surface sets it, the jur facade leaves it unset); the Unicode
+(`(?u)`) `\s` table is lineage-shared and unaffected.
 
 `EMPTY_LAST_LINE` + `END_OF_TEXT_ONLY` are the old bundled
 `FINAL_TERMINATOR_ANCHORS` pair, split: inverted flags should name their own

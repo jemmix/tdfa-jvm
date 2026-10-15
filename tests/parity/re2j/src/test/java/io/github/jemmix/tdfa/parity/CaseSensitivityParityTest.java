@@ -11,6 +11,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Case-insensitive matching parity: (?i), CASE_INSENSITIVE flag, ASCII folding,
  * Unicode case folding for \p{X}.
+ *
+ * <p>Jur twin below — bare {@code (?i)} folds ASCII only in both the JDK
+ * oracle and the JUR lane, so the whole suite translates; the
+ * Unicode-fold divergences (ſ, kelvin, İ/ı) live in FoldCaseParityTest's
+ * twins.
  */
 class CaseSensitivityParityTest {
 
@@ -165,5 +170,37 @@ class CaseSensitivityParityTest {
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void caseInsensitiveEmptyInput(RegexEngineFactory factory) {
         assertSameFind("(?i)a*", "", factory);
+    }
+
+    /** Jur twin: the whole suite against the live java.util.regex oracle. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwinAllCases(RegexEngineFactory factory) {
+        JurOracle.assertSameFind("(?i)abc", "ABC", factory);
+        JurOracle.assertSameFind("(?i)abc", "abc", factory);
+        JurOracle.assertSameFind("(?i)abc", "AbC", factory);
+        JurOracle.assertSameFind("(?i)abc", "abd", factory);
+        JurOracle.assertSameFind("abc", "ABC", factory);
+        JurOracle.assertSameFind("(?i)[A-Z]", "g", factory);
+        JurOracle.assertSameFind("(?i)[a-z]", "G", factory);
+        JurOracle.assertSameFind("(?i)a", "A", factory);
+        JurOracle.assertSameFind("(?i)hello", "HeLLo", factory);
+        JurOracle.assertSameFind("(?i)\\p{Ll}", "A", factory);
+        JurOracle.assertSameFind("(?i)\\p{Lu}", "a", factory);
+        // (?i)\p{Greek}: the JDK needs the Is-script spelling — the bare
+        // script name is a RE2-lineage extension (pinned in CharClass)
+        JurOracle.assertSameFind("(?i)ab(?-i)c", "ABc", factory);
+        JurOracle.assertSameFind("(?i)ab(?-i)c", "ABC", factory);
+        JurOracle.assertSameFind("a(?i:bc)d", "aBCd", factory);
+        JurOracle.assertSameFind("a(?i:bc)d", "abcd", factory);
+        JurOracle.assertSameFind("(?i:a)b", "Ab", factory);
+        JurOracle.assertSameFind("(?i)a(?-i:b)c", "AbC", factory);
+        JurOracle.assertSameFind("(?is).+", "AB\ncd", factory);
+        JurOracle.assertSameAllMatches("(?im)^\\w", "Ab\nCd", factory);
+        JurOracle.assertSameFind("(?i)[^a-z]", "A", factory);
+        JurOracle.assertSameFind("(?i)[^a-z]", "5", factory);
+        JurOracle.assertSameFind("(?i)a*", "", factory);
+        // the CASE_INSENSITIVE flag bit through the translation
+        JurOracle.assertSameFind("abc", "ABC", io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE, factory);
     }
 }

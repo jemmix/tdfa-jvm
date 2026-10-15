@@ -89,6 +89,9 @@ public final class PatternCompiler {
         if ((flags & PatternSurface.UNGREEDY_U) != 0) {
             s = s.ungreedyU();
         }
+        if ((flags & PatternSurface.SPACE_RE2) != 0) {
+            s = s.spaceRe2();
+        }
         return s;
     }
 

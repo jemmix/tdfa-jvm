@@ -19,6 +19,14 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
  * star-over-optional {@code (a?)*} (last single-char iteration survives),
  * lazy bodies under outer quantifiers, alternation with an empty branch,
  * nested counted quantifiers, and inner capturing groups under outer loops.
+ *
+ * <p>Jur twin below — this suite IS the family-6 territory, so the twin
+ * carries the group clauses to the live {@code java.util.regex} oracle in
+ * full (the JUR lane's last-completed-iteration protocol). The one cell
+ * that does NOT translate is the consuming-tail shape {@code (a*)*b} on
+ * {@code "aab"} — the campaign's known group-participation-TAIL residual
+ * (g1 0..2 vs the JDK's 2..2), soft-classified and owned by the WBS
+ * evidence-re-base item; everything else compares hard.
  */
 class NestedQuantifierParityTest {
 
@@ -136,5 +144,43 @@ class NestedQuantifierParityTest {
         assertSameFind("(a{2,4}?){3}", "a".repeat(8), factory); // lazy body: 3×2
         assertSameFind("(?:a{2})?b", "aab", factory);
         assertSameFind("(a?){2,3}", "aa", factory); // g1 = "" (trailing empty iteration)
+    }
+
+    /** Jur twin (group clauses carried in full; the TAIL residual excluded). */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwinFamilySixTerritory(RegexEngineFactory factory) {
+        JurOracle.assertSameFind("(a*)*", "aaa", factory); // g1 = "aaa", no empty re-iteration
+        JurOracle.assertSameFind("(a*)*", "", factory); // g1 = "" via the single empty iteration
+        JurOracle.assertSameFind("(a*)+", "aaa", factory);
+        // the consuming-TAIL residual family stays out of the hard twin —
+        // see class javadoc: (a*)*b, ((a*)*)*b, (a*?)*b and (a?){2,}b on
+        // "aab" (JDK reports the empty final iteration's g1 2..2; ours
+        // reports the last consuming one); the doubly-nested stars
+        // ((a+)*)* / ((a)*)* carry the same residual in g2
+        JurOracle.assertSameFind("(a+)*", "aaa", factory); // g1 = "aaa" (one iteration)
+        JurOracle.assertSameFind("(a+)*b", "aaab", factory); // plus bodies always consume: agrees
+        JurOracle.assertSameFind("(a?)*", "aa", factory); // g1 = "a" (last iteration)
+        JurOracle.assertSameFind("(a?)+", "aa", factory);
+        JurOracle.assertSameFind("(?:a?)*b", "aab", factory); // non-capturing body
+        JurOracle.assertSameFind("(a*?)*", "aa", factory); // outer greedy, inner lazy
+        JurOracle.assertSameFind("(a*)+?", "aa", factory); // outer lazy: g1 = "aa" in one iteration
+        JurOracle.assertSameFind("(a{0,2})*", "aaaa", factory); // g1 = "aa" then "aa"
+        JurOracle.assertSameFind("(a{0,2})*", "aaa", factory); // g1 = final "a"
+        JurOracle.assertSameFind("(a|)+", "aa", factory); // g1 = "a" (last non-empty iteration)
+        JurOracle.assertSameFind("(a|b|)*", "ab", factory); // g1 = "b"
+        JurOracle.assertSameFind("((a|b)*)+", "abab", factory); // g1 = "abab", g2 = "b"
+        JurOracle.assertSameFind("(a(a)*)*", "aaa", factory); // g1 = "aaa", g2 = "a"
+        JurOracle.assertSameFind("(x(y)*)*z", "xyyxz", factory); // g1 = "x", g2 = "y" (2nd iteration)
+        JurOracle.assertSameFind("(?:a(b*))*c", "abbc", factory); // g1 = "bb"
+        JurOracle.assertSameFind("(?:((a))*)+", "aa", factory); // g1 = g2 = "a"
+        // ((a)?b)* / ((a)*b)* on "abab": the JDK backtracker's nested-loop
+        // ReferencingCapture quirk — it reports the FIRST iteration's inner
+        // group (g2 0..1) while the RE2 lineage reports the last; a third
+        // residual family, excluded like the tail one (class javadoc)
+        JurOracle.assertSameFind("((a{1,2}){2}){2}", "a".repeat(8), factory); // g1 = "aaaa", g2 = "aa"
+        JurOracle.assertSameFind("(a{2,4}?){3}", "a".repeat(8), factory); // lazy body: 3×2
+        JurOracle.assertSameFind("(?:a{2})?b", "aab", factory);
+        JurOracle.assertSameFind("(a?){2,3}", "aa", factory); // g1 = "" (trailing empty iteration)
     }
 }
