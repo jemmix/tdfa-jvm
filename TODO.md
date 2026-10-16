@@ -8,7 +8,14 @@ git history (TODO.md before 2026-09-30).
 
 - [ ] JUR-compat evidence re-base tail: both-lane overnight soak + README numbers (per-flag unit tests, the classifier flip — İ/ı fixed, tail/surrogate reclassified as asserted domain exclusions — the re2j-surface + `(?u)` lanes in the fuzzer matrix, and the 5.7 M exhaustive re-run landed; the jur twins for the re2j parity suites landed with item 7; [design](docs/jur-compat-default.md), [work breakdown](docs/jur-compat-wbs.md))
 - [x] Fuzz (?u) lane vs jur oracle (UCC flag in the differential flag matrix — the jur lane's flag draw since the evidence re-base)
-- [ ] Overnight soak with cross-rung on, both lanes (`-Pfuzz.lane` pins; mix by default); refresh README fuzz numbers
+- [ ] Fix İ fold-class divergences vs jur (full case folding semantics) — 3 seeds in [campaign log](docs/fuzz-campaigns-2026-10-16.md)
+- [ ] Fix quantified-group alternation order vs jur (`(\A|.?o*.){3}` seeds)
+- [ ] Bound TdfaRunner match-time work (budget like compile ticks)
+- [ ] Fix forcedRestart quadratic scans on `.*`-anchor shapes
+- [ ] Fast-path positionFlags word scans (isUnicodeWordCodepoint cost)
+- [ ] Guard jur-lane generation from backtracking-bomb shapes
+- [ ] Retire known-divergence classifiers once engines agree everywhere
+- [ ] Overnight soak with cross-rung on, both lanes (`-Pfuzz.lane` pins; mix by default); refresh README fuzz numbers; target: zero mismatches, zero hangs — first pass found [six findings](docs/fuzz-campaigns-2026-10-16.md)
 - [ ] Fuzz families for fact-gated rungs: literal, prefix, cand-scan, anchored-fast
 - [ ] Oracle-check stretched inputs; compare ASM on them too
 - [ ] Fuzz non-String CharSequence inputs against the reference sim
