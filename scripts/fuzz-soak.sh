@@ -77,6 +77,14 @@ echo "$(date '+%F %T') soak done" >> "$LOG"
 # as hangs although they replay in milliseconds; the cpuMs/verdict fields in
 # each record say so at recording time, this pass confirms it end-to-end.
 # VERDICT lines land in $OUT/hang-replays.log.
+#
+# The replay passes $EXTRA through: without the lane pin, fuzz.one regenerates
+# the batch's natural lane draw and a jur-soak hang replays against the WRONG
+# oracle (observed 2026-10-16: 5 of 14 verdicts flipped). stdin is /dev/null:
+# timeout(1) runs the child in its own process group, the gradle wrapper
+# touches the tty, and macOS SIGTTIN stops it in T state forever — timeout's
+# SIGTERM can't reach a stopped process (observed: stage wedged 20 min per
+# seed, zero replays executed).
 if grep -q '"kind":"HANG_' "$OUT/failures.ndjson" 2>/dev/null; then
     REP="$OUT/hang-replays.log"
     : > "$REP"
@@ -84,7 +92,8 @@ if grep -q '"kind":"HANG_' "$OUT/failures.ndjson" 2>/dev/null; then
         [ -z "$s" ] && continue
         t0=$(date +%s)
         if timeout 120 ./gradlew -q :tests:parity:re2j:fuzz -Pfuzz.one="$s" \
-                -Pfuzz.maxWork=8388608 -Pfuzz.out="$OUT-replays" >> "$LOG" 2>&1; then
+                -Pfuzz.maxWork=8388608 -Pfuzz.out="$OUT-replays" $EXTRA \
+                </dev/null >> "$LOG" 2>&1; then
             w=$(( $(date +%s) - t0 ))
             # Exit 0 alone is NOT "clean" — a budget-monster compile can
             # complete in ~57 s of wall. Wall is the discriminator: the
