@@ -29,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.SplittableRandom;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -93,6 +94,18 @@ import java.util.concurrent.atomic.AtomicInteger;
  * case folds over every codepoint in a range — wide {@code (?i)} ranges
  * can hang the ORACLE). Everything else
  * must agree with re2j or it is a finding.
+ *
+ * <p>On the jur lane the ORACLE itself is a backtracking engine, so one
+ * more family is avoided rather than compared: nested-quantifier bombs
+ * (an unbounded quantifier over a wide atom — {@code .} / {@code \D} /
+ * {@code \W} / {@code \S} / a class — textually inside a group that
+ * carries an unbounded quantifier, e.g. {@code (?:\D+[^\d]*?){2,}?}) are
+ * catastrophic-backtracking shapes for {@code java.util.regex}
+ * (Pattern$LazyLoop/GroupCurly spins; campaign 2026-10-16 finding 4) but
+ * ordinary input for this engine. Those batches are skipped whole and
+ * counted as {@code JURLANE_GUARD} records (the re2j lane still runs
+ * them — its oracle is linear-time); the predicate is a pure function of
+ * the pattern, so replay is lane-stable.
  *
  * <p>Cross-rung differential (on by default, {@code -Pfuzz.crossRung=0}
  * off): after the normal protocol, every case is re-run on the VM engine
@@ -259,6 +272,11 @@ public final class DifferentialFuzzer {
                 System.out.println("pattern: " + escape(c.pattern()));
                 System.out.println("input:   " + escape(c.input()));
                 System.out.println("flags:   " + c.flags() + "  lane: " + c.lane());
+                if (c.lane() == Lane.JUR && jurOracleBomb(c.pattern())) {
+                    System.out.println("guard:   jur oracle-bomb — case is JURLANE_GUARD in soak "
+                        + "(java.util.regex would spin; run -Pfuzz.lane=re2j to replay the engines)");
+                    return;
+                }
                 Outcome o = runOne(c);
                 System.out.println("oracle:  " + o.oracle);
                 System.out.println("asm:     " + o.asm);
@@ -351,9 +369,10 @@ public final class DifferentialFuzzer {
         return (int) Math.max(1, Long.getLong("fuzz.threads", def));
     }
 
-    /** One in-flight batch. */
+    /** One in-flight batch. {@code guarded} = the jur-lane oracle-bomb
+     *  guard tripped: never executed, recorded as {@code JURLANE_GUARD}. */
     private record BatchJob(long batch, int flags, Lane lane, String pattern, String[] inputs, Outcome[] os,
-        AtomicInteger prog, Thread[] worker, Future<Boolean> done) {
+        AtomicInteger prog, Thread[] worker, Future<Boolean> done, boolean guarded) {
     }
 
     /** Fuzz-scoped compile work budget (ticks, wall-clock-free: the same
@@ -427,8 +446,8 @@ public final class DifferentialFuzzer {
                         }
                         boolean done;
                         try {
-                            done = runBatchWatched(job.pattern(), job.flags(), job.lane(), job.inputs(), job.os(),
-                                job.prog(), job.worker());
+                            done = job.guarded() || runBatchWatched(job.pattern(), job.flags(), job.lane(),
+                                job.inputs(), job.os(), job.prog(), job.worker());
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
                             break;
@@ -470,7 +489,10 @@ public final class DifferentialFuzzer {
     }
 
     /** Draw one batch from the master stream, generate on THIS thread, and
-     *  either submit to the pool or return the job for sequential execution. */
+     *  either submit to the pool or return the job for sequential execution.
+     *  A jur-lane batch whose pattern trips {@link #jurOracleBomb} is marked
+     *  guarded: never executed (the oracle would spin), recorded as
+     *  {@code JURLANE_GUARD} skips in {@link #handleBatch}. */
     private static BatchJob submit(ExecutorService pool, SplittableRandom master, Results r) {
         // >>> 4 keeps batch*8+i < 2^63 (>>> 3 was wrong: batches ≥ 2^60
         // wrapped negative — bijective and replayable, but confusing in logs).
@@ -478,6 +500,7 @@ public final class DifferentialFuzzer {
         Lane lane = laneOf(batch);
         int flags = genFlags(batch, lane);
         String pattern = genPattern(batch);
+        boolean guarded = lane == Lane.JUR && jurOracleBomb(pattern);
         // pattern-level generation guards fold once per batch
         r.ciSuppAvoidedTotal += ciSuppAvoided;
         r.ciRangeAvoidedTotal += ciRangeAvoided;
@@ -489,16 +512,21 @@ public final class DifferentialFuzzer {
         AtomicInteger prog = new AtomicInteger(-1);
         Thread[] worker = new Thread[1];
         if (pool != null) {
-            Future<Boolean> fut = pool.submit(() -> runBatchWatched(pattern, flags, lane, inputs, os, prog, worker));
-            return new BatchJob(batch, flags, lane, pattern, inputs, os, prog, worker, fut);
+            Future<Boolean> fut = guarded ? CompletableFuture.completedFuture(true)
+                : pool.submit(() -> runBatchWatched(pattern, flags, lane, inputs, os, prog, worker));
+            return new BatchJob(batch, flags, lane, pattern, inputs, os, prog, worker, fut, guarded);
         }
-        return new BatchJob(batch, flags, lane, pattern, inputs, os, prog, worker, null);
+        return new BatchJob(batch, flags, lane, pattern, inputs, os, prog, worker, null, guarded);
     }
 
     /** Record a finished (or hung) batch: prefix outcomes, hang attribution
      *  via the batch's own worker thread (post-mortem stack), exact case cap. */
     private static void handleBatch(BatchJob job, boolean done, Results r, Logs logs, long maxCases) {
         long batch = job.batch();
+        if (job.guarded()) {
+            r.recordGuarded(batch, job, logs, maxCases);
+            return;
+        }
         int k = done ? BATCH_K : job.prog().get(); // on hang: outcomes < k are real, k is the victim
         for (int i = 0; i < k && (maxCases <= 0 || r.cases < maxCases); i++) {
             r.record(batch * BATCH_K + i, job.os()[i], logs);
@@ -954,6 +982,126 @@ public final class DifferentialFuzzer {
         return cp >= 0x1C80 && cp <= 0x1C88;
     }
 
+    /**
+     * The jur-lane oracle-hang guard (see the class doc): true when the
+     * pattern nests an unbounded quantifier over a WIDE atom (dot, the
+     * negated shorthands, or a bracket class) textually inside a group
+     * carrying an UNBOUNDED quantifier — the catastrophic-backtracking
+     * shapes for {@code java.util.regex} (campaign 2026-10-16 finding 4:
+     * {@code (?:\D+[^\ds-z#𐐂]*?){2,}?} and friends spin it >100 s on
+     * ≤24-char inputs). Bounded-count outer quantifiers ({@code {3}},
+     * {@code {0,4}}) are NOT bombs on generator-sized inputs and stay in
+     * the compared domain; the engine-side slow shapes of finding 3
+     * ({@code .*}-anchor restart scans, unquantified nesting) have no
+     * unbounded-quantified enclosing group and pass through untouched.
+     *
+     * <p>A pure-function structural scan: escapes, {@code \Q..\E} quotes
+     * and class interiors are skipped (their metacharacters are literals),
+     * and containment is textual, so nesting through inner groups counts.
+     */
+    static boolean jurOracleBomb(String p) {
+        // Atom events {start, end, kind, unbounded}: kind 0 = wide atom
+        // under an unbounded quantifier (the bomb inner), 1 = anything
+        // else, 2 = group (its own quantifier in slot 3).
+        List<int[]> events = new ArrayList<>();
+        ArrayDeque<int[]> groups = new ArrayDeque<>(); // open group starts
+        int i = 0;
+        while (i < p.length()) {
+            char c = p.charAt(i);
+            if (c == '\\' && i + 1 < p.length()) {
+                char n = p.charAt(i + 1);
+                if (n == 'Q') {
+                    int e = p.indexOf("\\E", i + 2);
+                    i = e < 0 ? p.length() : e + 2;
+                    continue;
+                }
+                i = atomEnd(p, i, i + 2, n == 'D' || n == 'W' || n == 'S', events);
+                continue;
+            }
+            if (c == '[') {
+                int j = i + 1;
+                if (j < p.length() && p.charAt(j) == '^') {
+                    j++;
+                }
+                if (j < p.length() && p.charAt(j) == ']') {
+                    j++; // literal ] first in class
+                }
+                while (j < p.length() && p.charAt(j) != ']') {
+                    j += p.charAt(j) == '\\' && j + 1 < p.length() ? 2 : 1;
+                }
+                i = atomEnd(p, i, j + 1, true, events);
+                continue;
+            }
+            if (c == '(') {
+                groups.push(new int[]{i});
+                i++;
+                continue;
+            }
+            if (c == ')') {
+                if (!groups.isEmpty()) {
+                    int start = groups.pop()[0];
+                    i = atomEnd(p, start, i + 1, false, events);
+                    events.get(events.size() - 1)[2] = 2; // mark: group
+                } else {
+                    i++;
+                }
+                continue;
+            }
+            if (c == '.') {
+                i = atomEnd(p, i, i + 1, true, events);
+                continue;
+            }
+            i++; // literal char, anchor, or structural — not a wide atom
+        }
+        for (int[] g : events) {
+            if (g[2] != 2 || g[3] == 0) {
+                continue; // not a group, or its quantifier bounded/absent
+            }
+            for (int[] w : events) {
+                if (w[2] == 0 && w[0] > g[0] && w[1] < g[1]) {
+                    return true; // unbounded-wide inner inside an unbounded group
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Close the atom ending at {@code end} (exclusive): read one trailing
+     *  quantifier, record the event, return the scan position after it. */
+    private static int atomEnd(String p, int start, int end, boolean wide, List<int[]> events) {
+        int unbounded = 0;
+        int i = end;
+        if (i < p.length()) {
+            char c = p.charAt(i);
+            if (c == '*' || c == '+') {
+                unbounded = 1;
+                i++;
+            } else if (c == '?') {
+                i++;
+            } else if (c == '{') {
+                int j = i + 1;
+                int comma = -1;
+                while (j < p.length() && "0123456789,".indexOf(p.charAt(j)) >= 0) {
+                    if (p.charAt(j) == ',') {
+                        comma = j;
+                    }
+                    j++;
+                }
+                if (j < p.length() && p.charAt(j) == '}' && j > i + 1) {
+                    if (comma == j - 1) { // {n,} — unbounded; {n} and {n,m} bounded
+                        unbounded = 1;
+                    }
+                    i = j + 1;
+                } // else: literal '{' — no quantifier
+            }
+            if (i < p.length() && p.charAt(i) == '?') { // lazy marker
+                i++;
+            }
+        }
+        events.add(new int[]{start, end, wide && unbounded == 1 ? 0 : 1, unbounded});
+        return i;
+    }
+
     static int[] releasedCiPool() {
         if (!RELEASED_ORACLE) {
             return POOL_UNICODE;
@@ -1340,6 +1488,12 @@ public final class DifferentialFuzzer {
         long cases, failures, bothReject, flagged, ciSuppAvoidedTotal, ciRangeAvoidedTotal, knownDivergence;
         long crossRung, crossRouting;
         long jurCases, jurFailures, jurSkipped;
+        /** Jur-lane oracle-bomb guard hits: batches never executed (the
+         *  counter keeps running; ndjson records cap at
+         *  {@value #JUR_GUARD_RECORD_MAX} — the shape is one signature,
+         *  every hit reproducible from its caseSeed). */
+        long jurGuarded;
+        int jurGuardRecorded;
         /** Recorded-records cap per JURLANE_SKIP reason (the count keeps
          *  running; overnight the skip kinds are frequent — the v1 (?U)
          *  rejections alone are ~7% of jur cases — and every skip is
@@ -1349,9 +1503,31 @@ public final class DifferentialFuzzer {
         long hangs, hangsOurs, hangsOracle;
         double casesPerMinute;
         final Map<String, Sig> signatures = new LinkedHashMap<>();
+        /** ndjson record cap for JURLANE_GUARD (one shape — breadcrumbs,
+         *  not a log). */
+        static final int JUR_GUARD_RECORD_MAX = 8;
 
         Results(long masterSeed) {
             this.masterSeed = masterSeed;
+        }
+
+        /** Count + (capped) record a guarded batch's cases. The cases stay
+         *  caseSeed-addressable and replay-stable; a guard record documents
+         *  WHY the case never ran (the live oracle would spin on it). */
+        void recordGuarded(long batch, BatchJob job, Logs logs, long maxCases) {
+            for (int i = 0; i < BATCH_K && (maxCases <= 0 || cases < maxCases); i++) {
+                cases++;
+                jurCases++;
+                jurGuarded++;
+                if (jurGuardRecorded < JUR_GUARD_RECORD_MAX) {
+                    jurGuardRecorded++;
+                    Outcome o = new Outcome(new Case(job.pattern(), job.inputs()[i], job.flags(), job.lane()));
+                    o.oracle = "<guard: jur oracle-bomb>";
+                    o.asm = "<not-run>";
+                    o.vm = "<not-run>";
+                    logs.failure(batch * BATCH_K + i, o, "JURLANE_GUARD (jur-oracle-bomb)", "JUR");
+                }
+            }
         }
 
         void record(long caseSeed, Outcome o, Logs logs) {
@@ -1766,8 +1942,9 @@ public final class DifferentialFuzzer {
                     + r.hangsOurs + "  hangsOracle: " + r.hangsOracle + "  crossRung: " + r.crossRung
                     + "  crossRouting: " + r.crossRouting);
                 w.println("jur lane: cases=" + r.jurCases + "  failures=" + r.jurFailures + "  domainSkips="
-                    + r.jurSkipped + " (by reason: " + r.jurSkipRecorded + ")    re2j lane: cases="
-                    + (r.cases - r.jurCases) + "  failures=" + (r.failures - r.jurFailures));
+                    + r.jurSkipped + " (by reason: " + r.jurSkipRecorded + ")  guardSkips=" + r.jurGuarded
+                    + " (jur-oracle-bomb)    re2j lane: cases=" + (r.cases - r.jurCases) + "  failures="
+                    + (r.failures - r.jurFailures));
                 w.printf("rate: %.1f cases/min%n", r.casesPerMinute);
                 w.println("ciSuppAvoided (known-gap constructs not generated): " + r.ciSuppAvoidedTotal
                     + "  ciWideRangeAvoided (oracle-hang guard): " + r.ciRangeAvoidedTotal);

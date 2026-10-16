@@ -13,7 +13,6 @@ git history (TODO.md before 2026-09-30).
 - [ ] Bound TdfaRunner match-time work (budget like compile ticks)
 - [ ] Fix forcedRestart quadratic scans on `.*`-anchor shapes
 - [ ] Fast-path positionFlags word scans (isUnicodeWordCodepoint cost)
-- [ ] Guard jur-lane generation from backtracking-bomb shapes
 - [ ] Retire known-divergence classifiers once engines agree everywhere
 - [ ] Overnight soak with cross-rung on, both lanes (`-Pfuzz.lane` pins; mix by default); refresh README fuzz numbers; target: zero mismatches, zero hangs — first pass found [six findings](docs/fuzz-campaigns-2026-10-16.md)
 - [ ] Fuzz families for fact-gated rungs: literal, prefix, cand-scan, anchored-fast
