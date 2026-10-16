@@ -469,6 +469,15 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.ATHROW);
         mv.visitLabel(fromOk);
 
+        // Start the match-work meter for this operation (campaign
+        // 2026-10-16 finding 3): the delegated strategy pieces below (sim,
+        // trigger, restart tail) debit their walk steps against it. The
+        // inlined extractOne leaf itself is called once here plus from the
+        // prefix loops that bake in PREFIX_WALK_BUDGET — bounded by
+        // construction, so only the delegations need the meter.
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "beginMatchMeter", "(I)V", false);
+
         // No literal-needle ladder here by construction: a DFA with a needle
         // always compiles as DELEGATE (generateBytes), so in the INLINED
         // classes that emit this method the runner's literal needle is

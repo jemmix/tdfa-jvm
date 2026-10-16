@@ -105,6 +105,13 @@ tasks.register('fuzz', JavaExec) {
     if (project.hasProperty('fuzz.maxWork')) {   // else the fuzzer scopes its own 8M default
         systemProperty 'fuzz.max.work', project.getProperty('fuzz.maxWork')
     }
+    // Fuzz-scoped match-time budget (the campaign's finding-3 containment):
+    // 500 ms per match operation — a case's probe cascade (5 natural + the
+    // stretched baseline + 4 forced rungs) then stays under the 10 s case
+    // watchdog, and a degenerate ladder records MATCH_BUDGET instead of a
+    // hang. The library default (2 s) is untouched; raise with
+    // -Pfuzz.maxMatchMs=0 to fuzz at the library bound.
+    systemProperty 'tdfa.budget.match.ms', project.findProperty('fuzz.maxMatchMs') ?: '500'
     def fuzzOut = project.findProperty('fuzz.out')
             ?: rootProject.layout.buildDirectory.dir('fuzz').get().asFile.absolutePath
     systemProperty 'fuzz.out', fuzzOut
@@ -151,6 +158,7 @@ tasks.register('camp', JavaExec) {
     systemProperty 'camp.seconds', project.findProperty('camp.seconds') ?: '600'
     systemProperty 'camp.seed', project.findProperty('camp.seed') ?: '0'
     systemProperty 'camp.one', project.findProperty('camp.one') ?: '0'
+    systemProperty 'tdfa.budget.match.ms', project.findProperty('fuzz.maxMatchMs') ?: '500'
     systemProperty 'camp.cases', project.findProperty('camp.cases') ?: '0'
     def campOut = project.findProperty('camp.out')
             ?: rootProject.layout.buildDirectory.dir('fuzz-camp').get().asFile.absolutePath

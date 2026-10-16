@@ -1,14 +1,18 @@
 package io.github.jemmix.tdfa.core.budget;
 
 /**
- * The user-facing resource budgets, as three system properties, and the
+ * The user-facing resource budgets, as four system properties, and the
  * derived caps the pipeline actually checks. Compilation is bounded by a
  * <b>RAM budget</b> (bytes of transient compile-time structures, weighted
  * per structure via {@link BudgetWeights}) and a <b>CPU budget</b>
  * (abstract ticks of compile work, metered by {@link WorkMeter}); the
- * match-time scan is bounded by a <b>RAM budget</b> alone (the linear-time
- * guarantee makes a runtime CPU budget meaningless — no backtracking
- * engine exists to burn one).
+ * match-time scan is bounded by a <b>RAM budget</b> (lazy memos) and, as a
+ * safety net rather than a linear-time claim, a <b>work budget</b> in walk
+ * steps per match operation ({@link #matchStepAllowance}) — no
+ * backtracking engine exists to burn CPU exponentially, but the search
+ * <em>ladder</em> above the walks can still degenerate quadratically on
+ * known shapes, and the bound turns those spins into
+ * {@link MatchBudgetExceededException} failures.
  *
  * <table border=1>
  *   <tr><th>Property</th><th>Meaning</th><th>Default</th></tr>
@@ -20,6 +24,10 @@ package io.github.jemmix.tdfa.core.budget;
  *   <tr><td>{@code tdfa.budget.runtime.memory}</td><td>match-time RAM per
  *       compiled pattern: retained artifact tables + lazy memo allowances,
  *       bytes</td><td>16 MiB</td></tr>
+ * * <tr><td>{@code tdfa.budget.match.ms}</td><td>match-time work bound,
+ *       wall-milliseconds per match operation (find/matches/lookingAt):
+ *       the safety net that bounds a degenerate search ladder</td>
+ *       <td>2000 ms</td></tr>
  * </table>
  *
  * <p>The derived caps (max DFA states, kernel totals, &epsilon;-closure
@@ -79,6 +87,19 @@ public final class Budgets {
      */
     public static final String RUNTIME_MEMORY_PROP = "tdfa.budget.runtime.memory";
     /**
+     * System property: match-time work bound in wall milliseconds per
+     * match operation ({@code find()}/{@code matches()}/{@code lookingAt()}).
+     * The walks are linear per start and the ladder is linear-time on the
+     * fast paths, but the known degenerate shapes (the unit-semantics
+     * restart quadratic on {@code .*}-anchor patterns, the mask-heavy
+     * per-step costs) can spend unbounded wall on medium inputs — this
+     * bound turns those spins into {@link MatchBudgetExceededException}
+     * failures. {@code <= 0} disables the bound (unbounded work returns).
+     * Not deterministic by design: it is a damage bound, not a semantic
+     * contract — the deterministic work bound is the compile-side one.
+     */
+    public static final String MATCH_TIME_PROP = "tdfa.budget.match.ms";
+    /**
      * Default compile RAM budget: 128 MiB.
      */
     public static final long DEFAULT_COMPILE_MEMORY = 128L << 20;
@@ -92,6 +113,15 @@ public final class Budgets {
      */
     public static final long DEFAULT_COMPILE_COMPUTE =
         BudgetWeights.DEFAULT_COMPILE_COMPUTE_SECONDS * BudgetWeights.TICKS_PER_SECOND;
+
+    /**
+     * Default match-time wall bound per match operation: 2 s. Healthy
+     * operations measure in microseconds-to-low-milliseconds (the
+     * conformance suite's heaviest legit restart churn is ~60 ms); the
+     * campaign's degenerate spins measured 12–55 s — three orders of
+     * margin on both sides.
+     */
+    public static final long DEFAULT_MATCH_TIME_MILLIS = 2000;
 
     private Budgets() {
     }
@@ -117,6 +147,14 @@ public final class Budgets {
      */
     public static long runtimeMemoryBytes() {
         return Long.getLong(RUNTIME_MEMORY_PROP, DEFAULT_RUNTIME_MEMORY);
+    }
+
+    /**
+     * Match-time wall bound per match operation, milliseconds
+     * ({@value #MATCH_TIME_PROP}); {@code <= 0} = unbounded.
+     */
+    public static long matchTimeMillis() {
+        return Long.getLong(MATCH_TIME_PROP, DEFAULT_MATCH_TIME_MILLIS);
     }
 
     /**

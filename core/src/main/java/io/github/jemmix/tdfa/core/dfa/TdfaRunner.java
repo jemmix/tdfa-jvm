@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.core.dfa;
 
 import io.github.jemmix.tdfa.core.ast.Alphabet;
 import io.github.jemmix.tdfa.core.budget.Budgets;
+import io.github.jemmix.tdfa.core.budget.MatchBudgetExceededException;
 import io.github.jemmix.tdfa.core.emit.EmittedSurface;
 import io.github.jemmix.tdfa.core.engine.MatchResult;
 import io.github.jemmix.tdfa.core.engine.MatchScratch;
@@ -147,9 +148,30 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      */
     private static volatile boolean TRACE = Boolean.getBoolean("tdfa.trace.strategy");
     /** Forced-strategy hook state (fuzz cross-rung differential; see
-     * {@link #setForcedStrategy}). */
+     *  {@link #setForcedStrategy}). */
     private static volatile boolean anyForced;
     private static final ThreadLocal<Strategy> FORCED = new ThreadLocal<>();
+    /**
+     * Match-time work meter (campaign 2026-10-16 finding 3): per-thread
+     * {deadline nanos, input length}, the deadline set at every
+     * match-operation entry ({@link #beginMatchMeter}) and checked once
+     * per restart-loop ITERATION (never per walk step — the walk leaves
+     * stay pristine; a restart loop's short-walk churn and its long-walk
+     * churn both surface as wall time at the iteration granularity, and a
+     * single linear walk is healthy user-sized work by definition). Past
+     * the deadline the check throws {@link MatchBudgetExceededException}
+     * — the bounded failure that replaces the ladder spins the campaign
+     * measured at 12–55 s. A wall bound, not a step count, because the
+     * observed diseases are per-step COST explosions (mask-heavy dispatch
+     * and position flags) on step counts legit work also reaches: the
+     * campaign's spins and the conformance suite's heaviest healthy churn
+     * both land at ~3–10 M walk steps, while their WALL times differ by
+     * three orders. A ThreadLocal (not the scratch carrier) because the
+     * ASM-emitted ladders enter the shared restart code without a carrier
+     * hand-off at their prologue, and a retained long[2] per matching
+     * thread is the same trade the trace buffer above makes.
+     */
+    private static final ThreadLocal<long[]> MATCH_METER = ThreadLocal.withInitial(() -> new long[]{0, 0});
 
     final int[] stateMeta;
     final int[] stateBase;
@@ -633,6 +655,39 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     }
 
     /**
+     * Start this thread's match-work meter for one match operation over an
+     * input of {@code length} chars: every walk leaf below debits a step
+     * per loop iteration, and every {@link #MATCH_METER_CHECK_EVERY} steps
+     * the clock is consulted — past the wall bound
+     * ({@link Budgets#matchTimeMillis()}) the next consult throws
+     * {@link MatchBudgetExceededException}. Public + emitted: the ASM
+     * backend's ladder prologue calls it by name (generated classes share
+     * the metered restart tail), and the interpreter's own entries
+     * ({@code match}/{@code find}) call it before descending.
+     */
+    @EmittedSurface
+    public static void beginMatchMeter(int length) {
+        long ms = Budgets.matchTimeMillis();
+        long[] m = MATCH_METER.get();
+        m[0] = ms > 0 ? System.nanoTime() + ms * 1_000_000L : Long.MAX_VALUE;
+        m[1] = length;
+    }
+
+    /** The restart-loop iteration check: past this operation's wall bound,
+     *  fail loudly instead of spinning (see {@link #MATCH_METER}). The
+     *  {@code iteration} mask keeps the consult amortized — one clock read
+     *  per 256 restarts — so die-fast restart scans (the healthy hot path)
+     *  pay an and+branch, nothing else. */
+    private static void checkMatchDeadline(int iteration) {
+        if ((iteration & 0xFF) == 0) {
+            long[] m = MATCH_METER.get();
+            if (System.nanoTime() > m[0]) {
+                throw new MatchBudgetExceededException(Budgets.matchTimeMillis(), (int) m[1]);
+            }
+        }
+    }
+
+    /**
      * Pooled register file for walk leaves: grow-only reuse of
      * {@code MatchScratch.regs} — the same carrier the interpreter's walks
      * use — shared with the ASM-generated tier, whose {@code extractOne}/
@@ -739,6 +794,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     @EmittedSurface
     @Override
     public boolean matches(CharSequence input) {
+        beginMatchMeter(input.length());
         if (input instanceof String) {
             String s = (String) input;
             if (fastPath) {
@@ -755,6 +811,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     @EmittedSurface
     @Override
     public boolean find(CharSequence input) {
+        beginMatchMeter(input.length());
         if (input instanceof String) {
             String s = (String) input;
             Strategy force = forcedStrategy();
@@ -808,6 +865,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 }
                 trace(Strategy.WALK_RESTART);
                 for (int from = Math.max(w, 1); from <= maxStart; from++) {
+                    checkMatchDeadline(from);
                     if (scanSkipsPairs && Alphabet.pairInterior(s, from)) {
                         continue;
                     }
@@ -842,6 +900,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         if (sc == null) {
             sc = new MatchScratch();
         }
+        beginMatchMeter(input.length());
         MatchHolder h;
         if (input instanceof String) {
             String s = (String) input;
@@ -1141,6 +1200,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         }
         trace(Strategy.WALK_RESTART);
         for (int startSearch = from + 1; startSearch <= maxStart; startSearch++) {
+            checkMatchDeadline(startSearch);
             if (scanSkipsPairs && Alphabet.pairInterior(input, startSearch)) {
                 continue;
             }
@@ -1222,6 +1282,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 trace(Strategy.WALK_RESTART);
                 int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? from : to;
                 for (int s = Math.max(from + 1, w); s <= maxStart; s++) {
+                    checkMatchDeadline(s);
                     if (scanSkipsPairs && Alphabet.pairInterior(input, s)) {
                         continue;
                     }
@@ -1249,6 +1310,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         trace(Strategy.WALK_RESTART);
         int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? from : to;
         for (int s = from; s <= maxStart; s++) {
+            checkMatchDeadline(s);
             if (scanSkipsPairs && s > from && Alphabet.pairInterior(input, s)) {
                 continue;
             }
@@ -1690,6 +1752,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             sc = new MatchScratch();
         }
         for (int s = fromStart; s <= to; s++) {
+            checkMatchDeadline(s);
             if (scanSkipsPairs && Alphabet.pairInterior(input, s)) {
                 continue;
             }
@@ -1966,6 +2029,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         if (!scanSkipsPairs) {
             trace(Strategy.WALK_RESTART);
             for (int from = 0; from <= to; from++) {
+                checkMatchDeadline(from);
                 if (matchFromFast(input, from, to)) {
                     return true;
                 }
@@ -2622,7 +2686,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         // restarts pay only the -1 refill, not a fresh allocation per start;
         // successful escapes clone into the MatchHolder, so reuse is safe.
         int startSearch = from;
+        int meterGuard = 0;
         while (true) {
+            checkMatchDeadline(meterGuard++);
             final int[] regs;
             final TagTree tree = multi ? takeTree(sc) : null;
             if (regSize == 0) {

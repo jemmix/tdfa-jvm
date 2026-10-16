@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.fuzz;
 
 import com.google.re2j.Re2jUnicodeProvider;
+import io.github.jemmix.tdfa.core.budget.MatchBudgetExceededException;
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
@@ -704,6 +705,12 @@ public final class DifferentialFuzzer {
             String base;
             try {
                 base = compute(pr.vm, stretched);
+            } catch (MatchBudgetExceededException e) {
+                // Stretched inputs trip the match-work budget on the known
+                // restart-ladder quadratic: a documented budget class, not a
+                // cross-rung finding — record for kindOf and stop the leg.
+                o.exceptions.add("vm MatchBudgetExceededException: " + firstLine(e.getMessage()));
+                return;
             } catch (RuntimeException e) {
                 o.cross
                     .add("THREW stretched baseline " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
@@ -725,6 +732,11 @@ public final class DifferentialFuzzer {
             try {
                 forced = compute(vm, in);
                 routed = TdfaRunner.traceSnapshot();
+            } catch (MatchBudgetExceededException e) {
+                // Budget trip, not a cross-rung divergence (see crossRung).
+                TdfaRunner.traceSnapshot();
+                o.exceptions.add("vm MatchBudgetExceededException: " + firstLine(e.getMessage()));
+                continue;
             } catch (RuntimeException e) {
                 TdfaRunner.traceSnapshot();
                 o.cross.add("THREW " + tag + f + " " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
@@ -1738,9 +1750,15 @@ public final class DifferentialFuzzer {
             // deferred to the first matches() when only the lazily compiled
             // anchored TDFA trips the budget ("<exception:...>"). Both are
             // the documented fuzz-scoped budget contract, not divergences.
+            // The match-time work bound ("match work budget exceeded") is
+            // the same contract's runtime twin: the bounded failure that
+            // replaced the campaign's restart-ladder spins.
             for (String e : o.exceptions) {
                 if (e.contains("pattern too large")) {
                     return "BUDGET_REJECT";
+                }
+                if (e.contains("match work budget exceeded")) {
+                    return "MATCH_BUDGET";
                 }
             }
             if (!o.exceptions.isEmpty()) {

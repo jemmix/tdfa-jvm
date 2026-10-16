@@ -10,7 +10,6 @@ git history (TODO.md before 2026-09-30).
 - [x] Fuzz (?u) lane vs jur oracle (UCC flag in the differential flag matrix — the jur lane's flag draw since the evidence re-base)
 - [ ] Fix İ fold-class divergences vs jur (full case folding semantics) — 3 seeds in [campaign log](docs/fuzz-campaigns-2026-10-16.md)
 - [ ] Fix quantified-group alternation order vs jur (`(\A|.?o*.){3}` seeds)
-- [ ] Bound TdfaRunner match-time work (budget like compile ticks)
 - [ ] Fix forcedRestart quadratic scans on `.*`-anchor shapes
 - [ ] Fast-path positionFlags word scans (isUnicodeWordCodepoint cost)
 - [ ] Retire known-divergence classifiers once engines agree everywhere
