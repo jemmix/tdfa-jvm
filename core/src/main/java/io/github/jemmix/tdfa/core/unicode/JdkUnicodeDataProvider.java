@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.IntFunction;
+import java.util.regex.Pattern;
 
 /**
  * {@link UnicodeDataProvider} backed by the JDK's bundled Unicode database
@@ -93,7 +94,29 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
     private volatile Map<String, int[]> foldTables;
     private volatile int[] alphabetic;
 
+    /** JDK 26's regex added the member-side image clause to CI ranges
+     *  ({@code i} matching {@code [İ-İ9]}); older regexen test the input's
+     *  images only. This provider BRIDGES the live oracle (its declared
+     *  role), so the reading is probed once from THIS JVM's
+     *  java.util.regex rather than hard-coded — the same-JVM contract the
+     *  fold universe already follows. */
+    private static final boolean RANGE_MEMBER_SIDE = probe("[\u0130-\u0139]", "i");
+
+    /** JDK 26's regex also admits the {@code toLower(toUpper(c))} image
+     *  (final sigma reaching {@code [σ-σ]}); older regexen stop at
+     *  toUpper. Probed the same way. */
+    private static final boolean RANGE_DOUBLE_MAP = probe("[\u03C3-\u03C3]", "\u03C2");
+
     private JdkUnicodeDataProvider() {
+    }
+
+    private static boolean probe(String rangeClass, String input) {
+        try {
+            return Pattern.compile(rangeClass, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE).matcher(input)
+                .matches();
+        } catch (RuntimeException e) {
+            return false; // unprobeable shapes fall back to the classic reading
+        }
     }
 
     @Override
@@ -165,6 +188,24 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
     @Override
     public int[] foldCounterparts(int cp) {
         return CaseFoldTable.foldRangesJava(cp);
+    }
+
+    /**
+     * The java.util.regex RANGE reading (see
+     * {@link CaseFoldTable#javaRangeFoldExtras}): java's case-insensitive
+     * ranges test the INPUT's simple-case images against the raw member
+     * range — NOT the member orbit closure the single/literal path uses —
+     * so e.g. {@code [H-K]} rejects İ while {@code [I]} admits it
+     * (live-JDK probed; the asymmetry is java.util.regex's own).
+     */
+    @Override
+    public boolean suppliesRangeFoldSemantics() {
+        return true;
+    }
+
+    @Override
+    public int[] rangeFoldCounterparts(int lo, int hi) {
+        return CaseFoldTable.javaRangeFoldExtras(lo, hi, RANGE_MEMBER_SIDE, RANGE_DOUBLE_MAP);
     }
 
     @Override

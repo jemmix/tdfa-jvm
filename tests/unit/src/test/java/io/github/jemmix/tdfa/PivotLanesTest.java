@@ -459,6 +459,57 @@ class PivotLanesTest {
         assertThat(re2Ci.matcher("\u0131").find()).as("re2j surface plain (?i) keeps ı inert").isFalse();
     }
 
+    @Test
+    void jurCiRangesFoldByTheJavaImageTestNotOrbitClosure() {
+        // The campaign 2026-10-16 finding-1 fix: java.util.regex folds
+        // WRITTEN ranges by the two-sided simple-case image test — the
+        // input's images {self, toLower, toUpper, toLower∘toUpper} against
+        // the RAW range, plus the member-side mirror (c ∈ IMG(m) for a
+        // member m) — NOT by closing every member's fold orbit (which is
+        // what single members and literals use; live-JDK probed). The
+        // asymmetric-mapping families discriminate: İ satisfies [h-k]
+        // input-side (toLower(İ)=i) but NOT [H-K], and the degenerate
+        // [I-I] is a RANGE and rejects İ while the single [I] admits it.
+        // ı satisfies both sides (toUpper(ı)=I, toLower∘toUpper(ı)=i); the
+        // Kelvin sign mirrors İ ([j-l] yes, [J-L] no); ſ and the OHM sign
+        // satisfy both sides; final sigma reaches [Σ-Σ] through
+        // toLower∘toUpper; and i matches [İ-İ9] member-side (i ∈ IMG(İ)).
+        String[] inputs = {"\u0130", "\u0131", "i", "I", "\u017F", "s", "S", "\u212A", "k", "K", "\u2126", "\u03C9",
+            "\u03A3", "\u03C2", "\u03C3"};
+        for (String pat : new String[]{"(?iu)[h-k]", "(?iu)[H-K]", "(?iu)[g-j]", "(?iu)[G-J]", "(?iu)[i]", "(?iu)[I]",
+            "(?iu)[I-I]", "(?iu)[i-i]", "(?iu)[j-l]", "(?iu)[J-L]", "(?iu)[r-t]", "(?iu)[R-T]", "(?iu)[A-z]",
+            "(?iu)[\u03B1-\u03C9]", "(?iu)[\u0391-\u03A9]", "(?iu)[\u03A3-\u03A3]", "(?iu)[\u03C3-\u03C3]",
+            "(?iu)[\u0130-\u0139]", "(?iu)[\u0120-\u0131]", "(?iu)[^h-k]", "(?iu)[^H-K]", "(?iu)[^i]", "(?iu)[a-z]",
+            "(?iu)[A-Z]"}) {
+            assertOracleParity("JUR " + pat, pat, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE, JUR, inputs);
+        }
+        // the UCC-widened reading (the fuzz lane's flag combo; (?u) is the
+        // lane's spelling of the compile flag — see the battery above)
+        for (String pat : new String[]{"(?u)(?i)[h-k]", "(?u)(?i)[H-K]", "(?u)(?i)[I-I]", "(?u)(?i)[i]"}) {
+            assertOracleParity("JUR CI|UCC " + pat, pat, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS,
+                JUR, inputs);
+        }
+        // ... and the facade's own compile-flag spelling of the same combo
+        int ciUcc =
+            io.github.jemmix.tdfa.Pattern.CASE_INSENSITIVE | io.github.jemmix.tdfa.Pattern.UNICODE_CHARACTER_CLASS;
+        io.github.jemmix.tdfa.Pattern lowRange = io.github.jemmix.tdfa.Pattern.compile("[h-k]", ciUcc);
+        assertThat(lowRange.matcher("\u0130").find()).as("facade CI|UCC [h-k] matches İ (toLower image)").isTrue();
+        io.github.jemmix.tdfa.Pattern upRange = io.github.jemmix.tdfa.Pattern.compile("[H-K]", ciUcc);
+        assertThat(upRange.matcher("\u0130").find()).as("facade CI|UCC [H-K] rejects İ (no image / no member IMG)")
+            .isFalse();
+        io.github.jemmix.tdfa.Pattern degenerate = io.github.jemmix.tdfa.Pattern.compile("[I-I]", ciUcc);
+        assertThat(degenerate.matcher("\u0130").find()).as("facade CI|UCC [I-I] rejects İ (degenerate = range)")
+            .isFalse();
+        // the re2j surface keeps the orbit closure for ranges (its oracle's
+        // reading; İ fold-inert under the patched fork — the surface split
+        // this battery pins the other side of)
+        io.github.jemmix.tdfa.re2j.Pattern re2Range = io.github.jemmix.tdfa.re2j.Pattern.compile("(?i)[H-K]");
+        assertThat(re2Range.matcher("\u0130").find()).as("re2j surface (?i)[H-K] keeps İ inert").isFalse();
+        assertThat(re2Range.matcher("\u0131").find()).as("re2j surface (?i)[H-K]: ı inert too").isFalse();
+        io.github.jemmix.tdfa.re2j.Pattern re2RangeLow = io.github.jemmix.tdfa.re2j.Pattern.compile("(?i)[h-k]");
+        assertThat(re2RangeLow.matcher("\u0130").find()).as("re2j surface (?i)[h-k] keeps İ inert").isFalse();
+    }
+
     // ===== (?U): the java.util.regex reading — scoped Unicode-case =====
 
     @Test
