@@ -128,3 +128,50 @@ Artifacts: same layout as the 2026-10-03 campaign; `hang-replays.log`
 contains the lane-pinned manual replay verdicts for all 14 hang seeds
 (the driver's own stage was wedged — finding 5 — so the pass was rerun by
 hand with identical command/verdict rules).
+
+## Follow-ups (2026-10-17)
+
+The pre-soak fix pass, landed as #69–#71:
+
+- **Finding 4 → guarded (#69).** Jur-lane batches whose pattern nests an
+  unbounded quantifier over a wide atom inside an unbounded-quantified
+  group are skipped as `JURLANE_GUARD` records (0.33 % of jur cases; the
+  re2j lane still runs them). All three >100 s bomb seeds now replay
+  instantly with a guard notice.
+- **Finding 3 → bounded (#70).** A per-operation match-work budget
+  (`tdfa.budget.match.ms`, default 2 s wall — a WALL bound, not steps:
+  the diseases are per-step cost explosions on step counts legit work
+  also reaches; the conformance suite caught a first steps-based cut
+  false-tripping on `[a-z]+qrst`-style churn) checked once per 256
+  restart-loop iterations, so the walk leaves stay pristine (a per-step
+  debit cost 10–14 % on the scan benches). All six engine-spin seeds
+  replay in 1–3 s with the classified `MATCH_BUDGET` record; a 2-minute
+  mixed soak ran 276 K cases with zero hangs. The root quadratic (no
+  trigger bound under unit semantics) stays open in TODO.
+- **Finding 1 → fixed (#71).** Root cause: java.util.regex folds WRITTEN
+  ranges by a simple-case IMAGE test, not the member-orbit closure it
+  uses for singles/literals — `satisfies(c, R) ⟺ IMG(c) ∩ R ≠ ∅` plus
+  (JDK 26+) a member-side clause and the `toLower∘toUpper` image, with
+  `IMG(x) = {x, toLower(x), toUpper(x)}`. The clauses are PROBED from
+  the live JVM (JDK 26 regex tests more than 25/11 did — the CI's JDK 25
+  row caught it). All three seeds replay bit-for-bit equal to the
+  oracle; 28-pattern × 15-input live-oracle battery added in
+  `PivotLanesTest`.
+- **Finding 2 → root-caused, still open.** `(\A|.?o*.){3}` diverges
+  exactly on `matches()`. java.util.regex's `GroupCurly` (any `{n,m}`
+  over a non-deterministic group, capturing or not) runs its first
+  `cmin` iterations in a plain forward loop and never re-routes them —
+  the greedy backoff (`match0`) only revisits iterations beyond `j >
+  min` — so an exact `{3}` commits all three copies to their
+  first-success branches; our whole-match artifact accepts any path
+  through the unrolled copies and reports the consuming path
+  `[ε,ε,Y]`. Probed surface: `{2}`, `{3}`, `{2,4}` diverge when the
+  ε-branch is tried first; `{0,m}`, `{1}`, `{1,m}`, `*`, `+` and plain
+  concatenation agree (their iterations are all ≥ cmin, i.e.
+  retryable, or they compile to Loop/concat nodes that retry). Fix
+  direction: a committed-copy prefer-and-kill scoped to the first cmin
+  copies in the whole determinization only — find/lookingAt already
+  agree with the oracle.
+- **Soak readiness.** With 1, 3, 4 addressed, the next both-lane soak's
+  expected residue is the finding-2 family plus the documented
+  BUDGET_REJECT / MATCH_BUDGET / JURLANE_GUARD / JURLANE_SKIP classes.

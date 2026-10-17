@@ -4,14 +4,18 @@ Status: **flipped** — the JUR-parity default landed (the `PatternCompiler`
 user-bit mapping; `RE2_COMPAT` is the pre-flip default in one constant),
 with every pivot parameterized and family 6 in. The evidence re-base
 landed except its overnight tail (per-flag unit tests, campaign
-classifiers flipped to hard assertions with the İ/ı residual FIXED — the
-fold universe rides the surface default — and tail/surrogate consciously
+classifiers flipped to hard assertions with the İ/ı residual FIXED — in
+literals and, since #71, in CI ranges too (java.util.regex's range image
+test, probed from the live JVM) — tail/surrogate consciously
 reclassified as asserted domain exclusions; the re2j + `(?u)` lanes in
 the fuzzer matrix; the 5.7 M exhaustive evidence re-run in the RE2 lane;
-[WBS item 6](jur-compat-wbs.md)). Still open: the both-lane overnight
-soak + README numbers (item 6's tail), the jur twins for the re2j parity
-suites (every translatable suite also pinned against the live
-`java.util.regex` oracle — item 7). Landing the rest is only cheap
+the jur twins for the re2j parity suites — item 7 — landed). Still open:
+the both-lane overnight soak + README numbers (item 6's tail) and one
+characterized engine family (java.util.regex's GroupCurly commits the
+first `cmin` iterations of a bounded quantified group — `matches()`
+diverges on `{n≥2}` shapes; see the
+[campaign follow-ups](fuzz-campaigns-2026-10-16.md)). Landing the
+rest is only cheap
 before the first Maven publish / 1.0 API lock (both still open in
 [TODO](../TODO.md)) — after that the same flip is a major version. This
 page is the full accounting: what flips, what the API looks like, what it
