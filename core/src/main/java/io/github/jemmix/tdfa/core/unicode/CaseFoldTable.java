@@ -242,7 +242,7 @@ public final class CaseFoldTable {
                 }
             }
         }
-        return n == 0 ? null : Arrays.copyOf(out, n);
+        return Arrays.copyOf(out, n); // possibly empty: applicable-but-no-extras
     }
 
     private static int addIfOut(int[] out, int n, int cp, int lo, int hi) {

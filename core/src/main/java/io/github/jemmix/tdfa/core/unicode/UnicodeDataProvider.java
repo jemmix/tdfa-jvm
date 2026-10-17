@@ -108,8 +108,11 @@ public interface UnicodeDataProvider {
      * Extra codepoints matched by the case-insensitive range
      * {@code [lo-hi]} under this provider's reading — the compile-time
      * transpose of the oracle's per-input range test. Unsorted, may include
-     * codepoints inside the range (callers union), {@code null} = none.
-     * Only consulted when {@link #suppliesRangeFoldSemantics()} returns
+     * codepoints inside the range (callers union); possibly EMPTY — an
+     * empty result means the reading applies and admits no extras (the
+     * caller must NOT fall back to another fold), while {@code null} means
+     * the semantics do not apply (the caller's usual fold serves). Only
+     * consulted when {@link #suppliesRangeFoldSemantics()} returns
      * {@code true}; the default implementation is unreachable.
      */
     default int[] rangeFoldCounterparts(int lo, int hi) {

@@ -569,15 +569,15 @@ public final class Parser {
     }
 
     /** The RANGE twin of {@link #foldUniverse}: extra codepoints a CI range
-     *  {@code [lo-hi]} matches under the active universe's reading, or
-     *  {@code null} = none / not applicable (fall back to the per-member
-     *  orbit closure). Only a provider that pins the range semantics
-     *  (java.util.regex's two-sided image test, see
-     *  {@code CaseFoldTable#javaRangeFoldExtras}) under the full universe
-     *  answers — the RE2-lineage reading folds ranges member-by-member
-     *  like every other fold, so its answer here is always "not
-     *  applicable". Metered: the transpose scans the range's members and
-     *  the cased-codepoint table, the same work the orbit fallback would
+     *  {@code [lo-hi]} matches under the active universe's reading.
+     *  {@code null} = the reading does not apply here (bare-CI ASCII lane,
+     *  or a provider without pinned range semantics — the per-member orbit
+     *  closure serves); a non-null result — POSSIBLY EMPTY — is the whole
+     *  reading and replaces the orbit closure entirely (empty must NOT
+     *  fall back: an orbit member outside the image test is exactly the
+     *  İ-in-[H-K] class of divergence the reading exists to prevent).
+     *  Metered: the transpose scans the range's members and the
+     *  cased-codepoint table, the same work the orbit fallback would
      *  spend walking members. */
     private int[] foldRangeExtras(int lo, int hi) {
         if (!(unicodeCase || unicodeShorthand)) {
