@@ -568,6 +568,28 @@ public final class Parser {
         return CaseFoldTable.foldRanges(cp);
     }
 
+    /** The RANGE twin of {@link #foldUniverse}: extra codepoints a CI range
+     *  {@code [lo-hi]} matches under the active universe's reading, or
+     *  {@code null} = none / not applicable (fall back to the per-member
+     *  orbit closure). Only a provider that pins the range semantics
+     *  (java.util.regex's two-sided image test, see
+     *  {@code CaseFoldTable#javaRangeFoldExtras}) under the full universe
+     *  answers — the RE2-lineage reading folds ranges member-by-member
+     *  like every other fold, so its answer here is always "not
+     *  applicable". Metered: the transpose scans the range's members and
+     *  the cased-codepoint table, the same work the orbit fallback would
+     *  spend walking members. */
+    private int[] foldRangeExtras(int lo, int hi) {
+        if (!(unicodeCase || unicodeShorthand)) {
+            return null; // bare CI: ASCII pairs only, handled by the orbit path
+        }
+        if (provider == null || !provider.suppliesRangeFoldSemantics()) {
+            return null;
+        }
+        meter.tick((hi - lo + 1) * BudgetWeights.FOLD_SCAN_CODEPOINT_TICKS);
+        return provider.rangeFoldCounterparts(lo, hi);
+    }
+
     /** Atom for one literal codepoint. BMP stays {@link Ast.Symbol}; a
      *  supplementary codepoint becomes a single-codepoint {@link CharClass},
      *  the same shape {@code \x{...}} produces, because the engine's alphabet
@@ -873,12 +895,19 @@ public final class Parser {
             negated = true;
         }
         List<Integer> ranges = new ArrayList<>();
+        // Syntactic-range markers, parallel to `ranges`' pairs: item i was
+        // WRITTEN as a range (a dash between endpoints) — degenerate
+        // [x-x] included. java.util.regex folds written ranges by the
+        // two-sided image test while single members take the orbit closure
+        // (see foldRangeExtras), so the distinction is semantic, not cosmetic.
+        List<Boolean> writtenRange = new ArrayList<>();
         // POSIX/RE2: a `]` as the FIRST char in the class (after an optional `^`)
         // is a literal class member, not the terminator. So `[]]` matches a single `]`,
         // `[]a]` matches `]` or `a`, etc.
         if (peek() == ']') {
             ranges.add((int) ']');
             ranges.add((int) ']');
+            writtenRange.add(false);
             pos++;
         }
         while (pos < src.length() && peek() != ']') {
@@ -887,6 +916,9 @@ public final class Parser {
                 int[] posix = parsePosixClass();
                 for (int v : posix) {
                     ranges.add(v);
+                }
+                for (int v = 0; v < posix.length; v += 2) {
+                    writtenRange.add(false);
                 }
                 continue;
             }
@@ -899,26 +931,36 @@ public final class Parser {
                     for (int v : sr) {
                         ranges.add(v);
                     }
+                    for (int v = 0; v < sr.length; v += 2) {
+                        writtenRange.add(false);
+                    }
                     continue;
                 }
                 // Unicode property classes \p{X} \pX \P{X} \PX \p{^X}
                 if (next == 'p' || next == 'P') {
                     pos += 2; // consume '\' and 'p'/'P'
+                    int before = ranges.size();
                     appendUnicodeToRanges(ranges, next == 'p');
+                    for (int i = before; i < ranges.size(); i += 2) {
+                        writtenRange.add(false);
+                    }
                     continue;
                 }
             }
             int lo = parseClassChar();
             int hi = lo;
+            boolean dashed = false;
             if (peek() == '-' && pos + 1 < src.length() && src.charAt(pos + 1) != ']') {
                 pos++;
                 hi = parseClassChar();
+                dashed = true;
                 if (hi < lo) {
                     throw fail(this, "inverted range in class");
                 }
             }
             ranges.add(lo);
             ranges.add(hi);
+            writtenRange.add(dashed);
         }
         expect(']');
         int[] arr = ranges.stream().mapToInt(Integer::intValue).toArray();
@@ -930,9 +972,47 @@ public final class Parser {
             // negated classes exclude fold equivalents automatically. In-class
             // shorthands (\w inside [...]) are ordinary ranges here and fold
             // through the same path.
-            arr = foldExpandRanges(arr);
+            arr = foldExpandClass(arr, toBooleanArray(writtenRange));
         }
         return new CharClass(arr, negated);
+    }
+
+    private static boolean[] toBooleanArray(List<Boolean> list) {
+        boolean[] out = new boolean[list.size()];
+        for (int i = 0; i < list.size(); i++) {
+            out[i] = list.get(i);
+        }
+        return out;
+    }
+
+    /** The class-item fold expansion: WRITTEN ranges under a provider that
+     *  pins the range semantics take that reading (java.util.regex's
+     *  two-sided image test, see {@link #foldRangeExtras}); everything
+     *  else — single members, programmatic shorthand/POSIX sets — takes
+     *  the per-member orbit closure of the active fold universe. */
+    private int[] foldExpandClass(int[] arr, boolean[] writtenRange) {
+        List<int[]> ivs = new ArrayList<>(arr.length);
+        for (int i = 0; i < arr.length; i += 2) {
+            int lo = arr[i], hi = arr[i + 1];
+            ivs.add(new int[]{lo, hi});
+            int[] extras = writtenRange[i / 2] ? foldRangeExtras(lo, hi) : null;
+            if (extras != null) {
+                for (int v : extras) {
+                    ivs.add(new int[]{v, v});
+                }
+                continue; // the provider's reading replaces the orbit closure
+            }
+            for (int cp = lo; cp <= hi; cp++) {
+                meter.tick(BudgetWeights.FOLD_SCAN_CODEPOINT_TICKS);
+                int[] fr = foldUniverse(cp);
+                if (fr != null) {
+                    for (int v : fr) {
+                        ivs.add(new int[]{v, v});
+                    }
+                }
+            }
+        }
+        return mergeIntervals(ivs);
     }
 
     /** Union of {@code ranges} with every member's fold orbit under the
@@ -957,6 +1037,11 @@ public final class Parser {
                 }
             }
         }
+        return mergeIntervals(ivs);
+    }
+
+    /** Sort by lo, merge overlapping/adjacent intervals, flatten. */
+    private static int[] mergeIntervals(List<int[]> ivs) {
         ivs.sort((a, b) -> Integer.compare(a[0], b[0]));
         List<Integer> merged = new ArrayList<>(ivs.size() * 2);
         int lo = ivs.get(0)[0], hi = ivs.get(0)[1];

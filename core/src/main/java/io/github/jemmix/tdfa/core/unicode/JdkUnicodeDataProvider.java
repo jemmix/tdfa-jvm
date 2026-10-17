@@ -167,6 +167,24 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
         return CaseFoldTable.foldRangesJava(cp);
     }
 
+    /**
+     * The java.util.regex RANGE reading (see
+     * {@link CaseFoldTable#javaRangeFoldExtras}): java's case-insensitive
+     * ranges test the INPUT's simple-case images against the raw member
+     * range — NOT the member orbit closure the single/literal path uses —
+     * so e.g. {@code [H-K]} rejects İ while {@code [I]} admits it
+     * (live-JDK probed; the asymmetry is java.util.regex's own).
+     */
+    @Override
+    public boolean suppliesRangeFoldSemantics() {
+        return true;
+    }
+
+    @Override
+    public int[] rangeFoldCounterparts(int lo, int hi) {
+        return CaseFoldTable.javaRangeFoldExtras(lo, hi);
+    }
+
     @Override
     public int[] foldTableFor(String name) {
         int[] table = tableFor(name);

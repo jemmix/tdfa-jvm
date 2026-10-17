@@ -91,4 +91,28 @@ public interface UnicodeDataProvider {
     default int[] foldCounterparts(int cp) {
         return null;
     }
+
+    /**
+     * Whether this provider also pins the case-insensitive RANGE semantics
+     * (see {@link #rangeFoldCounterparts(int, int)}): the extra codepoints a
+     * CI range {@code [lo-hi]} matches beyond its members. When
+     * {@code false}, the parser applies the per-member orbit closure of
+     * {@link #foldCounterparts(int)} to ranges too (the RE2-lineage
+     * reading — re2j's own parser folds every range codepoint).
+     */
+    default boolean suppliesRangeFoldSemantics() {
+        return false;
+    }
+
+    /**
+     * Extra codepoints matched by the case-insensitive range
+     * {@code [lo-hi]} under this provider's reading — the compile-time
+     * transpose of the oracle's per-input range test. Unsorted, may include
+     * codepoints inside the range (callers union), {@code null} = none.
+     * Only consulted when {@link #suppliesRangeFoldSemantics()} returns
+     * {@code true}; the default implementation is unreachable.
+     */
+    default int[] rangeFoldCounterparts(int lo, int hi) {
+        return null;
+    }
 }
