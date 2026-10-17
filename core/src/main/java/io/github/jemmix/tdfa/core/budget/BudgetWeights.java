@@ -60,6 +60,7 @@ public final class BudgetWeights {
      * {@code Pattern.compile}).
      */
     public static final int FOLD_SCAN_CODEPOINT_TICKS = 2;
+
     /**
      * A minted TNFA state is assumed to weigh this much (per-state slices
      * of the builder's adjacency arrays and the determinizer's masks).
