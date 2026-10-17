@@ -178,56 +178,69 @@ public final class CaseFoldTable {
     /**
      * The extra codepoints a {@code java.util.regex} case-insensitive
      * RANGE {@code [lo-hi]} matches beyond its own members — the
-     * compile-time transpose of the oracle's per-input range test, which
-     * (live-JDK probed, including the degenerate {[I]} vs {[H-K]} split)
-     * is two-sided over the image set {@code IMG(x) = {x, toLower(x),
-     * toUpper(x), toLower(toUpper(x))}}:
+     * compile-time transpose of the oracle's per-input range test. That
+     * test (live-JDK probed, including the degenerate {[I]} vs {[H-K]}
+     * split) is input-side over the image set, plus the two clauses newer
+     * JDKs added — both PROBED by the caller, because the reading is
+     * whatever THIS JVM's java.util.regex answers (JDK 26 tests more
+     * than 25 did):
      * <pre>
-     *   satisfies(c, R) ⟺ IMG(c) ∩ R ≠ ∅  ∨  ∃ m ∈ R: c ∈ IMG(m)
+     *   satisfies(c, R) ⟺ IMG(c) ∩ R ≠ ∅                       (always)
+     *                     ∨ ∃ m ∈ R: c ∈ IMG(m)                 (member-side, JDK 26+)
+     *   with IMG(x) = {x, toLower(x), toUpper(x)}                (always)
+     *               ∪ {toLower(toUpper(x))}                      (double-map, JDK 26+)
      * </pre>
-     * Input-side (the first clause) plus member-side (the second). Two
-     * clauses because either alone mis-answers the asymmetric-mapping
-     * families: İ satisfies {@code [h-k]} input-side ({@code toLower(İ)=i})
-     * but no {@code IMG(m)} of an uppercase-only range contains it, so
-     * {@code [H-K]} rejects İ; conversely {@code i} satisfies
-     * {@code [İ-İ9]} only member-side ({@code i ∈ IMG(İ)}). Symmetric
-     * orbits satisfy both readings alike, so this diverges from the
-     * per-member orbit closure ({@link #foldRangesJava}, which governs
-     * single members and literals) exactly on the asymmetric families —
-     * İ/ı, ſ, the Kelvin and OHM signs, final sigma.
+     * The clauses matter because either alone mis-answers the
+     * asymmetric-mapping families: İ satisfies {@code [h-k]} input-side
+     * ({@code toLower(İ)=i}) but no image test of an uppercase-only range
+     * admits it, so {@code [H-K]} rejects İ; ı satisfies both sides
+     * ({@code toUpper(ı)=I}, double-map to {@code i}); final sigma
+     * reaches {@code [Σ-Σ]} via {@code toUpper} and {@code [σ-σ]} only
+     * via the double map; and {@code i} satisfies {@code [İ-İ9]} only
+     * member-side. Symmetric orbits satisfy every reading alike, so this
+     * diverges from the per-member orbit closure
+     * ({@link #foldRangesJava}, which governs single members and
+     * literals) exactly on the asymmetric families — İ/ı, ſ, the Kelvin
+     * and OHM signs, final sigma.
      *
      * <p>Returns the union as individual codepoints (unsorted; callers
      * union into the positive set), or {@code null} when there are no
      * extras.
      */
-    public static int[] javaRangeFoldExtras(int lo, int hi) {
+    public static int[] javaRangeFoldExtras(int lo, int hi, boolean memberSide, boolean doubleMap) {
         int[] img = caseImages;
         if (img == null) {
             img = publishCaseImages();
         }
         int[] out = new int[img.length / 4 + (hi - lo + 1) * 3];
         int n = 0;
-        // input side: cased c with any image inside the raw range
+        // input side: cased c with an image inside the raw range
         for (int i = 0; i < img.length; i += 4) {
             int c = img[i];
             if (c >= lo && c <= hi) {
                 continue;
             }
-            if (inRange(img[i + 1], lo, hi) || inRange(img[i + 2], lo, hi) || inRange(img[i + 3], lo, hi)) {
+            if (inRange(img[i + 1], lo, hi) || inRange(img[i + 2], lo, hi)
+                || (doubleMap && inRange(img[i + 3], lo, hi))) {
                 out[n++] = c;
             }
         }
-        // member side: c ∈ IMG(m) for a cased member m (most members are
-        // uncased; the cased ones contribute up to three off-range images)
-        for (int m = lo; m <= hi; m++) {
-            int lower = Character.toLowerCase(m);
-            int upper = Character.toUpperCase(m);
-            if (lower == m && upper == m) {
-                continue;
-            } // uncased member: IMG(m) = {m}, already in R
-            n = addIfOut(out, n, lower, lo, hi);
-            n = addIfOut(out, n, upper, lo, hi);
-            n = addIfOut(out, n, Character.toLowerCase(upper), lo, hi);
+        // member side (JDK 26+ regex): c ∈ IMG(m) for a cased member m —
+        // most members are uncased; the cased ones contribute up to three
+        // off-range images
+        if (memberSide) {
+            for (int m = lo; m <= hi; m++) {
+                int lower = Character.toLowerCase(m);
+                int upper = Character.toUpperCase(m);
+                if (lower == m && upper == m) {
+                    continue;
+                } // uncased member: IMG(m) = {m}, already in R
+                n = addIfOut(out, n, lower, lo, hi);
+                n = addIfOut(out, n, upper, lo, hi);
+                if (doubleMap) {
+                    n = addIfOut(out, n, Character.toLowerCase(upper), lo, hi);
+                }
+            }
         }
         return n == 0 ? null : Arrays.copyOf(out, n);
     }

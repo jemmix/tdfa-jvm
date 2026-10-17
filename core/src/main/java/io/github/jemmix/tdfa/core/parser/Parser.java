@@ -586,7 +586,7 @@ public final class Parser {
         if (provider == null || !provider.suppliesRangeFoldSemantics()) {
             return null;
         }
-        meter.tick((hi - lo + 1) * BudgetWeights.FOLD_SCAN_CODEPOINT_TICKS);
+        meter.tick((hi - lo + 1) * (long) BudgetWeights.FOLD_SCAN_CODEPOINT_TICKS);
         return provider.rangeFoldCounterparts(lo, hi);
     }
 
