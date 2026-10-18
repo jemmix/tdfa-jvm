@@ -155,9 +155,17 @@ The pre-soak fix pass, landed as #69–#71:
   (`maskSatisfied` at the entry/entryNext sites; `positionFlagsC`
   specialized by `posFlagDeps()`), and (b) the restart ladder itself
   (n restarts × O(n) walk, each step paying a ~800-candidate prefix-max
-  back-scan on the CI+UCC fold-expanded states) — (b) is the open
-  `.*`-anchor TODO item and the reason the stretched-seed spins remain
-  budget-contained for now.
+  back-scan on the CI+UCC fold-expanded states).
+  (b) split again by anchor class: the `\A`/non-multiline-`^` shapes
+  (`.*(?:\A\W )h` 39 s, `.{1,}(?:\A\w…)\w` 55 s, `.+^\W` 16 s) are
+  root-fixed by the abs-begin ladder bound
+  (`Tdfa.absBeginBound()` — every accepting path crosses an \A gate ⇒
+  restarts past the origin provably fruitless ⇒ the ladder collapses to
+  the exact walk; replays now < 1 s, a 4 400-char no-match find
+  measures 2–5 ms). The residue — restarts genuinely viable (multiline
+  `(?m:$\d)` tails, avoidable anchors, plain `.+tail` shapes like
+  `. +zz`) — stays budget-contained pending the unit-semantics trigger
+  bound (the open TODO item).
 - **Finding 1 → fixed (#71).** Root cause: java.util.regex folds WRITTEN
   ranges by a simple-case IMAGE test, not the member-orbit closure it
   uses for singles/literals — `satisfies(c, R) ⟺ IMG(c) ∩ R ≠ ∅` plus

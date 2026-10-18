@@ -288,6 +288,10 @@ public final class Tdfa {
      * Lazily-computed {@link #posFlagDeps()} (benign race; -1 = not computed).
      */
     private int posFlagDepsCache = -1;
+    /**
+     * Lazily-computed {@link #absBeginBound()} (benign race; -1 = not computed).
+     */
+    private int absBeginBoundCache = -1;
 
     /** Every axis set (the RE2-lineage reading): the legacy-constructor default. */
     private static final Semantics ALL_AXES = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
@@ -730,6 +734,107 @@ public final class Tdfa {
         deps |= tableDeps(stateFinalOpsByMask(), posFlagCells);
         posFlagDepsCache = deps;
         return deps;
+    }
+
+    /**
+     * Whether every accepting path of this FIND artifact crosses an
+     * {@code \A} gate — a range whose {@code requiredMask} (or a target
+     * state's entry mask, or an accepting state's accept mask) includes
+     * {@link Tnfa#ABS_BEGIN}, the one position predicate that can only
+     * hold at absolute position 0. When true, a walk started anywhere
+     * past 0 can never accept (the gate sits at {@code pos > 0} on every
+     * accepting path), so the search ladder's restart enumeration — the
+     * unit-semantics per-position loop with no trigger bound under
+     * java.util.regex semantics — is provably fruitless and collapses to
+     * the exact walk at the search origin. This is the root fix for the
+     * campaign 2026-10-16 finding-3 restart quadratic on
+     * {@code .*}-before-anchor shapes ({@code .*(?:\A\W )h},
+     * {@code .+^\W} — a non-multiline {@code ^} compiles to ABS_BEGIN);
+     * the shapes whose anchors are avoidable ({@code (\A|.)x}) or
+     * multiline ({@code (?m)^}, BEGIN_TEXT) keep the ladder.
+     *
+     * <p>SOUNDNESS (never claim bound when a restart could match): the
+     * reachability walks only edges that are live at some position
+     * {@code > 0} — range entries without ABS_BEGIN in their
+     * requiredMask whose target's entry mask also lacks it — and counts
+     * an accepting state as restart-usable only when its accept itself
+     * can hold past 0: accept mask without ABS_BEGIN, or (for the
+     * position-aware φ table) a non-suppressed cell at a flag index
+     * without ABS_BEGIN. Conservatism is one-directional: a shadowed
+     * range or an unreachable-in-practice cell can only keep the ladder
+     * alive, never kill it. Dead markers ({@code target < 0}) kill walks
+     * and never enable accepts. The whole/partial-whole side tables are
+     * the matches()-surface's own graph and are deliberately excluded —
+     * the restart ladder reads {@link #ranges} only.
+     */
+    public boolean absBeginBound() {
+        int cached = absBeginBoundCache;
+        if (cached >= 0) {
+            return cached == 1;
+        }
+        boolean bound = computeAbsBeginBound();
+        absBeginBoundCache = bound ? 1 : 0;
+        return bound;
+    }
+
+    private boolean computeAbsBeginBound() {
+        // The start state itself gated (\A at the pattern head): every walk
+        // past the origin dies at entry — the classic collapse, folded in.
+        if (stateEntryMask != null && (stateEntryMask[startState] & Tnfa.ABS_BEGIN) != 0) {
+            return true;
+        }
+        // BFS over restart-live edges from the start state.
+        boolean[] seen = new boolean[stateCount];
+        int[] queue = new int[stateCount];
+        int head = 0, tail = 0;
+        seen[startState] = true;
+        queue[tail++] = startState;
+        while (head < tail) {
+            int s = queue[head++];
+            if ((stateMeta[s] & 1) != 0 && acceptUsablePastZero(s)) {
+                return false;
+            }
+            int base = stateBase[s];
+            int count = rangeCount(stateMeta[s]);
+            for (int i = 0; i < count; i++) {
+                int o = (base + i) * 5;
+                int t = ranges[o + 2];
+                if (t < 0 || seen[t]) {
+                    continue; // dead marker, or already queued via live edges
+                }
+                if ((ranges[o + 4] & Tnfa.ABS_BEGIN) != 0) {
+                    continue; // \A-gated transition: crossable only at pos 0
+                }
+                if (stateEntryMask != null && (stateEntryMask[t] & Tnfa.ABS_BEGIN) != 0) {
+                    continue; // gated target entry: enterable only at pos 0
+                }
+                seen[t] = true;
+                queue[tail++] = t;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Whether accepting state {@code s} can record an accept at some
+     * position {@code > 0} (see {@link #absBeginBound()}): the position
+     * table is authoritative when present (a cell {@code >= 0} at a flag
+     * index without ABS_BEGIN is an alive accept config there); a plain
+     * accept mask must lack ABS_BEGIN; no mask at all accepts
+     * unconditionally.
+     */
+    private boolean acceptUsablePastZero(int s) {
+        if (stateFinalOpsByMask != null) {
+            int cells = posFlagCells();
+            for (int i = 0; i < cells; i++) {
+                if ((i & Tnfa.ABS_BEGIN) == 0 && stateFinalOpsByMask[s * cells + i] >= 0) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        int am = stateAcceptMask == null ? 0 : stateAcceptMask[s];
+        return (am & Tnfa.ABS_BEGIN) == 0;
     }
 
     /**

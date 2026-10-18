@@ -276,6 +276,15 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      */
     private final boolean needsFinalEnd;
     /**
+     * Derived (see {@link Tdfa#absBeginBound()}): every accepting path
+     * crosses an {@code \A} gate, so no walk started past position 0 can
+     * accept — the restart ladders collapse to the exact walk at the
+     * origin (the root fix for the campaign 2026-10-16 finding-3
+     * {@code .*}-anchor restart quadratic; subsumes the old
+     * start-state-gated collapse).
+     */
+    private final boolean absBeginBound;
+    /**
      * Cells per state in the posFlags-indexed tables (see
      * {@link Tdfa#posFlagCells()}); runtime posFlags values stay below it.
      */
@@ -412,6 +421,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         // they distinguish (see Tdfa.posFlagDeps) — no per-consumer model to keep in sync.
         this.needsWordFlags = (tdfa.posFlagDeps() & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY)) != 0;
         this.needsFinalEnd = (tdfa.posFlagDeps() & Tnfa.FINAL_END) != 0;
+        // Derived (see Tdfa.absBeginBound): every accepting path crosses an
+        // \A gate — restart enumeration past the origin is provably fruitless.
+        this.absBeginBound = tdfa.absBeginBound();
         this.wordBits = RunnerTables.buildWordBits(tdfa.unicodeWordBoundary ? tdfa.wordRanges : null);
         this.startBits =
             (literalNeedle == null && (tdfa.stateMeta[tdfa.startState] & 1) == 0) ? buildStartBits() : null;
@@ -827,7 +839,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             if (fastPath) {
                 return runStringFindFast(s, len, sc);
             }
-            int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? 0 : len;
+            int maxStart = absBeginBound ? 0 : len;
             if (maxStart > 0) {
                 // One exact walk from 0 first: for prefix-chain DFAs (e.g.
                 // \p{L}{256}) a match at/near 0 answers in O(len) while the
@@ -1155,7 +1167,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * String find with anchor enforcement and register extraction.
      */
     private MatchHolder runStringExtract(String input, int from, int to, MatchScratch sc) {
-        int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? 0 : to;
+        int maxStart = absBeginBound ? 0 : to;
         // One exact walk from `from` first (match at/near from is the common
         // case and answers in O(len) — cheaper than any pre-check; see find()).
         {
@@ -1280,7 +1292,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                     return h;
                 }
                 trace(Strategy.WALK_RESTART);
-                int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? from : to;
+                int maxStart = absBeginBound ? from : to;
                 for (int s = Math.max(from + 1, w); s <= maxStart; s++) {
                     checkMatchDeadline(s);
                     if (scanSkipsPairs && Alphabet.pairInterior(input, s)) {
@@ -1308,7 +1320,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      */
     private MatchHolder forcedRestart(String input, int from, int to, MatchScratch sc) {
         trace(Strategy.WALK_RESTART);
-        int maxStart = (startStateEntryMask & Tnfa.ABS_BEGIN) != 0 ? from : to;
+        int maxStart = absBeginBound ? from : to;
         for (int s = from; s <= maxStart; s++) {
             checkMatchDeadline(s);
             if (scanSkipsPairs && s > from && Alphabet.pairInterior(input, s)) {
@@ -1750,6 +1762,12 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     public MatchHolder restartExtract(String input, int fromStart, int to, int from0, MatchScratch sc) {
         if (sc == null) {
             sc = new MatchScratch();
+        }
+        // Abs-begin-bound artifact: every walk from fromStart >= 1 crosses
+        // an \A gate at pos > 0 and dies (see Tdfa.absBeginBound) — the
+        // loop is provably fruitless. All callers pass fromStart >= 1.
+        if (absBeginBound) {
+            return null;
         }
         for (int s = fromStart; s <= to; s++) {
             checkMatchDeadline(s);
@@ -2703,7 +2721,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                     if (anchored) {
                         return null;
                     }
-                    if ((startStateEntryMask & Tnfa.ABS_BEGIN) != 0) {
+                    if (absBeginBound) {
                         return null;
                     }
                     startSearch++;
@@ -2843,7 +2861,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             if (anchored) {
                 return null;
             }
-            if ((startStateEntryMask & Tnfa.ABS_BEGIN) != 0) {
+            if (absBeginBound) {
                 return null;
             }
             startSearch++;
