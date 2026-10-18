@@ -2918,8 +2918,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         if ((mask & Tnfa.ABS_END) != 0 && pos != len) {
             return false;
         }
-        if ((mask & Tnfa.BEGIN_TEXT) != 0
-            && !((emptyLastLine || pos < len) && (pos == 0 || lineBegin(s, pos, len)))) {
+        if ((mask & Tnfa.BEGIN_TEXT) != 0 && !((emptyLastLine || pos < len) && (pos == 0 || lineBegin(s, pos, len)))) {
             return false;
         }
         if ((mask & Tnfa.END_TEXT) != 0 && !(pos == len || lineEnd(s, pos, len))) {
@@ -2946,8 +2945,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         if ((mask & Tnfa.ABS_END) != 0 && pos != len) {
             return false;
         }
-        if ((mask & Tnfa.BEGIN_TEXT) != 0
-            && !((emptyLastLine || pos < len) && (pos == 0 || lineBegin(s, pos, len)))) {
+        if ((mask & Tnfa.BEGIN_TEXT) != 0 && !((emptyLastLine || pos < len) && (pos == 0 || lineBegin(s, pos, len)))) {
             return false;
         }
         if ((mask & Tnfa.END_TEXT) != 0 && !(pos == len || lineEnd(s, pos, len))) {

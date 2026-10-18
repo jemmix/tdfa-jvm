@@ -44,48 +44,48 @@ class PositionFlagMaskTest {
         List<String[]> cs = new ArrayList<>();
         // ABS_BEGIN behind a consuming loop: the \A-gated state's entry
         // probe runs per step; a match can only cross it at position 0.
-        cs.add(new String[] { ".*(?:\\A\\W )h", "ab cd h" });
-        cs.add(new String[] { ".*(?:\\A\\W )h", "! h" });
-        cs.add(new String[] { ".*(?:\\A\\W )h", "ab! h" });
-        cs.add(new String[] { ".+\\A.", "ab" });
+        cs.add(new String[]{".*(?:\\A\\W )h", "ab cd h"});
+        cs.add(new String[]{".*(?:\\A\\W )h", "! h"});
+        cs.add(new String[]{".*(?:\\A\\W )h", "ab! h"});
+        cs.add(new String[]{".+\\A.", "ab"});
         // ABS_END behind a loop: entry probe at pos == len only.
-        cs.add(new String[] { "[a-z]+d\\z", "abcd" });
-        cs.add(new String[] { "[a-z]+d\\z", "abcde" });
-        cs.add(new String[] { ".+\\z.", "ab" });
+        cs.add(new String[]{"[a-z]+d\\z", "abcd"});
+        cs.add(new String[]{"[a-z]+d\\z", "abcde"});
+        cs.add(new String[]{".+\\z.", "ab"});
         // BEGIN_TEXT under (?m): after any terminator, never at end of
         // input ("Perl does not match ^ at end of input even after
         // newline"); never inside a \r\n pair.
-        cs.add(new String[] { "(?m)a*^b", "a\nb" });
-        cs.add(new String[] { "(?m)a*^b", "ab" });
-        cs.add(new String[] { "(?m)x^b", "x\nb" });
-        cs.add(new String[] { "(?m)^b", "a\r\nb" });
+        cs.add(new String[]{"(?m)a*^b", "a\nb"});
+        cs.add(new String[]{"(?m)a*^b", "ab"});
+        cs.add(new String[]{"(?m)x^b", "x\nb"});
+        cs.add(new String[]{"(?m)^b", "a\r\nb"});
         // END_TEXT under (?m): before any terminator minus \r\n interiors
         // (JDK: (?m)$ on "a\r\nb" matches at 1 and 4, never at 2).
-        cs.add(new String[] { "(?m)a$", "a\r\nb" });
-        cs.add(new String[] { "(?m)a$.x", "a\r\nb" });
+        cs.add(new String[]{"(?m)a$", "a\r\nb"});
+        cs.add(new String[]{"(?m)a$.x", "a\r\nb"});
         // FINAL_END (plain $): "a\n\n" matches at 2 and 3; on "a\r\n" at 1
         // and 3 — the \r position owns the pair.
-        cs.add(new String[] { "a$", "a\n\n" });
-        cs.add(new String[] { "\\n$a", "a\n\na" });
-        cs.add(new String[] { "a$", "a\r\n" });
+        cs.add(new String[]{"a$", "a\n\n"});
+        cs.add(new String[]{"\\n$a", "a\n\na"});
+        cs.add(new String[]{"a$", "a\r\n"});
         // WORD_BOUNDARY behind a loop near supplementary letters: the pair
         // decodes to the full codepoint under (?u).
-        cs.add(new String[] { "(?u)x+\\b.", "xx" + SUP });
-        cs.add(new String[] { "(?u)x+\\B.", "xx\ud835" });
-        cs.add(new String[] { "(?u)\\w+\\b", "ab" + SUP + "cd" });
-        cs.add(new String[] { "(?u)\\b\\w+\\b", "ab cd " + SUP });
+        cs.add(new String[]{"(?u)x+\\b.", "xx" + SUP});
+        cs.add(new String[]{"(?u)x+\\B.", "xx\ud835"});
+        cs.add(new String[]{"(?u)\\w+\\b", "ab" + SUP + "cd"});
+        cs.add(new String[]{"(?u)\\b\\w+\\b", "ab cd " + SUP});
         // NO_WORD_BOUNDARY mid-word and at supplementary adjacency
-        cs.add(new String[] { "(?u)ab\\Bcd", "abcd" });
-        cs.add(new String[] { "(?u)ab\\Bcd", "ab cd" });
-        cs.add(new String[] { "(?u)" + SUP + "\\B" + SUP, SUP + SUP });
+        cs.add(new String[]{"(?u)ab\\Bcd", "abcd"});
+        cs.add(new String[]{"(?u)ab\\Bcd", "ab cd"});
+        cs.add(new String[]{"(?u)" + SUP + "\\B" + SUP, SUP + SUP});
         // CI fold-mask interplay (non-disjoint candidate loop + entryNext):
         // the K/k fold orbit under (?i) carries required masks on entries.
-        cs.add(new String[] { "(?i).+[k]x", "abkx" });
-        cs.add(new String[] { "(?i).+[k]x", "ab" + KELVIN + "x" });
-        cs.add(new String[] { "(?i)(?:\\Ak|q)+", "kqk" });
+        cs.add(new String[]{"(?i).+[k]x", "abkx"});
+        cs.add(new String[]{"(?i).+[k]x", "ab" + KELVIN + "x"});
+        cs.add(new String[]{"(?i)(?:\\Ak|q)+", "kqk"});
         // Mixed bits on one ladder: anchor + boundary branches
-        cs.add(new String[] { "(?:\\Ax|\\By)+", "x y x" });
-        cs.add(new String[] { "(?:\\Ax|\\By)+", "y y" });
+        cs.add(new String[]{"(?:\\Ax|\\By)+", "x y x"});
+        cs.add(new String[]{"(?:\\Ax|\\By)+", "y y"});
         return cs;
     }
 
