@@ -994,7 +994,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         // Entry check for start state — inline
         {
             int entryReq = sem[state];
-            if (entryReq != 0 && (positionFlagsCS(input, pos, to) & entryReq) != entryReq) {
+            if (entryReq != 0 && !maskSatisfiedCS(input, pos, to, entryReq)) {
                 return null;
             }
         }
@@ -1108,7 +1108,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
               // transition's ops run (see extractFrom).
             int width = c > 0xFFFF ? 2 : 1;
             int entryReqNext = sem[chosenTarget];
-            if (entryReqNext != 0 && (positionFlagsCS(input, pos + width, to) & entryReqNext) != entryReqNext) {
+            if (entryReqNext != 0 && !maskSatisfiedCS(input, pos + width, to, entryReqNext)) {
                 return null;
             }
             if (regs != null) {
@@ -1353,7 +1353,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         // Entry check for start state — inline
         {
             int entryReq = sem[state];
-            if (entryReq != 0 && (positionFlags(input, pos, to) & entryReq) != entryReq) {
+            if (entryReq != 0 && !maskSatisfied(input, pos, to, entryReq)) {
                 return null;
             }
         }
@@ -1543,7 +1543,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             // reporting empty instead of null).
             int width = c > 0xFFFF ? 2 : 1;
             int entryReqNext = sem[chosenTarget];
-            if (entryReqNext != 0 && (positionFlags(input, pos + width, to) & entryReqNext) != entryReqNext) {
+            if (entryReqNext != 0 && !maskSatisfied(input, pos + width, to, entryReqNext)) {
                 break;
             }
             if (regs != null) {
@@ -2305,7 +2305,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         // Entry check for start state — inline
         {
             int entryReq = sem[state];
-            if (entryReq != 0 && (positionFlags(input, 0, to) & entryReq) != entryReq) {
+            if (entryReq != 0 && !maskSatisfied(input, 0, to, entryReq)) {
                 return -1;
             }
         }
@@ -2341,8 +2341,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                     int target = rg[mo + 2];
                     if (target >= 0) {
                         int requiredMask = rg[mo + 4];
-                        boolean maskOk = true;
-                        if (requiredMask != 0) {
+                        boolean maskOk = requiredMask == 0;
+                        if (!maskOk) {
                             if (posFlags < 0) {
                                 posFlags = positionFlags(input, pos, to);
                             }
@@ -2354,7 +2354,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                                 pos++;
                             }
                             int entryReq = sem[state];
-                            if (entryReq == 0 || (positionFlags(input, pos + 1, to) & entryReq) == entryReq) {
+                            if (entryReq == 0 || maskSatisfied(input, pos + 1, to, entryReq)) {
                                 matched = true;
                             } else {
                                 return lastAcceptPos == to ? lastAcceptPos : -1;
@@ -2396,7 +2396,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                         }
                         int entryReq = sem[state];
                         if (entryReq != 0) {
-                            if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
+                            if (!maskSatisfied(input, pos + 1, to, entryReq)) {
                                 return lastAcceptPos == to ? lastAcceptPos : -1;
                             }
                         }
@@ -2464,7 +2464,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                     }
                     int entryReq = sem[state];
                     if (entryReq != 0) {
-                        if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
+                        if (!maskSatisfied(input, pos + 1, to, entryReq)) {
                             return lastAcceptPos == to ? lastAcceptPos : -1;
                         }
                     }
@@ -2497,7 +2497,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         // Entry check for start state — inline
         {
             int entryReq = sem[state];
-            if (entryReq != 0 && (positionFlags(input, pos, to) & entryReq) != entryReq) {
+            if (entryReq != 0 && !maskSatisfied(input, pos, to, entryReq)) {
                 return -1;
             }
         }
@@ -2572,10 +2572,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                         pos++;
                     }
                     int entryReq = sem[state];
-                    if (entryReq != 0) {
-                        if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
-                            return haveAccept ? lastAcceptPos : -1;
-                        }
+                    if (entryReq != 0 && !maskSatisfied(input, pos + 1, to, entryReq)) {
+                        return haveAccept ? lastAcceptPos : -1;
                     }
                     matched = true;
                 }
@@ -2610,10 +2608,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                         pos++;
                     }
                     int entryReq = sem[state];
-                    if (entryReq != 0) {
-                        if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
-                            return haveAccept ? lastAcceptPos : -1;
-                        }
+                    if (entryReq != 0 && !maskSatisfied(input, pos + 1, to, entryReq)) {
+                        return haveAccept ? lastAcceptPos : -1;
                     }
                     matched = true;
                     break;
@@ -2665,10 +2661,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                         pos++;
                     }
                     int entryReq = sem[state];
-                    if (entryReq != 0) {
-                        if ((positionFlags(input, pos + 1, to) & entryReq) != entryReq) {
-                            return haveAccept ? lastAcceptPos : -1;
-                        }
+                    if (entryReq != 0 && !maskSatisfied(input, pos + 1, to, entryReq)) {
+                        return haveAccept ? lastAcceptPos : -1;
                     }
                     matched = true;
                 }
@@ -2705,7 +2699,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             // Entry check for start state — inline
             {
                 int entryReq = stateEntryMask[state];
-                if (entryReq != 0 && (positionFlagsCS(input, pos, to) & entryReq) != entryReq) {
+                if (entryReq != 0 && !maskSatisfiedCS(input, pos, to, entryReq)) {
                     if (anchored) {
                         return null;
                     }
@@ -2823,7 +2817,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 // Mask before ops — see extractFrom.
                 int width = c > 0xFFFF ? 2 : 1;
                 int entryReqNext = stateEntryMask[chosenTarget];
-                if (entryReqNext != 0 && (positionFlagsCS(input, pos + width, to) & entryReqNext) != entryReqNext) {
+                if (entryReqNext != 0 && !maskSatisfiedCS(input, pos + width, to, entryReqNext)) {
                     break;
                 }
                 if (regs != null) {
@@ -2895,6 +2889,81 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             return u[state] == 0;
         }
         return stopOnAcceptMask[state * posCells + posFlags] != Tdfa.NEVER_STOP;
+    }
+
+    /**
+     * Mask-directed subset test: {@code (positionFlags(s, pos, len) & mask)
+     * == mask} evaluated bit-by-bit, cheapest bits first, WITHOUT
+     * materialising the bits the mask never reads (the campaign 2026-10-16
+     * finding-3 per-step cost: an {@code \A}-gated ladder step pays one
+     * comparison here instead of the full line/word predicate battery).
+     * Used at the single-shot consult sites — the start-state entry check
+     * (once per walk) and the post-transition entry check (once per step,
+     * for the position AFTER the consumed char, which no other probe of
+     * the step reads) — while the candidate loops and accept/stop probes,
+     * which may consult the same position's bits repeatedly within one
+     * step, keep the one-shot cached {@link #positionFlags} computation
+     * (a per-candidate mask-directed call recomputes the word pair per
+     * candidate and measured 40% slower on the \b-heavy campaign seed).
+     * Each bit's formula is the exact twin of the one in {@code
+     * positionFlags}; the word pair is computed once when either boundary
+     * bit is requested. A mask containing both {@code WORD_BOUNDARY} and
+     * {@code NO_WORD_BOUNDARY} is unsatisfiable by construction — the
+     * computed flags are exclusive, so the subset test can never hold.
+     */
+    private boolean maskSatisfied(String s, int pos, int len, int mask) {
+        if ((mask & Tnfa.ABS_BEGIN) != 0 && pos != 0) {
+            return false;
+        }
+        if ((mask & Tnfa.ABS_END) != 0 && pos != len) {
+            return false;
+        }
+        if ((mask & Tnfa.BEGIN_TEXT) != 0
+            && !((emptyLastLine || pos < len) && (pos == 0 || lineBegin(s, pos, len)))) {
+            return false;
+        }
+        if ((mask & Tnfa.END_TEXT) != 0 && !(pos == len || lineEnd(s, pos, len))) {
+            return false;
+        }
+        if ((mask & Tnfa.FINAL_END) != 0 && !finalEnd(s, pos, len)) {
+            return false;
+        }
+        int wb = mask & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY);
+        if (wb == (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY)) {
+            return false;
+        }
+        if (wb != 0 && (isWordBefore(s, pos) != isWordAt(s, pos, len)) != (wb == Tnfa.WORD_BOUNDARY)) {
+            return false;
+        }
+        return true;
+    }
+
+    /** CharSequence twin of {@link #maskSatisfied(String, int, int, int)}. */
+    private boolean maskSatisfiedCS(CharSequence s, int pos, int len, int mask) {
+        if ((mask & Tnfa.ABS_BEGIN) != 0 && pos != 0) {
+            return false;
+        }
+        if ((mask & Tnfa.ABS_END) != 0 && pos != len) {
+            return false;
+        }
+        if ((mask & Tnfa.BEGIN_TEXT) != 0
+            && !((emptyLastLine || pos < len) && (pos == 0 || lineBegin(s, pos, len)))) {
+            return false;
+        }
+        if ((mask & Tnfa.END_TEXT) != 0 && !(pos == len || lineEnd(s, pos, len))) {
+            return false;
+        }
+        if ((mask & Tnfa.FINAL_END) != 0 && !finalEnd(s, pos, len)) {
+            return false;
+        }
+        int wb = mask & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY);
+        if (wb == (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY)) {
+            return false;
+        }
+        if (wb != 0 && (isWordBefore(s, pos) != isWordAt(s, pos, len)) != (wb == Tnfa.WORD_BOUNDARY)) {
+            return false;
+        }
+        return true;
     }
 
     /**

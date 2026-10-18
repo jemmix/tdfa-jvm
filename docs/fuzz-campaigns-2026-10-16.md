@@ -138,16 +138,26 @@ The pre-soak fix pass, landed as #69–#71:
   group are skipped as `JURLANE_GUARD` records (0.33 % of jur cases; the
   re2j lane still runs them). All three >100 s bomb seeds now replay
   instantly with a guard notice.
-- **Finding 3 → bounded (#70).** A per-operation match-work budget
-  (`tdfa.budget.match.ms`, default 2 s wall — a WALL bound, not steps:
-  the diseases are per-step cost explosions on step counts legit work
-  also reaches; the conformance suite caught a first steps-based cut
-  false-tripping on `[a-z]+qrst`-style churn) checked once per 256
-  restart-loop iterations, so the walk leaves stay pristine (a per-step
-  debit cost 10–14 % on the scan benches). All six engine-spin seeds
-  replay in 1–3 s with the classified `MATCH_BUDGET` record; a 2-minute
-  mixed soak ran 276 K cases with zero hangs. The root quadratic (no
-  trigger bound under unit semantics) stays open in TODO.
+- **Finding 3 → bounded (#70), root work started.** A per-operation
+  match-work budget (`tdfa.budget.match.ms`, default 2 s wall — a WALL
+  bound, not steps: the diseases are per-step cost explosions on step
+  counts legit work also reaches; the conformance suite caught a first
+  steps-based cut false-tripping on `[a-z]+qrst`-style churn) checked
+  once per 256 restart-loop iterations, so the walk leaves stay pristine
+  (a per-step debit cost 10–14 % on the scan benches). All six engine-spin
+  seeds replay in 1–3 s with the classified `MATCH_BUDGET` record; a
+  2-minute mixed soak ran 276 K cases with zero hangs. The root quadratic
+  (no trigger bound under unit semantics) stays open in TODO.
+  Root-work note (2026-10-18): profiling the finding-3 seeds split the
+  per-step cost into two diseases — (a) the position-flag battery at
+  every entry/required-mask probe (the emitted tier computed the word
+  pair even for `\b`-free artifacts), addressed by mask-directed probes
+  (`maskSatisfied` at the entry/entryNext sites; `positionFlagsC`
+  specialized by `posFlagDeps()`), and (b) the restart ladder itself
+  (n restarts × O(n) walk, each step paying a ~800-candidate prefix-max
+  back-scan on the CI+UCC fold-expanded states) — (b) is the open
+  `.*`-anchor TODO item and the reason the stretched-seed spins remain
+  budget-contained for now.
 - **Finding 1 → fixed (#71).** Root cause: java.util.regex folds WRITTEN
   ranges by a simple-case IMAGE test, not the member-orbit closure it
   uses for singles/literals — `satisfies(c, R) ⟺ IMG(c) ∩ R ≠ ∅` plus

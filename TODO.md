@@ -9,7 +9,6 @@ git history (TODO.md before 2026-09-30).
 - [ ] JUR-compat evidence re-base tail: both-lane overnight soak + README numbers ([design](docs/jur-compat-default.md), [work breakdown](docs/jur-compat-wbs.md))
 - [ ] Fix quantified-group alternation order vs jur (`(\A|.?o*.){3}` seeds) — root-caused: GroupCurly commits the first `cmin` iterations; `matches()` diverges on `{n≥2}` shapes ([campaign follow-ups](docs/fuzz-campaigns-2026-10-16.md))
 - [ ] Fix forcedRestart quadratic scans on `.*`-anchor shapes (unit-semantics ladder has no trigger bound; contained by the match budget since #70)
-- [ ] Fast-path positionFlags word scans (isUnicodeWordCodepoint cost)
 - [ ] Retire known-divergence classifiers once engines agree everywhere (last family: the GroupCurly item)
 - [ ] Overnight soak with cross-rung on, both lanes (`-Pfuzz.lane` pins; mix by default); refresh README fuzz numbers; target: zero mismatches, zero hangs — first pass found [six findings](docs/fuzz-campaigns-2026-10-16.md), 1/3/4 addressed
 - [ ] Fuzz families for fact-gated rungs: literal, prefix, cand-scan, anchored-fast

@@ -198,7 +198,7 @@ public final class TdfaAsmBackend {
             if (tdfa.registerCount() > 0 && !stackRegs) {
                 genPhi(cw, tdfa);
             }
-            genPositionFlagsC(cw, owner, tdfa.unicodeWordBoundary(), pfAxes(tdfa));
+            genPositionFlagsC(cw, owner, tdfa.unicodeWordBoundary(), pfAxes(tdfa), tdfa.posFlagDeps());
             if (tdfa.unicodeWordBoundary()) {
                 genIsUnicodeWordChar(cw, owner);
                 genIsWordBefore(cw, owner);
@@ -862,7 +862,18 @@ public final class TdfaAsmBackend {
 
     // ===== positionFlagsC — position flags over String (helper) =====
 
-    private static void genPositionFlagsC(ClassWriter cw, String owner, boolean unicodeWord, PfAxes ax) {
+    /**
+     * Emits {@code positionFlagsC(pos, len, input)}, SPECIALIZED by the
+     * artifact's {@link Tdfa#posFlagDeps()} — the derived source of truth
+     * for which flag bits any consumed mask or M-indexed table actually
+     * distinguishes: a bit outside deps never changes an emitted consumer's
+     * verdict (mask subset tests don't read it; table cells don't differ
+     * across it), so its computation is dead weight and is simply not
+     * emitted. The campaign 2026-10-16 finding-3 cost lived exactly here —
+     * the unconditional word pair (and line predicates) ran per mask check
+     * on artifacts whose masks only ever read {@code \A}.
+     */
+    private static void genPositionFlagsC(ClassWriter cw, String owner, boolean unicodeWord, PfAxes ax, int deps) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "positionFlagsC",
             "(IILjava/lang/String;)I", null, null);
         mv.visitCode();
@@ -872,45 +883,53 @@ public final class TdfaAsmBackend {
 
         // BEGIN_TEXT: pos == 0 (unless java's (?m)^ end-of-input exclusion
         // applies — see emitBeginTextLineBit) || lineBegin(pos)
-        emitBeginTextLineBit(mv, 2, 0, 1, 3, 4, ax);
+        if ((deps & Tnfa.BEGIN_TEXT) != 0) {
+            emitBeginTextLineBit(mv, 2, 0, 1, 3, 4, ax);
+        }
 
         // END_TEXT: pos == len
-        mv.visitVarInsn(Opcodes.ILOAD, 0);
-        mv.visitVarInsn(Opcodes.ILOAD, 1);
-        Label l2 = new Label();
-        mv.visitJumpInsn(Opcodes.IF_ICMPNE, l2);
-        mv.visitInsn(Opcodes.ICONST_2);
-        mv.visitVarInsn(Opcodes.ILOAD, 3);
-        mv.visitInsn(Opcodes.IOR);
-        mv.visitVarInsn(Opcodes.ISTORE, 3);
-        mv.visitLabel(l2);
+        if ((deps & Tnfa.END_TEXT) != 0) {
+            mv.visitVarInsn(Opcodes.ILOAD, 0);
+            mv.visitVarInsn(Opcodes.ILOAD, 1);
+            Label l2 = new Label();
+            mv.visitJumpInsn(Opcodes.IF_ICMPNE, l2);
+            mv.visitInsn(Opcodes.ICONST_2);
+            mv.visitVarInsn(Opcodes.ILOAD, 3);
+            mv.visitInsn(Opcodes.IOR);
+            mv.visitVarInsn(Opcodes.ISTORE, 3);
+            mv.visitLabel(l2);
 
-        // || lineEnd(pos): before-terminator, axis-selected
-        emitEndTextLineBit(mv, 2, 0, 1, 3, 5, ax);
+            // || lineEnd(pos): before-terminator, axis-selected
+            emitEndTextLineBit(mv, 2, 0, 1, 3, 5, ax);
+        }
 
         // ABS_BEGIN (\A): pos == 0, always (never affected by (?m))
-        mv.visitVarInsn(Opcodes.ILOAD, 0);
-        Label lab = new Label();
-        mv.visitJumpInsn(Opcodes.IFNE, lab);
-        mv.visitIntInsn(Opcodes.BIPUSH, 16);
-        mv.visitVarInsn(Opcodes.ILOAD, 3);
-        mv.visitInsn(Opcodes.IOR);
-        mv.visitVarInsn(Opcodes.ISTORE, 3);
-        mv.visitLabel(lab);
+        if ((deps & Tnfa.ABS_BEGIN) != 0) {
+            mv.visitVarInsn(Opcodes.ILOAD, 0);
+            Label lab = new Label();
+            mv.visitJumpInsn(Opcodes.IFNE, lab);
+            mv.visitIntInsn(Opcodes.BIPUSH, 16);
+            mv.visitVarInsn(Opcodes.ILOAD, 3);
+            mv.visitInsn(Opcodes.IOR);
+            mv.visitVarInsn(Opcodes.ISTORE, 3);
+            mv.visitLabel(lab);
+        }
 
         // ABS_END (\z): pos == len, always
-        mv.visitVarInsn(Opcodes.ILOAD, 0);
-        mv.visitVarInsn(Opcodes.ILOAD, 1);
-        Label lae = new Label();
-        mv.visitJumpInsn(Opcodes.IF_ICMPNE, lae);
-        mv.visitIntInsn(Opcodes.BIPUSH, 32);
-        mv.visitVarInsn(Opcodes.ILOAD, 3);
-        mv.visitInsn(Opcodes.IOR);
-        mv.visitVarInsn(Opcodes.ISTORE, 3);
-        mv.visitLabel(lae);
+        if ((deps & Tnfa.ABS_END) != 0) {
+            mv.visitVarInsn(Opcodes.ILOAD, 0);
+            mv.visitVarInsn(Opcodes.ILOAD, 1);
+            Label lae = new Label();
+            mv.visitJumpInsn(Opcodes.IF_ICMPNE, lae);
+            mv.visitIntInsn(Opcodes.BIPUSH, 32);
+            mv.visitVarInsn(Opcodes.ILOAD, 3);
+            mv.visitInsn(Opcodes.IOR);
+            mv.visitVarInsn(Opcodes.ISTORE, 3);
+            mv.visitLabel(lae);
+        }
 
         // FINAL_END (plain $, END_OF_TEXT_ONLY unset): end, or immediately
-        // before the final terminator run
+        // before the final terminator run (already deps-gated via PfAxes)
         emitFinalEndBit(mv, 2, 0, 1, 3, 4, ax);
 
         // prevWord = pos > 0 && isWordBefore(pos, len, input)   [unicode: decodes surrogate pairs]
@@ -918,67 +937,69 @@ public final class TdfaAsmBackend {
         // with its high surrogate, so \b adjacent to supplementary word chars is computed on
         // the full codepoint. ASCII mode keeps the inline char check (surrogate halves are
         // simply non-word there).
-        Label pf = new Label(), pd = new Label();
-        mv.visitVarInsn(Opcodes.ILOAD, 0);
-        mv.visitJumpInsn(Opcodes.IFLE, pf);
-        if (unicodeWord) {
+        if ((deps & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY)) != 0) {
+            Label pf = new Label(), pd = new Label();
             mv.visitVarInsn(Opcodes.ILOAD, 0);
-            mv.visitVarInsn(Opcodes.ILOAD, 1);
-            mv.visitVarInsn(Opcodes.ALOAD, 2);
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWordBefore", "(IILjava/lang/String;)Z", false);
-        } else {
-            mv.visitVarInsn(Opcodes.ALOAD, 2);
-            mv.visitVarInsn(Opcodes.ILOAD, 0);
-            mv.visitInsn(Opcodes.ICONST_1);
-            mv.visitInsn(Opcodes.ISUB);
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
+            mv.visitJumpInsn(Opcodes.IFLE, pf);
+            if (unicodeWord) {
+                mv.visitVarInsn(Opcodes.ILOAD, 0);
+                mv.visitVarInsn(Opcodes.ILOAD, 1);
+                mv.visitVarInsn(Opcodes.ALOAD, 2);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWordBefore", "(IILjava/lang/String;)Z", false);
+            } else {
+                mv.visitVarInsn(Opcodes.ALOAD, 2);
+                mv.visitVarInsn(Opcodes.ILOAD, 0);
+                mv.visitInsn(Opcodes.ICONST_1);
+                mv.visitInsn(Opcodes.ISUB);
+                mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
+                mv.visitVarInsn(Opcodes.ISTORE, 4);
+                emitIsWordBranch(mv, 4, pf, false, owner);
+                mv.visitInsn(Opcodes.ICONST_1);
+            }
+            mv.visitJumpInsn(Opcodes.GOTO, pd);
+            mv.visitLabel(pf);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitLabel(pd);
             mv.visitVarInsn(Opcodes.ISTORE, 4);
-            emitIsWordBranch(mv, 4, pf, false, owner);
-            mv.visitInsn(Opcodes.ICONST_1);
-        }
-        mv.visitJumpInsn(Opcodes.GOTO, pd);
-        mv.visitLabel(pf);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitLabel(pd);
-        mv.visitVarInsn(Opcodes.ISTORE, 4);
 
-        // currWord = pos < len && isWordAt(pos, len, input)
-        Label cf = new Label(), cd = new Label();
-        mv.visitVarInsn(Opcodes.ILOAD, 0);
-        mv.visitVarInsn(Opcodes.ILOAD, 1);
-        mv.visitJumpInsn(Opcodes.IF_ICMPGE, cf);
-        if (unicodeWord) {
+            // currWord = pos < len && isWordAt(pos, len, input)
+            Label cf = new Label(), cd = new Label();
             mv.visitVarInsn(Opcodes.ILOAD, 0);
             mv.visitVarInsn(Opcodes.ILOAD, 1);
-            mv.visitVarInsn(Opcodes.ALOAD, 2);
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWordAt", "(IILjava/lang/String;)Z", false);
-        } else {
-            mv.visitVarInsn(Opcodes.ALOAD, 2);
-            mv.visitVarInsn(Opcodes.ILOAD, 0);
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
-            mv.visitVarInsn(Opcodes.ISTORE, 5);
-            emitIsWordBranch(mv, 5, cf, false, owner);
-            mv.visitInsn(Opcodes.ICONST_1);
-        }
-        mv.visitJumpInsn(Opcodes.GOTO, cd);
-        mv.visitLabel(cf);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitLabel(cd);
+            mv.visitJumpInsn(Opcodes.IF_ICMPGE, cf);
+            if (unicodeWord) {
+                mv.visitVarInsn(Opcodes.ILOAD, 0);
+                mv.visitVarInsn(Opcodes.ILOAD, 1);
+                mv.visitVarInsn(Opcodes.ALOAD, 2);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "isWordAt", "(IILjava/lang/String;)Z", false);
+            } else {
+                mv.visitVarInsn(Opcodes.ALOAD, 2);
+                mv.visitVarInsn(Opcodes.ILOAD, 0);
+                mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
+                mv.visitVarInsn(Opcodes.ISTORE, 5);
+                emitIsWordBranch(mv, 5, cf, false, owner);
+                mv.visitInsn(Opcodes.ICONST_1);
+            }
+            mv.visitJumpInsn(Opcodes.GOTO, cd);
+            mv.visitLabel(cf);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitLabel(cd);
 
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
-        Label nb = new Label(), done = new Label();
-        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, nb);
-        mv.visitInsn(Opcodes.ICONST_4);
-        mv.visitVarInsn(Opcodes.ILOAD, 3);
-        mv.visitInsn(Opcodes.IOR);
-        mv.visitVarInsn(Opcodes.ISTORE, 3);
-        mv.visitJumpInsn(Opcodes.GOTO, done);
-        mv.visitLabel(nb);
-        mv.visitIntInsn(Opcodes.BIPUSH, 8);
-        mv.visitVarInsn(Opcodes.ILOAD, 3);
-        mv.visitInsn(Opcodes.IOR);
-        mv.visitVarInsn(Opcodes.ISTORE, 3);
-        mv.visitLabel(done);
+            mv.visitVarInsn(Opcodes.ILOAD, 4);
+            Label nb = new Label(), done = new Label();
+            mv.visitJumpInsn(Opcodes.IF_ICMPEQ, nb);
+            mv.visitInsn(Opcodes.ICONST_4);
+            mv.visitVarInsn(Opcodes.ILOAD, 3);
+            mv.visitInsn(Opcodes.IOR);
+            mv.visitVarInsn(Opcodes.ISTORE, 3);
+            mv.visitJumpInsn(Opcodes.GOTO, done);
+            mv.visitLabel(nb);
+            mv.visitIntInsn(Opcodes.BIPUSH, 8);
+            mv.visitVarInsn(Opcodes.ILOAD, 3);
+            mv.visitInsn(Opcodes.IOR);
+            mv.visitVarInsn(Opcodes.ISTORE, 3);
+            mv.visitLabel(done);
+        }
 
         mv.visitVarInsn(Opcodes.ILOAD, 3);
         mv.visitInsn(Opcodes.IRETURN);
