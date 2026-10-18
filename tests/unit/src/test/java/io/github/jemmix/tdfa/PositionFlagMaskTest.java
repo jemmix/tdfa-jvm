@@ -31,12 +31,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class PositionFlagMaskTest {
 
+    private static final String SUP = new String(Character.toChars(0x1D504)); // 𝔉 Fraktur A, a (?u) word char
+    private static final String KELVIN = new String(Character.toChars(0x212A)); // KELVIN SIGN, folds to k
+
     private static Stream<RegexEngineFactory> factories() {
         return Stream.<RegexEngineFactory>of(null, TdfaRunner::new);
     }
-
-    private static final String SUP = new String(Character.toChars(0x1D504)); // 𝔉 Fraktur A, a (?u) word char
-    private static final String KELVIN = new String(Character.toChars(0x212A)); // KELVIN SIGN, folds to k
 
     /** One case: the tdfa pattern (a leading {@code (?u)} maps to the
      *  oracle's UNICODE_CHARACTER_CLASS) and the input. */
