@@ -868,10 +868,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                     return candScanBool(s, 1, len);
                 }
                 // The trigger scan and the origin sim step CODEPOINTS; under
-                // unit semantics (CODEPOINT_BOUNDARIES unset) their "no match
-                // starts before W" proof would miss interior-unit starts, so
-                // the complete restart loop serves alone from position 1.
-                int w = scanSkipsPairs ? triggerScan(s, 0, len, sc) : 1;
+                // unit semantics (CODEPOINT_BOUNDARIES unset) the unit twin
+                // of the raw scan carries the interior-unit starts and
+                // bounds the complete restart loop the same way.
+                int w = scanSkipsPairs ? triggerScan(s, 0, len, sc) : unitTrigger(s, 0, len, sc);
                 if (w < 0) {
                     return false;
                 }
@@ -1198,11 +1198,12 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         // Trigger scan: memoized search-DFA pass that both proves no-match and
         // bounds the restart loop to the kill-point window (no configuration
         // alive before W can produce a match — see SearchDfa). Under unit
-        // semantics the proof is codepoint-stepped and would miss
-        // interior-unit starts (see find()), so the restart loop walks every
-        // position instead.
+        // semantics the codepoint-stepped memo proof would miss interior-unit
+        // starts, so the unit twin of the raw scan serves instead — same two
+        // products (no-match proof, kill-point window) with the interior
+        // seeds folded in (see unitRawScan).
         if (maxStart > 0) {
-            int w = scanSkipsPairs ? triggerScan(input, from, to, sc) : from + 1;
+            int w = scanSkipsPairs ? triggerScan(input, from, to, sc) : unitTrigger(input, from, to, sc);
             if (w < 0) {
                 return null;
             }
@@ -1270,13 +1271,12 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 // fall through
             case TRIGGER :
             case RAW_SCAN : {
-                // Unit semantics: the sim/trigger rungs step codepoints (see
-                // find()); a forced entry under them degrades to the complete
-                // restart floor, mirroring the natural ladder's routing.
-                if (!scanSkipsPairs) {
-                    return forcedRestart(input, from, to, sc);
-                }
-                int w = triggerScan(input, from, to, sc, force);
+                // The lane's own trigger rung: the codepoint memo under
+                // CODEPOINT_BOUNDARIES, the unit raw scan (interior seeds,
+                // see unitTrigger) under unit semantics — both bound the
+                // restart loop to the kill-point window below, mirroring
+                // the natural ladder's routing.
+                int w = scanSkipsPairs ? triggerScan(input, from, to, sc, force) : unitTrigger(input, from, to, sc);
                 if (w < 0) {
                     return null;
                 }
@@ -1626,6 +1626,17 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     }
 
     /**
+     * The unit-semantics trigger entry (see {@link #unitRawScan}): raw —
+     * the interior seeds break the memo's pure-row algebra — traced
+     * RAW_SCAN like the codepoint lane's raw fallback. Same contract as
+     * {@link #triggerScan}: kill-point window start or -1 = no match.
+     */
+    private int unitTrigger(String input, int from, int to, MatchScratch sc) {
+        trace(Strategy.RAW_SCAN);
+        return unitRawScan(input, from, to, from, null, sc);
+    }
+
+    /**
      * {@code force} = RAW_SCAN takes the unmemoized path regardless of
      * window size (forced-strategy hook); TRIGGER still degrades to raw on
      * a capped memo — the memo cannot grow past its budget.
@@ -1671,8 +1682,38 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     /**
      * Uncapped fallback: the unmemoized multi-state simulation with kill-point
      * tracking (kill = the pre-seed step set is empty). Returns W or -1.
+     * {@code unitSeeds} adds the unit-semantics interior seeds (see
+     * {@link #unitRawScan}).
      */
     private int rawScan(String input, int from, int to, int wIn, int[] liveIn, MatchScratch sc) {
+        return rawScan(input, from, to, wIn, liveIn, sc, false);
+    }
+
+    /**
+     * The unit-semantics trigger bound: {@link #rawScan} with the
+     * interior-unit seeds on. The codepoint-stepped simulation re-seeds
+     * only at codepoint boundaries; under unit semantics a match may also
+     * start at the INTERIOR unit of a surrogate pair, consuming the low
+     * surrogate as a lone BMP char and rejoining the codepoint-aligned
+     * stream one unit later — so at every {@code adv == 2} step the scan
+     * additionally merges {@code delta(startState, lone low unit)} into
+     * the next live set. With the interior seeds included, the two
+     * trigger products are sound under unit semantics exactly as under
+     * codepoint semantics: no accept live anywhere means no match at all
+     * ({@code -1}), and a live accept means every surviving configuration
+     * started at or after {@code W} (an interior config's origin is the
+     * pair's low position, which participates in the emptiness test and
+     * so never lets W advance past it). This is the bound the
+     * unit-semantics restart ladder was missing — the campaign
+     * 2026-10-16 finding-3 residue ({@code .+zz}-style tails, multiline
+     * gates) turns from n restarts x O(n) walks into one linear pass
+     * plus the restarts the window admits.
+     */
+    private int unitRawScan(String input, int from, int to, int wIn, int[] liveIn, MatchScratch sc) {
+        return rawScan(input, from, to, wIn, liveIn, sc, true);
+    }
+
+    private int rawScan(String input, int from, int to, int wIn, int[] liveIn, MatchScratch sc, boolean unitSeeds) {
         final int nwords = stateWords;
         int[] live = sc.takeLive(nwords);
         int[] next = sc.takeNext(nwords);
@@ -1724,6 +1765,35 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                                 next[t >>> 5] |= 1 << (t & 31);
                                 empty = false;
                             }
+                        }
+                    }
+                }
+            }
+            if (unitSeeds && adv == 2) {
+                // Interior-unit start at pos+1 (a real pair): the low unit
+                // consumed as a lone BMP char rejoins the aligned stream at
+                // pos+2 — merge its start-state targets into the next set.
+                // Mask-free like the rest of the scan: over-approximate.
+                int base = stateBase[startState];
+                int count = (stateMeta[startState] >>> 1) & 0xFFFF;
+                int lo = input.charAt(pos + 1);
+                int rlo = 0, rhi = count - 1, anchor = -1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    if (rg[(base + mid) * 5] <= lo) {
+                        anchor = mid;
+                        rlo = mid + 1;
+                    } else {
+                        rhi = mid - 1;
+                    }
+                }
+                for (int i = anchor; i >= 0 && rhp[base + i] >= lo; i--) {
+                    int mo = (base + i) * 5;
+                    if (lo <= rg[mo + 1]) {
+                        int t = rg[mo + 2];
+                        if (t >= 0) {
+                            next[t >>> 5] |= 1 << (t & 31);
+                            empty = false;
                         }
                     }
                 }
@@ -1822,6 +1892,17 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     @EmittedSurface
     public int triggerScanTop(String input, int from, int to, MatchScratch sc) {
         return triggerScan(input, from, to, sc != null ? sc : new MatchScratch());
+    }
+
+    /**
+     * The unit-semantics trigger bound (see {@link #unitTrigger}): window
+     * start W, or -1 = no match. Emitted-ladder hook — the ASM tier
+     * delegates so both ladders run the ONE scan definition.
+     * {@code sc} may be null (carrier-free engines' cold fallback).
+     */
+    @EmittedSurface
+    public int unitTriggerTop(String input, int from, int to, MatchScratch sc) {
+        return unitTrigger(input, from, to, sc != null ? sc : new MatchScratch());
     }
 
     /**
@@ -2042,11 +2123,16 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             trace(Strategy.CAND_SCAN);
             return candScanBool(input, 0, to);
         }
-        // Unit semantics: the trigger scan steps codepoints (see find());
-        // the complete per-unit walk floor serves instead.
+        // Unit semantics: the unit raw-scan trigger (interior seeds, see
+        // unitTrigger) — no match anywhere answers false in one pass; a
+        // window bounds the per-unit walk floor below it.
         if (!scanSkipsPairs) {
+            int w = unitTrigger(input, 0, to, sc);
+            if (w < 0) {
+                return false;
+            }
             trace(Strategy.WALK_RESTART);
-            for (int from = 0; from <= to; from++) {
+            for (int from = Math.max(1, w); from <= to; from++) {
                 checkMatchDeadline(from);
                 if (matchFromFast(input, from, to)) {
                     return true;
@@ -2168,12 +2254,17 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         //    Retrying every failed start with a full walk instead costs O(n)
         //    restarts × O(n) walk = O(n²) on dense-match regexes like
         //    [a-zA-Z]+ing.
-        //    Unit semantics (CODEPOINT_BOUNDARIES unset): the sim and the
-        //    trigger step codepoints and would miss interior-unit starts
-        //    (see find()); the complete per-unit restart floor serves.
+        //    Unit semantics (CODEPOINT_BOUNDARIES unset): the sim/trigger
+        //    steps codepoints, so the unit raw-scan trigger serves (interior
+        //    seeds, see unitTrigger) — same window bound, one linear pass
+        //    before the restart floor.
         if (!scanSkipsPairs) {
+            int w = unitTrigger(input, from, to, sc);
+            if (w < 0) {
+                return null;
+            }
             trace(Strategy.WALK_RESTART);
-            return restartExtract(input, from + 1, to, from, sc);
+            return restartExtract(input, Math.max(from + 1, w), to, from, sc);
         }
         trace(Strategy.ORIGIN_SIM);
         int leftmost = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS, sc);

@@ -162,10 +162,18 @@ The pre-soak fix pass, landed as #69–#71:
   (`Tdfa.absBeginBound()` — every accepting path crosses an \A gate ⇒
   restarts past the origin provably fruitless ⇒ the ladder collapses to
   the exact walk; replays now < 1 s, a 4 400-char no-match find
-  measures 2–5 ms). The residue — restarts genuinely viable (multiline
-  `(?m:$\d)` tails, avoidable anchors, plain `.+tail` shapes like
-  `. +zz`) — stays budget-contained pending the unit-semantics trigger
-  bound (the open TODO item).
+  measures 2–5 ms). The unit-semantics trigger bound followed
+  (`unitRawScan`: the raw scan's kill-point proof with interior-unit
+  seeds — at every surrogate pair the start state's transitions on the
+  lone low unit join the live set, making the no-match proof and the
+  kill-point window sound under unit semantics): the plain `.+tail`
+  family (`.+zz`, `\S{4,}\.`) went from 200–460 ms per 4 400-char
+  no-match find to 1–3 ms, and the multiline-gated seeds dropped to
+  1.5–2.3 s replays. The residue — boundary-gated alternations
+  (`(.+$\D|.+ x\D+)\b`) whose accepting states look live to the
+  mask-blind simulation, defeating the window early — stays
+  budget-contained (~170–250 ms per 4 400-char no-match find) pending a
+  mask-aware simulation or an accepted-residue decision (open TODO).
 - **Finding 1 → fixed (#71).** Root cause: java.util.regex folds WRITTEN
   ranges by a simple-case IMAGE test, not the member-orbit closure it
   uses for singles/literals — `satisfies(c, R) ⟺ IMG(c) ∩ R ≠ ∅` plus
