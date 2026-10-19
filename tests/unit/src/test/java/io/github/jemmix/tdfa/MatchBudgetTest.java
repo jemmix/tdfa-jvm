@@ -14,26 +14,29 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Match-time work bound ({@code tdfa.budget.match.ms}, wall milliseconds
- * per match operation): the safety net that bounds the search ladder's
- * degenerate shapes that REMAIN degenerate after the root fixes — the
- * finding-3 {@code \A}/`^`-anchor class collapsed to a linear walk by the
- * abs-begin ladder bound (see AbsBeginLadderBoundTest); the residue is
- * the multiline/avoidable-anchor family (scoped {@code (?m:$\d)}-style
- * gates with a {@code .*} prefix) whose restarts are genuinely viable and
- * whose walks still churn quadratically. A wall bound rather than a step
- * count because the diseases are per-step COST explosions on step counts
- * legit work also reaches: the spins and the conformance suite's heaviest
- * healthy churn both land at ~3–10 M walk steps while their wall times
- * differ by three orders. Healthy operations (microseconds to ~60 ms)
- * must never trip the default.
+ * per match operation): the safety net for the search-ladder shapes that
+ * REMAIN degenerate after the root fixes — the finding-3 {@code \A}/`^`
+ * class collapsed by the abs-begin ladder bound, and the plain {@code
+ * .+tail} / multiline classes bounded by the unit-semantics trigger; the
+ * residue is the boundary-gated-alternation family whose accepting
+ * states look live to the mask-blind simulation (an early trigger
+ * return), leaving the restart ladder's long walks unbounded. A wall
+ * bound rather than a step count because the diseases are per-step COST
+ * explosions on step counts legit work also reaches: the spins and the
+ * conformance suite's heaviest healthy churn both land at ~3–10 M walk
+ * steps while their wall times differ by three orders. Healthy
+ * operations (microseconds to ~60 ms) must never trip the default.
  */
 class MatchBudgetTest {
 
-    /** A still-degenerate shape: multiline-scoped {@code $} inside a
-     *  quantified group behind a {@code .*} prefix — every restart walk
-     *  scans to the end before the {@code (?m:$\d)b} tail dies; no
-     *  ABS_BEGIN gate exists, so the ladder bound cannot collapse it. */
-    private static final String RESTART_QUADRATIC = ".*(((?m:$\\d)b)\\s){0,4}n";
+    /** A still-degenerate shape: alternation of {@code .+} bodies with
+     *  boundary-gated accepts — the trigger's acceptBits over-approximation
+     *  reports an accept live at the scan's first step (the accepting
+     *  states' \b masks are invisible to the simulation), so the window
+     *  bound buys nothing and the restart ladder's walks scan to the end.
+     *  The narrow residue the unit-semantics trigger bound left behind
+     *  (see UnitTriggerBoundTest for the classes it did fix). */
+    private static final String RESTART_QUADRATIC = "(.+$\\D|.+ x\\D+)\\b";
 
     /** The campaign's finding-3 {@code \A}-anchor shape — root-fixed by
      *  the abs-begin ladder bound: kept here as the healthy canary. */
@@ -80,6 +83,11 @@ class MatchBudgetTest {
             // the abs-begin-bound shapes: collapsed to one exact walk
             // (the campaign's 39 s anchor spin — the root-fix canary)
             for (String p : new String[]{ANCHOR_COLLAPSED, ".+^\\W", ".{1,}(?:\\A\\w)\\w"}) {
+                assertThat(Pattern.compile(p).matcher("ab".repeat(2200)).find()).isFalse();
+            }
+            // the unit-trigger-bounded shapes: one linear raw scan proves
+            // no-match (the `.+tail` family — was n restarts × O(n) walks)
+            for (String p : new String[]{".+zz", "\\S{4,}\\.", ".*(((?m:$\\d)b)\\s){0,4}n"}) {
                 assertThat(Pattern.compile(p).matcher("ab".repeat(2200)).find()).isFalse();
             }
             assertThat(Pattern.compile(ANCHOR_COLLAPSED).matcher("! h").find()).isTrue();

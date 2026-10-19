@@ -668,10 +668,9 @@ public final class TdfaAsmBackend {
 
         // --- 2) budgeted origin sim, trigger fallback ---
         // CODEPOINT_BOUNDARIES axis: the sim/trigger rungs step codepoints,
-        // so under unit semantics their leftmost/kill-point proofs would
-        // miss interior-unit starts (runner ladders route the same way);
-        // the emitted ladder keeps rungs 1/1a/1b and falls straight to the
-        // complete restart floor.
+        // so the memo/sim serve under that axis; under unit semantics the
+        // unit raw-scan trigger (interior-unit seeds, delegated to the
+        // runner's one definition) bounds the restart floor the same way.
         Label noMatch1 = new Label();
         if (searchBound) {
             // bound artifact: leftmost = from (no sim/trigger rung; the
@@ -724,8 +723,30 @@ public final class TdfaAsmBackend {
             emitExtractOne(mv, owner, 4, 7, 5, 6, 3);
             emitReturnToResult(mv, owner, 6);
         } else {
-            // leftmost = from (the restart floor starts at from + 1)
+            // unit semantics: the raw unit trigger (interior-unit seeds —
+            // delegated to the runner's one definition, which traces
+            // RAW_SCAN itself, like the codepoint lane's triggerScanTop).
+            // -1 = no match anywhere; W bounds the restart floor to
+            // max(from + 1, W), mirroring the interpreter's
+            // runStringExtractFast routing.
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+            mv.visitVarInsn(Opcodes.ALOAD, 4);
             mv.visitVarInsn(Opcodes.ILOAD, 2);
+            mv.visitVarInsn(Opcodes.ILOAD, 5);
+            mv.visitVarInsn(Opcodes.ALOAD, 3);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "unitTriggerTop",
+                "(Ljava/lang/String;II" + SCRATCH_D + ")I", false);
+            mv.visitVarInsn(Opcodes.ISTORE, 7);
+            mv.visitVarInsn(Opcodes.ILOAD, 7);
+            mv.visitJumpInsn(Opcodes.IFLT, noMatch1);
+            // leftmost = max(from, W - 1) — the restart delegate starts at
+            // leftmost + 1, i.e. max(from + 1, W)
+            mv.visitVarInsn(Opcodes.ILOAD, 2);
+            mv.visitVarInsn(Opcodes.ILOAD, 7);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitInsn(Opcodes.ISUB);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Math", "max", "(II)I", false);
             mv.visitVarInsn(Opcodes.ISTORE, 7);
         }
         // --- 3) defensive restart: delegated to the runner (one definition;
