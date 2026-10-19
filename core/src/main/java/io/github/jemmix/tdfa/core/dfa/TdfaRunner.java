@@ -2,7 +2,6 @@ package io.github.jemmix.tdfa.core.dfa;
 
 import io.github.jemmix.tdfa.core.ast.Alphabet;
 import io.github.jemmix.tdfa.core.budget.Budgets;
-import io.github.jemmix.tdfa.core.budget.MatchBudgetExceededException;
 import io.github.jemmix.tdfa.core.emit.EmittedSurface;
 import io.github.jemmix.tdfa.core.engine.MatchResult;
 import io.github.jemmix.tdfa.core.engine.MatchScratch;
@@ -151,27 +150,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      *  {@link #setForcedStrategy}). */
     private static volatile boolean anyForced;
     private static final ThreadLocal<Strategy> FORCED = new ThreadLocal<>();
-    /**
-     * Match-time work meter (campaign 2026-10-16 finding 3): per-thread
-     * {deadline nanos, input length}, the deadline set at every
-     * match-operation entry ({@link #beginMatchMeter}) and checked once
-     * per restart-loop ITERATION (never per walk step — the walk leaves
-     * stay pristine; a restart loop's short-walk churn and its long-walk
-     * churn both surface as wall time at the iteration granularity, and a
-     * single linear walk is healthy user-sized work by definition). Past
-     * the deadline the check throws {@link MatchBudgetExceededException}
-     * — the bounded failure that replaces the ladder spins the campaign
-     * measured at 12–55 s. A wall bound, not a step count, because the
-     * observed diseases are per-step COST explosions (mask-heavy dispatch
-     * and position flags) on step counts legit work also reaches: the
-     * campaign's spins and the conformance suite's heaviest healthy churn
-     * both land at ~3–10 M walk steps, while their WALL times differ by
-     * three orders. A ThreadLocal (not the scratch carrier) because the
-     * ASM-emitted ladders enter the shared restart code without a carrier
-     * hand-off at their prologue, and a retained long[2] per matching
-     * thread is the same trade the trace buffer above makes.
-     */
-    private static final ThreadLocal<long[]> MATCH_METER = ThreadLocal.withInitial(() -> new long[]{0, 0});
 
     final int[] stateMeta;
     final int[] stateBase;
@@ -311,6 +289,32 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      */
     private final long[] startBits;
     /**
+     * Accepting states whose acceptance is position-gated, packed flat as
+     * {@code [state, mask, ...]} — null when no accepting state is gated
+     * (the plain acceptBits intersection is then already exact). Non-null
+     * switches the simulations' accept-liveness probes to the gate-aware
+     * path ({@link #acceptLive}): a gated state's report is suppressed
+     * while its gate cannot hold at the probed position. Two gate flavors
+     * share the table: an accept mask (the walks' {@code sam} gate,
+     * evaluated with the mask-directed predicate) on φ-free artifacts,
+     * and the position-aware φ table's cells on artifacts that have one
+     * (mask {@code -1}: the cell at the step's posFlags decides, exactly
+     * as the walk's fm branch does). This is what lets the trigger's
+     * products survive boundary-gated alternations ({@code
+     * (.+$\D|.+ x\D+)\b}): the gate-blind sim reported those accepts
+     * live at the scan's first step, and the restart ladder walked n
+     * starts × O(n) walks behind it.
+     */
+    private final int[] maskedAcceptStates;
+    /**
+     * Whether any range entry carries a non-zero required mask — switches
+     * the raw scan's transition stepping to the gate-aware path (a
+     * candidate whose required mask cannot hold at the consumed position
+     * is dead, exactly as the walks' own candidate loops treat it).
+     * Mask-free artifacts keep the blind fast path.
+     */
+    private final boolean rangeMaskGates;
+    /**
      * Eager ASCII dispatch tables present (rangesDisjoint ∧ small enough).
      */
     private final boolean asciiTables;
@@ -427,7 +431,71 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         this.wordBits = RunnerTables.buildWordBits(tdfa.unicodeWordBoundary ? tdfa.wordRanges : null);
         this.startBits =
             (literalNeedle == null && (tdfa.stateMeta[tdfa.startState] & 1) == 0) ? buildStartBits() : null;
+        this.maskedAcceptStates = buildMaskedAcceptStates();
+        this.rangeMaskGates = rangeMaskGates(tdfa);
         this.walkIdx = new WalkIndex(this, memoBudgetBytes);
+    }
+
+    /**
+     * The gated-accepting table for the simulations (see
+     * {@link #maskedAcceptStates}): on φ-free artifacts every accepting
+     * state whose accept mask is non-zero carries that mask; on artifacts
+     * with the position-aware φ table EVERY accepting state carries
+     * {@code -1} (the cell at the step's posFlags is authoritative for
+     * all of them). The reads mirror the walks' own accept branches, so
+     * the simulation's suppression and the walk's acceptance stay one
+     * formula.
+     */
+    private int[] buildMaskedAcceptStates() {
+        final int[] fm = this.finalOpsByMask;
+        int n = 0;
+        if (fm != null) {
+            for (int s = 0; s < stateCount; s++) {
+                if ((stateMeta[s] & 1) != 0) {
+                    n++;
+                }
+            }
+        } else if (stateAcceptMask != null) {
+            for (int s = 0; s < stateCount; s++) {
+                if ((stateMeta[s] & 1) != 0 && stateAcceptMask[s] != 0) {
+                    n++;
+                }
+            }
+        }
+        if (n == 0) {
+            return null;
+        }
+        int[] out = new int[n * 2];
+        int i = 0;
+        for (int s = 0; s < stateCount; s++) {
+            if ((stateMeta[s] & 1) == 0) {
+                continue;
+            }
+            int gate;
+            if (fm != null) {
+                gate = -1;
+            } else if (stateAcceptMask != null && stateAcceptMask[s] != 0) {
+                gate = stateAcceptMask[s];
+            } else {
+                continue;
+            }
+            out[i++] = s;
+            out[i++] = gate;
+        }
+        return out;
+    }
+
+    /** Whether any range entry (find side — the only table the raw scans
+     *  step) carries a required mask — the raw scan then gates its
+     *  transitions on it (see {@link #rangeMaskGates}). */
+    private static boolean rangeMaskGates(Tdfa tdfa) {
+        int[] rg = tdfa.ranges;
+        for (int i = 4; i < rg.length; i += 5) {
+            if (rg[i] != 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -667,39 +735,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     }
 
     /**
-     * Start this thread's match-work meter for one match operation over an
-     * input of {@code length} chars: every walk leaf below debits a step
-     * per loop iteration, and every {@link #MATCH_METER_CHECK_EVERY} steps
-     * the clock is consulted — past the wall bound
-     * ({@link Budgets#matchTimeMillis()}) the next consult throws
-     * {@link MatchBudgetExceededException}. Public + emitted: the ASM
-     * backend's ladder prologue calls it by name (generated classes share
-     * the metered restart tail), and the interpreter's own entries
-     * ({@code match}/{@code find}) call it before descending.
-     */
-    @EmittedSurface
-    public static void beginMatchMeter(int length) {
-        long ms = Budgets.matchTimeMillis();
-        long[] m = MATCH_METER.get();
-        m[0] = ms > 0 ? System.nanoTime() + ms * 1_000_000L : Long.MAX_VALUE;
-        m[1] = length;
-    }
-
-    /** The restart-loop iteration check: past this operation's wall bound,
-     *  fail loudly instead of spinning (see {@link #MATCH_METER}). The
-     *  {@code iteration} mask keeps the consult amortized — one clock read
-     *  per 256 restarts — so die-fast restart scans (the healthy hot path)
-     *  pay an and+branch, nothing else. */
-    private static void checkMatchDeadline(int iteration) {
-        if ((iteration & 0xFF) == 0) {
-            long[] m = MATCH_METER.get();
-            if (System.nanoTime() > m[0]) {
-                throw new MatchBudgetExceededException(Budgets.matchTimeMillis(), (int) m[1]);
-            }
-        }
-    }
-
-    /**
      * Pooled register file for walk leaves: grow-only reuse of
      * {@code MatchScratch.regs} — the same carrier the interpreter's walks
      * use — shared with the ASM-generated tier, whose {@code extractOne}/
@@ -806,7 +841,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     @EmittedSurface
     @Override
     public boolean matches(CharSequence input) {
-        beginMatchMeter(input.length());
         if (input instanceof String) {
             String s = (String) input;
             if (fastPath) {
@@ -823,7 +857,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     @EmittedSurface
     @Override
     public boolean find(CharSequence input) {
-        beginMatchMeter(input.length());
         if (input instanceof String) {
             String s = (String) input;
             Strategy force = forcedStrategy();
@@ -877,7 +910,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 }
                 trace(Strategy.WALK_RESTART);
                 for (int from = Math.max(w, 1); from <= maxStart; from++) {
-                    checkMatchDeadline(from);
                     if (scanSkipsPairs && Alphabet.pairInterior(s, from)) {
                         continue;
                     }
@@ -912,7 +944,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         if (sc == null) {
             sc = new MatchScratch();
         }
-        beginMatchMeter(input.length());
         MatchHolder h;
         if (input instanceof String) {
             String s = (String) input;
@@ -1213,7 +1244,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         }
         trace(Strategy.WALK_RESTART);
         for (int startSearch = from + 1; startSearch <= maxStart; startSearch++) {
-            checkMatchDeadline(startSearch);
             if (scanSkipsPairs && Alphabet.pairInterior(input, startSearch)) {
                 continue;
             }
@@ -1294,7 +1324,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 trace(Strategy.WALK_RESTART);
                 int maxStart = absBeginBound ? from : to;
                 for (int s = Math.max(from + 1, w); s <= maxStart; s++) {
-                    checkMatchDeadline(s);
                     if (scanSkipsPairs && Alphabet.pairInterior(input, s)) {
                         continue;
                     }
@@ -1322,7 +1351,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         trace(Strategy.WALK_RESTART);
         int maxStart = absBeginBound ? from : to;
         for (int s = from; s <= maxStart; s++) {
-            checkMatchDeadline(s);
             if (scanSkipsPairs && s > from && Alphabet.pairInterior(input, s)) {
                 continue;
             }
@@ -1615,6 +1643,63 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     }
 
     /**
+     * Accept liveness of a simulation state set at {@code pos}: plain
+     * acceptBits intersection when no accepting state is gated (the
+     * exact fast path), else per-accepting-state — an ungated accept
+     * reports immediately; a gated one only when its gate holds at
+     * {@code pos} (accept mask via the mask-directed predicate; φ cell
+     * via the step's posFlags — the walks' own branches, see
+     * maskedAcceptStates). Suppression only ever DELAYS the trigger's
+     * products (a later window W, or the -1 no-match proof); an accept
+     * that can hold is still reported, so the restart ladder's
+     * enumeration stays complete. {@code flags} is the caller's
+     * one-element posFlags cache for the position — the φ lookups share
+     * it (computed at most once per position, and only when a gated
+     * accept is actually live).
+     */
+    private boolean acceptLive(String input, int pos, int to, int[] live, int[] flags) {
+        final int[] ab = acceptBits;
+        if (maskedAcceptStates == null) {
+            for (int w = 0; w < stateWords; w++) {
+                if ((live[w] & ab[w]) != 0) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        for (int w = 0; w < stateWords; w++) {
+            int both = live[w] & ab[w];
+            while (both != 0) {
+                int bit = Integer.numberOfTrailingZeros(both);
+                both &= both - 1;
+                if (acceptStateLive(input, pos, to, (w << 5) + bit, flags)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** The per-state gate probe: 0-mask accepts hold, φ cells decide by
+     *  the step's posFlags, masked ones by the mask-directed predicate. */
+    private boolean acceptStateLive(String input, int pos, int to, int s, int[] flags) {
+        final int[] sam = stateAcceptMask;
+        final int[] fm = this.finalOpsByMask;
+        // gate: -1 = φ cell decides, 0 = ungated, else the accept mask
+        int gate = fm != null ? -1 : (sam == null ? 0 : sam[s]);
+        if (gate == 0) {
+            return true; // ungated accept
+        }
+        if (gate < 0) {
+            if (flags[0] < 0) {
+                flags[0] = positionFlags(input, pos, to);
+            }
+            return fm[s * posCells + flags[0]] >= 0;
+        }
+        return maskSatisfied(input, pos, to, gate);
+    }
+
+    /**
      * Trigger scan: advance the search DFA over {@code [from, to)}; on the first
      * position where an accepting state is (over-approximately) live, return the
      * latest kill-point window start {@code W} ({@code from} if none) — every
@@ -1654,8 +1739,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         sd.ensureSeed(); // pure-seed row 0, interned once, race-safe
         int cur = 0;
         int W = from;
+        int[] pf = {-1}; // per-position posFlags cache (φ-gated probes)
         for (int pos = from; pos < to;) {
-            if (sd.accept(cur)) {
+            pf[0] = -1;
+            if (acceptLive(input, pos, to, sd.rowWordsOf(cur), pf)) {
                 return W;
             }
             int c = Alphabet.decode(input, pos, to);
@@ -1676,7 +1763,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             }
             pos += adv;
         }
-        return sd.accept(cur) ? W : -1;
+        return acceptLive(input, to, to, sd.rowWordsOf(cur), new int[]{-1}) ? W : -1;
     }
 
     /**
@@ -1724,12 +1811,13 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             live[startState >>> 5] |= 1 << (startState & 31);
         }
         final int[] sm = stateMeta, rg = ranges, ab = acceptBits;
+        final boolean rangeGates = this.rangeMaskGates;
         int W = wIn;
+        int[] pf = {-1}; // per-position posFlags cache (φ-gated probes)
         for (int pos = from; pos <= to; pos++) {
-            for (int w = 0; w < nwords; w++) {
-                if ((live[w] & ab[w]) != 0) {
-                    return W;
-                }
+            pf[0] = -1;
+            if (acceptLive(input, pos, to, live, pf)) {
+                return W;
             }
             if (pos == to) {
                 break;
@@ -1761,7 +1849,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                         int mo = (base + i) * 5;
                         if (c <= rg[mo + 1]) {
                             int t = rg[mo + 2];
-                            if (t >= 0) {
+                            if (t >= 0 && (!rangeGates || maskSatisfied(input, pos, to, rg[mo + 4]))) {
                                 next[t >>> 5] |= 1 << (t & 31);
                                 empty = false;
                             }
@@ -1770,10 +1858,21 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 }
             }
             if (unitSeeds && adv == 2) {
+                // Interior-unit ORIGIN at pos+1 (a real pair), empty-match
+                // case first: the start state accepting at pos+1 (nothing
+                // consumed) is a match starting and ending at the low unit
+                // — probed here because the scan's accept checks only run
+                // at codepoint positions.
+                if ((stateMeta[startState] & 1) != 0) {
+                    pf[0] = -1; // the probe's position is pos+1, not pos
+                    if (acceptStateLive(input, pos + 1, to, startState, pf)) {
+                        return W;
+                    }
+                }
                 // Interior-unit start at pos+1 (a real pair): the low unit
                 // consumed as a lone BMP char rejoins the aligned stream at
-                // pos+2 — merge its start-state targets into the next set.
-                // Mask-free like the rest of the scan: over-approximate.
+                // pos+2 — merge its start-state targets into the next set,
+                // gated on required masks like every other transition.
                 int base = stateBase[startState];
                 int count = (stateMeta[startState] >>> 1) & 0xFFFF;
                 int lo = input.charAt(pos + 1);
@@ -1791,7 +1890,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                     int mo = (base + i) * 5;
                     if (lo <= rg[mo + 1]) {
                         int t = rg[mo + 2];
-                        if (t >= 0) {
+                        if (t >= 0 && (!rangeGates || maskSatisfied(input, pos + 1, to, rg[mo + 4]))) {
                             next[t >>> 5] |= 1 << (t & 31);
                             empty = false;
                         }
@@ -1840,7 +1939,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             return null;
         }
         for (int s = fromStart; s <= to; s++) {
-            checkMatchDeadline(s);
             if (scanSkipsPairs && Alphabet.pairInterior(input, s)) {
                 continue;
             }
@@ -2133,7 +2231,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             }
             trace(Strategy.WALK_RESTART);
             for (int from = Math.max(1, w); from <= to; from++) {
-                checkMatchDeadline(from);
                 if (matchFromFast(input, from, to)) {
                     return true;
                 }
@@ -2789,9 +2886,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         // restarts pay only the -1 refill, not a fresh allocation per start;
         // successful escapes clone into the MatchHolder, so reuse is safe.
         int startSearch = from;
-        int meterGuard = 0;
         while (true) {
-            checkMatchDeadline(meterGuard++);
             final int[] regs;
             final TagTree tree = multi ? takeTree(sc) : null;
             if (regSize == 0) {

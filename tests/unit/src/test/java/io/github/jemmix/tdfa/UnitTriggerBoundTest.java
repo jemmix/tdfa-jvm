@@ -79,28 +79,19 @@ class UnitTriggerBoundTest {
 
     /**
      * Perf canaries: the {@code .+tail} no-match family answers a
-     * 4 400-char input in one linear pass — milliseconds, unbounded
-     * budget, both tiers (the pre-bound ladder measured 200–460 ms here;
-     * stretched fuzz inputs 12–55 s).
+     * 4 400-char input in one linear pass — milliseconds, both tiers
+     * (the pre-bound ladder measured 200–460 ms here; stretched fuzz
+     * inputs 12–55 s).
      */
     @Test
     void plainTailFamilyIsLinear() {
-        String prev = System.setProperty("tdfa.budget.match.ms", "0");
-        try {
-            String input = "ab".repeat(2200); // 4400 chars, no match
-            for (RegexEngineFactory tier : new RegexEngineFactory[]{null, TdfaRunner::new}) {
-                for (String p : new String[]{".+zz", "\\S{4,}\\.", ".+(" + UNPAIRED_LOW + ")"}) {
-                    long t0 = System.nanoTime();
-                    assertThat(Pattern.compile(p, 0, tier).matcher(input).find()).as("/%s/ no match", p).isFalse();
-                    long ms = (System.nanoTime() - t0) / 1_000_000;
-                    assertThat(ms).as("4400-char /%s/ wall, tier %s", p, name(tier)).isLessThan(250);
-                }
-            }
-        } finally {
-            if (prev != null) {
-                System.setProperty("tdfa.budget.match.ms", prev);
-            } else {
-                System.clearProperty("tdfa.budget.match.ms");
+        String input = "ab".repeat(2200); // 4400 chars, no match
+        for (RegexEngineFactory tier : new RegexEngineFactory[]{null, TdfaRunner::new}) {
+            for (String p : new String[]{".+zz", "\\S{4,}\\.", ".+(" + UNPAIRED_LOW + ")"}) {
+                long t0 = System.nanoTime();
+                assertThat(Pattern.compile(p, 0, tier).matcher(input).find()).as("/%s/ no match", p).isFalse();
+                long ms = (System.nanoTime() - t0) / 1_000_000;
+                assertThat(ms).as("4400-char /%s/ wall, tier %s", p, name(tier)).isLessThan(250);
             }
         }
     }
