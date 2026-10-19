@@ -15,24 +15,32 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * Match-time work bound ({@code tdfa.budget.match.ms}, wall milliseconds
  * per match operation): the safety net that bounds the search ladder's
- * known degenerate shapes — the unit-semantics restart loop without a
- * trigger bound under {@code .*}-anchor patterns, whose mask-heavy
- * per-step costs measured 12–55 s on the campaign's seeds (finding 3).
- * A wall bound rather than a step count because the diseases are per-step
- * COST explosions on step counts legit work also reaches: the spins and
- * the conformance suite's heaviest healthy churn both land at ~3–10 M
- * walk steps while their wall times differ by three orders. Healthy
- * operations (microseconds to ~60 ms) must never trip the default.
+ * degenerate shapes that REMAIN degenerate after the root fixes — the
+ * finding-3 {@code \A}/`^`-anchor class collapsed to a linear walk by the
+ * abs-begin ladder bound (see AbsBeginLadderBoundTest); the residue is
+ * the multiline/avoidable-anchor family (scoped {@code (?m:$\d)}-style
+ * gates with a {@code .*} prefix) whose restarts are genuinely viable and
+ * whose walks still churn quadratically. A wall bound rather than a step
+ * count because the diseases are per-step COST explosions on step counts
+ * legit work also reaches: the spins and the conformance suite's heaviest
+ * healthy churn both land at ~3–10 M walk steps while their wall times
+ * differ by three orders. Healthy operations (microseconds to ~60 ms)
+ * must never trip the default.
  */
 class MatchBudgetTest {
 
-    /** The campaign's finding-3 shape: {@code .*} before an anchor — every
-     *  restart walk from every unit position runs the full remaining span
-     *  under unit semantics (no trigger bound), with mask-heavy steps. */
-    private static final String RESTART_QUADRATIC = ".*(?:\\A\\W )h";
+    /** A still-degenerate shape: multiline-scoped {@code $} inside a
+     *  quantified group behind a {@code .*} prefix — every restart walk
+     *  scans to the end before the {@code (?m:$\d)b} tail dies; no
+     *  ABS_BEGIN gate exists, so the ladder bound cannot collapse it. */
+    private static final String RESTART_QUADRATIC = ".*(((?m:$\\d)b)\\s){0,4}n";
+
+    /** The campaign's finding-3 {@code \A}-anchor shape — root-fixed by
+     *  the abs-begin ladder bound: kept here as the healthy canary. */
+    private static final String ANCHOR_COLLAPSED = ".*(?:\\A\\W )h";
 
     private static String bigNoMatch() {
-        return "ab".repeat(2200); // 4400 chars, no 'h' — the walk never accepts
+        return "ab".repeat(2200); // 4400 chars — every restart walk scans to the end and dies
     }
 
     @Test
@@ -54,10 +62,11 @@ class MatchBudgetTest {
     void nonpositiveDisablesAndAnswerStaysCorrect() {
         System.setProperty("tdfa.budget.match.ms", "0");
         try {
-            Pattern p = Pattern.compile(RESTART_QUADRATIC);
-            assertThat(p.matcher("! h").find()).as("the \\A-anchored branch matches at 0").isTrue();
+            assertThat(Pattern.compile(ANCHOR_COLLAPSED).matcher("! h").find())
+                .as("the \\A-anchored branch matches at 0").isTrue();
             System.setProperty("tdfa.budget.match.ms", "-1");
-            assertThat(p.matcher(bigNoMatch()).find()).as("no 'h' in the input, unbounded").isFalse();
+            assertThat(Pattern.compile(RESTART_QUADRATIC).matcher(bigNoMatch()).find())
+                .as("no viable multiline tail, unbounded").isFalse();
         } finally {
             System.clearProperty("tdfa.budget.match.ms");
         }
@@ -68,9 +77,12 @@ class MatchBudgetTest {
         // Linear scans and die-fast restart scans: microseconds to a few
         // milliseconds against the 2 000 ms default.
         assertThatCode(() -> {
-            Pattern p = Pattern.compile(RESTART_QUADRATIC);
-            assertThat(p.matcher("ab".repeat(200)).find()).isFalse();
-            assertThat(p.matcher("! h").find()).isTrue();
+            // the abs-begin-bound shapes: collapsed to one exact walk
+            // (the campaign's 39 s anchor spin — the root-fix canary)
+            for (String p : new String[]{ANCHOR_COLLAPSED, ".+^\\W", ".{1,}(?:\\A\\w)\\w"}) {
+                assertThat(Pattern.compile(p).matcher("ab".repeat(2200)).find()).isFalse();
+            }
+            assertThat(Pattern.compile(ANCHOR_COLLAPSED).matcher("! h").find()).isTrue();
             Pattern q = Pattern.compile("zz$");
             assertThat(q.matcher("ab".repeat(5000)).find()).isFalse(); // die-fast restarts: linear
             assertThat(Pattern.compile("\\w+ing").matcher(("spr" + "int ").repeat(3000) + "spring").find()).isTrue();

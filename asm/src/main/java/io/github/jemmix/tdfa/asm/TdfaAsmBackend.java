@@ -489,6 +489,16 @@ public final class TdfaAsmBackend {
         emitExtractOne(mv, owner, 4, 2, 5, 6, 3);
         emitReturnToResult(mv, owner, 6);
 
+        // Abs-begin-bound artifact (Tdfa.absBeginBound, decided at emit
+        // time): every accepting path crosses an \A gate, so no start
+        // past `from` can produce a match — the prefix/candidate/sim
+        // rungs below and the delegated restart tail are provably
+        // fruitless and are not emitted, mirroring the interpreter's
+        // maxStart collapse (same trace sequence: EXACT_FROM then the
+        // WALK_RESTART delegate, whose loop self-collapses in the
+        // runner's one definition of it).
+        boolean searchBound = tdfa.absBeginBound();
+
         // --- 1a) literal-prefix candidate scan ---
         // Emitted only when the DFA carries a required literal prefix
         // (decided at emit time by the SAME detector the VM runner's
@@ -499,7 +509,7 @@ public final class TdfaAsmBackend {
         // adaptive boolean prefilter and walk budget bake in the same
         // TdfaRunner constants. Budget exhaustion falls through to the
         // candidate scan below (a complete search).
-        String prefix = TdfaRunner.detectPrefixNeedle(tdfa);
+        String prefix = searchBound ? null : TdfaRunner.detectPrefixNeedle(tdfa);
         if (prefix != null) {
             emitTrace(mv, "PREFIX");
             // searchFrom = from + 1 (local 12); walks = 0 (local 13)
@@ -574,6 +584,10 @@ public final class TdfaAsmBackend {
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "startBits", "()[J", false);
         mv.visitVarInsn(Opcodes.ASTORE, 11);
         Label skipCand = new Label();
+        if (searchBound) {
+            // bound artifact: startBits unconsulted, loop not emitted
+            mv.visitJumpInsn(Opcodes.GOTO, skipCand);
+        }
         mv.visitVarInsn(Opcodes.ALOAD, 11);
         mv.visitJumpInsn(Opcodes.IFNULL, skipCand);
         mv.visitVarInsn(Opcodes.ILOAD, 5);
@@ -659,7 +673,12 @@ public final class TdfaAsmBackend {
         // the emitted ladder keeps rungs 1/1a/1b and falls straight to the
         // complete restart floor.
         Label noMatch1 = new Label();
-        if (tdfa.semantics().isCodepointBoundaries()) {
+        if (searchBound) {
+            // bound artifact: leftmost = from (no sim/trigger rung; the
+            // restart tail below self-collapses in the runner)
+            mv.visitVarInsn(Opcodes.ILOAD, 2);
+            mv.visitVarInsn(Opcodes.ISTORE, 7);
+        } else if (tdfa.semantics().isCodepointBoundaries()) {
             emitTrace(mv, "ORIGIN_SIM");
             mv.visitVarInsn(Opcodes.ALOAD, 0);
             mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
