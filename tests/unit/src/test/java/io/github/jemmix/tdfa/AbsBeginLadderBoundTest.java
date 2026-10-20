@@ -97,30 +97,20 @@ class AbsBeginLadderBoundTest {
     /**
      * The perf canary: the campaign's 39 s {@code .*}-anchor spin is a
      * linear walk now — the collapsed ladder answers a 4 400-char no-match
-     * find in single-digit milliseconds, an unbounded budget (the property
-     * pinned to 0) keeping the measurement honest.
+     * find in single-digit milliseconds.
      */
     @Test
     void anchorLadderIsLinearNotQuadratic() {
-        String prev = System.setProperty("tdfa.budget.match.ms", "0");
-        try {
-            String input = "ab".repeat(2200); // 4400 chars, no 'h'
-            for (RegexEngineFactory tier : new RegexEngineFactory[]{null, TdfaRunner::new}) {
-                Pattern p = Pattern.compile(".*(?:\\A\\W )h", 0, tier);
-                long t0 = System.nanoTime();
-                assertThat(p.matcher(input).find()).as("no 'h', no match").isFalse();
-                long ms = (System.nanoTime() - t0) / 1_000_000;
-                // 2-5 ms measured; the campaign's budget-contained replay
-                // was 12-55 s and the first unbounded stretch quadratic —
-                // 250 ms is two orders of margin against JIT/machine noise.
-                assertThat(ms).as("4400-char collapsed ladder wall, tier %s", tier).isLessThan(250);
-            }
-        } finally {
-            if (prev != null) {
-                System.setProperty("tdfa.budget.match.ms", prev);
-            } else {
-                System.clearProperty("tdfa.budget.match.ms");
-            }
+        String input = "ab".repeat(2200); // 4400 chars, no 'h'
+        for (RegexEngineFactory tier : new RegexEngineFactory[]{null, TdfaRunner::new}) {
+            Pattern p = Pattern.compile(".*(?:\\A\\W )h", 0, tier);
+            long t0 = System.nanoTime();
+            assertThat(p.matcher(input).find()).as("no 'h', no match").isFalse();
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            // 2-5 ms measured; the campaign's budget-contained replay
+            // was 12-55 s and the first unbounded stretch quadratic —
+            // 250 ms is two orders of margin against JIT/machine noise.
+            assertThat(ms).as("4400-char collapsed ladder wall, tier %s", tier).isLessThan(250);
         }
     }
 

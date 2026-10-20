@@ -174,6 +174,17 @@ The pre-soak fix pass, landed as #69–#71:
   mask-blind simulation, defeating the window early — stays
   budget-contained (~170–250 ms per 4 400-char no-match find) pending a
   mask-aware simulation or an accepted-residue decision (open TODO).
+  The mask-aware simulation then landed (the raw scan gates its
+  transitions and accept reports on the walks' own range/accept masks,
+  making the simulation's liveness exact): the residue class went
+  linear — 10–18 ms per 44 000-char no-match find, where
+  java.util.regex measures 4.7 s — and with every degenerate class
+  root-fixed the match-work budget itself was retired (the
+  {@code tdfa.budget.match.ms} property, {@code
+  MatchBudgetExceededException}, the metering ThreadLocal and the
+  emitted-ladder hook all deleted): a wall-clock exception in a
+  linear-time engine's API was a smell the root fixes made
+  unnecessary.
 - **Finding 1 → fixed (#71).** Root cause: java.util.regex folds WRITTEN
   ranges by a simple-case IMAGE test, not the member-orbit closure it
   uses for singles/literals — `satisfies(c, R) ⟺ IMG(c) ∩ R ≠ ∅` plus
