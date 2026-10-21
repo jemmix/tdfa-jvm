@@ -209,6 +209,9 @@ The pre-soak fix pass, landed as #69–#71:
   direction: a committed-copy prefer-and-kill scoped to the first cmin
   copies in the whole determinization only — find/lookingAt already
   agree with the oracle.
-- **Soak readiness.** With 1, 3, 4 addressed, the next both-lane soak's
-  expected residue is the finding-2 family plus the documented
-  BUDGET_REJECT / MATCH_BUDGET / JURLANE_GUARD / JURLANE_SKIP classes.
+- **Soak readiness.** With 1 and 4 addressed and 3 closed root-and-branch
+  (#74 mask-directed probes, #75 abs-begin ladder bound, #76 unit-semantics
+  trigger, #77 exact simulation + budget retirement), the next both-lane
+  soak's expected residue is the finding-2 family plus the documented
+  BUDGET_REJECT / JURLANE_GUARD / JURLANE_SKIP classes — MATCH_BUDGET no
+  longer exists (every degenerate class root-fixed).
