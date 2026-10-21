@@ -198,19 +198,27 @@ public final class QuickBench {
     static double runFor(LongSupplier op, int iters, long budgetNs, String name, Long expected) {
         double best = Double.MAX_VALUE;
         int valid = 0;
+        int it = iters;
         long start = System.nanoTime();
         long sink = 0;
         while (System.nanoTime() - start < budgetNs) {
             long t0 = System.nanoTime();
-            for (int i = 0; i < iters; i++) {
+            for (int i = 0; i < it; i++) {
                 sink ^= op.getAsLong();
             }
             double perBatch = System.nanoTime() - t0;
             if (perBatch < 100_000) {
+                // sub-0.1ms batch: either timer noise or the op sped up
+                // under JIT past the cold-calibrated batch size — GROW the
+                // batch instead of skipping it (the cold single-call
+                // calibration in measure() can overshoot iters by 5-10x
+                // once warm; skipping every batch then fails the whole
+                // measurement, seen on a 15 us op on an M-series Air).
+                it = (int) Math.min(1 << 20, it * 2L);
                 continue;
-            } // sub-0.1ms batch: timer noise, skip
+            }
             valid++;
-            best = Math.min(best, perBatch / iters);
+            best = Math.min(best, perBatch / it);
             long check = op.getAsLong();
             if (expected != null && check != expected) {
                 throw new IllegalStateException(
