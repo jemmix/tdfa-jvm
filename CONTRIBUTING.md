@@ -49,7 +49,7 @@ ordered fields → constructors → methods, nested types last. Generated
 ## Before you open a PR
 
 ```
-./gradlew check          # full gate: tests both backends, spotless, checkstyle
+./gradlew check          # full gate: tests both backends, spotless, checkstyle, TODO format
 ./scripts/format.sh      # if spotless complains
 ```
 
@@ -58,4 +58,6 @@ ordered fields → constructors → methods, nested types last. Generated
   (see [How it's tested](README.md#how-its-tested)).
 - Perf-affecting changes: run `scripts/bench-regression.sh` (15% rule) and
   post the numbers.
-- Update `TODO.md` — open work lives there, or it doesn't exist.
+- Update `TODO.md` — open work lives there, or it doesn't exist. One
+  terse line (≤ 10 words) per item, no completed items; `check` gates
+  it (`scripts/check-todo.sh`).

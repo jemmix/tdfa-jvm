@@ -199,3 +199,18 @@ allprojects {
         }
     }
 }
+
+// TODO.md gate: open work only, one terse line (max 10 words) per
+// item — detail lives in linked docs, completed items in git history
+// (the file's own header states the contract). Standalone:
+// scripts/check-todo.sh. Rides `check` like spotless/checkstyle, so
+// the local full gate and the CI check job enforce it.
+def todoCheck = tasks.register('todoCheck', Exec) {
+    description = 'Validates TODO.md: open items only, max 10 words each.'
+    group = 'verification'
+    commandLine './scripts/check-todo.sh'
+    inputs.file layout.projectDirectory.file('TODO.md')
+}
+tasks.named('check') {
+    dependsOn todoCheck
+}
