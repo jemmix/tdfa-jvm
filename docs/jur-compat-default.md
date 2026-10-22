@@ -9,13 +9,13 @@ literals and, since #71, in CI ranges too (java.util.regex's range image
 test, probed from the live JVM) — tail/surrogate consciously
 reclassified as asserted domain exclusions; the re2j + `(?u)` lanes in
 the fuzzer matrix; the 5.7 M exhaustive evidence re-run in the RE2 lane;
-the jur twins for the re2j parity suites — item 7 — landed). Still open:
-the both-lane overnight soak + README numbers (item 6's tail) and one
-characterized engine family (java.util.regex's GroupCurly commits the
-first `cmin` iterations of a bounded quantified group — `matches()`
-diverges on `{n≥2}` shapes; see the
-[campaign follow-ups](fuzz-campaigns-2026-10-16.md)). Landing the
-rest is only cheap
+the jur twins for the re2j parity suites — item 7 — landed). The finding-2
+family (`{n,m}` over a body that can match empty through a choice point)
+is FIXED — java's `Prolog`+`Loop` zero-width-exit guard, reproduced by the
+NFA builder's per-copy zero-width split (JUR lane only; see the
+[campaign follow-ups](fuzz-campaigns-2026-10-16.md)); the open engine
+family is its unbounded mirror (`(Y?|a\z)+`-shaped ε-exit preference,
+TODO). Landing the rest is only cheap
 before the first Maven publish / 1.0 API lock (both still open in
 [TODO](../TODO.md)) — after that the same flip is a major version. This
 page is the full accounting: what flips, what the API looks like, what it

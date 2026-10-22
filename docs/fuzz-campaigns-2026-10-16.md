@@ -194,24 +194,38 @@ The pre-soak fix pass, landed as #69–#71:
   row caught it). All three seeds replay bit-for-bit equal to the
   oracle; 28-pattern × 15-input live-oracle battery added in
   `PivotLanesTest`.
-- **Finding 2 → root-caused, still open.** `(\A|.?o*.){3}` diverges
-  exactly on `matches()`. java.util.regex's `GroupCurly` (any `{n,m}`
-  over a non-deterministic group, capturing or not) runs its first
-  `cmin` iterations in a plain forward loop and never re-routes them —
-  the greedy backoff (`match0`) only revisits iterations beyond `j >
-  min` — so an exact `{3}` commits all three copies to their
-  first-success branches; our whole-match artifact accepts any path
-  through the unrolled copies and reports the consuming path
-  `[ε,ε,Y]`. Probed surface: `{2}`, `{3}`, `{2,4}` diverge when the
-  ε-branch is tried first; `{0,m}`, `{1}`, `{1,m}`, `*`, `+` and plain
-  concatenation agree (their iterations are all ≥ cmin, i.e.
-  retryable, or they compile to Loop/concat nodes that retry). Fix
-  direction: a committed-copy prefer-and-kill scoped to the first cmin
-  copies in the whole determinization only — find/lookingAt already
-  agree with the oracle.
-- **Soak readiness.** With 1 and 4 addressed and 3 closed root-and-branch
+- **Finding 2 → fixed (root cause corrected in the landing).** The
+  divergence is NOT GroupCurly's cmin-commit: `(\A|.)`-class bodies are
+  non-deterministic (Branch.study), so java compiles the `{n,m}` as
+  `Prolog`+`Loop` — and `Loop.match`'s guard `i > locals[beginIndex]`
+  forces the loop to EXIT after any zero-width iteration, the count
+  check sitting inside the guard (an under-`cmin` exit on ε is legal —
+  `(\A|.){2}` find on `"Y"` reports `0..0` with ONE iteration). Our
+  structural desugar's concatenated copies admit `[ε, consume]` paths
+  java's backtracker never explores. Probed surface wider than the
+  campaign's paraphrase: `{0,2}`/`{1,2}` diverge on GROUPS (`(\b|Y){0,2}`
+  on `"Y"`: jur `g1 1..1` via `[Y,ε]`, ours `g1 0..1` via `[ε,Y]`), lazy
+  variants and `{2,}` prefix copies included; all-zero-width
+  deterministic bodies (`(\b){2}`) keep agreeing (java's GroupCurly
+  COMMITS those — no guard). Fix: `Ast.Repeat.zeroWidthExit`
+  (parser-marked, JUR reading only — nullable-through-choice bodies,
+  `{n,m}` with max ≥ 2 and `{n,}` with min ≥ 2) drives the NFA builder's
+  BOUNDED_ZWE frame: each desugared copy's ε-reachable subgraph is
+  duplicated, the duplicates' copy-exit arrivals re-route to the
+  quantifier exit (tags carried — java reports the exiting iteration's
+  spans), consuming edges rejoin the original nodes. Both campaign seeds
+  replay bit-for-bit equal; `zwexit-battery.tsv` (41 rows, live-JDK
+  re-verified each run) pins JUR and RE2 columns on both tiers; a
+  30 K randomized bounded battery and a 0.9 M-case mixed fuzz batch
+  found zero divergences outside the documented classes. Residue found
+  by the shakeout, now the open TODO: the UNBOUNDED plus has the
+  mirror-image bug (`(Y?|a\z)+` on `"Ya"`: jur `[0,1) g1 1..1`, ours
+  `[0,2)` — the hub's same-position re-entry dedup kills the preferred
+  ε-exit-with-span path).
+- **Soak readiness.** With 1, 2 and 4 addressed and 3 closed root-and-branch
   (#74 mask-directed probes, #75 abs-begin ladder bound, #76 unit-semantics
   trigger, #77 exact simulation + budget retirement), the next both-lane
-  soak's expected residue is the finding-2 family plus the documented
+  soak's expected residue is the unbounded-plus ε-exit family (the finding-2
+  landing's shakeout residue, TODO) plus the documented
   BUDGET_REJECT / JURLANE_GUARD / JURLANE_SKIP classes — MATCH_BUDGET no
   longer exists (every degenerate class root-fixed).
