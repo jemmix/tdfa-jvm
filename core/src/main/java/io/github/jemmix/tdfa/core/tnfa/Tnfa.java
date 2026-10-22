@@ -489,6 +489,11 @@ public final class Tnfa {
             int zweUnits; // total units (mandatory + optional + the {n,} plus tail)
             int zweMandatory; // mandatory split units
             boolean zweTail; // {n,}: the last unit is the plus tail (no split)
+            // finding 2's unbounded mirror: PLUS/STAR_NULLABLE bodies over
+            // nullable-with-choice fragments split their pure-ε completions
+            // to the quantifier exit (the loop guard), at the body's own
+            // node-range start
+            boolean zweSplit;
         }
 
         /** Returns entry state of sub-NFA that flows into {@code entryTo}.
@@ -616,6 +621,8 @@ public final class Tnfa {
                             f.bodyPri = bodyPri;
                             f.skipPri = skipPri;
                             f.s = fresh(); // plus loop hub (at body exit)
+                            f.zweSplit = r.zeroWidthExit; // finding 2's unbounded mirror
+                            f.zweLo = counter;
                             frames.push();
                             stack.push(f);
                             pushNode(stack, body, f.s);
@@ -639,6 +646,8 @@ public final class Tnfa {
                         f.bodyPri = bodyPri;
                         f.skipPri = skipPri;
                         f.s = fresh();
+                        f.zweSplit = r.zeroWidthExit; // finding 2's unbounded mirror
+                        f.zweLo = counter;
                         frames.push();
                         stack.push(f);
                         pushNode(stack, body, f.s);
@@ -771,6 +780,12 @@ public final class Tnfa {
                 }
                 if (f.kind == BuildFrame.STAR_NULLABLE) {
                     int bodyStart = result;
+                    if (f.zweSplit) {
+                        // finding 2's unbounded mirror: a zero-width iteration
+                        // exits the star (java's Loop guard) carrying its tag
+                        // writes at the body's own branch priority
+                        bodyStart = zweSplit(result, f.s, f.entryTo, f.zweLo);
+                    }
                     int hub = f.s;
                     eps(hub, bodyStart, f.bodyPri); // iterate (no ntag; group already matched)
                     eps(hub, f.entryTo, f.skipPri); // or exit (no ntag)
@@ -795,6 +810,12 @@ public final class Tnfa {
                 }
                 if (f.kind == BuildFrame.PLUS) {
                     int bodyStart = result;
+                    if (f.zweSplit) {
+                        // finding 2's unbounded mirror: a zero-width iteration
+                        // exits the plus (java's Loop guard) carrying its tag
+                        // writes at the body's own branch priority
+                        bodyStart = zweSplit(result, f.s, f.entryTo, f.zweLo);
+                    }
                     eps(f.s, bodyStart, f.bodyPri);
                     eps(f.s, f.entryTo, f.skipPri);
                     result = bodyStart;
@@ -951,7 +972,9 @@ public final class Tnfa {
             boolean tailUnit = f.zweTail && f.zweDone == f.zweUnits - 1;
             if (tailUnit) {
                 boolean lazy = f.bodyPri != 1;
-                pushNode(stack, new Ast.Repeat(f.node, 1, Integer.MAX_VALUE, !lazy), f.entryTo);
+                Ast.Repeat plus = new Ast.Repeat(f.node, 1, Integer.MAX_VALUE, !lazy);
+                plus.zeroWidthExit = true; // the body qualified the outer mark; the tail re-loops it
+                pushNode(stack, plus, f.entryTo);
                 return;
             }
             boolean optional = f.zweDone >= f.zweMandatory;

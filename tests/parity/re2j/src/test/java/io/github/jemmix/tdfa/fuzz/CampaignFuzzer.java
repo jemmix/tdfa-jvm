@@ -549,26 +549,31 @@ public final class CampaignFuzzer {
             return;
         }
         // The evidence re-base reclassifications (WBS item 6: "fixed or
-        // consciously reclassified, none left soft by default"). Both
-        // residuals below are DOCUMENTED domain exclusions — SKIP kinds,
-        // not KNOWN divergences: a skip means "this shape is outside the
+        // consciously reclassified, none left soft by default"). The
+        // residual below is a DOCUMENTED domain exclusion — a SKIP kind,
+        // not a KNOWN divergence: a skip means "this shape is outside the
         // compared domain", a known-family pass would swallow divergence.
         // The skip set is asserted (CampaignSmokeTest pins the soft-kind
         // allowlist), so a new soft kind cannot appear silently.
         //
-        // (1) The family-6 TAIL residual: an unbounded greedy quantified
-        // capture followed by a consuming tail — java's Loop keeps the
-        // final zero-width iteration at the loop's REST position ((a*)*b
-        // on "aab" -> g1 2..2), the surfaced write must ride the
-        // transition φ as a position-carrying ε-write to express that
-        // (the 4d audit's finding); until that engine work lands the lane
-        // answers the maximal-iteration span there. Skeleton-equal (the
-        // overall spans DID compare, above) + a quantified capture in the
-        // pattern = this family — everything else about family 6 stays
-        // hard.
-        if (sameSkeleton(jur, jurLaneVm) && c.pattern().matches(".*\\).*[*+{].*")) {
-            counts.soft("SKIP_GROUP_PARTICIPATION_TAIL");
-            camp.rec(caseSeed, "JURLANE_SKIP (group-participation-tail)", "pattern", c.pattern(), "input", c.input(),
+        // (1, retired) The family-6 TAIL residual — an unbounded greedy
+        // quantified capture followed by a consuming tail — was this
+        // skip's family: the unbounded zero-width-exit split (finding 2's
+        // mirror) now carries the exiting iteration's writes on a normal
+        // ε-edge at the loop's REST position, so `(a*)*b` on "aab"
+        // compares hard and the skip retired.
+        //
+        // (1b) The nested-loop inner-capture quirk — java's backtracker
+        // restores the FIRST iteration's inner group for a quantified
+        // capture nested inside another quantified group (`((a)*b)*` on
+        // "abab" -> g2 0..1; the loop lineage reports the last, 2..3 —
+        // and note `((a)?b)*` AGREES on JDK 26, so the quirk is the
+        // inner-star shape specifically). Skeleton-equal (only the inner
+        // clause diverged) + the nested-quantified-group shape = this
+        // family; the engine fix is the open TODO.
+        if (sameSkeleton(jur, jurLaneVm) && c.pattern().matches(".*\\(.*\\(.*\\)[*+{].*\\)[*+{].*")) {
+            counts.soft("SKIP_NESTED_LOOP_CAPTURE");
+            camp.rec(caseSeed, "JURLANE_SKIP (nested-loop-capture)", "pattern", c.pattern(), "input", c.input(),
                 "flags", c.tdfaFlags(), "jur", jur, "jurLaneVm", jurLaneVm);
             return;
         }

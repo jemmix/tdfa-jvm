@@ -11,11 +11,15 @@ reclassified as asserted domain exclusions; the re2j + `(?u)` lanes in
 the fuzzer matrix; the 5.7 M exhaustive evidence re-run in the RE2 lane;
 the jur twins for the re2j parity suites — item 7 — landed). The finding-2
 family (`{n,m}` over a body that can match empty through a choice point)
-is FIXED — java's `Prolog`+`Loop` zero-width-exit guard, reproduced by the
-NFA builder's per-copy zero-width split (JUR lane only; see the
-[campaign follow-ups](fuzz-campaigns-2026-10-16.md)); the open engine
-family is its unbounded mirror (`(Y?|a\z)+`-shaped ε-exit preference,
-TODO). Landing the rest is only cheap
+and its unbounded mirror are FIXED — java's `Prolog`+`Loop` zero-width-exit
+guard, reproduced by the NFA builder's per-copy zero-width split, extended
+to the loop bodies (JUR lane only; see the
+[campaign follow-ups](fuzz-campaigns-2026-10-16.md)); the same redirect
+closed the family-6 TAIL residual (the 4d ε-write is a normal tagged
+ε-edge at the loop's REST position — `SKIP_GROUP_PARTICIPATION_TAIL`
+retired). The open engine families: the nested-loop inner-capture quirk
+(`((a)*b)*`-shaped, `SKIP_NESTED_LOOP_CAPTURE`) and the surrogate-unit
+reading (TODO). Landing the rest is only cheap
 before the first Maven publish / 1.0 API lock (both still open in
 [TODO](../TODO.md)) — after that the same flip is a major version. This
 page is the full accounting: what flips, what the API looks like, what it
@@ -123,12 +127,14 @@ fails — `(a|\b)*x` on `"aax"` reports g1 `1..2` (the `\b` re-entry
 never matched; not a protocol case at all). The 4d audit's residual:
 with a CONSUMING TAIL the surfaced span sits at the loop's REST
 position, not the accept position (`(a*)*b` on `"aab"` → g1 `2..2`)
-— expressing that needs the surfaced write to ride the transition φ as
-a position-carrying ε-write (compose with line-merged DFA states), the
-one family-6 slice still answered the RE2 way on the JUR lane. The
-evidence re-base reclassified it a conscious domain exclusion
-(`SKIP_GROUP_PARTICIPATION_TAIL`, reached only with skeleton-equal
-protocols); everything else about family 6 compares HARD against the
+— CLOSED, and not by the projected φ work: the unbounded
+zero-width-exit split (finding 2's mirror landing) re-routes the pure-ε
+loop completions to the quantifier exit as a NORMAL tagged ε-edge, which
+IS the position-carrying ε-write — the span records at the edge's own
+(rest) position. The tail slice compares HARD (the parity twin pins it);
+the successor residual is java's nested-loop inner-capture quirk
+(`((a)*b)*`: the first iteration's inner group,
+`SKIP_NESTED_LOOP_CAPTURE`), everything else about family 6 compares HARD against the
 live oracle.
 
 **Decided interactions**:

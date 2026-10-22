@@ -1660,10 +1660,17 @@ public final class DifferentialFuzzer {
          *       {@code (?U)} is no longer here — it translates to the
          *       oracle's scoped {@code (?U:...)} wrap and compares
          *       HARD.</li>
-         *   <li><b>group-participation-tail</b> — the family-6 tail slice
-         *       (the 4d audit's position-carrying ε-write gap); reached only
-         *       with skeleton-equal protocols, so the overall spans already
-         *       compared clean.</li>
+         *   <li><b>group-participation-tail — RETIRED</b>: the family-6
+         *       tail slice (the 4d audit's position-carrying ε-write gap)
+         *       closed by the unbounded zero-width-exit split (finding 2's
+         *       mirror) — the exiting iteration's writes ride a normal
+         *       ε-edge at the loop's REST position and compare HARD.</li>
+         *   <li><b>nested-loop-capture</b> — java's backtracker restores
+         *       the FIRST iteration's inner group for a quantified capture
+         *       nested inside another quantified group ({@code ((a)*b)*}
+         *       on {@code "abab"} &rarr; g2 0..1; the loop lineage reports
+         *       the last). Skeleton-equal + the nested-quantified shape;
+         *       the engine fix is the open TODO.</li>
          *   <li><b>surrogate-unit-semantics</b> — the lane's designed unit
          *       semantics vs java's pair-aware UTF-16 discipline (java's
          *       classes never match a surrogate unit inside a well-formed
@@ -1678,8 +1685,8 @@ public final class DifferentialFuzzer {
             if (o.vm.startsWith("<reject") && p.contains("(?U")) {
                 return "v1-ungreedy-scope";
             }
-            if (CampaignFuzzer.sameSkeleton(o.oracle, o.vm) && p.matches(".*\\).*[*+{].*")) {
-                return "group-participation-tail";
+            if (CampaignFuzzer.sameSkeleton(o.oracle, o.vm) && p.matches(".*\\(.*\\(.*\\)[*+{].*\\)[*+{].*")) {
+                return "nested-loop-capture";
             }
             if (CampaignFuzzer.hasLoneSurrogate(p) || CampaignFuzzer.hasLoneSurrogate(o.c.input())
                 || CampaignFuzzer.laneExtrasAllPairInteriors(o.oracle, o.vm, o.c.input())
