@@ -335,7 +335,21 @@ public final class Parser {
                 throw fail(this, "invalid nested repetition operator");
             }
         }
-        return new Ast.Repeat(atom, min, max, greedy);
+        Ast.Repeat rep = new Ast.Repeat(atom, min, max, greedy);
+        // Finding 2 (campaign 2026-10-16): JUR reading only — mark the
+        // bounded shapes whose body can match empty through a choice
+        // point (java's Prolog+Loop compile; the Loop guard exits after
+        // any zero-width iteration). {n}/{n,m} with max >= 2 and {n,}
+        // with min >= 2 all desugar structural copies that need the
+        // zero-width-exit split; {0,1}, {0,}, {1,} build no copies and
+        // the unbounded tail machinery already models the guard. No-op on
+        // the RE2 lane: the re2j surface's structural reading keeps the
+        // permissive [ε, consume] copies, so its artifacts stay
+        // bit-identical.
+        boolean boundedCopies = max != Integer.MAX_VALUE ? max >= 2 : min >= 2;
+        rep.zeroWidthExit =
+            boundedCopies && !options.isEmptyIterationSpans() && nullableBody(atom) && !dissolvableBody(atom);
+        return rep;
     }
 
     /**

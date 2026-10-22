@@ -462,6 +462,7 @@ public final class Tnfa {
             static final int STAR_NULLABLE = 4; // e* with nullable body: (e+)? shape
             static final int STAR_PLAIN = 5; // e* with non-nullable body: hub loop
             static final int PLUS = 6; // e+
+            static final int BOUNDED_ZWE = 7; // marked {n,m}/{n,}: zero-width-exit split copies
 
             int kind = DISPATCH;
             Ast node; // DISPATCH/CONCAT/ALT: the node; repeat kinds: the body
@@ -478,6 +479,16 @@ public final class Tnfa {
             int newStart;
             List<BitSet> branchGroups;
             BitSet union;
+            // BOUNDED_ZWE scratch (finding 2): the unit plan and threading
+            int zweIn; // chain source awaiting an edge to the current unit's entry (-1 = none)
+            int zweExit; // current unit's copy-exit node X
+            int zweCtl = -1; // optional unit's controller C (enter edge pending); -1 = mandatory
+            int zweEntry = -1; // the quantifier's overall entry (first unit's entry)
+            int zweLo; // node-range start of the current unit's body fragment
+            int zweDone; // completed units
+            int zweUnits; // total units (mandatory + optional + the {n,} plus tail)
+            int zweMandatory; // mandatory split units
+            boolean zweTail; // {n,}: the last unit is the plus tail (no split)
         }
 
         /** Returns entry state of sub-NFA that flows into {@code entryTo}.
@@ -633,6 +644,27 @@ public final class Tnfa {
                         pushNode(stack, body, f.s);
                         continue;
                     }
+                    // Finding 2 (campaign 2026-10-16): a marked bounded repeat
+                    // over a nullable-with-choice body builds through the
+                    // zero-width-exit split instead of the plain structural
+                    // desugar — java's Prolog+Loop guard exits after any
+                    // zero-width iteration, the plain copies permit [ε, consume]
+                    // paths java never explores (see BOUNDED_ZWE).
+                    if (r.zeroWidthExit) {
+                        f.kind = BuildFrame.BOUNDED_ZWE;
+                        f.node = body;
+                        f.bodyPri = bodyPri;
+                        f.skipPri = skipPri;
+                        f.zweTail = max == Integer.MAX_VALUE;
+                        f.zweMandatory = f.zweTail ? min - 1 : min;
+                        f.zweUnits = f.zweMandatory + (f.zweTail ? 1 : max - min);
+                        f.zweIn = -1;
+                        f.zweDone = 0;
+                        frames.push();
+                        stack.push(f);
+                        zweNextUnit(f, stack);
+                        continue;
+                    }
                     // Bounded repetitions {n}, {n,}, {n,m} — desugar via concatenation + tail.
                     // (We desugar rather than implementing the paper's bounded-rep construction literally;
                     //  tags are duplicated, which is acceptable for our subset.)
@@ -769,6 +801,45 @@ public final class Tnfa {
                     frames.pop();
                     continue;
                 }
+                if (f.kind == BuildFrame.BOUNDED_ZWE) {
+                    boolean tailUnit = f.zweTail && f.zweDone == f.zweUnits - 1;
+                    if (tailUnit) {
+                        // the {n,} plus tail's fragment entry — its own loop
+                        // machinery (same-position re-entry dedup) models the
+                        // guard for the unbounded iterations
+                        if (f.zweIn >= 0) {
+                            eps(f.zweIn, result, 1);
+                            f.zweIn = -1;
+                        }
+                        result = f.zweEntry;
+                        frames.pop();
+                        continue;
+                    }
+                    // split the just-built copy: pure-ε completions re-route to
+                    // the quantifier exit, consuming paths keep the copy exit
+                    int pure = zweSplit(result, f.zweExit, f.entryTo, f.zweLo);
+                    if (f.zweCtl >= 0) {
+                        eps(f.zweCtl, pure, f.bodyPri);
+                        f.zweCtl = -1;
+                    }
+                    if (f.zweIn >= 0) {
+                        eps(f.zweIn, pure, 1);
+                        f.zweIn = -1;
+                    } else if (f.zweEntry < 0) {
+                        f.zweEntry = pure;
+                    }
+                    f.zweDone++;
+                    if (f.zweDone >= f.zweUnits) {
+                        eps(f.zweExit, f.entryTo, 1); // the last copy's exit joins the quantifier exit
+                        result = f.zweEntry;
+                        frames.pop();
+                        continue;
+                    }
+                    f.zweIn = f.zweExit;
+                    stack.push(f);
+                    zweNextUnit(f, stack);
+                    continue;
+                }
                 throw new IllegalStateException("unknown build frame kind: " + f.kind);
             }
             return result;
@@ -865,6 +936,159 @@ public final class Tnfa {
                 target = ntagState;
             }
             return target;
+        }
+
+        /**
+         * Start the next BOUNDED_ZWE unit. Mandatory units ({@code {n}}'s n
+         * copies, {@code {n,}}'s first n-1) build the body into a fresh copy
+         * exit X; optional units ({@code {n,m}}'s m-n suffix levels) first
+         * mint a controller C with the skip edge (ntag-prefixed, like the
+         * QUEST's initial skip) and chain into it. The {n,} plus tail is
+         * pushed whole — its hub dedup already models the guard for the
+         * unbounded iterations.
+         */
+        private void zweNextUnit(BuildFrame f, ArrayDeque<BuildFrame> stack) {
+            boolean tailUnit = f.zweTail && f.zweDone == f.zweUnits - 1;
+            if (tailUnit) {
+                boolean lazy = f.bodyPri != 1;
+                pushNode(stack, new Ast.Repeat(f.node, 1, Integer.MAX_VALUE, !lazy), f.entryTo);
+                return;
+            }
+            boolean optional = f.zweDone >= f.zweMandatory;
+            if (optional) {
+                int c = fresh();
+                eps(c, ntagChain(f.node, f.entryTo), f.skipPri);
+                if (f.zweIn >= 0) {
+                    eps(f.zweIn, c, 1);
+                    f.zweIn = -1;
+                } else if (f.zweEntry < 0) {
+                    f.zweEntry = c;
+                }
+                f.zweCtl = c;
+            }
+            f.zweExit = fresh();
+            f.zweLo = counter;
+            pushNode(stack, f.node, f.zweExit);
+        }
+
+        /**
+         * Finding 2 (campaign 2026-10-16) — the zero-width-exit split of one
+         * desugared copy. java.util.regex compiles a bounded quantifier over
+         * a body that can match empty through a choice point as
+         * {@code Prolog}+{@code Loop}; the Loop guard {@code i >
+         * locals[begin]} forces the loop to EXIT after any zero-width
+         * iteration (even under cmin — the count check sits inside the
+         * guard, so the exit is legal with fewer iterations too). The plain
+         * structural desugar's concatenated copies admit {@code [ε, consume]}
+         * paths java's backtracker never explores — the campaign's
+         * {@code (\A|.?o*.){3}} matches() divergences.
+         *
+         * <p>The split partitions each copy's paths by zero-width
+         * provenance since the copy's entry: the ε-reachable subgraph R is
+         * DUPLICATED (tags and assertion masks carried — java reports the
+         * exiting iteration's group spans); the duplicates' arrivals at the
+         * copy exit re-route to the QUANTIFIER's exit, their consuming
+         * edges rejoin the original nodes (a consumed iteration continues
+         * to the next copy). The original entry is left orphaned — every
+         * path starts pure at the duplicate and switches to the original
+         * side on its first consuming edge.
+         *
+         * @param entry the copy fragment's entry (from the body build)
+         * @param exit the copy's exit node X (fragment flows into it)
+         * @param qExit the quantifier's exit (the Repeat's entryTo)
+         * @param lo node id captured before the body build; the fragment
+         *        minted [{@code lo}, {@code counter}-1] and its exit's
+         *        only outside target is {@code exit}
+         * @return the copy's PURE entry (the entry's duplicate), or
+         *         {@code entry} when no pure-ε path reaches the exit
+         *         (nothing to redirect — the guard cannot fire)
+         */
+        private int zweSplit(int entry, int exit, int qExit, int lo) {
+            int hi = counter - 1;
+            if (entry < lo || entry > hi) {
+                return entry; // pass-through leaf: no interior to split
+            }
+            // zero-width adjacency of the fragment (all ε flavors — plain,
+            // tagged, assertion-gated — are zero-width; symbol edges consume)
+            int span = hi - lo + 1;
+            List<int[]>[] adj = new List[span];
+            int epsSnapshot = eps.size();
+            for (int i = 0; i < epsSnapshot; i++) {
+                meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+                int[] e = eps.get(i);
+                int u = e[0];
+                if (u >= lo && u <= hi) {
+                    List<int[]> bucket = adj[u - lo];
+                    if (bucket == null) {
+                        bucket = new ArrayList<>();
+                        adj[u - lo] = bucket;
+                    }
+                    bucket.add(e);
+                }
+            }
+            BitSet reach = new BitSet(span);
+            ArrayDeque<Integer> work = new ArrayDeque<>();
+            reach.set(entry - lo);
+            work.add(entry);
+            boolean reachesExit = false;
+            while (!work.isEmpty()) {
+                int u = work.poll();
+                List<int[]> edges = adj[u - lo];
+                if (edges == null) {
+                    continue;
+                }
+                for (int[] e : edges) {
+                    int v = e[1];
+                    if (v == exit) {
+                        reachesExit = true;
+                    } else if (v >= lo && v <= hi && !reach.get(v - lo)) {
+                        reach.set(v - lo);
+                        work.add(v);
+                    } else if (v < lo || v > hi) {
+                        throw new IllegalStateException("zero-width-exit split: edge leaves the copy fragment");
+                    }
+                }
+            }
+            if (!reachesExit) {
+                return entry; // every copy completion consumes — guard never fires
+            }
+            int[] dup = new int[span];
+            for (int u = reach.nextSetBit(0); u >= 0; u = reach.nextSetBit(u + 1)) {
+                dup[u] = fresh();
+            }
+            for (int i = 0; i < epsSnapshot; i++) {
+                int[] e = eps.get(i);
+                int u = e[0];
+                if (u < lo || u > hi || !reach.get(u - lo)) {
+                    continue;
+                }
+                int v = e[1];
+                int tv;
+                if (v == exit) {
+                    tv = qExit; // the redirect: a zero-width copy exits the quantifier
+                } else if (v >= lo && v <= hi && reach.get(v - lo)) {
+                    tv = dup[v - lo];
+                } else {
+                    throw new IllegalStateException("zero-width-exit split: edge leaves the copy fragment");
+                }
+                zwEps(dup[u - lo], tv, e[2], e[3], e[4]);
+            }
+            int symSnapshot = syms.size();
+            for (int i = 0; i < symSnapshot; i++) {
+                int u = syms.get(i)[0];
+                if (u >= lo && u <= hi && reach.get(u - lo)) {
+                    sym(dup[u - lo], syms.get(i)[1], symClasses.get(i));
+                }
+            }
+            return dup[entry - lo];
+        }
+
+        /** Raw ε-edge emitter for the split's duplicates (tag + assertion
+         *  mask both preserved from the original edge). */
+        private void zwEps(int from, int to, int pri, int tag, int emptyMask) {
+            meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(BudgetWeights.TNFA_EPS_EDGE_BYTES);
+            eps.add(new int[]{from, to, pri, tag, emptyMask});
         }
 
         /** Collect group numbers (1-based) used anywhere in the AST subtree.

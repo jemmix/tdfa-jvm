@@ -142,6 +142,20 @@ public abstract class Ast {
         public final Ast body;
         public final int min, max;
         public final boolean greedy;
+        /**
+         * Finding 2 (campaign 2026-10-16): java.util.regex compiles a
+         * bounded {@code {n,m}} / {@code {n,}} over a body that can match
+         * empty through a choice point as {@code Prolog}+{@code Loop},
+         * whose zero-width guard ({@code i > locals[begin]}) forces the
+         * loop to EXIT after any zero-width iteration — even under
+         * {@code cmin} (the count check sits inside the guard). The NFA
+         * builder splits every desugared copy's zero-width paths to the
+         * quantifier exit (see {@code Tnfa.Builder}'s BOUNDED_ZWE frame).
+         * Parser-set on the JUR reading only; all-zero-width deterministic
+         * bodies stay unmarked — java's GroupCurly COMMITS those (no
+         * guard), and the plain structural desugar already agrees.
+         */
+        public boolean zeroWidthExit;
 
         public Repeat(Ast body, int min, int max, boolean greedy) {
             this.body = body;

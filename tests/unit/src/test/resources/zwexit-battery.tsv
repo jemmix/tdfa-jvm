@@ -1,0 +1,45 @@
+# Finding-2 battery (campaign 2026-10-16) — the bounded-quantifier zero-width-exit
+# rule: java compiles {n,m} over a nullable-with-choice body as Prolog+Loop,
+# whose guard (i > locals[begin]) forces the loop to EXIT after any zero-width
+# iteration (even under cmin). JUR column recorded from the live JDK; RE2 column
+# from the re2j surface (both tiers agreeing). Protocol: M=..|F=..|R=..
+id	pattern	input	jur	re2
+ewe-first-2	(\A|.){2}	Y	M=NONE|F=0,0;0,0|R=0,0;0,0	M=0,1;0,1|F=0,0;0,0|R=0,0;0,0
+ewe-first-2b	(\A|.){2}	YY	M=0,2;1,2|F=0,0;0,0|R=NONE	M=0,2;1,2|F=0,0;0,0|R=NONE
+ewe-first-3	(\A|.){3}	YY	M=NONE|F=0,0;0,0|R=NONE	M=0,2;1,2|F=0,0;0,0|R=NONE
+ewe-first-23	(\A|.){2,3}	Y	M=NONE|F=0,0;0,0|R=0,0;0,0	M=0,1;0,1|F=0,0;0,0|R=0,0;0,0
+ewe-last-2	(Y|\A){2}	Y	M=NONE|F=0,0;0,0|R=0,0;0,0	M=0,1;0,1|F=0,1;0,1|R=0,1;0,1
+ewe-last-23	(Y|\A){2,3}	Y	M=NONE|F=0,0;0,0|R=0,0;0,0	M=0,1;0,1|F=0,1;0,1|R=0,1;0,1
+ewe-seed	(\A|.?o*.){3}	Y	M=NONE|F=0,0;0,0|R=0,0;0,0	M=0,1;0,1|F=0,0;0,0|R=0,0;0,0
+ewe-seed-b	(\A|.?o*.){2}	ab	M=0,2;1,2|F=0,0;0,0|R=NONE	M=0,2;0,2|F=0,0;0,0|R=NONE
+ewe-noncap-2	(?:\A|.){2}	Y	M=NONE|F=0,0|R=0,0	M=0,1|F=0,0|R=0,0
+ewe-nested	((\A|.)){2}	x	M=NONE|F=0,0;0,0;0,0|R=0,0;0,0;0,0	M=0,1;0,1;0,1|F=0,0;0,0;0,0|R=0,0;0,0;0,0
+ewe-lazy-2	(\A|.){2}?	Y	M=NONE|F=0,0;0,0|R=0,0;0,0	M=0,1;0,1|F=0,0;0,0|R=0,0;0,0
+ewe-lazy-23	(\A|.){2,3}?	a	M=NONE|F=0,0;0,0|R=0,0;0,0	M=0,1;0,1|F=0,0;0,0|R=0,0;0,0
+bdot-first-2	(\b|Y){2}	Y	M=0,1;1,1|F=0,0;0,0|R=0,0;0,0	M=0,1;0,1|F=0,0;0,0|R=0,0;0,0
+bdot-first-02	(\b|Y){0,2}	Y	M=0,1;1,1|F=0,0;0,0|R=0,0;0,0	M=0,1;0,1|F=0,0;0,0|R=0,0;0,0
+bdot-first-12	(\b|Y){1,2}	Y	M=0,1;1,1|F=0,0;0,0|R=0,0;0,0	M=0,1;0,1|F=0,0;0,0|R=0,0;0,0
+bdot-first-23	(\b|Y){2,3}	YY	M=0,2;2,2|F=0,0;0,0|R=1,2;2,2	M=0,2;1,2|F=0,0;0,0|R=1,2;2,2
+bdot-last	(Y|\b){2}	Y	M=0,1;1,1|F=0,1;1,1|R=0,1;1,1	M=0,1;1,1|F=0,1;1,1|R=0,1;1,1
+bdot-tail	(\b|Y){2,3}	Ya	M=NONE|F=0,0;0,0|R=2,2;2,2	M=NONE|F=0,0;0,0|R=2,2;2,2
+quest-body-2	(a?){2}	a	M=0,1;1,1|F=0,1;1,1|R=0,1;1,1	M=0,1;1,1|F=0,1;1,1|R=0,1;1,1
+quest-body-02	(a?){0,2}	a	M=0,1;1,1|F=0,1;1,1|R=0,1;1,1	M=0,1;1,1|F=0,1;1,1|R=0,1;1,1
+quest-body-23	(a?|\b){2,3}	ab	M=NONE|F=0,1;1,1|R=1,1;1,1	M=NONE|F=0,1;1,1|R=1,1;1,1
+empty-alt-2	(a|){2}		M=0,0;0,0|F=0,0;0,0|R=0,0;0,0	M=0,0;0,0|F=0,0;0,0|R=0,0;0,0
+empty-alt-2b	(a|){2}	a	M=0,1;1,1|F=0,1;1,1|R=0,1;1,1	M=0,1;1,1|F=0,1;1,1|R=0,1;1,1
+zw-det-2	(\b){2}	a	M=NONE|F=0,0;0,0|R=0,0;0,0	M=NONE|F=0,0;0,0|R=0,0;0,0
+zw-det-3	(?:\b){3}	ab	M=NONE|F=0,0|R=2,2	M=NONE|F=0,0|R=2,2
+empty-group-2	(){2}		M=0,0;0,0|F=0,0;0,0|R=0,0;0,0	M=0,0;0,0|F=0,0;0,0|R=0,0;0,0
+consume-2	(a|b){2}	ab	M=0,2;1,2|F=0,2;1,2|R=NONE	M=0,2;1,2|F=0,2;1,2|R=NONE
+consume-23	(a|b){2,3}	aba	M=0,3;2,3|F=0,3;2,3|R=1,3;2,3	M=0,3;2,3|F=0,3;2,3|R=1,3;2,3
+mixed-24	(\A|Y|.){2,4}	Ya	M=0,2;1,2|F=0,0;0,0|R=NONE	M=0,2;1,2|F=0,0;0,0|R=NONE
+mixed-24b	(\A|Y|.){2,4}	YYaa	M=0,4;3,4|F=0,0;0,0|R=2,4;3,4	M=0,4;3,4|F=0,0;0,0|R=2,4;3,4
+suffix-tail-23	(\A|.){2,3}z	Yz	M=NONE|F=NONE|R=NONE	M=0,2;0,1|F=0,2;0,1|R=NONE
+suffix-tail-2	(\b|Y){2}z	Yz	M=NONE|F=NONE|R=NONE	M=0,2;0,1|F=0,2;0,1|R=NONE
+anchored-seq	x(\A|.){2}	xY	M=NONE|F=NONE|R=NONE	M=NONE|F=NONE|R=NONE
+whole-demand	(\A|Y.){2}	Ya	M=NONE|F=0,0;0,0|R=NONE	M=0,2;0,2|F=0,0;0,0|R=NONE
+greedy-inner	(\A|.?.){2}	ab	M=0,2;1,2|F=0,0;0,0|R=NONE	M=0,2;0,2|F=0,0;0,0|R=NONE
+bdot-word	(\b|\w){2}	ab	M=0,2;1,2|F=0,0;0,0|R=1,2;2,2	M=0,2;1,2|F=0,0;0,0|R=1,2;2,2
+plustail-2	(\A|.){2,}	Y	M=NONE|F=0,0;0,0|R=0,0;0,0	M=0,1;0,1|F=0,0;0,0|R=0,0;0,0
+plustail-2b	(Y|\b){2,}	Ya	M=NONE|F=0,0;0,0|R=2,2;2,2	M=NONE|F=0,1;0,1|R=2,2;2,2
+plustail-3	(\b|Y){3,}	YY	M=0,2;2,2|F=0,0;0,0|R=1,2;2,2	M=0,2;1,2|F=0,0;0,0|R=1,2;2,2
