@@ -33,18 +33,20 @@ class CampaignSmokeTest {
 
     /** The jur mode's enumerated soft kinds (the asserted domain boundary).
      * RE2-lane probe: the re2j surface's documented divergence families vs
-     * the jur oracle (KNOWN_*), the fold-ambiguity and untranslatable-(?U
-     * skips, and the compile/exception/budget guards. JUR-lane probe:
-     * SKIP_* domain exclusions and guards only — no KNOWN_ kind may appear
-     * on the lane. */
+     * the jur oracle (KNOWN_*), the fold-ambiguity skip, and the compile/
+     * exception/budget guards. JUR-lane probe: SKIP_* domain exclusions
+     * and guards only — no KNOWN_ kind may appear on the lane, and the
+     * engine's own match-time exceptions are HARD (JURLANE_EXCEPTION;
+     * the compile catch-all's twin — the re-base flipped that one first,
+     * JUR_EXCEPTION was never actually soft). */
     private static final Set<String> JUR_SOFT = Set.of(
         // RE2-lane probe (jurCase): re2j reading vs jur oracle, by design
         "KNOWN_SURROGATE-CODE-UNIT", "KNOWN_LINE-TERMINATOR-SET", "KNOWN_UNIT-BOUNDARY-POSITIONS",
         "KNOWN_CARET-AFTER-FINAL-NEWLINE", "KNOWN_DOLLAR-BEFORE-FINAL-NEWLINE", "KNOWN_GROUP-PARTICIPATION-LINEAGE",
-        "SKIP_UNGREEDY", "SKIP_CI_FOLD_AMBIGUOUS", "BUDGET", "JUR_ORACLE_THREW", "JUR_EXCEPTION",
+        "SKIP_UNGREEDY", "SKIP_CI_FOLD_AMBIGUOUS", "BUDGET", "JUR_ORACLE_THREW",
         // JUR-lane probe (jurLaneCase): domain exclusions + guards
         "V1_UNGREEDY_SCOPE", "SKIP_SCOPED_U_UNTRANSLATABLE", "SKIP_GROUP_PARTICIPATION_TAIL",
-        "SKIP_SURROGATE_UNIT_SEMANTICS", "JURLANE_BUDGET", "JURLANE_EXCEPTION");
+        "SKIP_SURROGATE_UNIT_SEMANTICS", "JURLANE_BUDGET");
 
     private static final Map<String, Set<String>> MODE_SOFT =
         Map.of("jur", JUR_SOFT, "stretch", Set.of("SKIP_EMPTY", "THREW", "SLOW", "STRETCH_BUDGET"), "seq",
