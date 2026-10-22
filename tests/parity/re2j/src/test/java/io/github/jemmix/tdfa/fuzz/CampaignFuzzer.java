@@ -496,9 +496,17 @@ public final class CampaignFuzzer {
             jurLaneVm = engineProtocol(new TdfaRunner(find, 1 << 20), c.input());
             jurLaneAsm = engineProtocol(TdfaAsmBackend.generate(find, 1 << 20), c.input());
         } catch (RuntimeException | StackOverflowError e) {
-            counts.soft("JURLANE_EXCEPTION");
+            // The compile catch-all's twin, flipped hard by the same
+            // re-base philosophy: a match-time engine exception is an
+            // engine bug, not a budget rejection — the engine is
+            // non-recursive, so StackOverflowError too. The oracle-side
+            // JUR_ORACLE_THREW stays soft (that is the oracle bombing,
+            // which the generation guard mostly prevents).
+            counts.hard("JURLANE_EXCEPTION");
             camp.rec(caseSeed, "JURLANE_EXCEPTION", "pattern", c.pattern(), "input", c.input(), "flags", c.tdfaFlags(),
-                "detail", e.getClass().getSimpleName());
+                "detail", e + " @ " + firstFrame(e));
+            camp.log("HARD JURLANE_EXCEPTION seed=%d pat=%s in=%s%n  %s", caseSeed,
+                DifferentialFuzzer.escape(c.pattern()), DifferentialFuzzer.escape(c.input()), e);
             return;
         }
         if (!jurLaneVm.equals(jurLaneAsm)) {
