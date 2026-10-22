@@ -53,9 +53,12 @@ import java.util.concurrent.atomic.AtomicLong;
  *       terminators where the RE2 lineage sees {@code \n} only. Inline
  *       {@code (?U:...)} groups stay skipped on the RE2-lane probe (tdfa:
  *       ungreedy; jur: UNICODE_CHARACTER_CLASS — untranslatable); the
+ *       untranslatable); inline {@code (?i:...)} + UCC reaches here. A
+ *       missed oracle span starting at a non-ASCII char is that family.
  *       JUR-lane probe parses {@code (?U} itself (v1: {@code (?U:...)}
- *       shapes reject by design and count soft; a leading {@code (?U)}
- *       translates to the oracle's UNICODE_CASE flag). Under CI the jur
+ *       shapes reject by design and count soft; a top-level point-forward
+ *       {@code (?U)} translates to the oracle's scoped {@code (?U:...)}
+ *       wrap of the remainder). Under CI the jur
  *       answer is computed under both plain CASE_INSENSITIVE and
  *       CASE_INSENSITIVE|UNICODE_CASE; disagreement ("fold ambiguous" —
  *       non-ASCII folds involved, the universes legitimately differ) skips
@@ -425,8 +428,9 @@ public final class CampaignFuzzer {
      *  (?u)/(?U)/UCC — fold the java.util.regex reading incl. the merged
      *  İ/ı orbit since the evidence re-base, so those compare HARD too)
      *  and the (?U) reading (SKIP_UNGREEDY retired: (?U:...)/nested
-     *  spellings reject by design, counted soft at the compile; a leading
-     *  (?U) translates to the oracle's UNICODE_CASE flag) — and since
+     *  spellings reject by design, counted soft at the compile; a
+     *  top-level point-forward (?U) translates to the oracle's scoped
+     *  (?U:...) wrap of the remainder) — and since
      *  family 6 landed (WBS 4b suppression + 4c surfacing), the GROUP
      *  clauses compare HARD too — both protocols carry them, no more
      *  skeleton stripping. The evidence-re-base residuals are conscious
@@ -436,12 +440,13 @@ public final class CampaignFuzzer {
     static void jurLaneCase(long caseSeed, Camp camp, Counts counts) {
         JurCase c = genJur(caseSeed);
         // SKIP_UNGREEDY retired (fold + U bits): the JUR lane parses (?U
-        // itself. A leading (?U) is the scoped fold upgrade — the oracle's
-        // spelling is the UNICODE_CASE flag on the remainder; any other
-        // (?U spelling the lane ACCEPTS (mid-pattern top-level) has no flag
-        // translation and skips soft below; (?U:...)/nested forms reject
-        // at the compile and are counted there.
-        boolean leadingScopedU = c.pattern().startsWith("(?U)");
+        // itself. A top-level point-forward (?U) — leading or mid-pattern —
+        // is the scoped fold upgrade; the oracle's spelling wraps the
+        // remainder in java's scoped (?U:...) (inline flags extend to the
+        // end of the enclosing group, so prefix + (?U:remainder:) is the
+        // same reading — non-capturing, group numbering unchanged);
+        // (?U:...)/nested forms reject at the compile and are counted
+        // there.
         // JUR-lane compile: same flag→inline-prefix mapping as the facade,
         // Semantics.of() — the facade default since the flip.
         String fl = c.pattern();
@@ -486,10 +491,6 @@ public final class CampaignFuzzer {
                 DifferentialFuzzer.escape(c.pattern()), e);
             return;
         }
-        if (!leadingScopedU && c.pattern().contains("(?U")) {
-            counts.soft("SKIP_SCOPED_U_UNTRANSLATABLE"); // point-forward (?U) has no oracle flag spelling
-            return;
-        }
         String jurLaneVm;
         String jurLaneAsm;
         try {
@@ -518,10 +519,14 @@ public final class CampaignFuzzer {
             return;
         }
         // oracle: java.util.regex under the lane's reading — bare CI (the
-        // ASCII universe); a leading (?U) upgrade is the UNICODE_CASE flag
-        // on the remainder.
-        String oraclePattern = leadingScopedU ? c.pattern().substring(4) : c.pattern();
-        int jurFlags = c.jurFlags() | (leadingScopedU ? JUR_UCASE : 0);
+        // ASCII universe); a top-level point-forward (?U) becomes java's
+        // scoped spelling, the remainder wrapped in (?U:...). A lexical
+        // "(?U" the LANE compiled (so the occurrence is structural) wraps
+        // too; shapes the lane rejected never reach here.
+        int scopedU = c.pattern().indexOf("(?U)");
+        String oraclePattern = scopedU >= 0
+            ? c.pattern().substring(0, scopedU) + "(?U:" + c.pattern().substring(scopedU + 4) + ")" : c.pattern();
+        int jurFlags = c.jurFlags();
         String jur;
         java.util.regex.Pattern jp;
         try {

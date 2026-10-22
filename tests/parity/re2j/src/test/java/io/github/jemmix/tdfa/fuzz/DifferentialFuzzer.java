@@ -50,8 +50,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * through the jur facade (the default lane) against the live
  * {@code java.util.regex} oracle with the campaign's flag translation
  * (CASE_INSENSITIVE / DOTALL / MULTILINE / UNICODE_CHARACTER_CLASS — the
- * {@code (?u)} lane; no LONGEST, jur has no equivalent; a leading
- * {@code (?U)} translates to the oracle's UNICODE_CASE flag). The contract
+ * {@code (?u)} lane; no LONGEST, jur has no equivalent; a top-level
+ * point-forward {@code (?U)} translates to the oracle's scoped
+ * {@code (?U:...)} wrap of the remainder). The contract
  * is each oracle's observable behavior: compile-accept/reject parity plus a
  * five-probe span protocol compared for exact equality — first
  * {@code find()} with overall and per-group spans (spans strictly subsume
@@ -570,13 +571,18 @@ public final class DifferentialFuzzer {
         String vmExc;
     }
 
-    /** The oracle pattern a JUR-lane compile compares against (a leading
-     *  {@code (?U)} — the lane's scoped fold upgrade — has no
-     *  java.util.regex spelling and translates to UNICODE_CASE on the
-     *  remainder; other {@code (?U} spellings are the classifier's domain
-     *  exclusions). */
+    /** The oracle pattern a JUR-lane compile compares against: a
+     *  top-level point-forward {@code (?U)} — the lane's scoped fold
+     *  upgrade, leading or mid-pattern — translates to java's SCOPED
+     *  spelling, the remainder wrapped in {@code (?U:...)} (inline flags
+     *  extend to the end of the enclosing group, so prefix +
+     *  {@code (?U:remainder:)} is the same reading — non-capturing, group
+     *  numbering unchanged). {@code (?U:...)}/nested spellings reject at
+     *  the lane compile (the v1 top-level-only limit) and never reach
+     *  here. */
     static String jurOraclePattern(String pattern) {
-        return pattern.startsWith("(?U)") ? pattern.substring(4) : pattern;
+        int u = pattern.indexOf("(?U)");
+        return u >= 0 ? pattern.substring(0, u) + "(?U:" + pattern.substring(u + 4) + ")" : pattern;
     }
 
     static int jurFlags(int flags, String pattern) {
@@ -584,7 +590,6 @@ public final class DifferentialFuzzer {
         jf |= (flags & FLAG_DOTALL) != 0 ? JUR_S : 0;
         jf |= (flags & FLAG_MULTILINE) != 0 ? JUR_M : 0;
         jf |= (flags & FLAG_UCC) != 0 ? JUR_UCC : 0;
-        jf |= pattern.startsWith("(?U)") ? JUR_UCASE : 0;
         return jf;
     }
 
@@ -1648,10 +1653,13 @@ public final class DifferentialFuzzer {
          *   <li><b>oracle-threw</b> — java.util.regex blew up at match time
          *       (backtracker StackOverflowError): an oracle limit, not a
          *       divergence (the campaign's JUR_ORACLE_THREW soft).</li>
-         *   <li><b>scoped-U-untranslatable</b> — non-leading {@code (?U}
-         *       spellings: the v1 top-level-only limit rejects
-         *       {@code (?U:...)} shapes the oracle accepts, and a
-         *       point-forward {@code (?U)} has no oracle flag spelling.</li>
+         *   <li><b>v1-ungreedy-scope</b> — {@code (?U:...)} and nested
+         *       {@code (?U} spellings: the v1 top-level-only limit rejects
+         *       at the lane compile by design (the campaign's
+         *       V1_UNGREEDY_SCOPE twin); a point-forward top-level
+         *       {@code (?U)} is no longer here — it translates to the
+         *       oracle's scoped {@code (?U:...)} wrap and compares
+         *       HARD.</li>
          *   <li><b>group-participation-tail</b> — the family-6 tail slice
          *       (the 4d audit's position-carrying ε-write gap); reached only
          *       with skeleton-equal protocols, so the overall spans already
@@ -1667,8 +1675,8 @@ public final class DifferentialFuzzer {
             if (o.oracle.startsWith("<exception")) {
                 return "oracle-threw";
             }
-            if (!p.startsWith("(?U)") && p.contains("(?U")) {
-                return "scoped-U-untranslatable";
+            if (o.vm.startsWith("<reject") && p.contains("(?U")) {
+                return "v1-ungreedy-scope";
             }
             if (CampaignFuzzer.sameSkeleton(o.oracle, o.vm) && p.matches(".*\\).*[*+{].*")) {
                 return "group-participation-tail";

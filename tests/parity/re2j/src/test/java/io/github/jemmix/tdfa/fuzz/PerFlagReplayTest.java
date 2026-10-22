@@ -18,7 +18,6 @@ import static io.github.jemmix.tdfa.fuzz.DifferentialFuzzer.FLAG_UCC;
 import static io.github.jemmix.tdfa.fuzz.DifferentialFuzzer.JUR_I;
 import static io.github.jemmix.tdfa.fuzz.DifferentialFuzzer.JUR_M;
 import static io.github.jemmix.tdfa.fuzz.DifferentialFuzzer.JUR_S;
-import static io.github.jemmix.tdfa.fuzz.DifferentialFuzzer.JUR_UCASE;
 import static io.github.jemmix.tdfa.fuzz.DifferentialFuzzer.JUR_UCC;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -95,9 +94,10 @@ class PerFlagReplayTest {
         CampaignFuzzer.JurCase base = CampaignFuzzer.genJur(seed);
         String pattern = base.pattern();
         String input = base.input();
-        boolean leadingScopedU = pattern.startsWith("(?U)");
-        // the v1 (?U) limit / untranslatable spellings: outside the domain
-        if (!leadingScopedU && pattern.contains("(?U")) {
+        // the v1 (?U) limit: (?U:...)/nested spellings reject at the
+        // compile by design — outside the domain. A point-forward
+        // top-level (?U) translates (the scoped wrap) and compares.
+        if (pattern.contains("(?U:") || pattern.contains("(?U-")) {
             return;
         }
         String oraclePattern = DifferentialFuzzer.jurOraclePattern(pattern);
@@ -105,7 +105,6 @@ class PerFlagReplayTest {
         jurFlags |= (flags & FLAG_DOTALL) != 0 ? JUR_S : 0;
         jurFlags |= (flags & FLAG_MULTILINE) != 0 ? JUR_M : 0;
         jurFlags |= (flags & FLAG_UCC) != 0 ? JUR_UCC : 0;
-        jurFlags |= leadingScopedU ? JUR_UCASE : 0;
 
         String oracle;
         java.util.regex.Pattern jp;
