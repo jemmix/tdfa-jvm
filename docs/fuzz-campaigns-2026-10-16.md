@@ -236,7 +236,11 @@ The pre-soak fix pass, landed as #69–#71:
   and 3 closed root-and-branch
   (#74 mask-directed probes, #75 abs-begin ladder bound, #76 unit-semantics
   trigger, #77 exact simulation + budget retirement), the next both-lane
-  soak's expected residue is the nested-loop inner-capture quirk (the
-  finding-2 unbounded landing's successor skip) plus the documented
-  BUDGET_REJECT / JURLANE_GUARD / JURLANE_SKIP classes — MATCH_BUDGET no
-  longer exists (every degenerate class root-fixed).
+  soak's expected residue is the two exact group-family skips — the
+  nested-loop inner-capture quirk (`SKIP_NESTED_LOOP_CAPTURE`) and java's
+  restart-tag leak (`SKIP_RESTART_TAG_LEAK`, `(?:(\A))*(\n)`-shaped: a
+  group span from a FAILED restart attempt survives into the accepted
+  match, outside the overall span; the retired tail predicate used to
+  swallow it) — plus the documented BUDGET_REJECT / JURLANE_GUARD /
+  JURLANE_SKIP classes. MATCH_BUDGET no longer exists (every degenerate
+  class root-fixed).
