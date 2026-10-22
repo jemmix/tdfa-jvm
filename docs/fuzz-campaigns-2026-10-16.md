@@ -217,15 +217,26 @@ The pre-soak fix pass, landed as #69–#71:
   replay bit-for-bit equal; `zwexit-battery.tsv` (41 rows, live-JDK
   re-verified each run) pins JUR and RE2 columns on both tiers; a
   30 K randomized bounded battery and a 0.9 M-case mixed fuzz batch
-  found zero divergences outside the documented classes. Residue found
-  by the shakeout, now the open TODO: the UNBOUNDED plus has the
-  mirror-image bug (`(Y?|a\z)+` on `"Ya"`: jur `[0,1) g1 1..1`, ours
-  `[0,2)` — the hub's same-position re-entry dedup kills the preferred
-  ε-exit-with-span path).
-- **Soak readiness.** With 1, 2 and 4 addressed and 3 closed root-and-branch
+  found zero divergences outside the documented classes. **The unbounded
+  mirror landed with it**: the same split extends to the PLUS/
+  STAR_NULLABLE loop bodies — the pure-ε loop completions re-route to
+  the quantifier's exit at the branch's own priority (java's Loop guard;
+  the hub's same-position re-entry dedup killed the ε-exit path when a
+  lower-priority branch could keep consuming — `(Y?|a\z)+` on `"Ya"`).
+  That redirect turned out to BE the 4d audit's position-carrying
+  ε-write: the exiting iteration's spans ride a normal tagged ε-edge at
+  the loop's REST position, so the family-6 TAIL family (`(a*)*b` on
+  `"aab"` → g1 `2..2`) compares hard and `SKIP_GROUP_PARTICIPATION_TAIL`
+  retired (the parity twin now pins `(a*)*b`, `(a*?)*b`, `(a?){2,}b`
+  hard). The successor skip is java's nested-loop inner-capture quirk
+  (`((a)*b)*` on `"abab"`: java restores the FIRST iteration's inner
+  group, g2 `0..1`; `((a)?b)*` agrees on JDK 26) —
+  `SKIP_NESTED_LOOP_CAPTURE`, skeleton- and shape-gated, the open TODO.
+- **Soak readiness.** With 1, 2 (bounded AND unbounded) and 4 addressed
+  and 3 closed root-and-branch
   (#74 mask-directed probes, #75 abs-begin ladder bound, #76 unit-semantics
   trigger, #77 exact simulation + budget retirement), the next both-lane
-  soak's expected residue is the unbounded-plus ε-exit family (the finding-2
-  landing's shakeout residue, TODO) plus the documented
+  soak's expected residue is the nested-loop inner-capture quirk (the
+  finding-2 unbounded landing's successor skip) plus the documented
   BUDGET_REJECT / JURLANE_GUARD / JURLANE_SKIP classes — MATCH_BUDGET no
   longer exists (every degenerate class root-fixed).

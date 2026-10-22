@@ -44,8 +44,13 @@ class CampaignSmokeTest {
         "KNOWN_SURROGATE-CODE-UNIT", "KNOWN_LINE-TERMINATOR-SET", "KNOWN_UNIT-BOUNDARY-POSITIONS",
         "KNOWN_CARET-AFTER-FINAL-NEWLINE", "KNOWN_DOLLAR-BEFORE-FINAL-NEWLINE", "KNOWN_GROUP-PARTICIPATION-LINEAGE",
         "SKIP_UNGREEDY", "SKIP_CI_FOLD_AMBIGUOUS", "BUDGET", "JUR_ORACLE_THREW",
-        // JUR-lane probe (jurLaneCase): domain exclusions + guards
-        "V1_UNGREEDY_SCOPE", "SKIP_GROUP_PARTICIPATION_TAIL", "SKIP_SURROGATE_UNIT_SEMANTICS", "JURLANE_BUDGET");
+        // JUR-lane probe (jurLaneCase): domain exclusions + guards — the
+        // family-6 TAIL skip retired (the unbounded zero-width-exit split
+        // carries the exiting iteration's writes; `(a*)*b` compares hard);
+        // the nested-loop inner-capture quirk (`((a)*b)*`: java restores
+        // the FIRST iteration's inner group) is the remaining group-family
+        // skip, skeleton-gated + shape-gated
+        "V1_UNGREEDY_SCOPE", "SKIP_NESTED_LOOP_CAPTURE", "SKIP_SURROGATE_UNIT_SEMANTICS", "JURLANE_BUDGET");
 
     private static final Map<String, Set<String>> MODE_SOFT =
         Map.of("jur", JUR_SOFT, "stretch", Set.of("SKIP_EMPTY", "THREW", "SLOW", "STRETCH_BUDGET"), "seq",

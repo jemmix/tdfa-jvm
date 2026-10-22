@@ -155,8 +155,8 @@ class PerFlagReplayTest {
         if (oracle.startsWith("<exception")) {
             return "oracle-threw";
         }
-        if (CampaignFuzzer.sameSkeleton(oracle, vm) && pattern.matches(".*\\).*[*+{].*")) {
-            return "group-participation-tail";
+        if (CampaignFuzzer.sameSkeleton(oracle, vm) && pattern.matches(".*\\(.*\\(.*\\)[*+{].*\\)[*+{].*")) {
+            return "nested-loop-capture";
         }
         if (CampaignFuzzer.hasLoneSurrogate(pattern) || CampaignFuzzer.hasLoneSurrogate(input)
             || CampaignFuzzer.laneExtrasAllPairInteriors(oracle, vm, input)
