@@ -563,6 +563,21 @@ public final class CampaignFuzzer {
         // ε-edge at the loop's REST position, so `(a*)*b` on "aab"
         // compares hard and the skip retired.
         //
+        // (1c) java's restart-tag leak: Matcher.search does NOT reset group
+        // writes between a find()'s failed restart attempts — a group span
+        // recorded during a FAILED start (here \A's ε iteration at 0)
+        // survives into the accepted match's protocol, landing OUTSIDE the
+        // overall match span (g1 0..0 inside a 2..3 match — no legitimate
+        // write can produce that; our lane resets per restart, the clean
+        // reading, and java's is arguably a bug its docs disown). The leak
+        // signature is exact: skeleton-equal + an oracle group span strictly
+        // outside the reported match. The engine decision is the open TODO.
+        if (sameSkeleton(jur, jurLaneVm) && leakedRestartSpan(jur, jurLaneVm)) {
+            counts.soft("SKIP_RESTART_TAG_LEAK");
+            camp.rec(caseSeed, "JURLANE_SKIP (restart-tag-leak)", "pattern", c.pattern(), "input", c.input(), "flags",
+                c.tdfaFlags(), "jur", jur, "jurLaneVm", jurLaneVm);
+            return;
+        }
         // (1b) The nested-loop inner-capture quirk — java's backtracker
         // restores the FIRST iteration's inner group for a quantified
         // capture nested inside another quantified group (`((a)*b)*` on
@@ -986,6 +1001,65 @@ public final class CampaignFuzzer {
 
     static String stripGroups(String s) {
         return s.replaceAll("\\s*\\([^()]*\\)", "");
+    }
+
+    /** The restart-tag-leak signature (SKIP_RESTART_TAG_LEAK's predicate):
+     *  the two protocols agree on everything but the group clauses, AND the
+     *  oracle carries a group span STRICTLY OUTSIDE the reported overall
+     *  match — only java's failed-restart write leak can produce that (a
+     *  legitimate write is always within the match region). Uses the F=
+     *  probe's first clause. */
+    static boolean leakedRestartSpan(String oracle, String vm) {
+        String oFirst = firstFindClause(oracle);
+        String vFirst = firstFindClause(vm);
+        if (oFirst == null || vFirst == null) {
+            return false;
+        }
+        int op = oFirst.indexOf('(');
+        int vp = vFirst.indexOf('(');
+        if (op < 0 || vp < 0) {
+            return false; // a groupless clause cannot leak
+        }
+        int[] overall = overallSpan(oFirst);
+        if (overall == null) {
+            return false;
+        }
+        String[] oGroups = oFirst.substring(op + 1, oFirst.lastIndexOf(')')).split(" ");
+        String[] vGroups = vFirst.substring(vp + 1, vFirst.lastIndexOf(')')).split(" ");
+        if (oGroups.length != vGroups.length) {
+            return false;
+        }
+        for (int i = 0; i < oGroups.length; i++) {
+            if (vGroups[i].equals("-")) {
+                int[] span = spanOf(oGroups[i]);
+                // strictly outside the reported match: the leak signature
+                if (span != null && (span[1] <= overall[0] || span[0] >= overall[1])) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** "F=true 2..3 (0..0 2..3) I=[..." -> "F=true 2..3 (0..0 2..3)". */
+    private static String firstFindClause(String proto) {
+        if (!proto.startsWith("F=true ")) {
+            return null;
+        }
+        int end = proto.indexOf(" I=[");
+        return end < 0 ? proto : proto.substring(0, end);
+    }
+
+    private static int[] overallSpan(String clause) {
+        int s = clause.indexOf(' ', clause.indexOf("F=true "));
+        int e = clause.indexOf('(', s);
+        String span = (e < 0 ? clause : clause.substring(0, e)).substring(s + 1).trim();
+        return spanOf(span);
+    }
+
+    private static int[] spanOf(String s) {
+        int d = s.indexOf("..");
+        return d < 0 ? null : new int[]{Integer.parseInt(s.substring(0, d)), Integer.parseInt(s.substring(d + 2))};
     }
 
     // ================ mode: stretch — oracle + ASM on stretched inputs ================

@@ -1685,6 +1685,9 @@ public final class DifferentialFuzzer {
             if (o.vm.startsWith("<reject") && p.contains("(?U")) {
                 return "v1-ungreedy-scope";
             }
+            if (CampaignFuzzer.sameSkeleton(o.oracle, o.vm) && CampaignFuzzer.leakedRestartSpan(o.oracle, o.vm)) {
+                return "restart-tag-leak";
+            }
             if (CampaignFuzzer.sameSkeleton(o.oracle, o.vm) && p.matches(".*\\(.*\\(.*\\)[*+{].*\\)[*+{].*")) {
                 return "nested-loop-capture";
             }
