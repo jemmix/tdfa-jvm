@@ -571,7 +571,11 @@ public final class CampaignFuzzer {
         // write can produce that; our lane resets per restart, the clean
         // reading, and java's is arguably a bug its docs disown). The leak
         // signature is exact: skeleton-equal + an oracle group span strictly
-        // outside the reported match. The engine decision is the open TODO.
+        // outside the reported match. DECIDED (excluded, not reproduced):
+        // the leaked state is a backtracker artifact — atomic spans
+        // committed at GroupTail/GroupCurly points a determinized walk
+        // cannot mirror without emulating the backtracking itself. Pinned
+        // both ways in RestartTagLeakParityTest.
         if (sameSkeleton(jur, jurLaneVm) && leakedRestartSpan(jur, jurLaneVm)) {
             counts.soft("SKIP_RESTART_TAG_LEAK");
             camp.rec(caseSeed, "JURLANE_SKIP (restart-tag-leak)", "pattern", c.pattern(), "input", c.input(), "flags",
