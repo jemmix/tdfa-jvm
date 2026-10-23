@@ -243,8 +243,7 @@ The pre-soak fix pass, landed as #69–#71:
   and 3 closed root-and-branch
   (#74 mask-directed probes, #75 abs-begin ladder bound, #76 unit-semantics
   trigger, #77 exact simulation + budget retirement), the next both-lane
-  soak's expected residue is the two exact group-family skips — the
-  nested-loop inner-capture quirk (`SKIP_NESTED_LOOP_CAPTURE`) and java's
+  soak's expected residue is the one exact group-family skip — java's
   restart-tag leak (`SKIP_RESTART_TAG_LEAK`, `(?:(\A))*(\n)`-shaped: a
   group span from a FAILED restart attempt survives into the accepted
   match, outside the overall span; the retired tail predicate used to

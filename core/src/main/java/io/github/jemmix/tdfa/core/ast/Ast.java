@@ -89,13 +89,25 @@ public abstract class Ast {
      *  {@code Prolog}+{@code Loop} reports the final zero-width iteration,
      *  which the determinizer's same-position closure subsumption cuts; the
      *  accepting kernels where the cut fired surface the pair's writes as a
-     *  φ SET_POS at the accept position (see {@code Tnfa#surfaceFinalTags}). */
+     *  φ SET_POS at the accept position (see {@code Tnfa#surfaceFinalTags}).
+     *  <p>{@code sticky} is the nested-loop inner-capture quirk mark (JUR
+     *  lane): the pair belongs to a capture quantified directly by a greedy
+     *  {@code GroupCurly}-shape quantifier nested inside another quantified
+     *  construct — java.util.regex's {@code GroupCurly} backoff rewrites
+     *  the pair's span on each unwind, outermost frame last, so the FIRST
+     *  iteration of the enclosing loop that matches the capture is the one
+     *  whose span survives ({@code ((a)*b)*} on {@code "abab"} reports
+     *  g2 {@code 0..1}, not the last iteration's {@code 2..3}). The NFA
+     *  builder's sticky split reproduces that discipline; like the
+     *  family-6 marks, the pair keeps its own register — its final value
+     *  is path-disciplined, not a reconstructable distance. */
     public static final class Tag extends Ast {
         public final int tag;
         public int fixedOn;
         public int fixedOffset;
         public boolean dissolved;
         public boolean surfaceFinal;
+        public boolean sticky;
 
         public Tag(int tag) {
             this.tag = tag;

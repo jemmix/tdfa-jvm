@@ -582,20 +582,12 @@ public final class CampaignFuzzer {
                 c.tdfaFlags(), "jur", jur, "jurLaneVm", jurLaneVm);
             return;
         }
-        // (1b) The nested-loop inner-capture quirk — java's backtracker
-        // restores the FIRST iteration's inner group for a quantified
-        // capture nested inside another quantified group (`((a)*b)*` on
-        // "abab" -> g2 0..1; the loop lineage reports the last, 2..3 —
-        // and note `((a)?b)*` AGREES on JDK 26, so the quirk is the
-        // inner-star shape specifically). Skeleton-equal (only the inner
-        // clause diverged) + the nested-quantified-group shape = this
-        // family; the engine fix is the open TODO.
-        if (sameSkeleton(jur, jurLaneVm) && c.pattern().matches(".*\\(.*\\(.*\\)[*+{].*\\)[*+{].*")) {
-            counts.soft("SKIP_NESTED_LOOP_CAPTURE");
-            camp.rec(caseSeed, "JURLANE_SKIP (nested-loop-capture)", "pattern", c.pattern(), "input", c.input(),
-                "flags", c.tdfaFlags(), "jur", jur, "jurLaneVm", jurLaneVm);
-            return;
-        }
+        // (1b, retired) The nested-loop inner-capture quirk — java's
+        // GroupCurly backoff rewrites the pair's span on every unwind,
+        // outermost frame last, so the FIRST enclosing-loop iteration that
+        // matches the capture wins (`((a)*b)*` on "abab" -> g2 0..1).
+        // CLOSED by the sticky split (Tnfa.Builder#stickySplit): those
+        // shapes compare hard, pinned in NestedQuantifierParityTest.
         // (2) The lone-surrogate family: the JUR lane's CODEPOINT_
         // BOUNDARIES-unset axis semantics are unit-level by design —
         // matches start/end at any unit and classes match surrogate

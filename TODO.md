@@ -14,7 +14,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 ## Correctness
 
 - [ ] JUR-compat re-base tail: both-lane soak, README numbers ([design](docs/jur-compat-default.md), [WBS](docs/jur-compat-wbs.md))
-- [ ] Fix nested-loop inner-capture quirk vs jur ([campaign](docs/fuzz-campaigns-2026-10-16.md))
 - [ ] Un-skip surrogate-unit family; retire `SKIP_SURROGATE_UNIT_SEMANTICS` ([campaign](docs/fuzz-campaigns-2026-10-16.md))
 - [ ] Overnight cross-rung soak, both lanes; refresh README numbers ([findings](docs/fuzz-campaigns-2026-10-16.md))
 - [ ] Fuzz families for fact-gated rungs: literal, prefix, cand-scan, anchored-fast

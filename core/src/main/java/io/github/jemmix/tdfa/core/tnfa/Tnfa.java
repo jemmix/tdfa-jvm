@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -289,6 +290,12 @@ public final class Tnfa {
         }
         long t1 = System.nanoTime();
         Ast ast = parsed.ast();
+        // The nested-loop inner-capture quirk (JUR lane): mark the greedy
+        // captures quantified directly by a GroupCurly-shape quantifier
+        // nested inside another quantified construct BEFORE the fixed-tags
+        // pass — a sticky pair must keep its own register (see Ast.Tag).
+        List<StickyCap> stickyCaps =
+            multiValuedTags || semantics.isEmptyIterationSpans() ? Collections.emptyList() : markStickyCaptures(ast);
         // Multi-valued compiles keep the fixed-tag pass OFF: §6.4 drops the
         // fixed tags from the NFA and reconstructs ONE offset per tag at
         // match time — meaningless for a tag whose whole point is its
@@ -322,6 +329,7 @@ public final class Tnfa {
         Builder b = new Builder(meter, semantics);
         int accept = b.fresh();
         int start = b.build(ast, accept);
+        b.stickySplit(stickyCaps);
         Tnfa nfa = b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(), parsed.unicodeShorthand(),
             parsed.unicodeWordRanges(), parsed.namedGroups(), fixedBase, fixedOffset, dissolved, surfaced,
             multiValuedTags, semantics);
@@ -389,6 +397,143 @@ public final class Tnfa {
         return marked;
     }
 
+    /** One sticky-capture finding of {@link #markStickyCaptures}: the
+     *  capture's tag pair and the innermost/outermost enclosing repeats
+     *  with iteration machinery ({@code max} unbounded or {@code >= 2} —
+     *  {@code {0,1}}/{@code {1,1}} never re-invoke the capture). */
+    private static final class StickyCap {
+        final int openTag;
+        final int closeTag;
+        final Ast.Repeat inner;
+        final Ast.Repeat outer;
+
+        StickyCap(int openTag, int closeTag, Ast.Repeat inner, Ast.Repeat outer) {
+            this.openTag = openTag;
+            this.closeTag = closeTag;
+            this.inner = inner;
+            this.outer = outer;
+        }
+    }
+
+    /**
+     * The nested-loop inner-capture quirk (JUR lane). java.util.regex
+     * compiles a greedy quantifier DIRECTLY on a capture whose body is
+     * {@code study()}-deterministic (chars/classes/sequences — no choice
+     * points, no nested quantifier) as {@code GroupCurly}; when that
+     * construct sits inside another quantified construct (a
+     * {@code Prolog}+{@code Loop}), {@code GroupCurly.match0}'s backoff
+     * rewrites the capture's span on EVERY unwind and the unwinding runs
+     * innermost-first — the outermost rewriting frame lands LAST. The
+     * surviving span is therefore the FIRST enclosing-loop iteration that
+     * matches the capture at least once (its LAST inner iteration;
+     * {@code ((a)*b)*} on {@code "abab"} &rarr; g2 {@code 0..1},
+     * {@code ((a)*b)*} on {@code "babab"} &rarr; g2 {@code 1..2} — the
+     * first <em>writing</em> iteration), not the last iteration's
+     * ({@code 2..3}/{@code 3..4}, the plain last-write-wins reading).
+     * {@code ((a)?b)*} keeps the loop lineage ({@code Ques} commits no
+     * rewrite frame), lazy inners likewise, and a top-level
+     * {@code (a)*} runs one invocation only — none of those mark.
+     *
+     * <p>Marks the pair's {@link Ast.Tag}s (the fixed-tags pass then keeps
+     * their registers) and records the enclosing repeats for
+     * {@code Builder#stickySplit}. Family-6 pairs ({@code dissolved} /
+     * {@code surfaceFinal}) never mark — their protocol overrides already
+     * decide the pair's final value.
+     */
+    private static List<StickyCap> markStickyCaptures(Ast root) {
+        List<StickyCap> caps = new ArrayList<>();
+        // iterative DFS with an explicit ancestor list; Ast nodes have no
+        // parent pointers and nesting depth costs heap, never JVM stack
+        ArrayDeque<Object> work = new ArrayDeque<>();
+        work.push(root);
+        ArrayList<Ast.Repeat> ancestors = new ArrayList<>();
+        ArrayDeque<Integer> depths = new ArrayDeque<>();
+        depths.push(0);
+        while (!work.isEmpty()) {
+            Object o = work.pop();
+            int depth = depths.pop();
+            while (ancestors.size() > depth) {
+                ancestors.remove(ancestors.size() - 1);
+            }
+            if (!(o instanceof Ast)) {
+                continue; // a marker: unwound already via depth
+            }
+            Ast e = (Ast) o;
+            if (e instanceof Ast.Repeat) {
+                Ast.Repeat r = (Ast.Repeat) e;
+                if (isStickyCap(r) && !ancestors.isEmpty()) {
+                    Ast.Tag open = (Ast.Tag) ((Ast.Concat) r.body).children.get(0);
+                    Ast.Tag close = (Ast.Tag) ((Ast.Concat) r.body).children.get(2);
+                    open.sticky = true;
+                    close.sticky = true;
+                    caps.add(new StickyCap(open.tag, close.tag, ancestors.get(ancestors.size() - 1), ancestors.get(0)));
+                }
+                if (r.max == Integer.MAX_VALUE || r.max >= 2) {
+                    ancestors.add(r); // re-invokes its body: an enclosing loop
+                }
+                descend(work, depths, r.body, ancestors.size());
+            } else if (e instanceof Ast.Concat || e instanceof Ast.Alt) {
+                descend(work, depths, e, ancestors.size());
+            } // leaves: nothing below
+        }
+        return caps;
+    }
+
+    /** Push {@code e}'s children for the marks walk (a container), or
+     *  {@code e} itself (a leaf or Repeat, handled at its own pop), each
+     *  tagged with the ancestor depth it sees. */
+    private static void descend(ArrayDeque<Object> work, ArrayDeque<Integer> depths, Ast e, int depth) {
+        if (e instanceof Ast.Concat || e instanceof Ast.Alt) {
+            List<Ast> ch = e instanceof Ast.Concat ? ((Ast.Concat) e).children : ((Ast.Alt) e).children;
+            for (int i = ch.size() - 1; i >= 0; i--) {
+                work.push(ch.get(i));
+                depths.push(depth);
+            }
+        } else {
+            work.push(e);
+            depths.push(depth);
+        }
+    }
+
+    /** The GroupCurly-capture shape: greedy, {@code max >= 2} or
+     *  unbounded, directly on a capture whose inner body is
+     *  deterministic (no Alt, no nested Repeat — the study()-deterministic
+     *  bodies java compiles as GroupCurly) and not family-6 marked. */
+    private static boolean isStickyCap(Ast.Repeat r) {
+        if (!r.greedy || !(r.max == Integer.MAX_VALUE || r.max >= 2)) {
+            return false;
+        }
+        if (!(r.body instanceof Ast.Concat)) {
+            return false;
+        }
+        List<Ast> ch = ((Ast.Concat) r.body).children;
+        if (ch.size() != 3 || !(ch.get(0) instanceof Ast.Tag) || !(ch.get(2) instanceof Ast.Tag)) {
+            return false;
+        }
+        Ast.Tag open = (Ast.Tag) ch.get(0);
+        Ast.Tag close = (Ast.Tag) ch.get(2);
+        if (close.tag != open.tag + 1 || open.dissolved || open.surfaceFinal) {
+            return false;
+        }
+        return deterministicForGroupCurly(ch.get(1));
+    }
+
+    /** No choice points, no nested quantifiers (java's Curly/GroupCurly
+     *  eligibility); consuming atoms and zero-width assertions are fine. */
+    private static boolean deterministicForGroupCurly(Ast e) {
+        ArrayDeque<Ast> work = new ArrayDeque<>();
+        work.push(e);
+        while (!work.isEmpty()) {
+            Ast a = work.pop();
+            if (a instanceof Ast.Concat) {
+                work.addAll(((Ast.Concat) a).children);
+            } else if (a instanceof Ast.Alt || a instanceof Ast.Repeat) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static final class Builder {
         final List<int[]> eps = new ArrayList<>(); // [from, to, pri, tag, emptyMask]
         final List<int[]> syms = new ArrayList<>(); // [from, to]
@@ -405,6 +550,18 @@ public final class Tnfa {
         long weightedBytes = 0;
 
         final long memBudget;
+
+        /** Per-repeat build bookkeeping for the sticky split: the state
+         *  span start (mint id when the construct began) and the
+         *  iteration-entry states (the states an iteration's re-entry
+         *  edge targets — the hub iterate target for loop shapes, each
+         *  chained unit's entry for the zero-width-exit copies). */
+        final IdentityHashMap<Ast.Repeat, RepInfo> repInfo = new IdentityHashMap<>();
+
+        static final class RepInfo {
+            int lo = -1;
+            final List<Integer> entries = new ArrayList<>();
+        }
 
         Builder(WorkMeter meter, Semantics semantics) {
             this.meter = meter;
@@ -471,10 +628,16 @@ public final class Tnfa {
             int bodyPri, skipPri;
             int s; // QUEST: s; STAR_NULLABLE: hub; STAR_PLAIN: s0; PLUS: loopBack
             int hub; // STAR_PLAIN: the loop hub
-            // CONCAT scratch: children, next index (descending), threaded entry
+            // the Repeat this frame builds (sticky-split bookkeeping:
+            // iteration-entry states, via Builder.repInfo)
+            Ast.Repeat rep;
+            // CONCAT scratch: children, next index (descending), threaded entry;
+            // recEntries: the desugared-bounded shape — completed children's
+            // entries are iteration boundaries (sticky split)
             List<Ast> ch;
             int idx;
             int cur;
+            boolean recEntries;
             // ALT scratch
             int newStart;
             List<BitSet> branchGroups;
@@ -569,6 +732,13 @@ public final class Tnfa {
                     // Ast.Repeat — dispatch by shape (see the per-kind resume steps).
                     Ast.Repeat r = (Ast.Repeat) e;
                     Ast body = r.body;
+                    f.rep = r;
+                    RepInfo ri = repInfo.get(r);
+                    if (ri == null) { // aliased synthetic repeats keep the original's span
+                        ri = new RepInfo();
+                        ri.lo = counter; // the construct's mint-span start
+                        repInfo.put(r, ri);
+                    }
                     int min = r.min, max = r.max;
                     // Greedy: prefer BODY/REPEAT (pri 1) over SKIP/EXIT (pri 2).
                     // Lazy:   prefer SKIP/EXIT   (pri 1) over BODY/REPEAT (pri 2).
@@ -677,13 +847,6 @@ public final class Tnfa {
                     // Bounded repetitions {n}, {n,}, {n,m} — desugar via concatenation + tail.
                     // (We desugar rather than implementing the paper's bounded-rep construction literally;
                     //  tags are duplicated, which is acceptable for our subset.)
-                    List<Ast> mandatory = new ArrayList<>();
-                    for (int i = 0; i < min; i++) {
-                        mandatory.add(body);
-                    }
-                    Ast mandatoryAst = mandatory.isEmpty() ? new Ast.Empty()
-                        : (mandatory.size() == 1 ? mandatory.get(0) : new Ast.Concat(mandatory));
-                    Ast desugared = mandatoryAst;
                     // {0,0} falls through as bare Empty: neither the body's tags nor
                     // its ntags are emitted. Sound because a group's tags are
                     // syntactically unique (allocated at its '(' alone), so no other
@@ -691,6 +854,11 @@ public final class Tnfa {
                     // kill, and the group simply reports NIL. The asymmetry with the
                     // quest case (which meticulously emits ntags) is deliberate: there
                     // is nothing below an empty body to poison.
+                    if (min == 0 && max == 0) {
+                        pushNode(stack, new Ast.Empty(), f.entryTo);
+                        continue;
+                    }
+                    Ast.Repeat tail = null;
                     if (max == Integer.MAX_VALUE) {
                         // {n,} = (n-1) copies followed by body+  — NOT body*.
                         // re2j's Simplify general case ("x{4,} is xxxx+"): a PLUS tail
@@ -701,14 +869,7 @@ public final class Tnfa {
                         // the greedy first-iteration-empty write an empty capture
                         // (g1=""), diverging from re2j.
                         // min >= 2 here ({0,} star and {1,} plus have their own cases).
-                        List<Ast> copies = new ArrayList<>();
-                        for (int i = 0; i < min - 1; i++) {
-                            copies.add(body);
-                        }
-                        Ast copiesAst = copies.isEmpty() ? new Ast.Empty()
-                            : (copies.size() == 1 ? copies.get(0) : new Ast.Concat(copies));
-                        desugared = new Ast.Concat(Collections.unmodifiableList(
-                            Arrays.asList(copiesAst, new Ast.Repeat(body, 1, Integer.MAX_VALUE, r.greedy))));
+                        tail = new Ast.Repeat(body, 1, Integer.MAX_VALUE, r.greedy);
                     } else if (max > min) {
                         // {n,m} = mandatory + RIGHT-NESTED optional suffix (x(x(x)?)?)?,
                         // exactly re2j Simplify's shape ("x{2,5} = xx(x(x(x)?)?)?").
@@ -719,22 +880,50 @@ public final class Tnfa {
                         // the next copy's (e.g. ((a{1,2}?c?){0,5}?)d on "aad": re2j/JDK
                         // report g2="a" — two outer iterations — a flat tail reports
                         // g2="aa").
-                        Ast suffix = new Ast.Repeat(body, 0, 1, r.greedy);
+                        tail = new Ast.Repeat(body, 0, 1, r.greedy);
                         for (int i = min + 1; i < max; i++) {
-                            suffix = new Ast.Repeat(
-                                new Ast.Concat(Collections.unmodifiableList(Arrays.asList(body, suffix))), 0, 1,
-                                r.greedy);
+                            tail =
+                                new Ast.Repeat(new Ast.Concat(Collections.unmodifiableList(Arrays.asList(body, tail))),
+                                    0, 1, r.greedy);
                         }
-                        desugared = new Ast.Concat(Collections.unmodifiableList(Arrays.asList(mandatoryAst, suffix)));
                     }
-                    // build the desugared form directly into entryTo — pass-through,
-                    // no continuation frame for the Repeat itself.
-                    pushNode(stack, desugared, f.entryTo);
+                    // The synthetic tail re-loops the same body — the same
+                    // construct's iterations for the sticky split's frontier.
+                    if (tail != null) {
+                        repInfo.put(tail, repInfo.get(r));
+                    }
+                    // Build the copies FLAT through a recording concat: every
+                    // completed child except the leftmost copy is a copy ENTRY
+                    // — an iteration boundary (entering copy i+1 is iteration
+                    // i+1). {n,} carries min-1 copies (the plus tail is the
+                    // n-th iteration and beyond); {n,m} carries min copies and
+                    // the optional suffix. Pass-through otherwise: no
+                    // continuation frame for the Repeat itself.
+                    int copies = max == Integer.MAX_VALUE ? min - 1 : min;
+                    BuildFrame cf = new BuildFrame();
+                    cf.kind = BuildFrame.CONCAT;
+                    cf.rep = r;
+                    cf.recEntries = true;
+                    cf.ch = new ArrayList<>(copies + 1);
+                    for (int i = 0; i < copies; i++) {
+                        cf.ch.add(body);
+                    }
+                    if (tail != null) {
+                        cf.ch.add(tail);
+                    }
+                    cf.idx = cf.ch.size() - 1;
+                    cf.entryTo = f.entryTo;
+                    frames.push();
+                    stack.push(cf);
+                    pushNode(stack, cf.ch.get(cf.idx), f.entryTo);
                     continue;
                 }
                 if (f.kind == BuildFrame.CONCAT) {
                     // build right-to-left: the completed child's entry becomes the
                     // next (leftward) child's exit
+                    if (f.recEntries && f.idx > 0) {
+                        stickyEntry(f, result); // a copy/tail ENTRY: iteration boundary
+                    }
                     f.cur = result;
                     f.idx--;
                     if (f.idx >= 0) {
@@ -770,6 +959,7 @@ public final class Tnfa {
                 }
                 if (f.kind == BuildFrame.QUEST) {
                     int bodyStart = result;
+                    stickyEntry(f, bodyStart);
                     eps(f.s, bodyStart, f.bodyPri);
                     // Initial skip path: prepend ntags for body groups (0 iterations ⇒ no match).
                     int skipTarget = ntagChain(f.node, f.entryTo);
@@ -789,6 +979,7 @@ public final class Tnfa {
                     int hub = f.s;
                     eps(hub, bodyStart, f.bodyPri); // iterate (no ntag; group already matched)
                     eps(hub, f.entryTo, f.skipPri); // or exit (no ntag)
+                    stickyEntry(f, bodyStart);
                     int s0 = fresh(); // quest: skip vs enter the plus
                     eps(s0, bodyStart, f.bodyPri);
                     int skipFromStart = ntagChain(f.node, f.entryTo);
@@ -804,6 +995,7 @@ public final class Tnfa {
                     eps(f.s, skipFromStart, f.skipPri);
                     eps(f.hub, bodyStart, f.bodyPri); // iterate (no ntag; group already matched)
                     eps(f.hub, f.entryTo, f.skipPri); // or exit
+                    stickyEntry(f, bodyStart);
                     result = f.s;
                     frames.pop();
                     continue;
@@ -818,6 +1010,7 @@ public final class Tnfa {
                     }
                     eps(f.s, bodyStart, f.bodyPri);
                     eps(f.s, f.entryTo, f.skipPri);
+                    stickyEntry(f, bodyStart);
                     result = bodyStart;
                     frames.pop();
                     continue;
@@ -832,6 +1025,7 @@ public final class Tnfa {
                             eps(f.zweIn, result, 1);
                             f.zweIn = -1;
                         }
+                        stickyEntry(f, result); // the tail re-iterates its own entry
                         result = f.zweEntry;
                         frames.pop();
                         continue;
@@ -839,6 +1033,9 @@ public final class Tnfa {
                     // split the just-built copy: pure-ε completions re-route to
                     // the quantifier exit, consuming paths keep the copy exit
                     int pure = zweSplit(result, f.zweExit, f.entryTo, f.zweLo);
+                    if (f.zweDone > 0) {
+                        stickyEntry(f, pure); // chained unit: entering it is a new iteration
+                    }
                     if (f.zweCtl >= 0) {
                         eps(f.zweCtl, pure, f.bodyPri);
                         f.zweCtl = -1;
@@ -1112,6 +1309,194 @@ public final class Tnfa {
             meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
             charge(BudgetWeights.TNFA_EPS_EDGE_BYTES);
             eps.add(new int[]{from, to, pri, tag, emptyMask});
+        }
+
+        /** Record an iteration-entry state for the frame's repeat (the
+         *  sticky split's invocation frontier). */
+        private void stickyEntry(BuildFrame f, int entry) {
+            RepInfo info = repInfo.get(f.rep);
+            if (info != null) {
+                info.entries.add(entry);
+            }
+        }
+
+        /**
+         * The nested-loop inner-capture sticky split (JUR lane; see
+         * {@link #markStickyCaptures}). java's {@code GroupCurly} backoff
+         * rewrites the capture's span on every unwind, outermost frame
+         * last: the surviving span is the one the FIRST enclosing-loop
+         * iteration that matches the capture wrote — its last inner
+         * iteration — while later iterations' writes are lost to the
+         * rewrite order. Last-write-wins cannot express that (the
+         * first <em>writing</em> iteration is data-dependent:
+         * {@code ((a)*b)*} on {@code "babab"} reports g2 {@code 1..2}),
+         * so the discipline rides the automaton as a sticky bit:
+         * <ul>
+         * <li><b>N</b> — the graph as built. Nothing has written the pair
+         *     yet; the capture's write edges fire normally and CROSS (see
+         *     below). Iterations that match nothing stay here.</li>
+         * <li><b>W-current</b> — clone of everything reachable from the
+         *     write edges' targets within the outermost enclosing
+         *     construct: the rest of the first writing invocation, writes
+         *     kept (its later inner iterations still update the pair —
+         *     last-write-wins WITHIN the invocation).</li>
+         * <li><b>W-later</b> — clone of everything reachable from the
+         *     innermost enclosing repeat's iteration entries (the
+         *     invocation frontier): every later invocation, the pair's
+         *     writes (and nil-clears) stripped — a later invocation can
+         *     never rewrite the span.</li>
+         * </ul>
+         * The crossing: each original write edge keeps its tag but its
+         * target becomes the W-current clone (the write fires, the path
+         * continues where writes still count). W-current's edges into the
+         * frontier retarget to W-later's clones; everything past the
+         * outermost construct (its exit, the suffix, accept) rejoins the
+         * originals — register values flow through shared states, so the
+         * sticky value survives to the accept. Clones append (the
+         * minting-order contract for pre-existing states is untouched),
+         * and each pass reads the whole current graph — earlier passes'
+         * clones included — so several sticky captures in one body
+         * compose (independently; the product is charged to the compile
+         * RAM budget). No-op without marks: the RE2 lane's artifacts stay
+         * bit-identical.
+         */
+        void stickySplit(List<StickyCap> caps) {
+            for (StickyCap cap : caps) {
+                boolean dbg = Boolean.getBoolean("tdfa.debug");
+                RepInfo in = repInfo.get(cap.inner);
+                RepInfo out = repInfo.get(cap.outer);
+                if (in == null || out == null || out.lo < 0 || in.entries.isEmpty()) {
+                    continue;
+                }
+                int lo = out.lo;
+                int hi = counter; // the construct + earlier passes' clones
+                int nEps = eps.size();
+                int nSym = syms.size();
+                BitSet frontier = new BitSet();
+                for (int e : in.entries) {
+                    frontier.set(e);
+                }
+                // W-later: from the frontier, writes suppressed
+                BitSet c2 = new BitSet();
+                ArrayDeque<Integer> work = new ArrayDeque<>();
+                for (int e = frontier.nextSetBit(lo); e >= 0 && e < hi; e = frontier.nextSetBit(e + 1)) {
+                    c2.set(e);
+                    work.add(e);
+                }
+                bfs(work, c2, lo, hi, null);
+                // W-current: from the write edges' targets, stopping at the frontier
+                BitSet w0 = new BitSet();
+                for (int i = 0; i < nEps; i++) {
+                    int[] e = eps.get(i);
+                    if (e[3] == cap.openTag || e[3] == cap.closeTag) {
+                        int v = e[1];
+                        if (v >= lo && v < hi) {
+                            w0.set(v);
+                        }
+                    }
+                }
+                BitSet c1 = new BitSet();
+                work.clear();
+                for (int v = w0.nextSetBit(lo); v >= 0 && v < hi; v = w0.nextSetBit(v + 1)) {
+                    if (!frontier.get(v)) {
+                        c1.set(v);
+                        work.add(v);
+                    }
+                }
+                bfs(work, c1, lo, hi, frontier);
+                if (dbg) {
+                    System.err.printf("[tdfa] sticky t%d/%d lo=%d hi=%d frontier=%s c2=%d c1=%d%n", cap.openTag,
+                        cap.closeTag, lo, hi, in.entries, c2.cardinality(), c1.cardinality());
+                }
+                if (c1.isEmpty()) {
+                    continue;
+                }
+                int[] dup2 = new int[hi - lo];
+                int[] dup1 = new int[hi - lo];
+                Arrays.fill(dup2, -1);
+                Arrays.fill(dup1, -1);
+                for (int u = c2.nextSetBit(lo); u >= 0; u = c2.nextSetBit(u + 1)) {
+                    dup2[u - lo] = fresh();
+                }
+                for (int u = c1.nextSetBit(lo); u >= 0; u = c1.nextSetBit(u + 1)) {
+                    dup1[u - lo] = fresh();
+                }
+                for (int i = 0; i < nEps; i++) {
+                    int[] e = eps.get(i);
+                    int u = e[0];
+                    if (c2.get(u)) {
+                        int v = e[1];
+                        int tag = e[3];
+                        if (tag == cap.openTag || tag == cap.closeTag || tag == -cap.openTag || tag == -cap.closeTag) {
+                            tag = NO_TAG; // a later invocation never rewrites the pair
+                        }
+                        zwEps(dup2[u - lo], c2.get(v) ? dup2[v - lo] : v, e[2], tag, e[4]);
+                    }
+                    if (c1.get(u)) {
+                        int v = e[1];
+                        int tv = c1.get(v) ? dup1[v - lo] : frontier.get(v) ? dup2[v - lo] : v;
+                        zwEps(dup1[u - lo], tv, e[2], e[3], e[4]);
+                    }
+                }
+                for (int i = 0; i < nSym; i++) {
+                    int[] e = syms.get(i);
+                    CharClass cc = symClasses.get(i);
+                    int u = e[0];
+                    if (c2.get(u)) {
+                        int v = e[1];
+                        sym(dup2[u - lo], c2.get(v) ? dup2[v - lo] : v, cc);
+                    }
+                    if (c1.get(u)) {
+                        int v = e[1];
+                        int tv = c1.get(v) ? dup1[v - lo] : frontier.get(v) ? dup2[v - lo] : v;
+                        sym(dup1[u - lo], tv, cc);
+                    }
+                }
+                // the crossing: the original write edges jump into W-current
+                for (int i = 0; i < nEps; i++) {
+                    int[] e = eps.get(i);
+                    if (e[3] == cap.openTag || e[3] == cap.closeTag) {
+                        int v = e[1];
+                        if (c1.get(v)) {
+                            e[1] = dup1[v - lo];
+                        }
+                    }
+                }
+            }
+        }
+
+        /** Forward BFS over both edge flavors restricted to {@code [lo, hi)},
+         *  optionally stopping at {@code stop} states (recorded per-edge by
+         *  the caller's remapping, never entered). Adjacency is scanned
+         *  inline: the lists are pattern-sized and this runs once per mark. */
+        private void bfs(ArrayDeque<Integer> work, BitSet seen, int lo, int hi, BitSet stop) {
+            int nEps = eps.size();
+            int nSym = syms.size();
+            while (!work.isEmpty()) {
+                int u = work.poll();
+                for (int i = 0; i < nEps; i++) {
+                    int[] e = eps.get(i);
+                    if (e[0] != u) {
+                        continue;
+                    }
+                    int v = e[1];
+                    if (v >= lo && v < hi && !seen.get(v) && (stop == null || !stop.get(v))) {
+                        seen.set(v);
+                        work.add(v);
+                    }
+                }
+                for (int i = 0; i < nSym; i++) {
+                    int[] e = syms.get(i);
+                    if (e[0] != u) {
+                        continue;
+                    }
+                    int v = e[1];
+                    if (v >= lo && v < hi && !seen.get(v) && (stop == null || !stop.get(v))) {
+                        seen.set(v);
+                        work.add(v);
+                    }
+                }
+            }
         }
 
         /** Collect group numbers (1-based) used anywhere in the AST subtree.
