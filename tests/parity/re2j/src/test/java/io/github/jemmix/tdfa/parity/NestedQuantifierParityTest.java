@@ -191,9 +191,61 @@ class NestedQuantifierParityTest {
         JurOracle.assertSameFind("(a?){2,}b", "aab", factory); // bounded prefix + plus tail: g1 2..2
         JurOracle.assertSameFind("(a?){2,3}b", "aab", factory); // bounded suffix edition
         JurOracle.assertSameFind("((a)?b)*", "abab", factory); // g2 = 2..3 (live JDK 26: the last iteration)
-        // ((a)*b)* on "abab" stays out: the JDK backtracker's nested-loop
-        // inner-capture quirk — it restores the FIRST iteration's inner
-        // group (g2 0..1) where the loop lineage reports the last; the
-        // remaining third residual family (class javadoc)
+        // the nested-loop inner-capture quirk — HARD since the sticky
+        // split (the dedicated battery below)
+        JurOracle.assertSameFind("((a)*b)*", "abab", factory); // g2 = 0..1 (first writing iteration)
+    }
+
+    /** java's nested-loop inner-capture quirk, pinned hard: the sticky
+     *  split. java compiles a greedy quantifier directly on a capture with
+     *  a deterministic body (its {@code GroupCurly}) and rewrites the
+     *  pair's span on EVERY unwind — outermost rewriting frame last — so
+     *  when that construct sits inside another quantified construct, the
+     *  FIRST enclosing-loop iteration that matches the capture is the one
+     *  whose span survives ({@code ((a)*b)*} on {@code "abab"}: g2
+     *  {@code 0..1}, not the last iteration's {@code 2..3}); the span is
+     *  that invocation's LAST inner iteration ({@code ((a)+b)*} on
+     *  {@code "aab"}: g2 {@code 1..2}). Last-write-wins cannot express a
+     *  first-WRITING iteration (data-dependent: on {@code "babab"} the
+     *  first iteration matches nothing, java reports g2 {@code 1..2}),
+     *  so the discipline rides the automaton: the builder clones the
+     *  post-write continuation (writes kept within the invocation) and
+     *  the invocation frontier's world (writes stripped — later
+     *  invocations never rewrite the pair), crossing at the capture's
+     *  write edges. Controls that never marked: the {@code Ques} inner
+     *  ({@code ((a)?b)*} keeps the loop lineage), the lazy inner, and
+     *  the single-invocation top-level shapes. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void nestedLoopInnerCaptureSticky(RegexEngineFactory factory) {
+        JurOracle.assertSameFind("((a)*b)*", "abab", factory); // g2 = 0..1
+        JurOracle.assertSameFind("((a)*b)*", "babab", factory); // first WRITING iteration: g2 = 1..2
+        JurOracle.assertSameFind("((a)*b)*", "ab", factory); // one iteration: g2 = 0..1
+        JurOracle.assertSameFind("((a)*b)*", "b", factory); // zero inner matches: g2 = -1
+        JurOracle.assertSameFind("((a)+b)*", "aab", factory); // within-invocation last: g2 = 1..2
+        JurOracle.assertSameFind("((ab)*c)*", "abcabc", factory); // multi-unit inner: g2 = 0..2
+        JurOracle.assertSameFind("((a)*cb*)*", "acbacbb", factory); // two invocations: g2 = 0..1
+        JurOracle.assertSameFind("((a)*[cd](b)*)*", "adacb", factory); // INDEPENDENT stickiness: g2 = 0..1, g3 = 4..5
+        JurOracle.assertSameFind("(x((a)*b)*y)*", "xababyababy", factory); // deep: g3 = 1..2
+        JurOracle.assertSameFind("(b(a)*)*", "baba", factory); // g2 = 1..2
+        JurOracle.assertSameFind("((x(a)*y)*)*", "xayxaxy", factory); // two enclosing loops: g3 = 1..2
+        JurOracle.assertSameFind("((a)*)*", "a a", factory); // sticky across outer re-iterations: g2 = 0..1
+        JurOracle.assertSameFind("((a)*)*", "aa", factory); // degenerate: family-6 spans intact
+        JurOracle.assertSameFind("(((a)*)*)*", "a", factory); // triple nesting agrees (one invocation)
+        JurOracle.assertSameAllMatches("((a)*b|x)*", "abxb", factory); // sticky through alternation: g2 = 0..1
+        // bounded enclosing shapes: the {n,} plus tail, the {n,m} optional
+        // copies, and exact {n} are all invocation boundaries
+        JurOracle.assertSameFind("((a)*b){2,}", "ababab", factory); // g2 = 0..1
+        JurOracle.assertSameFind("((a)*b){2}", "abab", factory); // g2 = 0..1
+        JurOracle.assertSameFind("((a)*b){2,3}", "ababab", factory); // g2 = 0..1
+        JurOracle.assertSameFind("((a){1,2}b)*", "aabab", factory); // bounded inner: g2 = 1..2
+        JurOracle.assertSameFind("((a){2,}b)*", "aab", factory); // {2,} inner: g2 = 1..2
+        // controls: shapes java never marks — the Ques inner keeps the
+        // loop lineage (last iteration), the lazy inner never rewrites,
+        // and a top-level single-invocation GroupCurly is plain last-write
+        JurOracle.assertSameFind("((a)?b)*", "abab", factory); // g2 = 2..3 (last)
+        JurOracle.assertSameFind("((a)*?b)*", "abab", factory); // lazy inner: g2 = 2..3
+        JurOracle.assertSameFind("(a)*", "aaa", factory); // top level: g1 = "a" (last iteration)
+        JurOracle.assertSameFind("(a|b)*", "ab", factory); // branch bodies never mark
     }
 }

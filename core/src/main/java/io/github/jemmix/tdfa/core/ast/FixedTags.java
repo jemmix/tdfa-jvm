@@ -213,11 +213,12 @@ public final class FixedTags {
             }
             if (e instanceof Ast.Tag) {
                 Ast.Tag t = (Ast.Tag) e;
-                if (t.dissolved || t.surfaceFinal) {
-                    // Family 6: this tag's FINAL value is a protocol
-                    // override on the JUR lane (sub-family A: NIL — the
-                    // dissolved pair reports nothing; sub-family B: the
-                    // surfaced final iteration's position), not a
+                if (t.dissolved || t.surfaceFinal || t.sticky) {
+                    // Family 6 / the sticky mark: this tag's FINAL value is
+                    // a protocol discipline on the JUR lane (sub-family A:
+                    // NIL — the dissolved pair reports nothing; sub-family
+                    // B: the surfaced final iteration's position; sticky:
+                    // the first-writing-iteration span), not a
                     // reconstructable distance — it must keep its own
                     // register (never fix onto a base) and must not serve
                     // as a reconstruction base for anything to its left:

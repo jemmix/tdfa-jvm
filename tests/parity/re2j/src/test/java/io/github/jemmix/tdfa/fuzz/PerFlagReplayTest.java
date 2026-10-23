@@ -158,9 +158,7 @@ class PerFlagReplayTest {
         if (CampaignFuzzer.sameSkeleton(oracle, vm) && CampaignFuzzer.leakedRestartSpan(oracle, vm)) {
             return "restart-tag-leak";
         }
-        if (CampaignFuzzer.sameSkeleton(oracle, vm) && pattern.matches(".*\\(.*\\(.*\\)[*+{].*\\)[*+{].*")) {
-            return "nested-loop-capture";
-        }
+        // the nested-loop-capture family retired (the sticky split)
         if (CampaignFuzzer.hasLoneSurrogate(pattern) || CampaignFuzzer.hasLoneSurrogate(input)
             || CampaignFuzzer.laneExtrasAllPairInteriors(oracle, vm, input)
             || CampaignFuzzer.negatedClassSurrogateResidual(pattern, input)
