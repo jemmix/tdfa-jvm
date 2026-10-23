@@ -38,6 +38,20 @@ class RestartLeakPredicateTest {
     }
 
     @Test
+    void displacedWriteVariantTripsToo() {
+        // the fuzz-found variant: BOTH sides carry a span, but the oracle's
+        // sits strictly outside its own match — the leak displaces whatever
+        // the accepted path wrote ((?:(.).){3,}Z shapes: a failed earlier
+        // start leaves the loop's last atomic span standing past the
+        // accepted match). Outside-the-match is the invariant, regardless
+        // of our side's clause.
+        assertThat(CampaignFuzzer.leakedRestartSpan("F=true 1..26 (34..35) M=false", "F=true 1..26 (22..23) M=false"))
+            .as("oracle g1 34..35 past the 1..26 match: the leak, displaced variant").isTrue();
+        assertThat(CampaignFuzzer.leakedRestartSpan("F=true 20..30 (20..29 32..33) M=false",
+            "F=true 20..30 (20..29 28..29) M=false")).as("g2 32..33 past the 30 end: same").isTrue();
+    }
+
+    @Test
     void grouplessProtocolsCannotLeak() {
         assertThat(CampaignFuzzer.leakedRestartSpan("F=true 2..3 M=false", "F=true 2..3 M=false")).isFalse();
         assertThat(CampaignFuzzer.leakedRestartSpan("F=false M=false", "F=false M=false")).isFalse();

@@ -883,8 +883,14 @@ public final class CampaignFuzzer {
      *  the two protocols agree on everything but the group clauses, AND the
      *  oracle carries a group span STRICTLY OUTSIDE the reported overall
      *  match — only java's failed-restart write leak can produce that (a
-     *  legitimate write is always within the match region). Uses the F=
-     *  probe's first clause. */
+     *  legitimate write is always within the match region). The leaked span
+     *  displaces whatever the accepted path wrote or did not: the lane's
+     *  own clause is irrelevant — an oracle span outside the oracle's own
+     *  match is the leak no matter what our side reports (fuzz-found
+     *  variants where BOTH sides carry a span, e.g.
+     *  {@code (?:(.).){3,}Z} shapes whose failed earlier starts leave the
+     *  loop's last atomic span standing past the accepted match). Uses the
+     *  F= probe's first clause. */
     static boolean leakedRestartSpan(String oracle, String vm) {
         String oFirst = firstFindClause(oracle);
         String vFirst = firstFindClause(vm);
@@ -905,13 +911,11 @@ public final class CampaignFuzzer {
         if (oGroups.length != vGroups.length) {
             return false;
         }
-        for (int i = 0; i < oGroups.length; i++) {
-            if (vGroups[i].equals("-")) {
-                int[] span = spanOf(oGroups[i]);
-                // strictly outside the reported match: the leak signature
-                if (span != null && (span[1] <= overall[0] || span[0] >= overall[1])) {
-                    return true;
-                }
+        for (String oGroup : oGroups) {
+            int[] span = spanOf(oGroup);
+            // strictly outside the reported match: the leak signature
+            if (span != null && (span[1] <= overall[0] || span[0] >= overall[1])) {
+                return true;
             }
         }
         return false;
