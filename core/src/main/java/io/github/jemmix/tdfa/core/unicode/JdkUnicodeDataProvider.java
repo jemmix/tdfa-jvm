@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.core.unicode;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -93,6 +94,11 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
     private volatile Map<String, int[]> categories;
     private volatile Map<String, int[]> foldTables;
     private volatile int[] alphabetic;
+    /** The fold-closing sources discovered from the live oracle (see
+     *  {@link #RANGE_FOLD_CLOSURE}), sorted; their matched inputs in
+     *  parallel. Lazy one-time discovery. */
+    private volatile int[] closingSrcs;
+    private volatile int[][] closingExtras;
 
     /** JDK 26's regex added the member-side image clause to CI ranges
      *  ({@code i} matching {@code [İ-İ9]}); older regexen test the input's
@@ -106,6 +112,13 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
      *  (final sigma reaching {@code [σ-σ]}); older regexen stop at
      *  toUpper. Probed the same way. */
     private static final boolean RANGE_DOUBLE_MAP = probe("[\u03C3-\u03C3]", "\u03C2");
+
+    /** JDK 26's regex closes CI ranges by their members' whole fold
+     * ORBITS (the new CaseFolding.getClassRangeClosingCharacters clause):
+     * CAPITAL OMEGA reaches a range containing OHM SIGN through the
+     * Ω/ω/OHM fold group though neither image of Ω lands in it. Older
+     * regexen test images only. Probed the same way. */
+    private static final boolean RANGE_FOLD_CLOSURE = probe("[\u2126-\u2126]", "\u03A9");
 
     private JdkUnicodeDataProvider() {
     }
@@ -205,7 +218,18 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
 
     @Override
     public int[] rangeFoldCounterparts(int lo, int hi) {
-        return CaseFoldTable.javaRangeFoldExtras(lo, hi, RANGE_MEMBER_SIDE, RANGE_DOUBLE_MAP);
+        int[] base = CaseFoldTable.javaRangeFoldExtras(lo, hi, RANGE_MEMBER_SIDE, RANGE_DOUBLE_MAP);
+        if (!RANGE_FOLD_CLOSURE) {
+            return base;
+        }
+        int[] closing = rangeClosingExtras(lo, hi);
+        if (closing.length == 0) {
+            return base;
+        }
+        int[] out = new int[base.length + closing.length];
+        System.arraycopy(base, 0, out, 0, base.length);
+        System.arraycopy(closing, 0, out, base.length, closing.length);
+        return out; // duplicates fine: the class range-set merges
     }
 
     @Override
@@ -454,5 +478,161 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
             flat[2 * i + 1] = merged.get(i)[1];
         }
         return flat;
+    }
+
+    /**
+     * JDK 26's closing-characters clause for one compile range: a member
+     * with an EXPANDED case relation (OHM SIGN, ı, ς, the Cyrillic
+     * historical letters, ...) admits the case-relatives of its expansion
+     * target even when neither image of the input lands in the range —
+     * and ONLY those: the relation is directional ({@code [Ω-Ω]} does NOT
+     * admit OHM SIGN back). The JDK's entry table is internal data, so it
+     * is DISCOVERED from the live oracle once per JVM: every codepoint
+     * whose java-reading fold orbit contains a member the image test
+     * would not match against the single-member range is probed, and the
+     * oracle's verdict defines the extras — future JDK entries surface
+     * automatically wherever the fold table knows the group.
+     */
+    private int[] rangeClosingExtras(int lo, int hi) {
+        int[] srcs = closingSrcs;
+        int[][] extras = closingExtras;
+        if (srcs == null) {
+            synchronized (this) {
+                if (closingSrcs == null) {
+                    discoverClosingEntries();
+                }
+                srcs = closingSrcs;
+                extras = closingExtras;
+            }
+        }
+        int n = 0;
+        int[] out = new int[16];
+        for (int m = lo; m <= hi; m++) {
+            int i = Arrays.binarySearch(srcs, m);
+            if (i < 0) {
+                continue;
+            }
+            for (int v : extras[i]) {
+                if (v < lo || v > hi) {
+                    if (n == out.length) {
+                        out = Arrays.copyOf(out, out.length * 2);
+                    }
+                    out[n++] = v;
+                }
+            }
+        }
+        return Arrays.copyOf(out, n);
+    }
+
+    private void discoverClosingEntries() {
+        // candidate pass: every codepoint with a java-reading fold orbit
+        // is examined locally; only sources with an orbit member the image
+        // test would miss reach the live probe
+        HashMap<Integer, IntList> found = new HashMap<>();
+        for (int cp = 0; cp <= Character.MAX_CODE_POINT; cp++) {
+            int[] orbit = CaseFoldTable.foldRangesJava(cp);
+            if (orbit == null) {
+                continue;
+            }
+            boolean special = false;
+            for (int oi = 0; oi < orbit.length && !special; oi += 2) {
+                for (int o = orbit[oi]; o <= orbit[oi + 1]; o++) {
+                    if (o != cp && !imageMatch(o, cp, cp)) {
+                        special = true;
+                        break;
+                    }
+                }
+            }
+            if (!special) {
+                continue;
+            }
+            IntList ex = null;
+            for (int oi = 0; oi < orbit.length; oi += 2) {
+                for (int o = orbit[oi]; o <= orbit[oi + 1]; o++) {
+                    if (o == cp || imageMatch(o, cp, cp) || !probe(singleRange(cp), codepointOf(o))) {
+                        continue;
+                    }
+                    if (ex == null) {
+                        ex = new IntList();
+                    }
+                    ex.add(o);
+                }
+            }
+            if (ex != null && ex.size > 0) {
+                found.put(cp, ex);
+            }
+        }
+        int[] srcs = new int[found.size()];
+        int[][] extras = new int[found.size()][];
+        int i = 0;
+        for (Map.Entry<Integer, IntList> e : found.entrySet()) {
+            srcs[i] = e.getKey();
+            extras[i] = e.getValue().trimmed();
+            i++;
+        }
+        Integer[] idx = new Integer[found.size()];
+        for (int j = 0; j < idx.length; j++) {
+            idx[j] = j;
+        }
+        Arrays.sort(idx, (x, y) -> Integer.compare(srcs[x], srcs[y]));
+        int[] s2 = new int[srcs.length];
+        int[][] e2 = new int[extras.length][];
+        for (int j = 0; j < idx.length; j++) {
+            s2[j] = srcs[idx[j]];
+            e2[j] = extras[idx[j]];
+        }
+        closingSrcs = s2;
+        closingExtras = e2;
+    }
+
+    /** java's CI range image test for input {@code o} against the
+     *  single-member range {@code [r, r]}: toUpper or toLower∘toUpper in
+     *  range (the doubleMap clause is the same composition). */
+    private static boolean imageMatch(int o, int rLo, int rHi) {
+        int up = Character.toUpperCase(o);
+        int lo = Character.toLowerCase(up);
+        return (up >= rLo && up <= rHi) || (lo >= rLo && lo <= rHi);
+    }
+
+    private static String singleRange(int cp) {
+        StringBuilder sb = new StringBuilder(14);
+        sb.append('[');
+        appendCodepoint(sb, cp);
+        sb.append('-');
+        appendCodepoint(sb, cp);
+        sb.append(']');
+        return sb.toString();
+    }
+
+    private static String codepointOf(int cp) {
+        StringBuilder sb = new StringBuilder(2);
+        appendCodepoint(sb, cp);
+        return sb.toString();
+    }
+
+    private static void appendCodepoint(StringBuilder sb, int cp) {
+        if (Character.isBmpCodePoint(cp)) {
+            sb.append((char) cp);
+        } else {
+            sb.append(Character.highSurrogate(cp));
+            sb.append(Character.lowSurrogate(cp));
+        }
+    }
+
+    /** Tiny primitive growable list (init-path only). */
+    private static final class IntList {
+        int[] a = new int[4];
+        int size;
+
+        void add(int v) {
+            if (size == a.length) {
+                a = Arrays.copyOf(a, a.length * 2);
+            }
+            a[size++] = v;
+        }
+
+        int[] trimmed() {
+            return Arrays.copyOf(a, size);
+        }
     }
 }
