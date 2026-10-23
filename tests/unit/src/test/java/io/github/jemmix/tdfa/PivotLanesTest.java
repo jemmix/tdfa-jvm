@@ -474,13 +474,25 @@ class PivotLanesTest {
         // Kelvin sign mirrors İ ([j-l] yes, [J-L] no); ſ and the OHM sign
         // satisfy both sides; final sigma reaches [Σ-Σ] through
         // toLower∘toUpper; and i matches [İ-İ9] member-side (i ∈ IMG(İ)).
+        // JDK 26 adds the CLOSING-characters clause (its internal
+        // CaseFolding table): a member with an EXPANDED case relation
+        // admits the case-relatives of its expansion target DIRECTIONALLY
+        // — OHM SIGN inside a range closes CAPITAL OMEGA in though
+        // neither image of Ω lands ([1c84-dbff] matches Ω), while [Ω-Ω]
+        // does NOT admit OHM back. The provider discovers the entry table
+        // from the live oracle once (probing every fold-orbit candidate
+        // the image test would miss), so the cells below pin the whole
+        // clause — the OHM/Kelvin/Angstrom/micro/Historic-Cyrillic
+        // families and the fuzz-found shape included.
         String[] inputs = {"\u0130", "\u0131", "i", "I", "\u017F", "s", "S", "\u212A", "k", "K", "\u2126", "\u03C9",
-            "\u03A3", "\u03C2", "\u03C3"};
+            "\u03A3", "\u03C2", "\u03C3", "\u03A9", "\u00B5", "\u03BC", "\u1C80", "\u1C85", "\u0432", "\u0442"};
         for (String pat : new String[]{"(?iu)[h-k]", "(?iu)[H-K]", "(?iu)[g-j]", "(?iu)[G-J]", "(?iu)[i]", "(?iu)[I]",
             "(?iu)[I-I]", "(?iu)[i-i]", "(?iu)[j-l]", "(?iu)[J-L]", "(?iu)[r-t]", "(?iu)[R-T]", "(?iu)[A-z]",
             "(?iu)[\u03B1-\u03C9]", "(?iu)[\u0391-\u03A9]", "(?iu)[\u03A3-\u03A3]", "(?iu)[\u03C3-\u03C3]",
             "(?iu)[\u0130-\u0139]", "(?iu)[\u0120-\u0131]", "(?iu)[^h-k]", "(?iu)[^H-K]", "(?iu)[^i]", "(?iu)[a-z]",
-            "(?iu)[A-Z]"}) {
+            "(?iu)[A-Z]", "(?iu)[\u2126-\u2126]", "(?iu)[\u03A9-\u03A9]", "(?iu)[\u03C9-\u03C9]",
+            "(?iu)[\u1C84-\uDBFF]", "(?iu)[\u1C80-\u1C88]", "(?iu)[\u0412-\u0432]", "(?iu)[k-\u212A]",
+            "(?iu)[\u00B5-\u00B5]", "(?iu)[\u0386-\u03CE]"}) {
             assertOracleParity("JUR " + pat, pat, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE, JUR, inputs);
         }
         // the UCC-widened reading (the fuzz lane's flag combo; (?u) is the
