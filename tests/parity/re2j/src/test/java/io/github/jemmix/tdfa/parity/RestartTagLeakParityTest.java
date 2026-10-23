@@ -54,7 +54,17 @@ class RestartTagLeakParityTest {
             // the inner atom commits while the outer group's own tail is restored
             new Case("(a(b))*c", "aba c", new int[]{4, 5, -1, -1, 1, 2}, new int[]{4, 5, -1, -1, -1, -1}),
             // leak with a non-capturing tail — only the committed span differs
-            new Case("(?:(\\A))*(?:b)", "ab", new int[]{1, 2, 0, 0}, new int[]{1, 2, -1, -1}));
+            new Case("(?:(\\A))*(?:b)", "ab", new int[]{1, 2, 0, 0}, new int[]{1, 2, -1, -1}),
+            // the DISPLACED variant (fuzz-found, generalized signature): the
+            // accepted path DID write the group, but a failed earlier start's
+            // atomic span stands PAST the accepted match in the oracle — no
+            // legitimate write reaches there; our clean reading keeps the
+            // accepted path's own last write
+            new Case("(?:(.).){3,}\u1c88Z",
+                "\udc00\ud800\udfff\ud801\udc02\u0000\udc00Z\u0000\ud801\udc21\ud801\n\udc21\ud801\udc02"
+                    + "\n\ud800\udfff\u0130\u20ac\udbff@\u0130\u1c88Z\udfff\ud835\udd04b\ud801\udc02z\t"
+                    + "\u017f\ud800\udc00\udbff",
+                new int[]{17, 26, 34, 35}, new int[]{17, 26, 22, 23}));
     }
 
     /** The oracle shows the leak AND the engine shows the clean reading. */
