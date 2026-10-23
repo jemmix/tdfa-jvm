@@ -46,13 +46,16 @@ class CampaignSmokeTest {
         "SKIP_UNGREEDY", "SKIP_CI_FOLD_AMBIGUOUS", "BUDGET", "JUR_ORACLE_THREW",
         // JUR-lane probe (jurLaneCase): domain exclusions + guards — the
         // family-6 TAIL skip retired (the unbounded zero-width-exit split
-        // carries the exiting iteration's writes; `(a*)*b` compares hard);
-        // the nested-loop inner-capture quirk (`((a)*b)*`: java restores
-        // the FIRST iteration's inner group) and java's restart-tag leak
-        // (a group span from a FAILED restart attempt, outside the match)
-        // are the remaining group-family skips, skeleton-gated + exact
-        "V1_UNGREEDY_SCOPE", "SKIP_NESTED_LOOP_CAPTURE", "SKIP_RESTART_TAG_LEAK", "SKIP_SURROGATE_UNIT_SEMANTICS",
-        "JURLANE_BUDGET");
+        // carries the exiting iteration's writes; `(a*)*b` compares hard),
+        // and the surrogate-unit family retired with it (the pair-aware
+        // scan pivot: Parser#hasSupplementaryStarts OR-ed into the runner's
+        // candidate-scan pivot — lone surrogates and pair cases compare
+        // hard); the nested-loop inner-capture quirk (`((a)*b)*`: java
+        // restores the FIRST iteration's inner group) and java's
+        // restart-tag leak (a group span from a FAILED restart attempt,
+        // outside the match) are the remaining group-family skips,
+        // skeleton-gated + exact
+        "V1_UNGREEDY_SCOPE", "SKIP_NESTED_LOOP_CAPTURE", "SKIP_RESTART_TAG_LEAK", "JURLANE_BUDGET");
 
     private static final Map<String, Set<String>> MODE_SOFT =
         Map.of("jur", JUR_SOFT, "stretch", Set.of("SKIP_EMPTY", "THREW", "SLOW", "STRETCH_BUDGET"), "seq",

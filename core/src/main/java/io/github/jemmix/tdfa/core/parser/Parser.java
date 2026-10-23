@@ -24,7 +24,10 @@ import java.util.Map;
 /**
  * Hand-rolled iterative-descent parser for a PCRE-ish subset:
  * - literals, escape sequences (\n \t \r \f \a \v \d \D \w \W \s \S)
- * - hex escapes (\xNN, \x{N+}), octal escapes (\NNN, 1–3 digits capped at 0xFF)
+ * - hex escapes (\xNN, \x{N+}), octal escapes (\NNN, 1–3 digits capped at 0xFF),
+ *   Unicode escapes (backslash-u-XXXX — BMP values incl. lone surrogates,
+ *   java's adjacent high+low escape pairs combining to one supplementary
+ *   codepoint)
  * - char classes [abc], [a-z], [^...], with POSIX classes [:alpha:] etc.
  * - Unicode property classes \p{X} \P{X} (full codepoint range, U+0000–U+10FFFF)
  * - quantifiers: * + ? {n} {n,} {n,m} (greedy and lazy)
@@ -125,6 +128,61 @@ public final class Parser {
     static final CharClass WHITESPACE_JDK = new CharClass(R_SPACE_JDK, false);
     static final CharClass NOT_WHITESPACE_JDK = new CharClass(R_SPACE_JDK, true);
 
+    /**
+     * java.util.regex's {@code hasSupplementary(pattern)}: whether an
+     * unanchored {@code find()} there scans candidate starts by codepoint
+     * (the {@code StartS} node — interiors of well-formed surrogate pairs
+     * are never tried after the first candidate) or by UTF-16 unit (plain
+     * {@code Start}). Frozen onto the artifact and OR-ed into the runner's
+     * scan pivot beside the CODEPOINT_BOUNDARIES axis. Mirrors the JDK's
+     * exact flip rules (live-JDK verified):
+     * <ul>
+     * <li>any surrogate unit in the pattern SOURCE (a raw pair decodes to a
+     *     supplementary codepoint, a lone unit is its own codepoint — the
+     *     JDK's whole-pattern codepoint scan);</li>
+     * <li>a SINGLE-CHAR literal atom (run of length one) whose codepoint is
+     *     supplementary/lone (java's {@code SingleS}), or that case-folds
+     *     under the full fold universe (java's {@code SingleU}) — a
+     *     multi-char literal run compiles to a Slice, which never flips
+     *     the flag (the slice quirk: {@code \x{1F600}} flips,
+     *     {@code \x{1F600}x} does not);</li>
+     * <li>any complement (user {@code [^...]}, {@code \W \D \S \P{...}},
+     *     {@code [:^...:]}): java's negate() loses the Bmp marker — "too
+     *     expensive to detect", unconditional;</li>
+     * <li>a written class range {@code lo-hi} that is not provably BMP
+     *     (java's {@code Range} Bmp test) — and ANY written range under
+     *     case-insensitivity (java's {@code CIRange}/{@code CIRangeU} are
+     *     full predicates);</li>
+     * <li>any {@code \p{...}} family predicate except the ASCII-family
+     *     names java builds as Bmp ({@code ASCII}, {@code L1} always; the
+     *     POSIX names only without {@code (?u)}); a shorthand
+     *     {@code \d \w \s} flips only under {@code (?u)} (the UCC variants
+     *     are full predicates);</li>
+     * <li>never the bare {@code .} (java builds it with a direct
+     *     {@code new CharProperty(DOT())} that bypasses the flip).</li>
+     * </ul>
+     */
+    boolean hasSupplementaryStarts;
+
+    /** Literal-run detection for the slice quirk (see
+     *  {@link #hasSupplementaryStarts}): java's atom() consumes a maximal
+     *  run of literal chars into one Slice (which never flips the flag)
+     *  and unwinds one char when a quantifier follows — so a literal's
+     *  single-char flip applies only when neither a neighboring literal
+     *  nor a quantifier makes it part of a longer unit. Tracked streaming:
+     *  every concat part arrival feeds {@link #partArrived}. */
+    private boolean runSolo;
+
+    private boolean runSoloCand;
+
+    private boolean runMulti;
+
+    /** Set by the literal productions (parseAtom's literal branch,
+     *  parseEscape's literal returns, parseQuotedLiteral) before the part
+     *  returns to the concat loop: 0 = not a literal part, 1 = literal
+     *  with no flip candidate, 2 = literal that flips when single. */
+    private int literalKind;
+
     private final String src;
     private int pos = 0;
     private int nextTag = 1;
@@ -172,6 +230,17 @@ public final class Parser {
         this.meter = meter;
         this.options = options;
         this.unicodeCase = options.isUnicodeCase();
+        // Rule (a): java scans the whole pattern source codepoint-wise; any
+        // surrogate unit — a well-formed pair as its supplementary codepoint,
+        // a lone unit as itself — flips the flag. A unit-level scan over the
+        // source is equivalent (a pair contains a high unit).
+        for (int i = 0; i < src.length(); i++) {
+            char c = src.charAt(i);
+            if (c >= 0xD800 && c <= 0xDFFF) {
+                hasSupplementaryStarts = true;
+                break;
+            }
+        }
     }
 
     public static Ast parse(String src) {
@@ -207,7 +276,7 @@ public final class Parser {
         }
         e = anchorBoth ? anchorBoth(e) : e;
         return new ParseResult(e, p.tagCount(), p.groupCount(), p.multiline(), p.unicodeShorthand(),
-            p.unicodeWordRanges(), p.namedGroups());
+            p.unicodeWordRanges(), p.namedGroups(), p.hasSupplementaryStarts);
     }
 
     /** Wrap a parsed body in start/end-text anchors (matches() = anchored both ends).
@@ -235,14 +304,18 @@ public final class Parser {
                     Ast flagOnly = openGroup(stack, frames);
                     if (flagOnly != null) {
                         f.parts.add(applyQuantifier(flagOnly));
+                        partArrived(0, false); // a flag-only group is never a literal
                     }
                 } else {
-                    f.parts.add(parseRepeat());
+                    Ast part = parseRepeat();
+                    f.parts.add(part);
+                    partArrived(literalKind, part instanceof Ast.Repeat);
                 }
                 continue;
             }
             if (c == '|') {
                 pos++;
+                flushLiteralRun();
                 f.alts.add(finishConcat(f.parts));
                 f.parts = new ArrayList<>();
                 continue;
@@ -262,9 +335,82 @@ public final class Parser {
             }
             break;
         }
+        flushLiteralRun();
         GroupFrame root = stack.pop();
         root.alts.add(finishConcat(root.parts));
         return root.alts.size() == 1 ? root.alts.get(0) : new Ast.Alt(root.alts);
+    }
+
+    /**
+     * One concat part arrived (source order): feed the literal-run
+     * detector (the slice quirk, see {@link #hasSupplementaryStarts}).
+     * {@code kind} is the literal production's {@link #literalKind}
+     * (consumed here); {@code quantified} marks a quantifier on the part —
+     * java's atom() unwinds the quantified char out of a literal run, so a
+     * quantified literal is always a single-char atom (its candidate
+     * applies) and it closes the run before it (that prefix keeps its own
+     * slice/single verdict).
+     */
+    private void partArrived(int kind, boolean quantified) {
+        boolean partLit = kind != 0;
+        if (!partLit) {
+            flushLiteralRun();
+            return;
+        }
+        if (quantified) {
+            flushLiteralRun();
+            if (kind == 2) {
+                hasSupplementaryStarts = true; // single-char atom (java's unwind)
+            }
+            return;
+        }
+        if (runMulti) {
+            return; // the segment is already a slice: no member flips
+        }
+        if (runSolo) {
+            runMulti = true; // second literal: java's Slice, no flip
+            runSolo = false;
+            return;
+        }
+        runSolo = true;
+        runSoloCand = kind == 2;
+    }
+
+    /** The current literal segment ended: a run of exactly one member is a
+     *  single-char atom in java (its flip candidate applies); a run of two
+     *  or more compiled to a Slice and flips nothing. */
+    private void flushLiteralRun() {
+        if (runSolo && runSoloCand) {
+            hasSupplementaryStarts = true;
+        }
+        runSolo = false;
+        runMulti = false;
+    }
+
+    /** java's {@code isSupplementary}: a supplementary codepoint or a lone
+     *  surrogate unit (both compile to non-Bmp predicates — SingleS). */
+    private static boolean isSupplementaryCp(int cp) {
+        return cp >= 0x10000 || (cp >= 0xD800 && cp <= 0xDFFF);
+    }
+
+    /**
+     * java's {@code single()} flip verdict for one literal codepoint: a
+     * supplementary/lone value always flips (SingleS); under
+     * case-insensitivity with the full fold universe a codepoint with case
+     * counterparts flips too (SingleU is a full predicate) — under the
+     * ASCII universe java's SingleI stays Bmp and never flips.
+     */
+    private boolean singleLiteralFlips(int cp) {
+        if (isSupplementaryCp(cp)) {
+            return true;
+        }
+        return caseInsensitive && (unicodeCase || unicodeShorthand) && foldUniverse(cp) != null;
+    }
+
+    /** {@link #literalKind} for one literal codepoint (see
+     *  {@link #singleLiteralFlips}). */
+    private int literalKindOf(int cp) {
+        return singleLiteralFlips(cp) ? 2 : 1;
     }
 
     /** concat := repeat* (no explicit separator) — the single-branch shape;
@@ -617,6 +763,7 @@ public final class Parser {
     /** atom := class | dot | anchor | escape | literal — groups are handled
      *  by the caller ({@link #parseAlt()}'s loop) so nesting never recurses. */
     private Ast parseAtom() {
+        literalKind = 0; // the literal branches below raise it (run detector)
         char c = cur();
         if (c == '[') {
             pos++;
@@ -626,7 +773,9 @@ public final class Parser {
             pos++;
             // UNIX_LINES axis: the dot skips \n only (the RE2-lineage and the
             // JDK-flag reading agree); unset recognizes the full
-            // java.util.regex terminator set (DOT_JUR).
+            // java.util.regex terminator set (DOT_JUR). Either way the bare
+            // dot never flips hasSupplementaryStarts (java's direct
+            // CharProperty construction bypasses the flip).
             return dotall ? DOTALL : options.isDotNlOnly() ? DOT : DOT_JUR;
         }
         if (c == '^') {
@@ -658,6 +807,7 @@ public final class Parser {
         }
         int cp = Alphabet.decode(src, pos, src.length());
         pos += Alphabet.width(cp);
+        literalKind = literalKindOf(cp);
         if (caseInsensitive) {
             Ast folded = caseFoldChar(cp);
             if (folded != null) {
@@ -883,6 +1033,7 @@ public final class Parser {
         expect(')'); // the caller peeked it; the group owns its consumption
         GroupFrame f = stack.pop();
         frames.pop();
+        flushLiteralRun(); // the body's concat ends here (run detector)
         f.alts.add(finishConcat(f.parts));
         Ast body = f.alts.size() == 1 ? f.alts.get(0) : new Ast.Alt(f.alts);
         // Restore the flag state saved at '(' (flag-only groups never pushed
@@ -901,6 +1052,7 @@ public final class Parser {
         Ast quantified = applyQuantifier(group);
         markFamily6Groups(quantified, f.capturing);
         stack.peek().parts.add(quantified);
+        partArrived(0, false); // a group is never a literal part
     }
 
     /** class := '^'? class-item+ ']' */
@@ -909,6 +1061,9 @@ public final class Parser {
         if (peek() == '^') {
             pos++;
             negated = true;
+            // Rule (d): any complement flips unconditionally — java's
+            // negate() drops the Bmp marker ("too expensive to detect").
+            hasSupplementaryStarts = true;
         }
         List<Integer> ranges = new ArrayList<>();
         // Syntactic-range markers, parallel to `ranges`' pairs: item i was
@@ -924,6 +1079,7 @@ public final class Parser {
             ranges.add((int) ']');
             ranges.add((int) ']');
             writtenRange.add(false);
+            memberFlip(']');
             pos++;
         }
         while (pos < src.length() && peek() != ']') {
@@ -943,6 +1099,9 @@ public final class Parser {
                 char next = src.charAt(pos + 1);
                 int[] sr = shorthandRanges(next);
                 if (sr != null) {
+                    // In-class shorthand flip: complements always, the
+                    // positive families only under (?u) (see shorthandFlip).
+                    shorthandFlip(next);
                     pos += 2;
                     for (int v : sr) {
                         ranges.add(v);
@@ -974,6 +1133,11 @@ public final class Parser {
                     throw fail(this, "inverted range in class");
                 }
             }
+            if (dashed) {
+                rangeFlip(lo, hi);
+            } else {
+                memberFlip(lo);
+            }
             ranges.add(lo);
             ranges.add(hi);
             writtenRange.add(dashed);
@@ -991,6 +1155,42 @@ public final class Parser {
             arr = foldExpandClass(arr, toBooleanArray(writtenRange));
         }
         return new CharClass(arr, negated);
+    }
+
+    /**
+     * A written class range's contribution to {@link #hasSupplementaryStarts}
+     * (rule c): java's {@code Range} predicate is Bmp only when the range is
+     * provably below the surrogate block or strictly between it and the
+     * supplementary plane — and under case-insensitivity java builds
+     * {@code CIRange}/{@code CIRangeU}, full predicates regardless of bounds.
+     */
+    private void rangeFlip(int lo, int hi) {
+        boolean bmp = hi < 0xD800 || (lo > 0xDFFF && hi < 0x10000);
+        if (caseInsensitive || !bmp) {
+            hasSupplementaryStarts = true;
+        }
+    }
+
+    /**
+     * A single class member's contribution (rule b, class form): a
+     * supplementary/lone member always flips (java's single() → SingleS —
+     * bits cannot hold it); under CI with the full fold universe a member
+     * that reaches single() with case counterparts flips too (SingleU) —
+     * java keeps members below 0x100 in its BitClass except the
+     * case-folding specials, so a plain BMP letter member stays Bmp.
+     */
+    private void memberFlip(int cp) {
+        if (isSupplementaryCp(cp)) {
+            hasSupplementaryStarts = true;
+            return;
+        }
+        if (!caseInsensitive || !(unicodeCase || unicodeShorthand)) {
+            return;
+        }
+        boolean reachesSingle = cp >= 0x100 || "\u00FF\u00B5IiSsKk\u00C5\u00E5\u00DF".indexOf(cp) >= 0;
+        if (reachesSingle && foldUniverse(cp) != null) {
+            hasSupplementaryStarts = true;
+        }
     }
 
     private static boolean[] toBooleanArray(List<Boolean> list) {
@@ -1236,7 +1436,14 @@ public final class Parser {
         if (r == null) {
             throw fail(this, "unknown POSIX class: [:" + (negated ? "^" : "") + name + ":]");
         }
-        return negated ? complementRanges(r) : r;
+        if (negated) {
+            // The complement form flips hasSupplementaryStarts (rule d) —
+            // the house extension mirrors java's negate() discipline for the
+            // spelled complement.
+            hasSupplementaryStarts = true;
+            return complementRanges(r);
+        }
+        return r;
     }
 
     /** ASCII-only POSIX class ranges, matching re2j's CharClass tables. */
@@ -1319,6 +1526,8 @@ public final class Parser {
                     return '\\';
                 case 'x' :
                     return parseHexChar();
+                case 'u' :
+                    return parseUHex();
                 default :
                     // re2j rejects unknown ASCII alphanumeric escapes in class
                     // context (notably [\b] — backspace is unsupported); a
@@ -1384,36 +1593,52 @@ public final class Parser {
             } else if (c != '0') {
                 throw fail(this, "invalid escape sequence: \\" + c);
             }
+            literalKind = 1; // <= 0xFF: never supplementary, never folds
             return new Ast.Symbol((char) val);
         }
         switch (c) {
             case 'n' :
+                literalKind = 1;
                 return new Ast.Symbol('\n');
             case 't' :
+                literalKind = 1;
                 return new Ast.Symbol('\t');
             case 'r' :
+                literalKind = 1;
                 return new Ast.Symbol('\r');
             case 'f' :
+                literalKind = 1;
                 return new Ast.Symbol('\f');
             case 'a' :
+                literalKind = 1;
                 return new Ast.Symbol((char) 7); // alarm/bell, like re2j
             case 'v' :
+                literalKind = 1;
                 return new Ast.Symbol((char) 11); // vertical tab, like re2j
             case '\\' :
+                literalKind = 1;
                 return new Ast.Symbol('\\');
             case 'x' :
                 return parseHexEscape();
+            case 'u' :
+                return parseUEscape();
             case 'd' :
+                shorthandFlip('d');
                 return shorthandEscape('d');
             case 'D' :
+                shorthandFlip('D');
                 return shorthandEscape('D');
             case 'w' :
+                shorthandFlip('w');
                 return shorthandEscape('w');
             case 'W' :
+                shorthandFlip('W');
                 return shorthandEscape('W');
             case 's' :
+                shorthandFlip('s');
                 return shorthandEscape('s');
             case 'S' :
+                shorthandFlip('S');
                 return shorthandEscape('S');
             // RE2 (and re2j) reject \C as "any byte" — see re2j Parser.java:913.
             // We don't support it either; reject at parse time so silent misparse
@@ -1445,8 +1670,22 @@ public final class Parser {
                 if (c < 128 && Character.isLetterOrDigit(c)) {
                     throw fail(this, "invalid escape sequence: \\" + c);
                 }
+                literalKind = literalKindOf(c); // java folds identity escapes via single()
                 return new Ast.Symbol(c);
             }
+        }
+    }
+
+    /**
+     * A shorthand atom's contribution to {@link #hasSupplementaryStarts}:
+     * the uppercase complements flip unconditionally (java's negate()
+     * drops the Bmp marker), the positive families flip only under
+     * {@code (?u)} (their UCC variants are full predicates — the ASCII
+     * tables java builds otherwise are Bmp).
+     */
+    private void shorthandFlip(char c) {
+        if (Character.isUpperCase(c) || unicodeShorthand) {
+            hasSupplementaryStarts = true;
         }
     }
 
@@ -1472,17 +1711,24 @@ public final class Parser {
         } // consume \E
 
         if (literal.isEmpty()) {
+            // \Q\E is transparent in java (RemoveQEQuoting deletes it): a
+            // blank literal part that keeps the surrounding literals in one
+            // run — kind 1 (literal, never a flip candidate).
+            literalKind = 1;
             return new Ast.Empty();
         }
-        if (literal.length() == 1) {
-            char ch = literal.charAt(0);
+        // The whole body decoding to ONE codepoint (a lone unit, or a raw
+        // pair) is java's single-char atom; anything longer is a Slice.
+        int firstCp = Alphabet.decode(literal, 0, literal.length());
+        if (literal.length() == Alphabet.width(firstCp)) {
+            literalKind = literalKindOf(firstCp);
             if (caseInsensitive) {
-                Ast folded = caseFoldChar(ch);
+                Ast folded = caseFoldChar(firstCp);
                 if (folded != null) {
                     return folded;
                 }
             }
-            return new Ast.Symbol(ch);
+            return literalAtom(firstCp);
         }
         List<Ast> parts = new ArrayList<>();
         for (int i = 0; i < literal.length();) {
@@ -1497,6 +1743,10 @@ public final class Parser {
             }
             parts.add(literalAtom(cp));
         }
+        // The whole quoted body is ONE literal run in java (>= 2 chars ⇒ a
+        // Slice, which never flips); it still merges with neighboring
+        // literal parts into that run.
+        literalKind = 1;
         return new Ast.Concat(parts);
     }
 
@@ -1536,11 +1786,39 @@ public final class Parser {
         if (t == null) {
             throw fail(this, "unknown character class name: " + name);
         }
+        propertyFlip(name, positive == innerNeg);
         int[] fold = caseInsensitive ? provider.foldTableFor(name) : null;
         if (fold != null && fold.length > 0) {
             t = mergeRanges(t, fold);
         }
         return (positive == innerNeg) ? complementRanges(t) : t;
+    }
+
+    /**
+     * A {@code \p{...}} family predicate's contribution to
+     * {@link #hasSupplementaryStarts} (rule e, live-JDK verified): the
+     * complement forms flip unconditionally; the positive forms flip
+     * unless java builds the name as a Bmp predicate — {@code ASCII} and
+     * {@code L1} are Bmp range tables under any flag, the POSIX ASCII
+     * family names only without {@code (?u)} (with it java substitutes the
+     * full Unicode predicates). Every other name (categories, scripts,
+     * binary properties) is a full predicate and flips.
+     */
+    private void propertyFlip(String name, boolean complement) {
+        if (complement) {
+            hasSupplementaryStarts = true;
+            return;
+        }
+        if ("ASCII".equals(name) || "L1".equals(name)) {
+            return;
+        }
+        boolean posixAsciiFamily =
+            "Alnum".equals(name) || "Alpha".equals(name) || "Blank".equals(name) || "Cntrl".equals(name)
+                || "Digit".equals(name) || "Graph".equals(name) || "Lower".equals(name) || "Print".equals(name)
+                || "Punct".equals(name) || "Space".equals(name) || "Upper".equals(name) || "XDigit".equals(name);
+        if (!posixAsciiFamily || unicodeShorthand) {
+            hasSupplementaryStarts = true;
+        }
     }
 
     /** Append Unicode property ranges into a class's accumulator. The caller
@@ -1641,7 +1919,58 @@ public final class Parser {
      * </ul>
      */
     private Ast parseHexEscape() {
-        return literalAtom(parseHexChar());
+        int cp = parseHexChar();
+        literalKind = literalKindOf(cp);
+        return literalAtom(cp);
+    }
+
+    /**
+     * Parse a backslash-u-XXXX escape after the leading backslash-u (caller
+     * has consumed it): exactly 4 hex digits, the BMP codepoint 0xXXXX.
+     * java's pair-combining reading (live-JDK verified): when the value is
+     * a high surrogate immediately followed by backslash-u + a low
+     * surrogate, the two combine into ONE supplementary codepoint
+     * ({@code a<high><low>} spells "a", 0x1F600, "b" via adjacent escapes);
+     * a lone surrogate value stays lone and matches only unpaired units
+     * (the alphabet decodes a well-formed pair as its supplementary
+     * codepoint instead). re2j has no backslash-u escape — the
+     * shared-syntax extension lands on both surfaces with the escape
+     * suites' pinned accept-divergence.
+     */
+    private Ast parseUEscape() {
+        int cp = parseUHex();
+        literalKind = literalKindOf(cp);
+        return literalAtom(cp);
+    }
+
+    /** Exactly 4 hex digits (java's {@code uxxxx()}), or a parse failure. */
+    private int parseUHex() {
+        if (pos + 4 > src.length()) {
+            throw fail(this, "illegal Unicode escape sequence: expected 4 hex digits after \\u");
+        }
+        int val = 0;
+        for (int i = 0; i < 4; i++) {
+            char h = src.charAt(pos + i);
+            if (!isHex(h)) {
+                throw fail(this, "illegal Unicode escape sequence: expected 4 hex digits after \\u");
+            }
+            val = (val << 4) | hexVal(h);
+        }
+        pos += 4;
+        // java's u(): a high surrogate immediately followed by backslash-u
+        // + low surrogate combines into the supplementary codepoint
+        if (val >= 0xD800 && val <= 0xDBFF && pos + 1 < src.length() && src.charAt(pos) == '\\'
+            && src.charAt(pos + 1) == 'u') {
+            int save = pos;
+            pos += 2;
+            int lo = pos + 4 <= src.length() && isHex(src.charAt(pos)) && isHex(src.charAt(pos + 1))
+                && isHex(src.charAt(pos + 2)) && isHex(src.charAt(pos + 3)) ? parseUHex() : -1;
+            if (lo >= 0xDC00 && lo <= 0xDFFF) {
+                return ((val - 0xD800) << 10) + (lo - 0xDC00) + 0x10000;
+            }
+            pos = save; // not a pair: the high surrogate stays lone
+        }
+        return val;
     }
 
     private static boolean isHex(char c) {

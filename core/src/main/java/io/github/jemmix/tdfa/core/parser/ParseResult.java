@@ -22,7 +22,10 @@ import java.util.Map;
  * boundaries); {@code unicodeShorthand} mirrors {@code (?u)} (Unicode-aware
  * {@code \w \d \s \b}); {@code unicodeWordRanges} carries the word-character
  * ranges when {@code unicodeShorthand} is set (else {@code null});
- * {@code namedGroups} is the unmodifiable name&rarr;group-index map.
+ * {@code namedGroups} is the unmodifiable name&rarr;group-index map;
+ * {@code hasSupplementaryStarts} is java.util.regex's
+ * {@code hasSupplementary(pattern)} — the StartS/Start selection (see
+ * {@code Parser#hasSupplementaryStarts}).
  */
 // Not a record: the Java 8 bytecode floor forbids them; the defensive-copy
 // semantics are preserved by hand.
@@ -34,9 +37,10 @@ public final class ParseResult {
     private final boolean unicodeShorthand;
     private final int[] unicodeWordRanges;
     private final Map<String, Integer> namedGroups;
+    private final boolean hasSupplementaryStarts;
 
     public ParseResult(Ast ast, int tagCount, int groupCount, boolean multiline, boolean unicodeShorthand,
-        int[] unicodeWordRanges, Map<String, Integer> namedGroups) {
+        int[] unicodeWordRanges, Map<String, Integer> namedGroups, boolean hasSupplementaryStarts) {
         this.ast = ast;
         this.tagCount = tagCount;
         this.groupCount = groupCount;
@@ -48,6 +52,7 @@ public final class ParseResult {
         // Defensive copy: an array field is otherwise only as immutable as
         // the caller's discipline.
         this.unicodeWordRanges = unicodeWordRanges != null ? unicodeWordRanges.clone() : null;
+        this.hasSupplementaryStarts = hasSupplementaryStarts;
     }
 
     public Ast ast() {
@@ -77,5 +82,14 @@ public final class ParseResult {
 
     public Map<String, Integer> namedGroups() {
         return namedGroups;
+    }
+
+    /**
+     * java.util.regex's {@code hasSupplementary(pattern)} (the StartS/Start
+     * selection) — see {@code Parser#hasSupplementaryStarts} for the flip
+     * rules it mirrors.
+     */
+    public boolean hasSupplementaryStarts() {
+        return hasSupplementaryStarts;
     }
 }

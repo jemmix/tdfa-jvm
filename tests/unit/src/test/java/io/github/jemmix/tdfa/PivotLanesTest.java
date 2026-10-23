@@ -566,31 +566,35 @@ class PivotLanesTest {
     }
 
     @Test
-    void jurUnitSemanticsLetMatchesStartInsidePairs() {
-        // The CODEPOINT_BOUNDARIES lane contract: unit semantics — matches
-        // start/end at any unit, lone surrogates match as single units.
-        // java refuses surrogate units inside well-formed pairs entirely;
-        // that residual belongs to the campaign's soft surrogate family.
+    void jurFlippedPatternsScanCodepointAligned() {
+        // The scan pivot: a JUR-lane pattern that flipped java's
+        // hasSupplementary (any surrogate unit in the source — the classes
+        // and literals below) enumerates candidate starts codepoint-aligned
+        // exactly like java's StartS: pair interiors are never candidates,
+        // so no match starts inside a well-formed pair (live-JDK pinned;
+        // the retired unit-semantics family). An unflipped pattern (the
+        // plain BMP literal) keeps unit enumeration — irrelevant for it,
+        // its matches sit on codepoint boundaries anyway.
         String pair = "\uD83D\uDE00";
         assertLane("JUR [\\uD800-\\uDFFF]", "[\uD800-\uDFFF]", JUR, new String[]{pair, "a" + pair, pair + "b"},
-            new String[]{"F=true [1..2) M=false R=[1..2)", "F=true [2..3) M=false R=[2..3)",
-                "F=true [1..2) M=false R=[1..2)"});
+            new String[]{"F=false M=false R=[1..2)", "F=false M=false R=-", "F=false M=false R=[1..2)"});
         assertLane("RE2 [\\uD800-\\uDFFF]", "[\uD800-\uDFFF]", RE2, new String[]{pair, "a" + pair},
             new String[]{"F=false M=false R=[1..2)", "F=false M=false R=-"});
         // literal needle path (the LITERAL strategy's indexOf): the lone-low
-        // hit inside the pair is served under unit semantics, guarded under
-        // codepoint discipline
+        // hit inside the pair is refused — the pattern flipped, interiors
+        // are never candidates (the RE2 lane agrees, unconditionally)
         assertLane("JUR \\uDE00", "\uDE00", JUR, new String[]{pair, "a" + pair},
-            new String[]{"F=true [1..2) M=false R=[1..2)", "F=true [2..3) M=false R=[2..3)"});
+            new String[]{"F=false M=false R=[1..2)", "F=false M=false R=-"});
         assertLane("RE2 \\uDE00", "\uDE00", RE2, new String[]{pair, "a" + pair},
             new String[]{"F=false M=false R=[1..2)", "F=false M=false R=-"});
-        // consuming shape anchored by a later char: the interior start wins
+        // consuming shape anchored by a later char: the interior start is
+        // never a candidate under the flipped scan
         assertLane("JUR [\\uDC00-\\uDFFF]b", "[\uDC00-\uDFFF]b", JUR, new String[]{pair + "b"},
-            new String[]{"F=true [1..3) M=false R=[1..3)"});
+            new String[]{"F=false M=false R=[1..3)"});
         assertLane("RE2 [\\uDC00-\\uDFFF]b", "[\uDC00-\uDFFF]b", RE2, new String[]{pair + "b"},
             new String[]{"F=false M=false R=[1..3)"});
-        // literal prefix scan path (the PREFIX strategy): a needle hit at a
-        // pair-interior start is a real candidate under unit semantics
+        // literal prefix scan path (the PREFIX strategy) over an unflipped
+        // pattern: unchanged — the hit sits on a codepoint boundary
         assertLane("JUR abx", "abx", JUR, new String[]{"\uD83D\uDE00abx", "abx"},
             new String[]{"F=true [2..5) M=false R=[2..5)", "F=true [0..3) M=true R=-"});
         assertLane("RE2 abx", "abx", RE2, new String[]{"\uD83D\uDE00abx"},
