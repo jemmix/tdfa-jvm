@@ -1688,13 +1688,11 @@ public final class DifferentialFuzzer {
             if (CampaignFuzzer.sameSkeleton(o.oracle, o.vm) && CampaignFuzzer.leakedRestartSpan(o.oracle, o.vm)) {
                 return "restart-tag-leak";
             }
-            // the nested-loop-capture family retired (the sticky split)
-            if (CampaignFuzzer.hasLoneSurrogate(p) || CampaignFuzzer.hasLoneSurrogate(o.c.input())
-                || CampaignFuzzer.laneExtrasAllPairInteriors(o.oracle, o.vm, o.c.input())
-                || CampaignFuzzer.negatedClassSurrogateResidual(p, o.c.input())
-                || CampaignFuzzer.boundarySurrogateResidual(p, o.c.input())) {
-                return "surrogate-unit-semantics";
+            if (CampaignFuzzer.sameSkeleton(o.oracle, o.vm) && p.matches(".*\\(.*\\(.*\\)[*+{].*\\)[*+{].*")) {
+                return "nested-loop-capture";
             }
+            // the surrogate-unit family retired (pair-aware scans; see
+            // CampaignFuzzer.jurLaneCase)
             return null;
         }
 

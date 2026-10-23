@@ -163,6 +163,18 @@ public final class Tdfa {
      */
     final Semantics semantics;
     /**
+     * java.util.regex's {@code hasSupplementary(pattern)} — the
+     * StartS/Start selection (see {@code Parser#hasSupplementaryStarts}
+     * for the exact flip rules), frozen from the {@link Tnfa}. The
+     * runner ORs it into its candidate-scan pivot beside the
+     * CODEPOINT_BOUNDARIES axis: a JUR-lane compile whose pattern flipped
+     * the fact scans codepoint-aligned starts exactly like java's
+     * StartS (pair interiors are never candidates after the first try);
+     * an unflipped JUR pattern keeps unit-wise candidate enumeration
+     * (java's plain Start).
+     */
+    final boolean hasSupplementaryStarts;
+    /**
      * True iff every tag of this artifact is multi-valued (BT22 §3.1):
      * transition/final ops may then be {@link #OP_APPEND_POS} and final
      * registers hold {@link io.github.jemmix.tdfa.core.engine.TagTree}
@@ -315,6 +327,22 @@ public final class Tdfa {
         boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset, boolean pikeCutMatters,
         int[] wholeRanges, int[] wholeBase, int[] wholeCount, int[] wholeHiPrefix, boolean wholeSideComplete,
         boolean multiValued, Semantics semantics, int posFlagCells) {
+        this(tagCount, groupCount, namedGroups, registerCount, finalRegBase, startState, stateCount, stateMeta,
+            stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges, ops, entryHiPrefix, stateEntryMask,
+            stateAcceptMask, longestMatch, stopOnAcceptMask, stopMaskUniform, multiline, unicodeWordBoundary,
+            wordRanges, fixedBase, fixedOffset, pikeCutMatters, wholeRanges, wholeBase, wholeCount, wholeHiPrefix,
+            wholeSideComplete, multiValued, semantics, posFlagCells, false);
+    }
+
+    /** Fullest entry: the StartS-selection fact (see
+     *  {@link #hasSupplementaryStarts}) rides beside the policy. */
+    public Tdfa(int tagCount, int groupCount, Map<String, Integer> namedGroups, int registerCount, int finalRegBase,
+        int startState, int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
+        int[] stateFinalOpsByMask, int[] ranges, int[] ops, int[] entryHiPrefix, int[] stateEntryMask,
+        int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
+        boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset, boolean pikeCutMatters,
+        int[] wholeRanges, int[] wholeBase, int[] wholeCount, int[] wholeHiPrefix, boolean wholeSideComplete,
+        boolean multiValued, Semantics semantics, int posFlagCells, boolean hasSupplementaryStarts) {
         this.tagCount = tagCount;
         this.groupCount = groupCount;
         this.namedGroups = namedGroups != null ? Collections.unmodifiableMap(namedGroups) : Collections.emptyMap();
@@ -342,6 +370,7 @@ public final class Tdfa {
         this.stopMaskUniform = stopMaskUniform;
         this.multiline = multiline;
         this.semantics = semantics;
+        this.hasSupplementaryStarts = hasSupplementaryStarts;
         this.multiValued = multiValued;
         this.unicodeWordBoundary = unicodeWordBoundary;
         this.wordRanges = wordRanges;
@@ -980,6 +1009,15 @@ public final class Tdfa {
      */
     public Semantics semantics() {
         return semantics;
+    }
+
+    /**
+     * java.util.regex's {@code hasSupplementary(pattern)} — the
+     * StartS/Start selection frozen on this artifact (see
+     * {@link #hasSupplementaryStarts}).
+     */
+    public boolean hasSupplementaryStarts() {
+        return hasSupplementaryStarts;
     }
 
     /**

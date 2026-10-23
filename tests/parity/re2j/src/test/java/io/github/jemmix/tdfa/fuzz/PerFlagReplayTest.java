@@ -158,13 +158,8 @@ class PerFlagReplayTest {
         if (CampaignFuzzer.sameSkeleton(oracle, vm) && CampaignFuzzer.leakedRestartSpan(oracle, vm)) {
             return "restart-tag-leak";
         }
-        // the nested-loop-capture family retired (the sticky split)
-        if (CampaignFuzzer.hasLoneSurrogate(pattern) || CampaignFuzzer.hasLoneSurrogate(input)
-            || CampaignFuzzer.laneExtrasAllPairInteriors(oracle, vm, input)
-            || CampaignFuzzer.negatedClassSurrogateResidual(pattern, input)
-            || CampaignFuzzer.boundarySurrogateResidual(pattern, input)) {
-            return "surrogate-unit-semantics";
-        }
+        // the nested-loop-capture family retired (the sticky split) and
+        // the surrogate-unit family retired (pair-aware scans)
         return null;
     }
 

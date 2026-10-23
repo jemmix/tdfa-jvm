@@ -124,6 +124,16 @@ public final class Tnfa {
      */
     public final boolean[] surfaceFinalTags;
 
+    /**
+     * java.util.regex's {@code hasSupplementary(pattern)} (the StartS/Start
+     * selection — see {@code Parser#hasSupplementaryStarts} for the exact
+     * flip rules), carried from the parse and frozen onto the
+     * {@code Tdfa}: the runner ORs it into its candidate-scan pivot beside
+     * the CODEPOINT_BOUNDARIES axis (a JUR-lane pattern with supplementary
+     * content scans codepoint-aligned starts exactly like java's StartS).
+     */
+    public final boolean hasSupplementaryStarts;
+
     // Zero-width assertion bits. BEGIN_TEXT/END_TEXT are LINE boundaries
     // (position 0 / end-of-input, plus after/before a terminator of the
     // compile's set — the (?m) flavor lives in which bit each ^/$ edge
@@ -188,6 +198,18 @@ public final class Tnfa {
         boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
         int[] fixedBase, int[] fixedOffset, boolean[] dissolvedTags, boolean[] surfaceFinalTags,
         boolean multiValuedTags, Semantics semantics) {
+        this(stateCount, epsFrom, epsTo, epsPri, epsTag, epsEmptyMask, symFrom, symTo, symClass, start, accept,
+            tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
+            dissolvedTags, surfaceFinalTags, multiValuedTags, semantics, false);
+    }
+
+    /** Fullest entry: the StartS-selection fact (see
+     *  {@link #hasSupplementaryStarts}) rides beside the policy. */
+    public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
+        int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
+        boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
+        int[] fixedBase, int[] fixedOffset, boolean[] dissolvedTags, boolean[] surfaceFinalTags,
+        boolean multiValuedTags, Semantics semantics, boolean hasSupplementaryStarts) {
         this.stateCount = stateCount;
         this.epsFrom = epsFrom;
         this.epsTo = epsTo;
@@ -211,6 +233,7 @@ public final class Tnfa {
         this.fixedOffset = fixedOffset;
         this.dissolvedTags = dissolvedTags;
         this.surfaceFinalTags = surfaceFinalTags;
+        this.hasSupplementaryStarts = hasSupplementaryStarts;
     }
 
     // ====== Builder / construction ======
@@ -332,7 +355,7 @@ public final class Tnfa {
         b.stickySplit(stickyCaps);
         Tnfa nfa = b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(), parsed.unicodeShorthand(),
             parsed.unicodeWordRanges(), parsed.namedGroups(), fixedBase, fixedOffset, dissolved, surfaced,
-            multiValuedTags, semantics);
+            multiValuedTags, semantics, parsed.hasSupplementaryStarts());
         if (observer != null) {
             observer.stage(CompileObserver.Stage.TNFA, System.nanoTime() - t1, nfa.stateCount);
         }
@@ -1616,7 +1639,8 @@ public final class Tnfa {
 
         Tnfa build(int start, int accept, int tagCount, int groupCount, boolean multiline, boolean unicodeWordBoundary,
             int[] wordRanges, Map<String, Integer> namedGroups, int[] fixedBase, int[] fixedOffset,
-            boolean[] dissolvedTags, boolean[] surfaceFinalTags, boolean multiValuedTags, Semantics semantics) {
+            boolean[] dissolvedTags, boolean[] surfaceFinalTags, boolean multiValuedTags, Semantics semantics,
+            boolean hasSupplementaryStarts) {
             int n = eps.size();
             int[] eFrom = new int[n], eTo = new int[n], ePri = new int[n], eTag = new int[n], eEmpty = new int[n];
             for (int i = 0; i < n; i++) {
@@ -1632,7 +1656,7 @@ public final class Tnfa {
             CharClass[] sClass = symClasses.toArray(new CharClass[0]);
             return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, sFrom, sTo, sClass, start, accept, tagCount,
                 groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
-                dissolvedTags, surfaceFinalTags, multiValuedTags, semantics);
+                dissolvedTags, surfaceFinalTags, multiValuedTags, semantics, hasSupplementaryStarts);
         }
     }
 }

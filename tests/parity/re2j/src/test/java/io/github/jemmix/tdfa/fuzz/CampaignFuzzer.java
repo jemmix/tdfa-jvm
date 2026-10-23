@@ -588,27 +588,12 @@ public final class CampaignFuzzer {
         // matches the capture wins (`((a)*b)*` on "abab" -> g2 0..1).
         // CLOSED by the sticky split (Tnfa.Builder#stickySplit): those
         // shapes compare hard, pinned in NestedQuantifierParityTest.
-        // (2) The lone-surrogate family: the JUR lane's CODEPOINT_
-        // BOUNDARIES-unset axis semantics are unit-level by design —
-        // matches start/end at any unit and classes match surrogate
-        // units anywhere, lone or the halves of a well-formed pair —
-        // while java's UTF-16 discipline never matches a surrogate unit
-        // inside a well-formed pair (live-JDK verified; the RE2-lane
-        // probe's own surrogate family and DifferentialFuzzer's
-        // knownDivergence doc the same discipline). The \b/\B wordness
-        // twin joins it (codepoint-decoded wordness at pair units vs
-        // java's per-unit). A pair-aware JUR reading is the open engine
-        // work that would un-skip this.
-        boolean surrogate = hasLoneSurrogate(c.pattern()) || hasLoneSurrogate(c.input())
-            || laneExtrasAllPairInteriors(jur, jurLaneVm, c.input())
-            || negatedClassSurrogateResidual(c.pattern(), c.input())
-            || boundarySurrogateResidual(c.pattern(), c.input());
-        if (surrogate) {
-            counts.soft("SKIP_SURROGATE_UNIT_SEMANTICS");
-            camp.rec(caseSeed, "JURLANE_SKIP (surrogate-unit-semantics)", "pattern", c.pattern(), "input", c.input(),
-                "flags", c.tdfaFlags(), "jur", jur, "jurLaneVm", jurLaneVm);
-            return;
-        }
+        // (2, retired) The lone-surrogate family — the JUR lane's unit-level
+        // candidate scans vs java's StartS/plain-Start discipline — closed
+        // by the pair-aware scan pivot (Parser#hasSupplementaryStarts frozen
+        // on the artifact, OR-ed into the runner's scanSkipsPairs): lone
+        // surrogates, surrogate-covering classes and the \b/\B wordness
+        // twin now compare HARD against the live oracle.
         counts.hard("JURLANE_MISMATCH");
         camp.rec(caseSeed, "JURLANE_MISMATCH", "pattern", c.pattern(), "input", c.input(), "flags", c.tdfaFlags(),
             "jurFlags", jurFlags, "jur", jur, "jurLaneVm", jurLaneVm);
@@ -801,111 +786,6 @@ public final class CampaignFuzzer {
                 }
                 i++;
             } else if (c >= 0xDC00 && c <= 0xDFFF) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Feature-level tail of the surrogate residual (the same coarseness the
-     * RE2-lane probe's surrogate feature accepts): with well-formed pairs in
-     * the input and a pattern that can match NON-word/non-digit/non-space
-     * codepoints (negated classes cover the surrogate range), java's
-     * unit-level negated-class behavior and the lane's unit semantics
-     * diverge in ripples the span-level classifier cannot attribute — the
-     * family owns those wholesale. Bracket classes with surrogate-crossing
-     * ranges join them (found by the evidence-re-base matrix: a lane extra
-     * starting at a pair's HIGH unit — the lane's unit semantics match each
-     * surrogate unit of a well-formed pair against a surrogate-covering
-     * class where java's pair-aware classes never match). Pivot-relevant
-     * shapes (literals, anchors, dot) are unaffected: literals are covered
-     * by the lone-surrogate predicate, and the dot consumes the pair as one
-     * unit on both sides.
-     */
-    static boolean negatedClassSurrogateResidual(String pattern, String input) {
-        if (!hasWellFormedPair(input)) {
-            return false;
-        }
-        return pattern.contains("\\W") || pattern.contains("\\S") || pattern.contains("\\D") || pattern.contains("[^")
-            || pattern.contains("[");
-    }
-
-    /**
-     * The \b/\B twin of the surrogate residual: the lane evaluates boundary
-     * wordness CODEPOINT-decoded at pair positions (a pair encoding a
-     * letter reads word on its high unit) where java's per-unit wordness
-     * reads the lone surrogate unit non-word — java and the lane disagree
-     * on \b at exactly those positions (found by the evidence-re-base
-     * matrix: {@code [b-c…]*\B} iterating an extra empty at a high unit).
-     * Any \b/\B pattern over a well-formed-pair input is the family.
-     */
-    static boolean boundarySurrogateResidual(String pattern, String input) {
-        return (pattern.contains("\\b") || pattern.contains("\\B")) && hasWellFormedPair(input);
-    }
-
-    /**
-     * JUR-lane residual classifier: the LANE's span sequence, with every
-     * interior-started span removed, equals the ORACLE's sequence with every
-     * span shadowed by a removed one removed. java's classes never match a
-     * surrogate unit inside a well-formed pair; the lane's unit semantics
-     * do — an interior-started lane match both adds a span and consumes
-     * past positions the oracle's next match would have started at. Any
-     * other divergence (a lane miss, a different end) is a real finding.
-     */
-    static boolean laneExtrasAllPairInteriors(String jur, String lane, String input) {
-        List<int[]> laneSpans = spansOf(stripGroups(lane));
-        List<int[]> jurSpans = spansOf(stripGroups(jur));
-        if (laneSpans.isEmpty()) {
-            return false; // the lane found nothing: nothing to attribute
-        }
-        // An interior-started lane span the ORACLE also reports is agreed
-        // (java's \B evaluates at every unit, interior included) — only a
-        // lane-ONLY interior span is the residual, and only those shadow.
-        List<int[]> interiorSpans = new ArrayList<>();
-        for (int[] sp : laneSpans) {
-            if (startsInterior(input, sp[0]) && !containsSpan(jurSpans, sp)) {
-                interiorSpans.add(sp);
-            }
-        }
-        if (interiorSpans.isEmpty()) {
-            return false;
-        }
-        List<int[]> laneFiltered = new ArrayList<>();
-        for (int[] sp : laneSpans) {
-            if (!startsInterior(input, sp[0]) || containsSpan(jurSpans, sp)) {
-                laneFiltered.add(sp);
-            }
-        }
-        List<int[]> jurFiltered = new ArrayList<>();
-        for (int[] sp : jurSpans) {
-            if (!shadowed(sp, interiorSpans)) {
-                jurFiltered.add(sp);
-            }
-        }
-        if (laneFiltered.size() != jurFiltered.size()) {
-            return false;
-        }
-        for (int i = 0; i < laneFiltered.size(); i++) {
-            if (laneFiltered.get(i)[0] != jurFiltered.get(i)[0] || laneFiltered.get(i)[1] != jurFiltered.get(i)[1]) {
-                return false;
-            }
-        }
-        // The R probe under the same rule: the lane's restart span equals the
-        // oracle's, or starts interior, or the oracle's is shadowed.
-        int[] rLane = rSpanOf(lane);
-        int[] rJur = rSpanOf(jur);
-        if (rLane == null) {
-            return rJur == null;
-        }
-        return startsInterior(input, rLane[0]) || (rJur != null && rJur[0] == rLane[0] && rJur[1] == rLane[1])
-            || (rJur != null && shadowed(rJur, interiorSpans));
-    }
-
-    /** Shadowed by a removed interior-started lane span? */
-    static boolean shadowed(int[] sp, List<int[]> interiorSpans) {
-        for (int[] is : interiorSpans) {
-            if (sp[0] >= is[0] && sp[0] < is[1]) {
                 return true;
             }
         }

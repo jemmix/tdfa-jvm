@@ -241,11 +241,17 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      */
     private final boolean emptyLastLine;
     /**
-     * CODEPOINT_BOUNDARIES axis (set = RE2 side): candidate scans and
-     * restart loops skip surrogate-pair interiors; unset (java.util.regex
-     * unit semantics) lets a match start at any UTF-16 unit. The walks
-     * themselves decode codepoints either way — this gates only the
-     * start-position enumerations.
+     * CODEPOINT_BOUNDARIES axis (set = RE2 side) OR java's
+     * hasSupplementary(pattern) (frozen on the artifact): candidate scans
+     * and restart loops skip surrogate-pair interiors — exactly java's
+     * StartS discipline, which the RE2 lineage applies unconditionally
+     * and java.util.regex applies precisely when the pattern flipped the
+     * fact (any surrogate unit in the source, a supplementary/lone or
+     * full-universe-case-folded single-char literal, any complement, a
+     * non-BMP written range, most {@code \p{...}}). The walks themselves
+     * decode codepoints either way; the find()'s own {@code from} is
+     * always tried as-is (java's StartS tries the first candidate even
+     * interior) — this gates only the start-position enumeration after it.
      */
     private final boolean scanSkipsPairs;
     /**
@@ -409,7 +415,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         // in the walks.
         this.nlOnlyTerminators = semantics.isUnixLines();
         this.emptyLastLine = semantics.isEmptyLastLine();
-        this.scanSkipsPairs = semantics.isCodepointBoundaries();
+        this.scanSkipsPairs = semantics.isCodepointBoundaries() || tdfa.hasSupplementaryStarts;
         this.posCells = tdfa.posFlagCells();
         this.stopOnAcceptMask = tdfa.stopOnAcceptMask;
         this.stopMaskUniform = tdfa.stopMaskUniform;

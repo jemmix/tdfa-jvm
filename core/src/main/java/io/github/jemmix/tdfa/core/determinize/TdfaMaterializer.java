@@ -885,7 +885,7 @@ final class TdfaMaterializer {
             flat.entryMask, flat.acceptMask, longest, finalStop, uniformStop, nfa.multiline, nfa.unicodeWordBoundary,
             nfa.wordRanges, fixed ? nfa.fixedBase : null, fixed ? nfa.fixedOffset : null, flat.pikeCutMatters,
             flat.wholeRanges, flat.wholeBase, flat.wholeCount, flat.wholeHiPrefix, flat.wholeSideComplete,
-            nfa.multiValuedTags, nfa.semantics, flat.posFlagCells);
+            nfa.multiValuedTags, nfa.semantics, flat.posFlagCells, nfa.hasSupplementaryStarts);
     }
 
     /**

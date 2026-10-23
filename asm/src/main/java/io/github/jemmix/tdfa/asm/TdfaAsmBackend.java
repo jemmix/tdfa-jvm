@@ -490,6 +490,12 @@ public final class TdfaAsmBackend {
         // runner's one definition of it).
         boolean searchBound = tdfa.absBeginBound();
 
+        // The runner's candidate-scan pivot, mirrored at emit time (the
+        // emitted ladder must pick the same rungs the interpreter does):
+        // codepoint-aligned starts either by the CODEPOINT_BOUNDARIES axis
+        // or by the artifact's hasSupplementaryStarts — java's StartS rule.
+        boolean scanSkipsPairs = tdfa.semantics().isCodepointBoundaries() || tdfa.hasSupplementaryStarts();
+
         // --- 1a) literal-prefix candidate scan ---
         // Emitted only when the DFA carries a required literal prefix
         // (decided at emit time by the SAME detector the VM runner's
@@ -530,8 +536,7 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ALOAD, 4);
             mv.visitVarInsn(Opcodes.ILOAD, 7);
             ic(mv, prefix.length());
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER,
-                tdfa.semantics().isCodepointBoundaries() ? "prefixHitUsable" : "prefixHitUsableUnit",
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, scanSkipsPairs ? "prefixHitUsable" : "prefixHitUsableUnit",
                 "(Ljava/lang/String;II)Z", false);
             mv.visitJumpInsn(Opcodes.IFEQ, pfxLoop);
             // if (walks >= ADAPTIVE_PREFILTER_AFTER && !booleanMatchFrom(s, idx, len))
@@ -620,11 +625,12 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.LCMP);
         mv.visitJumpInsn(Opcodes.IFEQ, candNext);
         // never start a match mid-pair (runner-identical guard; the pre-test
-        // makes it one compare on the ASCII fast path). CODEPOINT_BOUNDARIES
-        // axis: unit semantics (axis unset) let candidates start inside
-        // surrogate pairs, so the whole guard disappears from the emitted
-        // loop there — the interpreter's candScan* skip it identically.
-        if (tdfa.semantics().isCodepointBoundaries()) {
+        // makes it one compare on the ASCII fast path). The scan pivot: unit
+        // semantics (axis unset AND the pattern never flipped java's
+        // hasSupplementary) let candidates start inside surrogate pairs, so
+        // the whole guard disappears from the emitted loop there — the
+        // interpreter's candScan* skip it identically.
+        if (scanSkipsPairs) {
             mv.visitVarInsn(Opcodes.ILOAD, 10);
             mv.visitIntInsn(Opcodes.SIPUSH, 0xDC00);
             mv.visitJumpInsn(Opcodes.IF_ICMPLT, candWalk);
@@ -658,17 +664,19 @@ public final class TdfaAsmBackend {
         mv.visitLabel(skipCand);
 
         // --- 2) budgeted origin sim, trigger fallback ---
-        // CODEPOINT_BOUNDARIES axis: the sim/trigger rungs step codepoints,
-        // so the memo/sim serve under that axis; under unit semantics the
-        // unit raw-scan trigger (interior-unit seeds, delegated to the
-        // runner's one definition) bounds the restart floor the same way.
+        // The scan pivot: the sim/trigger rungs step codepoints, so they
+        // serve codepoint-aligned candidate starts (the axis OR the
+        // artifact's hasSupplementaryStarts — java's StartS rule); under
+        // unit semantics the unit raw-scan trigger (interior-unit seeds,
+        // delegated to the runner's one definition) bounds the restart
+        // floor the same way.
         Label noMatch1 = new Label();
         if (searchBound) {
             // bound artifact: leftmost = from (no sim/trigger rung; the
             // restart tail below self-collapses in the runner)
             mv.visitVarInsn(Opcodes.ILOAD, 2);
             mv.visitVarInsn(Opcodes.ISTORE, 7);
-        } else if (tdfa.semantics().isCodepointBoundaries()) {
+        } else if (scanSkipsPairs) {
             emitTrace(mv, "ORIGIN_SIM");
             mv.visitVarInsn(Opcodes.ALOAD, 0);
             mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
