@@ -185,6 +185,13 @@ The pre-soak fix pass, landed as #69–#71:
   emitted-ladder hook all deleted): a wall-clock exception in a
   linear-time engine's API was a smell the root fixes made
   unnecessary.
+- **The restart-tag leak → DECIDED (excluded).** java's committed-span
+  discipline (atomic GroupTail/GroupCurly writes that a failed restart
+  never unwinds) is a backtracker artifact a determinized walk cannot
+  mirror; our per-restart reset is the reading java's docs describe.
+  `SKIP_RESTART_TAG_LEAK` stays as the domain boundary, pinned both
+  ways in `RestartTagLeakParityTest` (the campaign seed, the lazy
+  mirror, the inner-atom shape, and the non-leaking controls).
 - **Finding 1 → fixed (#71).** Root cause: java.util.regex folds WRITTEN
   ranges by a simple-case IMAGE test, not the member-orbit closure it
   uses for singles/literals — `satisfies(c, R) ⟺ IMG(c) ∩ R ≠ ∅` plus
@@ -241,6 +248,7 @@ The pre-soak fix pass, landed as #69–#71:
   restart-tag leak (`SKIP_RESTART_TAG_LEAK`, `(?:(\A))*(\n)`-shaped: a
   group span from a FAILED restart attempt survives into the accepted
   match, outside the overall span; the retired tail predicate used to
-  swallow it) — plus the documented BUDGET_REJECT / JURLANE_GUARD /
+  swallow it; DECIDED — a permanent exclusion, pinned both ways in
+  `RestartTagLeakParityTest`) — plus the documented BUDGET_REJECT / JURLANE_GUARD /
   JURLANE_SKIP classes. MATCH_BUDGET no longer exists (every degenerate
   class root-fixed).
