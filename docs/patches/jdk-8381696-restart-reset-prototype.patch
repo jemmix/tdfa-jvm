@@ -1,0 +1,78 @@
+--- a/src/java.base/share/classes/java/util/regex/Pattern.java	2026-10-24 13:20:46
++++ b/src/java.base/share/classes/java/util/regex/Pattern.java	2026-10-24 13:20:46
+@@ -3797,6 +3797,11 @@
+                     matcher.groups[1] = matcher.last;
+                     return true;
+                 }
++                // JDK-8381696: a failed start attempt must not leak its
++                // committed capture spans into the next attempt; discard
++                // them when the attempt dirtied any capture.
++                if (matcher.capturesDirty)
++                    matcher.resetCaptures();
+             }
+             matcher.hitEnd = true;
+             return false;
+@@ -3830,6 +3835,9 @@
+                     matcher.groups[1] = matcher.last;
+                     return true;
+                 }
++                // JDK-8381696: as in Start.match above.
++                if (matcher.capturesDirty)
++                    matcher.resetCaptures();
+                 if (i == guard)
+                     break;
+                 // Optimization to move to the next character. This is
+@@ -4695,6 +4703,9 @@
+             if (capture) {
+                 save1 = groups[groupIndex];
+                 save2 = groups[groupIndex+1];
++                // JDK-8381696: capture writes below may outlive this
++                // node's own restore on failure; mark for the restart reset.
++                matcher.capturesDirty = true;
+             }
+ 
+             // Notify GroupTail there is no need to setup group info
+@@ -5001,6 +5012,7 @@
+ 
+                 matcher.groups[groupIndex] = tmp;
+                 matcher.groups[groupIndex+1] = i;
++                matcher.capturesDirty = true;   // JDK-8381696
+                 if (next.match(matcher, i, seq)) {
+                     return true;
+                 }
+--- a/src/java.base/share/classes/java/util/regex/Matcher.java	2026-10-24 13:20:46
++++ b/src/java.base/share/classes/java/util/regex/Matcher.java	2026-10-24 13:20:46
+@@ -125,6 +125,25 @@
+      * a group was skipped during the matching.
+      */
+     int[] groups;
++
++    /**
++     * JDK-8381696: a capturing group has been written since the last
++     * capture reset (search() entry or a Start/StartS restart). Used to
++     * confine the per-restart reset to attempts that dirtied captures.
++     */
++    boolean capturesDirty;
++
++    /**
++     * JDK-8381696: discard capture state between the search loop's
++     * restart attempts, mirroring search()'s once-per-find() reset.
++     * Groups 0/1 are rewritten on success, so only captures are cleared.
++     */
++    void resetCaptures() {
++        int[] g = groups;
++        for (int k = 2; k < g.length; k++)
++            g[k] = -1;
++        capturesDirty = false;
++    }
+ 
+     /**
+      * The range within the sequence that is to be matched. Anchors
+@@ -425,6 +444,7 @@
+         locals = new int[newPattern.localCount];
+         for (int i = 0; i < groups.length; i++)
+             groups[i] = -1;
++        capturesDirty = false;
+         for (int i = 0; i < locals.length; i++)
+             locals[i] = -1;
+         localsPos = new IntHashSet[parentPattern.localTCNCount];
