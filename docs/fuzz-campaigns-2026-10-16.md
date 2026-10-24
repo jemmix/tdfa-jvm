@@ -248,6 +248,7 @@ The pre-soak fix pass, landed as #69–#71:
   group span from a FAILED restart attempt survives into the accepted
   match, outside the overall span; the retired tail predicate used to
   swallow it; DECIDED — a permanent exclusion, pinned both ways in
-  `RestartTagLeakParityTest`) — plus the documented BUDGET_REJECT / JURLANE_GUARD /
+  `RestartTagLeakParityTest`; JDK-side root cause and upstream fix
+  prototype in [jdk-8381696-restart-tag-leak-fix.md](jdk-8381696-restart-tag-leak-fix.md)) — plus the documented BUDGET_REJECT / JURLANE_GUARD /
   JURLANE_SKIP classes. MATCH_BUDGET no longer exists (every degenerate
   class root-fixed).

@@ -14,6 +14,7 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 ## Correctness
 
 - [ ] JUR-compat re-base tail: both-lane soak, README numbers ([design](docs/jur-compat-default.md), [WBS](docs/jur-compat-wbs.md))
+- [ ] Watch JDK-8381696; retire `SKIP_RESTART_TAG_LEAK` on JDK fix ([analysis](docs/jdk-8381696-restart-tag-leak-fix.md))
 - [ ] Overnight cross-rung soak, both lanes; refresh README numbers ([findings](docs/fuzz-campaigns-2026-10-16.md))
 - [ ] Fuzz families for fact-gated rungs: literal, prefix, cand-scan, anchored-fast
 - [ ] Oracle-check stretched inputs; compare ASM on them too
