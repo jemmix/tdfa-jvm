@@ -39,7 +39,7 @@ at 8 per reason per chunk — counters keep running):
 
 | # | Fix | Effort | Finding |
 |---|---|---|---|
-| F1 | Cross-rung warm-state self-inconsistency: warm replay mode + determinism double-run, then root-cause under the [immutability program](runner-immutability.md) | 2–5 d | **1 below** — engine vs itself, oracle-free |
+| F1 | ~~Cross-rung warm-state self-inconsistency~~ → ORIGIN_SIM leftmost-start miss (deterministic, cold; replay reporting gap fixed 2026-10-26, see the update under finding 1) | 2–5 d | **1 below** — engine vs itself, oracle-free |
 | F2 | Extend `leakedRestartSpan` to the `I`/`R` probe clauses | hours | **2 below** — ~90 misclassified records |
 | F3 | `(X)*tail` in-span participation: sticky-split extension or decided exclusion, pinned tests + battery; triage the one overall-span record separately | 2–4 d | **3 below** — ~180 records |
 | F4 | Walk-loop spins, round 4: profile the three slow seeds, extend the ladder bounds | 1–3 d | **4 below** |
@@ -67,6 +67,27 @@ runner (`SearchDfa` rows/blocks; sibling inputs visit different rows).
 Whether it is warm/cold determinism or a true cross-thread race is
 exactly what the [runner-immutability program](runner-immutability.md)
 sets out to make unrepresentable.
+
+**Update 2026-10-26 — warmth hypothesis retired (immutability W1).** The
+solo-replay cleanliness was a reporting gap, not a warmth effect: the
+one-mode replay never printed or checked the cross-rung findings
+(`o.cross`), so the divergence was there and silent. W1's replay fix
+prints them — the record now reproduces **deterministically, cold,
+single-threaded, every run** (`-Pfuzz.one=8663892547704900790
+-Pfuzz.lane=jur`), with the double-run on and off, warm mode on and off.
+The live `java.util.regex` oracle adjudicates: the natural ladder
+(`F=true 0..4299 …`) is **right**, the forced `ORIGIN_SIM` answer
+(`F=true 1..4301 …`) is **wrong** — a leftmost-start miss in
+`multiStateLeftmostStart` (or its forced-entry plumbing), not memo
+state. Minimal family: the same pattern on 3× the 18-unit base input
+(54 chars, far under every budget) already diverges the same way;
+forced `TRIGGER`/`RAW_SCAN`/`WALK_RESTART` all agree with the oracle.
+The one-in-168.9 M rarity is reachability, not flakiness: the stretch
+probe (1-in-8 hash sample) is the only natural route to the forced
+rung for this shape. Fix: the ORIGIN_SIM leftmost discipline — tracked
+as its own correctness item; the immutability program proceeds on the
+state-discipline axis regardless (W2–W4 still delete the surfaces a
+warm-state bug would have needed).
 
 ## Finding 2 — the leak classifier reads only the first find (~90 records)
 
