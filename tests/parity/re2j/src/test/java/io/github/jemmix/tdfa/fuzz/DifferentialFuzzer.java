@@ -151,6 +151,20 @@ public final class DifferentialFuzzer {
     /** Cross-rung differential on/off (Gradle: -Pfuzz.crossRung=0). */
     static final boolean CROSS_RUNG = Long.getLong("fuzz.crossRung", 1) != 0;
 
+    /**
+     * Determinism double-run (runner-immutability tripwire 2): re-run
+     * every engine probe on the warm artifact and byte-compare; any diff
+     * records as {@code MEMO_STATE_MISMATCH}. Default on.
+     */
+    static final boolean DOUBLE_RUN = Long.getLong("fuzz.double", 1) != 0;
+
+    /**
+     * Warm replay for {@code fuzz.one} (runner-immutability tripwire 3):
+     * replay the case's batch siblings on the same artifact before the
+     * case, reproducing the soak's warm memo state. Opt-in.
+     */
+    static final boolean WARM_REPLAY = Long.getLong("fuzz.warm", 0) != 0;
+
     /** Stretched-input probes on/off; sampled 1-in-stretchEvery cases. */
     static final boolean CROSS_STRETCH = Long.getLong("fuzz.crossRung.stretch", 1) != 0;
 
@@ -278,10 +292,30 @@ public final class DifferentialFuzzer {
                         + "(java.util.regex would spin; run -Pfuzz.lane=re2j to replay the engines)");
                     return;
                 }
-                Outcome o = runOne(c);
+                Outcome o;
+                if (WARM_REPLAY) {
+                    // Warm replay (runner-immutability tripwire 3): run the
+                    // case's batch siblings first on the SAME artifact, then
+                    // the case — the memo state the soak had when it recorded.
+                    // Solo replay runs cold, which is exactly how
+                    // warmth-dependent records (2026-10-24 finding 1) stayed
+                    // unreproduced.
+                    long batch = Math.floorDiv(one, BATCH_K);
+                    int idx = (int) Math.floorMod(one, BATCH_K);
+                    Prepared pr = prepare(c.pattern(), c.flags(), c.lane());
+                    for (int i = 0; i < idx; i++) {
+                        matchCase(pr, new Case(c.pattern(), genInput(batch, i, c.flags()), c.flags(), c.lane()));
+                    }
+                    System.out.println("warm:    replayed " + idx + " prior batch inputs on the same artifact");
+                    o = matchCase(pr, c);
+                } else {
+                    o = runOne(c);
+                }
                 System.out.println("oracle:  " + o.oracle);
                 System.out.println("asm:     " + o.asm);
                 System.out.println("vm:     " + o.vm);
+                o.memo.forEach(m -> System.out.println("memo:    " + m));
+                o.cross.forEach(x -> System.out.println("cross:   " + x));
                 if (!o.exceptions.isEmpty()) {
                     o.exceptions.forEach(System.out::println);
                 }
@@ -684,10 +718,47 @@ public final class DifferentialFuzzer {
         }
         o.asm = runEngine(pr.asm, pr.asmTag, pr.asmExc, "asm", c, o);
         o.vm = runEngine(pr.vm, pr.vmTag, pr.vmExc, "vm", c, o);
+        doubleRun(pr, c, o);
         if (CROSS_RUNG && pr.vm != null) {
             crossRung(pr, c, o);
         }
         return o;
+    }
+
+    // ---- determinism double-run (runner-immutability tripwire 2) ----
+
+    /**
+     * Re-run every engine probe on the SAME artifact right after the
+     * normal protocol and byte-compare: a warm memo must answer exactly
+     * what the cold one did — warm == cold is the tested property, not a
+     * hope ({@code MEMO_STATE_MISMATCH}). On by default
+     * ({@code -Dfuzz.double=0} opts out); skips tagged outcomes (rejects
+     * and exceptions are compile-time, not memo state).
+     */
+    static void doubleRun(Prepared pr, Case c, Outcome o) {
+        if (!DOUBLE_RUN) {
+            return;
+        }
+        if (pr.asm != null && o.asm != null && !o.asm.startsWith("<")) {
+            try {
+                String again = compute(pr.asm, c.input());
+                if (!again.equals(o.asm)) {
+                    o.memo.add("MISMATCH asm warm [" + again + "] cold [" + o.asm + "]");
+                }
+            } catch (RuntimeException | StackOverflowError e) {
+                o.memo.add("THREW asm double-run " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
+            }
+        }
+        if (pr.vm != null && o.vm != null && !o.vm.startsWith("<")) {
+            try {
+                String again = compute(pr.vm, c.input());
+                if (!again.equals(o.vm)) {
+                    o.memo.add("MISMATCH vm warm [" + again + "] cold [" + o.vm + "]");
+                }
+            } catch (RuntimeException | StackOverflowError e) {
+                o.memo.add("THREW vm double-run " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
+            }
+        }
     }
 
     // ---- cross-rung differential ----
@@ -1469,12 +1540,18 @@ public final class DifferentialFuzzer {
         /** Cross-rung findings (MISMATCH/ROUTED/THREW) — non-empty fails the
          *  case regardless of the oracle outcome. */
         final List<String> cross = new ArrayList<>();
+        /** Determinism double-run findings (warm artifact vs itself,
+         *  runner-immutability tripwire 2) — non-empty fails the case. */
+        final List<String> memo = new ArrayList<>();
 
         Outcome(Case c) {
             this.c = c;
         }
 
         boolean failed() {
+            if (!memo.isEmpty()) {
+                return true;
+            }
             if (!cross.isEmpty()) {
                 return true;
             }
@@ -1756,6 +1833,9 @@ public final class DifferentialFuzzer {
                 if (e.contains("pattern too large")) {
                     return "BUDGET_REJECT";
                 }
+            }
+            if (!o.memo.isEmpty()) {
+                return "MEMO_STATE_MISMATCH";
             }
             if (!o.exceptions.isEmpty()) {
                 return "EXCEPTION";

@@ -86,7 +86,8 @@ test {
 // Chunked soak (hang-leak containment, shared out dir via append):
 //   scripts/fuzz-soak.sh [iters=480] [minutes=1] [out=build/fuzz] [seedBase] [-Pfuzz.lane=...]
 // Reproduce a failures.ndjson line turnkey:
-//   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.one=<caseSeed>
+//   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.one=<caseSeed>            # cold solo replay
+//   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.one=<caseSeed> -Pfuzz.warm=1   # warm batch replay (runner-immutability tripwire 3)
 // Exits nonzero if any divergence found.
 tasks.register('fuzz', JavaExec) {
     group = 'verification'
@@ -125,6 +126,16 @@ tasks.register('fuzz', JavaExec) {
     systemProperty 'fuzz.crossRung', project.findProperty('fuzz.crossRung') ?: '1'
     systemProperty 'fuzz.crossRung.stretch', project.findProperty('fuzz.crossRung.stretch') ?: '1'
     systemProperty 'fuzz.crossRung.stretchEvery', project.findProperty('fuzz.crossRung.stretchEvery') ?: '8'
+    // Determinism double-run (runner-immutability tripwire 2): on by default;
+    // -Pfuzz.double=0 opts out. Warm replay for fuzz.one (tripwire 3) is
+    // opt-in: -Pfuzz.one=<caseSeed> -Pfuzz.warm=1 runs the case's batch
+    // siblings on the same artifact first (warmth-dependent records replay).
+    systemProperty 'fuzz.double', project.findProperty('fuzz.double') ?: '1'
+    systemProperty 'fuzz.warm', project.findProperty('fuzz.warm') ?: '0'
+    // Sampled memo recompute (tripwire 4) rides every soak JVM too: 1-in-64
+    // memoized search-DFA transitions recomputed and compared. Default on;
+    // -Ptdfa.memo.audit=false restores the unaudited runtime.
+    systemProperty 'tdfa.memo.audit', System.getProperty('tdfa.memo.audit', 'true')
     // Lane axis (evidence re-base): mix (default) draws the lane per batch —
     // jur facade vs live java.util.regex beside the re2j surface vs re2j;
     // pin for a lane-pure soak (re-running the re2j-pinned evidence, or a

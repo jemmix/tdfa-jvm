@@ -50,9 +50,19 @@ final class WalkIndex {
      * snapshot reference (copy-on-grow; build is synchronized
      * and double-checked, so races only cost a redundant lock).
      */
+    /**
+     * Memo (purity for the three fields below): the key is a (state,
+     * 512-codepoint block) pair; the value — the block's 512 range-index
+     * cells — is a pure function of (runner tables, key), so warm == cold
+     * == concurrent and racing duplicate builds publish equal content.
+     * Deleted by the honest-cache conversion (runner-immutability W3).
+     */
+    @MemoCache
     private volatile int[][] walkBlocksArr = EMPTY_BLOCKS;
 
+    @MemoCache
     private int walkBlockCount; // guarded by this
+    @MemoCache
     private long chargedBytes;
 
     WalkIndex(TdfaRunner r, long memoBudgetBytes) {

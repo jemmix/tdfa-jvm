@@ -37,6 +37,17 @@ import static io.github.jemmix.tdfa.core.dfa.TdfaRunner.SDFA_KILL;
  * why the snapshots exist.
  */
 final class SearchDfa {
+    /**
+     * Sampled-recompute audit ({@code -Dtdfa.memo.audit=1}, frozen at
+     * class init like {@code tdfa.trace}): on the memoized fast path,
+     * 1-in-64 reads recompute the transition from the immutable row
+     * words and compare against the published cell — a corrupt warm row
+     * fails instantly with the row and codepoint identified. Pure
+     * comparison of immutable data: no lock, no mutation, and off by
+     * default (zero cost is a plain final branch).
+     */
+    static final boolean AUDIT = Boolean.getBoolean("tdfa.memo.audit");
+
     final TdfaRunner r;
     final int nw;
     /**
@@ -59,12 +70,24 @@ final class SearchDfa {
      */
     private final Wrapper probe = new Wrapper(new int[0]);
 
+    /**
+     * Memo (purity for {@link #capped}, {@link #rowWordsArr},
+     * {@link #rowBlockIdsArr}, {@link #blocksArr} below): the key is a
+     * row's live-set bitset (row intern) or a (row, block) pair (block
+     * build); the value — the interned row's words, or the block's 512
+     * encoded transitions — is a pure function of (runner tables, key),
+     * so warm == cold == concurrent and duplicate racing computation
+     * publishes equal content. Deleted by the honest-cache conversion
+     * (runner-immutability W2).
+     */
+    @MemoCache
     volatile boolean capped;
 
     // ---- immutable snapshots; volatile-published on growth (copy-on-write) ----
     /**
      * row id -> live-set bitset; rows are interned (never mutated after publish).
      */
+    @MemoCache
     private volatile int[][] rowWordsArr = {};
     /**
      * row id -> int[128] block ids. Cell: -1 unbuilt, -2 capped/direct,
@@ -72,10 +95,12 @@ final class SearchDfa {
      * copy-on-write (a new row replaces the old in a fresh snapshot on
      * every cell write — see setRowCell).
      */
+    @MemoCache
     private volatile int[][] rowBlockIdsArr = {};
     /**
      * block id -> int[512] encoded transitions.
      */
+    @MemoCache
     private volatile int[][] blocksArr = {};
 
     SearchDfa(TdfaRunner r, long memoBudgetBytes) {
@@ -332,12 +357,56 @@ final class SearchDfa {
     }
 
     /**
+     * Audit hook ({@link #AUDIT}): recompute the transition for (rowId, c)
+     * from the immutable row words and compare against the published
+     * value {@code stored} (a row id or {@link SDFA_KILL}). Lock-free and
+     * mutation-free — both sides are immutable after publication, so any
+     * mismatch is real corruption of a warm row.
+     */
+    private void auditTransition(int rowId, int c, int stored) {
+        int[] expect = delta(rowWordsArr[rowId], c);
+        boolean empty = true;
+        for (int i = 0; i < nw; i++) {
+            if (expect[i] != 0) {
+                empty = false;
+                break;
+            }
+        }
+        if (empty) {
+            if (stored != SDFA_KILL) {
+                throw new IllegalStateException(
+                    "MEMO_CORRUPT: row " + rowId + " cp " + c + " expected KILL, stored " + stored);
+            }
+            return;
+        }
+        expect[r.startState >>> 5] |= 1 << (r.startState & 31);
+        if (stored == SDFA_KILL) {
+            throw new IllegalStateException(
+                "MEMO_CORRUPT: row " + rowId + " cp " + c + " stored KILL, computed a live target");
+        }
+        if (stored < 0) {
+            throw new IllegalStateException("MEMO_CORRUPT: row " + rowId + " cp " + c + " stored " + stored);
+        }
+        if (!Arrays.equals(expect, rowWordsArr[stored])) {
+            throw new IllegalStateException(
+                "MEMO_CORRUPT: row " + rowId + " cp " + c + " stored row " + stored + " differs from recomputation");
+        }
+    }
+
+    /**
      * Immutable-ish int[] key wrapper with cached hash. Stored keys are
      * NEVER mutated after insertion; the shared {@link #probe} instance
      * (lock-confined, never stored) reassigns its fields instead.
      */
     private static final class Wrapper {
+        /**
+         * Memo (see the class-level {@link MemoCache} note): reassigned
+         * only as the lock-confined intern-table probe — never stored, so
+         * the maps' keys stay immutable after insertion.
+         */
+        @MemoCache
         int[] a;
+        @MemoCache
         int hash;
 
         Wrapper(int[] a) {

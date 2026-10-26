@@ -295,14 +295,27 @@ public final class Tdfa {
      * could expose default-value cells under the JMM); duplicate
      * materialization by racing threads is benign, mutation is never intended.
      */
+    /**
+     * Lazily-materialized 2D expansion of {@link #stopMaskUniform}. Volatile so
+     * the filled array is safely published to racing readers (a plain field
+     * could expose default-value cells under the JMM); duplicate
+     * materialization by racing threads is benign, mutation is never intended.
+     */
+    @MemoCache
     private volatile int[] stopMaskTableCache;
     /**
      * Lazily-computed {@link #posFlagDeps()} (benign race; -1 = not computed).
+     * Memo: pure function of the final tables; duplicate racing fills
+     * compute the identical value — deleted by runner-immutability W4.
      */
+    @MemoCache
     private int posFlagDepsCache = -1;
     /**
      * Lazily-computed {@link #absBeginBound()} (benign race; -1 = not computed).
+     * Memo: pure function of the final tables; duplicate racing fills
+     * compute the identical value — deleted by runner-immutability W4.
      */
+    @MemoCache
     private int absBeginBoundCache = -1;
 
     /** Every axis set (the RE2-lineage reading): the legacy-constructor default. */
