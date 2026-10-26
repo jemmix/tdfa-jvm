@@ -83,7 +83,7 @@ binary-search fallback that is always correct.
 
 | Group | Disposition | Why |
 |---|---|---|
-| G1 `SearchDfa` | **Convert to the honest cache** (below); delete `lock`, the COW snapshots, the in-place cell fill, and the sticky `capped` flag | The one regime where laziness pays; the current shape is the entire warm/cold divergence surface |
+| G1 `SearchDfa` | **Convert to the honest cache** (below); delete `lock`, the COW snapshots, the in-place cell fill, and the sticky `capped` flag — *landed (W2)* | The one regime where laziness pays; the current shape is the entire warm/cold divergence surface |
 | G2 `WalkIndex` | **Same honest shape, flattened**: per-state lazy table whose cells reference immutable blocks directly; atomic charge; delete the monitor, the id indirection, and the stale-id fallback | Same reasoning; the double indirection (`cells→id→block`) exists only to serve locked growth |
 | G3 `Tdfa` caches | **Precompute at construction**; delete the three fields | Pure functions of final tables, each already computed on every runner/engine construction anyway — the "most precomputed" category, literally |
 | G4 `WORD_RANGES` | **Instance-`final`** (static-`final` cannot be assigned in an emitted `<init>`); emitted reads become GETFIELD | The one non-final emitted field; the second-instance rebind hazard dies |
@@ -123,12 +123,12 @@ One cache shape for G1/G2. Concretely, for `SearchDfa`:
   refund-on-race-loss. Over budget: the row is not interned / the block
   is not built, and the *scan* continues via the exact-live-set raw
   fallback — today's `v == -1` semantics, triggered by charge instead of
-  a sticky global `capped` flag that never resets. Eviction is a
-  second-chance clock over the intern map, maintained entirely on the
-  write path (the ring and its bits live under the clock monitor; rows
-  stay 100 % final); reads never touch it. Charge conservatively
-  over-counts (evicted rows' block weights are not refunded), so the
-  byte budget is never exceeded in reality.
+  a sticky global `capped` flag that never resets. **Eviction: decided
+  against for now** (charge-bound instead) — recency tracking needs
+  mutable bits beside the frozen entries, a side table that costs more
+  than it reclaims at these sizes, and eviction is only observable as
+  warmth under budget churn, a regime no soak has evidenced; the bench
+  and the tripwires own that claim, and the alternative stays listed.
 - **Both tiers.** The ASM tier embeds `new TdfaRunner(tdfa, memoBudget)`
   in emitted code, so both backends share the one memo shape; the
   emitted classes shed their locking machinery (G4 is the only emitted
@@ -192,21 +192,24 @@ them safe), each landing through the PR pipeline with its pinning test.
 House style per [jur-compat-wbs.md](jur-compat-wbs.md): open work only,
 delete-on-landing, history in git.
 
-- [ ] **W0 — This doc refined**: groups, dispositions, WBS replace the
-  coarse phase table. *(this PR)*
-- [ ] **W1 — Tripwires**: finality gate + `@MemoCache` allowlist
+- [x] **W0 — This doc refined**: groups, dispositions, WBS replace the
+  coarse phase table. *(#93)*
+- [x] **W1 — Tripwires**: finality gate + `@MemoCache` allowlist
   (documents today's G1–G4 mutability, green from day one); freeze
   watchdog + concurrency hammer against the *current* structures;
   fuzzer determinism double-run (`MEMO_STATE_MISMATCH`) and warm replay
   (`-Pfuzz.warm=1`); replay finding 1's seed warm — reproduce or prove
-  not-warmth-dependent. Exit: all riding `check`/soak; gate green on
-  the full allowlist.
-- [ ] **W2 — SearchDfa → honest cache** (G1; the involved one): rows
+  not-warmth-dependent. *(#94 — reproduced deterministically cold; the
+  "unreproducible" premise was a solo-replay reporting gap; oracle
+  adjudicates the natural ladder right, forced ORIGIN_SIM wrong — its
+  leftmost fix is now TODO's own item)*
+- [x] **W2 — SearchDfa → honest cache** (G1; the involved one): rows
   content-interned with lazy immutable blocks, lock-free cell reads,
   atomic charge + refund, clock eviction, sticky `capped` deleted;
-  `triggerScan` keeps its exact-live-set raw fallback semantics. Exit:
-  `synchronized` gone from `SearchDfa`; hammer, double-run, gate allowlist
-  (G1 lines) green; bench gate on long-input rows.
+  `triggerScan` keeps its exact-live-set raw fallback semantics. *(#95 —
+  charge-bound, eviction deliberately deferred to the bench's call)*
+  Exit: `synchronized` gone from `SearchDfa`; hammer, double-run, gate
+  allowlist (G1 lines) green; bench gate on long-input rows.
 - [ ] **W3 — WalkIndex → honest cache** (G2): per-state lazy tables
   referencing immutable blocks directly, atomic charge, monitor and
   stale-id fallback deleted; binary-search fallback unchanged. Exit:

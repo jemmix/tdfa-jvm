@@ -1,180 +1,149 @@
 package io.github.jemmix.tdfa.core.dfa;
 
-import io.github.jemmix.tdfa.core.budget.Budgets;
+import io.github.jemmix.tdfa.core.budget.BudgetWeights;
 
 import java.util.Arrays;
-import java.util.HashMap;
-
-import static io.github.jemmix.tdfa.core.dfa.TdfaRunner.SDFA_KILL;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
- * The {@code r} back-reference carries the shared runner tables. The
- * kill sentinel stays on TdfaRunner (its scan paths use it too) and is
- * static-imported here.
- * <p>
- * Static nested: shared per-Tdfa lifetime; references the runner's tables.
- * The memo's caps derive per runner from the match-time RAM budget
- * ({@link Budgets} — {@code -Dtdfa.budget.runtime.memory}) through the
- * weight model's eighths partition: rows 4/8, blocks 3/8 (the walk-block
- * memo takes the last eighth), all against the runner's share of the
- * budget — the full budget for a pattern's only engine, half for a
- * find+whole pair.
- * <p>
- * Thread-safety (the RegexEngine contract requires concurrent-safe
- * engines): the mutation path — internRow / transition / buildBlock — is
- * confined under {@link #lock}. The per-codepoint READ path never touches
- * the intern maps: it goes through immutable, volatile-published
- * snapshots ({@link #rowWordsArr}, {@link #rowBlockIdsArr},
- * {@link #blocksArr}) whose entries are fully built before publication;
- * row-block cells only ever transition from -1 to their final value under
- * the lock (plain int writes are atomic, so a racing reader sees either
- * -1 — and re-checks under the lock — or the final value; a block id is
- * written to a cell only AFTER the block is published in
- * {@code blocksArr}, and readers length-check against the snapshot so a
- * stale snapshot degrades to the locked path, never to a wrong lookup).
- * Locking the read path itself would serialize concurrent scans of one
- * Pattern and put a monitor enter/exit on every scanned char — that is
- * why the snapshots exist.
+ * The honest search-DFA memo (runner-immutability W2): a lazily
+ * determinized unanchored-search automaton ({@code .*?} + pattern) whose
+ * entries are frozen objects published behind lock-free primitives —
+ * nothing is mutated after publication, ever.
+ *
+ * <p><b>Shape.</b> A {@link Row} is the live-set bitset of one
+ * simulation configuration class, interned by content in a
+ * {@link ConcurrentHashMap} (the input only chooses which rows get
+ * visited). Each row carries 128 lazily filled cells, one per
+ * 512-codepoint block; a published cell is an immutable {@link Block}
+ * holding the 512 target rows directly ({@code targets[k] == null} is
+ * the kill sentinel: every configuration died, the next row is the pure
+ * seed, and the caller may advance its match-window bound past this
+ * position). No ids exist — blocks reference rows, rows are found by
+ * content — so there is no id-stability protocol to reason about and no
+ * snapshot-staleness path to re-check.
+ *
+ * <p><b>Purity.</b> Every entry is a pure function of (runner tables,
+ * key): a row's words are a deterministic function of the row content
+ * that produced them; a block's targets of (row content, block index).
+ * Racing duplicate computation publishes equal content ({@code
+ * putIfAbsent} keeps one; the loser's charge is refunded), so
+ * {@code warm == cold == concurrent}, byte-for-byte, forever.
+ *
+ * <p><b>Budget — charge-bound, deliberately without eviction.</b> The
+ * same eighths partition and the same weight constants as before (rows
+ * {@code budget/2} at {@code RUNTIME_ROW_FIXED + nw*RUNTIME_ROW_STATE}
+ * weighted bytes, blocks {@code 3*budget/8} at {@code RUNTIME_BLOCK_BYTES}),
+ * now charged atomically charge-before-publish instead of counted
+ * against append-only arrays with a sticky global cap. Over budget, the
+ * row is not interned / the block is not built, the CELL pins a cap
+ * marker, and {@link #step} answers {@link #CAP} — the scan continues
+ * via the kill-point-aware raw simulation carrying the exact live set
+ * (today's {@code v == -1} semantics, minus the permanent {@code capped}
+ * flag: degradation is per-structure, and already-published warmth keeps
+ * serving). Eviction was considered and deferred (the doc's alternatives
+ * section): recency tracking needs mutable bits beside the frozen
+ * entries — a side table that costs more than it reclaims at these
+ * sizes — and eviction is only observable as warmth under budget churn,
+ * a regime no soak has evidenced. The tripwires own that claim.
+ *
+ * <p><b>Soundness</b> — the same over-approximation the raw scan uses
+ * ({@link TdfaRunner#multiStateLeftmostStart}): transition/entry masks
+ * are ignored (every matching target followed), and {@code accept} is
+ * any live state with the accept bit — so a trigger can fire without a
+ * real match (the exact extract confirms or continues), but it can never
+ * miss one.
  */
 final class SearchDfa {
     /**
      * Sampled-recompute audit ({@code -Dtdfa.memo.audit=1}, frozen at
      * class init like {@code tdfa.trace}): on the memoized fast path,
-     * 1-in-64 reads recompute the transition from the immutable row
-     * words and compare against the published cell — a corrupt warm row
-     * fails instantly with the row and codepoint identified. Pure
-     * comparison of immutable data: no lock, no mutation, and off by
-     * default (zero cost is a plain final branch).
+     * 1-in-64 steps recompute the transition from the immutable row
+     * words and compare against the published block — a corrupt warm row
+     * fails instantly with the codepoint identified. Pure comparison of
+     * immutable data (never interns, never locks); off by default.
      */
     static final boolean AUDIT = Boolean.getBoolean("tdfa.memo.audit");
 
     final TdfaRunner r;
+
     final int nw;
-    /**
-     * Row cap — RAM-budget-derived (see class doc).
-     */
-    final int maxRows;
-    /**
-     * Block cap — RAM-budget-derived (see class doc).
-     */
-    final int maxBlocks;
-
-    final Object lock = new Object();
-    // ---- writer-confined (all accesses under lock) ----
-    private final HashMap<Wrapper, Integer> rowById = new HashMap<>(); // bitset -> row id
-    private final HashMap<Wrapper, Integer> blockById = new HashMap<>(); // content -> block id
-    /**
-     * Reusable probe key for both intern maps (lock-confined; the maps
-     * never hold it — a fresh Wrapper is still allocated on the intern
-     * path only).
-     */
-    private final Wrapper probe = new Wrapper(new int[0]);
 
     /**
-     * Memo (purity for {@link #capped}, {@link #rowWordsArr},
-     * {@link #rowBlockIdsArr}, {@link #blocksArr} below): the key is a
-     * row's live-set bitset (row intern) or a (row, block) pair (block
-     * build); the value — the interned row's words, or the block's 512
-     * encoded transitions — is a pure function of (runner tables, key),
-     * so warm == cold == concurrent and duplicate racing computation
-     * publishes equal content. Deleted by the honest-cache conversion
-     * (runner-immutability W2).
+     * Budget-out sentinel from {@link #step}: the memo could not serve
+     * this step (row/block over its weighted share); the caller continues
+     * via the raw simulation with this row's exact live set. Distinct
+     * from {@code null} (kill). Identity-compared only; its words are
+     * never read.
      */
-    @MemoCache
-    volatile boolean capped;
+    static final Row CAP = new Row(new int[0]);
 
-    // ---- immutable snapshots; volatile-published on growth (copy-on-write) ----
-    /**
-     * row id -> live-set bitset; rows are interned (never mutated after publish).
-     */
-    @MemoCache
-    private volatile int[][] rowWordsArr = {};
-    /**
-     * row id -> int[128] block ids. Cell: -1 unbuilt, -2 capped/direct,
-     * -3 all-kill, >=0 block id in {@link #blocksArr}. Rows are
-     * copy-on-write (a new row replaces the old in a fresh snapshot on
-     * every cell write — see setRowCell).
-     */
-    @MemoCache
-    private volatile int[][] rowBlockIdsArr = {};
-    /**
-     * block id -> int[512] encoded transitions.
-     */
-    @MemoCache
-    private volatile int[][] blocksArr = {};
+    /** Cell marker: this (row, block) permanently computes directly. */
+    private static final Object CAP_CELL = new Object();
+
+    /** Shared frozen all-kill block (replaces the old {@code -3} cell). */
+    private static final Block ALL_KILL = new Block(new Row[512]);
+
+    private final ConcurrentHashMap<RowKey, Row> rows = new ConcurrentHashMap<>();
+
+    private final AtomicLong rowCharge = new AtomicLong();
+    private final AtomicLong blockCharge = new AtomicLong();
+    private final long rowLimit;
+    private final long blockLimit;
+    private final int rowWeight;
 
     SearchDfa(TdfaRunner r, long memoBudgetBytes) {
         this.r = r;
         this.nw = r.stateWords;
-        this.maxRows = Budgets.sdfaMaxRows(nw, memoBudgetBytes);
-        this.maxBlocks = Budgets.sdfaMaxBlocks(memoBudgetBytes);
+        this.rowWeight = BudgetWeights.RUNTIME_ROW_FIXED_BYTES + nw * BudgetWeights.RUNTIME_ROW_STATE_BYTES;
+        this.rowLimit = Math.max((long) BudgetWeights.RUNTIME_MIN_ROWS * rowWeight, memoBudgetBytes / 2);
+        this.blockLimit = Math.max((long) BudgetWeights.RUNTIME_MIN_BLOCKS * BudgetWeights.RUNTIME_BLOCK_BYTES,
+            memoBudgetBytes * 3 / 8);
     }
 
     /**
-     * Intern the pure-seed row as id 0. Idempotent and race-safe:
-     * the first caller past the lock publishes it, later callers see
-     * row 0 in the snapshot and return.
+     * The pure-seed row (start state only), interned like any other.
+     * Race-safe: equal content interns to one row; racing duplicates
+     * refund their charge.
      */
-    void ensureSeed() {
-        if (rowWordsArr.length != 0) {
-            return;
-        }
-        synchronized (lock) {
-            if (rowWordsArr.length != 0) {
-                return;
-            }
-            int[] seed = new int[nw];
-            seed[r.startState >>> 5] |= 1 << (r.startState & 31);
-            internRowLocked(seed);
-        }
+    Row seed() {
+        int[] w = new int[nw];
+        w[r.startState >>> 5] |= 1 << (r.startState & 31);
+        return internRow(w);
     }
 
     /**
-     * Must hold {@link #lock}. Interns {@code words}; -1 (and cap flag)
-     * when the row budget is exhausted.
+     * One memoized step: the row after consuming codepoint {@code c}.
+     * Returns the target row, {@code null} (kill — the next row is the
+     * pure seed; the caller may advance its window bound past this
+     * position), or {@link #CAP} (budget — continue via the raw scan
+     * with the exact live set). Lock-free on the memoized fast path:
+     * one volatile cell load plus one array load, no monitor, no id
+     * indirection.
      */
-    private int internRowLocked(int[] words) {
-        probe.a = words;
-        probe.hash = Arrays.hashCode(words);
-        Integer id = rowById.get(probe);
-        if (id != null) {
-            return id;
+    @SuppressWarnings("ReferenceEquality")
+    Row step(Row row, int c) {
+        if (c >= 0x10000) {
+            return target(row.words, c); // supplementary: computed per step, never cached (rare)
         }
-        if (rowWordsArr.length >= maxRows || capped) {
-            capped = true;
-            return -1;
+        int b = c >>> 9;
+        Object cell = row.cells.get(b);
+        if (cell == null) {
+            cell = buildBlock(row, b);
         }
-        int[] key = words.clone();
-        int nid = rowWordsArr.length;
-        rowById.put(new Wrapper(key), nid);
-        int[][] rw = Arrays.copyOf(rowWordsArr, nid + 1);
-        rw[nid] = key;
-        rowWordsArr = rw; // volatile publish
-        int[][] rb = Arrays.copyOf(rowBlockIdsArr, nid + 1);
-        int[] cells = new int[128];
-        Arrays.fill(cells, -1);
-        rb[nid] = cells;
-        rowBlockIdsArr = rb; // volatile publish (cells still all -1)
-        return nid;
+        if (cell == CAP_CELL) {
+            return CAP;
+        }
+        Row t = ((Block) cell).targets[c & 511];
+        if (AUDIT && ((System.identityHashCode(row) + c) & 63) == 0) {
+            auditStep(row, c, t);
+        }
+        return t;
     }
 
-    /**
-     * Live-set bitset of an interned row. Safe for lock-free readers:
-     * row arrays are immutable after publication.
-     */
-    int[] rowWordsOf(int rowId) {
-        return rowWordsArr[rowId];
-    }
-
-    boolean accept(int rowId) {
-        int[] w = rowWordsArr[rowId];
-        for (int i = 0; i < nw; i++) {
-            if ((w[i] & r.acceptBits[i]) != 0) {
-                return true;
-            }
-        }
-        return false;
-    }
+    // ---- the pure automaton ----
 
     /**
      * Pure step (no re-seed): all targets of live states on c, masks ignored.
@@ -215,79 +184,12 @@ final class SearchDfa {
     }
 
     /**
-     * Encoded transition for row on c: row id, SDFA_KILL, or -1 (uncapped-cap).
-     * Locked: it computes and interns (mutation); the memoized read path
-     * is {@link #bmpTransition}, which only lands here on block misses.
+     * The target of (words, c): kill ({@code null}) or the interned row
+     * for delta re-seeded with the start state. Budget-out interns
+     * nothing and answers {@link #CAP}.
      */
-    int transition(int rowId, int c) {
-        synchronized (lock) {
-            int[] d = delta(rowWordsArr[rowId], c);
-            boolean empty = true;
-            for (int i = 0; i < nw; i++) {
-                if (d[i] != 0) {
-                    empty = false;
-                    break;
-                }
-            }
-            if (empty) {
-                return SDFA_KILL;
-            } // next = pure row 0 + kill
-            d[r.startState >>> 5] |= 1 << (r.startState & 31);
-            return internRowLocked(d);
-        }
-    }
-
-    /**
-     * Must hold {@link #lock}. Materialize block {@code b} of {@code rowId}:
-     * 512 encoded transitions; returns the cell value for (rowId, b):
-     * block id, -3 (all-kill), or -2 (capped → caller computes directly).
-     */
-    private int buildBlockLocked(int rowId, int b) {
-        int[] cells = new int[512];
-        int lo = b << 9;
-        boolean allKill = true;
-        for (int k = 0; k < 512; k++) {
-            int t = transitionLocked(rowId, lo + k);
-            if (t == -1) {
-                // capped mid-block: whole block unusable (-2 cells handled by caller)
-                setRowCell(rowId, b, -2);
-                return -2;
-            }
-            if (t != SDFA_KILL) {
-                allKill = false;
-            }
-            cells[k] = t;
-        }
-        int blockId;
-        if (allKill) {
-            blockId = -3; // shared all-kill block
-        } else {
-            Wrapper key = new Wrapper(cells);
-            Integer cached = blockById.get(key);
-            if (cached != null) {
-                blockId = cached;
-            } else {
-                if (blocksArr.length >= maxBlocks) {
-                    setRowCell(rowId, b, -2);
-                    return -2;
-                }
-                int n = blocksArr.length;
-                int[][] nb = Arrays.copyOf(blocksArr, n + 1);
-                nb[n] = cells;
-                blocksArr = nb; // volatile publish BEFORE the cell can point at it
-                blockId = n;
-                blockById.put(key, blockId);
-            }
-        }
-        setRowCell(rowId, b, blockId);
-        return blockId;
-    }
-
-    /**
-     * Must hold {@link #lock}.
-     */
-    private int transitionLocked(int rowId, int c) {
-        int[] d = delta(rowWordsArr[rowId], c);
+    private Row target(int[] words, int c) {
+        int[] d = delta(words, c);
         boolean empty = true;
         for (int i = 0; i < nw; i++) {
             if (d[i] != 0) {
@@ -296,122 +198,112 @@ final class SearchDfa {
             }
         }
         if (empty) {
-            return SDFA_KILL;
+            return null; // kill: next row is the pure seed
         }
         d[r.startState >>> 5] |= 1 << (r.startState & 31);
-        return internRowLocked(d);
+        return internRow(d);
+    }
+
+    // ---- interning and charging ----
+
+    /**
+     * Intern the row with these words by content. Equal content answers
+     * an equal row forever (answers never change). Charge-before-publish
+     * against the row share; racing losers refund.
+     */
+    private Row internRow(int[] words) {
+        RowKey key = new RowKey(words);
+        Row existing = rows.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        if (rowCharge.get() + rowWeight > rowLimit) {
+            return CAP;
+        }
+        rowCharge.addAndGet(rowWeight);
+        Row fresh = new Row(words.clone());
+        Row winner = rows.putIfAbsent(key, fresh);
+        if (winner != null) {
+            rowCharge.addAndGet(-rowWeight); // lost the race: refund, adopt the winner
+            return winner;
+        }
+        return fresh;
     }
 
     /**
-     * Must hold {@link #lock}. Publish the cell for (rowId, b).
-     *
-     * <p>In-place write, per the class-level publication protocol: the
-     * row's cells array is published fully -1-filled at row intern and
-     * its cells only ever transition -1 → final under this lock; plain
-     * int writes are atomic, so a lock-free reader sees either -1 (it
-     * re-checks under the lock) or the final value. Copying the row
-     * (or the whole {@code rowBlockIdsArr} snapshot) per cell would be
-     * O(rows) churn per (row, block) pair for no reader benefit — the
-     * outer array only ever grows (rows), which is what snapshot
-     * readers rely on.
+     * Materialize block {@code b} of the row: 512 frozen target refs
+     * (or the shared all-kill block when every target died), published
+     * by CAS — a losing racer's equal block is garbage and its charge
+     * is refunded. Mid-block row-budget-out abandons the block (charge
+     * refunded) and pins the cell's cap marker: the block never existed.
      */
-    private void setRowCell(int rowId, int b, int value) {
-        rowBlockIdsArr[rowId][b] = value;
-    }
-
-    /**
-     * Encoded transition via blocks; builds lazily. c must be < 0x10000.
-     * Lock-free on the memoized fast path (snapshot reads only); takes
-     * the lock only on first visit of a (row, block) or on capped rows.
-     */
-    int bmpTransition(int rowId, int c) {
-        int b = c >>> 9;
-        int cell = rowBlockIdsArr[rowId][b];
-        if (cell == -1) {
-            synchronized (lock) {
-                cell = rowBlockIdsArr[rowId][b]; // re-read under lock: may have been built
-                if (cell == -1) {
-                    cell = buildBlockLocked(rowId, b);
-                }
+    private Object buildBlock(Row row, int b) {
+        if (blockCharge.get() + BudgetWeights.RUNTIME_BLOCK_BYTES > blockLimit) {
+            row.cells.set(b, CAP_CELL);
+            return CAP_CELL;
+        }
+        blockCharge.addAndGet(BudgetWeights.RUNTIME_BLOCK_BYTES);
+        Row[] targets = new Row[512];
+        boolean allKill = true;
+        int lo = b << 9;
+        for (int k = 0; k < 512; k++) {
+            Row t = target(row.words, lo + k);
+            if (t == CAP) {
+                blockCharge.addAndGet(-BudgetWeights.RUNTIME_BLOCK_BYTES);
+                row.cells.set(b, CAP_CELL);
+                return CAP_CELL;
+            }
+            if (t != null) {
+                allKill = false;
+                targets[k] = t;
             }
         }
-        if (cell == -2) {
-            return transition(rowId, c);
-        } // capped: compute directly
-        if (cell == -3) {
-            return SDFA_KILL;
-        } // all-kill block
-        int[][] arr = blocksArr;
-        if (cell < arr.length) {
-            return arr[cell][c & 511];
+        Object pub = allKill ? ALL_KILL : new Block(targets);
+        if (row.cells.compareAndSet(b, null, pub)) {
+            return pub;
         }
-        // Stale snapshot vs a fresh id (no happens-before edge between the
-        // plain cell read and this volatile read): re-check under the lock.
-        synchronized (lock) {
-            cell = rowBlockIdsArr[rowId][b];
-            if (cell >= 0 && cell < blocksArr.length) {
-                return blocksArr[cell][c & 511];
-            }
-            return transitionLocked(rowId, c);
-        }
+        blockCharge.addAndGet(-BudgetWeights.RUNTIME_BLOCK_BYTES); // someone published an equal block
+        return row.cells.get(b);
     }
 
+    // ---- audit ----
+
     /**
-     * Audit hook ({@link #AUDIT}): recompute the transition for (rowId, c)
-     * from the immutable row words and compare against the published
-     * value {@code stored} (a row id or {@link SDFA_KILL}). Lock-free and
-     * mutation-free — both sides are immutable after publication, so any
-     * mismatch is real corruption of a warm row.
+     * Audit hook ({@link #AUDIT}): recompute the transition for (row, c)
+     * — without interning — and compare content against the published
+     * target. Lock-free and mutation-free; both sides are immutable
+     * after publication, so any mismatch is real corruption of a warm row.
      */
-    private void auditTransition(int rowId, int c, int stored) {
-        int[] expect = delta(rowWordsArr[rowId], c);
+    private void auditStep(Row row, int c, Row published) {
+        int[] d = delta(row.words, c);
         boolean empty = true;
         for (int i = 0; i < nw; i++) {
-            if (expect[i] != 0) {
+            if (d[i] != 0) {
                 empty = false;
                 break;
             }
         }
-        if (empty) {
-            if (stored != SDFA_KILL) {
-                throw new IllegalStateException(
-                    "MEMO_CORRUPT: row " + rowId + " cp " + c + " expected KILL, stored " + stored);
-            }
-            return;
+        if (!empty) {
+            d[r.startState >>> 5] |= 1 << (r.startState & 31);
         }
-        expect[r.startState >>> 5] |= 1 << (r.startState & 31);
-        if (stored == SDFA_KILL) {
-            throw new IllegalStateException(
-                "MEMO_CORRUPT: row " + rowId + " cp " + c + " stored KILL, computed a live target");
-        }
-        if (stored < 0) {
-            throw new IllegalStateException("MEMO_CORRUPT: row " + rowId + " cp " + c + " stored " + stored);
-        }
-        if (!Arrays.equals(expect, rowWordsArr[stored])) {
-            throw new IllegalStateException(
-                "MEMO_CORRUPT: row " + rowId + " cp " + c + " stored row " + stored + " differs from recomputation");
+        boolean ok = empty ? published == null : published != null && Arrays.equals(d, published.words);
+        if (!ok) {
+            throw new IllegalStateException("MEMO_CORRUPT: row words " + Arrays.toString(row.words) + " cp " + c
+                + " published " + (published == null ? "KILL" : "row words " + Arrays.toString(published.words))
+                + " differ from recomputation");
         }
     }
 
-    /**
-     * Immutable-ish int[] key wrapper with cached hash. Stored keys are
-     * NEVER mutated after insertion; the shared {@link #probe} instance
-     * (lock-confined, never stored) reassigns its fields instead.
-     */
-    private static final class Wrapper {
-        /**
-         * Memo (see the class-level {@link MemoCache} note): reassigned
-         * only as the lock-confined intern-table probe — never stored, so
-         * the maps' keys stay immutable after insertion.
-         */
-        @MemoCache
-        int[] a;
-        @MemoCache
-        int hash;
+    // ---- frozen entry types ----
 
-        Wrapper(int[] a) {
-            this.a = a;
-            hash = Arrays.hashCode(a);
+    /** Immutable content key: the row's live-set words. */
+    private static final class RowKey {
+        final int[] words;
+        final int hash;
+
+        RowKey(int[] words) {
+            this.words = words;
+            this.hash = Arrays.hashCode(words);
         }
 
         @Override
@@ -421,7 +313,35 @@ final class SearchDfa {
 
         @Override
         public boolean equals(Object o) {
-            return o instanceof Wrapper && Arrays.equals(a, ((Wrapper) o).a);
+            return o instanceof RowKey && Arrays.equals(words, ((RowKey) o).words);
+        }
+    }
+
+    /**
+     * A frozen simulation row: the live-set bitset and 128 lazily
+     * published immutable block cells (null = unbuilt, {@link #CAP_CELL}
+     * = permanent cap, {@link Block} = served). Every field final; safe
+     * publication by construction (final-field freeze plus the volatile
+     * cell write).
+     */
+    static final class Row {
+        final int[] words;
+        final AtomicReferenceArray<Object> cells = new AtomicReferenceArray<>(128);
+
+        Row(int[] words) {
+            this.words = words;
+        }
+    }
+
+    /**
+     * A frozen 512-codepoint dispatch block: {@code targets[k]} is the
+     * next row, or {@code null} = kill. Every field final.
+     */
+    static final class Block {
+        final Row[] targets;
+
+        Block(Row[] targets) {
+            this.targets = targets;
         }
     }
 }

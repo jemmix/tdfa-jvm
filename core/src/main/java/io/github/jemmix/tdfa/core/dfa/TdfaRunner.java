@@ -69,31 +69,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      */
     public static final int LSS_BUDGET = -2;
     /**
-     * Memoized search DFA for unanchored find(): the states of the multi-state
-     * simulation (live-set bitsets, start state re-seeded every position — the
-     * implicit {@code .*?} of unanchored search) interned into flat rows so the
-     * scan loop is ~3 array loads per char instead of a bitset simulation step.
-     *
-     * <p>Row transitions are materialized lazily as deduplicated 512-codepoint
-     * blocks covering the whole BMP ({@code blocks[bits.blockIds[c >>> 9]][c & 511]});
-     * supplementary codepoints are computed per-step without caching (rare).
-     * A block cell is either the next row id, or the kill sentinel {@code KILL}
-     * meaning "every configuration just died; the next row is the pure-seed row
-     * and the caller may advance its match-window bound past this position"
-     * (sound: nothing alive from an earlier start survives a kill).
-     *
-     * <p>Caps bound memory; past the caps the scan falls back to the
-     * unmemoized simulation (still tracking kill points, so the extract
-     * window stays bounded either way).
-     *
-     * <p><b>Soundness</b> — the same over-approximation the origin sim uses
-     * ({@link #multiStateLeftmostStart}): transition/entry masks are ignored
-     * (every matching target followed), and {@code accept} is any live state
-     * with the accept bit — so a trigger can fire without a real match (the
-     * exact extract confirms or continues), but it can never miss one.
-     */
-    static final int SDFA_KILL = -2;
-    /**
      * Runtime walk tracing ({@code -Dtdfa.trace}). Frozen at class init
      * ON PURPOSE: it is read in the per-character walk loop, where a
      * volatile/property read would pollute the hot path — set it before
@@ -125,8 +100,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     // kill-point aware). Each runner (one per compiled Regex) keeps its own
     // memo — N live Patterns cost at most N runtime budgets of memo RAM.
     // The memo is shared across threads matching the same Pattern (safe:
-    // see SearchDfa — locked mutation, snapshot reads), NOT per-thread.
-    // Below SDFA_MIN_WINDOW the raw scan runs unmemoized entirely.
+    // frozen entries behind lock-free publications — see SearchDfa), NOT
+    // per-thread. Below SDFA_MIN_WINDOW the raw scan runs unmemoized entirely.
     private static final int SDFA_MIN_WINDOW = 2048; // below: unmemoized raw scan
     /**
      * Origin-sim budget before falling back to the memoized trigger scan.
@@ -337,6 +312,16 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     // Zero cost when disabled: TRACE is static final, branches prune.
     // TODO: revisit as first-class internals access (observer/event API) —
     // see TODO.md "internals access".
+    /**
+     * Memoized search DFA for unanchored find(): frozen rows interned by
+     * content, transitions lazily materialized as immutable 512-codepoint
+     * blocks — {@code ~2 loads/char} instead of a bitset simulation step.
+     * Kill is a {@code null} block target; budget-out answers {@link
+     * SearchDfa#CAP} and the scan continues via the raw simulation with
+     * the exact live set. Soundness and the honest-cache discipline
+     * (frozen entries, pure values, lock-free reads, charge-bounded):
+     * see {@link SearchDfa}.
+     */
     private final SearchDfa searchDfa;
     /**
      * Exact-literal needle when the whole regex is a plain literal string
@@ -1729,47 +1714,51 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
 
     /**
      * {@code force} = RAW_SCAN takes the unmemoized path regardless of
-     * window size (forced-strategy hook); TRIGGER still degrades to raw on
-     * a capped memo — the memo cannot grow past its budget.
+     * window size (forced-strategy hook); TRIGGER degrades to raw when a
+     * step's row/block cannot charge its budget share — the memo cannot
+     * grow past its budget.
      */
     private int triggerScan(String input, int from, int to, MatchScratch sc, Strategy force) {
         // Short scans never amortize the memo (block build = 512 interned steps);
         // short-lived runners would allocate-and-die fat instead. Raw scan keeps
         // the kill-point window either way.
         SearchDfa sd = searchDfa;
-        if (force == Strategy.RAW_SCAN || to - from < SDFA_MIN_WINDOW || sd.capped) {
+        if (force == Strategy.RAW_SCAN || to - from < SDFA_MIN_WINDOW) {
             trace(Strategy.RAW_SCAN);
             return rawScan(input, from, to, from, null, sc);
         }
         trace(Strategy.TRIGGER);
-        sd.ensureSeed(); // pure-seed row 0, interned once, race-safe
-        int cur = 0;
+        SearchDfa.Row seedRow = sd.seed();
+        if (seedRow == SearchDfa.CAP) { // memo share exhausted before it began
+            return rawScan(input, from, to, from, null, sc);
+        }
+        SearchDfa.Row cur = seedRow;
         int W = from;
         int[] pf = {-1}; // per-position posFlags cache (φ-gated probes)
         for (int pos = from; pos < to;) {
             pf[0] = -1;
-            if (acceptLive(input, pos, to, sd.rowWordsOf(cur), pf)) {
+            if (acceptLive(input, pos, to, cur.words, pf)) {
                 return W;
             }
             int c = Alphabet.decode(input, pos, to);
             int adv = Alphabet.width(c);
-            int v = c < 0x10000 ? sd.bmpTransition(cur, c) : sd.transition(cur, c);
-            if (v == -1) {
-                // Cap: continue unmemoized from pos WITH the exact live set —
+            SearchDfa.Row next = sd.step(cur, c);
+            if (next == SearchDfa.CAP) {
+                // Budget: continue unmemoized from pos WITH the exact live set —
                 // restarting from a bare seed would drop configurations started
                 // in [W, pos) that are still alive (and may accept later),
                 // masking real matches.
-                return rawScan(input, pos, to, W, sd.rowWordsOf(cur), sc);
+                return rawScan(input, pos, to, W, cur.words, sc);
             }
-            if (v == SDFA_KILL) {
+            if (next == null) { // kill: every configuration died at this step
                 W = pos + adv;
-                cur = 0;
+                cur = seedRow;
             } else {
-                cur = v;
+                cur = next;
             }
             pos += adv;
         }
-        return acceptLive(input, to, to, sd.rowWordsOf(cur), new int[]{-1}) ? W : -1;
+        return acceptLive(input, to, to, cur.words, new int[]{-1}) ? W : -1;
     }
 
     /**

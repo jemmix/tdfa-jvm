@@ -54,16 +54,6 @@ final class RunnerFinalityGateTest {
     private static final Map<String, Map<String, String>> MEMO_ALLOWLIST = new HashMap<>();
 
     static {
-        Map<String, String> sdfa = new HashMap<>();
-        sdfa.put("capped", "W2 — honest-cache conversion");
-        sdfa.put("rowWordsArr", "W2");
-        sdfa.put("rowBlockIdsArr", "W2");
-        sdfa.put("blocksArr", "W2");
-        MEMO_ALLOWLIST.put("io.github.jemmix.tdfa.core.dfa.SearchDfa", sdfa);
-        Map<String, String> wrapper = new HashMap<>();
-        wrapper.put("a", "W2 — intern-table probe, lock-confined");
-        wrapper.put("hash", "W2");
-        MEMO_ALLOWLIST.put("io.github.jemmix.tdfa.core.dfa.SearchDfa$Wrapper", wrapper);
         Map<String, String> walk = new HashMap<>();
         walk.put("walkBlocksArr", "W3 — honest-cache conversion");
         walk.put("walkBlockCount", "W3");
