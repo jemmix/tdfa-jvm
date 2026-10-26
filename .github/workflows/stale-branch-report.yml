@@ -1,0 +1,141 @@
+name: stale-branch-report
+
+# Report-only backstop for delete_branch_on_merge (enabled 2026-10-26).
+# The repo setting deletes head branches at merge time; this job catches
+# whatever slips past it: branches merged before the setting existed,
+# renames mid-PR, merges made via API/web that bypass it, and plain
+# fast-forward merges that never had a PR at all.
+# It NEVER deletes anything. It maintains one tracking issue and
+# @mentions the owner, which is what sends the email:
+#   - stale set changed (or first seen)  -> new comment -> notification email
+#   - stale set unchanged                -> body refresh only, silent
+#   - nothing stale                      -> issue closed with a comment
+# Deliberately minimal and boring: stdlib shell + git + gh + jq only.
+
+on:
+  schedule:
+    - cron: '17 8 * * 1' # Mondays 08:17 UTC (off the top of the hour)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  GRACE_HOURS: 24 # ignore merges newer than this; avoids racing the auto-deleter
+  DEFAULT_BRANCH: main # never reported, even though it is trivially an ancestor of itself
+  ISSUE_TITLE: Stale merged branches need cleanup
+
+jobs:
+  report:
+    name: find merged-but-alive branches
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0 # ancestry checks need full history of every branch
+
+      - name: Detect
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          T="$RUNNER_TEMP"
+          table="$T/table.tsv" # branch<TAB>via<TAB>when, sorted by branch
+
+          git fetch --prune origin # belt-and-braces: complete + pruned branch view
+
+          # Live remote heads.
+          git ls-remote --heads origin | cut -f2 | sed 's|refs/heads/||' | sort > "$T/heads.txt"
+
+          # Category 1 sources: merged PRs past the grace window.
+          # (headRefName is the fork-side name for cross-fork PRs; those
+          # simply won't match a live head, so no false positives.)
+          cutoff=$(date -u -d "-$GRACE_HOURS hours" +%Y-%m-%dT%H:%M:%SZ)
+          gh pr list --state merged --limit 300 \
+            --json number,headRefName,mergedAt \
+            | jq -r --arg c "$cutoff" \
+                '.[] | select(.mergedAt < $c)
+                     | [.headRefName, ("PR #" + (.number|tostring)), .mergedAt] | @tsv' \
+            | sort > "$T/prs.tsv"
+
+          : > "$table"
+          while read -r br; do
+            [ "$br" = "$DEFAULT_BRANCH" ] && continue
+            row=$(awk -F'\t' -v b="$br" '$1 == b {print; exit}' "$T/prs.tsv")
+            if [ -n "$row" ]; then
+              printf '%s\n' "$row" >> "$table"
+            elif git merge-base --is-ancestor "origin/$br" origin/main; then
+              # Category 2: no PR, but tip commit is an ancestor of main
+              # (direct / fast-forward merge).
+              when=$(git log -1 --format=%cI "origin/$br")
+              printf '%s\t%s\t%s\n' "$br" 'no PR (ancestor of main)' "$when" >> "$table"
+            fi
+          done < "$T/heads.txt"
+          sort -o "$table" "$table"
+
+          sig=$(cut -f1 "$table" | paste -sd, -) # deterministic change detector
+          echo "SIG=$sig" >> "$GITHUB_ENV"
+          echo "COUNT=$(wc -l < "$table" | tr -d ' ')" >> "$GITHUB_ENV"
+          cp "$table" "$T/table.keep"
+
+      - name: Publish tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -eu
+          T="$RUNNER_TEMP"
+          table="$T/table.keep"
+
+          # Locate our tracking issue, open or closed, by exact title.
+          issue=$(gh issue list --state all --limit 200 --json number,title \
+            | jq -r --arg t "$ISSUE_TITLE" 'map(select(.title == $t))[0].number // 0')
+
+          if [ "$COUNT" -eq 0 ]; then
+            if [ "$issue" -ne 0 ]; then
+              state=$(gh issue view "$issue" --json state --jq .state)
+              if [ "$state" = OPEN ]; then
+                echo 'All merged branches are cleaned up. Closing.' \
+                  | gh issue comment "$issue" --body-file -
+                gh issue close "$issue"
+              fi
+            fi
+            echo 'Nothing stale; no issue activity.'
+            exit 0
+          fi
+
+          # Compose body: hidden signature first (machine diffed), then
+          # the human-readable table, then the mention.
+          {
+            echo "<!-- stale-branch-report sig: $SIG -->"
+            echo
+            echo 'These branches are merged into `main` but still exist on the remote. They are safe to delete:'
+            echo
+            echo '| branch | merged via | merged at |'
+            echo '|---|---|---|'
+            while IFS=$'\t' read -r br v w; do
+              printf '| `%s` | %s | %s |\n' "$br" "$v" "$w"
+            done < "$table"
+            echo
+            echo "Generated $(date -u +%Y-%m-%dT%H:%M:%SZ) by the \`stale-branch-report\` workflow — report-only, deletes nothing."
+            echo
+            echo "@$OWNER — stale merged branches above."
+          } > "$T/body.md"
+
+          if [ "$issue" -eq 0 ]; then
+            gh issue create --title "$ISSUE_TITLE" --body-file "$T/body.md"
+            exit 0
+          fi
+
+          old_sig=$(gh issue view "$issue" --json body --jq .body \
+            | sed -n 's/.*stale-branch-report sig: \(.*\) -->.*/\1/p')
+          state=$(gh issue view "$issue" --json state --jq .state)
+          # Email only on change: new signature, or issue was closed/resurrected.
+          if [ "$old_sig" != "$SIG" ] || [ "$state" != OPEN ]; then
+            gh issue comment "$issue" --body-file "$T/body.md"
+          fi
+          gh issue edit "$issue" --body-file "$T/body.md"
+          gh issue reopen "$issue" 2>/dev/null || true
