@@ -4,13 +4,38 @@ The match-time runner carries lazy mutable state on shared artifacts.
 The 2026-10-24 jur soak caught it misbehaving once in 168.9 M cases
 ([finding 1](fuzz-campaigns-2026-10-24.md) — a forced rung disagreeing
 with the natural ladder, unreproducible on a cold artifact), and the
-audit that followed found the trade had never been made explicitly:
-`TdfaRunner` has ~49 non-final private fields beside its 35 final ones,
-and the search-DFA memo's cross-thread safety lives in a comment
-("shared across threads matching the same Pattern (safe: …)") rather
-than in a checkable invariant. This doc is the decision: **audit every
-field; make most immutable/precomputed; convert the genuinely lazy rest
-into an honest LRU cache built on pure functions — done right.**
+audit that followed found the trade had never been made explicitly.
+This doc is the decision: **audit every field; make most
+immutable/precomputed; convert the genuinely lazy rest into an honest
+cache built on pure functions — done right.**
+
+## Ground truth — where the mutability actually lives
+
+The original audit's headline ("~49 non-final private fields on
+`TdfaRunner`") does not survive contact with the tree. A reflection
+pass over `core.dfa`/`core.engine`/`asm` finds the runner body itself
+already frozen: **every `TdfaRunner` instance field is `final`**. The
+real mutable surface on shared artifacts is five clusters, ~20 fields,
+living in the objects the runner holds — which is exactly why the
+finding was warmth-shaped: none of it is visible until a second call
+touches the same artifact. The inventory, verified field-by-field
+against `main` at #91:
+
+| Group | Where | Fields (all non-final) | Sharing |
+|---|---|---|---|
+| G1 — search-DFA memo | `SearchDfa` | `capped` (volatile), `rowWordsArr`, `rowBlockIdsArr` (volatile COW **+ in-place cell fill**), `blocksArr`, `rowById`/`blockById`/`probe` (`Wrapper` field reassignment, under `lock`) | per-runner, cross-thread |
+| G2 — walk-block memo | `WalkIndex` | `walkBlocksArr` (volatile COW), `walkBlockCount`, `chargedBytes` (guarded), `walkBlockIdx` cells **+ in-place `pub[b]` writes** | per-runner, cross-thread |
+| G3 — artifact-derived lazy caches | `Tdfa` | `stopMaskTableCache` (volatile), `posFlagDepsCache`, `absBeginBoundCache` (benign-race) | per-artifact, cross-thread |
+| G4 — emitted-tier residue | `TdfaAsmBackend` | generated `WORD_RANGES` (`private static`, written in emitted `<init>`) | per-emitted-class |
+| G5 — test/debug statics | `TdfaRunner` | `TRACE`, `anyForced` (volatile statics, runtime settable); `TRACE_BUF`, `FORCED` (final `ThreadLocal` refs) | JVM-global |
+
+The remaining mutability in scope is **sanctioned by design** and needs
+a disposition, not a fix: per-call carriers (`Matcher`'s seven
+protected fields, `MatchScratch`'s grow-only buffers, `TagTree`,
+`findAll`'s iterator) and compile-time-only builders
+(`DfaStateBuilder`, `Range.ops` under the CFG flush) are never shared
+across threads — the gate below names them so the classification is
+checkable, not just traditional.
 
 ## The invariant
 
@@ -50,48 +75,64 @@ unmemoized simulation. The audit's conclusions:
   static per-pattern cost. Rejected — the memo stays lazy, but becomes
   *honest*.
 
-## Target state
+The walk-block memo (G2) is the same argument one size smaller: lazily
+materialized 512-codepoint dispatch blocks for wide-class walks, with a
+binary-search fallback that is always correct.
 
-### 1. Field audit — every non-final field gets a category
+## Dispositions — what happens to each group
 
-A reflection gate (below) fails the build on unclassified mutability.
-The categories, in the order they should be applied:
-
-| Category | Disposition | Examples |
+| Group | Disposition | Why |
 |---|---|---|
-| Frozen tables | Make `final`; verify no write after construction | transition tables, `finalOpsByMask`, ascii dispatch |
-| Compile-derivable, cheap | **Precompute at construction** (the "most immutable/precomputed" of the program) | trigger/kill-point statics, derived caps, flat op arrays |
-| Per-call / per-Matcher carriers | Move to the `Matcher` (already contractually single-threaded) | pooled regs, scratch trees |
-| Genuinely lazy, pattern+input-visitation-derived | The honest LRU below | search-DFA rows and blocks |
-| Statics | `final`, or an explicit documented allowlist | `WTRACE`, `anyForced` (document the never-reset latch) |
+| G1 `SearchDfa` | **Convert to the honest cache** (below); delete `lock`, the COW snapshots, the in-place cell fill, and the sticky `capped` flag | The one regime where laziness pays; the current shape is the entire warm/cold divergence surface |
+| G2 `WalkIndex` | **Same honest shape, flattened**: per-state lazy table whose cells reference immutable blocks directly; atomic charge; delete the monitor, the id indirection, and the stale-id fallback | Same reasoning; the double indirection (`cells→id→block`) exists only to serve locked growth |
+| G3 `Tdfa` caches | **Precompute at construction**; delete the three fields | Pure functions of final tables, each already computed on every runner/engine construction anyway — the "most precomputed" category, literally |
+| G4 `WORD_RANGES` | **Instance-`final`** (static-`final` cannot be assigned in an emitted `<init>`); emitted reads become GETFIELD | The one non-final emitted field; the second-instance rebind hazard dies |
+| G5 statics | **Stay, on the documented allowlist** the finality gate enforces: `TRACE`/`anyForced` (test instruments, off the answer path), `TRACE_BUF`/`FORCED` (final containers) | Conformance/fuzz hooks; WTRACE-style freeze-at-init already covers the compile knobs |
+| Per-call carriers | **None** — named as the sanctioned destination in the gate (per-`Matcher`, contractually single-threaded) | This is where match-time state *should* live |
+| Compile-time builders | **Out of the match-time invariant's scope** — gate allowlist, "compile-time only, never reachable from a compiled Pattern" | `DfaStateBuilder`, `Range.ops`, emitter counters die at compile |
 
-Expected end state: a runner with **zero** non-final fields outside the
-LRU container, and the LRU container itself final.
+Expected end state: a runner cluster with **zero** non-final fields
+outside the honest-cache containers (and their clock bookkeeping), the
+containers themselves final, the statics allowlist exactly four entries
+with justifications.
 
-### 2. The honest LRU — done right
+## The honest cache — done right
 
-One cache shape for every remaining lazy value, `SearchDfa` first:
+One cache shape for G1/G2. Concretely, for `SearchDfa`:
 
-- **Immutable entries.** A row/block is built completely, then published
-  as a frozen object. No in-place cell mutation after publish — the
-  current copy-on-write arrays with locked cell fill-in are deleted, and
-  with them the "stale snapshot degrades to the locked path" reasoning.
-- **Pure keys, pure values.** The key is content (the intern key), the
-  value a deterministic function of (artifact, key). A compute/publish
-  race produces two equal candidates; `putIfAbsent` keeps one. Duplicate
-  computation is the benign cost of lock freedom.
-- **Lock-free reads.** `ConcurrentHashMap` lookup; no synchronized read
-  path, no volatile array dances, nothing to get subtly wrong under
-  publication.
-- **Honest accounting.** Size is bounded by the existing weight model
-  (`Budgets.runtimeMemoryBytes()`); eviction is LRU (a second-chance/
-  clock list maintained on the write path is acceptable if it keeps
-  reads lock-free; a strict LRU list under a striped lock if the bench
-  shows clock thrashing). Eviction must never be observable — pure
-  values make that free.
-- **Both tiers.** The ASM backend embeds its own memo budget in emitted
-  code; it inherits the same shape, and the emitted classes shed their
-  locking machinery.
+- **Immutable entries.** A `Row` is `{final int[] words; final
+  AtomicReferenceArray<Block> cells(128); final boolean accept}` —
+  frozen at build. A `Block` is `{final Row[] targets(512)}` (`null` =
+  kill), frozen at build then published into its row's cell. No
+  in-place cell mutation after publish — the copy-on-write arrays and
+  locked cell fill-in are deleted, and with them the "stale snapshot
+  degrades to the locked path" reasoning.
+- **Pure keys, pure values.** Rows are interned by content in a
+  `ConcurrentHashMap` (the key is the live-set bitset; the value is a
+  deterministic function of (artifact, key)). A compute/publish race
+  produces two equal candidates; `putIfAbsent` keeps one and the loser's
+  charge is refunded. Duplicate computation is the benign cost of lock
+  freedom. Cell publication uses `AtomicReferenceArray.set` — a fully
+  built immutable object behind a volatile, nothing subtler.
+- **Lock-free reads.** The per-char path is one volatile cell load plus
+  one array load — no monitor, no synchronized read path, no volatile
+  array dance, no id indirection (blocks reference rows directly;
+  ids stop existing).
+- **Honest accounting.** One `AtomicLong` charge per memo (row weight +
+  block weight, per the existing weight model); charge-before-publish,
+  refund-on-race-loss. Over budget: the row is not interned / the block
+  is not built, and the *scan* continues via the exact-live-set raw
+  fallback — today's `v == -1` semantics, triggered by charge instead of
+  a sticky global `capped` flag that never resets. Eviction is a
+  second-chance clock over the intern map, maintained entirely on the
+  write path (the ring and its bits live under the clock monitor; rows
+  stay 100 % final); reads never touch it. Charge conservatively
+  over-counts (evicted rows' block weights are not refunded), so the
+  byte budget is never exceeded in reality.
+- **Both tiers.** The ASM tier embeds `new TdfaRunner(tdfa, memoBudget)`
+  in emitted code, so both backends share the one memo shape; the
+  emitted classes shed their locking machinery (G4 is the only emitted
+  mutable field, and it goes final).
 
 What this deletes outright: the cross-thread "safe:" argument (there is
 nothing left to argue about), the warm/cold divergence class (finding 1
@@ -103,9 +144,13 @@ of reasoning about interleavings on the match path.
 - **Eager precomputation of everything** — rejected (state blowup,
   compile cost, static memory; the library's pitch is fast compile of
   every pattern with a frozen lazily-touched budget).
+- **Charge-bound, no eviction** (degrade-per-structure instead of
+  reclaiming) — strictly simpler; kept as the fallback if the clock
+  shows bugs or the bench shows the sweep costing real time. Eviction
+  is only observable as warmth, and only budget-churn inputs can tell.
 - **Thread-confined per-Matcher memo** — viable, strictly simpler, loses
-  warmth across Matchers/threads; kept as the fallback if the LRU misses
-  the bench gate.
+  warmth across Matchers/threads; kept as the fallback if the honest
+  cache misses the bench gate.
 - **Delete the memo** (always run the unmemoized simulation) — gated by
   `scripts/bench-regression.sh` (15 % rule) on the long-input rows; the
   TODO "long-input scans" benchmark work decides whether the simpler
@@ -114,47 +159,83 @@ of reasoning about interleavings on the match path.
 ## Enforcement — the tripwires that keep it honest
 
 1. **Finality gate** (plain JUnit, zero deps): reflection scan of
-   `core.dfa`/`core.engine` — every non-final instance field must carry
-   `@MemoCache` (with the purity argument in its javadoc); every
-   non-final static on an allowlist with a justification line. Rides
-   `./gradlew check`.
+   `core.dfa`/`core.engine` — every non-final instance field must be a
+   sanctioned per-call carrier, live in a gate-named honest-cache
+   container, or sit on the memo allowlist with a purity argument;
+   every non-final static on the allowlist with a justification line
+   (G5's four entries). The allowlist only ever shrinks — each WBS
+   chunk below deletes its entries. Rides `./gradlew check`.
 2. **Determinism double-run** in the differential fuzzer: after the
    normal protocol, re-run every probe on the same artifact and
    byte-compare; any diff records as `MEMO_STATE_MISMATCH`. Warm ==
    cold becomes a tested property at fuzz scale, not a hope.
 3. **Warm replay mode** for `fuzz.one` (run the batch, then the case) so
    warmth-dependent records replay — the gap that stranded finding 1.
-4. **Sampled memo recompute**: 1-in-N cache reads recompute the value
-   and compare against the published entry — a corrupt warm row fails
-   instantly, with the row identified.
-5. **jcstress** publication tests per entry type (publish-on-one-thread,
-   read-on-another) — proves the protocol, entry by entry.
-6. **Artifact twin-diff + freeze watchdog**: compile the same pattern
-   twice in different threads, deep-compare (compile determinism);
-   CRC the frozen tables at construction and re-hash after batches (any
-   post-construction mutation trips, including stray out-of-bounds
-   writes).
+4. **Sampled memo recompute** (`-Dtdfa.memo.audit=1`): 1-in-N cache
+   reads recompute the value and compare against the published entry —
+   a corrupt warm row fails instantly, with the row identified. Rides
+   the concurrency test and any soak that opts in.
+5. **Concurrency hammer + freeze watchdog** (replacing the originally
+   sketched jcstress suite): N threads scan one shared `Pattern` on
+   multi-KB inputs, byte-compared thread-vs-thread and vs a cold
+   artifact twin; before/after, every final table of the artifact is
+   deep-hashed — any post-construction mutation (including stray
+   out-of-bounds writes) trips. jcstress exists to stress a publication
+   *protocol*; the honest cache has none left (final fields + CHM/ARA
+   publication are guarantees, not arguments). If a protocol ever
+   returns, jcstress returns with it.
 
-## Phases
+## Work breakdown structure
 
-| Phase | Exit criterion |
-|---|---|
-| 0 — Tripwires | 1–3 above landed; finding 1 reproduces (or is proven not warmth-dependent) via warm replay |
-| 1 — Audit | Field inventory categorized; finality gate green on the allowlist + `@MemoCache` set |
-| 2 — SearchDfa conversion | Rows/blocks as immutable LRU entries; locks deleted; jcstress green; determinism double-run clean over a mixed chunk |
-| 3 — Remainder | Every other lazy field precomputed, Matcher-confined, or LRU'd; zero unclassified mutability |
-| 4 — Bench + close | Both tiers through the 15 % gate; the 2026-10-24 findings doc F1 closed by construction |
+PR-sized chunks, heavier refactors first (after the tripwires that make
+them safe), each landing through the PR pipeline with its pinning test.
+House style per [jur-compat-wbs.md](jur-compat-wbs.md): open work only,
+delete-on-landing, history in git.
 
-Phase 0 is deliberately first: the tripwires convert this design from
-prose into tests before the risky refactor begins, and they stay as the
-permanent regression net. If the long-input benches ever let the memo be
-deleted outright (the alternatives section), phases 2–3 collapse — the
+- [ ] **W0 — This doc refined**: groups, dispositions, WBS replace the
+  coarse phase table. *(this PR)*
+- [ ] **W1 — Tripwires**: finality gate + `@MemoCache` allowlist
+  (documents today's G1–G4 mutability, green from day one); freeze
+  watchdog + concurrency hammer against the *current* structures;
+  fuzzer determinism double-run (`MEMO_STATE_MISMATCH`) and warm replay
+  (`-Pfuzz.warm=1`); replay finding 1's seed warm — reproduce or prove
+  not-warmth-dependent. Exit: all riding `check`/soak; gate green on
+  the full allowlist.
+- [ ] **W2 — SearchDfa → honest cache** (G1; the involved one): rows
+  content-interned with lazy immutable blocks, lock-free cell reads,
+  atomic charge + refund, clock eviction, sticky `capped` deleted;
+  `triggerScan` keeps its exact-live-set raw fallback semantics. Exit:
+  `synchronized` gone from `SearchDfa`; hammer, double-run, gate allowlist
+  (G1 lines) green; bench gate on long-input rows.
+- [ ] **W3 — WalkIndex → honest cache** (G2): per-state lazy tables
+  referencing immutable blocks directly, atomic charge, monitor and
+  stale-id fallback deleted; binary-search fallback unchanged. Exit:
+  same gates as W2; allowlist G2 lines deleted.
+- [ ] **W4 — Tdfa precompute + emitted finality** (G3+G4):
+  `posFlagDeps`/`absBeginBound`/stop-table computed in the constructor,
+  three cache fields deleted; `WORD_RANGES` instance-final. Exit:
+  allowlist G3/G4 lines deleted; twin-compile determinism test still
+  green (construction cost moves inside the existing compile budget).
+- [ ] **W5 — Gate to end state** (G5): statics allowlist exactly the
+  four justified entries; per-call carriers and compile-time builders
+  named in the gate; `@MemoCache` set empty; zero non-final fields
+  outside honest-cache containers — the invariant now mechanically
+  true. Exit: gate green with empty memo allowlist.
+- [ ] **W6 — Bench + close**: both tiers through `scripts/bench-regression.sh`
+  (15 % rule) incl. long-input rows; F1 closed by construction in the
+  2026-10-24 findings doc; TODO.md line updated; this page's boxes
+  checked and the WBS retired.
+
+W1 is deliberately first: the tripwires convert this design from prose
+into tests before the risky refactor begins, and they stay as the
+permanent regression net. If the long-input benches ever let the memo
+be deleted outright (the alternatives section), W2–W4 collapse — the
 audit and gates remain.
 
 ## Non-goals
 
 - No behavior changes: protocols, budgets, and public API are untouched;
   this is a state-discipline refactor with identical observable answers.
-- No new concurrency primitives beyond `ConcurrentHashMap` and (if
-  needed) a striped lock on the eviction path — no exotic structures
-  until the bench demands them.
+- No new concurrency primitives beyond `ConcurrentHashMap`,
+  `AtomicReferenceArray`, `AtomicLong`, and (on the eviction write path
+  only) one monitor — no exotic structures until the bench demands them.
