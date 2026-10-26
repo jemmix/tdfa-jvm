@@ -54,11 +54,6 @@ final class RunnerFinalityGateTest {
     private static final Map<String, Map<String, String>> MEMO_ALLOWLIST = new HashMap<>();
 
     static {
-        Map<String, String> walk = new HashMap<>();
-        walk.put("walkBlocksArr", "W3 — honest-cache conversion");
-        walk.put("walkBlockCount", "W3");
-        walk.put("chargedBytes", "W3");
-        MEMO_ALLOWLIST.put("io.github.jemmix.tdfa.core.dfa.WalkIndex", walk);
         Map<String, String> tdfa = new HashMap<>();
         tdfa.put("stopMaskTableCache", "W4 — precompute at construction");
         tdfa.put("posFlagDepsCache", "W4");

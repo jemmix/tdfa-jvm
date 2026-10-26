@@ -84,7 +84,7 @@ binary-search fallback that is always correct.
 | Group | Disposition | Why |
 |---|---|---|
 | G1 `SearchDfa` | **Convert to the honest cache** (below); delete `lock`, the COW snapshots, the in-place cell fill, and the sticky `capped` flag — *landed (W2)* | The one regime where laziness pays; the current shape is the entire warm/cold divergence surface |
-| G2 `WalkIndex` | **Same honest shape, flattened**: per-state lazy table whose cells reference immutable blocks directly; atomic charge; delete the monitor, the id indirection, and the stale-id fallback | Same reasoning; the double indirection (`cells→id→block`) exists only to serve locked growth |
+| G2 `WalkIndex` | **Same honest shape, flattened**: per-state lazy table whose cells reference immutable blocks directly; atomic charge; delete the monitor, the id indirection, and the stale-id fallback — *landed (W3)* | Same reasoning; the double indirection (`cells→id→block`) exists only to serve locked growth |
 | G3 `Tdfa` caches | **Precompute at construction**; delete the three fields | Pure functions of final tables, each already computed on every runner/engine construction anyway — the "most precomputed" category, literally |
 | G4 `WORD_RANGES` | **Instance-`final`** (static-`final` cannot be assigned in an emitted `<init>`); emitted reads become GETFIELD | The one non-final emitted field; the second-instance rebind hazard dies |
 | G5 statics | **Stay, on the documented allowlist** the finality gate enforces: `TRACE`/`anyForced` (test instruments, off the answer path), `TRACE_BUF`/`FORCED` (final containers) | Conformance/fuzz hooks; WTRACE-style freeze-at-init already covers the compile knobs |
@@ -210,10 +210,10 @@ delete-on-landing, history in git.
   charge-bound, eviction deliberately deferred to the bench's call)*
   Exit: `synchronized` gone from `SearchDfa`; hammer, double-run, gate
   allowlist (G1 lines) green; bench gate on long-input rows.
-- [ ] **W3 — WalkIndex → honest cache** (G2): per-state lazy tables
+- [x] **W3 — WalkIndex → honest cache** (G2): per-state lazy tables
   referencing immutable blocks directly, atomic charge, monitor and
-  stale-id fallback deleted; binary-search fallback unchanged. Exit:
-  same gates as W2; allowlist G2 lines deleted.
+  stale-id fallback deleted; binary-search fallback unchanged. *(#96)*
+  Exit: same gates as W2; allowlist G2 lines deleted.
 - [ ] **W4 — Tdfa precompute + emitted finality** (G3+G4):
   `posFlagDeps`/`absBeginBound`/stop-table computed in the constructor,
   three cache fields deleted; `WORD_RANGES` instance-final. Exit:

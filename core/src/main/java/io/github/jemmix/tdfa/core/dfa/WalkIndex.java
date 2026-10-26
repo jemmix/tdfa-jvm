@@ -4,147 +4,119 @@ import io.github.jemmix.tdfa.core.budget.BudgetWeights;
 import io.github.jemmix.tdfa.core.budget.Budgets;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
- * Lazy per-state walk-block memo (codepoints past the flat Latin-1 table).
- * The monitor is this index instance; the runner has no other synchronized
- * methods, so this lock is the walk path's only synchronization domain.
+ * The honest walk-block memo (runner-immutability W3): lazily
+ * materialized 512-codepoint dispatch blocks for codepoints past the
+ * flat Latin-1 table, published as FROZEN arrays behind lock-free cell
+ * reads — nothing is mutated after publication, no monitor, no ids.
  *
- * <p><b>Budget.</b> The memo — per-state block-id tables plus the shared
- * 512-codepoint blocks — is charged against this runner's share of the
- * runtime RAM budget ({@link Budgets#walkMaxBytes(long)}, one eighth of
- * the partition): each published per-state table weighs {@link
- * BudgetWeights#WALK_STATE_TABLE_BYTES}, each block {@link
- * BudgetWeights#WALK_BLOCK_BYTES}, and past the allowance dispatch falls
- * back to binary search (correct, slower).
+ * <p><b>Shape.</b> Per visited state, one lazily allocated 128-cell
+ * table (a cell per 512-codepoint block); a published cell IS the
+ * immutable {@code int[512]} block (cell = the containing range's
+ * index, or {@code -1} = dead), or the shared cap marker when the
+ * block could not charge its share. The old shape — per-state id
+ * tables into a shared growable volatile-published block array, with
+ * in-place cell writes under a monitor and a stale-id fallback — is
+ * gone entirely. Reads are one volatile cell load plus one array load.
+ *
+ * <p><b>Purity.</b> A block is a pure function of (runner tables,
+ * state, block index); racing duplicate builds publish equal content
+ * (the CAS loser's equal block is garbage and its charge refunded), so
+ * {@code warm == cold == concurrent}, byte-for-byte, forever.
+ *
+ * <p><b>Budget.</b> The same allowance as before ({@link
+ * Budgets#walkMaxBytes}: one eighth of the runner's memo budget,
+ * floored), charged atomically per published table and block,
+ * charge-before-publish. Over budget the cell — or the whole state, if
+ * even the table cannot charge — pins the cap marker and every lookup
+ * takes the binary-search fallback: correct, slower, identical answers.
+ * Deliberately no eviction (same decision as {@link SearchDfa}).
  */
 final class WalkIndex {
-    private static final int[][] EMPTY_BLOCKS = {};
-    /**
-     * Shared marker for states whose per-state table did not fit the walk
-     * allowance: every lookup takes the binary-search fallback.
-     */
-    private static final int[] CAP_MARKER = new int[128];
+    /** Per-(state, block) cap marker: this cell permanently binary-searches. */
+    private static final Object CAP_CELL = new Object();
+
+    /** Per-state cap marker: this state permanently binary-searches (dummy instance, identity-compared). */
+    private static final AtomicReferenceArray<Object> TABLE_CAP = new AtomicReferenceArray<>(1);
 
     private final TdfaRunner r;
-    /**
-     * Lazy per-state block-id tables, one volatile cell per state (see
-     * {@link #walkRangeIndex}): the cell write publishes the fully-built,
-     * -1-filled id array, so a racing reader sees either null (builds its
-     * own, benignly duplicated) or a fully-initialized array — never a
-     * default-0 cell misread as block id 0.
-     */
-    private final AtomicReferenceArray<int[]> walkBlockIdx;
-    /**
-     * This memo's byte allowance (runner's share of the runtime budget;
-     * see the class doc) and the weighted bytes committed so far
-     * (published tables + blocks).
-     */
-    private final long maxBytes;
-    /**
-     * Lazy per-state 512-codepoint walk blocks for codepoints >= latinLimit:
-     * cell = the (unique, disjoint-only) containing range's index, or -1.
-     * turns wide-class walks (\p{L}{2,} on Cyrillic: ~600-range binary
-     * searches per char) into one array load. Published via a volatile
-     * snapshot reference (copy-on-grow; build is synchronized
-     * and double-checked, so races only cost a redundant lock).
-     */
-    /**
-     * Memo (purity for the three fields below): the key is a (state,
-     * 512-codepoint block) pair; the value — the block's 512 range-index
-     * cells — is a pure function of (runner tables, key), so warm == cold
-     * == concurrent and racing duplicate builds publish equal content.
-     * Deleted by the honest-cache conversion (runner-immutability W3).
-     */
-    @MemoCache
-    private volatile int[][] walkBlocksArr = EMPTY_BLOCKS;
 
-    @MemoCache
-    private int walkBlockCount; // guarded by this
-    @MemoCache
-    private long chargedBytes;
+    /**
+     * Lazily allocated per-state 128-cell tables ({@code null} =
+     * allocate on first visit, {@link #TABLE_CAP} = capped). Final
+     * container; cells publish fully built immutable blocks.
+     */
+    private final AtomicReferenceArray<AtomicReferenceArray<Object>> tables;
+
+    private final AtomicLong charge = new AtomicLong();
+
+    private final long maxBytes;
 
     WalkIndex(TdfaRunner r, long memoBudgetBytes) {
         this.r = r;
-        this.walkBlockIdx = r.rangesDisjoint ? new AtomicReferenceArray<>(r.stateCount) : null;
+        this.tables = r.rangesDisjoint ? new AtomicReferenceArray<>(r.stateCount) : null;
         this.maxBytes = Budgets.walkMaxBytes(memoBudgetBytes);
     }
 
     /**
-     * Must effectively hold this' monitor or be benignly racy: count
-     * {@code bytes} against the walk allowance; false when over (callers
-     * fall back to binary search).
-     */
-    private synchronized boolean tryCharge(long bytes) {
-        if (chargedBytes + bytes > maxBytes) {
-            return false;
-        }
-        chargedBytes += bytes;
-        return true;
-    }
-
-    /**
-     * Range index for codepoint {@code c} (BMP, disjoint DFA) via lazy walk
-     * blocks: -1 = dead entry, -2 = budget cap exceeded (caller falls back to
-     * binary search). See {@link #walkBlocksArr} for the publication scheme.
+     * Range index for codepoint {@code c} (BMP, disjoint DFA) via the
+     * lazy walk blocks: the (unique, disjoint-only) containing entry's
+     * index, {@code -1} = dead entry, {@code -2} = cap exceeded (caller
+     * falls back to binary search). Turns wide-class walks
+     * ({@code \p{L}{2,}} on Cyrillic: ~600-range binary searches per
+     * char) into one array load.
      */
     @SuppressWarnings("ReferenceEquality")
     int walkRangeIndex(int state, int c) {
-        int[] idx = walkBlockIdx.get(state);
-        if (idx == null) {
-            // Per-state id table: charged like every other memo structure;
-            // over the allowance the state permanently falls back to binary
-            // search (cell pinned to the -2 sentinel via a shared marker).
-            if (tryCharge(BudgetWeights.WALK_STATE_TABLE_BYTES)) {
-                idx = new int[128];
-                Arrays.fill(idx, -1);
-                walkBlockIdx.set(state, idx); // volatile publish of the filled array
-                idx = walkBlockIdx.get(state); // adopt the winner if we lost the race
-            } else {
-                walkBlockIdx.compareAndSet(state, null, CAP_MARKER);
-                idx = walkBlockIdx.get(state);
-            }
+        AtomicReferenceArray<Object> t = tables.get(state);
+        if (t == null) {
+            t = buildTable(state);
         }
-        if (idx == CAP_MARKER) {
+        if (t == TABLE_CAP) {
             return -2;
         }
         int b = c >>> 9;
-        int id = idx[b];
-        if (id == -1) {
-            id = buildWalkBlock(state, b);
+        Object cell = t.get(b);
+        if (cell == null) {
+            cell = buildBlock(state, b, t);
         }
-        if (id < 0) {
-            return id;
+        if (cell == CAP_CELL) {
+            return -2;
         }
-        int[][] arr = walkBlocksArr;
-        if (id < arr.length) {
-            int ri = arr[id][c & 511];
-            return ri; // -1 cell = dead entry
-        }
-        return -2; // stale id vs a fresh snapshot: treat as capped (rare, safe)
+        return ((int[]) cell)[c & 511]; // -1 cell = dead entry
     }
 
     /**
-     * Build one 512-cp block for `state` (lowest entry index per cell — for
-     * disjoint DFAs the containing entry is unique). Synchronized + double-checked
-     * against the PUBLISHED id table (two threads racing a first-visit of the
-     * same state may carry private idx copies; the block id itself must be
-     * canonical). Cell values: -1 unbuilt, -2 capped, >=0 block id; cells only
-     * ever transition from -1 under the lock, so a racing plain read observes
-     * either -1 (re-checks here) or the final id — ints are atomically written.
+     * The state's 128-cell table, charged like every other memo
+     * structure; over the allowance the state permanently falls back to
+     * binary search (cell pinned to the shared marker).
      */
-    private synchronized int buildWalkBlock(int state, int b) {
-        int[] pub = walkBlockIdx.get(state);
-        int e = pub != null ? pub[b] : -1;
-        if (e != -1) {
-            return e;
+    private AtomicReferenceArray<Object> buildTable(int state) {
+        if (!tryCharge(BudgetWeights.WALK_STATE_TABLE_BYTES)) {
+            tables.compareAndSet(state, null, TABLE_CAP);
+            return TABLE_CAP;
         }
-        if (walkBlockCount >= maxWalkBlocks() || !tryCharge(BudgetWeights.WALK_BLOCK_BYTES)) {
-            if (pub != null) {
-                pub[b] = -2;
-            }
-            return -2;
+        AtomicReferenceArray<Object> t = new AtomicReferenceArray<>(128);
+        if (tables.compareAndSet(state, null, t)) {
+            return t;
+        }
+        charge.addAndGet(-BudgetWeights.WALK_STATE_TABLE_BYTES); // lost the race: refund, adopt the winner
+        return tables.get(state);
+    }
+
+    /**
+     * One frozen 512-codepoint block for the state: {@code cells[cp - lo]}
+     * = the lowest containing entry's index (disjoint DFA: unique), or
+     * {@code -1} = dead. Fully built, then CAS-published; a losing
+     * racer's equal block is garbage and its charge is refunded.
+     */
+    private Object buildBlock(int state, int b, AtomicReferenceArray<Object> t) {
+        if (!tryCharge(BudgetWeights.WALK_BLOCK_BYTES)) {
+            t.set(b, CAP_CELL);
+            return CAP_CELL;
         }
         int[] cells = new int[512];
         Arrays.fill(cells, -1);
@@ -158,21 +130,22 @@ final class WalkIndex {
                 cells[cp - lo] = i;
             }
         }
-        int n = walkBlockCount++;
-        int[][] next = Arrays.copyOf(walkBlocksArr, n + 1);
-        next[n] = cells;
-        walkBlocksArr = next; // volatile publish: cells contents visible to readers
-        if (pub != null) {
-            pub[b] = n;
+        if (t.compareAndSet(b, null, cells)) {
+            return cells;
         }
-        return n;
+        charge.addAndGet(-BudgetWeights.WALK_BLOCK_BYTES); // someone published an equal block
+        return t.get(b);
     }
 
-    /**
-     * Block-count cap derived from the walk allowance (floored so a tiny
-     * budget keeps a usable memo).
-     */
-    private int maxWalkBlocks() {
-        return (int) Math.max(BudgetWeights.WALK_MIN_BLOCKS, maxBytes / BudgetWeights.WALK_BLOCK_BYTES);
+    /** Charge {@code bytes} against the walk allowance; false when over (lock-free). */
+    private boolean tryCharge(long bytes) {
+        long now;
+        do {
+            now = charge.get();
+            if (now + bytes > maxBytes) {
+                return false;
+            }
+        } while (!charge.compareAndSet(now, now + bytes));
+        return true;
     }
 }
