@@ -4,7 +4,6 @@ import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -31,24 +30,22 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <ul>
  * <li><b>Hammer</b> — N threads scan one shared {@code Pattern} over
- * multi-KB inputs (past {@code SDFA_MIN_WINDOW}, so the search-DFA memo
- * engages; wide classes exercise the walk-block memo; supplementary
- * segments exercise the locked step path), on both tiers (the emitted
- * engine and the interpreter). Every thread's byte-for-byte protocol
- * must equal every other's AND a cold artifact twin's: warm == cold ==
- * concurrent.</li>
+ * multi-KB inputs (wide classes exercise the walk-block memo;
+ * supplementary segments exercise the codepoint paths), on both tiers
+ * (the emitted engine and the interpreter). Every thread's byte-for-byte
+ * protocol must equal every other's AND a cold artifact twin's: warm ==
+ * cold == concurrent.</li>
  * <li><b>Freeze watchdog</b> — every frozen table (final primitive-array
  * field of the runner, its artifact, and the emitted classes' table
  * statics) is content-hashed before and after the hammer; any post-
  * construction mutation — including a stray out-of-bounds write — trips.</li>
- * <li><b>Sampled recompute</b> — the JVM runs with
- * {@code -Dtdfa.memo.audit=1} (piped in by the {@code tests/unit} build
- * as a default), so hammer scans additionally recompute 1-in-64 memoized
- * transitions and compare against the published cell.</li>
  * <li><b>Emitted finality</b> — generated classes carry only final
  * fields (the emitted {@code WORD_RANGES} static is the one documented
  * exception until W4).</li>
  * </ul>
+ *
+ * <p>The sampled-recompute audit hook (tripwire 4) retired with the
+ * search-DFA memo it audited (see docs/search-dfa-memo-tradeoffs.md).
  */
 @Timeout(240)
 final class RunnerImmutabilityTest {
@@ -64,13 +61,6 @@ final class RunnerImmutabilityTest {
     private static final String[][] PATTERNS = {{"ab*cde", "0"}, {"(a|bb)+cde", "0"}, {"(?:ab){2,}c", "0"},
         {"(((a)(b))c){2,}", "0"}, {"[a-c]{3}d", "0"}, {"\\w+\\b", String.valueOf(Pattern.UNICODE_CHARACTER_CLASS)},
         {"(\\p{L}{2,})x", "0"}, {"a\uD801\uDC00{2,}", "0"}, {"(?s).{8,9}z", "0"},};
-
-    @BeforeAll
-    static void enableSampledAudit() throws Exception {
-        // Frozen at SearchDfa class init; the tests/unit build pipes the
-        // property in as a default so it holds regardless of test order.
-        System.setProperty("tdfa.memo.audit", "true");
-    }
 
     @Test
     void warmEqualsColdEqualsConcurrent() throws Exception {
@@ -126,16 +116,6 @@ final class RunnerImmutabilityTest {
             .isEmpty();
     }
 
-    /** The sampled-recompute dimension must actually be armed here. */
-    @Test
-    void sampledAuditIsArmed() throws Exception {
-        Class<?> sdfa = Class.forName("io.github.jemmix.tdfa.core.dfa.SearchDfa");
-        Field audit = sdfa.getDeclaredField("AUDIT");
-        audit.setAccessible(true);
-        assertThat(audit.getBoolean(null)).as("-Dtdfa.memo.audit must reach SearchDfa class init in this JVM "
-            + "(check the tests/unit build property plumbing)").isTrue();
-    }
-
     /**
      * Generated classes live in {@code io.github.jemmix.tdfa.gen}; walking
      * stops at core base classes ({@code Matcher}, {@code PatternMatcher})
@@ -184,7 +164,7 @@ final class RunnerImmutabilityTest {
         String[] out = new String[3];
         SplittableRandom rnd = new SplittableRandom(20261026L);
         for (int i = 0; i < out.length; i++) {
-            int len = 8192 + i * 4096; // past SDFA_MIN_WINDOW: the memo engages
+            int len = 8192 + i * 4096; // long scans: the walk-block memo engages
             StringBuilder sb = new StringBuilder(len);
             for (int k = 0; k < len; k++) {
                 int r = rnd.nextInt(100);

@@ -174,9 +174,9 @@ public final class DifferentialFuzzer {
     static final TdfaRunner.Strategy[] FORCED_RUNGS = {TdfaRunner.Strategy.ORIGIN_SIM, TdfaRunner.Strategy.TRIGGER,
         TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART};
 
-    /** Stretched-input floor: past twice the search-DFA memo window (2048)
-     *  so the memoized trigger path — never reachable on 0-24-char inputs —
-     *  runs with real kill-point windows and multiple interned blocks. */
+    /** Stretched-input floor: past twice the old search-DFA memo window
+     *  (2048) so the long-scan paths — never reachable on 0-24-char
+     *  inputs — run with real kill-point windows and budget interplay. */
     static final int STRETCH_MIN_CHARS = 4300;
 
     /** Char pools. Supplementary codepoints and lone surrogates are

@@ -52,12 +52,6 @@ test {
     // clean budget rejection; at 512m the OOM preempts the rejection.
     jvmArgs '-Xmx2g', '-XX:+HeapDumpOnOutOfMemoryError'
     systemProperty 'tdfa.asm.dump', System.getProperty('tdfa.asm.dump', 'false')
-    // Default-ON sampled memo recompute (runner-immutability tripwire 4):
-    // 1-in-64 memoized search-DFA transitions are recomputed and compared
-    // during every unit-test scan. Frozen at SearchDfa class init, so it
-    // must arrive as a JVM property; RunnerImmutabilityTest asserts it did.
-    // Opt out (perf runs): -Ptdfa.memo.audit=false
-    systemProperty 'tdfa.memo.audit', System.getProperty('tdfa.memo.audit', 'true')
     // The JIT inlining guard is its own action (below), never the default gate.
     filter { excludeTestsMatching '*InliningGuard*' }
     testLogging {
