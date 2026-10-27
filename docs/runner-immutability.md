@@ -75,6 +75,16 @@ unmemoized simulation. The audit's conclusions:
   static per-pattern cost. Rejected — the memo stays lazy, but becomes
   *honest*.
 
+**Update (post-W2b):** the regime proved narrower than this audit
+assumed — the memo engaged only for codepoint-lane wide-class patterns
+over multi-KB inputs (bounded-ASCII patterns served raw at the same
+speed), and the priced no-memo worst case was a flat ~63 ns/ch on every
+measured shape. The memo was **deleted**; the full pricing and the
+restoration criteria live in
+[search-dfa-memo-tradeoffs.md](search-dfa-memo-tradeoffs.md). The
+program's state-discipline work was the precondition: W2 made the
+fallback provably pure, so deletion became a one-rung change.
+
 The walk-block memo (G2) is the same argument one size smaller: lazily
 materialized 512-codepoint dispatch blocks for wide-class walks, with a
 binary-search fallback that is always correct.
@@ -83,7 +93,7 @@ binary-search fallback that is always correct.
 
 | Group | Disposition | Why |
 |---|---|---|
-| G1 `SearchDfa` | **Convert to the honest cache** (below); delete `lock`, the COW snapshots, the in-place cell fill, and the sticky `capped` flag — *landed (W2)* | The one regime where laziness pays; the current shape is the entire warm/cold divergence surface |
+| G1 `SearchDfa` | ~~Honest cache~~ → **deleted outright** — the measured regime (codepoint-lane wide-class multi-KB scans, 2–7×) did not justify the keep-cost; the trigger rung serves via the raw scan ([tradeoffs](search-dfa-memo-tradeoffs.md), #97) | The honest-cache conversion (W2, #95) made the deletion safe: pure fallback, no state to reason about |
 | G2 `WalkIndex` | **Same honest shape, flattened**: per-state lazy table whose cells reference immutable blocks directly; atomic charge; delete the monitor, the id indirection, and the stale-id fallback — *landed (W3)* | Same reasoning; the double indirection (`cells→id→block`) exists only to serve locked growth |
 | G3 `Tdfa` caches | **Precompute at construction**; delete the three fields | Pure functions of final tables, each already computed on every runner/engine construction anyway — the "most precomputed" category, literally |
 | G4 `WORD_RANGES` | **Instance-`final`** (static-`final` cannot be assigned in an emitted `<init>`); emitted reads become GETFIELD | The one non-final emitted field; the second-instance rebind hazard dies |
@@ -98,7 +108,9 @@ with justifications.
 
 ## The honest cache — done right
 
-One cache shape for G1/G2. Concretely, for `SearchDfa`:
+One cache shape for the remaining lazy values (post-W2b, `WalkIndex` is
+the surviving instance; `SearchDfa` was its first application before
+deletion). Concretely, as `SearchDfa` had it:
 
 - **Immutable entries.** A `Row` is `{final int[] words; final
   AtomicReferenceArray<Block> cells(128); final boolean accept}` —
@@ -155,6 +167,8 @@ of reasoning about interleavings on the match path.
   `scripts/bench-regression.sh` (15 % rule) on the long-input rows; the
   TODO "long-input scans" benchmark work decides whether the simpler
   world passes. If it passes, prefer deletion over any cache.
+  **Decided 2026-10-27: deleted** — the regime pricing and restoration
+  criteria are in [search-dfa-memo-tradeoffs.md](search-dfa-memo-tradeoffs.md).
 
 ## Enforcement — the tripwires that keep it honest
 
@@ -174,7 +188,9 @@ of reasoning about interleavings on the match path.
 4. **Sampled memo recompute** (`-Dtdfa.memo.audit=1`): 1-in-N cache
    reads recompute the value and compare against the published entry —
    a corrupt warm row fails instantly, with the row identified. Rides
-   the concurrency test and any soak that opts in.
+   the concurrency test and any soak that opts in. *(Retired with the
+   search-DFA memo it audited — W2b; the hook returns with any restored
+   cache.)*
 5. **Concurrency hammer + freeze watchdog** (replacing the originally
    sketched jcstress suite): N threads scan one shared `Pattern` on
    multi-KB inputs, byte-compared thread-vs-thread and vs a cold
@@ -210,6 +226,13 @@ delete-on-landing, history in git.
   charge-bound, eviction deliberately deferred to the bench's call)*
   Exit: `synchronized` gone from `SearchDfa`; hammer, double-run, gate
   allowlist (G1 lines) green; bench gate on long-input rows.
+- [x] **W2b — SearchDfa deleted** (the alternatives-section call, made
+  with numbers): the memo's regime proved narrow (codepoint-lane
+  wide-class multi-KB scans only; 2–7× there, ~1× elsewhere) and the
+  no-memo worst case a flat ~63 ns/ch on every measured shape — never
+  worse than re2j on the board. Priced tradeoffs, restoration criteria,
+  and the two-level restoration shape recorded in
+  [search-dfa-memo-tradeoffs.md](search-dfa-memo-tradeoffs.md). *(#97)*
 - [x] **W3 — WalkIndex → honest cache** (G2): per-state lazy tables
   referencing immutable blocks directly, atomic charge, monitor and
   stale-id fallback deleted; binary-search fallback unchanged. *(#96)*

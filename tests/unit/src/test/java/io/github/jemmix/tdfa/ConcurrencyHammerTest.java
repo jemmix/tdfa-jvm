@@ -19,12 +19,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Conformance of the RegexEngine thread-safety contract ("effectively
  * immutable, safe for concurrent use") under real contention. Hammers the
- * two lazily-materialized shared structures: the per-runner search-DFA memo
- * (SearchDfa) and the per-state walk blocks (walkBlockIdx) — both are
- * mutated/read cross-thread, so they must be synchronized or safely
- * published. Every thread must observe bit-identical results to the
- * single-threaded reference, on inputs long enough to engage the memoized
- * paths (search-DFA window ≥ 2048 chars; walk blocks on non-Latin-1 text).
+ * lazily-materialized shared structure that remains — the per-state walk
+ * blocks (walkBlockIdx) — and the engine tables beside it, all read
+ * cross-thread. Every thread must observe bit-identical results to the
+ * single-threaded reference, on inputs long enough to engage the
+ * memoized paths (walk blocks on non-Latin-1 text; the search-DFA memo
+ * this originally hammered was deleted — see
+ * docs/search-dfa-memo-tradeoffs.md).
  */
 class ConcurrencyHammerTest {
 

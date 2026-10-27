@@ -132,10 +132,6 @@ tasks.register('fuzz', JavaExec) {
     // siblings on the same artifact first (warmth-dependent records replay).
     systemProperty 'fuzz.double', project.findProperty('fuzz.double') ?: '1'
     systemProperty 'fuzz.warm', project.findProperty('fuzz.warm') ?: '0'
-    // Sampled memo recompute (tripwire 4) rides every soak JVM too: 1-in-64
-    // memoized search-DFA transitions recomputed and compared. Default on;
-    // -Ptdfa.memo.audit=false restores the unaudited runtime.
-    systemProperty 'tdfa.memo.audit', System.getProperty('tdfa.memo.audit', 'true')
     // Lane axis (evidence re-base): mix (default) draws the lane per batch —
     // jur facade vs live java.util.regex beside the re2j surface vs re2j;
     // pin for a lane-pure soak (re-running the re2j-pinned evidence, or a

@@ -33,7 +33,8 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  * charge-before-publish. Over budget the cell — or the whole state, if
  * even the table cannot charge — pins the cap marker and every lookup
  * takes the binary-search fallback: correct, slower, identical answers.
- * Deliberately no eviction (same decision as {@link SearchDfa}).
+ * Deliberately no eviction (charge-bound; the same decision the deleted
+ * search-DFA memo made — see docs/search-dfa-memo-tradeoffs.md).
  */
 final class WalkIndex {
     /** Per-(state, block) cap marker: this cell permanently binary-searches. */

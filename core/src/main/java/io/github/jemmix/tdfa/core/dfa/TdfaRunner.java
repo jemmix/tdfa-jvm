@@ -92,19 +92,16 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     private static final int ASCII_TABLE_MAX_STATES = 16_384;
 
     private static final ThreadLocal<ArrayList<Strategy>> TRACE_BUF = ThreadLocal.withInitial(ArrayList::new);
-    // Lazy-DFA memo caps, DERIVED per runner from the match-time RAM budget
-    // ({@link Budgets#runtimeMemoryBytes()}, -Dtdfa.budget.runtime.memory,
-    // default 16 MiB per compiled pattern) through the weight model:
-    // half the budget in rows, half in 512-codepoint blocks.
-    // Past the caps the scan degrades to the unmemoized simulation (still
-    // kill-point aware). Each runner (one per compiled Regex) keeps its own
-    // memo — N live Patterns cost at most N runtime budgets of memo RAM.
-    // The memo is shared across threads matching the same Pattern (safe:
-    // frozen entries behind lock-free publications — see SearchDfa), NOT
-    // per-thread. Below SDFA_MIN_WINDOW the raw scan runs unmemoized entirely.
-    private static final int SDFA_MIN_WINDOW = 2048; // below: unmemoized raw scan
+    // The search-DFA memo that used to live here was DELETED (see
+    // docs/search-dfa-memo-tradeoffs.md): on the measured regime it bought
+    // 2-7x only for codepoint-lane wide-class scans of multi-KB inputs,
+    // never engaged on the default (unit-semantics) surface's bounded-ASCII
+    // patterns, and the unmemoized kill-point-aware scan it fell back to
+    // was already competitive with re2j everywhere on the board. The
+    // trigger rung now serves every scan via that raw simulation.
     /**
-     * Origin-sim budget before falling back to the memoized trigger scan.
+     * Origin-sim budget before falling back to the trigger/restart ladder
+     * below it.
      */
     private static final int LSS_BUDGET_CHARS = 4096;
     /**
@@ -144,7 +141,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     final int[] wholeRhp;
     /**
      * This runner's share of the pattern's runtime RAM budget (see the
-     * constructor overload): caps the lazy search-DFA and walk memos.
+     * constructor overload): caps the lazy walk-block memo (the search-DFA
+     * memo this used to cap was deleted — see
+     * docs/search-dfa-memo-tradeoffs.md).
      */
     final long memoBudgetBytes;
 
@@ -313,17 +312,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     // TODO: revisit as first-class internals access (observer/event API) —
     // see TODO.md "internals access".
     /**
-     * Memoized search DFA for unanchored find(): frozen rows interned by
-     * content, transitions lazily materialized as immutable 512-codepoint
-     * blocks — {@code ~2 loads/char} instead of a bitset simulation step.
-     * Kill is a {@code null} block target; budget-out answers {@link
-     * SearchDfa#CAP} and the scan continues via the raw simulation with
-     * the exact live set. Soundness and the honest-cache discipline
-     * (frozen entries, pure values, lock-free reads, charge-bounded):
-     * see {@link SearchDfa}.
-     */
-    private final SearchDfa searchDfa;
-    /**
      * Exact-literal needle when the whole regex is a plain literal string
      * (single char-chain DFA, no captures/ops/masks): find()/leftmost-start
      * then use String.indexOf — the JIT's intrinsified, vectorized scan —
@@ -407,7 +395,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         this.stateCount = tdfa.stateCount;
         this.stateWords = (tdfa.stateCount + 31) >>> 5;
         this.acceptBits = RunnerTables.buildAcceptBits(tdfa);
-        this.searchDfa = new SearchDfa(this, memoBudgetBytes); // after all table fields are assigned
         this.literalNeedle = RunnerTables.detectLiteralNeedle(tdfa);
         this.prefixNeedle = this.literalNeedle == null ? RunnerTables.detectPrefixNeedle(tdfa) : null;
         this.unicodeWordBoundary = tdfa.unicodeWordBoundary;
@@ -1217,13 +1204,13 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             trace(Strategy.CAND_SCAN);
             return candScanExtract(input, from + 1, to, sc);
         }
-        // Trigger scan: memoized search-DFA pass that both proves no-match and
+        // Trigger scan: multi-state pass that both proves no-match and
         // bounds the restart loop to the kill-point window (no configuration
-        // alive before W can produce a match — see SearchDfa). Under unit
-        // semantics the codepoint-stepped memo proof would miss interior-unit
-        // starts, so the unit twin of the raw scan serves instead — same two
-        // products (no-match proof, kill-point window) with the interior
-        // seeds folded in (see unitRawScan).
+        // alive before W can produce a match). Under unit semantics the
+        // codepoint-stepped proof would miss interior-unit starts, so the
+        // unit twin of the raw scan serves instead — same two products
+        // (no-match proof, kill-point window) with the interior seeds
+        // folded in (see unitRawScan).
         if (maxStart > 0) {
             int w = scanSkipsPairs ? triggerScan(input, from, to, sc) : unitTrigger(input, from, to, sc);
             if (w < 0) {
@@ -1713,52 +1700,18 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     }
 
     /**
-     * {@code force} = RAW_SCAN takes the unmemoized path regardless of
-     * window size (forced-strategy hook); TRIGGER degrades to raw when a
-     * step's row/block cannot charge its budget share — the memo cannot
-     * grow past its budget.
+     * The trigger rung: the kill-point-aware unmemoized multi-state scan.
+     * (The lazily determinized search-DFA memo that used to serve this
+     * rung above 2 048 chars was deleted — the priced tradeoff and the
+     * restoration criteria live in docs/search-dfa-memo-tradeoffs.md.)
+     * Returns the kill-point window start W — every configuration alive
+     * before W is dead, so the restart loop may start there — or -1 =
+     * no match at all. {@code force} is kept for the forced-strategy
+     * hook; both TRIGGER and RAW_SCAN now serve the same raw path.
      */
     private int triggerScan(String input, int from, int to, MatchScratch sc, Strategy force) {
-        // Short scans never amortize the memo (block build = 512 interned steps);
-        // short-lived runners would allocate-and-die fat instead. Raw scan keeps
-        // the kill-point window either way.
-        SearchDfa sd = searchDfa;
-        if (force == Strategy.RAW_SCAN || to - from < SDFA_MIN_WINDOW) {
-            trace(Strategy.RAW_SCAN);
-            return rawScan(input, from, to, from, null, sc);
-        }
-        trace(Strategy.TRIGGER);
-        SearchDfa.Row seedRow = sd.seed();
-        if (seedRow == SearchDfa.CAP) { // memo share exhausted before it began
-            return rawScan(input, from, to, from, null, sc);
-        }
-        SearchDfa.Row cur = seedRow;
-        int W = from;
-        int[] pf = {-1}; // per-position posFlags cache (φ-gated probes)
-        for (int pos = from; pos < to;) {
-            pf[0] = -1;
-            if (acceptLive(input, pos, to, cur.words, pf)) {
-                return W;
-            }
-            int c = Alphabet.decode(input, pos, to);
-            int adv = Alphabet.width(c);
-            SearchDfa.Row next = sd.step(cur, c);
-            if (next == SearchDfa.CAP) {
-                // Budget: continue unmemoized from pos WITH the exact live set —
-                // restarting from a bare seed would drop configurations started
-                // in [W, pos) that are still alive (and may accept later),
-                // masking real matches.
-                return rawScan(input, pos, to, W, cur.words, sc);
-            }
-            if (next == null) { // kill: every configuration died at this step
-                W = pos + adv;
-                cur = seedRow;
-            } else {
-                cur = next;
-            }
-            pos += adv;
-        }
-        return acceptLive(input, to, to, cur.words, new int[]{-1}) ? W : -1;
+        trace(Strategy.RAW_SCAN);
+        return rawScan(input, from, to, from, null, sc);
     }
 
     /**
@@ -3510,8 +3463,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         CAND_SCAN, // first-char-set bit scan + exact walks (short input)
         EXACT_FROM, // one exact walk from the requested start
         ORIGIN_SIM, // budgeted origin-tracking multi-state simulation
-        TRIGGER, // memoized search-DFA trigger scan
-        RAW_SCAN, // unmemoized live-set simulation (short window / cap)
+        TRIGGER, // trigger rung (kill-point scan; its search-DFA memo is deleted)
+        RAW_SCAN, // unmemoized live-set simulation
         WALK_RESTART, // defensive per-start restart loop
         ANCHORED_FAST, // flat-table anchored loop (fastPath)
         ANCHORED, // generic anchored walk
