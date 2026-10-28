@@ -25,7 +25,7 @@ XL = architectural bet.
 
 | Cluster | Items | Verdicts in | State |
 |---|---|---|---|
-| A. Memo-deletion debris | C1–C5 | 0/5 | pending |
+| A. Memo-deletion debris | C1–C5 | 1/5 | C4 landed via #99; rest in review |
 | B. Runner dispatch ladder | C6–C12 | 0/7 | pending |
 | C. ASM backend | C13–C16 | 0/4 | pending |
 | D. Facades & API | C17–C21 | 0/5 | pending |
@@ -60,13 +60,14 @@ capped them is largely still here. The tradeoffs doc already flags this
   The value survives as a forced-rung identity in the fuzzer and three
   battery tests. Merge into `RAW_SCAN` (keep the trace string stable where
   the fuzzer parses it).
-- **C4 — `Tdfa` G3 lazy caches** (S/M, simplify — already decided, execute).
-  `stopMaskTableCache`, `posFlagDepsCache`, `absBeginBoundCache` are
+- **C4 — `Tdfa` G3 lazy caches** (S, simplify — already decided, execute).
+  `stopMaskTableCache`, `posFlagDepsCache`, `absBeginBoundCache` were
   `@MemoCache`-annotated benign-race lazy fields whose W4 disposition
-  ("precompute at construction; delete the three fields") is agreed in
-  `docs/runner-immutability.md` but unexecuted. Also: the
-  `stopMaskTableCache` javadoc is pasted twice (Tdfa.java ~293–303) — a
-  two-line cleanup whenever touched.
+  ("precompute at construction; delete the three fields") was agreed in
+  `docs/runner-immutability.md`.
+  **Verdict: already-landed — #99** (verified: the fields and the
+  duplicated javadoc are gone from `Tdfa.java`; the finality gate's memo
+  allowlist is empty). Closed without a delegate.
 - **C5 — `@MemoCache` + finality-gate allowlist endgame** (S, keep-but-shrink).
   With W4/W5 done the annotation has zero annotated fields by design. The
   gate (RunnerFinalityGateTest) stays; decide whether the annotation type
@@ -290,3 +291,8 @@ capped them is largely still here. The tradeoffs doc already flags this
 - **2026-10-28** — list built from a full-tree pass (engine, ASM, facades,
   pipeline, unicode, budget, tests, scripts); 38 items across 8 clusters.
   Delegated reviewers queued, one per cluster.
+- **2026-10-28 (update 1)** — landed on main via #100. **C4 closed:
+  already-landed by #99** (W4 executed the same day this list was built —
+  the three lazy caches are constructor-final now, the duplicated javadoc
+  went with them, and the finality gate's memo allowlist is empty).
+  7 delegated cluster reviews running.
