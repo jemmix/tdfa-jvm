@@ -88,6 +88,30 @@ class CompileBudgetTest {
         }
     }
 
+    /** 2026-10-24 jur finding 5: the zero-op frontier closure iterated
+     *  whole range lists between the caller's meter ticks, so under the
+     *  fuzzer's 8 M-tick work scope this deep-nesting shape's closure was
+     *  invisible to the ledger — the cap never fired and the compile
+     *  ground past the 10 s watchdog instead (25 s solo replay; without
+     *  the fix this test's compile grinds 15+ minutes). One meter tick
+     *  per range puts the closure back on the ledger: the scope rejects
+     *  it cleanly in ~80 ms of metered work. Pinned with \x{...} escapes
+     *  (flags 32 = the seed's draw); seed 2845852313826387552. */
+    @Test
+    void zeroOpFrontierStarvationRejectsFast() {
+        String bomb = "\\~(?:((?i:\\x{dbff}[^\\x{1c80}\\x{dfff}_]+\\w{0,6})g\\x{1c84})(?m:\\.)){3}?";
+        System.setProperty("tdfa.budget.compile.compute", "8388608");
+        try {
+            long t0 = System.nanoTime();
+            assertThatCode(() -> Pattern.compile(bomb, 32)).isInstanceOf(PatternTooLargeException.class)
+                .hasMessageContaining("pattern too large").hasMessageContaining("tdfa.budget.compile.compute");
+            assertThat((System.nanoTime() - t0) / 1_000_000)
+                .as("wall to work-budget rejection (25 s+ starved before the per-range tick)").isLessThan(10_000);
+        } finally {
+            System.clearProperty("tdfa.budget.compile.compute");
+        }
+    }
+
     /** Alternation-in-counted-repetition bomb: the cross product is
      *  genuinely huge — clean state-cap rejection. Plain nested-counted
      *  bombs ((a{1,100}){1,100} etc.) COMPILE: the {n,m} desugaring uses
@@ -155,7 +179,7 @@ class CompileBudgetTest {
         System.setProperty("tdfa.budget.compile.compute", "8388608");
         try {
             long t0 = System.nanoTime();
-            assertThatCode(() -> Pattern.compile(bomb)).isInstanceOf(PatternTooLargeException.class)
+            assertThatCode(() -> Pattern.compile(bomb, 32)).isInstanceOf(PatternTooLargeException.class)
                 .hasMessageContaining("pattern too large");
             assertThat((System.nanoTime() - t0) / 1_000_000)
                 .as("wall of the budgeted compile (find + bounded side sweep)").isLessThan(10_000);

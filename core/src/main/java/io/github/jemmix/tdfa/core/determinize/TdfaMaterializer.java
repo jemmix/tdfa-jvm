@@ -262,6 +262,7 @@ final class TdfaMaterializer {
      */
     private void addZeroOpFrontier(List<Range> list, BitSet visited, ArrayDeque<Integer> frontier) {
         for (int r = 0; r < list.size(); r++) {
+            meter.tick(); // per range: the scan itself is the work on bomb shapes
             Range tr = list.get(r);
             if (tr.ops != null && tr.ops.length > 0) {
                 continue;
