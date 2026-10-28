@@ -157,7 +157,8 @@ error: things the owner left deliberately. Found and fixed:
 Suggested landing order (each PR rides `./gradlew check`; bench-gated
 items ride `scripts/bench-regression.sh`, 15 % rule):
 
-0. **Owner decisions first** (they gate everything below): C55
+0. **Owner decisions first** (they gate everything below — one-liners in
+   [complexity-decisions.md](complexity-decisions.md)): C55
    (multi-valued: delete or commit to the fuzz lane), C56/C57/C58
    (public surface: axis probe, BYO factory, observer), C35 (Qodana,
    with its TODO), C34-confirm (pikesim, with the publish TODO).
