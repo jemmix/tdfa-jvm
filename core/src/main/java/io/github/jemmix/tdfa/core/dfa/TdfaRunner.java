@@ -2010,10 +2010,14 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             }
             if (best >= 0) {
                 // Can any future accept beat `best`? Future accept origins are
-                // either origins of currently-live states or seeds > pos.
-                // best==from is the common dense case and stops immediately.
+                // either origins of currently-live states or seeds > pos. The
+                // scan may stop early only once that is decided: a partial min
+                // below `best` (no return is possible), or one at `from` — the
+                // origin floor, nothing can be smaller. A partial min merely
+                // EQUAL to `best` proves nothing: a smaller origin can sit in
+                // an unscanned word, so the scan must continue.
                 int minLive = Integer.MAX_VALUE;
-                for (int w = 0; w < nwords && minLive > best; w++) {
+                for (int w = 0; w < nwords && minLive >= best && minLive > from; w++) {
                     int bits = live[w];
                     while (bits != 0) {
                         int bit = Integer.numberOfTrailingZeros(bits);
