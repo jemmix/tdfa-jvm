@@ -13,7 +13,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 ## Correctness
 
-- [ ] ORIGIN_SIM leftmost-start miss: forced rung, deterministic repro ([findings](docs/fuzz-campaigns-2026-10-24.md))
 - [ ] Review memo deletions; restore if unicode regimes matter ([pricing](docs/search-dfa-memo-tradeoffs.md))
 - [ ] Runner immutability: frozen fields, honest LRU memos ([design](docs/runner-immutability.md))
 - [ ] Triage 2026-10-24 jur soak findings ([findings](docs/fuzz-campaigns-2026-10-24.md))
