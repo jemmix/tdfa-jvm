@@ -1305,19 +1305,36 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
 
     /**
      * The restart floor under a forced entry: an exact walk at every viable
-     * start (the naive complete search). {@code from} itself is walked even
-     * when it sits inside a surrogate pair, mirroring the EXACT_FROM-at-from
-     * call every natural ladder makes; later starts keep the pair-interior
-     * guard.
+     * start. {@code from} itself is walked even when it sits inside a
+     * surrogate pair, mirroring the EXACT_FROM-at-from call every natural
+     * ladder makes; later starts keep the pair-interior guard. Viable is
+     * decided by the kill-point window — the same scan every natural
+     * restart site consults ({@link #triggerScan}/{@link #unitTrigger},
+     * the #76/#77 bound): no accept live anywhere proves no match at all,
+     * and every surviving configuration started at or after {@code W}, so
+     * starts below {@code W} are provably dead walks. Without it the floor
+     * is n restarts x O(n) walks — the campaign 2026-10-24 finding-4
+     * family ($/\B/^ gates after unbounded class-plus on stretched
+     * no-match inputs) spent 20–36 s here per find, tripping the 10 s
+     * watchdog as HANG_ENGINE; the windowed floor answers in one scan
+     * plus the surviving window's walks.
      */
     private MatchHolder forcedRestart(String input, int from, int to, MatchScratch sc) {
         trace(Strategy.WALK_RESTART);
+        MatchHolder h = fastPath ? tryStartFast(input, from, to, sc) : extractFrom(input, from, to, sc);
         int maxStart = absBeginBound ? from : to;
-        for (int s = from; s <= maxStart; s++) {
-            if (scanSkipsPairs && s > from && Alphabet.pairInterior(input, s)) {
+        if (h != null || maxStart == from) {
+            return h;
+        }
+        int w = scanSkipsPairs ? triggerScan(input, from, to, sc) : unitTrigger(input, from, to, sc);
+        if (w < 0) {
+            return null;
+        }
+        for (int s = Math.max(from + 1, w); s <= maxStart; s++) {
+            if (scanSkipsPairs && Alphabet.pairInterior(input, s)) {
                 continue;
             }
-            MatchHolder h = fastPath ? tryStartFast(input, s, to, sc) : extractFrom(input, s, to, sc);
+            h = fastPath ? tryStartFast(input, s, to, sc) : extractFrom(input, s, to, sc);
             if (h != null) {
                 return h;
             }

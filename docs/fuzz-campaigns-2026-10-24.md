@@ -173,6 +173,25 @@ environmental.) The #75–#77 bounds covered the old shapes; `$`/`\B`/`^`
 gates after unbounded class-plus slip past. JFR dumps:
 `build/fuzz-jur/hang-<seed>.jfr`.
 
+**Update 2026-10-29 — residual triaged and closed: the spin was the
+forced restart floor, now windowed.** Re-profiling on the post-#102
+main split the finding: every natural path (facade `find`/`lookingAt`/
+`find(len/2)`, both tiers, the origin-sim and trigger rungs) already
+answers these shapes in single-digit milliseconds — the #76/#77
+kill-point window works wherever it is wired. The spin lived at the one
+ladder site it was never wired to: `forcedRestart`, the fuzz force
+hook's `WALK_RESTART` floor, whose per-start exact-walk loop ran
+unbounded — n restarts × O(n) walks, 17–64 s per find at the campaign's
+~4.3 k stretch (both tiers, measured in-process), which is exactly what
+the soak's stretched cross-rung probes rode into the `HANG_ENGINE`
+records above. The floor now consults the same kill-point window (the
+unit raw scan under unit semantics, the codepoint trigger above) before
+its walks: starts below `W` are provably dead, so the
+exact-walk-at-every-viable-start contract is unchanged, and all six
+seeds replay in 2–4 s (the slow three measured 36/32/20 s solo). Pinned
+oracle-differentially on both tiers, base and stretches, plus a
+forced-floor wall canary on the campaign stretch, in `WalkLadderSpinTest`.
+
 ## Finding 5 — compile-time spins in `addZeroOpFrontier` (3 records)
 
 `TdfaMaterializer.addZeroOpFrontier` — 10 s+ watchdog trips at *compile*:
