@@ -32,39 +32,147 @@ XL = architectural bet.
 | E. Compile pipeline & determinizer | C22–C29, C41–C42 | 10/10 | **done** — 1 simplify, 5 keep, 2 measure-first, +2 new |
 | F. Unicode & data | C30–C31 | 2/2* | **done** (with G) — 1 keep, 1 simplify |
 | G. Budget system | C32 | 1/1* | **done** — simplify; FrameBudget/WorkMeter keep |
-| H. Tests & infrastructure | C33–C38, C54 | 7/7 | **done** — 4 remove, 2 simplify, 1 keep, +1 new |
-| **Total** | **54** | **54** | **review complete — every item examined and verdicted** |
+| H. Tests & infrastructure | C33–C38, C54 | 7/7 | **done** — 3 remove, 2 simplify, 1 keep, 1 referred, +1 new |
+| I. Mission challenges (2nd pass) | C55–C59 | 5/5 | **done** — 4 decisions for the owner, 1 measure-first |
+| **Total** | **59** | **59** | **review complete — two passes, every item verdicted** |
 
 *New-item IDs are unique across clusters: A → C39/C40, E → C41/C42,
 F+G → C43–C45, B → C46–C48, C → C49–C51, D → C52/C53, H → C54.
 Reviewers' internal numbering collided at C39 and was renumbered on
 recording.*
 
-## The board after review — 54 items, 54 verdicts
+## The board after review — 59 items, 59 verdicts
 
 | Verdict | Count | Items |
 |---|---:|---|
-| remove | 10 | C1, C3, C20, C35, C36, C37, C39, C40, C41, C43 |
+| remove | 9 | C1, C3, C20, C36, C37, C39, C40, C41, C43 |
 | simplify | 20 | C2, C6, C8–C10, C22, C31–C34, C42, C44, C45, C47–C51, C53, C54 |
-| measure-first | 5 | C7, C25, C26, C46, C52 |
-| keep | 18 | C5, C11–C19, C21, C23, C24, C27–C30, C38 |
+| measure-first | 6 | C7, C25, C26, C46, C52, C59 |
+| keep | 18 | C5, C11–C19, C21, C23, C24*, C27–C30, C38 |
+| decision (owner) | 5 | C35, C55, C56, C57, C58 |
 | already-landed | 1 | C4 (#99) |
+
+*C24's keep is superseded by challenge C55; C35 was referred back to its
+TODO's owner after the second pass (see below).*
+
+## Mission challenges — the second pass
+
+The first pass verified *facts*; this pass asks a harder question of the
+features that survived it: **does the project's mission need this, or is
+it nice-to-have machinery the memo precedent teaches us to price again?**
+Mission, per README: linear-time by construction, the speed headline,
+drop-in per lineage (jur + re2j shapes), sane compile cost. A feature
+fails the test when no drop-in surface exposes it AND it is not part of
+the measured headline AND it carries real machinery. Each challenge below
+ends at an owner decision — the evidence is ours, the intent is not.
+
+- **C55 — `MULTI_VALUED_TAGS`: the flagship challenge** (decision, L).
+  The mission test **fails**: neither `java.util.regex` nor re2j has
+  `groupSpans` — no drop-in consumer exists — and it is not part of the
+  speed headline. What it costs: a parallel compile path
+  (`Tnfa.compileMulti`), `TagTree` + `OP_APPEND_POS` threaded through
+  determinize/dfa/tnfa/engine/ASM (~160 branch sites), its own parity
+  suite and fuzz plan — **and the fuzz lane does not exist yet** (TODO:
+  "Fuzz the multi-valued lane"). README's own words: "an obscure corner,
+  kept deliberately." That was C24's keep verdict, and it holds *only if
+  the capability is a deliberate differentiator worth its keep-cost*. The
+  honest challenge: pre-1.0 (no publish, no adoption to break) is the
+  one window to delete it cheaply — the docs and tests are complete
+  design memory for a re-add. If it stays, the unfuzzed lane is the
+  standing correctness risk and the fuzz TODO becomes mandatory, not
+  optional. Recommend: decide now — delete, or commit to fuzzing it.
+  Keeping it unfuzzed is the one indefensible option.
+- **C56 — `CompileOptions.semantics()`: the public axis probe**
+  (decision, S/M). The re2j facade's own javadoc disclaims it as "a
+  debugging tool, not a user contract". The two lanes are baked per
+  surface; per-axis mixing has six test-side consumers and zero product
+  ones. Delete the *public* probe (keep `Semantics` as the internal
+  lane representation C21 recorded); the PivotLanes hybrid batteries
+  move behind a test seam. The API surface shrinks and the 1.0 lock has
+  one less thing to freeze by accident. Composes with C20.
+- **C57 — `RegexEngineFactory`: bring-your-own-engine as public API**
+  (decision, M). Every consumer is test-side (verified: unit/parity
+  tests and benches use the factory overload to force VM/ASM twins;
+  nothing else). The drop-in surfaces never need a third-party engine;
+  `-Dtdfa.engine=VM` already covers tier selection. Folding the factory
+  to a test-only seam deletes the public overload pair, the
+  `noCodegenWrapper` lane, and the BYO-shell emission path in
+  `PatternCompiler`/`ShellEmitter` — the "tracer, experimental backend"
+  story is speculation, and YAGNI is cheapest pre-1.0.
+- **C58 — `CompileObserver`/`CompilationReport` as public machinery**
+  (decision, S/M). Same shape as C57: every observer consumer is a test
+  or the fuzz harness; observability is a development concern. Internalze
+  to `core.compile` (test-fixtures reach it by package); two fewer
+  public types to freeze, document, and keep japicmp-stable.
+- **C59 — stack-regs: re-price C14's keep against the headline**
+  (measure-first, M). C14 kept the axis on a recorded −9..−19 % class
+  win (4–16-register walks) — exactly the shape the memo precedent
+  teaches to re-price: a narrow regime carrying ~120 lines of emission
+  variant. Measure the *headline* rows (the README table's five
+  ParameterizedShortInput shapes + ShortFindBench captures) with
+  stack-regs disabled: if the flagship geomean moves <5 %, delete the
+  axis; the class win is then the same "2–7× inside one narrow regime"
+  the search-DFA memo died of. If the headline rows do carry it, the
+  keep stands with a better argument than it has today.
+
+Challenged and **survived** (recorded so the sweep is complete):
+`LONGEST_MATCH` (advertised in the pitch, both facades expose it);
+serialization (both drop-in targets are `Serializable`); the whole-match
+machinery (C23's shipped pricing history); the ASM INLINED tier (it *is*
+the speed headline); ORIGIN_SIM (degenerate-shape bounder — but its open
+correctness bug makes it fix-or-delete, already TODO'd); the pinned-
+Unicode provider API (documented consumer story; only its broken `-D`
+selection branch is dead — C45).
+
+### Intent corrections — verdicts walked back or reframed
+
+The second pass also swept the *remove/simplify* list for the opposite
+error: things the owner left deliberately. Found and fixed:
+
+- **C35 (Qodana) — remove → referred.** "Keep or remove" is the owner's
+  open TODO, not a verdict waiting for us. The evidence stands (zero
+  findings-driven fixes; nothing invokes `qodanaScan`, not even
+  `check`), but the *decision* — including "wire it into CI and give it
+  a chance" — belongs to that TODO. Recommend deciding at the pre-freeze
+  review; today it costs a plugin line and a config file.
+- **C33 — the soak's `nested-loop-capture` skip is now owner-confirm.**
+  #86 re-added it 25 minutes after #87's deletion — that timeline reads
+  as a deliberate revert, not an accident. Deletion proposal withdrawn
+  pending the owner's word; the rest of C33's dead-code deletions
+  (zero-caller helpers, dead counter, stale allowlist entry) stand
+  unaffected.
+- **C21 — the TODO is not ours to close.** "Decide Semantics scope"
+  stays open; this review's answer (axes are representation, not knobs)
+  is recorded as a *recommendation* feeding it.
+- **C34 — pikesim move rides the publish TODO.** "First Maven publish"
+  is open; if pikesim is intended product then, the move is wrong. The
+  README's own four-module story says test fixture today — confirm
+  intent at the publish decision.
+- Strengthened, not weakened: **C1/C2/C3 answer questions the owner
+  explicitly left "for the review"** — `docs/search-dfa-memo-tradeoffs.md`
+  names the budget split and `Strategy.TRIGGER` as deliberately deferred
+  to this review, so the remove verdicts are the solicited answers, not
+  overreach (each carries a two-line revert path if the memo returns).
 
 Suggested landing order (each PR rides `./gradlew check`; bench-gated
 items ride `scripts/bench-regression.sh`, 15 % rule):
 
+0. **Owner decisions first** (they gate everything below): C55
+   (multi-valued: delete or commit to the fuzz lane), C56/C57/C58
+   (public surface: axis probe, BYO factory, observer), C35 (Qodana,
+   with its TODO), C34-confirm (pikesim, with the publish TODO).
 1. **Pure removals** (dead code, no behavior change): C3, C20, C41,
-   C49, C50, C51 — then C35, C36, C43, and the prose-truth pair
-   C39/C40.
+   C49, C50, C51 — then C36, C43, and the prose-truth pair C39/C40.
 2. **Placement + harness truth**: C34 (pikesim → testlib), C33 (fuzzer
-   dead code), C54 (knob forwardings), C31 (NoUnicodeProvider).
+   dead code; the nested-loop skip waits for owner word), C54 (knob
+   forwardings), C31 (NoUnicodeProvider).
 3. **Budget endgame** (one PR): C32 — subsumes C1 + C2 + C44 and marks
    the tradeoffs-doc TODO resolved.
 4. **Pipeline shape**: C22 (with C41's ALL_AXES fold + C53's minimal
    fix), C42 (mode enum), C45 + C52 (test additions).
 5. **Ladder program** (gated; C46 rows first): C48 → C8 → C7 scope 1 →
    C9 → C47, then C10's test-hook seam.
-6. **Measure-first verdicts to run**: C25, C26 (throwaway patches),
+6. **Measure-first verdicts to run**: C25, C26, C59 (throwaway patches),
    C7 scope 2 (expected to close keep-with-numbers).
 7. **Chore**: C37 branch/worktree purge — after this review's own branch
    churn settles.
@@ -581,6 +689,9 @@ capped them is largely still here. The tradeoffs doc already flags this
   Maintenance re-priced: ~133 `multi` mentions + TagTree 149 lines,
   touched once since 2026-08. Open residual: the lane is unfuzzed —
   TODO's "Fuzz the multi-valued lane" closes the keep-cost's main risk.)
+  **Superseded by challenge C55 (second pass): the keep holds only if
+  the differentiator is worth its keep-cost — delete-or-fuzz is the
+  honest framing, and the owner decides.**
 - **C25 — `Optimize` N=2 loop** (S, measure-first). The paper runs
   liveness/DCE/interference/alloc/normalize twice; the doc says iteration
   2 finds new coalescing. Price N=1 on the compile-time benches: if the
@@ -764,11 +875,12 @@ table footnote)*
   `DifferentialFuzzer.JUR_UCASE` (own copy in CampaignFuzzer), the
   `ciSuppAvoided` counter (no increment site since 12d9921 — reports a
   permanent 0), `CampaignSmokeTest`'s `SKIP_NESTED_LOOP_CAPTURE` allowlist
-  entry (no producer since #87), the soak's `nested-loop-capture` skip
-  (re-added by #86 after #87 deleted it; fired zero times in the soak;
-  javadoc cites a TODO that does not exist), and stale class-doc prose
+  entry (no producer since #87), and stale class-doc prose
   naming retired families as live residuals. One PR plus a prose-truth
-  pass; `FORCED_RUNGS`' TRIGGER entry rides C3.)
+  pass; `FORCED_RUNGS`' TRIGGER entry rides C3. **Withdrawn from the
+  deletion list (second pass): the soak's `nested-loop-capture` skip** —
+  #86 re-added it 25 minutes after #87's deletion, a timeline that reads
+  as a deliberate revert; owner-confirm before touching.)
 - **C34 — `lib:pikesim` placement** (S/M, simplify). The reference
   simulator ships as a first-class module (Java 25 bytecode, in
   BytecodeFloorTest's shippedPaths) but its consumers are tests only
@@ -785,13 +897,14 @@ table footnote)*
 - **C35 — Qodana** (S, decide). Plugin + `qodana.yaml` + CI spend, with
   TODO "keep or remove". Decide by what it has caught lately; if nothing,
   remove the plugin from the build.
-  **Verdict: remove** (cluster H review — the track record is empty: zero
-  findings-driven fixes (git log shows only the wiring commit), and
-  **nothing invokes `qodanaScan`** — not CI, not even `check`. The
-  project's own r10 close-out already called the wiring "dead weight for
-  a declined tool". ErrorProne + SpotBugs cover the ground. Remove plugin
-  line + `qodana{}`/`qodanaScan` blocks + `qodana.yaml`; close the TODO
-  item; reversible from git.)
+  **Verdict: referred to the owner (second pass; was remove).** The
+  "keep or remove" TODO is a deliberate, open owner decision — this
+  review's evidence (zero findings-driven fixes; nothing invokes
+  `qodanaScan`, not even `check`; r10 already called the wiring dead
+  weight) feeds that decision but does not close it. The live option
+  space includes wiring it into CI and giving it a real chance. Decide
+  at the pre-freeze review; today it costs a plugin line and a config
+  file.
 - **C36 — `scripts/migration`** (S, remove). `add-braces.py`,
   `expand-star-imports.py` — one-shot codestyle migration scripts, already
   applied tree-wide (spotless enforces the style now). Delete.
@@ -882,3 +995,16 @@ table footnote)*
   the unreachable fuzzer knobs (C54). Final board: 10 remove,
   20 simplify, 5 measure-first, 18 keep, 1 already-landed. Execution
   order recorded above; examination phase closed.
+- **2026-10-29 (update 5, second pass)** — challenged the first pass's
+  keeps against the mission test (drop-in surfaces + speed headline +
+  sane compile). Five challenges recorded as owner decisions: **C55
+  multi-valued tags delete-or-fuzz** (no drop-in consumer, unfuzzed
+  lane, pre-1.0 window), C56 public axis probe, C57 BYO-engine factory,
+  C58 public observer, C59 stack-regs re-priced against the headline.
+  Intent sweep walked back the overreach: **C35 Qodana referred** to its
+  TODO's owner (evidence stands, decision doesn't), C33's nested-loop
+  skip withdrawn (possible deliberate #86 revert), C21's TODO left open,
+  C34 gated on the publish TODO; C1/C2/C3 confirmed as answering
+  questions the tradeoffs doc explicitly left "for the review". Board:
+  59 items — 9 remove, 20 simplify, 6 measure-first, 18 keep,
+  5 owner decisions, 1 already-landed.
