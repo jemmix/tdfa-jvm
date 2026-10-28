@@ -19,10 +19,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * The finality gate of the runner-immutability program
- * (docs/runner-immutability.md) — now in its permanent END-STATE form
- * (post-W5): every non-final field on the match-time classes fails the
- * build unless it is a sanctioned per-call carrier, a compile-time-only
- * builder, or a justified test/debug static.
+ * (docs/runner-immutability.md) — its permanent end-state form: every
+ * non-final field on the match-time classes fails the build unless it is
+ * a sanctioned per-call carrier, a compile-time-only builder, or a
+ * justified test/debug static.
  *
  * <p>The program's end state, enforced here:
  * <ul>
@@ -51,10 +51,11 @@ final class RunnerFinalityGateTest {
     private static final String[] PACKAGES = {"io.github.jemmix.tdfa.core.dfa", "io.github.jemmix.tdfa.core.engine"};
 
     /**
-     * The memo allowlist, historically the transition ratchet from W1 to W4.
-     * EMPTY since W4 (every entry deleted by its landing work item) — the
-     * gate now enforces the end state: no non-final instance field on a
-     * shared artifact may exist at all, annotated or not.
+     * The memo allowlist — historically the transition ratchet that let
+     * the gate land before the conversions; permanently EMPTY now (every
+     * entry was deleted by its landing PR). The gate enforces the end
+     * state: no non-final instance field on a shared artifact may exist
+     * at all, annotated or not.
      */
     private static final Map<String, Map<String, String>> MEMO_ALLOWLIST = new HashMap<>();
 
@@ -170,7 +171,7 @@ final class RunnerFinalityGateTest {
     }
 
     /**
-     * The end state (W5): NO field anywhere in scope carries
+     * The end state: NO field anywhere in scope carries
      * {@link MemoCache} — the allowlist is empty and stays empty. The
      * annotation survives as the sanctioned route for a future lazy
      * cache: using it means re-opening this gate deliberately (entry +
@@ -178,7 +179,7 @@ final class RunnerFinalityGateTest {
      */
     @Test
     void noMemoCacheFieldsExist() throws Exception {
-        assertThat(MEMO_ALLOWLIST).as("the transition allowlist must stay empty post-W4").isEmpty();
+        assertThat(MEMO_ALLOWLIST).as("the transition allowlist must stay empty").isEmpty();
         StringBuilder errors = new StringBuilder();
         for (String pkg : PACKAGES) {
             for (Class<?> c : classesOf(pkg)) {

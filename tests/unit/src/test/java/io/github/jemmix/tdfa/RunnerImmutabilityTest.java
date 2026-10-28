@@ -24,9 +24,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * The concurrency hammer + freeze watchdog of the runner-immutability
- * program (docs/runner-immutability.md, tripwires 4-6), run against the
- * CURRENT structures so the W2-W4 conversions start from a pinned
- * baseline:
+ * program (docs/runner-immutability.md) — permanent tripwires over the
+ * frozen-artifact contract:
  *
  * <ul>
  * <li><b>Hammer</b> — N threads scan one shared {@code Pattern} over
@@ -40,23 +39,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  * statics) is content-hashed before and after the hammer; any post-
  * construction mutation — including a stray out-of-bounds write — trips.</li>
  * <li><b>Emitted finality</b> — generated classes carry only final
- * fields (the emitted {@code WORD_RANGES} static is the one documented
- * exception until W4).</li>
+ * fields.</li>
  * </ul>
  *
- * <p>The sampled-recompute audit hook (tripwire 4) retired with the
- * search-DFA memo it audited (see docs/search-dfa-memo-tradeoffs.md).
+ * <p>The sampled-recompute audit hook (an early tripwire) retired with
+ * the search-DFA memo it audited (see docs/search-dfa-memo-tradeoffs.md).
  */
 @Timeout(240)
 final class RunnerImmutabilityTest {
 
     private static final int THREADS = 4;
 
-    /**
-     * Non-final fields allowed on emitted classes — EMPTY since W4
-     * (WORD_RANGES went ACC_FINAL; static finals assigned in emitted
-     * {@code <init>}s are the established pattern).
-     */
+    /** Non-final fields allowed on emitted classes — none; keep it that way. */
     private static final List<String> EMITTED_EXCEPTIONS = Arrays.asList();
 
     private static final String[] INPUTS = buildInputs();
@@ -116,8 +110,7 @@ final class RunnerImmutabilityTest {
             }
             assertAllFieldsFinal(p.matcher(INPUTS[0]).getClass(), errors);
         }
-        assertThat(errors).as("non-final fields on emitted classes (the exceptions list is the W4 burn-down)")
-            .isEmpty();
+        assertThat(errors).as("non-final fields on emitted classes").isEmpty();
     }
 
     /**
