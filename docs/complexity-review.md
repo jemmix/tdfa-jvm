@@ -25,7 +25,7 @@ XL = architectural bet.
 
 | Cluster | Items | Verdicts in | State |
 |---|---|---|---|
-| A. Memo-deletion debris | C1–C5 | 1/5 | C4 landed via #99; rest in review |
+| A. Memo-deletion debris | C1–C5, C39–C40 | 7/7 | **done** — 2 remove, 1 simplify, 1 already-landed, 1 keep, +2 new prose items |
 | B. Runner dispatch ladder | C6–C12 | 0/7 | pending |
 | C. ASM backend | C13–C16 | 0/4 | pending |
 | D. Facades & API | C17–C21 | 0/5 | pending |
@@ -33,7 +33,7 @@ XL = architectural bet.
 | F. Unicode & data | C30–C31 | 0/2 | pending |
 | G. Budget system | C32 | 0/1 | pending |
 | H. Tests & infrastructure | C33–C38 | 0/6 | pending |
-| **Total** | **38** | **0** | **in review** |
+| **Total** | **40** | **7** | **cluster A done; B–H in review** |
 
 ## A. Memo-deletion debris (the #97/#98 tail)
 
@@ -48,6 +48,15 @@ capped them is largely still here. The tradeoffs doc already flags this
   `RUNTIME_MIN_ROWS/BLOCKS`, `WALK_*`, `RUNTIME_WALK_DIVISOR`) and the
   eighths-partition javadoc ride along. Delete the methods + constants +
   the test rows; re-point the docs.
+  **Verdict: remove** (cluster A review, verified). Full deletion
+  inventory: Budgets.java:190–226 (methods + section header),
+  BudgetWeights.java:169–215 (nine constants + two headers),
+  Budgets.java:30–31, 129–137 (class-doc references),
+  BudgetModelTest.java:65–76, 87–88; prose re-points at
+  docs/search-dfa-memo-tradeoffs.md:97–101 and Tdfa.java:1170. Bonus
+  found by the review: `WALK_STATE_TABLE_BYTES` (BudgetWeights.java:205)
+  has zero references anywhere — not even the dead caps use it.
+  Enabling change for C32.
 - **C2 — `memoBudgetBytes` plumbing** (S/M, simplify). The field on
   `TdfaRunner` calls itself VESTIGIAL in its own javadoc, yet threads
   through `EngineBackend.generate`, both `TdfaAsmBackend.generate`
@@ -55,11 +64,35 @@ capped them is largely still here. The tradeoffs doc already flags this
   and `PatternCompiler`'s split arithmetic. With no memo left the whole
   parameter is theatre; collapse to nothing (or a plain retained-bytes
   check) and delete the emitted constant.
+  **Verdict: simplify** (cluster A review — stronger than listed: the
+  field is **write-only**; its sole reference is its own assignment
+  (TdfaRunner.java:351), and there is no split arithmetic to preserve —
+  PatternCompiler.java:199 passes the identical value to both engines
+  (the "half each" prose is fiction, see C39). Target: `TdfaRunner(Tdfa)`
+  sole constructor, `EngineBackend.generate(Tdfa)` (one implementation,
+  documented not-shipped-API), `"(TDFA)V"` replaces the emitted
+  `LDC`+`"(TDFA)J)V"` sites (TdfaAsmBackend.java:296–297, 2448–2449),
+  `Budgets.runtimeMemoAllowance` loses its last production caller.
+  Nothing breaks: generated classes are in-memory only (AOT is a
+  wishlist TODO), no test pins the constructor shape; blast radius is
+  ~10 test/doc sites (inventoried in the review, PR #102 series).
+  Pre-1.0, so the public-constructor removal is policy-clean.)
 - **C3 — `Strategy.TRIGGER`** (S, remove/alias). The enum javadoc admits the
   rung "now traces RAW_SCAN" — the trigger scan *is* the raw scan since #97.
   The value survives as a forced-rung identity in the fuzzer and three
   battery tests. Merge into `RAW_SCAN` (keep the trace string stable where
   the fuzzer parses it).
+  **Verdict: remove** (cluster A review, verified). `trace(TRIGGER)` is
+  emitted nowhere — trigger paths trace RAW_SCAN (TdfaRunner.java:1680,
+  1695) and the emitted ladder delegates to `triggerScanTop`/
+  `unitTriggerTop` (whose javadoc at 1914 still says "Memoized
+  search-DFA trigger scan" — reword, see C40). Forcing TRIGGER and
+  RAW_SCAN execute byte-identical work (same switch arm 1271–1272; the
+  5-arg `triggerScan`'s `force` param is literally unused), so the
+  fuzzer/batteries lose zero coverage and drop one redundant pass each;
+  StrategyConformanceTest compares enums, never names. Collapse the
+  4-arg/5-arg `triggerScan` pair into one method while there. If the
+  memo is ever restored the rung re-diverges — a two-line revert.
 - **C4 — `Tdfa` G3 lazy caches** (S, simplify — already decided, execute).
   `stopMaskTableCache`, `posFlagDepsCache`, `absBeginBoundCache` were
   `@MemoCache`-annotated benign-race lazy fields whose W4 disposition
@@ -73,6 +106,37 @@ capped them is largely still here. The tradeoffs doc already flags this
   gate (RunnerFinalityGateTest) stays; decide whether the annotation type
   itself stays as the mandated shape for any future cache (the doc says yes)
   or goes until needed. Record it; one-line either way.
+  **Verdict: keep** (cluster A review). The gate actively parses the
+  annotation in three branches (RunnerFinalityGateTest.java:119–127, 147) —
+  with the allowlist empty those branches are the ratchet's teeth; the
+  restoration criteria are live (TODO.md:17). Zero runtime cost (RUNTIME
+  retention, no runtime reader); deletion costs a gate rewrite plus
+  re-adding both when a cache returns. One touch for W5's landing note:
+  the doc says "statics allowlist exactly the four justified entries"
+  (runner-immutability.md:258–259) while the gate correctly carries two
+  (`TRACE`, `anyForced`) because `TRACE_BUF`/`FORCED` are final
+  containers skipped by construction.
+
+### New items found by the cluster A review
+
+- **C39 — the "per-engine half-split" budget contract is fiction** (S,
+  remove). Budgets.java:50–54 and TdfaAsmBackend.java:103–107 document a
+  two-engine pattern "splits the residual in half per engine" — no such
+  arithmetic exists: PatternCompiler.java:199 passes the identical
+  allowance to both engines, and the runner ignores it entirely (C2).
+  No behavioral consequence, but it misleads anyone reasoning about the
+  budget contract (ExecutionRamCheckTest.java:92 shows the note-side
+  wording was already scrubbed while the javadocs kept the claim).
+  C2's landing deletes these paragraphs wholesale; tracked separately so
+  the doc-integrity fix happens even if C2 slips.
+- **C40 — stale memo prose inventory** (S, remove). The memo deletions
+  left a wider prose trail than C1–C3 enumerate:
+  TdfaRunner.java:1914–1916 (`triggerScanTop` javadoc still says
+  "Memoized search-DFA trigger scan"), Tdfa.java:384 (names the deleted
+  memo among consumers), Tdfa.java:1081, Tdfa.java:1170, Budgets.java:8–9
+  and 23–25, DifferentialFuzzer.java:121–124 (stretched-input comment
+  claims the memoized path "actually runs"). One doc-truth pass closes
+  them all; each C1/C2/C3 PR carries the sites in its blast radius.
 
 ## B. Runner dispatch ladder (`TdfaRunner`, 3 474 lines)
 
@@ -296,3 +360,10 @@ capped them is largely still here. The tradeoffs doc already flags this
   the three lazy caches are constructor-final now, the duplicated javadoc
   went with them, and the finality gate's memo allowlist is empty).
   7 delegated cluster reviews running.
+- **2026-10-28 (update 2)** — **cluster A verdicts in** (delegated review):
+  C1 remove (dead caps, plus never-referenced `WALK_STATE_TABLE_BYTES`),
+  C2 simplify (memoBudgetBytes is write-only; no split arithmetic exists),
+  C3 remove (TRIGGER never traced; forced-TRIGGER ≡ forced-RAW_SCAN
+  byte-identical), C5 keep (gate's ratchet teeth). Two new items:
+  C39 (fictional half-split prose), C40 (stale memo prose inventory).
+  List grows to 40 items; clusters B–H still in review.
