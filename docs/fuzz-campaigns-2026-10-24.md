@@ -200,6 +200,16 @@ Stacks 100 % `java.util.regex.Pattern$*`. The `JURLANE_GUARD` predicate
 | 7448041313256672922 | `((?:(?:.(?:\D??){2,}?)*(?:\udc21 (?:\udc21))\udc00){3,})` | clean |
 | 3626555931799142662 | `(?:(.{0,5}?(.))*)*\U0001d504\n` | clean |
 
+**Update 2026-10-28 — guarded (fuzz24/f6).** The predicate now also
+matches the two lazy families: a range-quantified wide inside a
+lazy-unbounded group (`(.{0,6}?)*?` — `LazyLoop` has none of greedy
+`Loop`'s failed-position memo) and two multi-quantified wides inside a
+range-counted group (`(.*?.*?){2,6}`). The clean lookalikes stay
+compared — greedy loops are memoized, `\D??`/`{0,1}` (Ques) bodies never
+fan out — pinned both ways in `JurOracleBombTest`, with the crafted bomb
+shapes demonstrated against the live oracle. Guard rate 0.32 % → 0.34 %
+of jur cases (200 k-case lanes).
+
 ## Finding 7 — BUDGET_REJECT rate ×13 (watch item)
 
 0.069 % of cases (≈ 116.2 k / 168.9 M) vs 0.005 % on the 2026-10-16 jur
