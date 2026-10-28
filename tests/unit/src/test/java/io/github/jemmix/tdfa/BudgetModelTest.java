@@ -246,17 +246,17 @@ class BudgetModelTest {
         }
     }
 
-    /** The walk-block memo (wide-codepoint dispatch) is budget-bounded:
-     *  per-state id tables and 512-int blocks are charged against the
-     *  runner's walk share; over it, dispatch falls back to binary search
-     *  and the match answer is unchanged. */
+    /** Wide-codepoint dispatch is budget-independent and correct: the walk
+     *  paths binary-search the state's ranges for codepoints past the flat
+     *  tables (the walk-block memo that used to serve them is deleted —
+     *  see docs/search-dfa-memo-tradeoffs.md), so a tiny runtime budget
+     *  cannot change the match answer. */
     @Test
-    void walkMemoIsBudgetBoundedAndCorrect() {
-        System.setProperty(Budgets.RUNTIME_MEMORY_PROP, "20480"); // 2 KB walk share -> floor
+    void wideCodepointDispatchIsBudgetBoundedAndCorrect() {
+        System.setProperty(Budgets.RUNTIME_MEMORY_PROP, "20480"); // tiny runtime budget
         try {
             Pattern p = Pattern.compile("[\\x{400}-\\x{600}]{2,}");
-            // Wide-codepoint scans exercise WalkIndex; the capped memo must
-            // still answer exactly (binary-search fallback).
+            // Wide-codepoint walks must answer exactly whatever the budget.
             assertThat(p.matcher("\u0451\u04FF\u0500x").find()).isTrue();
             assertThat(p.matcher("x\u0451x").find()).isFalse();
             assertThat(p.matcher("\u05FF\u0400\u0401").find()).isTrue();

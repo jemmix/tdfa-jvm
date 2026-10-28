@@ -1,12 +1,16 @@
-# The search-DFA memo — priced tradeoffs and its deletion
+# The match-time memos — priced tradeoffs and their deletion
 
-Decision record for the search-DFA memo (`SearchDfa`, the lazily
+Decision record for the two lazily materialized match-time structures the
+runner used to carry: the **search-DFA memo** (`SearchDfa`, the lazily
 determinized `.*?`+pattern automaton that served the trigger rung above
-2 048 chars). Converted to the honest-cache shape in the
-[immutability program](runner-immutability.md) W2 (#95), then **deleted
-outright** — the measured regime did not justify its keep-cost. This
-page preserves the numbers so the decision can be re-litigated with
-evidence, and names the restoration criteria.
+2 048 chars) and the **walk-block memo** (`WalkIndex`, per-state
+512-codepoint dispatch blocks for the walk paths past the flat Latin-1
+tables). The first was converted to the honest-cache shape in the
+[immutability program](runner-immutability.md) W2 (#95) and then
+**deleted** (#97); the second got the same conversion in W3 (#96) and
+the same deletion (#98) once measured. This page preserves the numbers
+so both decisions can be re-litigated with evidence, and names the
+restoration criteria.
 
 All measurements: Apple M1, JDK 26, 16 KB–256 KB inputs, min-of-windows,
 strategy traces verified per row (which rung actually served). Where a
@@ -126,3 +130,60 @@ the immutability invariant unchanged (L1 on the carrier, L2 pure
 The budget knob meanwhile: 16 MiB/pattern was never an allocation, but
 2 MiB is the defensible ceiling for the walk memo if it is ever
 revisited — nothing sensible measured above ~1 MB.
+
+## Part II — the walk-block memo (`WalkIndex`), same treatment
+
+The walk memo served the WALK paths (extract/matches loops): for
+codepoints past the flat Latin-1 tables it turned "binary-search the
+state's char-class ranges" into one array load, via per-state lazily
+published immutable 512-codepoint blocks. After W3 it was the last
+shared, thread-safe mutable structure in the engine cluster.
+
+### Measurements (alternating same-session A/B, min across runs; two machine states — quiet and thermally noisy — shown where the sign flipped)
+
+| shape | ranges/state | memo (current) | no memo (binary search) | memo occupied |
+|---|---:|---:|---:|---:|
+| explicit Cyrillic class `[А-я]+@…` | ~2 | 32–40 | **27–28** | 21 KB / 9 blocks |
+| mixed wide `[\p{L}\p{N}]{3,}:` | ~600 | 50–65 | **51–52** | 10 KB / 4 blocks |
+| wide-class extract `(\p{L}{2,})x` | ~600 | 44 / 55 | 46 / **47** | 10 KB / 4 blocks |
+| cold vs warm (memo) | | ~1.0× on every shape | — | |
+
+Reading:
+
+- **The memo never shows a robust win.** On many-range wide-class shapes
+  — its theoretical home turf (1 array load vs ~10 binary-search
+  compares) — the two dispatch forms land within noise of each other
+  (±10 %, sign flipping with machine state): dispatch is a minority of
+  per-char walk cost (ops, regs, masks dominate). On few-range explicit
+  classes — keywords, bounded classes, the common case — the binary
+  search is 1–2 compares and **beats the memo's 3 dependent loads by
+  13–31 % in every session**.
+- **No warmth value**: cold ≈ warm everywhere; blocks build in
+  microseconds; occupancy 4–9 blocks (10–21 KB) — there was no
+  inter-call warmth worth sharing, which was the entire reason the
+  structure was shared and thread-safe.
+- **Per-`Matcher` confinement was strictly dominated**: same wash
+  economics (the lookup itself loses; sharing was never the issue), plus
+  plumbing — several walk paths (`matchFromFast` et al.) carry no
+  `MatchScratch`.
+- **Precompute-everything** enumerates cheaply (content is a pure
+  function of (state, block); < 1 ms, ~900 KB for the wide-class toys)
+  but is pointless when the dense lookup loses to the search on common
+  shapes, and explodes to ~GB on dictionary-scale wide-class DFAs — the
+  exact class the caps existed for.
+
+### Decision
+
+Delete (#98). Every walk dispatches via the binary search that already
+existed as the exact first-class fallback. Consequences: the runner
+cluster reaches **absolute** frozen-at-construction — no atomics, no
+CAS, no cap markers, no "lives in a final container" clause — and the
+invariant's second sentence ("caches are unobservable") becomes vacuously
+true. The only shapes that could miss it are unicode-heavy
+many-hundred-range class walks, where it measures within noise; that
+claim is recorded here with data.
+
+Restoration criteria (both memos): see Part I's list; the walk memo's
+trigger would be a measured regime where wide-class walks dominate AND
+binary search demonstrably bottlenecks — no such shape was found in two
+days of probing.

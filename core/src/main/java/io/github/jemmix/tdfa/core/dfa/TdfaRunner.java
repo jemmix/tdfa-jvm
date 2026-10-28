@@ -83,7 +83,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     /**
      * DFAs above this state count skip the EAGER per-state x latinLimit ASCII
      * dispatch tables (asciiTarget + asciiRangeFlat ≈ 1 KB/state at the 128-wide
-     * tier) and use the lazy walk blocks / binary search instead. A 234 K-state
+     * tier) and use the binary search instead. A 234 K-state
      * DFA would otherwise retain ~228 MB of dispatch tables — more than ALL of
      * its Tdfa tables combined; every normal post-minimize DFA (e.g. dictionary:
      * 6.8 K states) stays far below the cap and keeps the direct-dispatch fast
@@ -141,9 +141,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     final int[] wholeRhp;
     /**
      * This runner's share of the pattern's runtime RAM budget (see the
-     * constructor overload): caps the lazy walk-block memo (the search-DFA
-     * memo this used to cap was deleted — see
-     * docs/search-dfa-memo-tradeoffs.md).
+     * constructor overload). VESTIGIAL since both lazy memos it capped were
+     * deleted (see docs/search-dfa-memo-tradeoffs.md): retained for the
+     * public constructor signature and the facade's budget accounting; the
+     * budget-split cleanup rides the review TODO.
      */
     final long memoBudgetBytes;
 
@@ -168,7 +169,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      */
     private final byte[] stopMaskUniform;
 
-    private final WalkIndex walkIdx;
     /**
      * Tight 128-entry table for the SIMULATIONS: constant stride keeps the
      * hot loop's machine code compact (a 256-stride table measurably slows
@@ -335,17 +335,14 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     }
 
     /**
-     * Construct with an explicit lazy-memo budget: the bytes this runner's
-     * search-DFA memo (rows + blocks) and walk-block memo may retain,
-     * partitioned per the weight model (see {@link Budgets}). The facade
-     * derives the budget from the pattern's runtime RAM budget MINUS the
-     * retained artifact tables (the end-of-compile execution-RAM check;
-     * see {@link Budgets#runtimeMemoAllowance(long)}) and hands HALF the
-     * residual to a pattern's SECOND engine (the dedicated whole/anchored
-     * runner beside the find engine), keeping the PATTERN's combined lazy
-     * memos within one {@code tdfa.budget.runtime.memory}; the default
-     * constructor uses the whole budget for the shared-single-engine case
-     * (core-tier callers that skip the facade's check).
+     * Construct with an explicit lazy-memo budget. HISTORICAL: the two lazy
+     * memos this budget capped (search-DFA rows/blocks, walk blocks) are
+     * both deleted — see docs/search-dfa-memo-tradeoffs.md — so the runner
+     * retains nothing lazy; the parameter survives for the public surface
+     * and the facade's end-of-compile execution-RAM check ({@link
+     * Budgets#runtimeMemoAllowance(long)}, which still splits a pattern's
+     * residual across its engines and rejects compiles whose tables alone
+     * overshoot the runtime budget).
      *
      * @param memoBudgetBytes lazy-memo byte budget for this runner (&gt;0)
      */
@@ -411,7 +408,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             (literalNeedle == null && (tdfa.stateMeta[tdfa.startState] & 1) == 0) ? buildStartBits() : null;
         this.maskedAcceptStates = buildMaskedAcceptStates();
         this.rangeMaskGates = rangeMaskGates(tdfa);
-        this.walkIdx = new WalkIndex(this, memoBudgetBytes);
     }
 
     /**
@@ -966,7 +962,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * deleted continuations ({@link Tdfa#wholeRanges}).
      *
      * <p>Transition machinery is a verbatim transplant of {@link #extractFrom}'s
-     * (flat dispatch / walk blocks / most-specific-mask ownership with dead
+     * (flat dispatch / binary search / most-specific-mask ownership with dead
      * markers, entry masks checked before ops run); only the accept protocol
      * differs: no stop table, one gate + φ application at EOF.
      *
@@ -1053,11 +1049,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 // Disjoint ranges: at most one entry contains c, so entry
                 // priority is moot and the flat table is exact.
                 ri = arf[state * limit + c];
-            } else if (rangesDisjoint && c < 0x10000) {
-                ri = walkIdx.walkRangeIndex(state, c);
-                if (ri == -2) {
-                    ri = Integer.MIN_VALUE;
-                }
             } else {
                 ri = Integer.MIN_VALUE;
             }
@@ -1457,15 +1448,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 // Disjoint ranges: at most one entry contains c, so entry
                 // priority is moot and the flat table is exact.
                 ri = arf[state * limit + c];
-            } else if (rangesDisjoint && c < 0x10000) {
-                // Beyond the flat table (or tableless giant DFA — dispatch
-                // tables skipped above ASCII_TABLE_MAX_STATES): lazy walk
-                // block (one array load) or, past the block cap, the binary
-                // search below.
-                ri = walkIdx.walkRangeIndex(state, c);
-                if (ri == -2) {
-                    ri = Integer.MIN_VALUE;
-                }
             } else {
                 ri = Integer.MIN_VALUE;
             }
@@ -2210,11 +2192,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             int ri;
             if (c < limit) {
                 ri = arf[state * limit + c];
-            } else if (c < 0x10000) {
-                ri = walkIdx.walkRangeIndex(state, c);
-                if (ri == -2) {
-                    ri = Integer.MIN_VALUE;
-                }
             } else {
                 ri = Integer.MIN_VALUE;
             }
@@ -2695,17 +2672,11 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             int riFlat;
             if (arf != null && c < limit) {
                 riFlat = arf[state * limit + c];
-            } else if (rangesDisjoint && c < 0x10000) {
-                // tableless giant DFA (see ASCII_TABLE_MAX_STATES): walk blocks
-                riFlat = walkIdx.walkRangeIndex(state, c);
-                if (riFlat == -2) {
-                    riFlat = Integer.MIN_VALUE;
-                } // block cap: binary search
             } else {
                 riFlat = Integer.MIN_VALUE;
             }
             if (riFlat != Integer.MIN_VALUE) {
-                // disjoint flat/block lookup: exact (priority moot, single entry)
+                // disjoint flat lookup: exact (priority moot, single entry)
                 if (riFlat >= 0) {
                     int mo = (base + riFlat) * 5;
                     int target = rg[mo + 2];
