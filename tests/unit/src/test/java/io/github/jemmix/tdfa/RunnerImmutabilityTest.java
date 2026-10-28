@@ -30,11 +30,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <ul>
  * <li><b>Hammer</b> — N threads scan one shared {@code Pattern} over
- * multi-KB inputs (wide classes exercise the walk-block memo;
- * supplementary segments exercise the codepoint paths), on both tiers
- * (the emitted engine and the interpreter). Every thread's byte-for-byte
- * protocol must equal every other's AND a cold artifact twin's: warm ==
- * cold == concurrent.</li>
+ * multi-KB inputs (wide classes exercise the binary-search dispatch past
+ * the flat tables; supplementary segments exercise the codepoint paths),
+ * on both tiers (the emitted engine and the interpreter). Every thread's
+ * byte-for-byte protocol must equal every other's AND a cold artifact
+ * twin's: warm == cold == concurrent.</li>
  * <li><b>Freeze watchdog</b> — every frozen table (final primitive-array
  * field of the runner, its artifact, and the emitted classes' table
  * statics) is content-hashed before and after the hammer; any post-
@@ -164,7 +164,7 @@ final class RunnerImmutabilityTest {
         String[] out = new String[3];
         SplittableRandom rnd = new SplittableRandom(20261026L);
         for (int i = 0; i < out.length; i++) {
-            int len = 8192 + i * 4096; // long scans: the walk-block memo engages
+            int len = 8192 + i * 4096; // long scans: binary-search dispatch engages
             StringBuilder sb = new StringBuilder(len);
             for (int k = 0; k < len; k++) {
                 int r = rnd.nextInt(100);

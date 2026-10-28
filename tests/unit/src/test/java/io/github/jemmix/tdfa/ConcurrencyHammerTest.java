@@ -18,14 +18,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Conformance of the RegexEngine thread-safety contract ("effectively
- * immutable, safe for concurrent use") under real contention. Hammers the
- * lazily-materialized shared structure that remains — the per-state walk
- * blocks (walkBlockIdx) — and the engine tables beside it, all read
- * cross-thread. Every thread must observe bit-identical results to the
- * single-threaded reference, on inputs long enough to engage the
- * memoized paths (walk blocks on non-Latin-1 text; the search-DFA memo
- * this originally hammered was deleted — see
- * docs/search-dfa-memo-tradeoffs.md).
+ * immutable, safe for concurrent use") under real contention. With both
+ * lazy memos deleted (see docs/search-dfa-memo-tradeoffs.md), the engine
+ * holds only frozen tables — this now hammers that frozen-state contract
+ * itself: every thread must observe bit-identical results to the
+ * single-threaded reference on inputs that exercise every dispatch tier
+ * (flat tables, binary search on non-Latin-1 text, codepoint decoding).
  */
 class ConcurrencyHammerTest {
 
@@ -40,7 +38,7 @@ class ConcurrencyHammerTest {
             switch (r & 7) {
                 case 0 -> sb.append("word").append(r % 100).append(' ');
                 case 1 -> sb.append("setting ");
-                case 2 -> sb.append("лttesпословица").append(r % 10).append(' '); // Cyrillic: walk blocks
+                case 2 -> sb.append("лttesпословица").append(r % 10).append(' '); // Cyrillic: binary-search dispatch
                 case 3 -> sb.append("ing ".repeat(1 + (r % 3)));
                 case 4 -> sb.append('\n');
                 case 5 -> sb.append("Λγώ").append(r % 7); // Greek: non-Latin-1

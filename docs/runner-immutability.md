@@ -83,7 +83,10 @@ measured shape. The memo was **deleted**; the full pricing and the
 restoration criteria live in
 [search-dfa-memo-tradeoffs.md](search-dfa-memo-tradeoffs.md). The
 program's state-discipline work was the precondition: W2 made the
-fallback provably pure, so deletion became a one-rung change.
+fallback provably pure, so deletion became a one-rung change. The
+walk-block memo (G2) followed the same path one work item later (W3b):
+measured a wash at best and 13–31 % slower than its own fallback on
+few-range classes.
 
 The walk-block memo (G2) is the same argument one size smaller: lazily
 materialized 512-codepoint dispatch blocks for wide-class walks, with a
@@ -94,7 +97,7 @@ binary-search fallback that is always correct.
 | Group | Disposition | Why |
 |---|---|---|
 | G1 `SearchDfa` | ~~Honest cache~~ → **deleted outright** — the measured regime (codepoint-lane wide-class multi-KB scans, 2–7×) did not justify the keep-cost; the trigger rung serves via the raw scan ([tradeoffs](search-dfa-memo-tradeoffs.md), #97) | The honest-cache conversion (W2, #95) made the deletion safe: pure fallback, no state to reason about |
-| G2 `WalkIndex` | **Same honest shape, flattened**: per-state lazy table whose cells reference immutable blocks directly; atomic charge; delete the monitor, the id indirection, and the stale-id fallback — *landed (W3)* | Same reasoning; the double indirection (`cells→id→block`) exists only to serve locked growth |
+| G2 `WalkIndex` | ~~Honest shape, flattened~~ → **deleted** — measured a wash at best (within noise on many-range wide-class walks) and 13–31 % *slower* than the binary search on few-range classes, with zero warmth value ([tradeoffs](search-dfa-memo-tradeoffs.md), #98) | The honest-cache conversion (W3, #96) made deletion safe; dispatch keeps the exact first-class fallback |
 | G3 `Tdfa` caches | **Precompute at construction**; delete the three fields | Pure functions of final tables, each already computed on every runner/engine construction anyway — the "most precomputed" category, literally |
 | G4 `WORD_RANGES` | **Instance-`final`** (static-`final` cannot be assigned in an emitted `<init>`); emitted reads become GETFIELD | The one non-final emitted field; the second-instance rebind hazard dies |
 | G5 statics | **Stay, on the documented allowlist** the finality gate enforces: `TRACE`/`anyForced` (test instruments, off the answer path), `TRACE_BUF`/`FORCED` (final containers) | Conformance/fuzz hooks; WTRACE-style freeze-at-init already covers the compile knobs |
@@ -108,9 +111,11 @@ with justifications.
 
 ## The honest cache — done right
 
-One cache shape for the remaining lazy values (post-W2b, `WalkIndex` is
-the surviving instance; `SearchDfa` was its first application before
-deletion). Concretely, as `SearchDfa` had it:
+One cache shape for the remaining lazy values. *(Historical: `SearchDfa`
+was its first application (W2) and `WalkIndex` its last (W3) — both
+caches were subsequently deleted (W2b, W3b), so the shape currently has
+zero instances; it is recorded here as the mandated form for any future
+cache, with the tripwires unchanged.)* Concretely, as `SearchDfa` had it:
 
 - **Immutable entries.** A `Row` is `{final int[] words; final
   AtomicReferenceArray<Block> cells(128); final boolean accept}` —
@@ -237,6 +242,13 @@ delete-on-landing, history in git.
   referencing immutable blocks directly, atomic charge, monitor and
   stale-id fallback deleted; binary-search fallback unchanged. *(#96)*
   Exit: same gates as W2; allowlist G2 lines deleted.
+- [x] **W3b — WalkIndex deleted** (the same call, one memo later): the
+  walk memo measured a wash at best (within noise on many-range
+  wide-class walks) and 13–31 % slower than the binary search on
+  few-range classes, cold ≈ warm, occupancy 10–21 KB. Walks dispatch
+  via the exact binary search; the runner cluster reaches absolute
+  frozen-at-construction — no atomics, no containers. *(#98; numbers in
+  [search-dfa-memo-tradeoffs.md](search-dfa-memo-tradeoffs.md) Part II)*
 - [ ] **W4 — Tdfa precompute + emitted finality** (G3+G4):
   `posFlagDeps`/`absBeginBound`/stop-table computed in the constructor,
   three cache fields deleted; `WORD_RANGES` instance-final. Exit:
