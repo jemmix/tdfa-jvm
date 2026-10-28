@@ -889,25 +889,44 @@ public final class CampaignFuzzer {
      *  match is the leak no matter what our side reports (fuzz-found
      *  variants where BOTH sides carry a span, e.g.
      *  {@code (?:(.).){3,}Z} shapes whose failed earlier starts leave the
-     *  loop's last atomic span standing past the accepted match). Uses the
-     *  F= probe's first clause. */
+     *  loop's last atomic span standing past the accepted match). Checked
+     *  on every clause the leak can surface on: the F= probe's first match,
+     *  every I= iteration entry, and the R= restart clause — each probe
+     *  runs its own failed starts, so each can carry the stale write
+     *  (2026-10-24 finding 2: the I/R leaks escaped the F-only read and
+     *  landed as RESULT_MISMATCH). */
     static boolean leakedRestartSpan(String oracle, String vm) {
-        String oFirst = firstFindClause(oracle);
-        String vFirst = firstFindClause(vm);
-        if (oFirst == null || vFirst == null) {
+        if (clauseLeaks(firstFindClause(oracle), firstFindClause(vm))) {
+            return true;
+        }
+        List<String> oEntries = iEntries(oracle);
+        List<String> vEntries = iEntries(vm);
+        for (int i = 0; i < Math.min(oEntries.size(), vEntries.size()); i++) {
+            if (clauseLeaks(oEntries.get(i), vEntries.get(i))) {
+                return true;
+            }
+        }
+        return clauseLeaks(rClause(oracle), rClause(vm));
+    }
+
+    /** One bare span clause per side ({@code s..e (g1 g2 ...)}), group
+     *  counts agreeing: an oracle group span strictly outside the oracle's
+     *  own overall span is the leak. */
+    private static boolean clauseLeaks(String oClause, String vClause) {
+        if (oClause == null || vClause == null) {
             return false;
         }
-        int op = oFirst.indexOf('(');
-        int vp = vFirst.indexOf('(');
+        int op = oClause.indexOf('(');
+        int vp = vClause.indexOf('(');
         if (op < 0 || vp < 0) {
             return false; // a groupless clause cannot leak
         }
-        int[] overall = overallSpan(oFirst);
+        int[] overall = spanOf(oClause.substring(0, op).trim());
         if (overall == null) {
             return false;
         }
-        String[] oGroups = oFirst.substring(op + 1, oFirst.lastIndexOf(')')).split(" ");
-        String[] vGroups = vFirst.substring(vp + 1, vFirst.lastIndexOf(')')).split(" ");
+        String[] oGroups = oClause.substring(op + 1, oClause.lastIndexOf(')')).split(" ");
+        String[] vGroups = vClause.substring(vp + 1, vClause.lastIndexOf(')')).split(" ");
         if (oGroups.length != vGroups.length) {
             return false;
         }
@@ -921,20 +940,43 @@ public final class CampaignFuzzer {
         return false;
     }
 
-    /** "F=true 2..3 (0..0 2..3) I=[..." -> "F=true 2..3 (0..0 2..3)". */
+    /** "F=true 2..3 (0..0 2..3) I=[..." -> "2..3 (0..0 2..3)", or null when
+     *  the first find failed. */
     private static String firstFindClause(String proto) {
         if (!proto.startsWith("F=true ")) {
             return null;
         }
         int end = proto.indexOf(" I=[");
-        return end < 0 ? proto : proto.substring(0, end);
+        return (end < 0 ? proto : proto.substring(0, end)).substring("F=true ".length());
     }
 
-    private static int[] overallSpan(String clause) {
-        int s = clause.indexOf(' ', clause.indexOf("F=true "));
-        int e = clause.indexOf('(', s);
-        String span = (e < 0 ? clause : clause.substring(0, e)).substring(s + 1).trim();
-        return spanOf(span);
+    /** The I= section's entries, in order. Entries are concatenated with no
+     *  separator ("2..3 (0..0 2..3)6..7 (- 6..7)"), but each consumes its
+     *  overall span plus its own group clause, so the tokenizer never
+     *  mistakes a group span for an entry. */
+    private static List<String> iEntries(String proto) {
+        List<String> out = new ArrayList<>();
+        int open = proto.indexOf("I=[");
+        if (open < 0) {
+            return out;
+        }
+        int close = proto.indexOf(']', open);
+        if (close < 0) {
+            return out;
+        }
+        java.util.regex.Matcher m =
+            java.util.regex.Pattern.compile("\\d+\\.\\.\\d+( \\([^()]*\\))?").matcher(proto.substring(open + 3, close));
+        while (m.find()) {
+            out.add(m.group());
+        }
+        return out;
+    }
+
+    /** The R= restart clause ("R=true 6..7 (- 6..7)" -> "6..7 (- 6..7)");
+     *  null for {@code R=false} (nothing matched, nothing to leak). */
+    private static String rClause(String proto) {
+        int at = proto.indexOf(" R=true ");
+        return at < 0 ? null : proto.substring(at + " R=true ".length());
     }
 
     private static int[] spanOf(String s) {
