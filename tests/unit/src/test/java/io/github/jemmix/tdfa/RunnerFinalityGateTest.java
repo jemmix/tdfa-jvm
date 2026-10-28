@@ -19,22 +19,26 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * The finality gate of the runner-immutability program
- * (docs/runner-immutability.md): every non-final field on the match-time
- * classes is categorized, or the build fails.
+ * (docs/runner-immutability.md) — now in its permanent END-STATE form
+ * (post-W5): every non-final field on the match-time classes fails the
+ * build unless it is a sanctioned per-call carrier, a compile-time-only
+ * builder, or a justified test/debug static.
  *
- * <p>Rules, matching the doc's invariant:
+ * <p>The program's end state, enforced here:
  * <ul>
- * <li>Non-final <b>instance</b> fields on shared artifacts are legal only
- * while carrying {@link MemoCache} <em>and</em> sitting on the transition
- * allowlist below (each entry names the work item that deletes it). The
- * end state has an empty allowlist.</li>
- * <li>Non-final <b>static</b> fields must be on the static allowlist with
- * a justification line (test/debug instruments).</li>
+ * <li>Every instance field on every shared artifact (runner cluster,
+ * {@code Tdfa}) is <b>final</b> — no containers, no atomics, no
+ * laziness; both match-time memos were deleted after pricing
+ * (docs/search-dfa-memo-tradeoffs.md).</li>
+ * <li>Non-final <b>static</b> fields must sit on the static allowlist
+ * with a justification line (test/debug instruments: {@code TRACE},
+ * {@code anyForced}).</li>
  * <li>Per-call carriers (contractually single-threaded, per-{@code Matcher})
  * and compile-time-only builders are named exemptions — never caches.</li>
- * <li>Stale allowlist entries fail the gate: an entry whose field or class
- * no longer exists (or went final) must be deleted, so the allowlist only
- * ever shrinks.</li>
+ * <li>{@link MemoCache} exists as the sanctioned route for a FUTURE lazy
+ * field: {@link #noMemoCacheFieldsExist} fails on any use, so adding one
+ * means re-opening this gate deliberately — entry, purity argument, and
+ * deleting work item — never slipping through.</li>
  * </ul>
  *
  * <p>Scope: {@code core.dfa} + {@code core.engine}, the packages the doc
@@ -163,6 +167,30 @@ final class RunnerFinalityGateTest {
             }
         }
         assertThat(errors.toString()).as("stale allowlist entries").isEmpty();
+    }
+
+    /**
+     * The end state (W5): NO field anywhere in scope carries
+     * {@link MemoCache} — the allowlist is empty and stays empty. The
+     * annotation survives as the sanctioned route for a future lazy
+     * cache: using it means re-opening this gate deliberately (entry +
+     * purity argument + deleting work item), never slipping through.
+     */
+    @Test
+    void noMemoCacheFieldsExist() throws Exception {
+        assertThat(MEMO_ALLOWLIST).as("the transition allowlist must stay empty post-W4").isEmpty();
+        StringBuilder errors = new StringBuilder();
+        for (String pkg : PACKAGES) {
+            for (Class<?> c : classesOf(pkg)) {
+                for (Field f : c.getDeclaredFields()) {
+                    if (f.isAnnotationPresent(MemoCache.class)) {
+                        errors.append("@MemoCache present in the end state (re-open the gate deliberately): ")
+                            .append(c.getName()).append('.').append(f.getName()).append('\n');
+                    }
+                }
+            }
+        }
+        assertThat(errors.toString()).as("memo-cache fields in the end state").isEmpty();
     }
 
     /**

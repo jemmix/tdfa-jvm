@@ -1,5 +1,13 @@
 # Runner immutability — frozen artifacts, honest caches
 
+> **Program complete (#93–#100, 2026-10-28).** The end state: every
+> field on a compiled artifact and its engines is `final` — both
+> match-time memos were deleted on measured evidence after their
+> honest-cache conversions made the fallbacks provably pure
+> ([pricing](search-dfa-memo-tradeoffs.md)); the only mutable match-time
+> state is the sanctioned per-call carriers; the gate below enforces it
+> permanently. This page is the decision record.
+
 The match-time runner carries lazy mutable state on shared artifacts.
 The 2026-10-24 jur soak caught it misbehaving once in 168.9 M cases
 ([finding 1](fuzz-campaigns-2026-10-24.md) — a forced rung disagreeing
@@ -254,21 +262,38 @@ delete-on-landing, history in git.
   three cache fields deleted; `WORD_RANGES` emitted `ACC_FINAL`. Exit:
   allowlist G3/G4 lines deleted; twin-compile determinism test still
   green (construction cost moves inside the existing compile budget). *(#99)*
-- [ ] **W5 — Gate to end state** (G5): statics allowlist exactly the
-  four justified entries; per-call carriers and compile-time builders
-  named in the gate; `@MemoCache` set empty; zero non-final fields
-  outside honest-cache containers — the invariant now mechanically
-  true. Exit: gate green with empty memo allowlist.
-- [ ] **W6 — Bench + close**: both tiers through `scripts/bench-regression.sh`
-  (15 % rule) incl. long-input rows; F1 closed by construction in the
-  2026-10-24 findings doc; TODO.md line updated; this page's boxes
-  checked and the WBS retired.
+- [x] **W5 — Gate to end state** (G5): statics allowlist exactly the
+  justified test/debug entries; per-call carriers and compile-time
+  builders named in the gate; `@MemoCache` set empty (any future use
+  fails `noMemoCacheFieldsExist` until the gate is re-opened
+  deliberately); zero non-final fields anywhere in scope — the
+  invariant now mechanically true, and stronger than planned: no
+  honest-cache containers remain either, both memos having been
+  deleted on measured evidence. *(#100)*
+- [x] **W6 — Bench + close**: both tiers through `scripts/bench-regression.sh`
+  (15 % rule) at every step of the program, all green; F1's memo-suspicion
+  retired by deletion in the 2026-10-24 findings doc (the ORIGIN_SIM
+  leftmost bug stays its own TODO item — it was never memo state);
+  TODO.md program line retired; this page's boxes checked and the WBS
+  retired. *(#100 — the full-JMH "for the record" run was attempted at
+  close but the host was externally contended (load ~130, unrelated
+  updater); rerun it on a quiet host before the next baseline
+  re-capture)*
 
-W1 is deliberately first: the tripwires convert this design from prose
-into tests before the risky refactor begins, and they stay as the
-permanent regression net. If the long-input benches ever let the memo
-be deleted outright (the alternatives section), W2–W4 collapse — the
-audit and gates remain.
+**Program complete (#93–#100).** The end state exceeded the original
+plan: instead of "most immutable, the rest in honest caches", the
+measured evidence deleted both caches outright — the artifacts are
+frozen absolutely (every field final, no atomics, no containers), the
+only mutable match-time state is the sanctioned per-call carriers, and
+the tripwires (gate, hammer, freeze watchdog, determinism double-run,
+warm replay) stay as the permanent net. What the honest-cache chapters
+preserve is the mandated SHAPE for any future cache, not a live
+instance.
+
+W1 was deliberately first: the tripwires converted this design from
+prose into tests before the risky refactor began, and they stay as the
+permanent regression net. The alternatives section's deletion branch is
+the one that fired (W2b, W3b) — the audit and gates remain.
 
 ## Non-goals
 
