@@ -187,43 +187,13 @@ public final class Budgets {
         return compileMemoryBytes() / BudgetWeights.MINIMIZE_CELL_BYTES;
     }
 
-    // ===== runtime RAM-derived caps (lazy per-pattern memos) =====
-
-    /**
-     * Memoized search-DFA row cap for a runner whose live-set bitsets are
-     * {@code stateWords} ints wide, under an explicit lazy-memo byte
-     * budget: half the budget in weighted rows at the default budget (the
-     * row share of the eighths partition — rows 4/8, {@link
-     * #sdfaMaxBlocks(long)} 3/8, {@link #walkMaxBytes(long)} 1/8). The
-     * facade hands a pattern's second engine half the budget (per-pattern
-     * runtime split, see the class doc).
-     */
-    public static int sdfaMaxRows(int stateWords, long budgetBytes) {
-        long rowBytes =
-            BudgetWeights.RUNTIME_ROW_FIXED_BYTES + (long) stateWords * BudgetWeights.RUNTIME_ROW_STATE_BYTES;
-        long rows = (budgetBytes / 2) / rowBytes;
-        return (int) Math.max(BudgetWeights.RUNTIME_MIN_ROWS, Math.min(rows, Integer.MAX_VALUE));
-    }
-
-    /**
-     * Memoized search-DFA block cap under an explicit lazy-memo byte
-     * budget: three eighths of it in weighted 512-codepoint blocks (see
-     * the partition note in {@link #sdfaMaxRows(int, long)}).
-     */
-    public static int sdfaMaxBlocks(long budgetBytes) {
-        long blocks = (budgetBytes * 3 / 8) / BudgetWeights.RUNTIME_BLOCK_BYTES;
-        return (int) Math.max(BudgetWeights.RUNTIME_MIN_BLOCKS, Math.min(blocks, Integer.MAX_VALUE));
-    }
-
-    /**
-     * The walk-block memo's share of an explicit lazy-memo byte budget:
-     * one eighth (see the partition note in {@link #sdfaMaxRows(int,
-     * long)}); floored so the minimum block set always fits.
-     */
-    public static long walkMaxBytes(long budgetBytes) {
-        return Math.max((long) BudgetWeights.WALK_MIN_BLOCKS * BudgetWeights.WALK_BLOCK_BYTES,
-            budgetBytes / BudgetWeights.RUNTIME_WALK_DIVISOR);
-    }
+    // ===== runtime RAM-derived caps =====
+    // (The lazy-memo cap derivations that lived here — sdfaMaxRows,
+    //  sdfaMaxBlocks, walkMaxBytes and the eighths partition — were deleted
+    //  with the memos they bounded; see docs/search-dfa-memo-tradeoffs.md.
+    //  runtimeMemoryBytes/runtimeMemoAllowance stay as the compile-time
+    //  execution-RAM bound: a compile whose retained tables alone overshoot
+    //  the runtime budget still rejects.)
 
     private static int clampInt(long v) {
         return (int) Math.max(1, Math.min(v, Integer.MAX_VALUE));

@@ -160,59 +160,13 @@ public final class BudgetWeights {
      * budget. At the 128 MiB default: 8 MiB / 80 B = ~100 K configs.
      */
     public static final int CLOSURE_SPIKE_DIVISOR = 16;
-    /**
-     * Fixed part of one memoized search-DFA row: the 128 block-id cells
-     * (512 B), the interning map entry, and snapshot-copy amortization.
-     * The variable part (live-set words, cloned for interning) is
-     * {@link #RUNTIME_ROW_STATE_BYTES} per DFA state.
-     */
-    public static final int RUNTIME_ROW_FIXED_BYTES = 640;
 
-    // ===== runtime memory weights (bytes) =====
-    /**
-     * Variable part of one search-DFA row, per DFA state (bitset word +
-     * its clone in the intern key).
-     */
-    public static final int RUNTIME_ROW_STATE_BYTES = 8;
-    /**
-     * One memoized 512-codepoint transition block (int[512] + interning
-     * overhead) is assumed to weigh 2176 bytes.
-     */
-    public static final int RUNTIME_BLOCK_BYTES = 2176;
-    /**
-     * Floor caps so a tiny runtime budget still yields a usable memo.
-     */
-    public static final int RUNTIME_MIN_ROWS = 16;
-    /**
-     * Floor cap for search-DFA blocks, so a tiny runtime budget still
-     * yields a usable memo.
-     */
-    public static final int RUNTIME_MIN_BLOCKS = 16;
-    /**
-     * The runtime RAM budget is partitioned across the per-pattern lazy
-     * match-time memos in eighths: search-DFA rows 4/8, search-DFA
-     * transition blocks 3/8, and the walk-block memo (wide-codepoint
-     * dispatch, {@code WalkIndex}) 1/8. Every lazy structure a runner
-     * retains draws from one of the three shares.
-     */
-    public static final int RUNTIME_WALK_DIVISOR = 8;
-
-    // ===== runtime memo partition =====
-    /**
-     * One per-state walk-block id table ({@code int[128]} + the
-     * AtomicReferenceArray slot), the walk memo's per-state share.
-     */
-    public static final int WALK_STATE_TABLE_BYTES = 516;
-    /**
-     * One memoized 512-codepoint walk block (int[512] + overhead) — the
-     * same shape as {@link #RUNTIME_BLOCK_BYTES}.
-     */
-    public static final int WALK_BLOCK_BYTES = 2176;
-    /**
-     * Floor for walk blocks so a tiny runtime budget keeps the memo
-     * usable.
-     */
-    public static final int WALK_MIN_BLOCKS = 64;
+    // ===== runtime memo weights — DELETED with the memos they priced =====
+    // (RUNTIME_ROW_*, RUNTIME_BLOCK_*, RUNTIME_MIN_*, RUNTIME_WALK_DIVISOR,
+    //  WALK_STATE_TABLE_BYTES, WALK_BLOCK_BYTES, WALK_MIN_BLOCKS — the
+    //  eighths partition and its weights went with the search-DFA and
+    //  walk-block memos; see docs/search-dfa-memo-tradeoffs.md. The runtime
+    //  RAM budget itself stays, as the compile-time execution-RAM bound.)
 
     private BudgetWeights() {
     }

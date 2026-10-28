@@ -15,7 +15,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 - [ ] ORIGIN_SIM leftmost-start miss: forced rung, deterministic repro ([findings](docs/fuzz-campaigns-2026-10-24.md))
 - [ ] Review memo deletions; restore if unicode regimes matter ([pricing](docs/search-dfa-memo-tradeoffs.md))
-- [ ] Clean up vestigial memo budget split, weights, `memoBudgetBytes`
 - [ ] Triage 2026-10-24 jur soak findings ([findings](docs/fuzz-campaigns-2026-10-24.md))
 - [ ] JUR-compat re-base tail: both-lane soak, README numbers ([design](docs/jur-compat-default.md), [WBS](docs/jur-compat-wbs.md))
 - [ ] Watch JDK-8381696; retire `SKIP_RESTART_TAG_LEAK` on JDK fix ([analysis](docs/jdk-8381696-restart-tag-leak-fix.md))

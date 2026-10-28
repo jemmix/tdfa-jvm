@@ -54,7 +54,6 @@ class BudgetModelTest {
         assertThat(BudgetWeights.TNFA_BUILD_ACTION_TICKS).isEqualTo(5);
         assertThat(BudgetWeights.TNFA_EPS_EDGE_BYTES).isEqualTo(64);
         assertThat(BudgetWeights.KERNEL_CONFIG_BYTES).isEqualTo(80);
-        long rm = Budgets.runtimeMemoryBytes();
         assertThat(Budgets.maxDfaStates(0)).isEqualTo(524_288);
         // Perl mode adds the stop-table surcharge (int[n*64] = 256 B/state):
         assertThat(Budgets.maxDfaStates(BudgetWeights.STOP_TABLE_STATE_BYTES)).isEqualTo(262_144);
@@ -62,18 +61,11 @@ class BudgetModelTest {
         assertThat(Budgets.maxClosureSpikeBytes()).isEqualTo(8_388_608L);
         assertThat(Budgets.maxCfgEdges()).isEqualTo(4_194_304L);
         assertThat(Budgets.maxMinimizeNormCells()).isEqualTo(33_554_432L);
-        // 8 MiB row share (4/8) in weighted rows: fixed 640 B + 8 B/state-word,
-        // floored.
-        assertThat(Budgets.sdfaMaxRows(1, rm)).isEqualTo(12_945);
-        assertThat(Budgets.sdfaMaxRows(3125, rm)).isEqualTo(327);
-        // 6 MiB block share (3/8): the walk memo takes the last eighth.
-        assertThat(Budgets.sdfaMaxBlocks(rm)).isEqualTo(2_891);
-        // walk memo: 1/8 = 2 MiB, floored at the 64-block minimum.
-        assertThat(Budgets.walkMaxBytes(rm)).isEqualTo(2_097_152L);
-        // per-engine split: the budget-parameterized variants see half:
-        assertThat(Budgets.sdfaMaxRows(1, 8_388_608L)).isEqualTo(6_472);
-        assertThat(Budgets.sdfaMaxBlocks(8_388_608L)).isEqualTo(1_445);
-        assertThat(Budgets.walkMaxBytes(8_388_608L)).isEqualTo(1_048_576L);
+        // (The runtime memory budget's memo caps — sdfa rows/blocks, walk
+        //  blocks — were deleted with the memos they bounded; see
+        //  docs/search-dfa-memo-tradeoffs.md. runtimeMemoryBytes stays as
+        //  the compile-time execution-RAM bound via runtimeMemoAllowance.)
+        assertThat(Budgets.runtimeMemoryBytes()).isEqualTo(16_777_216L);
     }
 
     /** Properties override the defaults and take effect on the next call —
@@ -84,8 +76,8 @@ class BudgetModelTest {
         assertThat(Budgets.maxDfaStates(0)).isEqualTo(16);
         System.setProperty(Budgets.COMPILE_COMPUTE_PROP, "7777");
         assertThat(Budgets.compileComputeTicks()).isEqualTo(7_777L);
-        System.setProperty(Budgets.RUNTIME_MEMORY_PROP, "217600"); // ~37 blocks
-        assertThat(Budgets.sdfaMaxBlocks(Budgets.runtimeMemoryBytes())).isEqualTo(37);
+        System.setProperty(Budgets.RUNTIME_MEMORY_PROP, "217600");
+        assertThat(Budgets.runtimeMemoryBytes()).isEqualTo(217_600L);
         // and the pipeline sees it on the very next compile:
         assertThatCode(() -> Pattern.compile("ab|cd|ef|gh|ij")).isInstanceOf(PatternTooLargeException.class)
             .hasMessageContaining("pattern too large").hasMessageContaining(Budgets.COMPILE_MEMORY_PROP);

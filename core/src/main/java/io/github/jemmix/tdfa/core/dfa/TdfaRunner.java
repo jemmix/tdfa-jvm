@@ -139,14 +139,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     final int[] wholeBase;
     final int[] wholeCount;
     final int[] wholeRhp;
-    /**
-     * This runner's share of the pattern's runtime RAM budget (see the
-     * constructor overload). VESTIGIAL since both lazy memos it capped were
-     * deleted (see docs/search-dfa-memo-tradeoffs.md): retained for the
-     * public constructor signature and the facade's budget accounting; the
-     * budget-split cleanup rides the review TODO.
-     */
-    final long memoBudgetBytes;
 
     final int stateCount;
     final int stateWords; // # of 32-bit words in state bitsets
@@ -348,7 +340,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      */
     public TdfaRunner(Tdfa tdfa, long memoBudgetBytes) {
         this.tdfa = tdfa;
-        this.memoBudgetBytes = memoBudgetBytes;
+        // memoBudgetBytes: accepted and unused (both lazy memos deleted —
+        // see docs/search-dfa-memo-tradeoffs.md); the parameter stays for
+        // the public surface the facade and emitters call.
         this.stateMeta = tdfa.stateMeta;
         this.stateBase = tdfa.stateBase;
         this.stateFinalOpsOff = tdfa.stateFinalOpsOff;

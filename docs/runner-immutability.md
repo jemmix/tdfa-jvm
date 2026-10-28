@@ -1,6 +1,6 @@
 # Runner immutability — frozen artifacts, honest caches
 
-> **Program complete (#93–#100, 2026-10-28).** The end state: every
+> **Program complete (#93–#103, Oct 2026).** The end state: every
 > field on a compiled artifact and its engines is `final` — both
 > match-time memos were deleted on measured evidence after their
 > honest-cache conversions made the fallbacks provably pure
@@ -214,86 +214,34 @@ of reasoning about interleavings on the match path.
    publication are guarantees, not arguments). If a protocol ever
    returns, jcstress returns with it.
 
-## Work breakdown structure
+## Program record
 
-PR-sized chunks, heavier refactors first (after the tripwires that make
-them safe), each landing through the PR pipeline with its pinning test.
-House style per [jur-compat-wbs.md](jur-compat-wbs.md): open work only,
-delete-on-landing, history in git.
+Executed as a WBS of PR-sized chunks (tripwires first, heavier
+refactors next), 2026-10-26 → 2026-10-28, all through the PR pipeline;
+the itemized WBS is retired per house rule (open work only, history in
+git) — the PR trail: **#93** doc/groups/dispositions · **#94**
+tripwires + finding 1 de-mystified · **#95/#97** SearchDfa honest cache
+→ deleted on pricing · **#96/#98** WalkIndex honest cache → deleted on
+pricing · **#99** `Tdfa` precompute + emitted finality · **#102** gate
+sealed · **#103** remnant cleanup (budget split, weights, vestigial
+field). The full measurement record lives in
+[search-dfa-memo-tradeoffs.md](search-dfa-memo-tradeoffs.md).
 
-- [x] **W0 — This doc refined**: groups, dispositions, WBS replace the
-  coarse phase table. *(#93)*
-- [x] **W1 — Tripwires**: finality gate + `@MemoCache` allowlist
-  (documents today's G1–G4 mutability, green from day one); freeze
-  watchdog + concurrency hammer against the *current* structures;
-  fuzzer determinism double-run (`MEMO_STATE_MISMATCH`) and warm replay
-  (`-Pfuzz.warm=1`); replay finding 1's seed warm — reproduce or prove
-  not-warmth-dependent. *(#94 — reproduced deterministically cold; the
-  "unreproducible" premise was a solo-replay reporting gap; oracle
-  adjudicates the natural ladder right, forced ORIGIN_SIM wrong — its
-  leftmost fix is now TODO's own item)*
-- [x] **W2 — SearchDfa → honest cache** (G1; the involved one): rows
-  content-interned with lazy immutable blocks, lock-free cell reads,
-  atomic charge + refund, clock eviction, sticky `capped` deleted;
-  `triggerScan` keeps its exact-live-set raw fallback semantics. *(#95 —
-  charge-bound, eviction deliberately deferred to the bench's call)*
-  Exit: `synchronized` gone from `SearchDfa`; hammer, double-run, gate
-  allowlist (G1 lines) green; bench gate on long-input rows.
-- [x] **W2b — SearchDfa deleted** (the alternatives-section call, made
-  with numbers): the memo's regime proved narrow (codepoint-lane
-  wide-class multi-KB scans only; 2–7× there, ~1× elsewhere) and the
-  no-memo worst case a flat ~63 ns/ch on every measured shape — never
-  worse than re2j on the board. Priced tradeoffs, restoration criteria,
-  and the two-level restoration shape recorded in
-  [search-dfa-memo-tradeoffs.md](search-dfa-memo-tradeoffs.md). *(#97)*
-- [x] **W3 — WalkIndex → honest cache** (G2): per-state lazy tables
-  referencing immutable blocks directly, atomic charge, monitor and
-  stale-id fallback deleted; binary-search fallback unchanged. *(#96)*
-  Exit: same gates as W2; allowlist G2 lines deleted.
-- [x] **W3b — WalkIndex deleted** (the same call, one memo later): the
-  walk memo measured a wash at best (within noise on many-range
-  wide-class walks) and 13–31 % slower than the binary search on
-  few-range classes, cold ≈ warm, occupancy 10–21 KB. Walks dispatch
-  via the exact binary search; the runner cluster reaches absolute
-  frozen-at-construction — no atomics, no containers. *(#98; numbers in
-  [search-dfa-memo-tradeoffs.md](search-dfa-memo-tradeoffs.md) Part II)*
-- [x] **W4 — Tdfa precompute + emitted finality** (G3+G4):
-  `posFlagDeps`/`absBeginBound`/stop-table computed in the constructor,
-  three cache fields deleted; `WORD_RANGES` emitted `ACC_FINAL`. Exit:
-  allowlist G3/G4 lines deleted; twin-compile determinism test still
-  green (construction cost moves inside the existing compile budget). *(#99)*
-- [x] **W5 — Gate to end state** (G5): statics allowlist exactly the
-  justified test/debug entries; per-call carriers and compile-time
-  builders named in the gate; `@MemoCache` set empty (any future use
-  fails `noMemoCacheFieldsExist` until the gate is re-opened
-  deliberately); zero non-final fields anywhere in scope — the
-  invariant now mechanically true, and stronger than planned: no
-  honest-cache containers remain either, both memos having been
-  deleted on measured evidence. *(#100)*
-- [x] **W6 — Bench + close**: both tiers through `scripts/bench-regression.sh`
-  (15 % rule) at every step of the program, all green; F1's memo-suspicion
-  retired by deletion in the 2026-10-24 findings doc (the ORIGIN_SIM
-  leftmost bug stays its own TODO item — it was never memo state);
-  TODO.md program line retired; this page's boxes checked and the WBS
-  retired. *(#100 — the full-JMH "for the record" run was attempted at
-  close but the host was externally contended (load ~130, unrelated
-  updater); rerun it on a quiet host before the next baseline
-  re-capture)*
+The end state exceeded the original plan: instead of "most immutable,
+the rest in honest caches", the measured evidence deleted both caches
+outright — the artifacts are frozen absolutely (every field final, no
+atomics, no containers), the only mutable match-time state is the
+sanctioned per-call carriers, and the tripwires (gate, hammer, freeze
+watchdog, determinism double-run, warm replay) stay as the permanent
+net. What the honest-cache chapter above preserves is the mandated
+SHAPE for any future cache, not a live instance.
 
-**Program complete (#93–#100).** The end state exceeded the original
-plan: instead of "most immutable, the rest in honest caches", the
-measured evidence deleted both caches outright — the artifacts are
-frozen absolutely (every field final, no atomics, no containers), the
-only mutable match-time state is the sanctioned per-call carriers, and
-the tripwires (gate, hammer, freeze watchdog, determinism double-run,
-warm replay) stay as the permanent net. What the honest-cache chapters
-preserve is the mandated SHAPE for any future cache, not a live
-instance.
-
-W1 was deliberately first: the tripwires converted this design from
-prose into tests before the risky refactor began, and they stay as the
-permanent regression net. The alternatives section's deletion branch is
-the one that fired (W2b, W3b) — the audit and gates remain.
+The tripwires went first by design: they converted this design from
+prose into tests before the risky refactors began. The alternatives
+section's deletion branch is the one that fired — the audit and gates
+remain. One open caveat: the full-JMH record run at close was
+invalidated by host contention (external load ~130); rerun on a quiet
+host before the next baseline re-capture.
 
 ## Non-goals
 
