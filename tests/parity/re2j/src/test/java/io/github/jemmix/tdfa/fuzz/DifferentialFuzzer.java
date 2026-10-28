@@ -1742,6 +1742,13 @@ public final class DifferentialFuzzer {
          *       closed by the unbounded zero-width-exit split (finding 2's
          *       mirror) — the exiting iteration's writes ride a normal
          *       ε-edge at the loop's REST position and compare HARD.</li>
+         *   <li><b>restart-tag-leak</b> — java's {@code Matcher.search}
+         *       does not reset group writes between a find()'s failed
+         *       restart attempts, so a stale span lands strictly OUTSIDE
+         *       the accepted match (a legitimate write never does);
+         *       skeleton-gated, checked on the F first match, every I
+         *       entry and the R clause ({@link
+         *       CampaignFuzzer#leakedRestartSpan}).</li>
          *   <li><b>nested-loop-capture</b> — java's backtracker restores
          *       the FIRST iteration's inner group for a quantified capture
          *       nested inside another quantified group ({@code ((a)*b)*}
