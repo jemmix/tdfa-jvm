@@ -294,20 +294,9 @@ public final class DifferentialFuzzer {
                 }
                 Outcome o;
                 if (WARM_REPLAY) {
-                    // Warm replay (runner-immutability tripwire 3): run the
-                    // case's batch siblings first on the SAME artifact, then
-                    // the case — the memo state the soak had when it recorded.
-                    // Solo replay runs cold, which is exactly how
-                    // warmth-dependent records (2026-10-24 finding 1) stayed
-                    // unreproduced.
-                    long batch = Math.floorDiv(one, BATCH_K);
-                    int idx = (int) Math.floorMod(one, BATCH_K);
-                    Prepared pr = prepare(c.pattern(), c.flags(), c.lane());
-                    for (int i = 0; i < idx; i++) {
-                        matchCase(pr, new Case(c.pattern(), genInput(batch, i, c.flags()), c.flags(), c.lane()));
-                    }
-                    System.out.println("warm:    replayed " + idx + " prior batch inputs on the same artifact");
-                    o = matchCase(pr, c);
+                    o = warmReplay(one, c);
+                    System.out.println("warm:    replayed " + (int) Math.floorMod(one, BATCH_K)
+                        + " prior batch inputs on the same artifact");
                 } else {
                     o = runOne(c);
                 }
@@ -867,6 +856,23 @@ public final class DifferentialFuzzer {
 
     static Outcome runOne(Case c) {
         return matchCase(prepare(c.pattern(), c.flags(), c.lane()), c);
+    }
+
+    /**
+     * Warm replay for {@code fuzz.one} (runner-immutability tripwire 3):
+     * run the case's batch siblings on the SAME artifact first — the memo
+     * warmth the soak had when it recorded — then the case itself. Solo
+     * replay runs cold, which is exactly how warmth-dependent records
+     * (2026-10-24 finding 1) stayed unreproduced.
+     */
+    static Outcome warmReplay(long caseSeed, Case c) {
+        long batch = Math.floorDiv(caseSeed, BATCH_K);
+        int idx = (int) Math.floorMod(caseSeed, BATCH_K);
+        Prepared pr = prepare(c.pattern(), c.flags(), c.lane());
+        for (int i = 0; i < idx; i++) {
+            matchCase(pr, new Case(c.pattern(), genInput(batch, i, c.flags()), c.flags(), c.lane()));
+        }
+        return matchCase(pr, c);
     }
 
     // ---- match protocol ----
