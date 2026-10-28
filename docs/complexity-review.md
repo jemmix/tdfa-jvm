@@ -32,12 +32,44 @@ XL = architectural bet.
 | E. Compile pipeline & determinizer | C22–C29, C41–C42 | 10/10 | **done** — 1 simplify, 5 keep, 2 measure-first, +2 new |
 | F. Unicode & data | C30–C31 | 2/2* | **done** (with G) — 1 keep, 1 simplify |
 | G. Budget system | C32 | 1/1* | **done** — simplify; FrameBudget/WorkMeter keep |
-| H. Tests & infrastructure | C33–C38 | 0/6 | pending (relaunch 2 running) |
-| **Total** | **53** | **47** | **A, B, C, D, E, F+G done; H in review** |
+| H. Tests & infrastructure | C33–C38, C54 | 7/7 | **done** — 4 remove, 2 simplify, 1 keep, +1 new |
+| **Total** | **54** | **54** | **review complete — every item examined and verdicted** |
 
 *New-item IDs are unique across clusters: A → C39/C40, E → C41/C42,
-F+G → C43–C45, B → C46–C48, C → C49–C51, D → C52/C53. Reviewers'
-internal numbering collided at C39 and was renumbered on recording.*
+F+G → C43–C45, B → C46–C48, C → C49–C51, D → C52/C53, H → C54.
+Reviewers' internal numbering collided at C39 and was renumbered on
+recording.*
+
+## The board after review — 54 items, 54 verdicts
+
+| Verdict | Count | Items |
+|---|---:|---|
+| remove | 10 | C1, C3, C20, C35, C36, C37, C39, C40, C41, C43 |
+| simplify | 20 | C2, C6, C8–C10, C22, C31–C34, C42, C44, C45, C47–C51, C53, C54 |
+| measure-first | 5 | C7, C25, C26, C46, C52 |
+| keep | 18 | C5, C11–C19, C21, C23, C24, C27–C30, C38 |
+| already-landed | 1 | C4 (#99) |
+
+Suggested landing order (each PR rides `./gradlew check`; bench-gated
+items ride `scripts/bench-regression.sh`, 15 % rule):
+
+1. **Pure removals** (dead code, no behavior change): C3, C20, C41,
+   C49, C50, C51 — then C35, C36, C43, and the prose-truth pair
+   C39/C40.
+2. **Placement + harness truth**: C34 (pikesim → testlib), C33 (fuzzer
+   dead code), C54 (knob forwardings), C31 (NoUnicodeProvider).
+3. **Budget endgame** (one PR): C32 — subsumes C1 + C2 + C44 and marks
+   the tradeoffs-doc TODO resolved.
+4. **Pipeline shape**: C22 (with C41's ALL_AXES fold + C53's minimal
+   fix), C42 (mode enum), C45 + C52 (test additions).
+5. **Ladder program** (gated; C46 rows first): C48 → C8 → C7 scope 1 →
+   C9 → C47, then C10's test-hook seam.
+6. **Measure-first verdicts to run**: C25, C26 (throwaway patches),
+   C7 scope 2 (expected to close keep-with-numbers).
+7. **Chore**: C37 branch/worktree purge — after this review's own branch
+   churn settles.
+8. **Keeps** stand as recorded; re-litigation requires new evidence
+   (each keep argument above names what would reopen it).
 
 ## A. Memo-deletion debris (the #97/#98 tail)
 
@@ -723,25 +755,91 @@ table footnote)*
   determinism double-run, JURLANE_SKIP recording with caps. Several lanes
   retired in the last months (SKIP families reclassified); sweep the
   harness for retired knobs and dead classifiers before the next campaign.
+  **Verdict: simplify** (cluster H review — with the premise corrected:
+  JURLANE_SKIP recording is **alive** (the 2026-10-24 soak fired it hard:
+  266 restart-tag-leak + 3 840 v1-ungreedy-scope records in 52.3 M cases),
+  and `-Pfuzz.warm`/double-run are tripwires pinned by
+  WarmReplayDoubleRunTest (#105), not retired knobs. What IS dead:
+  `CampaignFuzzer.startsInterior` + `rSpanOf` (zero callers since #86/#103),
+  `DifferentialFuzzer.JUR_UCASE` (own copy in CampaignFuzzer), the
+  `ciSuppAvoided` counter (no increment site since 12d9921 — reports a
+  permanent 0), `CampaignSmokeTest`'s `SKIP_NESTED_LOOP_CAPTURE` allowlist
+  entry (no producer since #87), the soak's `nested-loop-capture` skip
+  (re-added by #86 after #87 deleted it; fired zero times in the soak;
+  javadoc cites a TODO that does not exist), and stale class-doc prose
+  naming retired families as live residuals. One PR plus a prose-truth
+  pass; `FORCED_RUNGS`' TRIGGER entry rides C3.)
 - **C34 — `lib:pikesim` placement** (S/M, simplify). The reference
   simulator ships as a first-class module (Java 25 bytecode, in
   BytecodeFloorTest's shippedPaths) but its consumers are tests only
   (parity columns, unit audits). If it is not a published artifact, move
   it under `testlib/` and drop it from the shipped set — one less module
   claiming to be product.
+  **Verdict: simplify** (cluster H review — verified: **no published
+  artifact can include it** — there is no maven-publish block anywhere and
+  "First Maven publish" is still open; README's module story never
+  mentions PikeSim. Target: `git mv lib/pikesim testlib/pikesim`, repoint
+  the two test consumer paths, drop the tests/unit dependency + the
+  BytecodeFloorTest anchor (the Java-25 tier keeps the two unicode
+  modules), update the "seven shipped jars" comments — six shipped jars.)
 - **C35 — Qodana** (S, decide). Plugin + `qodana.yaml` + CI spend, with
   TODO "keep or remove". Decide by what it has caught lately; if nothing,
   remove the plugin from the build.
+  **Verdict: remove** (cluster H review — the track record is empty: zero
+  findings-driven fixes (git log shows only the wiring commit), and
+  **nothing invokes `qodanaScan`** — not CI, not even `check`. The
+  project's own r10 close-out already called the wiring "dead weight for
+  a declined tool". ErrorProne + SpotBugs cover the ground. Remove plugin
+  line + `qodana{}`/`qodanaScan` blocks + `qodana.yaml`; close the TODO
+  item; reversible from git.)
 - **C36 — `scripts/migration`** (S, remove). `add-braces.py`,
   `expand-star-imports.py` — one-shot codestyle migration scripts, already
   applied tree-wide (spotless enforces the style now). Delete.
+  **Verdict: remove** (cluster H review — both scripts self-identify as
+  one-shot in their docstrings; the rules are permanently enforced by
+  checkstyle `NeedBraces`/`AvoidStarImport` riding `./gradlew check`;
+  nothing references the scripts since the migration (#15). Delete the
+  directory.)
 - **C37 — branch debris** (S, remove). ~90 local branches, half `t3code/*`
   scraps; the stale-branch-report workflow exists for exactly this. Prune
   the merged/dead ones.
+  **Verdict: remove** (cluster H review — worse than listed: **158 local
+  branches + 77 registered worktrees** (a branch checked out in a
+  worktree cannot be deleted until the worktree goes). The remote is
+  clean (1 head). Safe classes in order: stale tracking refs
+  (`git fetch --prune`); merged branches (worktree remove, then
+  `git branch --merged origin/main | grep -vE 'main$' | xargs -n1 git
+  branch -d`); squash-merged PR heads not ancestry-merged (cross-ref
+  `gh pr list --state merged` exactly as stale-branch-report.yml category
+  1 does). Keep genuinely parked work (`feat/non-recursive-parser`, the
+  active fuzz24 finding branches). Do it after this review's own branch
+  churn settles.)
 - **C38 — vendored re2j patch debt** (M, keep — watch). `vendor/` +
   `scripts/vendor.sh` + `re2j-jemmix` fork with upstream PRs #208/#212/#213
   pending maintainer review. Not removable while the parity suite depends
   on it; the debt closes when upstream lands. Record and leave.
+  **Verdict: keep** (cluster H review — the parity suite hard-depends on
+  the vendored tree and the patched fork is the DEFAULT oracle for the
+  whole parity/fuzz surface. The load-bearing argument: the fork makes
+  **every** divergence a real finding (the released 1.8 oracle has known
+  bugs that would need swallow-classifiers), the archive is pinned to the
+  re2j-1.8 tag, and it rebuilds bit-for-bit from one committed tarball.
+  Patch count small and every unit upstreamable. Watch only: upstream
+  PRs #208/#212/#213 verified still open on google/re2j; the debt closes
+  by swapping patches for a released artifact when they land.)
+
+### New item found by the cluster H review
+
+- **C54 — documented fuzzer knobs are unreachable through the Gradle
+  entry point** (S, simplify). The `fuzz` JavaExec task forwards exactly
+  13 `fuzz.*` properties, but the fuzzer reads and documents four more:
+  `fuzz.threads`, `fuzz.graceMs`, `fuzz.jfr`, `fuzz.caseTimeoutMs` —
+  unreachable via `-Pfuzz.…` because JavaExec forks a fresh JVM passing
+  only the declared properties, and `scripts/fuzz-soak.sh` advertises two
+  of them in its own header. These are exactly the knobs wanted on a
+  misbehaving overnight soak. Fix: add the four systemProperty
+  forwardings (or scrub the doc mentions — forwarding is smaller and more
+  useful).
 
 ## Progress log
 
@@ -773,3 +871,14 @@ table footnote)*
   TODO", ALL_AXES drift, semanticsOf unreachability, the half-split
   fiction). 53 items, 47 verdicts; H (relaunched twice after quota
   failures) in review.
+- **2026-10-29 (update 4, final)** — **cluster H verdicts in; the review
+  is complete: 54/54 items verdicted.** H corrected the C33 premise
+  (JURLANE_SKIP is alive and firing; warm/double-run are pinned
+  tripwires), confirmed Qodana (C35) and the migration scripts (C36) as
+  pure removals — Qodana has zero findings and is invoked by nothing —
+  moved pikesim to testlib-territory (C34, no publish config exists),
+  priced the branch/worktree debris at 158 + 77 (C37), recorded the
+  re2j fork's keep argument (C38, upstream PRs still open), and found
+  the unreachable fuzzer knobs (C54). Final board: 10 remove,
+  20 simplify, 5 measure-first, 18 keep, 1 already-landed. Execution
+  order recorded above; examination phase closed.
