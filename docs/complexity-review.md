@@ -26,14 +26,18 @@ XL = architectural bet.
 | Cluster | Items | Verdicts in | State |
 |---|---|---|---|
 | A. Memo-deletion debris | C1–C5, C39–C40 | 7/7 | **done** — 2 remove, 1 simplify, 1 already-landed, 1 keep, +2 new prose items |
-| B. Runner dispatch ladder | C6–C12 | 0/7 | pending |
-| C. ASM backend | C13–C16 | 0/4 | pending |
-| D. Facades & API | C17–C21 | 0/5 | pending |
-| E. Compile pipeline & determinizer | C22–C29 | 0/8 | pending |
-| F. Unicode & data | C30–C31 | 0/2 | pending |
-| G. Budget system | C32 | 0/1 | pending |
-| H. Tests & infrastructure | C33–C38 | 0/6 | pending |
-| **Total** | **40** | **7** | **cluster A done; B–H in review** |
+| B. Runner dispatch ladder | C6–C12, C46–C48 | 10/10 | **done** — 6 simplify, 2 keep, 2 measure-first, +3 new |
+| C. ASM backend | C13–C16, C49–C51 | 7/7 | **done** — 4 keep (bench artifacts decide), +3 new |
+| D. Facades & API | C17–C21, C52–C53 | 7/7 | **done** — 4 keep, 1 remove (C20 unreachable), +2 new |
+| E. Compile pipeline & determinizer | C22–C29, C41–C42 | 10/10 | **done** — 1 simplify, 5 keep, 2 measure-first, +2 new |
+| F. Unicode & data | C30–C31 | 2/2* | **done** (with G) — 1 keep, 1 simplify |
+| G. Budget system | C32 | 1/1* | **done** — simplify; FrameBudget/WorkMeter keep |
+| H. Tests & infrastructure | C33–C38 | 0/6 | pending (relaunch 2 running) |
+| **Total** | **53** | **47** | **A, B, C, D, E, F+G done; H in review** |
+
+*New-item IDs are unique across clusters: A → C39/C40, E → C41/C42,
+F+G → C43–C45, B → C46–C48, C → C49–C51, D → C52/C53. Reviewers'
+internal numbering collided at C39 and was renumbered on recording.*
 
 ## A. Memo-deletion debris (the #97/#98 tail)
 
@@ -149,6 +153,19 @@ capped them is largely still here. The tradeoffs doc already flags this
   rung: does it still clear its keep-cost on the post-memo board, or is it
   a rung the raw scan now serves at par? (Precedent: the memo's trigger
   rung survived by serving raw.)
+  **Verdict: simplify** (cluster B review — only TRIGGER is deletable
+  (the C3 merge); every other rung earns its slot, and the "overlapping
+  regimes" framing is wrong: EXACT_FROM→PREFIX→CAND_SCAN are disjoint
+  ordered guards, not overlap. Per-rung evidence: LITERAL ~0.2 vs
+  ~6.5 ns/char; PREFIX bounds the dense-hit adversarial shape
+  (`PREFIX_WALK_BUDGET=16`) and has active investment (TODO "Prefix
+  needle v2"); CAND_SCAN measured 492→142 ns (ipExtract) with bounded
+  64² worst case; RAW_SCAN is the campaign's degenerate-shape bounder
+  (`.+zz` 200–460 ms → 1–3 ms). ORIGIN_SIM is **keep-with-caveat**: it
+  serves only the codepoint lane (the default unit surface routes around
+  it), carries an OPEN correctness bug (TODO.md:16, forced-rung
+  leftmost-start miss) and zero bench coverage (C46) — re-price when the
+  fix lands. Concrete shape: the TRIGGER merge only.)
 - **C7 — bool/extract path duality** (M/L, measure-first). The ladder
   exists twice — boolean and extract variants hand-duplicated:
   `prefixScanBool`/`prefixScanExtract`, `candScanBool`/`candScanExtract`,
@@ -157,16 +174,41 @@ capped them is largely still here. The tradeoffs doc already flags this
   boolean wrapper would halve the paths; the counterargument is
   register-allocation cost on failed boolean walks. Measure the find()
   benches both ways before folding.
+  **Verdict: measure-first** (cluster B review — the duality is also the
+  C12 prefilter mechanism, and the counterargument is already priced:
+  boolean walks skip regs entirely while extract walks pay `takeRegs` +
+  fill + applyOps — measured 1143 vs 498 ns on emailNoMatch (d192462),
+  ~2.3×, so folding is *predicted to fail the gate*. Split: **scope 1**
+  (S, likely-pass) merge only the candidate-enumeration loops
+  (`prefixScan`/`candScan` parameterized by mode, ~30 lines); **scope 2**
+  (M, likely-fail) fold the walk leaves. Bench:
+  `./scripts/bench-regression.sh` (15 %) then `--jmh` (10 %) plus
+  ShortFindBench `emailNoMatch` on vm/asm — a ≥15 % emailNoMatch
+  regression closes scope 2 with numbers.)
 - **C8 — unit/codepoint scan twins** (M, simplify). `triggerScan` vs
   `unitTrigger`, `rawScan` vs `unitRawScan` (plus a `unitSeeds` flag
   variant): the same simulation twice, once per boundary discipline. The
   difference is small (pair-interior skips, start enumeration); a
   parameterized walk is plausible. Same shape as C7 — attempt after, not
   before.
+  **Verdict: simplify** (cluster B review — the premise is stale: post-#97
+  there is already ONE parameterized walk, `rawScan(…, boolean unitSeeds)`
+  (1733–1845); the "twins" are four thin entry wrappers plus dead
+  memo-era plumbing: the 5-arg `rawScan` and `unitRawScan` have one
+  caller each, the `wIn`/`liveIn` params are `from, null` at every call
+  site (the deleted SearchDfa's hand-off), and `triggerScan`'s `force`
+  param is never read. Delete wrappers + dead params; `@EmittedSurface`
+  hooks keep their names. Mechanical, ~30 lines; do before C7 so the
+  fold works against the minimal shape.)
 - **C9 — `runGeneric`, the third copy** (M, simplify). The CharSequence
   (non-String) fallback re-implements the walk against `charAt`. With C7/C8
   folded this collapses to the one parameterized walk plus a String fast
   prefix. Keep the GENERIC trace rung.
+  **Verdict: simplify** (cluster B review — sequence matters: C48 first
+  (the predicate-twin wall, S, gated), then C8, then C7; after which
+  runGeneric collapses toward one parameterized walk plus its
+  anchored/restart specifics. Gate each step on `info.anchored.vm/asm`,
+  `info.extract.vm/asm`, `findAllDense.vm/asm` within 15 %.)
 - **C10 — test hooks in the production runner** (M, simplify — TODO'd).
   `FORCED`/`anyForced` statics, `setForcedStrategy`, `forcedSearch`,
   `forcedRestart`, `TRACE`/`setTracing`, `TRACE_BUF`, `WTRACE` — all
@@ -176,6 +218,19 @@ capped them is largely still here. The tradeoffs doc already flags this
   package-private SPI in a test artifact) so the runner body carries zero
   instrument branches. Note `forcedStrategy()` is read on EVERY find/match
   call — a ThreadLocal get on the hot path.
+  **Verdict: simplify** (cluster B review — ~195 lines quantified
+  (trace ≈35, forced-rung ≈130, WTRACE ≈30). Two factual corrections:
+  `forcedStrategy()` is one volatile read of `anyForced` with the
+  ThreadLocal get only when forcing is active (favorable); but the class's
+  own "zero cost when disabled" comment is **false** — `TRACE` is
+  volatile, so ~34 `trace()` sites pay a static call + volatile load per
+  rung transition. Seam: (1) a `StrategyTraces` holder the emitter
+  re-targets (one INVOKESTATIC constant, conformance-pinned); (2) the
+  FORCED machinery wholesale into a test-sources class in the same
+  package, widening six private members to package-private — deletes
+  ~160 lines from the shipped class and the per-entry volatile read; (3)
+  delete WTRACE's per-position branches. Finality-gate static allowlist
+  shrinks to match — the W5 direction.)
 - **C11 — dual dispatch-table tiers** (M, measure-first). `asciiTarget`
   (128, simulations) vs `latinTarget` (256, walks) + `latinLimit` +
   `LATIN1_MAX_STATES` (8 192) + `ASCII_TABLE_MAX_STATES` (16 384) + the
@@ -183,11 +238,61 @@ capped them is largely still here. The tradeoffs doc already flags this
   measured 15 % ASCII-scan effect (documented) vs direct dispatch on
   accented text. Price one tier (256 with the compact-table guard) against
   the two-tier logic.
+  **Verdict: keep** (cluster B review — both one-tier directions already
+  have recorded measurements at or over the gate: 256-stride simulations
+  slowed pure-ASCII scans 15–18 % (commit 9c587ea; the row survives as
+  `scanNoMatch.*`), 128-only forfeits the Latin-1 walk win
+  (findAllLatin1 −15..−38 %). The two constants guard different
+  resources (table memory vs the 234 K-state bomb's ~228 MB), and the
+  aliasing rule already avoids a third allocation. Re-litigation must
+  name a single tier serving both `scanNoMatch` and `findAllLatin1`
+  within the gate.)
 - **C12 — `ADAPTIVE_PREFILTER_AFTER`** (S, measure-first). After 3 failed
   extract walks the candidate loop switches to a boolean pre-filter. The
   switch is an `@EmittedSurface` constant baked into generated classes —
   two loop shapes in both tiers. If the pre-filter wins everywhere now,
   make it unconditional; if it never wins, delete it.
+  **Verdict: keep** (cluster B review — the deciding number is on record:
+  1143 ns (extract per candidate) vs 498 ns (prefiltered) on the dense
+  no-match shape (d192462), and that gap is the regs-fill cost C7's fold
+  would pay. Unconditional would double per-candidate work where real
+  matches live (findAllDense); deleting regresses 2.3×. The two-tier
+  cost is one constant read at emit time + a conformance-pinned hook. Do
+  not re-open without a bench row showing the threshold's middle
+  dominated by either extreme.)
+
+### New items found by the cluster B review
+
+*(numbered C39–C41 by the reviewer; recorded as C46–C48)*
+
+- **C46 — the codepoint lane is invisible to the bench gate** (S,
+  measure-first). Every bench row compiles through the root
+  (unit-semantics) surface; no row ever exercises `ORIGIN_SIM` (routed
+  around on the unit lane), the codepoint-lane `triggerScan`/`rawScan`,
+  the `scanSkipsPairs` branches, or the `prefixHitUsable` selection — the
+  exact rungs C6–C9 fold. A ladder refactor could regress that lane and
+  still pass the gate. Shape: add two rows (dense findAll + no-match long
+  scan compiled on the `:re2j` surface, supplementary-bearing input),
+  `--capture`, then they gate every C6–C9 change. Until then
+  ORIGIN_SIM's keep-verdict is provisional.
+- **C47 — `runStringAnchored`, a third copy of the mask-aware transition
+  protocol** (M, simplify). ~186 lines transcribing the same
+  most-specific-mask/dispatch protocol as `extractFrom` and
+  `runStringMatchFrom`, with a drift-prone return quirk of its own — and
+  it is the rung the 2026-10-16 matches() divergence lived in (prior
+  drift history). After C7's fold, matches() should be expressible via
+  the single parameterized walk, equivalence pinned by a battery over
+  the anchor-gated catalog; if the proof fails, keep with a comment
+  naming it a deliberate third instance.
+- **C48 — the String/CharSequence predicate-twin wall** (S, simplify).
+  Six method pairs with byte-identical bodies differing only in receiver
+  type (`maskSatisfied`/`CS`, `positionFlags`/`CS`, `lineBegin`/`lineEnd`/
+  `finalEnd` ×2 — ~105 lines). `String.charAt` is final, so the
+  CharSequence-typed call on a String receiver should devirtualize —
+  delete the String twins, keep the CS versions. The natural first PR of
+  the C9 program; gate on the walk-heavy rows
+  (`info.anchored.vm/asm`, `info.extract.vm/asm`, `findAllDense.vm/asm`);
+  any regression closes it as a measured JIT artifact, named.
 
 ## C. ASM backend (`TdfaAsmBackend`, 2 929 lines)
 
@@ -199,11 +304,28 @@ capped them is largely still here. The tradeoffs doc already flags this
   the generated class be a thin monomorphic shell over the shared runner
   (DELEGATE-only) with named-method dispatch? The bench gate decides; the
  Emitter halves if it passes.
+  **Verdict: keep** (cluster C review — the split is smaller than listed:
+  the DELEGATE tier is ~96 lines of trivial forwarders, and even INLINED
+  classes delegate matches()/find() outright. The measurement already
+  exists in committed artifacts: BENCHMARKS.md §5 shows ASM/VM at
+  0.29–0.68× on capture-dense walks but ~1.08–1.15× where both tiers
+  delegate — i.e. DELEGATE-only ≈ the VM column. A fold regresses the
+  deciding rows (§1 short-input: 17.0 vs 73.1 ns; ShortFindBench
+  captures ~2× VM; LogExtract prefix rows 1.5–2.3×) by 2–4×, an order of
+  magnitude past the gate. DELEGATE stays as the method-cap/non-fastPath
+  valve it was born as.)
 - **C14 — the stack-register emission axis** (M, measure-first). A third
   variant bit: `stackRegsEligible()` + `genExtractOne(stackRegs)` +
   `genWholeOne(stackRegs)` + carrier-free classes + the 65 KB soft budget.
   If C13 folds to DELEGATE, this dies with it; independently, price
   stack-regs vs the plain regs pool on the extract benches.
+  **Verdict: keep** (cluster C review — the A/B is already in the
+  javadoc, landed with the axis (#12): −18 % (4 regs) … −9..−19 %
+  (12–16) … parity at 40+ (TdfaAsmBackend.java:2789–2797). Deleting the
+  ~120-line axis regresses 4–16-register extract walks at or past the
+  gate. Corrections: the soft budget is **30 KB** (`INLINE_BUDGET_BYTES`
+  — 65 KB is the JVM hard cap it leaves headroom under), and it guards
+  the INLINED tier (C13), not this axis.)
 - **C15 — emitted-shell machinery** (M, simplify). `ShellEmitter` (402),
   `ShellSpec`, `genDelegateInit`, `genMetadataMethods`, the
   `@EmittedSurface` 7-field shell contract on `engine.Matcher`, and
@@ -212,12 +334,60 @@ capped them is largely still here. The tradeoffs doc already flags this
   conceptually in the VM path; quantify what the emitted shell buys
   (devirtualization) vs its maintenance surface, or at least shrink the
   emitted surface to the three hot entry points it justifies.
+  **Verdict: keep** (cluster C review — the proposed middle shape **is
+  the shipped shape**: the shell emits exactly a ctor + find/matches/
+  lookingAt, nothing else; the linked surface is **8 fields, not 7**
+  (seven bookkeeping + `scratch`). The generic-shell alternative is the
+  VM carrier, whose `find()` call site goes megamorphic once ≥3 engine
+  types flow through it; the emitted shell's per-pattern concrete
+  receivers are mechanically enforced (EmittedBytecodePolicyTest: no
+  INVOKEINTERFACE, every INVOKEVIRTUAL receiver final) and measured
+  (~19 ns overhead on the anchored row, realized jointly with INLINED).
+  The BYO shell lane serves the public factory API — not dead.)
 - **C16 — emitted ladder re-implements the VM ladder** (L, keep-or-shared).
   The generated find/match ladders mirror `TdfaRunner`'s semantics by
   hand. Related TODO: "Shared Tdfa for asm+vm (halve fuzz compile churn)".
   A single parametric ladder spec consumed by both tiers would delete a
   whole class of cross-tier drift bugs (the fuzz forced-rung machinery
   exists largely to police this). Big lift; the drift evidence decides.
+  **Verdict: keep** (cluster C review — two factual corrections: the
+  forced-rung machinery polices **VM-internal** rung equivalence only
+  (ASM is not forced); cross-tier drift is policed by
+  StrategyConformanceTest's trace-equality assertions (17 shapes × 20
+  lengths × 4 entry points), and the "Shared Tdfa" TODO is compile-
+  artifact reuse, not a shared ladder. The hand-mirror is thinner than
+  it looks — strategy decisions are monomorphic calls into the one
+  embedded runner, thresholds linked at emit time. Drift bit exactly
+  twice and was caught by the net both times; no open cross-tier item.
+  A shared spec is an XL bet against C13's measured value.)
+
+### New items found by the cluster C review
+
+*(numbered C39–C41 by the reviewer; recorded as C49–C51)*
+
+- **C49 — stale `TABLE_SCAN` mode reference in rebar parity javadoc**
+  (S, simplify). RebarScenarioParityTest.java:46–47 describes "three
+  `DispatchMode`s (`INLINED`/`TABLE_SCAN`/`DELEGATE`)" — the enum has
+  exactly two values; TABLE_SCAN died in the kernel-unification refactor.
+  A C16-class prose drift sitting in the backend-pair coverage suite.
+  One-line comment fix.
+- **C50 — never-fired emission paths** (S, simplify). Two emitters produce
+  code no generated class can use: the entry-mask machinery
+  (`genEntryOkC`, `ENTRY_MASK` declaration/copy, dispatch branch,
+  start-state check) is gated on `hasEntryMasks`, but `pickMode` only
+  INLINEs fastPath DFAs and that predicate rejects any nonzero entry
+  mask — the code's own comment concedes "ship in no generated class
+  today"; and `genPositionFlagsC` is emitted unconditionally though its
+  only live caller is the wholeOne EOF path — every INLINED class with
+  no `stateFinalOpsByMask` carries a caller-less method. Delete the
+  entry-mask path (git-recoverable); gate positionFlagsC on
+  `stateFinalOpsByMask() != null`.
+- **C51 — `genDelegateMatches`/`genDelegateFind` byte-for-byte duplicates**
+  (S, simplify). The DELEGATE forwarders emit method bodies identical to
+  `genMatches`/`genFind` — both modes' classes carry the same `runner`
+  field; nothing distinguishes the pairs. Delete the two `genDelegate*`
+  forwarders and call the shared emitters from the DELEGATE branch:
+  ~22 lines, identical bytes emitted.
 
 ## D. Facades & API
 
@@ -228,28 +398,97 @@ capped them is largely still here. The tradeoffs doc already flags this
   `VmPattern` wrappers, `Surfaces` holders — is a lot of moving parts for
   two call sites. Examine: direct references from each facade instead of a
   string-keyed registry, with serialization pinned to a two-entry enum.
+  **Verdict: keep** (cluster D review — direct references from core are
+  structurally impossible: the module DAG is root→core and re2j→core, so
+  core cannot name either surface, and the reader process may never have
+  touched the surface module, so the reflective tail must exist no matter
+  what; a two-entry enum only replaces the id string while keeping it. A
+  per-surface proxy costs a base class + emitter plumbing (~10 moving
+  parts vs today's ~9). The registry's one consumer is `resolve`; the
+  facades' 6 static sites funnel through the 4-line
+  `PatternSurface.compile`. Contract pinned by PatternSerializationTest +
+  Re2jSurfaceTest. One nit: the two `VmPattern` copy ctors spell 7 fields
+  by hand and rot silently.)
 - **C18 — `Pattern.reset()` no-op** (S, remove). Documented no-op on both
   facades ("releases internal caches" — there are none since the memos
   died). Pure re2j-API-compat residue; drop before the 1.0 API lock or
   keep deliberately for drop-in parity — one-line decision, currently
   undecided complexity.
+  **Verdict: keep** (cluster D review — the premise was wrong in a
+  decisive way: re2j 1.8's own `Pattern.reset()` is **not** a no-op (it
+  nulls the pooled cache via `RE2.reset()`), so real re2j user code
+  plausibly calls it and the drop-in promise (README "Drop-in, per
+  lineage") requires accepting it. Cost: one interface method + empty
+  body + honest javadoc; already parity-pinned. Keep deliberately; close
+  before the 1.0 lock so it is not re-litigated.)
 - **C19 — compile-channel sprawl** (S/M, simplify). `Pattern` offers
   compile ×4 overloads + compileFind ×2 + CompileOptions (semantics,
   provider, observer) + the flag int. Three channels to say one thing.
   Pre-1.0 is the moment to pick: flags + CompileOptions, and let the
   factory overloads go through options.
+  **Verdict: keep** (cluster D review — the channels are layered by
+  audience, not redundant: the flag int is the re2j-parity surface,
+  CompileOptions is the core tier's only knob carrier (no flags param
+  there), Semantics is the machinery value. Every overload is consumed
+  (3-arg ≈105 sites; 4-arg ≈10 real sites; compileFind is the
+  README-advertised escape hatch). The facade's re-encode of three
+  options booleans into flag bits is load-bearing (core's only spelling
+  vs the facade's only spelling). Record as the pre-1.0 answer.)
 - **C20 — machinery-internal axis bits on `PatternSurface`** (S, simplify).
   `UNIX_LINES..SPACE_RE2` + `RE2_AXES` exist only for `semanticsOf`'s
   bit→axis mapping and tests; no surface accepts them. `Semantics` already
   spells the axes; the int vocabulary is a second spelling of the same
   thing — fold `semanticsOf` into `Semantics`-of-flags or delete the
   constants and switch the one consumer.
+  **Verdict: remove** (cluster D review — stronger than listed: not just
+  a second spelling but **unreachable dead code**. `semanticsOf`'s eight
+  axis branches can never fire: flags are validated against the surface
+  roster first and neither roster contains any axis bit (both reject
+  256+, pinned by Re2jSurfaceTest) — so `semanticsOf` always returns
+  `surface.defaultSemantics()` unchanged, and `RE2_AXES` has zero
+  references anywhere. Delete the constants + `semanticsOf`
+  (PatternSurface.java:74–103, PatternCompiler.java:68–95), replace the
+  call with a direct default/override choice; repoint the two test
+  consumers at the j.u.r constants they translate to anyway.)
 - **C21 — the 8-axis `Semantics` matrix** (M, decide). Every axis pair is
   pinned by tests; TODO carries "Decide Semantics scope (parity axes vs
   knobs) before lock". If per-axis mixing has no consumer beyond probes,
   freeze the two lanes as named presets and make `CompileOptions.semantics`
   lane-selecting rather than axis-building. Half the matrix's test surface
   evaporates.
+  **Verdict: keep** (cluster D review — the evaporation estimate was
+  wrong: there are no cross-product pair tests to delete, only per-axis
+  separability batteries — and those are load-bearing evidence: single-
+  axis resolution against the live JDK oracle is what **found SPACE_RE2**
+  ("the JUR default had silently kept re2j's table"). Internally the
+  matrix IS the lane representation; a Lane enum would re-encode the
+  same 8 booleans per stage. Close the TODO with this recorded answer:
+  axes are parity-axis representation, not user knobs. One javadoc fix:
+  `CompileOptions.semantics()` still lists seven axes — missing
+  SPACE_RE2.)
+
+### New items found by the cluster D review
+
+*(numbered C39–C40 by the reviewer; recorded as C52–C53)*
+
+- **C52 — `PatternSurface.resolve`'s lazy triggerClass branch is
+  untested** (S, measure-first). The entire reason `triggerClass` exists —
+  loading a surface the reading process has not compiled through — has
+  zero coverage: every round-trip test compiles first, so `REGISTERED`
+  always hits and the reflective branch can regress silently until a real
+  cross-process deserialization fails. Test-presence gate: serialize a
+  re2j-surface pattern, evict the registration, deserialize, assert the
+  lane survives and the unknown-id failure throws as documented — if (a)
+  cannot be made to re-register through the documented path, that is a
+  latent bug in the pinned contract.
+- **C53 — `Tdfa.ALL_AXES` drifted from `Tnfa.ALL_AXES` (7 axes vs 8)**
+  (S, simplify). Tnfa's constant spells all eight axes (incl.
+  `.spaceRe2()`); Tdfa's stops at seven while claiming "Every axis set" —
+  SPACE_RE2 (#66) updated one and missed the other. Benign today only
+  because no post-compile consumer reads `isSpaceRe2` — accidental safety
+  that evaporates on the next axis. Real fix rides C22 (one shared
+  lane constant); minimal fix now: add the missing wither + correct the
+  comment.
 
 ## E. Compile pipeline & determinizer
 
@@ -258,6 +497,16 @@ capped them is largely still here. The tradeoffs doc already flags this
   (ALL_AXES!). Callers: the materializer + PikeSim + tests. One builder (or
   keep the 31-arg and make the rest static factories with names) deletes
   two footguns and the legacy-lane trap.
+  **Verdict: simplify** (cluster E review, with corrections: the ctors are
+  24/33/34-arg at Tdfa.java:316–349, and **PikeSim is not a caller** — it
+  runs over Tnfa directly. Production caller: TdfaMaterializer.java:883–888
+  (34-arg) only; the 33-arg middle ctor has zero external callers; the
+  24-arg is TdfaValidateHardeningTest only and fabricates `ALL_AXES`
+  (Tdfa.java:312–314) — the legacy-lane footgun, confirmed. Target: delete
+  the 24- and 33-arg ctors, keep the 34-arg as the only public one, move
+  the hardening test onto it (`false/null` constants). No builder needed
+  for two callers; pre-1.0 (japicmp/publish TODOs open) is the last cheap
+  moment.)
 - **C23 — the whole-match machinery** (XL, keep-or-simplify — the biggest
   item on the list). One artifact serving find() AND matches() costs:
   `compileWithWholeSide`, the partial-whole side tables
@@ -269,35 +518,122 @@ capped them is largely still here. The tradeoffs doc already flags this
   Alternative worlds: (a) unpruned determinization always (paper-simple,
   pay state count), (b) whole = second cheap artifact, (c) status quo.
   Each is priceable; this is the memo-deletion question one size up.
+  **Verdict: keep** (cluster E review — the alternatives are not
+  hypotheticals; they **shipped and were priced**: world (b) was #13
+  (conditional cut-free second artifact), replaced by #24 because the side
+  table interns into the shared state space and explores only the cut
+  delta — on the flagship hazardous shape (rebar datefinder) the side
+  completes at 127/129 whole states, 4211/8250 entries; #26 deleted the
+  two-artifact fallback after measuring it rescued nothing, ever. World
+  (a) was the pre-#13 world with a concrete acceptance regression:
+  `(a{1,100}){1,100}`'s find artifact compiles while its whole divergence
+  exceeds the caps (WholeMatchTest.java:318–333), so unpruned-always
+  rejects patterns that compile today and FIND_ONLY could not save them.
+  Correctness pinned by two independent oracles + a 900-pattern sweep
+  (PartialWholeTest.java:72–168). The genuinely duplicated part —
+  wholeWalk vs extractFrom, genWholeOne vs extractOne — is the C7/C13/C16
+  cross-tier duplication problem; reprice it there, not here.)
 - **C24 — multi-valued tags lane** (M, keep — re-price). BT22 §3.1: a
   parallel compile path (`Tnfa.compileMulti`), `TagTree`, `OP_APPEND_POS`,
   `groupSpans`, its own fuzz plan and parity tests. README calls it "an
   obscure corner, kept deliberately". Verify the keep-cost is still
   acceptable (it blocks the fixed-tag/register optimizations on its
   artifacts only) and record the verdict; no action expected.
+  **Verdict: keep** (cluster E review — isolation verified end to end:
+  reachable only via `MULTI_VALUED_TAGS` (PatternCompiler.java:152);
+  append ops rejected at construction on single-valued artifacts
+  (Tdfa.java:601, pinned by TdfaValidateHardeningTest.java:143–152);
+  regopt and sticky-capture marking skip multi compiles
+  (TdfaMaterializer.java:100–105, Tnfa.java:321); plain-lane immunity is
+  a pinned property (MultiValuedTagsTest bit-identical assertions).
+  Maintenance re-priced: ~133 `multi` mentions + TagTree 149 lines,
+  touched once since 2026-08. Open residual: the lane is unfuzzed —
+  TODO's "Fuzz the multi-valued lane" closes the keep-cost's main risk.)
 - **C25 — `Optimize` N=2 loop** (S, measure-first). The paper runs
   liveness/DCE/interference/alloc/normalize twice; the doc says iteration
   2 finds new coalescing. Price N=1 on the compile-time benches: if the
   second iteration buys <noise in registers saved, make N a constant worth
   deleting.
+  **Verdict: measure-first** (cluster E review — protocol: a throwaway
+  patch reporting `cfg.regCount` per iteration (or flipping the constant
+  at Optimize.java:56–65) over the rebar corpus + DeterminismCorpus +
+  PartialWhole CATALOG, then `./scripts/bench-regression.sh` (15 % gate).
+  Delete N=2 only if final register counts match on ≥95 % of corpus
+  patterns (≤+1 elsewhere) AND the bench gate stays green AND REGOPT
+  stage time drops ≥15 % on the CompileLatencyGuardTest bombs; else keep
+  and record the deltas.)
 - **C26 — `DfaMinimizer` range normalization + degrade path** (M, examine).
   The normalizer (same per-codepoint behavior, different boundaries) has
   its own cell budget and a degrade-to-unnormalized fallback. How much does
   it merge on real patterns (dictionary? log shapes?) vs its complexity?
   If it merges ~nothing post-minimize, retire the pass; if it pays, keep
   and document the measured shapes.
+  **Verdict: measure-first** (cluster E review — the javadoc's "difference
+  between minimization working vs not" claim (DfaMinimizer.java:38–42) is
+  thinner than the record: the landing commit found rebar DFAs "already
+  minimal" and the 44 846-state dictionary "provably minimal"; the one
+  modern datapoint is curated/12-dictionary 19.5K→6.8K
+  (CompileLatencyGuardTest.java:35–38), and nothing pins that those merges
+  need the normalized signature. Protocol: one-line
+  `useNormalized = false` patch, compile the four latency-guard shapes +
+  rebar corpus, compare final `states=`; retire iff counts match ±0 and
+  dictionary keeps 6.8K; any movement goes through bench-regression.sh.)
 - **C27 — `TdfaStateIndex` key zoo** (S/M, examine). `ProbeKey` vs
   `DfaStateKey`, class-signature canonicalization, `tryMap` register
   bijection, addState. The probe-reuse trick saves 2 KB per hit (1.4 M
   lookups on the 234 K-state bomb) — load-bearing there. Examine whether
   the dual-key shape can simplify without giving back the win.
+  **Verdict: keep** (cluster E review — every piece carries a measured
+  in-code justification: get-only probe saves ~2 KB per hit on the
+  dominant case; order-exact keys prevent bucket blowup from multiset
+  arrival orders (116–128); tryMap's primitive bijection replaced a boxed
+  HashMap measured at 32 % getNode + 7 % putVal in JFR (472–478); the
+  class-signature partition avoids a 78 %-of-wall rescan; seed-nulling
+  avoids ~22 M dead Configs. No simpler shape returns these wins on the
+  adversarial class the budget system exists to survive.)
 - **C28 — `Parser`/`Tnfa` monoliths** (S, optional). 2 145 / 1 662 lines,
   single class each. Splitting is cosmetic churn unless a section is dead
   (none found); the non-recursive parser TODO is the real change if it
   happens. Verdict likely "keep".
+  **Verdict: keep** (cluster E review — no dead section in either: the
+  literal-run machinery feeds the prefix-needle strategy, `NFrame` is
+  already a non-recursive nullable evaluator, and the Tnfa builder is
+  already iterative (`BuildFrame` stacks). Factual correction: the
+  "non-recursive parser TODO" **does not exist** — TODO.md carries no
+  parser item; this list conflated it with the already-iterative NFA
+  builder. The real adjacent finding is C41.)
 - **C29 — `HistTable` hash-consing** (keep — verify only). Documented as
   the difference between O(sum|l|) per state and O(1) lookups; not a
   candidate. Listed so "examined, load-bearing" is on the record.
+  **Verdict: keep** (cluster E review — verified: ids make signatures one
+  int per config at the two consumption sites
+  (TdfaStateIndex.java:129–141, 249–263), the structure is budget-charged
+  and deliberately primitive-chained to avoid a boxed-map profile entry.
+  Nothing to simplify without reintroducing the documented regression.)
+
+### New items found by the cluster E review
+
+*(the reviewer numbered these C39/C40; recorded as C41/C42 — see the
+table footnote)*
+
+- **C41 — `Tnfa` telescoping constructors ×6, five dead** (S, remove).
+  `Tnfa` ships six public telescoping constructors (19–24 args,
+  Tnfa.java:158–237) and the only `new Tnfa(` in the tree is the internal
+  builder calling the 24-arg form (Tnfa.java:1657). The five shorter ones
+  exist only to chain toward it while fabricating the `ALL_AXES` default
+  — the same legacy-lane trap as C22 with zero callers. Pure deletion.
+  While there: `ALL_AXES` is spelled in three places (Tnfa.java:154–156,
+  Tdfa.java:312–314, `ParseOptions.re2Lane()`) — fold to one shared
+  constant, riding with C20/C22.
+- **C42 — `TdfaCompiler` boolean-triplet mode encoding** (S, simplify).
+  Four real modes encoded in three booleans — 8 configured worlds, of
+  which `wholeSide && (longestMatch || unpruned)` is silently rewritten
+  to "no side" at TdfaCompiler.java:378 instead of rejected. Target: a
+  package-private enum (`PERL_PRUNED`, `PERL_WHOLE`, `POSIX`, `UNPRUNED`)
+  so an invalid combination is unrepresentable; fix the dangling
+  `{@link Tdfa#compileWithWholeSide}` javadoc (the method lives on
+  `Determinizer`). Exactly the "two flags that must agree" class this
+  review hunts; makes the C23 surface harder to misuse.
 
 ## F. Unicode & data
 
@@ -306,11 +642,26 @@ capped them is largely still here. The tradeoffs doc already flags this
   live-JDK tables; `CaseFoldTable` (335) carries folds. Who consumes v6_0
   (a pinned-Unicode consumer story exists in tests)? If v6_0 is
   demo-only, fold to one generated module + the JDK provider.
+  **Verdict: keep** (F+G review — v6_0 is **not** demo-only: it is half
+  of the only stable version-divergence proof in the tree
+  (PinnedUnicodeTablesTest's v6-vs-v17 deltas — Osage Lu, U+1C80 fold);
+  a v17-vs-JDK contrast cannot replace it because the JDK's Unicode
+  version floats. Both modules are deterministic generated code with
+  ~zero maintenance. One open decision before "First Maven publish":
+  v6_0 as product tier (then document it + add a v6_0-vs-re2j
+  bit-exactness test — the "re2j's version" label is currently
+  unverified) or test fixture (then drop it from BytecodeFloorTest
+  shippedPaths/ANCHORS). Either way the modules stay.)
 - **C31 — provider indirection** (S, examine). `UnicodeDataProvider` +
   `UnicodeProviders` + `NoUnicodeProvider` + `Re2jUniverseProvider` +
   surface `defaultProvider` suppliers + failure memo. Each has a stated
   role (pinned tables, fold-universe seam); verify all five still pull
   weight or collapse the empty ones.
+  **Verdict: simplify** (F+G review — four of six pull weight; two are
+  dead: `NoUnicodeProvider` (the `"no-unicode"` switch arm has zero
+  in-tree consumers and duplicates the tested `DISABLE_UNICODE_GROUPS`
+  flag) and `resetForTest()` (a test hook no test calls). Delete both;
+  keep the rest as-is.)
 
 ## G. Budget system
 
@@ -322,6 +673,48 @@ capped them is largely still here. The tradeoffs doc already flags this
   side-table shares draw from (still used), and `FrameBudget` (62 lines)
   needs a usage audit. Slim the runtime half of the model to what the
   retained check needs; keep the compile half.
+  **Verdict: simplify** (F+G review — every claim verifies; #99 touched
+  nothing in core/budget. The two audits resolve to **keep**:
+  `FrameBudget` has three live consumers (the nesting-depth RAM guard,
+  62 lines well spent) and `WorkMeter`'s fork ledger is the whole-side
+  compile split — leave both. Target shape subsumes C1 + C2's budget
+  side, one PR: `Budgets` keeps the three properties + compile caps,
+  deletes the memo allowance/caps sections; `BudgetWeights` deletes its
+  runtime/memo sections; `EngineBackend.generate(Tdfa,long)` →
+  `generate(Tdfa)`; `TdfaRunner` deletes `memoBudgetBytes` + the 2-arg
+  ctor (pre-1.0); `PatternCompiler` drops the memo plumbing and rewords
+  the `runtimeFootprint` note; test blast radius: BudgetModelTest rows,
+  ExecutionRamCheckTest, the `1 << 20` callers in CampaignFuzzer/
+  PivotLanes/Family6/ZeroWidthExit batteries; mark the "Deliberately
+  left behind" paragraph in search-dfa-memo-tradeoffs.md resolved.)
+
+### New items found by the F+G review
+
+*(numbered C39–C41 by the reviewer; recorded as C43–C45)*
+
+- **C43 — phantom `tdfa-unicode-re2j` jar promised in SPI javadoc**
+  (S, remove). `UnicodeProviders.java:14–17` and
+  `JdkUnicodeDataProvider.java:18–25` tell users a separate
+  `tdfa-unicode-re2j` jar exists for bit-exact re2j parity — no such
+  module exists anywhere. A user following the javadoc hits a wall.
+  Point both at `:unicode:v6_0` (the re2j-era tier) or delete the
+  sentence.
+- **C44 — the retained-tables check is facade-only; core tier bypasses
+  it** (S, simplify). `CompiledRegex.compile` (the public core-tier
+  entry, javadoc promising budget rejections) never performs the
+  runtime-memory check the facade enforces (PatternCompiler.java:190–196)
+  — the same pattern rejects on the facade and compiles on the core tier
+  under the same `-D`. Factor the check into one shared site both entry
+  points call (5 lines; preserves the README "if it compiles, it
+  executes within budget" story). Rides with C32.
+- **C45 — provider-selection SPI untested and cannot load the project's
+  own pinned modules** (S, simplify). `UnicodeProviders.resolve()`'s
+  custom-class branch instantiates via a public no-arg constructor, but
+  both shipped pinned providers have private ctors + `static provider()`
+  (only SerialProxy honors that convention) — so pinning v6_0 globally
+  via `-D` throws. Zero test coverage for the whole SPI. Fix: try
+  `static provider()` before the no-arg ctor + one unit test, or delete
+  the reflective branch if global selection is not a 1.0 feature.
 
 ## H. Tests & infrastructure
 
@@ -367,3 +760,16 @@ capped them is largely still here. The tradeoffs doc already flags this
   byte-identical), C5 keep (gate's ratchet teeth). Two new items:
   C39 (fictional half-split prose), C40 (stale memo prose inventory).
   List grows to 40 items; clusters B–H still in review.
+- **2026-10-29 (update 3)** — **clusters B, C, D, E, F+G verdicts in**
+  (delegated reviews). Headlines: the whole-match machinery stays (its
+  alternatives already shipped and were priced out — #13/#24/#26); the ASM
+  dual emitters stay (committed bench artifacts decide C13/C14 at 2–4×);
+  the ladder keeps every rung except TRIGGER (≡ C3), with the fold
+  sequenced C48→C8→C7 (scope 1) →C9; `Pattern.reset()` stays (re2j's own
+  reset is not a no-op); C20's axis bits are **unreachable dead code**;
+  C1/C3/C41/C43 removals confirmed dead. Reviewers corrected the list in
+  nine places (constructor arities, PikeSim caller claim, forced-rung
+  scope, 30 KB budget, 8 shell fields, phantom "non-recursive parser
+  TODO", ALL_AXES drift, semanticsOf unreachability, the half-split
+  fiction). 53 items, 47 verdicts; H (relaunched twice after quota
+  failures) in review.
