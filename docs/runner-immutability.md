@@ -98,8 +98,8 @@ binary-search fallback that is always correct.
 |---|---|---|
 | G1 `SearchDfa` | ~~Honest cache~~ → **deleted outright** — the measured regime (codepoint-lane wide-class multi-KB scans, 2–7×) did not justify the keep-cost; the trigger rung serves via the raw scan ([tradeoffs](search-dfa-memo-tradeoffs.md), #97) | The honest-cache conversion (W2, #95) made the deletion safe: pure fallback, no state to reason about |
 | G2 `WalkIndex` | ~~Honest shape, flattened~~ → **deleted** — measured a wash at best (within noise on many-range wide-class walks) and 13–31 % *slower* than the binary search on few-range classes, with zero warmth value ([tradeoffs](search-dfa-memo-tradeoffs.md), #98) | The honest-cache conversion (W3, #96) made deletion safe; dispatch keeps the exact first-class fallback |
-| G3 `Tdfa` caches | **Precompute at construction**; delete the three fields | Pure functions of final tables, each already computed on every runner/engine construction anyway — the "most precomputed" category, literally |
-| G4 `WORD_RANGES` | **Instance-`final`** (static-`final` cannot be assigned in an emitted `<init>`); emitted reads become GETFIELD | The one non-final emitted field; the second-instance rebind hazard dies |
+| G3 `Tdfa` caches | **Precompute at construction**; delete the three fields — *landed (W4)* | Pure functions of final tables, each already computed on every runner/engine construction anyway — the "most precomputed" category, literally |
+| G4 `WORD_RANGES` | **`static final`** via `ACC_FINAL` (emitted classes assign static finals in `<init>` via PUTSTATIC across JDK 8–26 — the `ENTRY_MASK` pattern) | The one non-final emitted field; the second-instance rebind hazard dies |
 | G5 statics | **Stay, on the documented allowlist** the finality gate enforces: `TRACE`/`anyForced` (test instruments, off the answer path), `TRACE_BUF`/`FORCED` (final containers) | Conformance/fuzz hooks; WTRACE-style freeze-at-init already covers the compile knobs |
 | Per-call carriers | **None** — named as the sanctioned destination in the gate (per-`Matcher`, contractually single-threaded) | This is where match-time state *should* live |
 | Compile-time builders | **Out of the match-time invariant's scope** — gate allowlist, "compile-time only, never reachable from a compiled Pattern" | `DfaStateBuilder`, `Range.ops`, emitter counters die at compile |
@@ -249,11 +249,11 @@ delete-on-landing, history in git.
   via the exact binary search; the runner cluster reaches absolute
   frozen-at-construction — no atomics, no containers. *(#98; numbers in
   [search-dfa-memo-tradeoffs.md](search-dfa-memo-tradeoffs.md) Part II)*
-- [ ] **W4 — Tdfa precompute + emitted finality** (G3+G4):
+- [x] **W4 — Tdfa precompute + emitted finality** (G3+G4):
   `posFlagDeps`/`absBeginBound`/stop-table computed in the constructor,
-  three cache fields deleted; `WORD_RANGES` instance-final. Exit:
+  three cache fields deleted; `WORD_RANGES` emitted `ACC_FINAL`. Exit:
   allowlist G3/G4 lines deleted; twin-compile determinism test still
-  green (construction cost moves inside the existing compile budget).
+  green (construction cost moves inside the existing compile budget). *(#99)*
 - [ ] **W5 — Gate to end state** (G5): statics allowlist exactly the
   four justified entries; per-call carriers and compile-time builders
   named in the gate; `@MemoCache` set empty; zero non-final fields
