@@ -40,7 +40,7 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 ## Engineering
 
-- [ ] Complexity review: examine 38 listed items ([laundry list](docs/complexity-review.md))
+- [ ] Complexity review: land recorded removals, simplifications ([review](docs/complexity-review.md))
 - [ ] Namespace move jemmix → tagmaton (gates publish)
 - [ ] First Maven publish
 - [ ] japicmp baselines ×4
