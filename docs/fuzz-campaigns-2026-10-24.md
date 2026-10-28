@@ -89,6 +89,17 @@ as its own correctness item; the immutability program proceeds on the
 state-discipline axis regardless (W2–W4 still delete the surfaces a
 warm-state bug would have needed).
 
+**Update 2026-10-28 — fixed (#110).** Root cause was in the sim itself:
+the unbeatability scan's early exit stopped as soon as the PARTIAL
+live-origin minimum reached `best` — a tie read as "no future accept
+can beat it" while a smaller origin sat in an unscanned word (accept
+origin 1 at pos 43, origin 0 alive in a later word ⇒ leftmost 1). The
+natural ladder's exact walk at `from` answers 0 first, which is why
+only the forced rung exposed it. The exit now stops only when decided:
+partial min < `best`, or at `from` (the origin floor). Pinned in
+`OriginSimLeftmostStartTest` (54-char minimal family, 4×/5×, stretched
+shape; all rungs + live oracle).
+
 ## Finding 2 — the leak classifier reads only the first find (~90 records)
 
 `leakedRestartSpan` inspects `firstFindClause` only, so JDK-8381696
