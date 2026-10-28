@@ -278,7 +278,12 @@ public final class TdfaAsmBackend {
         // delegate path for everything the generated class doesn't own.
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "runner", RUNNER_D, null, null).visitEnd();
         if (tdfa.unicodeWordBoundary()) {
-            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "WORD_RANGES", "[I", null, null).visitEnd();
+            // ACC_FINAL: static finals assigned in <init> via PUTSTATIC are the
+            // established emitted-class pattern here (ENTRY_MASK et al., verified
+            // across JDK 8-26 CI) — one instance per generated class in practice,
+            // and the second-instance rebind hazard dies (runner-immutability W4).
+            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "WORD_RANGES", "[I", null, null)
+                .visitEnd();
         }
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(" + TDFA_D + ")V", null, null);
         mv.visitCode();

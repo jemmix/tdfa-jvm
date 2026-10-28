@@ -47,18 +47,14 @@ final class RunnerFinalityGateTest {
     private static final String[] PACKAGES = {"io.github.jemmix.tdfa.core.dfa", "io.github.jemmix.tdfa.core.engine"};
 
     /**
-     * Transition allowlist: class → (field → deleting work item). Every
-     * entry carries {@link MemoCache} at the declaration site with the
-     * purity argument. Burned down to empty by W2-W4.
+     * The memo allowlist, historically the transition ratchet from W1 to W4.
+     * EMPTY since W4 (every entry deleted by its landing work item) — the
+     * gate now enforces the end state: no non-final instance field on a
+     * shared artifact may exist at all, annotated or not.
      */
     private static final Map<String, Map<String, String>> MEMO_ALLOWLIST = new HashMap<>();
 
     static {
-        Map<String, String> tdfa = new HashMap<>();
-        tdfa.put("stopMaskTableCache", "W4 — precompute at construction");
-        tdfa.put("posFlagDepsCache", "W4");
-        tdfa.put("absBeginBoundCache", "W4");
-        MEMO_ALLOWLIST.put("io.github.jemmix.tdfa.core.dfa.Tdfa", tdfa);
     }
 
     /**

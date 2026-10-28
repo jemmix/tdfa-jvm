@@ -52,8 +52,12 @@ final class RunnerImmutabilityTest {
 
     private static final int THREADS = 4;
 
-    /** The only non-final fields allowed on emitted classes until W4. */
-    private static final List<String> EMITTED_EXCEPTIONS = Arrays.asList("WORD_RANGES");
+    /**
+     * Non-final fields allowed on emitted classes — EMPTY since W4
+     * (WORD_RANGES went ACC_FINAL; static finals assigned in emitted
+     * {@code <init>}s are the established pattern).
+     */
+    private static final List<String> EMITTED_EXCEPTIONS = Arrays.asList();
 
     private static final String[] INPUTS = buildInputs();
 

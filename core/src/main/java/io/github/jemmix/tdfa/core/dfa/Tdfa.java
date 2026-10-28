@@ -290,33 +290,24 @@ public final class Tdfa {
      */
     final int[] ops;
     /**
-     * Lazily-materialized 2D expansion of {@link #stopMaskUniform}. Volatile so
-     * the filled array is safely published to racing readers (a plain field
-     * could expose default-value cells under the JMM); duplicate
-     * materialization by racing threads is benign, mutation is never intended.
+     * Materialized-at-construction 2D expansion of {@link #stopMaskUniform}
+     * (null when the artifact carries the full stop table already, or is in
+     * POSIX mode with no uniform tier). Runner-immutability W4: this, the
+     * posFlag deps, and the \A bound are pure functions of the final
+     * tables, computed once in the constructor — no lazy fields, no benign
+     * races, no publication reasoning.
      */
+    private final int[] stopMaskTable;
     /**
-     * Lazily-materialized 2D expansion of {@link #stopMaskUniform}. Volatile so
-     * the filled array is safely published to racing readers (a plain field
-     * could expose default-value cells under the JMM); duplicate
-     * materialization by racing threads is benign, mutation is never intended.
+     * The position-flag bits the compiled DFA actually DISTINGUISHES —
+     * computed at construction (see {@link #posFlagDeps()}).
      */
-    @MemoCache
-    private volatile int[] stopMaskTableCache;
+    private final int posFlagDeps;
     /**
-     * Lazily-computed {@link #posFlagDeps()} (benign race; -1 = not computed).
-     * Memo: pure function of the final tables; duplicate racing fills
-     * compute the identical value — deleted by runner-immutability W4.
+     * Whether every accepting path of this FIND artifact crosses an
+     * {@code \A} gate — computed at construction (see {@link #absBeginBound()}).
      */
-    @MemoCache
-    private int posFlagDepsCache = -1;
-    /**
-     * Lazily-computed {@link #absBeginBound()} (benign race; -1 = not computed).
-     * Memo: pure function of the final tables; duplicate racing fills
-     * compute the identical value — deleted by runner-immutability W4.
-     */
-    @MemoCache
-    private int absBeginBoundCache = -1;
+    private final boolean absBeginBound;
 
     /** Every axis set (the RE2-lineage reading): the legacy-constructor default. */
     private static final Semantics ALL_AXES = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
@@ -404,6 +395,12 @@ public final class Tdfa {
                 multiValued, posFlagCells);
         }
         this.startStateEntryMask = stateEntryMask[startState];
+        // Derived-at-construction (runner-immutability W4): pure functions of
+        // the final tables, computed once — the stop table first (posFlagDeps
+        // consumes it), then the deps mask, then the \A-bound reachability.
+        this.stopMaskTable = stopOnAcceptMask != null || stopMaskUniform == null ? null : materializeStopTable();
+        this.posFlagDeps = computePosFlagDeps(stopMaskTable);
+        this.absBeginBound = computeAbsBeginBound();
     }
 
     /**
@@ -716,20 +713,22 @@ public final class Tdfa {
         if (stopOnAcceptMask != null) {
             return stopOnAcceptMask.clone();
         }
+        return stopMaskTable == null ? null : stopMaskTable.clone();
+    }
+
+    /**
+     * The 2D expansion of {@link #stopMaskUniform}, built once at
+     * construction ({@code NEVER_STOP} cells per masked state, 0 elsewhere).
+     * Null when the artifact carries the full table or is in POSIX mode.
+     */
+    private int[] materializeStopTable() {
         byte[] u = stopMaskUniform;
-        if (u == null) {
-            return null;
+        int cells = posFlagCells;
+        int[] out = new int[u.length * cells];
+        for (int s = 0; s < u.length; s++) {
+            Arrays.fill(out, s * cells, s * cells + cells, u[s] != 0 ? NEVER_STOP : 0);
         }
-        int[] cache = stopMaskTableCache;
-        if (cache == null) {
-            int cells = posFlagCells;
-            cache = new int[u.length * cells];
-            for (int s = 0; s < u.length; s++) {
-                Arrays.fill(cache, s * cells, s * cells + cells, u[s] != 0 ? NEVER_STOP : 0);
-            }
-            stopMaskTableCache = cache;
-        }
-        return cache.clone();
+        return out;
     }
 
     /**
@@ -749,11 +748,16 @@ public final class Tdfa {
      * reads a table that distinguishes b — no model to keep in sync.
      */
     public int posFlagDeps() {
-        int deps = posFlagDepsCache;
-        if (deps >= 0) {
-            return deps;
-        }
-        deps = 0;
+        return posFlagDeps;
+    }
+
+    /**
+     * The construction-time computation behind {@link #posFlagDeps()} —
+     * a pure function of the final tables; {@code stopTable} is the
+     * already-materialized stop table (null in POSIX mode).
+     */
+    private int computePosFlagDeps(int[] stopTable) {
+        int deps = 0;
         for (int m : stateEntryMask) {
             deps |= m;
         }
@@ -772,9 +776,8 @@ public final class Tdfa {
                 deps |= wholeRanges[i];
             }
         }
-        deps |= tableDeps(stopOnAcceptMask(), posFlagCells);
-        deps |= tableDeps(stateFinalOpsByMask(), posFlagCells);
-        posFlagDepsCache = deps;
+        deps |= tableDeps(stopTable, posFlagCells);
+        deps |= tableDeps(stateFinalOpsByMask, posFlagCells);
         return deps;
     }
 
@@ -810,13 +813,7 @@ public final class Tdfa {
      * the restart ladder reads {@link #ranges} only.
      */
     public boolean absBeginBound() {
-        int cached = absBeginBoundCache;
-        if (cached >= 0) {
-            return cached == 1;
-        }
-        boolean bound = computeAbsBeginBound();
-        absBeginBoundCache = bound ? 1 : 0;
-        return bound;
+        return absBeginBound;
     }
 
     private boolean computeAbsBeginBound() {
