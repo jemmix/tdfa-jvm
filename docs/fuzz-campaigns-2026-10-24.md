@@ -68,6 +68,15 @@ Whether it is warm/cold determinism or a true cross-thread race is
 exactly what the [runner-immutability program](runner-immutability.md)
 sets out to make unrepresentable.
 
+**Update 2026-10-28 — immutability program complete (#93–#100).** F1's
+original suspicion (lazy memo state on the shared runner) is retired
+**by construction**: both match-time memos were deleted outright after
+their honest-cache conversions ([pricing](runner-immutability.md),
+[tradeoffs](search-dfa-memo-tradeoffs.md)) — there is no memo state
+left to be warm, cold, or racy. What remains of F1 is the ORIGIN_SIM
+leftmost bug itself (its own TODO item above), which the 2026-10-26
+update below adjudicated.
+
 **Update 2026-10-26 — warmth hypothesis retired (immutability W1).** The
 solo-replay cleanliness was a reporting gap, not a warmth effect: the
 one-mode replay never printed or checked the cross-rung findings
