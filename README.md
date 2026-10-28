@@ -123,6 +123,17 @@ back to a slower engine.
   [work item](docs/jur-compat-wbs.md)).
 - **~300 M** differential fuzz cases vs re2j (overnight soaks): 0 divergences
   (same lane note).
+- Overnight-soak budget rejections — the documented non-divergence class
+  (clean `PatternTooLargeException`s under the soak's scoped 8 M-tick
+  compile budget): 0.023% of re2j-lane cases (2026-10-16); the 2026-10-24
+  jur leg ran **0.069%** (≈116.2 k/168.9 M, ×13 vs 0.005% on its 2026-10-16
+  run) — suspected #83 `BOUNDED_ZWE` ε-subgraph compile-state growth on
+  deep-nesting shapes. Raised-knob replay verified the class: 13 sampled
+  records compiled under raised `tdfa.budget.*` knobs and answered
+  byte-identical to `java.util.regex`; 3 expanded past any raised cap
+  (genuinely too large) — 0 mismatches in the sample; one separately
+  flagged F5-seed raised-knob divergence did not reproduce and stays
+  open ([finding 7](docs/fuzz-campaigns-2026-10-24.md)).
 - re2j-parity suites — each translatable case ALSO pinned against the live
   `java.util.regex` oracle on the jur facade (the default lane) — Glenn
   Fowler's testregex corpus, OpenJDK's `java.util.regex` regression corpus,

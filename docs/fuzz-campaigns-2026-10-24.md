@@ -211,6 +211,46 @@ documented — but F7 verifies classification (replay a sample with raised
 `-Dtdfa.budget.compile.*` knobs: accept ⇒ compare clean) and the shift
 must be stated in the README numbers refresh, not silently inherited.
 
+**Update 2026-10-28 — verified, classification holds (0 mismatches).**
+Two seed windows — a fresh 2-minute jur draw and this campaign's own
+first chunk re-run (seed 202610241338: 192 rejects, inside the 200–256
+band) — 16 distinct-shape seeds replayed with raised knobs
+(`-Pfuzz.maxWork=0`, i.e. the library 500 M-tick compute budget, plus
+`-Dtdfa.budget.compile.memory=1g` / `-Dtdfa.budget.runtime.memory=512m`
+where the reject message named those): **13 accepted and answered the
+five-probe protocol byte-identical to java.util.regex on both engines; 3
+stayed over budget at any raise** — the `(\w.{0,}){1,6}` CFG family
+expands to fill whatever memory cap it is given (4.19 M successor arcs at
+128 MiB, 33.5 M at 1 GiB) and one `{2,4}`-nested monster burns the full
+500 M-tick library budget (~55 s wall) — genuinely too large, the
+documented clean rejection. Consistent with the #83 hypothesis (simple
+CI shapes like `(\w)+` or `[^.\n]+(\w)` reject at the 8 M scoped ticks
+yet compile oracle-clean at 500 M; the ε-duplication shapes grow
+superlinearly); root-causing stays with the watch item. Pinned in
+`BudgetRejectReplayTest`; the rate shift is now stated in the README
+("How it's tested").
+
+**Coda — the one flag that did not reproduce.** Mid-verification, an
+F5-seed raised-knob replay (seed `2845852313826387552`) was flagged as
+"accepts at a 16 M-tick raise, then mismatches the oracle" — which
+would have been a real correctness finding. Exhaustive replay could NOT
+reproduce it. At this verification's base (`8910439`): the 16 M compute
+raise rejects cleanly (16,477,749/16,477,748 ticks — with and without a
+1 GiB memory raise), and the one accepting configuration, the library
+500 M budget, compiles BOTH engines and answers the five-probe protocol
+byte-identical to java.util.regex, cold and warm (the seed is batch
+index 0, so warmth adds nothing). The F5 siblings behave the same
+(`9193966964223274768` accepts clean at 500 M; `6737807483309015440`
+fills any raised memory cap, stays too large). On main, #104's per-range
+frontier metering makes the seed's true cost visible — it burns the
+ENTIRE library budget (499,700,533 ticks, ~13 s wall) and rejects
+cleanly at 8 M, 16 M and 500 M alike, so the raised-knob path can no
+longer materialize that artifact at all. Compute acceptance yields the
+identical artifact in every accepting configuration, so a compute-raise
+mismatch would have shown at the 500 M replay. The flag stays open in
+TODO.md; if the original observation resurfaces, the divergence lives
+somewhere this knob matrix cannot reach.
+
 ## Reproduction steps
 
 ```bash
