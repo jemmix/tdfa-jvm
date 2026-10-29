@@ -14,8 +14,7 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The campaign 2026-10-24 finding-4 shapes, pinned (see
- * docs/fuzz-campaigns-2026-10-24.md): {@code $}/{@code \B}/{@code ^} gates
+ * The campaign 2026-10-24 finding-4 shapes, pinned: {@code $}/{@code \B}/{@code ^} gates
  * after an unbounded class-plus — {@code .+$\w},
  * {@code .+(?m:^\w)}, {@code [^9]+?\B\w+?} — spun the walk ladder
  * 20–36 s on the soak's stretched inputs (plus the three clean

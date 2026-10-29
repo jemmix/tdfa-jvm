@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Finding 1 of the 2026-10-03 fuzz campaign
- * ({@code docs/fuzz-campaigns-2026-10-03.md}): {@code runGeneric} — the
+ * (2026-10-03 campaign): {@code runGeneric} — the
  * non-String CharSequence fallback, shared by both engine tiers — advanced
  * its restart scan without the surrogate-pair-interior skip the String
  * ladders and {@code PikeSim} apply, so matches could START inside

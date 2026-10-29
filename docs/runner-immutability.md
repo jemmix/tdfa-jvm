@@ -10,8 +10,8 @@
 
 The match-time runner carries lazy mutable state on shared artifacts.
 The 2026-10-24 jur soak caught it misbehaving once in 168.9 M cases
-([finding 1](fuzz-campaigns-2026-10-24.md) — a forced rung disagreeing
-with the natural ladder, unreproducible on a cold artifact), and the
+(2026-10-24 finding 1 — a forced rung disagreeing
+with the natural ladder), and the
 audit that followed found the trade had never been made explicitly.
 This doc is the decision: **audit every field; make most
 immutable/precomputed; convert the genuinely lazy rest into an honest

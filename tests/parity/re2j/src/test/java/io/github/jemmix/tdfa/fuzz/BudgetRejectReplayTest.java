@@ -18,8 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * seed must keep rejecting cleanly (the CFG-blowup family expands past any
  * raised memory cap — genuinely too large, the budget doing its job).
  * Evidence trail incl. the memory-raised accepts and the 500 M-tick
- * burn-out monster: finding 7 of
- * {@code docs/fuzz-campaigns-2026-10-24.md}.
+ * burn-out monster: finding 7 of the 2026-10-24 campaign.
  */
 @Timeout(300)
 class BudgetRejectReplayTest {

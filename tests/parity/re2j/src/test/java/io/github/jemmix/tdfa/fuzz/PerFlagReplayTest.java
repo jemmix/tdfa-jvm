@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * WBS item 6, first box — "per-flag unit tests from the campaign replay
  * seeds". The 2026-10-03 campaign's finding-2 representative seeds
- * ({@code docs/fuzz-campaigns-2026-10-03.md}: one per known family, each
+ * (2026-10-03 campaign: one per known family, each
  * replayable via {@code -Pcamp.mode=jur -Pcamp.one=<seed>}) plus a
  * deterministic per-axis sweep, run under EVERY flag setting — bare, each
  * axis alone, the CI pairs, all four — against the LIVE
