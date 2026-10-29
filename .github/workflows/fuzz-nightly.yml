@@ -1,0 +1,78 @@
+name: nightly-fuzz
+
+# Widest-surface differential soak, every night. scripts/fuzz-soak.sh runs
+# the chunked DifferentialFuzzer (one short-lived JVM per minute — hang-leak
+# containment) with ALL widening defaults left on:
+#   - lane mix: per-batch draw between the re2j surface vs the patched re2j
+#     oracle AND the jur facade vs live java.util.regex;
+#   - cross-rung differential (forced complete-search rungs) + stretch;
+#   - determinism double-run (runner-immutability tripwire);
+#   - GC logging on, JFR hang watch on.
+# Default length 240 chunks x 1 min = 4 h (plus ~5-15 s gradle+JIT per chunk
+# and the post-soak hang-replay verification pass).
+#
+# Findings: scripts/fuzz-nightly-issue.py reads the soak's failures.ndjson,
+# drops the counted-but-not-findings kinds (KNOWN_DIVERGENCE, JURLANE_SKIP,
+# JURLANE_GUARD, BUDGET_REJECT, HANG_ORACLE) and opens ONE issue per run —
+# only if some mismatch SIGNATURE (kind + structural pattern shape, the
+# fuzzer's own dedup) is not already tracked by an open nightly-fuzz issue.
+# Clean or all-known nights stay silent. Manual runs: workflow_dispatch
+# (minutes/seed inputs; seed 0 = random).
+
+on:
+  schedule:
+    # 02:30 UTC — off the top-of-hour cron stampede.
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: 'soak length in minutes (chunks x 1 min)'
+        default: '240'
+      seed:
+        description: 'seed base (0 = random)'
+        default: '0'
+
+# Never cancel a soak mid-flight for a concurrency collision.
+concurrency:
+  group: nightly-fuzz
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  fuzz:
+    name: differential fuzz soak (4h, both lanes)
+    # Schedules only fire on the default branch's copy of this file; the
+    # guard keeps forks that DO enable it from filing issues upstream-style.
+    if: github.repository == 'jemmix/tdfa-jvm'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          validate-wrappers: true
+      - name: Chunked differential soak (mix lanes, cross-rung + double-run on)
+        env:
+          SOAK_MINUTES: ${{ inputs.minutes || '240' }}
+          SOAK_SEED: ${{ inputs.seed || '0' }}
+        run: |
+          set -euxo pipefail
+          if [ "$SOAK_SEED" = "0" ]; then
+            scripts/fuzz-soak.sh "$SOAK_MINUTES" 1 build/fuzz-nightly
+          else
+            scripts/fuzz-soak.sh "$SOAK_MINUTES" 1 build/fuzz-nightly "$SOAK_SEED"
+          fi
+      # always(): findings from a partially-completed soak are still findings.
+      - name: Open issue on new mismatches
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/fuzz-nightly-issue.py build/fuzz-nightly "$RUN_URL"

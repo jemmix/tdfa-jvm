@@ -34,6 +34,11 @@ if (project.hasProperty('againstJars')) {
     ['compileTestJava', 'test'].each { name ->
         tasks.named(name) {
             dependsOn jarPaths
+            // Build cache is UNSOUND under the doFirst classpath swap below:
+            // entries are keyed on the declared (classes-dir) classpath, so a
+            // stored entry could be restored for a jars run. Never store or
+            // load in this mode (org.gradle.caching, gradle.properties).
+            outputs.cacheIf { false }
             doFirst {
                 def drop = shipped.collectMany {
                     [it.layout.buildDirectory.dir('classes/java/main').get().asFile,
@@ -54,6 +59,11 @@ test {
     systemProperty 'tdfa.asm.dump', System.getProperty('tdfa.asm.dump', 'false')
     // The JIT inlining guard is its own action (below), never the default gate.
     filter { excludeTestsMatching '*InliningGuard*' }
+    // Forked parallelism: ~54 test classes distributed across forks, each
+    // fork fully isolated (2g heap is per-fork — the bomb and the timing
+    // tests above are why this suite uses FORKS rather than in-JVM threads).
+    // Default 1 (local determinism); CI passes -Ptdfa.testForks=3.
+    maxParallelForks = providers.gradleProperty('tdfa.testForks').map(Integer::parseInt).getOrElse(1)
     testLogging {
         events 'failed', 'standardOut', 'standardError'
         exceptionFormat 'full'

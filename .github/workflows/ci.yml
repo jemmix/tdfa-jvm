@@ -2,9 +2,25 @@ name: ci
 
 # Deliberately minimal and boring.
 # Floor policy: core+asm+facade+re2j ship Java 8 bytecode; pikesim/unicode
-# ship Java 25 (latest LTS). Three jobs:
-#   check: full gate on a current JDK (everything; EP lint runs inside
-#       compile via --release cross-compilation),
+# ship Java 25 (latest LTS). Jobs:
+#   check: a 5-leg matrix, all on the public-repo ARM pool (ubuntu-24.04-arm
+#       — comparable core count to ubuntu-latest, faster single core, far
+#       shorter queue). The old single `check` job put ~95% of its ~11 min
+#       into four test tasks; the legs give each of them a whole runner:
+#         lint      — compile + ErrorProne + checkstyle + spotless + TODO
+#                     gate (check minus every test task)
+#         unit      — :tests:unit:test forked (-Ptdfa.testForks=3), plus the
+#                     tiny :tests:parity:rebar:test piggybacked here
+#         parity-re2j     — :tests:parity:re2j:test, forked (-Ptdfa.testForks=3;
+#                     in-JVM class parallelism is unsound here — the suite's
+#                     budget/engine system-property swaps are JVM-global, see
+#                     tests/parity/re2j/build.gradle)
+#         parity-re2j-suite-asm — re2j corpus, ASM backend (test)
+#         parity-re2j-suite-vm  — re2j corpus, VM backend (testOnVm); the
+#                     two suite legs are separate because both run the same
+#                     single vendored ExecTest class — intra-suite forking
+#                     cannot split one class across forks, so parallelism
+#                     comes from one runner per leg instead.
 #   spotbugs: JDK 25 (4.9.x cannot scan JDK 26 runtime classes; the build
 #       self-skips it there, so this row is where it actually ENFORCES),
 #   jars-and-tests: THE floor proof — core+asm+facade+re2j compiled by a
@@ -17,6 +33,10 @@ name: ci
 on:
   push:
     branches: [main]
+    # Doc-only pushes to main skip the gate (a PR already gated the merge);
+    # pull_request deliberately has NO path filter — required checks must
+    # always report.
+    paths-ignore: ['**.md', 'docs/**']
   pull_request:
 
 # Superseded runs of the same branch/PR don't queue up duplicating full gates.
@@ -29,9 +49,24 @@ permissions:
 
 jobs:
   check:
-    name: build + check (JDK 26)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    name: check / ${{ matrix.leg }} (JDK 26, arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    strategy:
+      # Every leg reports even if a sibling failed — full picture per run.
+      fail-fast: false
+      matrix:
+        include:
+          - leg: lint
+            gradle: 'check -x test -x testOnVm'
+          - leg: unit
+            gradle: ':tests:unit:test :tests:parity:rebar:test -Ptdfa.testForks=3'
+          - leg: parity-re2j
+            gradle: ':tests:parity:re2j:test -Ptdfa.testForks=3'
+          - leg: parity-re2j-suite-asm
+            gradle: ':tests:parity:re2j-suite:test'
+          - leg: parity-re2j-suite-vm
+            gradle: ':tests:parity:re2j-suite:testOnVm'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -41,7 +76,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         with:
           validate-wrappers: true
-      - run: ./gradlew check --stacktrace
+      - run: ./gradlew ${{ matrix.gradle }} --stacktrace
 
   spotbugs:
     name: spotbugs (JDK 25)
