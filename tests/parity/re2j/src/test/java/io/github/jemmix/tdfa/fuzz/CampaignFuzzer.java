@@ -139,6 +139,21 @@ public final class CampaignFuzzer {
     /** Soft wall guard per case; over it the case is recorded SLOW and skipped. */
     private static final long CASE_SLOW_MS = 3_000;
 
+    /** The pattern shape of the GroupCurly stale-iteration write (fuzz
+     *  campaign 2026-10-24, finding 3): a greedy {@code *}/{@code +}/
+     *  {@code {n,m}} quantifier directly on a group — capturing or not —
+     *  whose body contains another, UNQUANTIFIED capture (the
+     *  innermost-close lookahead). That is the body java.util.regex
+     *  compiles as {@code GroupCurly} with the inner capture's
+     *  {@code GroupTail} inside the atom, where its write survives the
+     *  backoff unwound. The #87 sticky shapes (the inner capture itself
+     *  quantified, {@code ((a)*b)*}) deliberately do NOT match: the
+     *  sticky split made those hard evidence. Deeper nestings
+     *  ({@code (((x)))*x}, {@code (?:(?:ab)(9))*x}) also miss — the skip
+     *  stays conservative, they compare hard. */
+    static final java.util.regex.Pattern STALE_ITERATION_SHAPE =
+        java.util.regex.Pattern.compile("\\((?:\\?:|\\?<\\w+>)?[^()]*\\([^()]*\\)(?![*+?{])[^()]*\\)[*+{]");
+
     // ---- families mode: family-biased shape pools (see genFamilies) ----
 
     static final String[] PREFIX_TAILS =
@@ -582,6 +597,35 @@ public final class CampaignFuzzer {
                 c.tdfaFlags(), "jur", jur, "jurLaneVm", jurLaneVm);
             return;
         }
+        // (1d) F3 (campaign 2026-10-24): the GroupCurly stale-iteration
+        // write — java's GroupCurly.match0 backoff rewrites ONLY the
+        // directly-quantified group's registers; a NESTED capture's
+        // GroupTail write (committed once the atom's own continuation
+        // succeeds) is never restored, so the DEEPEST greedy iteration's
+        // span survives the unwind and reports through the accepted match
+        // (the `(X)*tail` in-span participation family, ~180 records; the
+        // failed-restart variant of the same write lands here too —
+        // `(?:.(9)){0,}\d` on "x9" reports g1 1..2 from the attempt at 0).
+        // DECIDED (excluded, not reproduced): the surviving value is a
+        // function of the greedy saturation frontier — of a previous find()
+        // attempt, for the restart variant — not of the accepted path, so
+        // no tagged-NFA edit can express it (#87's split clones write
+        // disciplines along taken paths; this value lives on an untaken
+        // one). Faithful reproduction needs determinizer cross-config
+        // register transfers plus matcher-global carry across find()
+        // restarts — backtracker emulation the frozen runner cluster (#98)
+        // deleted the surfaces for. The JDK-side node truth: these bodies
+        // compile to GroupCurly, never Prolog/Loop — a non-deterministic
+        // body restores nested writes through GroupTail's save/restore and
+        // never diverges (control in GroupCurlyStaleWriteParityTest).
+        // Pinned both ways there.
+        if (sameSkeleton(jur, jurLaneVm) && STALE_ITERATION_SHAPE.matcher(c.pattern()).find()
+            && staleIterationSpan(jur, jurLaneVm)) {
+            counts.soft("SKIP_GROUPCURLY_STALE_WRITE");
+            camp.rec(caseSeed, "JURLANE_SKIP (groupcurly-stale-write)", "pattern", c.pattern(), "input", c.input(),
+                "flags", c.tdfaFlags(), "jur", jur, "jurLaneVm", jurLaneVm);
+            return;
+        }
         // (1b, retired) The nested-loop inner-capture quirk — java's
         // GroupCurly backoff rewrites the pair's span on every unwind,
         // outermost frame last, so the FIRST enclosing-loop iteration that
@@ -907,6 +951,62 @@ public final class CampaignFuzzer {
             }
         }
         return clauseLeaks(rClause(oracle), rClause(vm));
+    }
+
+    /** The GroupCurly stale-iteration signature
+     *  (SKIP_GROUPCURLY_STALE_WRITE's predicate): the protocols agree on
+     *  everything but the group clauses, AND some clause — the F probe's
+     *  first match, an I entry, or the R restart clause — reports an
+     *  oracle group span where the engines report none, the span INSIDE
+     *  the oracle's own overall match (the strictly-outside twin is
+     *  {@link #leakedRestartSpan}, checked first; the pattern shape gate
+     *  is {@link #STALE_ITERATION_SHAPE}). Only java's never-restored
+     *  {@code GroupTail} write can leave a span the accepted path never
+     *  reported; the shape gate keeps plain missing-write bugs out. */
+    static boolean staleIterationSpan(String oracle, String vm) {
+        if (clauseStale(firstFindClause(oracle), firstFindClause(vm))) {
+            return true;
+        }
+        List<String> oEntries = iEntries(oracle);
+        List<String> vEntries = iEntries(vm);
+        for (int i = 0; i < Math.min(oEntries.size(), vEntries.size()); i++) {
+            if (clauseStale(oEntries.get(i), vEntries.get(i))) {
+                return true;
+            }
+        }
+        return clauseStale(rClause(oracle), rClause(vm));
+    }
+
+    /** One bare span clause per side, group counts agreeing: an oracle
+     *  group span the engine reports as none, within the oracle's own
+     *  overall span, is the discarded iteration's write. */
+    private static boolean clauseStale(String oClause, String vClause) {
+        if (oClause == null || vClause == null) {
+            return false;
+        }
+        int op = oClause.indexOf('(');
+        int vp = vClause.indexOf('(');
+        if (op < 0 || vp < 0) {
+            return false; // a groupless clause cannot carry the signature
+        }
+        int[] overall = spanOf(oClause.substring(0, op).trim());
+        if (overall == null) {
+            return false;
+        }
+        String[] oGroups = oClause.substring(op + 1, oClause.lastIndexOf(')')).split(" ");
+        String[] vGroups = vClause.substring(vp + 1, vClause.lastIndexOf(')')).split(" ");
+        if (oGroups.length != vGroups.length) {
+            return false;
+        }
+        for (int i = 0; i < oGroups.length; i++) {
+            int[] span = spanOf(oGroups[i]);
+            // a span the engine does not report, inside the reported match:
+            // the stale iteration write
+            if (span != null && "-".equals(vGroups[i]) && span[0] >= overall[0] && span[1] <= overall[1]) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** One bare span clause per side ({@code s..e (g1 g2 ...)}), group

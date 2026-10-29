@@ -41,7 +41,7 @@ at 8 per reason per chunk — counters keep running):
 |---|---|---|---|
 | F1 | ~~Cross-rung warm-state self-inconsistency~~ → ORIGIN_SIM leftmost-start miss (deterministic, cold; replay reporting gap fixed 2026-10-26, see the update under finding 1) | 2–5 d | **1 below** — engine vs itself, oracle-free |
 | F2 | Extend `leakedRestartSpan` to the `I`/`R` probe clauses | hours | **2 below** — ~90 misclassified records |
-| F3 | `(X)*tail` in-span participation: sticky-split extension or decided exclusion, pinned tests + battery; triage the one overall-span record separately | 2–4 d | **3 below** — ~180 records |
+| F3 | ~~`(X)*tail` in-span participation: sticky-split extension or decided exclusion~~ → decided exclusion `SKIP_GROUPCURLY_STALE_WRITE` (2026-10-28, see the update under finding 3); the overall-span record dissolved into it | 2–4 d | **3 below** — ~180 records |
 | F4 | Walk-loop spins, round 4: profile the three slow seeds, extend the ladder bounds | 1–3 d | **4 below** |
 | F5 | `addZeroOpFrontier` tick starvation: meter the closure | hours | **5 below** — compile-time |
 | F6 | `JURLANE_GUARD` predicate: lazy nested-quantifier bombs | hours | **6 below** — oracle-side |
@@ -153,6 +153,36 @@ re-verification) or a conscious exclusion in the #89 style. One record is
 **not** participation-shaped and must be triaged separately: seed
 `2858084537373459748`, `((((\U000103ff)){0,}\D)(\udc00))x?` — oracle
 `F=true 3..6` vs ours `3..5`, an overall-span disagreement.
+
+**Update 2026-10-28 — F3 decided: exclusion (`SKIP_GROUPCURLY_STALE_WRITE`).**
+The node attribution corrected on the JDK 26 source + live oracle: the
+seeds compile to `GroupCurly` (study()-deterministic bodies), never
+`Prolog`/`Loop` — a TRUE Prolog/Loop body (non-deterministic, e.g.
+`(?:(?:|b)(9))*9`) restores nested writes through `GroupTail`'s
+save/restore and never diverges. The mechanism is `GroupCurly.match0`'s
+backoff rewriting only the directly-quantified group's registers: a
+nested capture's `GroupTail` write (committed once the atom's own
+continuation succeeds) survives the unwind, so the DEEPEST greedy
+iteration's span reports through the accepted match; seed
+`179386094230408747` is the same write surviving a FAILED find() restart
+(the in-span twin of the JDK-8381696 non-reset). The surviving value is a
+function of the greedy saturation frontier — of a previous attempt, for
+the restart variant — not of the accepted path, so no tagged-NFA edit can
+express it (#87's split clones write disciplines along taken paths; this
+value lives on an untaken one); faithful reproduction needs determinizer
+cross-config register transfers plus matcher-global carry across find()
+restarts — backtracker emulation the frozen runner cluster (#98) deleted
+the surfaces for. Exclusion = skeleton-equal + the
+GroupCurly-nested-capture shape + an oracle span the engines report as
+none inside the overall span (`CampaignFuzzer.staleIterationSpan`);
+pinned both ways in `GroupCurlyStaleWriteParityTest`, predicate in
+`StaleIterationPredicateTest`. The displaced twin (oracle keeps the
+deepest discarded iteration, we the live participating one) stays hard.
+Triage of `2858084537373459748`: the overall-span half no longer
+reproduces at HEAD (skeleton agrees, 3..6 both sides — fixed by the
+post-campaign engine work); the residual — innermost g3 `3..5` vs none —
+is this same family, covered by the exclusion. No separate engine bug
+remains.
 
 ## Finding 4 — walk-loop spins, round 4 (6 records, 3 real)
 
