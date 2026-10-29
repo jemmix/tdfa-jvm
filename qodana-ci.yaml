@@ -1,0 +1,29 @@
+# CI gate profile: javadoc integrity ONLY, for now.
+#
+# The full own-code policy (scope + harmful-check suppressions) lives in
+# qodana.yaml — run it ad hoc with `qodana scan` (no --config). This file
+# is what CI enforces (`./gradlew qodanaScan`, --fail-threshold 0): the
+# one finding family that is pure wins — broken {@link}/@see references
+# in the shipped API docs (docs/qodana-analysis.md, "correctness wins").
+# Everything else (dataflow on hot paths, extract-method, guard merging)
+# is deliberately not gated: see the classification table before adding
+# inspections here.
+version: "1.0"
+linter: qodana-jvm-community
+withinDocker: false
+profile:
+  name: empty
+  inspections:
+    - inspection: JavadocReference
+      enabled: true
+    # Same own-code scope as qodana.yaml (the empty profile still walks
+    # the whole tree without this).
+    - group: ALL
+      ignore:
+        - build/**
+        - benchmarks/**
+        - tests/**
+        - vendor/**
+        - unicode/**
+        - lib/**
+        - testlib/**

@@ -1,0 +1,52 @@
+name: qodana
+
+# Javadoc-integrity gate: the one Qodana finding family that is pure
+# wins — broken {@link}/@see references in the shipped API docs. Runs
+# the qodana-jvm-community linter in NATIVE mode (no Docker; the Gradle
+# plugin pulls the CLI, the IDE backend lands in ~/.cache/JetBrains and
+# is cached between runs) against the own-code modules only, with
+# --fail-threshold 0: any new broken doc reference fails the build.
+# The gate scope is deliberately narrow for now — the classification of
+# the other ~100 findings (hot-path dataflow, extract-method, guard
+# merging: applied they would make the code worse) and the config
+# knobs live in docs/qodana-analysis.md. Widening the gate is an
+# owner decision recorded there, not a drive-by.
+# Actions are pinned by commit SHA; bump deliberately.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  javadoc-gate:
+    name: qodana javadoc gate (JDK 26)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '26'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          validate-wrappers: true
+      # Qodana native-mode IDE backend (~1 GB). First run downloads, later
+      # runs restore. The Gradle-plugin CLI download rides setup-gradle's
+      # ~/.gradle cache.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/JetBrains
+          key: qodana-ide-${{ runner.os }}-${{ github.workflow }}
+          restore-keys: qodana-ide-${{ runner.os }}-
+      # qodana-ci.yaml: empty profile + JavadocReference, own-code scope,
+      # fail-threshold 0 (wired in build.gradle's qodanaScan task).
+      - run: ./gradlew qodanaScan --stacktrace
