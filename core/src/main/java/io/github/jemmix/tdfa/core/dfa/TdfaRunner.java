@@ -950,7 +950,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * stepped past, never recorded. Requires transitions that keep
      * full-match continuations past an earlier higher-priority accept
      * ({@code (a|ab)} on {@code "ab"}): either a cut-free artifact
-     * ({@link Tdfa#compileUnpruned}), a pruned artifact whose cut never
+     * ({@link io.github.jemmix.tdfa.core.determinize.Determinizer#compileUnpruned}), a pruned artifact whose cut never
      * fired, or a pruned artifact with its partial-whole side table — the
      * walk then dispatches on the side entries of the states whose cut
      * deleted continuations ({@link Tdfa#wholeRanges}).

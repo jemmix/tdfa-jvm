@@ -12,7 +12,7 @@ import java.util.NoSuchElementException;
  * execution strategy. The reference implementation is the table interpreter
  * ({@code TdfaRunner}); the ASM module generates a dedicated class per
  * pattern implementing this interface. Third parties may supply their own
- * implementations via {@link RegexEngineFactory}.
+ * implementations via {@link io.github.jemmix.tdfa.core.compile.RegexEngineFactory}.
  *
  * <p>The surface is find-shaped: {@link #find}, {@link #match} and
  * {@link #findAll} run leftmost-first (or leftmost-longest, per the

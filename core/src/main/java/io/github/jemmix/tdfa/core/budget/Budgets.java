@@ -42,7 +42,7 @@ package io.github.jemmix.tdfa.core.budget;
  *
  * <p><b>Per-pattern runtime split.</b> The runtime RAM budget bounds the
  * whole per-pattern execution footprint: the RETAINED artifact tables
- * (charged at {@link Tdfa#retainedTableBytes()} — an end-of-compile
+ * (charged at {@link io.github.jemmix.tdfa.core.dfa.Tdfa#retainedTableBytes()} — an end-of-compile
  * check fails the compile when they alone exceed the budget, the
  * standard clean "pattern too large" rejection pointing at {@value
  * #RUNTIME_MEMORY_PROP}; the partial-whole side table counts as retained
@@ -61,7 +61,7 @@ package io.github.jemmix.tdfa.core.budget;
  * artifact tables and any native fallback runner still draw from the
  * same residual.
  *
- * <p>Knob policy (see the inventory note in {@link Tdfa}): every read is
+ * <p>Knob policy (see the inventory note in {@link io.github.jemmix.tdfa.core.dfa.Tdfa}): every read is
  * fresh — budgets take effect on the next compile (or the next runner
  * constructed, for the runtime budget) in the same JVM, and tests can
  * vary them without forking. Budget exhaustion fails compilation with the
@@ -126,15 +126,12 @@ public final class Budgets {
      * The residual lazy-memo allowance after the retained artifact
      * tables: {@code max(0, runtimeMemoryBytes() - retainedArtifactBytes)}.
      * The facade splits this per engine slot (the whole residual to a
-     * shared engine, half each to a find+whole pair) and the memo caps
-     * ({@link #sdfaMaxRows(int, long)}, {@link #sdfaMaxBlocks(long)},
-     * {@link #walkMaxBytes(long)}) derive from the split — so a
-     * pattern's retained tables plus its memo shares stay within one
-     * budget ("if it compiles, it will execute within budget"). Memo
-     * {@link BudgetWeights#RUNTIME_MIN_ROWS floors} may lift a tiny
-     * residual's caps above it: the documented bounded carve-out that
-     * keeps tiny budgets usable (clamped, not rejected — the alternative
-     * would reject every pattern below the floor total).
+     * shared engine, half each to a find+whole pair), so a pattern's
+     * retained tables plus its memo shares stay within one budget ("if
+     * it compiles, it will execute within budget"). (The memo-cap
+     * derivations that once consumed this split were deleted with the
+     * memos they bounded — see docs/search-dfa-memo-tradeoffs.md; the
+     * split stays as the engine-slot accounting.)
      */
     public static long runtimeMemoAllowance(long retainedArtifactBytes) {
         return Math.max(0, runtimeMemoryBytes() - retainedArtifactBytes);

@@ -59,8 +59,8 @@ public final class CompiledRegex {
         return compile(pattern, CompileOptions.of());
     }
 
-    /** Compile with explicit options. Syntax errors throw {@link PatternSyntaxException};
-     *  budget rejections throw {@link PatternTooLargeException}. */
+    /** Compile with explicit options. Syntax errors throw {@link java.util.regex.PatternSyntaxException};
+     *  budget rejections throw {@link io.github.jemmix.tdfa.core.budget.PatternTooLargeException}. */
     public static CompiledRegex compile(String pattern, CompileOptions options) {
         if (pattern == null) {
             throw new NullPointerException("pattern is null");

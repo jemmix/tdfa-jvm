@@ -44,7 +44,7 @@ public final class DfaStateBuilder {
      * requiredMask separates), so adjacency-merge at append time keeps the
      * LIVE boxed range count at the post-coalesce total throughout the
      * sweep — the figure the compile RAM budget charges ({@link
-     * BudgetWeights#RANGE_BOXED_BYTES} per new range), instead of one
+     * io.github.jemmix.tdfa.core.budget.BudgetWeights#RANGE_BOXED_BYTES} per new range), instead of one
      * boxed object per cell pending the materialization-time coalesce.
      *
      * @return true iff a NEW live range was created (the caller's charge

@@ -14,7 +14,7 @@ package io.github.jemmix.tdfa.core.parser;
  * <p>Raised only by the parser, at the point the malformed syntax is
  * detected; it propagates to the caller unwrapped. A pattern that parses
  * but cannot be compiled within budget is a
- * {@link PatternTooLargeException}, not a syntax error.
+ * {@link io.github.jemmix.tdfa.core.budget.PatternTooLargeException}, not a syntax error.
  */
 public class PatternSyntaxException extends RuntimeException {
     private static final long serialVersionUID = 1L;

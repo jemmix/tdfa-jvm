@@ -111,7 +111,7 @@ public final class Tdfa {
      * false, every cut removed only non-steppable configs and this
      * artifact is identical to the cut-free build, so whole walks on it
      * are exact. Always false for POSIX and cut-free
-     * ({@linkplain #compileUnpruned unpruned}) compiles.
+     * ({@linkplain Determinizer#compileUnpruned unpruned}) compiles.
      */
     final boolean pikeCutMatters;
 
@@ -1082,7 +1082,7 @@ public final class Tdfa {
      * allowances from the residual); engine-tier tables built FROM these
      * arrays (dispatch tiers, generated-class statics, the materialized
      * 2D stop-mask copies) are disclosed construction-time constants
-     * outside the budget — the r11 scope line, see {@link Budgets}.
+     * outside the budget — the r11 scope line, see {@link io.github.jemmix.tdfa.core.budget.Budgets}.
      */
     public long retainedTableBytes() {
         long b = intBytes(stateMeta.length) + intBytes(stateBase.length) + intBytes(stateFinalOpsOff.length)
@@ -1122,7 +1122,7 @@ public final class Tdfa {
      * artifact: either the pike cut never deleted a continuation, or the
      * partial-whole side table recorded every cut context's uncut
      * transitions (complete exploration). The facade relies on this:
-     * after {@link Determinizer#compileWithWholeSide(Tnfa, boolean, CompileObserver, WorkMeter)} (which always requests the
+     * after {@link Determinizer#compileWithWholeSide} (which always requests the
      * side), false means the side was abandoned and the compile REJECTS
      * — no second cut-free determinization is attempted.
      */

@@ -19,7 +19,7 @@ import static io.github.jemmix.tdfa.core.dfa.Tdfa.OP_SET_POS;
  *
  * <p><b>Multi-valued compiles</b> (BT22 §3.1, {@code owner.multi}): every
  * POSITIVE history occurrence of a tag contributes an
- * {@link OP_APPEND_POS} op (the paper's {@code i ← j·h} append — negative
+ * {@link io.github.jemmix.tdfa.core.dfa.Tdfa#OP_APPEND_POS} op (the paper's {@code i ← j·h} append — negative
  * tags never enter histories; the engine's re2j capture contract keeps a
  * value once set, so multi-valued lists record only real participations)
  * instead of the last-sign reduction, and φ REPLACES the final register

@@ -6,7 +6,7 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 /**
  * Shell emission spec, carried from the compile machinery to the
- * {@link EngineBackend#emit(Object)} implementor. All core/reflection
+ * {@link EngineBackend#emit} implementor. All core/reflection
  * types — the backend resolves the surface's {@link PatternSurface
  * pattern interface} by descriptor at class-load time.
  *

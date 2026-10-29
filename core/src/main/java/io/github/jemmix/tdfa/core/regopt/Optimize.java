@@ -25,7 +25,7 @@ import java.util.List;
  * <p>The paper runs the post-compaction passes twice (N=2). Each iteration uses the
  * previous renaming and may find new coalescing opportunities.
  *
- * <p>Public entry point: {@link #optimize(Cfg)}.
+ * <p>Public entry point: {@link #optimize}.
  */
 public final class Optimize {
     private Optimize() {

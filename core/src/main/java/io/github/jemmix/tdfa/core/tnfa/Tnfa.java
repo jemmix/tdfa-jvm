@@ -45,7 +45,7 @@ import java.util.Map;
  * paths is included; repetition is handled structurally.
  *
  * Construction is iterative (re2j's Compiler is too): an explicit
- * {@link BuildFrame} worklist — one frame per AST node in progress — drives
+ * {@code BuildFrame} worklist — one frame per AST node in progress — drives
  * the minting of states and edges. The minting ORDER is part of the
  * contract (pre-body fresh() for repeats, concat children right-to-left,
  * alt branches left-to-right followed by their ntag chains), because it
