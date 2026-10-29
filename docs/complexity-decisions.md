@@ -18,9 +18,15 @@ link.
 - [ ] **4. Compile-progress callback — public or internal** ([C58](complexity-review.md#c58--compileobservercompilationreport-as-public-machinery)).
   A "watch the compiler work" listener; only tests listen. Make it
   internal?
-- [ ] **5. Qodana scanner — wire it up or drop it** ([C35](complexity-review.md#c35--qodana-s-decide)).
+- [x] **5. Qodana scanner — wire it up or drop it** ([C35](complexity-review.md#c35--qodana-s-decide)).
   Configured in the build but run by nothing, has found nothing so far.
   Give it a real CI job, or remove the config? (Your TODO, open.)
+  → **Decided 2026-10-29: keep, javadoc-only gate.** First real scan found
+  139 (the "zero findings" premise was the config never running; its
+  scoping was also silently dead). All 40 javadoc defects fixed; CI gates
+  that one family (`qodana-ci.yaml`); the rest classified — 50 would make
+  the code worse. Evidence: [qodana-analysis.md](qodana-analysis.md).
+  Left open there: baseline mode vs javadoc-only until the beauty batch.
 - [ ] **6. PikeSim — product or test tool** ([C34](complexity-review.md#c34--libpikesim-placement-sm-simplify)).
   Our tiny reference matcher is built like a shipped module though only
   tests use it. Decide before the first release: ship it or move it to

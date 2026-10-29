@@ -21,7 +21,12 @@ qodana {
 }
 
 tasks.qodanaScan {
-    arguments = ["--print-problems", "--fail-threshold", "0"]
+    // The CI gate: javadoc integrity only (qodana-ci.yaml; empty profile
+    // + JavadocReference, fail-threshold 0). The full own-code policy —
+    // scope + verified harmful-check suppressions — is qodana.yaml; run
+    // it ad hoc with `qodana scan` (it finds ~100 non-gated items by
+    // design; see docs/qodana-analysis.md before widening this gate).
+    arguments = ["--print-problems", "--fail-threshold", "0", "--config", "qodana-ci.yaml"]
 }
 
 group = 'io.github.jemmix'

@@ -51,7 +51,7 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 - [ ] Reproducible jar builds
 - [ ] GraalVM native-image compatibility
 - [ ] Android API-level compatibility
-- [ ] Qodana: keep or remove
+- [ ] Qodana: widen gate past javadoc (baseline?)
 
 ## Wishlist
 

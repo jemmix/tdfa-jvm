@@ -2,7 +2,7 @@ package io.github.jemmix.tdfa.core.report;
 
 /**
  * Compilation transparency hook: receives stage events while a pattern
- * compiles. Attach via {@link CompileOptions#observer(CompileObserver)}.
+ * compiles. Attach via {@link io.github.jemmix.tdfa.core.compile.CompileOptions#observer()}.
  *
  * <p>Stages fire in pipeline order, each with its wall-clock duration and a
  * stage-specific detail value:

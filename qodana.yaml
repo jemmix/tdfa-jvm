@@ -1,19 +1,43 @@
 version: "1.0"
 linter: qodana-jvm-community
+withinDocker: false
 profile:
   name: qodana.recommended
-include:
-  - name: CheckDependencyRules
-  - name: ConstantConditions
-  - name: SuspiciousNameCombination
-exclude:
-  - name: ALL
-    paths:
-      - build
-      - benchmarks
-      - tests
-      - vendor
-      - unicode
-      - lib
-      - testlib
-withinDocker: false
+  inspections:
+    # Own code only: the four shipped modules (facade src/, core, asm,
+    # re2j). Everything else — build output, benchmarks, tests, vendored
+    # jars, generated unicode tables, lib/pikesim, testlib — stays out of
+    # scope. (The legacy top-level include:/exclude: blocks this file
+    # used before are silently ignored by Qodana 2026.x; path scoping
+    # lives under profile.inspections[].ignore now.)
+    - group: ALL
+      ignore:
+        - build/**
+        - benchmarks/**
+        - tests/**
+        - vendor/**
+        - unicode/**
+        - lib/**
+        - testlib/**
+
+    # ------------------------------------------------------------------
+    # Harmful-check policy (starter set — tune to taste).
+    #
+    # Mechanism 1: kill an inspection project-wide. Used only where the
+    # recommendation is wrong everywhere in this codebase:
+    - inspection: ExtractMethodRecommender   # mega-methods are adjudicated by the complexity review
+      enabled: false
+    - inspection: FieldCanBeLocal            # TdfaRunner fields are deliberate engine state
+      enabled: false
+    #
+    # Mechanism 2: kill an inspection per path. Used for the
+    # benchmark-pinned match loops: dataflow "improvements" there add
+    # branches to verified-hot code (build.gradle bans this churn class
+    # for ErrorProne; same policy here). Trade-off: new real dataflow
+    # bugs in these files also go quiet — keep the file list minimal.
+    - inspection: ConstantValue
+      ignore:
+        - core/src/main/java/io/github/jemmix/tdfa/core/dfa/TdfaRunner.java
+    - inspection: DataFlowIssue
+      ignore:
+        - core/src/main/java/io/github/jemmix/tdfa/core/dfa/TdfaRunner.java

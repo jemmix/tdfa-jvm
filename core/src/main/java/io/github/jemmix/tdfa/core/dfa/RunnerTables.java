@@ -46,7 +46,7 @@ final class RunnerTables {
     /**
      * Build flat per-state target lookup: {@code [state * limit + c] → target state}
      * (-1 = dead). {@code limit} is 256 (Latin-1) for DFAs under
-     * {@link TdfaRunner#LATIN1_MAX_STATES} states, else 128. Codepoints 128..255 are single
+     * {@code LATIN1_MAX_STATES} states, else 128. Codepoints 128..255 are single
      * UTF-16 units and never surrogate halves, so indexing them directly is exact.
      */
     static int[] buildAsciiTarget(Tdfa tdfa, int limit) {

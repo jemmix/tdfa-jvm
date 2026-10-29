@@ -82,16 +82,16 @@ final class TdfaCompiler {
      */
     final boolean multi;
     /**
-     * Pike-cut-free determinization (see {@link Tdfa#compileUnpruned}):
+     * Pike-cut-free determinization (see {@link Determinizer#compileUnpruned}):
      * stepping follows every alive config, never cutting below an accept.
      * Used for the whole-match artifact; find() may share it iff the
-     * {@link Tdfa#pikeCutMatters()} predicate comes out false.
+     * {@link DeterminizedDfa#pikeCutMatters} predicate comes out false.
      */
     final boolean unpruned;
     /**
      * The partial-whole side table is recorded for this compile: a pruned
      * Perl-mode compile that ASKED for it (the facade's one-artifact
-     * build, {@link Tdfa#compileWithWholeSide}; find-only consumers never
+     * build, {@link Determinizer#compileWithWholeSide}; find-only consumers never
      * do — the side has no reader there). Every cut context then also
      * contributes its UNCUT transitions to the source state's whole list
      * (see {@link DfaStateBuilder#wholeRanges}), so one artifact serves
@@ -345,7 +345,7 @@ final class TdfaCompiler {
      *        and hands the same instance on to the post-determinization
      *        stages, so a single CPU budget covers the entire pipeline.
      * @param wholeSide record the partial-whole side table (the facade's
-     *        one-artifact compile; see {@link Tdfa#compileWithWholeSide}).
+     *        one-artifact compile; see {@link Determinizer#compileWithWholeSide}).
      *        Find-only consumers pass false — the side has no reader there.
      */
     TdfaCompiler(Tnfa nfa, boolean longestMatch, boolean unpruned, boolean wholeSide, WorkMeter sharedMeter) {
@@ -1499,7 +1499,7 @@ final class TdfaCompiler {
     }
 
     /**
-     * Pike-cut hazard predicate (feeds {@link Tdfa#pikeCutMatters()}):
+     * Pike-cut hazard predicate (feeds {@link DeterminizedDfa#pikeCutMatters}):
      * true iff under some posFlags M an alive AND steppable config sits
      * below the first alive accept in this kernel. The cut deletes every
      * config below an accept alive in a stepping context, so such a

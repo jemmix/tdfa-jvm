@@ -13,7 +13,7 @@ import io.github.jemmix.tdfa.core.engine.RegexEngine;
  * one compiled TDFA (the find artifact with its partial-whole side table
  * when the pike cut bites). Whole-input matching is never a factory
  * engine's obligation: the facade dispatches it through
- * {@link WholeEngine}, using the returned engine when it natively
+ * {@link io.github.jemmix.tdfa.core.engine.WholeEngine}, using the returned engine when it natively
  * implements that seam and a plain {@code TdfaRunner} over the same
  * artifact otherwise.
  *

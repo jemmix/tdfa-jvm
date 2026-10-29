@@ -9,7 +9,7 @@ package io.github.jemmix.tdfa.core.budget;
  * {@code pattern too large: ...}, each naming the {@code -D} property to
  * raise.
  *
- * <p>Deliberately NOT a {@link PatternSyntaxException}: a pattern that is
+ * <p>Deliberately NOT a {@link java.util.regex.PatternSyntaxException}: a pattern that is
  * too large is not malformed, and code that catches the syntax exception
  * must not accidentally swallow budget rejections (or vice versa). Raised
  * at the exact site that trips the budget — determinization caps, the

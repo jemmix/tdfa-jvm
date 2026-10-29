@@ -37,7 +37,8 @@ final class DeterminizedDfa {
      */
     final int[] acceptMask;
     /**
-     * [state * posFlagCells + posFlags] → 0 (stop on accept) or {@link Tdfa#NEVER_STOP}
+     * [state * posFlagCells + posFlags] → 0 (stop on accept) or {@link
+     * io.github.jemmix.tdfa.core.dfa.Tdfa#NEVER_STOP}
      * (extend). Perl mode only; null in POSIX (no reader exists there).
      */
     final int[] stopOnAcceptMask;
