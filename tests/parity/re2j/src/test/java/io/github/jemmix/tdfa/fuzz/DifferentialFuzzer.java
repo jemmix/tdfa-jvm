@@ -98,11 +98,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * <p>On the jur lane the ORACLE itself is a backtracking engine, so one
  * more family is avoided rather than compared: nested-quantifier bombs
- * (an unbounded quantifier over a wide atom — {@code .} / {@code \D} /
- * {@code \W} / {@code \S} / a class — textually inside a group that
- * carries an unbounded quantifier, e.g. {@code (?:\D+[^\d]*?){2,}?}) are
+ * (a quantified wide atom — {@code .} / {@code \D} / {@code \W} /
+ * {@code \S} / a class — textually inside a quantified group in one of
+ * the shapes {@code java.util.regex} cannot memoize, e.g.
+ * {@code (?:\D+[^\d]*?){2,}?}, {@code (.{0,6}?)*?} or
+ * {@code (.*?.*?){2,6}}) are
  * catastrophic-backtracking shapes for {@code java.util.regex}
- * (Pattern$LazyLoop/GroupCurly spins; campaign 2026-10-16 finding 4) but
+ * (Pattern$LazyLoop/GroupCurly spins; campaigns 2026-10-16 finding 4 and
+ * 2026-10-24 finding 6) but
  * ordinary input for this engine. Those batches are skipped whole and
  * counted as {@code JURLANE_GUARD} records (the re2j lane still runs
  * them — its oracle is linear-time); the predicate is a pure function of
@@ -1066,14 +1069,32 @@ public final class DifferentialFuzzer {
 
     /**
      * The jur-lane oracle-hang guard (see the class doc): true when the
-     * pattern nests an unbounded quantifier over a WIDE atom (dot, the
-     * negated shorthands, or a bracket class) textually inside a group
-     * carrying an UNBOUNDED quantifier — the catastrophic-backtracking
-     * shapes for {@code java.util.regex} (campaign 2026-10-16 finding 4:
-     * {@code (?:\D+[^\ds-z#𐐂]*?){2,}?} and friends spin it >100 s on
-     * ≤24-char inputs). Bounded-count outer quantifiers ({@code {3}},
-     * {@code {0,4}}) are NOT bombs on generator-sized inputs and stay in
-     * the compared domain; the engine-side slow shapes of finding 3
+     * pattern is a catastrophic-backtracking shape for
+     * {@code java.util.regex} — always a WIDE atom (dot, the negated
+     * shorthands, or a bracket class) textually inside a quantified
+     * group, in one of three families:
+     * <ol>
+     * <li>an unbounded quantifier over the wide atom inside an
+     * unbounded-quantified group — campaign 2026-10-16 finding 4
+     * ({@code (?:\D+[^\ds-z#𐐂]*?){2,}?} and friends spin it >100 s on
+     * ≤24-char inputs);</li>
+     * <li>a bounded-range quantifier ({@code {n,m}}, m ≥ 2 — variable
+     * width) over the wide atom inside a LAZY-unbounded-quantified group
+     * — campaign 2026-10-24 finding 6 ({@code (.{0,6}?)*?}, 22 s): the
+     * greedy {@code Loop} memoizes failed loop-entry positions, so the
+     * eager nest above and the memo-less {@code LazyLoop} spins are
+     * disjoint families;</li>
+     * <li>two multi-quantified wides (unbounded, or a variable-width
+     * range) inside a range-counted {@code {n,m}} group — the same
+     * finding ({@code (.*?.*?){2,6}}, 15 s): the memo prunes loop
+     * re-entry, never the width splits inside one body match.</li>
+     * </ol>
+     * NOT bombs on generator-sized inputs, so not guarded: bounded-count
+     * outer quantifiers ({@code {3}}, {@code {0,4}} over one wide), a
+     * single multi-quantified wide in a range-counted group
+     * ({@code (.*?){2,6}}), and 0/1-width bodies ({@code (?:\D??){2,}?}
+     * — Ques, no width fan-out; the finding-6 clean lookalikes). The
+     * engine-side slow shapes of the earlier campaigns
      * ({@code .*}-anchor restart scans, unquantified nesting) have no
      * unbounded-quantified enclosing group and pass through untouched.
      *
@@ -1082,9 +1103,11 @@ public final class DifferentialFuzzer {
      * and containment is textual, so nesting through inner groups counts.
      */
     static boolean jurOracleBomb(String p) {
-        // Atom events {start, end, kind, unbounded}: kind 0 = wide atom
-        // under an unbounded quantifier (the bomb inner), 1 = anything
-        // else, 2 = group (its own quantifier in slot 3).
+        // Atom events {start, end, kind, quant}: kind 0 = wide atom,
+        // 1 = anything else, 2 = group; quant 0 = none, '?' or exact
+        // {n} (widths 0/1 or fixed), 1 = bounded range {n,m} with
+        // m >= 2 (variable width), 2 = unbounded greedy (*, +, {n,}),
+        // 3 = unbounded lazy (*?, +?, {n,}?).
         List<int[]> events = new ArrayList<>();
         ArrayDeque<int[]> groups = new ArrayDeque<>(); // open group starts
         int i = 0;
@@ -1136,13 +1159,26 @@ public final class DifferentialFuzzer {
             i++; // literal char, anchor, or structural — not a wide atom
         }
         for (int[] g : events) {
-            if (g[2] != 2 || g[3] == 0) {
-                continue; // not a group, or its quantifier bounded/absent
+            if (g[2] != 2) {
+                continue; // not a group
             }
+            int multis = 0; // multi-quantified wides inside g
             for (int[] w : events) {
-                if (w[2] == 0 && w[0] > g[0] && w[1] < g[1]) {
+                if (w[2] != 0 || w[0] <= g[0] || w[1] >= g[1]) {
+                    continue; // not a wide atom inside g
+                }
+                if (g[3] >= 2 && w[3] >= 2) {
                     return true; // unbounded-wide inner inside an unbounded group
                 }
+                if (g[3] == 3 && w[3] == 1) {
+                    return true; // variable-width wide inside a lazy group loop
+                }
+                if (g[3] == 1 && w[3] != 0) {
+                    multis++;
+                }
+            }
+            if (g[3] == 1 && multis >= 2) {
+                return true; // two multi-quantified wides inside a range-counted group
             }
         }
         return false;
@@ -1151,12 +1187,13 @@ public final class DifferentialFuzzer {
     /** Close the atom ending at {@code end} (exclusive): read one trailing
      *  quantifier, record the event, return the scan position after it. */
     private static int atomEnd(String p, int start, int end, boolean wide, List<int[]> events) {
-        int unbounded = 0;
+        int quant = 0;
+        boolean lazy = false;
         int i = end;
         if (i < p.length()) {
             char c = p.charAt(i);
             if (c == '*' || c == '+') {
-                unbounded = 1;
+                quant = 2;
                 i++;
             } else if (c == '?') {
                 i++;
@@ -1170,17 +1207,24 @@ public final class DifferentialFuzzer {
                     j++;
                 }
                 if (j < p.length() && p.charAt(j) == '}' && j > i + 1) {
-                    if (comma == j - 1) { // {n,} — unbounded; {n} and {n,m} bounded
-                        unbounded = 1;
-                    }
+                    if (comma == j - 1) { // {n,} — unbounded
+                        quant = 2;
+                    } else if (comma > 0) { // {n,m} — range; variable width iff m >= 2
+                        int m = 0;
+                        for (int k = comma + 1; k < j; k++) {
+                            m = Math.min(2, m * 10 + (p.charAt(k) - '0'));
+                        }
+                        quant = m >= 2 ? 1 : 0; // {0,1} compiles to Ques — width 0/1
+                    } // else {n} exact: fixed width
                     i = j + 1;
                 } // else: literal '{' — no quantifier
             }
             if (i < p.length() && p.charAt(i) == '?') { // lazy marker
+                lazy = true;
                 i++;
             }
         }
-        events.add(new int[]{start, end, wide && unbounded == 1 ? 0 : 1, unbounded});
+        events.add(new int[]{start, end, wide ? 0 : 1, lazy && quant == 2 ? 3 : quant});
         return i;
     }
 
