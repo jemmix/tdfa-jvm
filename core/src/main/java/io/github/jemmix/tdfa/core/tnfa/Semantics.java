@@ -42,10 +42,11 @@ package io.github.jemmix.tdfa.core.tnfa;
  * </ul>
  *
  * <p>Immutable value class — field equality; a wither returns the
- * same instance when its axis is already set. The seven axes below
- * are the JUR-compat design's
- * ({@code docs/jur-compat-default.md}); new axes join by the
- * membership rule above, not by that document.
+ * same instance when its axis is already set. The axes below are
+ * the known lineage divergences the JUR-compat flip turned into
+ * opt-outs — a starting set, since grown ({@code SPACE_RE2} joined
+ * after the two-surface split); new axes join by the membership
+ * rule above, not by that starting set.
  */
 public final class Semantics {
 

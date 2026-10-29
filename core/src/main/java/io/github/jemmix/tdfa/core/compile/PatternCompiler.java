@@ -109,13 +109,12 @@ public final class PatternCompiler {
         if ((flags & ~surface.validFlags()) != 0) {
             throw new IllegalArgumentException(surface.flagsMessage());
         }
-        // JUR-compat (docs/jur-compat-default.md), post-flip: the seven
-        // opt-out bits map onto the axes — a bit set restores the
-        // RE2-lineage side of that axis, unset selects the
-        // java.util.regex-parity side, and the surface's default lane
-        // runs wherever no bit speaks. RE2_COMPAT (the bits' OR) was the
-        // pre-flip default in one constant; the re2j surface bakes the
-        // same lane in as its default.
+        // JUR-compat, post-flip: the opt-out bits map onto the axes —
+        // a bit set restores the RE2-lineage side of that axis, unset
+        // selects the java.util.regex-parity side, and the surface's
+        // default lane runs wherever no bit speaks. RE2_COMPAT (the
+        // bits' OR) was the pre-flip default in one constant; the
+        // re2j surface bakes the same lane in as its default.
         Semantics semantics = explicitSemantics != null ? explicitSemantics : semanticsOf(flags, surface);
         String fl = regex;
         if ((flags & PatternSurface.CASE_INSENSITIVE) != 0) {

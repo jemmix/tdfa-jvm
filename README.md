@@ -32,8 +32,8 @@ Apache 2.0.
   module — `tdfa-re2j` (`io.github.jemmix.tdfa.re2j.Pattern`) — with the
   lane baked in: no preset OR, no per-axis ceremony, un-gettable-wrong.
   Per-axis mixed probes remain available through
-  `CompileOptions.semantics`
-  ([design](docs/jur-compat-default.md)).
+  `CompileOptions.semantics` — each behavioral axis picked
+  individually where neither canned lane fits.
 
 The trade: compilation is eager and slower — ~290 µs (VM) / ~1.3 ms (ASM) per
 pattern cold, vs ~16 µs for `java.util.regex` (~32–38 µs steady-state). The
