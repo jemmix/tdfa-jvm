@@ -19,10 +19,7 @@ import java.util.regex.Pattern;
  * the JVM and is typically much newer than re2j's frozen Unicode 6.0 tables.
  * This means script/category ranges will diverge from re2j for codepoints
  * assigned after Unicode 6.0 — codepoints that didn't exist then now exist,
- * scripts have been added/extended, etc. For bit-exact re2j compat, use the
- * separate {@code tdfa-unicode-re2j} jar that ports re2j's tables verbatim
- * (set the {@value UnicodeProviders#PROPERTY_NAME} property to that
- * provider's class name).
+ * scripts have been added/extended, etc.
  *
  * <p><b>Fold universe:</b> this provider supplies its own — the
  * {@code java.util.regex} reading ({@link CaseFoldTable#foldRangesJava}:
