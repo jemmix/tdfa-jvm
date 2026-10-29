@@ -1805,6 +1805,18 @@ public final class DifferentialFuzzer {
          *       on {@code "abab"} &rarr; g2 0..1; the loop lineage reports
          *       the last). Skeleton-equal + the nested-quantified shape;
          *       the engine fix is the open TODO.</li>
+         *   <li><b>groupcurly-stale-write</b> — java's
+         *       {@code GroupCurly} backoff ({@code match0}) rewrites only
+         *       the directly-quantified group's registers; a nested
+         *       capture's {@code GroupTail} write is never restored, so a
+         *       DISCARDED iteration's span reports through the accepted
+         *       match (campaign 2026-10-24 finding 3, the {@code (X)*tail}
+         *       in-span participation family; the strictly-outside twin is
+         *       restart-tag-leak above, and the failed-restart variant of
+         *       the same write lands here in-span). Skeleton-gated, shape-
+         *       gated and signature-gated ({@link
+         *       CampaignFuzzer#staleIterationSpan}); pinned both ways in
+         *       {@code GroupCurlyStaleWriteParityTest}.</li>
          *   <li><b>surrogate-unit-semantics</b> — the lane's designed unit
          *       semantics vs java's pair-aware UTF-16 discipline (java's
          *       classes never match a surrogate unit inside a well-formed
@@ -1821,6 +1833,10 @@ public final class DifferentialFuzzer {
             }
             if (CampaignFuzzer.sameSkeleton(o.oracle, o.vm) && CampaignFuzzer.leakedRestartSpan(o.oracle, o.vm)) {
                 return "restart-tag-leak";
+            }
+            if (CampaignFuzzer.sameSkeleton(o.oracle, o.vm) && CampaignFuzzer.STALE_ITERATION_SHAPE.matcher(p).find()
+                && CampaignFuzzer.staleIterationSpan(o.oracle, o.vm)) {
+                return "groupcurly-stale-write";
             }
             if (CampaignFuzzer.sameSkeleton(o.oracle, o.vm) && p.matches(".*\\(.*\\(.*\\)[*+{].*\\)[*+{].*")) {
                 return "nested-loop-capture";

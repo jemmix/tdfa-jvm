@@ -51,11 +51,14 @@ class CampaignSmokeTest {
         // scan pivot: Parser#hasSupplementaryStarts OR-ed into the runner's
         // candidate-scan pivot — lone surrogates and pair cases compare
         // hard); the nested-loop inner-capture quirk (`((a)*b)*`: java
-        // restores the FIRST iteration's inner group) and java's
-        // restart-tag leak (a group span from a FAILED restart attempt,
-        // outside the match) are the remaining group-family skips,
-        // skeleton-gated + exact
-        "V1_UNGREEDY_SCOPE", "SKIP_NESTED_LOOP_CAPTURE", "SKIP_RESTART_TAG_LEAK", "JURLANE_BUDGET");
+        // restores the FIRST iteration's inner group), java's restart-tag
+        // leak (a group span from a FAILED restart attempt, outside the
+        // match), and the GroupCurly stale-iteration write (a DISCARDED
+        // greedy iteration's nested-capture span reporting through the
+        // accepted match, inside it — campaign 2026-10-24 finding 3) are
+        // the remaining group-family skips, skeleton-gated + exact
+        "V1_UNGREEDY_SCOPE", "SKIP_NESTED_LOOP_CAPTURE", "SKIP_RESTART_TAG_LEAK", "SKIP_GROUPCURLY_STALE_WRITE",
+        "JURLANE_BUDGET");
 
     private static final Map<String, Set<String>> MODE_SOFT =
         Map.of("jur", JUR_SOFT, "stretch", Set.of("SKIP_EMPTY", "THREW", "SLOW", "STRETCH_BUDGET"), "seq",
