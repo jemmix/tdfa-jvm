@@ -120,7 +120,7 @@ back to a slower engine.
 - **5.7 M** differential cases from RE2's exhaustive test suite: 0 failures
   (pinned in the re2j lane — the `tdfa-re2j` surface — since the
   JUR-default flip; the evidence re-base is the open
-  [work item](docs/jur-compat-wbs.md)).
+  both-lane soak TODO item).
 - **~300 M** differential fuzz cases vs re2j (overnight soaks): 0 divergences
   (same lane note).
 - Overnight-soak budget rejections — the documented non-divergence class
@@ -131,9 +131,11 @@ back to a slower engine.
   deep-nesting shapes. Raised-knob replay verified the class: 13 sampled
   records compiled under raised `tdfa.budget.*` knobs and answered
   byte-identical to `java.util.regex`; 3 expanded past any raised cap
-  (genuinely too large) — 0 mismatches in the sample; one separately
-  flagged F5-seed raised-knob divergence did not reproduce and stays
-  open ([finding 7](docs/fuzz-campaigns-2026-10-24.md)).
+  (genuinely too large) — 0 mismatches in the sample. The one separately
+  flagged F5-seed raised-knob divergence was investigated and explained:
+  a draft-harness budget-knob leak, not an engine divergence (the seed's
+  pattern cannot match its input; on main its artifact is unreachable at
+  any budget).
 - re2j-parity suites — each translatable case ALSO pinned against the live
   `java.util.regex` oracle on the jur facade (the default lane) — Glenn
   Fowler's testregex corpus, OpenJDK's `java.util.regex` regression corpus,

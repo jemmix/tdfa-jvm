@@ -13,7 +13,7 @@ RE2-lane default that the `tdfa-re2j` surface now spells — the JUR-parity
 default the flip shipped moves only divergence-axis behavior (terminator
 sets, fold universe, unit boundaries, anchor EOL rules, iteration spans,
 `(?U)`), none of which this corpus's shapes exercise beyond noise. The
-evidence re-base ([work item](docs/jur-compat-wbs.md) 6) re-runs and
+evidence re-base (the open both-lane soak TODO item) re-runs and
 refreshes the numbers in both lanes.
 
 Measurement-context note: tables captured before the 2026-08 module

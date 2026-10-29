@@ -14,7 +14,7 @@ family (`{n,m}` over a body that can match empty through a choice point)
 and its unbounded mirror are FIXED — java's `Prolog`+`Loop` zero-width-exit
 guard, reproduced by the NFA builder's per-copy zero-width split, extended
 to the loop bodies (JUR lane only; see the
-[campaign follow-ups](fuzz-campaigns-2026-10-16.md)); the same redirect
+2026-10-16 campaign follow-ups); the same redirect
 closed the family-6 TAIL residual (the 4d ε-write is a normal tagged
 ε-edge at the loop's REST position — `SKIP_GROUP_PARTICIPATION_TAIL`
 retired). The open engine families: the nested-loop inner-capture quirk
@@ -23,13 +23,13 @@ reading (TODO). Landing the rest is only cheap
 before the first Maven publish / 1.0 API lock (both still open in
 [TODO](../TODO.md)) — after that the same flip is a major version. This
 page is the full accounting: what flips, what the API looks like, what it
-costs, and how it's phased; the build order lives in the
-[work breakdown](jur-compat-wbs.md).
+costs, and how it's phased; the build order lived in the jur-compat WBS
+(retired on completion; see its git history).
 
 ## Scope and terms
 
 "JUR" in this tree means `java.util.regex` (the fuzz-campaign shorthand —
-see [fuzz-campaigns-2026-10-03.md](fuzz-campaigns-2026-10-03.md)). "JUR compat" means:
+the fuzz-campaign shorthand). "JUR compat" means:
 
 - **No new supported regexes.** The accepted syntax is exactly today's;
   compile parity already holds — the jur campaign's 542,679-case pass found
@@ -55,8 +55,8 @@ would need to describe RE2.
 ## The six families, and where they live
 
 All six are already classified with replayable seeds and counts
-(`docs/fuzz-campaigns-2026-10-03.md`, finding 2; representative records at
-the seeds listed there). The engine pivots are centralized — the ASM tier
+(2026-10-03 campaign, finding 2; the seeds ride
+the campaign report in git history). The engine pivots are centralized — the ASM tier
 calls back into the shared helpers rather than reimplementing them:
 
 | family | pivot |
@@ -251,8 +251,8 @@ Composition rules:
 | Family 6: group-participation protocol — two sub-families (suppress the min-0 all-zero-width span; surface the subsumed zero-width final iteration), four landable sub-items (the WBS's item-4 essays live in its git history) — **landed** | 2.5–4.5 d |
 | The flip commit: default changes, `RE2_COMPAT` preset, `PatternCompiler` whitelist, javadoc, README/`BENCHMARKS.md` re-baseline — **landed** | 1 d |
 | Tests: per-flag unit tests from the campaign replay seeds; jur campaign classifiers → assertions; `DifferentialFuzzer` matrix gains the `RE2_COMPAT` lane; soak + README numbers | 1.5–2 d |
-| Parity suites vs both oracles: jur twins for the re2j parity suites — every translatable case also runs the default lane against the live `java.util.regex` oracle ([work breakdown](jur-compat-wbs.md) item 7) | 1–1.5 d |
-| One `Pattern` or two: evaluate separate jur-compat / re2j-compat surfaces vs the bits-and-preset surface — decide before the API lock ([work breakdown](jur-compat-wbs.md) item 8) — **decided: two surfaces, landed** (the retired split design lives in the `surface-split/*` squash commits) | 0.5 d |
+| Parity suites vs both oracles: jur twins for the re2j parity suites — every translatable case also runs the default lane against the live `java.util.regex` oracle (jur-compat WBS item 7) | 1–1.5 d |
+| One `Pattern` or two: evaluate separate jur-compat / re2j-compat surfaces vs the bits-and-preset surface — decide before the API lock (jur-compat WBS item 8) — **decided: two surfaces, landed** (the retired split design lives in the `surface-split/*` squash commits) | 0.5 d |
 
 Total ≈ **1.5–2 weeks** focused through the flip (landed); the open tail
 (item 6 + the two items below it) adds ≈ 3–4 d. Ordering inside it:

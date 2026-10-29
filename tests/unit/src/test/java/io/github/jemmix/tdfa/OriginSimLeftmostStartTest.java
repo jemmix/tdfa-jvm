@@ -20,7 +20,7 @@ import java.util.regex.Pattern;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Pinned repro of finding 1, docs/fuzz-campaigns-2026-10-24.md (seed
+ * Pinned repro of the 2026-10-24 jur soak's finding 1 (seed
  * {@code 8663892547704900790}): the origin sim's unbeatability scan
  * stopped as soon as its PARTIAL live-origin minimum reached the best
  * accept origin — a tie treated as proof no future accept could beat

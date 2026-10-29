@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Pins the two replayability tripwires the 2026-10-24 soak prescribed for
- * finding 1 (docs/fuzz-campaigns-2026-10-24.md, "Replayability note"):
+ * finding 1 (the 2026-10-24 campaign's "Replayability note"):
  * the record is only as good as its replay. Both landed with the W1
  * tripwire PR (#94) — the determinism double-run
  * ({@code MEMO_STATE_MISMATCH}, default on) and warm batch replay for
