@@ -68,6 +68,17 @@ test {
     useJUnitPlatform()
     jvmArgs '-Xmx512m', '-XX:+HeapDumpOnOutOfMemoryError'
     systemProperty 'tdfa.asm.dump', System.getProperty('tdfa.asm.dump', 'false')
+    // Forked parallelism, NOT in-JVM class-level parallelism: this suite's
+    // machinery leans on JVM-global system properties (tdfa.budget.compile.*
+    // swaps in BudgetRejectReplayTest, tdfa.asm.dump/tmpdir in
+    // EmittedBytecodePolicyTest, tdfa.engine/nominimize/noregopt across the
+    // parity corpus) that every concurrently-running class would observe —
+    // measured, not theorized: Jupiter classes.default=concurrent made
+    // QuantifierParityTest falsely blow the compile-work budget while
+    // BudgetRejectReplayTest held it pinned low. Forks isolate the statics;
+    // classes still execute serially inside each fork. Default 1 (local
+    // determinism); CI passes -Ptdfa.testForks=3.
+    maxParallelForks = providers.gradleProperty('tdfa.testForks').map(Integer::parseInt).getOrElse(1)
     testLogging {
         events 'failed', 'standardOut', 'standardError'
         exceptionFormat 'full'
