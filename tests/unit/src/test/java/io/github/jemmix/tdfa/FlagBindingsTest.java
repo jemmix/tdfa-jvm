@@ -37,30 +37,22 @@ class FlagBindingsTest {
 
     /** A renamed fold letter beside the stock JUR alphabet. */
     private static final FlagBindings V_AS_FOLD = FlagBindings.builder().bind('i', FlagAction.CASE_INSENSITIVE)
-        .bind('s', FlagAction.DOTALL)
-        .bind('m', FlagAction.MULTILINE)
-        .bind('u', FlagAction.UNICODE_CHARACTER_CLASS)
-        .bind('U', FlagAction.UNICODE_CASE)
-        .bind('v', FlagAction.UNICODE_CASE)
-        .build();
+        .bind('s', FlagAction.DOTALL).bind('m', FlagAction.MULTILINE).bind('u', FlagAction.UNICODE_CHARACTER_CLASS)
+        .bind('U', FlagAction.UNICODE_CASE).bind('v', FlagAction.UNICODE_CASE).build();
 
     /** A renamed class-tables letter beside the stock JUR alphabet. */
-    private static final FlagBindings V_AS_UCC = FlagBindings.builder().bind('i', FlagAction.CASE_INSENSITIVE)
-        .bind('m', FlagAction.MULTILINE)
-        .bind('u', FlagAction.UNICODE_CHARACTER_CLASS)
-        .bind('v', FlagAction.UNICODE_CHARACTER_CLASS)
-        .build();
+    private static final FlagBindings V_AS_UCC =
+        FlagBindings.builder().bind('i', FlagAction.CASE_INSENSITIVE).bind('m', FlagAction.MULTILINE)
+            .bind('u', FlagAction.UNICODE_CHARACTER_CLASS).bind('v', FlagAction.UNICODE_CHARACTER_CLASS).build();
 
     /** A subset surface: i and m only — s, u and U are not in the alphabet. */
-    private static final FlagBindings NO_DOTALL = FlagBindings.builder().bind('i', FlagAction.CASE_INSENSITIVE)
-        .bind('m', FlagAction.MULTILINE)
-        .build();
+    private static final FlagBindings NO_DOTALL =
+        FlagBindings.builder().bind('i', FlagAction.CASE_INSENSITIVE).bind('m', FlagAction.MULTILINE).build();
 
     private static Tdfa compile(String pattern, FlagBindings bindings) {
         WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
-        Tnfa nfa =
-            Tnfa.compile(pattern, false, false, false, Semantics.of(), bindings, UnicodeProviders.get(),
-                CompileObserver.NONE, ledger);
+        Tnfa nfa = Tnfa.compile(pattern, false, false, false, Semantics.of(), bindings, UnicodeProviders.get(),
+            CompileObserver.NONE, ledger);
         return Determinizer.compileWithWholeSide(nfa, false, CompileObserver.NONE, ledger.fork(0));
     }
 
@@ -101,8 +93,8 @@ class FlagBindingsTest {
         // (?v) bound to UNICODE_CHARACTER_CLASS — java's (?U) reading
         RegexEngine eng = new TdfaRunner(compile("(?v)\\w", V_AS_UCC), 1 << 20);
         assertThat(first(eng, "é")).as("v-bound UCC widens \\w to Unicode").isEqualTo("0..1");
-        assertThat(Pattern.compile("(?U)\\w").matcher("é").find())
-            .as("the live JDK reading under java's own spelling").isTrue();
+        assertThat(Pattern.compile("(?U)\\w").matcher("é").find()).as("the live JDK reading under java's own spelling")
+            .isTrue();
         // and the ASCII tables return after the scope closes
         RegexEngine scoped = new TdfaRunner(compile("(?v:\\w)\\w", V_AS_UCC), 1 << 20);
         assertThat(first(scoped, "é")).as("the atom after the scoped group keeps ASCII \\w").isEqualTo("none");
@@ -110,8 +102,7 @@ class FlagBindingsTest {
 
     @Test
     void subsetSurfaceShrinksTheAlphabet() {
-        assertThatThrownBy(() -> compile("(?s).", NO_DOTALL))
-            .as("a letter the subset surface does not bind rejects")
+        assertThatThrownBy(() -> compile("(?s).", NO_DOTALL)).as("a letter the subset surface does not bind rejects")
             .isInstanceOf(PatternSyntaxException.class);
         assertThatThrownBy(() -> compile("(?u)\\w", NO_DOTALL)).isInstanceOf(PatternSyntaxException.class);
         assertThatCode(() -> compile("a", NO_DOTALL)).doesNotThrowAnyException();
@@ -137,14 +128,14 @@ class FlagBindingsTest {
     @Test
     void bindingsAreValues() {
         // lane identity for the campaign harness: equality is the map
-        assertThat(FlagBindings.builder().bind('U', FlagAction.UNGREEDY).bind('i', FlagAction.CASE_INSENSITIVE)
-            .build()).isEqualTo(FlagBindings.builder().bind('i', FlagAction.CASE_INSENSITIVE)
-                .bind('U', FlagAction.UNGREEDY).build());
+        assertThat(FlagBindings.builder().bind('U', FlagAction.UNGREEDY).bind('i', FlagAction.CASE_INSENSITIVE).build())
+            .isEqualTo(
+                FlagBindings.builder().bind('i', FlagAction.CASE_INSENSITIVE).bind('U', FlagAction.UNGREEDY).build());
         assertThat(FlagBindings.JUR_LANE).isNotEqualTo(FlagBindings.RE2_LANE);
         assertThat(FlagBindings.JUR_LANE.toString()).contains("U=UNICODE_CASE").contains("u=UNICODE_CHARACTER_CLASS");
         // construction is honest: rebinding and non-letters reject
-        assertThatThrownBy(() -> FlagBindings.builder().bind('v', FlagAction.UNGREEDY)
-            .bind('v', FlagAction.MULTILINE)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> FlagBindings.builder().bind('v', FlagAction.UNGREEDY).bind('v', FlagAction.MULTILINE))
+            .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> FlagBindings.builder().bind('3', FlagAction.UNGREEDY))
             .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> FlagBindings.builder().bind('ä', FlagAction.UNGREEDY))

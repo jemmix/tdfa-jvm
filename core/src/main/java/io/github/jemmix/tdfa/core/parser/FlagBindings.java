@@ -34,21 +34,15 @@ public final class FlagBindings {
 
     /** The java.util.regex alphabet: {@code i s m u} plus
      *  {@code U} = scoped Unicode case (the jur facade's reading). */
-    public static final FlagBindings JUR_LANE = builder().bind('i', FlagAction.CASE_INSENSITIVE)
-        .bind('s', FlagAction.DOTALL)
-        .bind('m', FlagAction.MULTILINE)
-        .bind('u', FlagAction.UNICODE_CHARACTER_CLASS)
-        .bind('U', FlagAction.UNICODE_CASE)
-        .build();
+    public static final FlagBindings JUR_LANE =
+        builder().bind('i', FlagAction.CASE_INSENSITIVE).bind('s', FlagAction.DOTALL).bind('m', FlagAction.MULTILINE)
+            .bind('u', FlagAction.UNICODE_CHARACTER_CLASS).bind('U', FlagAction.UNICODE_CASE).build();
 
     /** The RE2/re2j alphabet: {@code i s m u} plus
      *  {@code U} = ungreedy (the re2j facade's reading). */
-    public static final FlagBindings RE2_LANE = builder().bind('i', FlagAction.CASE_INSENSITIVE)
-        .bind('s', FlagAction.DOTALL)
-        .bind('m', FlagAction.MULTILINE)
-        .bind('u', FlagAction.UNICODE_CHARACTER_CLASS)
-        .bind('U', FlagAction.UNGREEDY)
-        .build();
+    public static final FlagBindings RE2_LANE =
+        builder().bind('i', FlagAction.CASE_INSENSITIVE).bind('s', FlagAction.DOTALL).bind('m', FlagAction.MULTILINE)
+            .bind('u', FlagAction.UNICODE_CHARACTER_CLASS).bind('U', FlagAction.UNGREEDY).build();
 
     private final FlagAction[] byLetter = new FlagAction[128];
 
@@ -111,6 +105,9 @@ public final class FlagBindings {
 
         private final LinkedHashMap<Character, FlagAction> map = new LinkedHashMap<>();
 
+        private Builder() {
+        }
+
         /** Bind {@code letter} to {@code action}; returns this. */
         public Builder bind(char letter, FlagAction action) {
             if (letter < 'A' || letter > 'z' || (letter > 'Z' && letter < 'a')) {
@@ -125,9 +122,6 @@ public final class FlagBindings {
 
         public FlagBindings build() {
             return new FlagBindings(map);
-        }
-
-        private Builder() {
         }
     }
 }

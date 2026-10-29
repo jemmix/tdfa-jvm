@@ -38,8 +38,8 @@ public final class ParseOptions {
 
     private final boolean spaceRe2;
 
-    private ParseOptions(boolean dotNlOnly, boolean unicodeCase, FlagBindings flagBindings,
-        boolean emptyIterationSpans, boolean spaceRe2) {
+    private ParseOptions(boolean dotNlOnly, boolean unicodeCase, FlagBindings flagBindings, boolean emptyIterationSpans,
+        boolean spaceRe2) {
         this.dotNlOnly = dotNlOnly;
         this.unicodeCase = unicodeCase;
         this.flagBindings = flagBindings;

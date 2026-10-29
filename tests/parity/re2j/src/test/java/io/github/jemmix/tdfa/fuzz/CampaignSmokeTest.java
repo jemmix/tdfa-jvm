@@ -59,8 +59,7 @@ class CampaignSmokeTest {
         // greedy iteration's nested-capture span reporting through the
         // accepted match, inside it — campaign 2026-10-24 finding 3) are
         // the remaining group-family skips, skeleton-gated + exact
-        "SKIP_NESTED_LOOP_CAPTURE", "SKIP_RESTART_TAG_LEAK", "SKIP_GROUPCURLY_STALE_WRITE",
-        "JURLANE_BUDGET");
+        "SKIP_NESTED_LOOP_CAPTURE", "SKIP_RESTART_TAG_LEAK", "SKIP_GROUPCURLY_STALE_WRITE", "JURLANE_BUDGET");
 
     private static final Map<String, Set<String>> MODE_SOFT =
         Map.of("jur", JUR_SOFT, "stretch", Set.of("SKIP_EMPTY", "THREW", "SLOW", "STRETCH_BUDGET"), "seq",

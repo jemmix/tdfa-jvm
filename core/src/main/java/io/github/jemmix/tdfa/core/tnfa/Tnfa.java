@@ -291,8 +291,8 @@ public final class Tnfa {
     public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
         boolean multiValuedTags, Semantics semantics, UnicodeDataProvider provider, CompileObserver observer,
         WorkMeter meter) {
-        return compile(pattern, disableUnicodeGroups, anchorBoth, multiValuedTags, semantics, null, provider,
-            observer, meter);
+        return compile(pattern, disableUnicodeGroups, anchorBoth, multiValuedTags, semantics, null, provider, observer,
+            meter);
     }
 
     /**
@@ -326,8 +326,7 @@ public final class Tnfa {
             ParseOptions.dotNlOnly(semantics.isUnixLines()).unicodeCase(semantics.isUnicodeCase())
                 .flagBindings(flagBindings != null ? flagBindings
                     : semantics.isUngreedyU() ? FlagBindings.RE2_LANE : FlagBindings.JUR_LANE)
-                .emptyIterationSpans(semantics.isEmptyIterationSpans())
-                .spaceRe2(semantics.isSpaceRe2()),
+                .emptyIterationSpans(semantics.isEmptyIterationSpans()).spaceRe2(semantics.isSpaceRe2()),
             provider, meter);
         if (observer != null) {
             observer.stage(CompileObserver.Stage.PARSE, System.nanoTime() - t0, parsed.tagCount());
