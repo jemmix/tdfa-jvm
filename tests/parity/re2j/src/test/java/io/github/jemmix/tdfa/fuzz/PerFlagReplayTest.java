@@ -94,12 +94,9 @@ class PerFlagReplayTest {
         CampaignFuzzer.JurCase base = CampaignFuzzer.genJur(seed);
         String pattern = base.pattern();
         String input = base.input();
-        // the v1 (?U) limit: (?U:...)/nested spellings reject at the
-        // compile by design — outside the domain. A point-forward
-        // top-level (?U) translates (the scoped wrap) and compares.
-        if (pattern.contains("(?U:") || pattern.contains("(?U-")) {
-            return;
-        }
+        // the match of the flag-group semantics: the v1 (?U) limit is
+        // retired — scoped spellings compile under the JUR reading and
+        // compare through the u/U letter swap.
         String oraclePattern = DifferentialFuzzer.jurOraclePattern(pattern);
         int jurFlags = (flags & FLAG_CI) != 0 ? JUR_I : 0;
         jurFlags |= (flags & FLAG_DOTALL) != 0 ? JUR_S : 0;

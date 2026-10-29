@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Deque;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -201,9 +202,11 @@ public final class Parser {
      *  java.util.regex bare-CI reading; JDK {@code UNICODE_CHARACTER_CLASS}
      *  implies Unicode-aware CI, so the UCC flag widens the fold universe
      *  exactly like UNICODE_CASE — see {@link #foldUniverse}). Initialized
-     *  from the compile's axis projection; a top-level (?U) under the
-     *  java.util.regex reading upgrades it for the rest of the pattern
-     *  (v1: only ever set at nesting depth 0, so no restore). */
+     *  from the compile's axis projection; a {@code (?U)} under the
+     *  java.util.regex reading upgrades it from that point on — scoped
+     *  like every inline flag since v2 (saved/restored per
+     *  {@link GroupFrame}, so {@code (?U:...)}/{@code ((?U)x)} restore at
+     *  their ')' exactly like {@code (?i)} does). */
     boolean unicodeCase;
 
     boolean disableUnicodeGroups = false;
@@ -212,7 +215,8 @@ public final class Parser {
     /** The compile's parser-side pivot knobs (see {@link ParseOptions}) —
      *  projected from the compile's Semantics by {@code Tnfa.compile}:
      *  the DOT terminator set (UNIX_LINES), the fold universe
-     *  (UNICODE_CASE) and the (?U) meaning (UNGREEDY_U). Legacy overloads
+     *  (UNICODE_CASE) and the inline-flag letter bindings (the
+     *  {@code (?U)} meaning rides them). Legacy overloads
      *  parse the RE2-lane selection. */
     final ParseOptions options;
     /** Front-end work meter shared with the TNFA builder (see
@@ -825,7 +829,7 @@ public final class Parser {
         List<Ast> alts = new ArrayList<>();
         boolean capturing;
         int open = -1, close = -1;
-        boolean savedCi, savedDs, savedMl, savedUs, savedUg;
+        boolean savedCi, savedDs, savedMl, savedUs, savedUc, savedUg;
     }
 
     /** group := '(' ('?:')? alt ')' | '(' '?flags' ')' | '(' '?flags:' alt ')' | '(' '?<' name '>' alt ')' | '(' '?P<' name '>' alt ')'
@@ -840,14 +844,14 @@ public final class Parser {
      * against re2j 1.8: `((?i)a)b` does NOT fold `b` — every ')' restores
      * the flag state saved at its '('). Flag-ONLY groups `(?i)` are the
      * exception: they apply until the end of the ENCLOSING group, so they
-     * never save/restore. unicodeShorthand restores too: \w/\d/\s class
-     * nodes materialize ranges at parse time (correctly scoped); the
-     * pattern-global runtime \b word table reflects the final top-level
-     * flag state. */
+     * never save/restore. unicodeShorthand and unicodeCase restore too:
+     * \w/\d/\s class nodes materialize ranges and literals/classes fold
+     * AT PARSE TIME (correctly scoped); the pattern-global runtime \b
+     * word table reflects the final top-level flag state. */
     private Ast openGroup(Deque<GroupFrame> stack, FrameBudget frames) {
         expect('(');
         boolean savedCi = caseInsensitive, savedDs = dotall, savedMl = multiline;
-        boolean savedUs = unicodeShorthand, savedUg = ungreedy;
+        boolean savedUs = unicodeShorthand, savedUc = unicodeCase, savedUg = ungreedy;
         boolean capturing = true;
         String groupName = null;
         if (pos + 1 < src.length() && src.charAt(pos) == '?' && src.charAt(pos + 1) == ':') {
@@ -876,11 +880,17 @@ public final class Parser {
                 pos += 2; // consume 'P<'
                 groupName = readGroupName();
             } else {
-                // Parse inline flags: (?i) (?s) (?m) (?U) (?u) (?-s) (?i:...) (?ism:...)
-                // Unknown flag letters are an error (re2j: "invalid or
-                // unsupported Perl syntax"), never a silent no-op.
-                boolean ci = false, ds = false, ml = false, us = false, ug = false;
-                boolean ciSet = false, dsSet = false, mlSet = false, usSet = false, ugSet = false;
+                // Parse inline flags: (?i) (?s) (?m) (?u) (?U) (?-s) (?i:...) (?ism:...)
+                // The letter→behavior activation is the compile's
+                // FlagBindings (the closed FlagAction vocabulary); a
+                // letter the surface does not bind is an error (re2j:
+                // "invalid or unsupported Perl syntax"), never a silent
+                // no-op. Every action targets scoped state, applied via
+                // applyFlagAction — under the JUR reading the U binding
+                // (scoped UNICODE_CASE) scopes like every other flag
+                // since v2: colon form, in-group and negated spellings
+                // all fold per java.util.regex.
+                EnumMap<FlagAction, Boolean> pending = new EnumMap<>(FlagAction.class);
                 boolean neg = false;
                 boolean pendingNeg = false;
                 while (pos < src.length() && peek() != ':' && peek() != ')') {
@@ -891,30 +901,11 @@ public final class Parser {
                         pos++;
                         continue;
                     }
-                    switch (f) {
-                        case 'i' :
-                            ci = !neg;
-                            ciSet = true;
-                            break;
-                        case 's' :
-                            ds = !neg;
-                            dsSet = true;
-                            break;
-                        case 'm' :
-                            ml = !neg;
-                            mlSet = true;
-                            break;
-                        case 'u' :
-                            us = !neg;
-                            usSet = true;
-                            break;
-                        case 'U' :
-                            ug = !neg;
-                            ugSet = true;
-                            break;
-                        default :
-                            throw fail(this, "invalid or unsupported Perl syntax: (?+" + f);
+                    FlagAction action = options.flagBindings().actionFor(f);
+                    if (action == null) {
+                        throw fail(this, "invalid or unsupported Perl syntax: (?+" + f);
                     }
+                    pending.put(action, !neg); // a later letter for the same behavior wins
                     neg = false;
                     pendingNeg = false;
                     pos++;
@@ -925,43 +916,13 @@ public final class Parser {
                 if (peek() == ':') {
                     pos++; // consume ':'
                     capturing = false;
-                    if (ugSet) {
-                        applyUFlag(stack, ug, true);
-                    }
-                    if (ciSet) {
-                        this.caseInsensitive = ci;
-                    }
-                    if (dsSet) {
-                        this.dotall = ds;
-                    }
-                    if (mlSet) {
-                        this.multiline = ml;
-                    }
-                    if (usSet) {
-                        this.unicodeShorthand = us;
-                    }
-                    if (ugSet && options.isUngreedyU()) {
-                        this.ungreedy = ug;
+                    for (Map.Entry<FlagAction, Boolean> e : pending.entrySet()) {
+                        applyFlagAction(e.getKey(), e.getValue());
                     }
                 } else {
                     expect(')');
-                    if (ugSet) {
-                        applyUFlag(stack, ug, false);
-                    }
-                    if (ciSet) {
-                        this.caseInsensitive = ci;
-                    }
-                    if (dsSet) {
-                        this.dotall = ds;
-                    }
-                    if (mlSet) {
-                        this.multiline = ml;
-                    }
-                    if (usSet) {
-                        this.unicodeShorthand = us;
-                    }
-                    if (ugSet && options.isUngreedyU()) {
-                        this.ungreedy = ug;
+                    for (Map.Entry<FlagAction, Boolean> e : pending.entrySet()) {
+                        applyFlagAction(e.getKey(), e.getValue());
                     }
                     return new Ast.Empty(); // flag-only group, continue — no frame, no restore
                 }
@@ -991,38 +952,49 @@ public final class Parser {
         f.savedDs = savedDs;
         f.savedMl = savedMl;
         f.savedUs = savedUs;
+        f.savedUc = savedUc;
         f.savedUg = savedUg;
         frames.push();
         stack.push(f);
         return null;
     }
 
-    /** Apply a parsed {@code U} inline-flag letter per the compile's
-     *  {@code (?U)} reading (the UNGREEDY_U axis, see {@link ParseOptions}).
-     *  Set (the RE2-lineage side): the letter selects ungreedy quantifiers,
-     *  scoped like every inline flag — handled by the caller. Unset (the
-     *  java.util.regex reading): {@code (?U)} is scoped {@code UNICODE_CASE}
-     *  — the fold-universe upgrade from that point on. v1 is top-level
-     *  flag-only: the colon form, a negated {@code (?-U)} and any use
-     *  inside a group reject with a {@link PatternSyntaxException}
-     *  (per-scope fold universes in the parser are the v2 work). */
-    private void applyUFlag(Deque<GroupFrame> stack, boolean on, boolean colonForm) {
-        if (options.isUngreedyU()) {
-            return; // the RE2 reading: the caller applies the letter to `ungreedy`
+    /** Apply one inline-flag behavior to the parser's scoped state
+     *  (see {@link FlagAction} — the fields the parse-time consumers
+     *  read: the fold sites, the class tables, the anchor flavor, the
+     *  quantifier preference). Scoped spellings restore at the
+     *  enclosing ')' via the {@link GroupFrame} snapshot; flag-only
+     *  groups like {@code (?i)} persist into the remainder of the
+     *  enclosing group (openGroup's flag-only return path).
+     *
+     *  <p>Since v2 this covers the JUR {@code (?U)} in every spelling:
+     *  {@code (?U:...)}, {@code ((?U)x)} and {@code (?-U)} fold per
+     *  java.util.regex (verified there live — java's own spelling of
+     *  the scoped reading is inline {@code (?u)}); the v1
+     *  top-level-only rejection is retired. */
+    private void applyFlagAction(FlagAction action, boolean on) {
+        switch (action) {
+            case CASE_INSENSITIVE :
+                this.caseInsensitive = on;
+                break;
+            case DOTALL :
+                this.dotall = on;
+                break;
+            case MULTILINE :
+                this.multiline = on;
+                break;
+            case UNICODE_CHARACTER_CLASS :
+                this.unicodeShorthand = on;
+                break;
+            case UNICODE_CASE :
+                this.unicodeCase = on;
+                break;
+            case UNGREEDY :
+                this.ungreedy = on;
+                break;
+            default :
+                throw new IllegalStateException("unhandled flag action: " + action);
         }
-        if (colonForm) {
-            throw fail(this, "invalid or unsupported Perl syntax: group-scoped (?U:...) — v1 supports top-level (?U)"
-                + " only under the java.util.regex reading");
-        }
-        if (!on) {
-            throw fail(this, "invalid or unsupported Perl syntax: (?-U) — v1 supports top-level (?U) only under"
-                + " the java.util.regex reading");
-        }
-        if (stack.size() > 1) {
-            throw fail(this, "invalid or unsupported Perl syntax: (?U) inside a group — v1 supports top-level (?U)"
-                + " only under the java.util.regex reading");
-        }
-        unicodeCase = true;
     }
 
     /** Pop the innermost group at its ')': assemble its alternation, restore
@@ -1043,6 +1015,7 @@ public final class Parser {
         dotall = f.savedDs;
         multiline = f.savedMl;
         unicodeShorthand = f.savedUs;
+        unicodeCase = f.savedUc;
         ungreedy = f.savedUg;
         Ast group =
             f.capturing

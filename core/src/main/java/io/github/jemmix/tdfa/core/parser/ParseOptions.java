@@ -12,34 +12,37 @@ package io.github.jemmix.tdfa.core.parser;
  * {@code true} selects):
  * <ul>
  * <li>the {@code DOT} terminator set (the UNIX_LINES axis — {@code \n}
- *     only, or the full java.util.regex terminator set);
+ *     only, or the full java.util.regex terminator set);</li>
  * <li>the fold universe (the UNICODE_CASE axis — full Unicode simple
- *     folding, or ASCII-only, the java.util.regex bare-CI reading);
- * <li>the {@code (?U)} meaning (the UNGREEDY_U axis — PCRE/RE2 ungreedy,
- *     or scoped Unicode-case, the java.util.regex reading);
+ *     folding, or ASCII-only, the java.util.regex bare-CI reading);</li>
  * <li>the ASCII {@code \s} table (the SPACE_RE2 axis — re2j's
- *     {@code [\t\n\f\r ]} without U+000B, or java.util.regex's with it).
+ *     {@code [\t\n\f\r ]} without U+000B, or java.util.regex's with it);</li>
+ * <li>the zero-width-iteration span protocol (the family-6 axis).</li>
  * </ul>
+ * plus the inline-flag letter {@link FlagBindings} — which
+ * {@link FlagAction} each letter activates. The stock lanes pin the
+ * two shipped readings ({@code U} = ungreedy / scoped Unicode case);
+ * {@link #flagBindings(FlagBindings)} is the custom-surface seam.
  */
 public final class ParseOptions {
 
-    private static final ParseOptions RE2_LANE = new ParseOptions(true, true, true, true, true);
+    private static final ParseOptions RE2_LANE = new ParseOptions(true, true, FlagBindings.RE2_LANE, true, true);
 
     private final boolean dotNlOnly;
 
     private final boolean unicodeCase;
 
-    private final boolean ungreedyU;
+    private final FlagBindings flagBindings;
 
     private final boolean emptyIterationSpans;
 
     private final boolean spaceRe2;
 
-    private ParseOptions(boolean dotNlOnly, boolean unicodeCase, boolean ungreedyU, boolean emptyIterationSpans,
-        boolean spaceRe2) {
+    private ParseOptions(boolean dotNlOnly, boolean unicodeCase, FlagBindings flagBindings,
+        boolean emptyIterationSpans, boolean spaceRe2) {
         this.dotNlOnly = dotNlOnly;
         this.unicodeCase = unicodeCase;
-        this.ungreedyU = ungreedyU;
+        this.flagBindings = flagBindings;
         this.emptyIterationSpans = emptyIterationSpans;
         this.spaceRe2 = spaceRe2;
     }
@@ -61,7 +64,7 @@ public final class ParseOptions {
      * The other axes default to the RE2-side reading.
      */
     public static ParseOptions dotNlOnly(boolean dotNlOnly) {
-        return new ParseOptions(dotNlOnly, true, true, true, true);
+        return new ParseOptions(dotNlOnly, true, FlagBindings.RE2_LANE, true, true);
     }
 
     /**
@@ -71,31 +74,35 @@ public final class ParseOptions {
      * one); {@code false} = ASCII only until widened — the
      * java.util.regex bare-CI reading (the 26 letter pairs and nothing
      * else; {@code (?u)} widens it, JDK {@code UNICODE_CHARACTER_CLASS}
-     * implying Unicode-aware CI).
+     * implying Unicode-aware CI — and the scoped {@code (?U)} does too,
+     * per scope, since v2).
      */
     public ParseOptions unicodeCase(boolean unicodeCase) {
-        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU, emptyIterationSpans, spaceRe2);
+        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2);
     }
 
     /**
-     * Select the {@code (?U)} meaning: {@code true} = ungreedy
-     * (quantifiers default to lazy — the PCRE/RE2 reading); {@code false}
-     * = scoped {@code UNICODE_CASE} (the java.util.regex reading; v1
-     * accepts the positive top-level flag-only spelling alone — see
-     * {@code Parser}).
+     * Select the {@code (?U)} meaning by lane: {@code true} = ungreedy
+     * (quantifiers default to lazy — the PCRE/RE2 reading, the re2j
+     * surface); {@code false} = scoped {@code UNICODE_CASE} (the
+     * java.util.regex reading — every spelling scoped since v2). Sugar
+     * for the two stock {@link FlagBindings} lanes.
      */
     public ParseOptions ungreedyU(boolean ungreedyU) {
-        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU, emptyIterationSpans, spaceRe2);
+        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU ? FlagBindings.RE2_LANE : FlagBindings.JUR_LANE,
+            emptyIterationSpans, spaceRe2);
     }
 
     /**
-     * Select the ASCII {@code \s}/{@code \S} table: {@code true} =
-     * re2j's {@code [\t\n\f\r ]} (U+000B is NOT whitespace — the
-     * RE2-lineage reading); {@code false} = java.util.regex's
-     * {@code [ \t\n\x0B\f\r]} (U+000B IS whitespace).
+     * Replace the inline-flag letter bindings outright — the
+     * custom-surface seam. The stock lanes are {@code U} = ungreedy
+     * (RE2) and {@code U} = scoped Unicode case (JUR); a custom
+     * surface binds any subset or renaming of the closed
+     * {@link FlagAction} vocabulary, and every letter it does not bind
+     * rejects at the parse.
      */
-    public ParseOptions spaceRe2(boolean spaceRe2) {
-        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU, emptyIterationSpans, spaceRe2);
+    public ParseOptions flagBindings(FlagBindings flagBindings) {
+        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2);
     }
 
     /**
@@ -109,7 +116,17 @@ public final class ParseOptions {
      * pair; the determinizer's φ overrides the finals).
      */
     public ParseOptions emptyIterationSpans(boolean emptyIterationSpans) {
-        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU, emptyIterationSpans, spaceRe2);
+        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2);
+    }
+
+    /**
+     * Select the ASCII {@code \s}/{@code \S} table: {@code true} =
+     * re2j's {@code [\t\n\f\r ]} (U+000B is NOT whitespace — the
+     * RE2-lineage reading); {@code false} = java.util.regex's
+     * {@code [ \t\n\x0B\f\r]} (U+000B IS whitespace).
+     */
+    public ParseOptions spaceRe2(boolean spaceRe2) {
+        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2);
     }
 
     /** Does the ASCII {@code \s} exclude U+000B (re2j's table, vs the JDK's)? */
@@ -122,14 +139,14 @@ public final class ParseOptions {
         return dotNlOnly;
     }
 
-    /** Folds CI the full Unicode universe (vs ASCII only)? */
+    /** Does CI fold the full Unicode universe (vs ASCII only)? */
     public boolean isUnicodeCase() {
         return unicodeCase;
     }
 
-    /** Does {@code (?U)} mean ungreedy (vs scoped Unicode-case)? */
-    public boolean isUngreedyU() {
-        return ungreedyU;
+    /** The inline-flag letter bindings (which letter activates which behavior). */
+    public FlagBindings flagBindings() {
+        return flagBindings;
     }
 
     /** Do zero-width loop iterations report their spans (vs sub-family-A dissolution)? */

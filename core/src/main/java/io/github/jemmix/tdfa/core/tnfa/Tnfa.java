@@ -8,6 +8,7 @@ import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.FrameBudget;
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
+import io.github.jemmix.tdfa.core.parser.FlagBindings;
 import io.github.jemmix.tdfa.core.parser.ParseOptions;
 import io.github.jemmix.tdfa.core.parser.ParseResult;
 import io.github.jemmix.tdfa.core.parser.Parser;
@@ -290,6 +291,22 @@ public final class Tnfa {
     public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
         boolean multiValuedTags, Semantics semantics, UnicodeDataProvider provider, CompileObserver observer,
         WorkMeter meter) {
+        return compile(pattern, disableUnicodeGroups, anchorBoth, multiValuedTags, semantics, null, provider,
+            observer, meter);
+    }
+
+    /**
+     * The compile entry with the inline-flag letter bindings override —
+     * the custom-surface seam. {@code flagBindings == null} selects the
+     * stock lane spelling of the {@code (?U)} axis ({@code U} = ungreedy
+     * when the axis is set, scoped Unicode case when unset); an explicit
+     * {@link FlagBindings} replaces the letter alphabet outright (every
+     * letter it does not bind rejects at the parse — a subset surface
+     * shrinks the accepted syntax exactly as much as it intends).
+     */
+    public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
+        boolean multiValuedTags, Semantics semantics, FlagBindings flagBindings, UnicodeDataProvider provider,
+        CompileObserver observer, WorkMeter meter) {
         long t0 = System.nanoTime();
         // Front-end budget: ONE work meter (CPU, ticks) spans parse + TNFA
         // build so the pre-determinization surface is bounded too — the
@@ -302,10 +319,14 @@ public final class Tnfa {
         // Parser-side projection of the compile's Semantics (the carrier
         // stays here; the parser package sits below tnfa in the layer DAG):
         // the DOT terminator set (UNIX_LINES), the fold universe
-        // (UNICODE_CASE) and the (?U) meaning (UNGREEDY_U).
+        // (UNICODE_CASE) and the inline-flag letter bindings (the (?U)
+        // meaning rides them — the override when present, else the stock
+        // lane spelling of the axis).
         ParseResult parsed = Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth,
             ParseOptions.dotNlOnly(semantics.isUnixLines()).unicodeCase(semantics.isUnicodeCase())
-                .ungreedyU(semantics.isUngreedyU()).emptyIterationSpans(semantics.isEmptyIterationSpans())
+                .flagBindings(flagBindings != null ? flagBindings
+                    : semantics.isUngreedyU() ? FlagBindings.RE2_LANE : FlagBindings.JUR_LANE)
+                .emptyIterationSpans(semantics.isEmptyIterationSpans())
                 .spaceRe2(semantics.isSpaceRe2()),
             provider, meter);
         if (observer != null) {

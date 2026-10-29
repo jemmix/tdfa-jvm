@@ -202,9 +202,18 @@ Composition rules:
   no `(?U` in the pattern.
 - Bit values do not mirror the JDK's (today's `MULTILINE=4` already differs
   from the JDK's 8); names and semantics mirror, numerics don't.
-- v1 limit, stated loudly: `(?U:` scoped fold upgrades need per-scope fold
-  universes in the parser; v1 accepts `UNGREEDY_U`/inline `(?U)` at top
-  level only and rejects group-scoped use with a `PatternSyntaxException`.
+- v2 landed (the scoped fold): `(?U:)` scoped fold universes ride the
+  group frames — every spelling (`(?U:…)`, in-group `(?U)`, `(?-U)`)
+  folds per `java.util.regex` (java's own spelling of the scoped
+  reading is inline `(?u)`; the engine's u/U letters are crossed vs
+  the JDK). The v1 top-level-only rejection is retired; the letter's
+  activation itself is data since the same landing — a closed
+  `FlagAction` vocabulary plus immutable `FlagBindings`
+  (letter&rarr;behavior) carried on `ParseOptions` and overridable at
+  the `Tnfa.compile` seam, so a surface is a value: the stock lanes
+  pin the two shipped readings (`U` = scoped Unicode case / ungreedy)
+  and a custom surface composes a subset or renamed alphabet with
+  zero core changes.
 
 ## Consequences of flipping the default
 
@@ -269,8 +278,12 @@ commit.
   harmless)~~ **Decided with the flip: not shipping** — plain `0` already
   reads as all-axes-JUR; harmless sugar can join later if the flag surface
   ever wants it.
-- Scoped `(?U:...)` fold in v2 vs the v1 top-level-only rejection (v1 limit
-  above).
+- ~~Scoped `(?U:...)` fold in v2 vs the v1 top-level-only rejection (v1 limit
+  above).~~ **Decided: v2 landed** — the scoped fold rides the group frames
+  (every spelling folds per java.util.regex; the campaign/fuzz skip kinds
+  retired, scoped shapes compare hard through the u/U letter swap), and the
+  letter&rarr;behavior activation became data (`FlagAction` +
+  `FlagBindings`) on the same landing.
 - ~~One `Pattern` or two: whether the jur-compat and re2j-compat readings
   belong on one surface (today's shape — the seven opt-out bits + the
   `RE2_COMPAT` preset) or on separate `Pattern` surfaces each owning their

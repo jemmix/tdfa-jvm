@@ -50,9 +50,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * through the jur facade (the default lane) against the live
  * {@code java.util.regex} oracle with the campaign's flag translation
  * (CASE_INSENSITIVE / DOTALL / MULTILINE / UNICODE_CHARACTER_CLASS — the
- * {@code (?u)} lane; no LONGEST, jur has no equivalent; a top-level
- * point-forward {@code (?U)} translates to the oracle's scoped
- * {@code (?U:...)} wrap of the remainder). The contract
+ * {@code (?u)} lane; no LONGEST, jur has no equivalent; the u/U letters
+ * swap to the oracle's spelling — engine {@code (?U)}/{@code (?u)} are
+ * java's {@code (?u)}/{@code (?U)} — in every spelling, the scoped
+ * {@code (?U:...)} shapes included since v2). The contract
  * is each oracle's observable behavior: compile-accept/reject parity plus a
  * five-probe span protocol compared for exact equality — first
  * {@code find()} with overall and per-group spans (spans strictly subsume
@@ -597,18 +598,85 @@ public final class DifferentialFuzzer {
         String vmExc;
     }
 
-    /** The oracle pattern a JUR-lane compile compares against: a
-     *  top-level point-forward {@code (?U)} — the lane's scoped fold
-     *  upgrade, leading or mid-pattern — translates to java's SCOPED
-     *  spelling, the remainder wrapped in {@code (?U:...)} (inline flags
-     *  extend to the end of the enclosing group, so prefix +
-     *  {@code (?U:remainder:)} is the same reading — non-capturing, group
-     *  numbering unchanged). {@code (?U:...)}/nested spellings reject at
-     *  the lane compile (the v1 top-level-only limit) and never reach
-     *  here. */
+    /** The oracle pattern a JUR-lane compile compares against: the
+     *  engine's u/U letters are crossed vs the JDK — engine
+     *  {@code (?U)} is scoped UNICODE_CASE (java's {@code (?u)}) and
+     *  engine {@code (?u)} is UCC (java's {@code (?U)}) — so every
+     *  inline-flag letter run swaps {@code u}<->{@code U}, spelling
+     *  for spelling: bare, colon-form, negated and combined, at any
+     *  depth (the scoped {@code (?U:...)} shapes compare hard since
+     *  v2). The scan is escape-, character-class- and
+     *  {@code \Q..\E}-aware so literal text never rewrites (a leading
+     *  {@code ]} is a class member; a letter run without a
+     *  {@code :}/{@code )} terminator is not a flag group). */
     static String jurOraclePattern(String pattern) {
-        int u = pattern.indexOf("(?U)");
-        return u >= 0 ? pattern.substring(0, u) + "(?U:" + pattern.substring(u + 4) + ")" : pattern;
+        StringBuilder out = new StringBuilder(pattern.length());
+        int n = pattern.length();
+        boolean inClass = false;
+        boolean quoted = false;
+        for (int i = 0; i < n; i++) {
+            char c = pattern.charAt(i);
+            if (quoted) {
+                out.append(c);
+                if (c == '\\' && i + 1 < n) {
+                    char nx = pattern.charAt(i + 1);
+                    out.append(nx);
+                    i++;
+                    quoted = nx != 'E';
+                }
+                continue;
+            }
+            if (c == '\\' && i + 1 < n) {
+                char nx = pattern.charAt(i + 1);
+                if (nx == 'Q') {
+                    quoted = true;
+                }
+                out.append(c).append(nx);
+                i++;
+                continue;
+            }
+            if (inClass) {
+                out.append(c);
+                if (c == ']') {
+                    inClass = false;
+                }
+                continue;
+            }
+            if (c == '[') {
+                inClass = true;
+                out.append(c);
+                // a leading '^' and then a ']' are literal members, not
+                // the class terminator
+                if (i + 1 < n && pattern.charAt(i + 1) == '^' && i + 2 < n && pattern.charAt(i + 2) == ']') {
+                    out.append("^]");
+                    i += 2;
+                } else if (i + 1 < n && pattern.charAt(i + 1) == ']') {
+                    out.append(']');
+                    i++;
+                }
+                continue;
+            }
+            if (c == '(' && i + 1 < n && pattern.charAt(i + 1) == '?' && i + 2 < n
+                && Character.isLetter(pattern.charAt(i + 2))) {
+                // candidate inline-flag run: letters (and '-') until ':' or ')'
+                int e = i + 2;
+                while (e < n && pattern.charAt(e) != ':' && pattern.charAt(e) != ')'
+                    && (Character.isLetter(pattern.charAt(e)) || pattern.charAt(e) == '-')) {
+                    e++;
+                }
+                if (e < n && (pattern.charAt(e) == ':' || pattern.charAt(e) == ')')) {
+                    out.append("(?");
+                    for (int t = i + 2; t < e; t++) {
+                        char f = pattern.charAt(t);
+                        out.append(f == 'u' ? 'U' : f == 'U' ? 'u' : f);
+                    }
+                    i = e - 1;
+                    continue;
+                }
+            }
+            out.append(c);
+        }
+        return out.toString();
     }
 
     static int jurFlags(int flags, String pattern) {
@@ -1627,9 +1695,10 @@ public final class DifferentialFuzzer {
         long jurGuarded;
         int jurGuardRecorded;
         /** Recorded-records cap per JURLANE_SKIP reason (the count keeps
-         *  running; overnight the skip kinds are frequent — the v1 (?U)
-         *  rejections alone are ~7% of jur cases — and every skip is
-         *  reproducible from its caseSeed once the shape is known). */
+         *  running; overnight the skip kinds are frequent, and every
+         *  skip is reproducible from its caseSeed once the shape is
+         *  known; the v1 (?U) rejections that were ~7% of jur cases
+         *  compare hard since the v2 scoped fold landed). */
         final Map<String, Integer> jurSkipRecorded = new LinkedHashMap<>();
         final Map<Layer, Integer> layerCounts = new EnumMap<>(Layer.class);
         long hangs, hangsOurs, hangsOracle;
@@ -1780,13 +1849,11 @@ public final class DifferentialFuzzer {
          *   <li><b>oracle-threw</b> — java.util.regex blew up at match time
          *       (backtracker StackOverflowError): an oracle limit, not a
          *       divergence (the campaign's JUR_ORACLE_THREW soft).</li>
-         *   <li><b>v1-ungreedy-scope</b> — {@code (?U:...)} and nested
-         *       {@code (?U} spellings: the v1 top-level-only limit rejects
-         *       at the lane compile by design (the campaign's
-         *       V1_UNGREEDY_SCOPE twin); a point-forward top-level
-         *       {@code (?U)} is no longer here — it translates to the
-         *       oracle's scoped {@code (?U:...)} wrap and compares
-         *       HARD.</li>
+         *   <li><b>v1-ungreedy-scope — RETIRED</b>: the v2 scoped fold
+         *       landed — {@code (?U:...)}/nested {@code (?U} spellings
+         *       compile under the JUR reading and compare HARD through
+         *       the u/U letter swap (a lane compile rejection is now a
+         *       real finding, never classified here).</li>
          *   <li><b>group-participation-tail — RETIRED</b>: the family-6
          *       tail slice (the 4d audit's position-carrying ε-write gap)
          *       closed by the unbounded zero-width-exit split (finding 2's
@@ -1827,9 +1894,6 @@ public final class DifferentialFuzzer {
             String p = o.c.pattern();
             if (o.oracle.startsWith("<exception")) {
                 return "oracle-threw";
-            }
-            if (o.vm.startsWith("<reject") && p.contains("(?U")) {
-                return "v1-ungreedy-scope";
             }
             if (CampaignFuzzer.sameSkeleton(o.oracle, o.vm) && CampaignFuzzer.leakedRestartSpan(o.oracle, o.vm)) {
                 return "restart-tag-leak";

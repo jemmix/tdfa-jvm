@@ -22,7 +22,6 @@ import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * WBS items "Parameterize the pivots" + "Fold + U bits" — the lane audit.
@@ -65,7 +64,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * both tiers, the same rung × wrapper audit) since WBS items 4b/4c
  * landed. The facade's {@code CompileOptions.semantics} route — the
  * core-tier spelling of the lane selection — is pinned at the bottom
- * (fold, terminator set, and the (?U) v1 rejection through it).
+ * (fold, terminator set, and the (?U) scoped reading through it).
  */
 class PivotLanesTest {
 
@@ -541,17 +540,22 @@ class PivotLanesTest {
     }
 
     @Test
-    void v1ScopedURejectionsUnderTheJurReading() {
-        // v1: top-level positive flag-only (?U) alone. The colon form, a
-        // negated (?-U), and any use inside a group (including inside
-        // another flag group's body) reject with PatternSyntaxException.
+    void scopedUSpellingsCompareHardAgainstJavaUtilRegex() {
+        // v2: the scoped fold — every spelling (colon form, in-group
+        // bare, negation, combined) folds per java.util.regex,
+        // dual-pattern oracled through java's own spelling of the
+        // scoped reading (inline (?u); the engine's u/U letters are
+        // crossed vs the JDK — our (?U) is java's (?u)).
+        String[] kelvins =
+            {"k", "K", "\u212A", "\u212Ak", "k\u212A", "s", "\u017F", "\u212As\u017F", "kk", "K\u212A", "\u212A\u212A"};
+        assertDualOracleParity("JUR (?i)(?U:k)k colon", "(?i)(?U:k)k", "(?i)(?u:k)k", 0, JUR, kelvins);
+        assertDualOracleParity("JUR (?i:((?U)k)k) in-group", "(?i:((?U)k)k)", "(?i:((?u)k)k)", 0, JUR, kelvins);
+        assertDualOracleParity("JUR (?i)((?U:k)s) nested", "(?i)((?U:k)s)", "(?i)((?u:k)s)", 0, JUR, kelvins);
+        assertDualOracleParity("JUR (?i)(?U:k)(?-U)k negated", "(?i)(?U:k)(?-U)k", "(?i)(?u:k)(?-u)k", 0, JUR, kelvins);
+        assertDualOracleParity("JUR (?i-U)k fold off", "(?i-U)k", "(?i-u)k", 0, JUR, kelvins);
+        // every v1-rejected spelling now compiles under the JUR reading
         for (String pat : new String[]{"(?U:a)", "(?U:a+)", "((?U)a)", "(a(?U)b)", "(?i:(?U)a)", "(?i-U)a", "(?-U)a",
             "((?U:a))"}) {
-            assertThatThrownBy(() -> compileTdfa(pat, JUR)).as("JUR lane rejects /%s/", pat)
-                .isInstanceOf(PatternSyntaxException.class);
-        }
-        // the legal spellings compile under the JUR reading ...
-        for (String pat : new String[]{"(?U)a", "(?U)(?i)a", "a|(?U)b", "(?U-s)a", "(?Ui)a", "(?U)a|b"}) {
             assertThatCode(() -> compileTdfa(pat, JUR)).as("JUR lane accepts /%s/", pat).doesNotThrowAnyException();
         }
         // ... and the RE2 reading (the re2j surface lane) keeps every
@@ -690,12 +694,13 @@ class PivotLanesTest {
         io.github.jemmix.tdfa.Pattern jurDot =
             io.github.jemmix.tdfa.Pattern.compile(".", CompileOptions.of().semantics(Semantics.of()));
         assertThat(jurDot.matcher("\r").find()).as("JUR lane: dot skips the full terminator set").isFalse();
-        // the (?U) reading through the same route: v1 rejection and the
-        // scoped fold upgrade
-        assertThatThrownBy(
-            () -> io.github.jemmix.tdfa.Pattern.compile("(?U:a)", CompileOptions.of().semantics(Semantics.of())))
-            .as("facade options route: (?U:...) rejects under the JUR reading")
-            .isInstanceOf(PatternSyntaxException.class);
+        // the (?U) reading through the same route: the scoped fold
+        // upgrade — every spelling (v2), java-verified
+        io.github.jemmix.tdfa.Pattern scoped =
+            io.github.jemmix.tdfa.Pattern.compile("(?i)(?U:k)k", CompileOptions.of().semantics(Semantics.of()));
+        assertThat(scoped.matcher("\u212Ak").find()).as("facade options route: scoped (?U:...) widens inside").isTrue();
+        assertThat(scoped.matcher("\u212A\u212A").find())
+            .as("facade options route: the atom after the scoped group folds ASCII").isFalse();
         io.github.jemmix.tdfa.Pattern up =
             io.github.jemmix.tdfa.Pattern.compile("(?U)(?i)k", CompileOptions.of().semantics(Semantics.of()));
         assertThat(up.matcher("\u212A").find()).as("facade options route: (?U) upgrades the fold universe").isTrue();

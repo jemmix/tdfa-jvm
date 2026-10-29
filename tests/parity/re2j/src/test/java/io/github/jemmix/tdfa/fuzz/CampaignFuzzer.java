@@ -484,12 +484,9 @@ public final class CampaignFuzzer {
                 CompileObserver.NONE, ledger);
             find = Determinizer.compileWithWholeSide(nfa, false, CompileObserver.NONE, ledger.fork(0));
         } catch (io.github.jemmix.tdfa.core.parser.PatternSyntaxException e) {
-            // The lane's only syntax delta is the (?U) v1 limit: top-level
-            // flag-only (?U) alone — every other spelling rejects.
-            if (c.pattern().contains("(?U")) {
-                counts.soft("V1_UNGREEDY_SCOPE");
-            }
             return; // other compile parity is the RE2-lane probe's question
+            // (the v1 (?U) top-level-only limit is retired: scoped
+            // spellings compile under the JUR reading and compare below)
         } catch (PatternTooLargeException | StackOverflowError e) {
             counts.soft("JURLANE_BUDGET");
             return;
@@ -533,14 +530,12 @@ public final class CampaignFuzzer {
                 DifferentialFuzzer.escape(c.pattern()), DifferentialFuzzer.escape(c.input()), jurLaneVm, jurLaneAsm);
             return;
         }
-        // oracle: java.util.regex under the lane's reading — bare CI (the
-        // ASCII universe); a top-level point-forward (?U) becomes java's
-        // scoped spelling, the remainder wrapped in (?U:...). A lexical
-        // "(?U" the LANE compiled (so the occurrence is structural) wraps
-        // too; shapes the lane rejected never reach here.
-        int scopedU = c.pattern().indexOf("(?U)");
-        String oraclePattern = scopedU >= 0
-            ? c.pattern().substring(0, scopedU) + "(?U:" + c.pattern().substring(scopedU + 4) + ")" : c.pattern();
+        // oracle: java.util.regex under the lane's reading — the u/U
+        // letters swap to java's spelling (engine (?U) is java's (?u),
+        // engine (?u) is java's (?U)) in every spelling, scoped
+        // (?U:...) included since v2; shapes the lane rejects never
+        // reach here.
+        String oraclePattern = DifferentialFuzzer.jurOraclePattern(c.pattern());
         int jurFlags = c.jurFlags();
         String jur;
         java.util.regex.Pattern jp;
