@@ -179,7 +179,11 @@ def main() -> int:
     lines += ["<!-- machine-readable tracked signatures (scripts/fuzz-nightly-issue.py):"] \
         + [f"fuzz-sig: {sig}" for sig in sorted(new_sigs)] + ["-->"]
 
-    gh("label", "create", LABEL, "--color", "B60205",
+    # --force: idempotent. The label outlives the first findings night, and
+    # a bare create then failed the whole step before the body write
+    # (2026-10-30 manual run 41061641546: the label left behind by the
+    # surrogate-crashed first night killed the second).
+    gh("label", "create", LABEL, "--color", "B60205", "--force",
        "--description", "new mismatches found by the nightly fuzz soak")
     body_file = os.path.join(out_dir, "issue-body.md")
     # errors="replace": belt-and-braces past sanitize() — an unanticipated
