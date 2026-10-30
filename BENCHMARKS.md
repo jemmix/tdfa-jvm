@@ -142,6 +142,32 @@ there. **VM ≈ ASM warm** is no longer universal on this suite: the ASM
 extract leaf is 1.5–2.3× faster than the interpreter's walk at prefix hits.
 No ASM cold penalty.
 
+**Prefix needle v2 — fold-aware, `\b`-gated chains (2026-10-30):** chain
+detection now runs THROUGH case-fold steps (the `(?i)i` group {I, i, İ..ı}
+is one one-unit step; a class range likewise) and picks the longest
+case-stable run inside the chain as the needle, at its fixed offset from
+the match start — `(?i)ip=\d+` searches for `=` at offset 2, `(?i)ERROR:
+code=` for `: ` at offset 5. Word-boundary gates no longer decline the
+chain (on the start state's mask or on chain exits' required masks): the
+candidate walk already evaluates them at the candidate position, so
+`\berror\b` searches for `error` directly. Non-word gates (`^`, `\A`,
+`$`-family) still belong to the restart ladder. QuickBench, 16 KB
+haystacks, control-normalized, same machine before/after (the ops are
+oracle-checked against `java.util.regex` in both runs):
+
+| shape | before | after | |
+|---|---:|---:|---|
+| `(?i)ip=\d+` find, no match | 13,230 | 55 | ~240× |
+| `\bxylophone\b` find, no match | 10,079 | 467 | ~22× |
+| `\bsinging\b` findAll, dense | 16,921 | 2,402 | ~7× |
+
+The fold row was the trigger-sim's live-set scan before (every char, every
+state); it is one vectorized `indexOf` now. The dense `\b` row still pays a
+gate-evaluating walk per hit — the budget fallback keeps it linear — but
+indexOf replaces the per-find trigger scan. Chains that fold all the way
+through (`(?i)kelvin`) still have no needle: every step varies, and a
+single `indexOf` cannot enumerate 2^k variants.
+
 ## 5. Backend comparison — ASM vs VM, and when to pick which
 
 Same strategy, different walk executor (conformance-tested). Per-shape

@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.core.dfa;
 
 import io.github.jemmix.tdfa.core.ast.Alphabet;
+import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 
 import java.util.Arrays;
 
@@ -10,13 +11,24 @@ import java.util.Arrays;
  */
 final class RunnerTables {
     /**
-     * Longest prefix needle detected ({@link #detectPrefixNeedle}): the walk
+     * Longest prefix chain detected ({@link #detectPrefixChain}): the walk
      * is bounded by state count, so detection stays O(32) even on giant
      * chain DFAs; every real log-shape needle (ip=, user_id=, path=) is far
-     * shorter. Single source of truth — {@link TdfaRunner#detectPrefixNeedle}
-     * exposes it to the ASM backend's emit-time mirror.
+     * shorter. Single source of truth — {@link TdfaRunner#detectPrefixChain}
+     * exposes it to the ASM backend's emit-time mirror. Caps chain STEPS
+     * (fold/class steps included), not needle length.
      */
     static final int PREFIX_NEEDLE_MAX = 32;
+
+    /**
+     * The only zero-width gates a prefix chain may carry: word-boundary
+     * bits, on the start state's entry mask or on chain exits' required
+     * masks. The candidate walks evaluate them at the candidate position,
+     * so the needle stays a complete candidate enumeration. Every other
+     * gate (^, \A, $-family) restricts where matches may begin in ways the
+     * restart ladder owns — those still end the chain.
+     */
+    static final int WORD_GATE = Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY;
 
     private RunnerTables() {
     }
@@ -190,78 +202,114 @@ final class RunnerTables {
     }
 
     /**
-     * Detect a REQUIRED literal prefix: the longest char chain from the
-     * start state such that every match must begin by consuming exactly
-     * those chars (null otherwise). The chain EXTENDS one char at a time
-     * while the current state is non-accepting and has exactly one live
-     * (non-dead) exit shape — a single BMP codepoint, no required mask,
-     * unique target (duplicate entries on the same char+target are fine).
-     * Anything else — a wider range, a second char, a fork, a mask-gated
-     * exit, an accepting state — ENDS the chain there: every char appended
-     * so far is still required (each step had exactly one live char, so
-     * every accepting path consumed it), while the divergence happens
-     * after the needle. That makes any prefix length sound; the loop just
-     * takes the longest one. The start state's own entry mask must be zero
-     * (an entry-masked start restricts where matches may begin — the
-     * restart ladder owns that). Transition OPS on chain exits are
-     * allowed: the prefix scan still runs the exact walk at every hit, so
-     * tag writes are applied by the walk, not skipped. Public static via
-     * {@link TdfaRunner#detectPrefixNeedle(Tdfa)}: the ASM backend asks
-     * at emit time and bakes the needle in as a class constant.
+     * Detect a REQUIRED literal chain from the start state and pick its
+     * search needle (null when no usable one exists). Every match must
+     * begin by consuming exactly one char per chain step, in order: the
+     * chain EXTENDS one step at a time while the current state is
+     * non-accepting and all of its live (non-dead) exits share one target
+     * and consume exactly one BMP unit each — a case-fold class (the
+     * {@code (?i)i} group {I, i, İ..ı}), a class range, or a plain char
+     * (duplicate entries on the same char+target dedup to one). Each exit
+     * may carry word-boundary gate bits ({@link #WORD_GATE}); anything
+     * else — a supplementary member (step width not fixed), a non-word
+     * gate, a second target, a dead-end-only state, an accepting state —
+     * ENDS the chain there: every step recorded so far is still required
+     * (each step had exactly one onward target, so every accepting path
+     * consumed it), while the divergence happens after the chain. The
+     * start state's entry mask may carry word-gate bits only.
+     *
+     * <p>The needle is the longest contiguous run of SINGLETON steps
+     * (case-stable chars — one live exit covering one codepoint) inside
+     * the chain, at its fixed unit offset from the match start: fold and
+     * class steps are one unit wide each, so every match contains the run
+     * at exactly that offset. A whole-chain run is the v1 shape (offset
+     * 0); a chain that folds all the way through (e.g. {@code (?i)kelvin})
+     * has no run and yields no needle. Ties go to the LAST longest run —
+     * the run nearest the divergence, the most selective position in
+     * separator-and-value log shapes.
+     *
+     * <p>Transition OPS and word gates are allowed on chain exits: the
+     * prefix scan still runs the exact walk at every hit, so tag writes
+     * and gate evaluation belong to the walk, never to the scan. Public
+     * static via {@link TdfaRunner#detectPrefixChain(Tdfa)}: the ASM
+     * backend asks at emit time and bakes needle + offset in as class
+     * constants.
      */
-    static String detectPrefixNeedle(Tdfa tdfa) {
+    static TdfaRunner.PrefixChain detectPrefixChain(Tdfa tdfa) {
         int n = tdfa.stateCount;
-        if (n < 2 || tdfa.startStateEntryMask != 0) {
+        if (n < 2 || (tdfa.startStateEntryMask & ~WORD_GATE) != 0) {
             return null;
         }
         int s = tdfa.startState;
         if ((tdfa.stateMeta[s] & 1) != 0) {
             return null; // zero-length matches possible anywhere
         }
-        StringBuilder sb = new StringBuilder(8);
         int cap = Math.min(n - 1, PREFIX_NEEDLE_MAX);
-        while (sb.length() < cap) {
+        // One char per step: the singleton's codepoint when the step has a
+        // case-stable char, 0 when it is a fold class / class range.
+        char[] step = new char[cap];
+        int steps = 0;
+        while (steps < cap) {
             int meta = tdfa.stateMeta[s];
+            if ((meta & 1) != 0) {
+                break; // a match may end here: later steps are not required
+            }
             int base = tdfa.stateBase[s], cnt = (meta >>> 1) & 0xFFFF;
-            // Unique extendable exit, if one exists: single BMP
-            // codepoint, mask-free, and every other live exit is an
-            // exact duplicate of it. A conflict (any other live exit)
-            // means two chars/targets lead onward — stop, keep sb.
-            int ch = -1, target = -1;
-            boolean conflict = false;
-            for (int i = 0; i < cnt && !conflict; i++) {
+            // Unique extendable target, if one exists. Every live exit must
+            // be BMP-only (fixed one-unit width) and word-gated at most; the
+            // step is singleton-stable iff all live exits dedup to ONE char.
+            int target = -1, ch = -1;
+            boolean stop = false, singleton = true;
+            for (int i = 0; i < cnt && !stop; i++) {
                 int o = (base + i) * 5;
                 if (tdfa.ranges[o + 2] < 0) {
-                    continue; // dead marker: this char never leads onward
+                    continue; // dead marker: this exit never leads onward
                 }
-                boolean singleton =
-                    tdfa.ranges[o + 4] == 0 && tdfa.ranges[o] == tdfa.ranges[o + 1] && tdfa.ranges[o] <= 0xFFFF;
-                if (!singleton) {
-                    conflict = true;
-                } else if (ch < 0) {
-                    ch = tdfa.ranges[o];
+                if (tdfa.ranges[o + 1] > 0xFFFF || (tdfa.ranges[o + 4] & ~WORD_GATE) != 0) {
+                    stop = true;
+                } else if (target < 0) {
                     target = tdfa.ranges[o + 2];
-                } else if (tdfa.ranges[o] != ch || tdfa.ranges[o + 2] != target) {
-                    conflict = true;
+                    ch = tdfa.ranges[o];
+                    singleton = tdfa.ranges[o] == tdfa.ranges[o + 1];
+                } else if (tdfa.ranges[o + 2] != target) {
+                    stop = true; // fork: the chain cannot continue linearly
+                } else if (tdfa.ranges[o] != ch || tdfa.ranges[o] != tdfa.ranges[o + 1]) {
+                    singleton = false; // fold class / class range member
                 }
             }
-            if (conflict || ch < 0 || (meta & 1) != 0 || tdfa.stateEntryMask[target] != 0) {
-                break; // chain end: divergence, dead-end, accept, or mask
+            if (stop || target < 0 || tdfa.stateEntryMask[target] != 0) {
+                break; // chain end: divergence, dead-end, gate, or mask
             }
-            sb.append((char) ch);
+            step[steps++] = singleton ? (char) ch : 0;
             s = target;
         }
+        // Longest stable run, ties to the last one (see javadoc).
+        int bestLen = 0, bestOff = 0, run = 0;
+        for (int i = 0; i < steps; i++) {
+            if (step[i] != 0) {
+                run++;
+                if (run >= bestLen) {
+                    bestLen = run;
+                    bestOff = i + 1 - run;
+                }
+            } else {
+                run = 0;
+            }
+        }
+        if (bestLen == 0) {
+            return null;
+        }
         // Same lone-surrogate adjacency bail as the literal needle: two
-        // adjacent LONE symbols re-encoded as a well-formed pair can
-        // never be matched by the codepoint-decoding walk, so the needle
-        // would only produce doomed candidates. Not a usable prefix.
-        for (int i = 0; i < sb.length() - 1; i++) {
-            char c0 = sb.charAt(i), c1 = sb.charAt(i + 1);
+        // adjacent LONE symbols re-encoded as a well-formed pair can never
+        // be matched by the codepoint-decoding walk, so the needle would
+        // only produce doomed candidates. Not a usable prefix.
+        for (int i = bestOff; i < bestOff + bestLen - 1; i++) {
+            char c0 = step[i], c1 = step[i + 1];
             if (c0 >= 0xD800 && c0 <= 0xDBFF && c1 >= 0xDC00 && c1 <= 0xDFFF) {
                 return null;
             }
         }
-        return sb.length() > 0 ? sb.toString() : null;
+        return new TdfaRunner.PrefixChain(new String(step, bestOff, bestLen), bestOff);
     }
 
     static void setBit(long[] bits, int c) {

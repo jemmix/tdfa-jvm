@@ -299,8 +299,9 @@ capped them is largely still here. The tradeoffs doc already flags this
   regimes" framing is wrong: EXACT_FROM→PREFIX→CAND_SCAN are disjoint
   ordered guards, not overlap. Per-rung evidence: LITERAL ~0.2 vs
   ~6.5 ns/char; PREFIX bounds the dense-hit adversarial shape
-  (`PREFIX_WALK_BUDGET=16`) and has active investment (TODO "Prefix
-  needle v2"); CAND_SCAN measured 492→142 ns (ipExtract) with bounded
+  (`PREFIX_WALK_BUDGET=16`) and its v2 investment landed (fold-aware,
+  `\b`-gated chains — BENCHMARKS.md §4); CAND_SCAN measured 492→142 ns
+  (ipExtract) with bounded
   64² worst case; RAW_SCAN is the campaign's degenerate-shape bounder
   (`.+zz` 200–460 ms → 1–3 ms). ORIGIN_SIM is **keep-with-caveat**: it
   serves only the codepoint lane (the default unit surface routes around

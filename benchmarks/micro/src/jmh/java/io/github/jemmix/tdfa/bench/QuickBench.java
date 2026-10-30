@@ -122,6 +122,17 @@ public final class QuickBench {
         Pattern vmLatin = Pattern.compile("[a-zA-Z\u00e0-\u00ff]+ement", 0, TdfaRunner::new);
         Pattern asmLatin = Pattern.compile("[a-zA-Z\u00e0-\u00ff]+ement");
 
+        // v2 prefix chains: fold steps before the case-stable needle run
+        // (no ip= anywhere — indexOf '=' at vector speed vs the old
+        // trigger-sim ladder) and word-gated chains (dense hits with gate
+        // walks + budget fallback, and a no-hit scan)
+        Pattern vmFold = Pattern.compile("(?i)ip=\\d+", 0, TdfaRunner::new);
+        Pattern asmFold = Pattern.compile("(?i)ip=\\d+");
+        Pattern vmWordDense = Pattern.compile("\\bsinging\\b", 0, TdfaRunner::new);
+        Pattern asmWordDense = Pattern.compile("\\bsinging\\b");
+        Pattern vmWordNo = Pattern.compile("\\bxylophone\\b", 0, TdfaRunner::new);
+        Pattern asmWordNo = Pattern.compile("\\bxylophone\\b");
+
         String noMatch = rep("the quick brown fox jumps over lazy dogs 0123 ", 1 << 14) + "tail";
         String dense = DENSE_INPUT;
         String sparse = SPARSE_INPUT;
@@ -142,6 +153,12 @@ public final class QuickBench {
         ops.add(new Op("findAllSparse.asm", () -> findAll(asmSparse, sparse)));
         ops.add(new Op("findAllLatin1.vm", () -> findAll(vmLatin, latin1)));
         ops.add(new Op("findAllLatin1.asm", () -> findAll(asmLatin, latin1)));
+        ops.add(new Op("prefixFoldNoMatch.vm", () -> vmFold.matcher(dense).find() ? 1 : 0));
+        ops.add(new Op("prefixFoldNoMatch.asm", () -> asmFold.matcher(dense).find() ? 1 : 0));
+        ops.add(new Op("prefixWordDense.vm", () -> findAll(vmWordDense, dense)));
+        ops.add(new Op("prefixWordDense.asm", () -> findAll(asmWordDense, dense)));
+        ops.add(new Op("prefixWordNoMatch.vm", () -> vmWordNo.matcher(dense).find() ? 1 : 0));
+        ops.add(new Op("prefixWordNoMatch.asm", () -> asmWordNo.matcher(dense).find() ? 1 : 0));
         ops.add(new Op("compile.vm", () -> System.identityHashCode(Pattern.compile(compileRe, 0, TdfaRunner::new))));
         ops.add(new Op("compile.asm", () -> System.identityHashCode(Pattern.compile(compileRe))));
         // re2j shim compile: eager find engine + eagerly compiled anchored-both engine
@@ -293,6 +310,12 @@ public final class QuickBench {
         m.put("findAllSparse.asm", jurFindAll("z[0-9]{3}q", SPARSE_INPUT));
         m.put("findAllLatin1.vm", jurFindAll("[a-zA-Z\u00e0-\u00ff]+ement", LATIN1_INPUT));
         m.put("findAllLatin1.asm", jurFindAll("[a-zA-Z\u00e0-\u00ff]+ement", LATIN1_INPUT));
+        m.put("prefixFoldNoMatch.vm", jurFind("(?i)ip=\\d+", DENSE_INPUT));
+        m.put("prefixFoldNoMatch.asm", jurFind("(?i)ip=\\d+", DENSE_INPUT));
+        m.put("prefixWordDense.vm", jurFindAll("\\bsinging\\b", DENSE_INPUT));
+        m.put("prefixWordDense.asm", jurFindAll("\\bsinging\\b", DENSE_INPUT));
+        m.put("prefixWordNoMatch.vm", jurFind("\\bxylophone\\b", DENSE_INPUT));
+        m.put("prefixWordNoMatch.asm", jurFind("\\bxylophone\\b", DENSE_INPUT));
         return m;
     }
 

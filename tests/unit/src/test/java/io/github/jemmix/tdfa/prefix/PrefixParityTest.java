@@ -3,6 +3,7 @@ package io.github.jemmix.tdfa.prefix;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import org.junit.jupiter.api.Test;
 
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -21,14 +22,25 @@ class PrefixParityTest {
         "path=(/[a-z0-9/]+)", "abcx|abcd", "ab?c", "x{2,}", "key=(?:val|other)", "a.*x", "aa[0-9]",
         // the Fowler basic.dat shape that caught the emitted ladder's
         // prefilter polarity: three dead hits before the live one
-        "abaa|abbaa|abbbaa|abbbbaa"};
+        "abaa|abbaa|abbbaa|abbbbaa",
+        // v2 chains: fold steps before the case-stable run (needle at an
+        // offset), explicit fold sets, and word-gated starts/middles —
+        // incl. the dense-hit offset shape from re2-exhaustive.txt:2526228
+        "(?i)ip=(\\d+\\.\\d+\\.\\d+\\.\\d+)", "(?i)ERROR: code=\\d+", "(?i)user_id=\\d+", "(?:a|A)bcd", "(?:(?:a|b)a)",
+        "\\berror\\b", "\\bip=\\d+", "ab\\b!", "\\baa[0-9]"};
 
     private static final String[] INPUTS = {"", "ip=", "ip=1", "ip=1.2.3.4", "say ip=1.2.3.4 twice ip=5.6.7.8 ok",
         "nothing relevant here", "user_id=7 re status=404 tail", "user_id=7 x status=404", "path=/a/b/c and path=/x",
         "abc abcd abcx", "c ac abc abbc", "x xx xxx xxxx", "key=val key=other key=nope", "prefix ip=1.2.3.4 suffix",
         "  ip=255.255.255.255  ", "ab\uDBFF\uD800cd ip=1.2.3.4", "\uD800\uDC00ip=1.2.3.4\uD800\uDC00",
         "ip=xx ip=yy ip=zz ip=1.2.3.4", "ababbabbbabbbabbbbabbbbaa", "ababbabbbabbbabbbbabaa", "abaa", "abbbaa",
-        "a".repeat(200), "a".repeat(2000), "a".repeat(500) + "b", "a".repeat(2000) + "x9"};
+        "a".repeat(200), "a".repeat(2000), "a".repeat(500) + "b", "a".repeat(2000) + "x9",
+        // v2: folded and gated variants of the same shapes
+        "IP=1.2.3.4 iP=5.6.7.8", "ERROR: code=42 error: code=7 Error: CODE=9", "user_id=9 USER_ID=8 User_Id=7",
+        "errors error errorist error xerror", "xabcd Abcd aBcd abCd abcd", "xab! ab! ab!ab ab", "aa9" + "a".repeat(97),
+        "b" + "a".repeat(200) + "9", "a".repeat(64) + "9" + "aa9",
+        // the exhaustive-corpus inputs: needle hits denser than the offset
+        "a☺aa", "☺☺aa", "☺aaa", "aaaa", "ba", "aba"};
 
     @Test
     void facadeParityWithJavaUtilRegex() {
@@ -78,6 +90,50 @@ class PrefixParityTest {
             if (e1) {
                 assertThat(m1.group()).isEqualTo(r.group());
                 assertThat(m2.group(1)).isEqualTo(r.group(1));
+            }
+        }
+    }
+
+    /**
+     * Dense needle hits vs the offset: the exhaustive corpus shape that
+     * caught the resume-floor bug (re2-exhaustive.txt:2526228 — needle "a"
+     * at offset 1: after the pair-interior candidate "a☺|aa|", the next
+     * hit sits at idx + 1, NOT candidate + 1 + offset; a candidate-floor
+     * resume skipped it and the scan reported no match). Exhaustive sweep
+     * over a small alphabet incl. a supplementary char, both tiers,
+     * iterative find() so every resume position is crossed.
+     */
+    @Test
+    void denseNeedleHitsEnumerateEveryCandidate() {
+        String[] pats = {"(?:(?:a|b)a)", "(?:(?:(?:a|b)a))$", "(?i)ab=", "(a|b)b?b"};
+        char[] sigma = {'a', 'b', '\u263A', '='};
+        StringBuilder[] words = {new StringBuilder()};
+        for (int len = 0; len < 4; len++) {
+            StringBuilder[] next = new StringBuilder[words.length * sigma.length];
+            int k = 0;
+            for (StringBuilder w : words) {
+                for (char c : sigma) {
+                    next[k++] = new StringBuilder(w).append(c);
+                }
+            }
+            words = next;
+            for (String pat : pats) {
+                for (StringBuilder w : words) {
+                    String in = w.toString();
+                    var m1 = io.github.jemmix.tdfa.Pattern.compile(pat, 0, TdfaRunner::new).matcher(in);
+                    var m2 = io.github.jemmix.tdfa.Pattern.compile(pat).matcher(in);
+                    Matcher m3 = Pattern.compile(pat).matcher(in);
+                    int n = 0;
+                    while (m3.find()) {
+                        n++;
+                        assertThat(m1.find()).as("%s / %s: vm find #%d", pat, in, n).isTrue();
+                        assertThat(m2.find()).as("%s / %s: asm find #%d", pat, in, n).isTrue();
+                        assertThat(m1.group()).as("%s / %s: vm span #%d", pat, in, n).isEqualTo(m3.group());
+                        assertThat(m1.group()).isEqualTo(m2.group());
+                    }
+                    assertThat(m1.find()).as("%s / %s: vm exhausted", pat, in).isFalse();
+                    assertThat(m2.find()).as("%s / %s: asm exhausted", pat, in).isFalse();
+                }
             }
         }
     }

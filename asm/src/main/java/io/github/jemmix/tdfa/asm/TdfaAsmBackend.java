@@ -432,8 +432,9 @@ public final class TdfaAsmBackend {
             cw.visitMethod(Opcodes.ACC_PUBLIC, "match", "(" + CS_D + "I" + SCRATCH_D + ")L" + RESULT + ";", null, null);
         mv.visitCode();
         // locals: 0=this, 1=input, 2=from, 3=sc, 4=s, 5=len, 6=holder,
-        //         7=leftmost/idx, 8=p, 9=fails, 10=c, 11=bits,
-        //         12=prefixSearchFrom, 13=prefixWalks
+        //         7=leftmost/idx, 8=p (also: prefix-loop candidate on
+        //         fold-offset chains), 9=fails, 10=c, 11=bits,
+        //         12=prefixHitFloor, 13=prefixWalks
         Label isStr = new Label();
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitTypeInsn(Opcodes.INSTANCEOF, STR);
@@ -501,29 +502,52 @@ public final class TdfaAsmBackend {
         // or by the artifact's hasSupplementaryStarts — java's StartS rule.
         boolean scanSkipsPairs = tdfa.semantics().isCodepointBoundaries() || tdfa.hasSupplementaryStarts();
 
-        // --- 1a) literal-prefix candidate scan ---
-        // Emitted only when the DFA carries a required literal prefix
-        // (decided at emit time by the SAME detector the VM runner's
-        // constructor uses, so the needle — and therefore the trace
-        // sequence — is identical by construction). Transcription of
-        // runStringExtractFast's 1a block: indexOf enumerates candidate
-        // starts, guards skip pair-interior / pair-ending hits, the
+        // --- 1a) literal-chain candidate scan ---
+        // Emitted only when the DFA carries a required literal chain with a
+        // case-stable needle run (decided at emit time by the SAME detector
+        // the VM runner's constructor uses, so needle + offset — and
+        // therefore the trace sequence — are identical by construction).
+        // Transcription of runStringExtractFast's 1a block: indexOf
+        // enumerates needle hits, the candidate sits `offset` units before
+        // each hit (offset 0 on case-stable chains; fold steps precede the
+        // needle on fold-aware ones), the end guard runs at the hit and the
+        // pair-interior start guard at the candidate (mirroring the
+        // candidate scan's inline pre-test + Alphabet.pairInterior), the
         // adaptive boolean prefilter and walk budget bake in the same
-        // TdfaRunner constants. Budget exhaustion falls through to the
-        // candidate scan below (a complete search).
-        String prefix = searchBound ? null : TdfaRunner.detectPrefixNeedle(tdfa);
-        if (prefix != null) {
+        // TdfaRunner constants. Word-gated chains (\b) never reach this
+        // emission: any gate disqualifies fastPath, so those DFAs compile
+        // as DELEGATE classes and the VM loop's walk evaluates the gate.
+        // Budget exhaustion falls through to the candidate scan below (a
+        // complete search).
+        TdfaRunner.PrefixChain chain = searchBound ? null : TdfaRunner.detectPrefixChain(tdfa);
+        if (chain != null) {
+            String prefix = chain.needle;
+            int off = chain.offset;
             emitTrace(mv, "PREFIX");
-            // searchFrom = from + 1 (local 12); walks = 0 (local 13)
+            // hitFloor = from + 1 + offset (local 12): candidates are
+            // hit - offset and must stay >= from + 1 (the exact walk above
+            // owns the start at `from`), so the first eligible hit sits at
+            // from + 1 + offset. The RESUME floor after a hit is idx + 1 —
+            // the next candidate's hit may sit as early as idx + 1 when
+            // needle hits are denser than the offset (needle "a" at offset
+            // 1 on "a☺aa") — exactly like the VM scan. walks = 0 (local 13)
             mv.visitVarInsn(Opcodes.ILOAD, 2);
             mv.visitInsn(Opcodes.ICONST_1);
             mv.visitInsn(Opcodes.IADD);
+            if (off > 0) {
+                ic(mv, off);
+                mv.visitInsn(Opcodes.IADD);
+            }
             mv.visitVarInsn(Opcodes.ISTORE, 12);
             mv.visitInsn(Opcodes.ICONST_0);
             mv.visitVarInsn(Opcodes.ISTORE, 13);
-            Label pfxLoop = new Label(), pfxWalk = new Label(), pfxFall = new Label(), pfxNone = new Label();
+            // candidate local: idx itself at offset 0 (v1 shape), else
+            // idx - offset in local 8
+            int cand = off == 0 ? 7 : 8;
+            Label pfxLoop = new Label(), pfxGuarded = new Label(), pfxWalk = new Label(), pfxFall = new Label(),
+                pfxNone = new Label();
             mv.visitLabel(pfxLoop);
-            // idx = s.indexOf(needle, searchFrom) → local 7
+            // idx = s.indexOf(needle, hitFloor) → local 7
             mv.visitVarInsn(Opcodes.ALOAD, 4);
             mv.visitLdcInsn(prefix);
             mv.visitVarInsn(Opcodes.ILOAD, 12);
@@ -536,15 +560,36 @@ public final class TdfaAsmBackend {
             mv.visitInsn(Opcodes.ICONST_1);
             mv.visitInsn(Opcodes.IADD);
             mv.visitVarInsn(Opcodes.ISTORE, 12);
-            // if (!TdfaRunner.prefixHitUsable[s, idx, needleLen] (or the
-            // unit-lane twin when CODEPOINT_BOUNDARIES is unset)) continue;
+            // if (TdfaRunner.prefixHitUsableUnit[s, idx, needleLen]) — the
+            // end guard, both lanes
             mv.visitVarInsn(Opcodes.ALOAD, 4);
             mv.visitVarInsn(Opcodes.ILOAD, 7);
             ic(mv, prefix.length());
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, scanSkipsPairs ? "prefixHitUsable" : "prefixHitUsableUnit",
-                "(Ljava/lang/String;II)Z", false);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "prefixHitUsableUnit", "(Ljava/lang/String;II)Z", false);
             mv.visitJumpInsn(Opcodes.IFEQ, pfxLoop);
-            // if (walks >= ADAPTIVE_PREFILTER_AFTER && !booleanMatchFrom(s, idx, len))
+            if (off > 0) {
+                // candidate = idx - offset → local 8
+                mv.visitVarInsn(Opcodes.ILOAD, 7);
+                ic(mv, off);
+                mv.visitInsn(Opcodes.ISUB);
+                mv.visitVarInsn(Opcodes.ISTORE, 8);
+            }
+            if (scanSkipsPairs) {
+                // start guard at the candidate — never walk a pair interior
+                // (runner-identical rule; the pre-test makes it one compare
+                // unless the candidate is a low surrogate)
+                mv.visitVarInsn(Opcodes.ALOAD, 4);
+                mv.visitVarInsn(Opcodes.ILOAD, cand);
+                mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
+                mv.visitIntInsn(Opcodes.SIPUSH, 0xDC00);
+                mv.visitJumpInsn(Opcodes.IF_ICMPLT, pfxGuarded);
+                mv.visitVarInsn(Opcodes.ALOAD, 4);
+                mv.visitVarInsn(Opcodes.ILOAD, cand);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, ALPHABET, "pairInterior", "(" + CS_D + "I)Z", false);
+                mv.visitJumpInsn(Opcodes.IFNE, pfxLoop);
+            }
+            mv.visitLabel(pfxGuarded);
+            // if (walks >= ADAPTIVE_PREFILTER_AFTER && !booleanMatchFrom(s, cand, len))
             //     { ++walks; if (walks > PREFIX_WALK_BUDGET) fall; continue; }
             mv.visitVarInsn(Opcodes.ILOAD, 13);
             ic(mv, TdfaRunner.ADAPTIVE_PREFILTER_AFTER);
@@ -552,7 +597,7 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ALOAD, 0);
             mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
             mv.visitVarInsn(Opcodes.ALOAD, 4);
-            mv.visitVarInsn(Opcodes.ILOAD, 7);
+            mv.visitVarInsn(Opcodes.ILOAD, cand);
             mv.visitVarInsn(Opcodes.ILOAD, 5);
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "booleanMatchFrom", "(Ljava/lang/String;II)Z", false);
             mv.visitJumpInsn(Opcodes.IFNE, pfxWalk);
@@ -561,9 +606,9 @@ public final class TdfaAsmBackend {
             ic(mv, TdfaRunner.PREFIX_WALK_BUDGET);
             mv.visitJumpInsn(Opcodes.IF_ICMPGT, pfxFall);
             mv.visitJumpInsn(Opcodes.GOTO, pfxLoop);
-            // h = extractOne(s, idx, len, sc); if (h != null) return;
+            // h = extractOne(s, cand, len, sc); if (h != null) return;
             mv.visitLabel(pfxWalk);
-            emitExtractOne(mv, owner, 4, 7, 5, 6, 3);
+            emitExtractOne(mv, owner, 4, cand, 5, 6, 3);
             emitReturnToResult(mv, owner, 6);
             mv.visitIincInsn(13, 1);
             mv.visitVarInsn(Opcodes.ILOAD, 13);

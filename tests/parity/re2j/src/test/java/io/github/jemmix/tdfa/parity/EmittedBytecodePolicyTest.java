@@ -50,12 +50,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 class EmittedBytecodePolicyTest {
 
     /** Shapes that trigger every emitted-ladder path: literal needle,
-     *  candidate scan with extract kernel, bare kernel. All fastPath/INLINED
+     *  candidate scan with extract kernel, bare kernel, fold-offset prefix
+     *  chain (indexOf candidate = hit − offset). All fastPath/INLINED
      *  tier (no zero-width masks), per the emitter's pickMode. */
     private static final String[] PATTERNS = {"needle42hash", // pure literal -> LITERAL short-circuit
         "[a-z]+ing", // candidate scan -> extractOne kernel
         "(\\d{3})-(\\d{4})", // tagged kernel + register ops
-        "\\w+@(\\w+)\\.[a-z]{2,4}",};
+        "\\w+@(\\w+)\\.[a-z]{2,4}", "(?i)ip=\\d+", // fold chain -> prefix ladder at offset 2
+    };
 
     private static final class Calls {
         final String file, method;
