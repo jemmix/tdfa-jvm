@@ -99,6 +99,10 @@ test {
 // Reproduce a failures.ndjson line turnkey:
 //   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.one=<caseSeed>            # cold solo replay
 //   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.one=<caseSeed> -Pfuzz.warm=1   # warm batch replay (runner-immutability tripwire 3)
+// Property shrinking (minimal repros) rides the replay by default and prints
+// the minimal same-kind failure plus a turnkey replay line; an explicit case
+// replays through the escaped-form replay properties (that line, verbatim):
+//   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.replay.pattern=... -Pfuzz.replay.input=... -Pfuzz.replay.flags=1 -Pfuzz.replay.lane=JUR
 // Exits nonzero if any divergence found.
 tasks.register('fuzz', JavaExec) {
     group = 'verification'
@@ -148,6 +152,24 @@ tasks.register('fuzz', JavaExec) {
     // pin for a lane-pure soak (re-running the re2j-pinned evidence, or a
     // jur-only night): -Pfuzz.lane=jur | -Pfuzz.lane=re2j
     systemProperty 'fuzz.lane', project.findProperty('fuzz.lane') ?: 'mix'
+    // Property shrinking (minimal repros): 'auto' (default) shrinks in
+    // fuzz.one/replay triage and stays off in the soak; 1 forces it on
+    // (the soak then pre-shrinks every recorded failure record into
+    // shrunkPattern/shrunkInput ndjson fields), 0 opts out everywhere.
+    // Bounds: fuzz.shrink.ms (wall) and fuzz.shrink.steps (evaluations).
+    systemProperty 'fuzz.shrink', project.findProperty('fuzz.shrink') ?: 'auto'
+    if (project.hasProperty('fuzz.shrink.ms')) {
+        systemProperty 'fuzz.shrink.ms', project.getProperty('fuzz.shrink.ms')
+    }
+    if (project.hasProperty('fuzz.shrink.steps')) {
+        systemProperty 'fuzz.shrink.steps', project.getProperty('fuzz.shrink.steps')
+    }
+    // Explicit case replay (the shrink block's printed command line);
+    // pattern/input in the ASCII-safe \uXXXX escaped form.
+    systemProperty 'fuzz.replay.pattern', project.findProperty('fuzz.replay.pattern') ?: ''
+    systemProperty 'fuzz.replay.input', project.findProperty('fuzz.replay.input') ?: ''
+    systemProperty 'fuzz.replay.flags', project.findProperty('fuzz.replay.flags') ?: '0'
+    systemProperty 'fuzz.replay.lane', project.findProperty('fuzz.replay.lane') ?: 'RE2J'
 }
 
 // Timeboxed fuzz campaigns for the TODO fuzzer items the overnight soak does
