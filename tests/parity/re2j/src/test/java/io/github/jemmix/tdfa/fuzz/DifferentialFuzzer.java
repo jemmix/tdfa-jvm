@@ -35,6 +35,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Predicate;
 
 /**
  * Differential fuzzer: random patterns over the supported grammar, random
@@ -112,6 +113,15 @@ import java.util.concurrent.atomic.AtomicInteger;
  * them — its oracle is linear-time); the predicate is a pure function of
  * the pattern, so replay is lane-stable.
  *
+ * <p>Property shrinking (minimal repros — {@link CaseShrinker}): a failing
+ * case is delta-debugged down to a minimal same-kind failure. In
+ * {@code fuzz.one} triage it is on by default ({@code -Pfuzz.shrink=0}
+ * opts out) and prints the shrunk pattern/input plus a turnkey
+ * {@code -Pfuzz.replay.*} command line; in the soak it is opt-in
+ * ({@code -Pfuzz.shrink=1}) and pre-shrinks every recorded failure record,
+ * so {@code failures.ndjson} carries {@code shrunkPattern}/{@code
+ * shrunkInput} beside the reproducible {@code caseSeed} fields.
+ *
  * <p>Cross-rung differential (on by default, {@code -Pfuzz.crossRung=0}
  * off): after the normal protocol, every case is re-run on the VM engine
  * with each complete-search ladder rung forced via
@@ -161,6 +171,20 @@ public final class DifferentialFuzzer {
      * records as {@code MEMO_STATE_MISMATCH}. Default on.
      */
     static final boolean DOUBLE_RUN = Long.getLong("fuzz.double", 1) != 0;
+
+    /** Property shrinking (minimal repros) knobs: wall/step bounds for one
+     *  shrink run. Where shrinking RUNS is tristate {@code fuzz.shrink}
+     *  ({@link #shrinkWanted}): on by default in {@code fuzz.one}/replay
+     *  triage, opt-in in the soak. */
+    static final long SHRINK_MS = Long.getLong("fuzz.shrink.ms", 60_000);
+
+    static final int SHRINK_STEPS = (int) (long) Long.getLong("fuzz.shrink.steps", 4096);
+
+    /** Soak-side shrink-at-record (opt-in): {@code -Pfuzz.shrink=1}
+     *  pre-shrinks every recorded failure record into the ndjson's
+     *  {@code shrunkPattern}/{@code shrunkInput} fields. Read once at
+     *  class init — the Gradle task sets the property before main runs. */
+    static final boolean SHRINK_RECORD = shrinkWanted(false);
 
     /**
      * Warm replay for {@code fuzz.one} (runner-immutability tripwire 3):
@@ -276,7 +300,8 @@ public final class DifferentialFuzzer {
 
     public static void main(String[] argv) throws Exception {
         long one = Long.getLong("fuzz.one", 0);
-        if (one != 0) {
+        Case replay = replayCase();
+        if (one != 0 || replay != null) {
             // Replay under the SAME scoped budget the soak uses — without
             // this, a one-case replay runs at the library budget (5 s of
             // ticks) and budget monsters replay in tens of seconds,
@@ -287,7 +312,7 @@ public final class DifferentialFuzzer {
             String prevWork =
                 fuzzWork > 0 ? System.setProperty("tdfa.budget.compile.compute", Long.toString(fuzzWork)) : null;
             try {
-                Case c = generate(one);
+                Case c = replay != null ? replay : generate(one);
                 System.out.println("pattern: " + escape(c.pattern()));
                 System.out.println("input:   " + escape(c.input()));
                 System.out.println("flags:   " + c.flags() + "  lane: " + c.lane());
@@ -297,7 +322,7 @@ public final class DifferentialFuzzer {
                     return;
                 }
                 Outcome o;
-                if (WARM_REPLAY) {
+                if (WARM_REPLAY && replay == null) {
                     o = warmReplay(one, c);
                     System.out.println("warm:    replayed " + (int) Math.floorMod(one, BATCH_K)
                         + " prior batch inputs on the same artifact");
@@ -311,6 +336,9 @@ public final class DifferentialFuzzer {
                 o.cross.forEach(x -> System.out.println("cross:   " + x));
                 if (!o.exceptions.isEmpty()) {
                     o.exceptions.forEach(System.out::println);
+                }
+                if (shrinkWanted(true)) {
+                    printShrink(c, o);
                 }
             } finally {
                 if (fuzzWork > 0) {
@@ -944,6 +972,144 @@ public final class DifferentialFuzzer {
             matchCase(pr, new Case(c.pattern(), genInput(batch, i, c.flags()), c.flags(), c.lane()));
         }
         return matchCase(pr, c);
+    }
+
+    // ---- property shrinking (minimal repros) ----
+
+    /** Where shrinking runs. Tristate {@code fuzz.shrink} (Gradle forwards
+     *  {@code -Pfuzz.shrink}): {@code auto} (default) takes the mode's own
+     *  default — on for {@code fuzz.one}/replay triage, off for the soak —
+     *  while {@code 1}/{@code true} and {@code 0}/{@code false} pin both
+     *  (the fuzzer's numeric flag convention — plain Boolean parsing
+     *  would read "1" as false). */
+    static boolean shrinkWanted(boolean defaultOn) {
+        String v = System.getProperty("fuzz.shrink", "auto");
+        return "auto".equalsIgnoreCase(v) ? defaultOn : "1".equals(v) || Boolean.parseBoolean(v);
+    }
+
+    /** The recorded-failure kind of an outcome, or null when the case is
+     *  NOT a finding: clean, both-reject, a jur-lane domain exclusion, or
+     *  a released-oracle known divergence. Mirrors the record-time
+     *  classification, so a shrunk case stays a repro of a FINDING and can
+     *  never drift into a skip or known class. Cross findings keep their
+     *  record split: ROUTED-first is CROSS_ROUTING, else CROSS_RUNG. */
+    static String findingKind(Outcome o) {
+        if (!o.cross.isEmpty()) {
+            return o.cross.get(0).startsWith("ROUTED") ? "CROSS_ROUTING" : "CROSS_RUNG";
+        }
+        if (!o.failed()) {
+            return null;
+        }
+        if (o.c.lane() == Lane.JUR && Results.jurLaneDomain(o) != null) {
+            return null;
+        }
+        if (o.c.lane() == Lane.RE2J && RELEASED_ORACLE && Results.knownDivergence(o) != null && o.asm.equals(o.vm)) {
+            return null;
+        }
+        return firstWord(Results.kindOf(o));
+    }
+
+    /** The shrink property: the case still fails COLD-SOLO with the same
+     *  finding kind. Jur-lane oracle bombs are never evaluated (the live
+     *  java.util.regex oracle would spin — the soak's own guard). Warmth-
+     *  dependent records (MEMO_STATE_MISMATCH on a warm artifact) do not
+     *  reproduce cold and simply do not shrink. */
+    static Predicate<Case> sameFinding(String kind) {
+        return c -> {
+            if (c.lane() == Lane.JUR && jurOracleBomb(c.pattern())) {
+                return false;
+            }
+            String k;
+            try {
+                k = findingKind(runOne(c));
+            } catch (RuntimeException | StackOverflowError e) {
+                return false;
+            }
+            return kind.equals(k);
+        };
+    }
+
+    /** Shrink a failing case to its minimal same-kind repro; null when the
+     *  kind is null (not a finding) or the case does not reproduce cold. */
+    static CaseShrinker.ShrinkReport shrinkCase(Case c, String kind) {
+        if (kind == null) {
+            return null;
+        }
+        return new CaseShrinker(sameFinding(kind), SHRINK_MS, SHRINK_STEPS).shrink(c);
+    }
+
+    /** The {@code fuzz.one} shrink block: minimal repro + the turnkey
+     *  replay command (replay properties are the ASCII-safe escaped form —
+     *  quote them if your shell wants that). */
+    private static void printShrink(Case c, Outcome o) {
+        String kind = findingKind(o);
+        if (kind == null) {
+            System.out.println(
+                "shrink:  n/a — " + (o.failed() ? "skip/known class, not a recorded finding" : "case is clean"));
+            return;
+        }
+        CaseShrinker.ShrinkReport rep = shrinkCase(c, kind);
+        if (rep == null) {
+            System.out.println("shrink:  does not reproduce cold (warm-only record? add -Pfuzz.warm=1)");
+        } else if (!rep.changed()) {
+            System.out.println("shrink:  already minimal — " + rep.evals() + " evals"
+                + (rep.abort() != null ? " — aborted: " + rep.abort() : ""));
+        } else {
+            Case m = rep.minimal();
+            System.out.println("shrunk:  pattern: " + escape(m.pattern()) + "  input: " + escape(m.input()));
+            System.out.println("shrunk:  " + c.pattern().length() + "→" + m.pattern().length() + " pattern chars, "
+                + c.input().length() + "→" + m.input().length() + " input chars — " + rep.evals() + " evals"
+                + (rep.abort() != null ? " — aborted: " + rep.abort()
+                    : rep.capped() ? " — cap hit, may not be minimal" : ""));
+            System.out.println("replay: ./gradlew :tests:parity:re2j:fuzz -Pfuzz.replay.pattern=" + escape(m.pattern())
+                + " -Pfuzz.replay.input=" + escape(m.input()) + " -Pfuzz.replay.flags=" + m.flags()
+                + " -Pfuzz.replay.lane=" + m.lane());
+        }
+    }
+
+    /** An explicit case from {@code -Dfuzz.replay.*} — the shrink block's
+     *  replay line. Pattern/input are in the ASCII-safe \\uXXXX
+     *  {@link #escape} form so any codepoint round-trips through Gradle
+     *  properties and shells unharmed. */
+    static Case replayCase() {
+        String pat = System.getProperty("fuzz.replay.pattern", "");
+        if (pat.isEmpty()) {
+            return null;
+        }
+        String in = System.getProperty("fuzz.replay.input", "");
+        int flags = Integer.parseInt(System.getProperty("fuzz.replay.flags", "0"));
+        Lane lane = Lane.valueOf(System.getProperty("fuzz.replay.lane", Lane.RE2J.name()));
+        return new Case(unescape(pat), unescape(in), flags, lane);
+    }
+
+    /** Inverse of {@link #escape} for the replay properties. */
+    static String unescape(String s) {
+        if (s.indexOf("\\u") < 0) {
+            return s;
+        }
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\\' && i + 5 < s.length() && s.charAt(i + 1) == 'u') {
+                int hex = 0;
+                int k = 0;
+                while (k < 4) {
+                    int d = Character.digit(s.charAt(i + 2 + k), 16);
+                    if (d < 0) {
+                        break;
+                    }
+                    hex = hex << 4 | d;
+                    k++;
+                }
+                if (k == 4) {
+                    sb.append((char) hex);
+                    i += 5;
+                    continue;
+                }
+            }
+            sb.append(c);
+        }
+        return sb.toString();
     }
 
     // ---- match protocol ----
@@ -1661,6 +1827,9 @@ public final class DifferentialFuzzer {
         /** Determinism double-run findings (warm artifact vs itself,
          *  runner-immutability tripwire 2) — non-empty fails the case. */
         final List<String> memo = new ArrayList<>();
+        /** Soak-side pre-shrink (opt-in {@code -Pfuzz.shrink=1}): the
+         *  minimal same-kind repro, set on recorded failure records only. */
+        String shrunkPattern, shrunkInput;
 
         Outcome(Case c) {
             this.c = c;
@@ -1702,6 +1871,9 @@ public final class DifferentialFuzzer {
         final Map<String, Integer> jurSkipRecorded = new LinkedHashMap<>();
         final Map<Layer, Integer> layerCounts = new EnumMap<>(Layer.class);
         long hangs, hangsOurs, hangsOracle;
+        /** Failure records pre-shrunk into shrunkPattern/shrunkInput
+         *  (soak opt-in -Pfuzz.shrink=1; see shrinkInto). */
+        long shrunkRecords;
         double casesPerMinute;
         final Map<String, Sig> signatures = new LinkedHashMap<>();
         /** ndjson record cap for JURLANE_GUARD (one shape — breadcrumbs,
@@ -1758,6 +1930,7 @@ public final class DifferentialFuzzer {
                 s.total++;
                 if (s.recorded < 8) {
                     s.recorded++;
+                    shrinkInto(o, kind);
                     logs.failure(caseSeed, o, kind + " (" + firstWord(o.cross.get(0)) + ")", "CROSS");
                 }
                 return;
@@ -1831,10 +2004,36 @@ public final class DifferentialFuzzer {
                 s.total++;
                 if (s.recorded < 8) {
                     s.recorded++;
+                    shrinkInto(o, kind);
                     logs.failure(caseSeed, o, kind, layerStr);
                 }
             } else if (o.oracle.startsWith("<")) {
                 bothReject++;
+            }
+        }
+
+        /**
+         * Soak-side shrink-at-record (opt-in {@code -Pfuzz.shrink=1}): a
+         * failure about to be recorded is pre-shrunk, so the ndjson line
+         * carries the minimal same-kind repro beside its reproducible
+         * caseSeed fields — the overnight issue gate then files minimal
+         * repros with zero triage. Runs on the recording (main) thread,
+         * bounded by the shrink caps; a failure that does not reproduce
+         * cold records unshrunk (its caseSeed still replays it warm).
+         */
+        void shrinkInto(Outcome o, String kind) {
+            if (!SHRINK_RECORD) {
+                return;
+            }
+            try {
+                CaseShrinker.ShrinkReport rep = shrinkCase(o.c, firstWord(kind));
+                if (rep != null && rep.changed()) {
+                    o.shrunkPattern = rep.minimal().pattern();
+                    o.shrunkInput = rep.minimal().input();
+                    shrunkRecords++;
+                }
+            } catch (RuntimeException e) {
+                // never let the shrink path corrupt the record being written
             }
         }
 
@@ -2091,6 +2290,9 @@ public final class DifferentialFuzzer {
                 + kind.replace('"', '\'') + "\",\"layer\":\"" + layer + "\"" + ",\"pattern\":\"" + escape(o.c.pattern())
                 + "\",\"input\":\"" + escape(o.c.input()) + "\",\"oracle\":\"" + escape(o.oracle) + "\",\"asm\":\""
                 + escape(o.asm) + "\",\"vm\":\"" + escape(o.vm) + "\""
+                + (o.shrunkPattern == null ? ""
+                    : ",\"shrunkPattern\":\"" + escape(o.shrunkPattern) + "\",\"shrunkInput\":\""
+                        + escape(o.shrunkInput) + "\"")
                 + (o.exceptions.isEmpty() ? ""
                     : ",\"ex\":" + o.exceptions.stream().map(e -> "\"" + escape(e) + "\"").toList())
                 + (o.cross.isEmpty() ? "" : ",\"cross\":" + o.cross.stream().map(e -> "\"" + escape(e) + "\"").toList())
@@ -2177,6 +2379,8 @@ public final class DifferentialFuzzer {
                     + " (jur-oracle-bomb)    re2j lane: cases=" + (r.cases - r.jurCases) + "  failures="
                     + (r.failures - r.jurFailures));
                 w.printf("rate: %.1f cases/min%n", r.casesPerMinute);
+                w.println("shrunk records: " + r.shrunkRecords
+                    + (SHRINK_RECORD ? "" : "  (off — -Pfuzz.shrink=1 pre-shrinks recorded failures)"));
                 w.println("ciSuppAvoided (known-gap constructs not generated): " + r.ciSuppAvoidedTotal
                     + "  ciWideRangeAvoided (oracle-hang guard): " + r.ciRangeAvoidedTotal);
                 if (!r.layerCounts.isEmpty()) {

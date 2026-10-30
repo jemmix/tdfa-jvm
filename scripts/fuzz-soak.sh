@@ -33,6 +33,15 @@
 # hang-<caseSeed>.jfr method-sample dump per HANG record (in-process
 # JFR watch, ~1% overhead; -Dfuzz.jfr=false to disable).
 #
+# Property shrinking (minimal repros) rides the replay path by default:
+# -Pfuzz.one=<caseSeed> delta-debugs the finding down to a minimal
+# same-kind repro and prints a turnkey -Pfuzz.replay.* command line. To
+# pre-shrink every RECORDED failure record into the ndjson's
+# shrunkPattern/shrunkInput fields during the soak itself, pass
+# -Pfuzz.shrink=1 as an extra gradle arg (bounded by the shrink caps; the
+# recording thread does the work, so a dirty night slows by up to the
+# caps times the recorded-signature count).
+#
 # The fuzzer is multi-threaded by default (-Dfuzz.threads, cores-1 capped
 # at 8; case order and ndjson records are thread-count-invariant). Run N
 # independent soaks ONLY if you want N separate out-dirs; one soak already

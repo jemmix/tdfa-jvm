@@ -122,7 +122,9 @@ back to a slower engine.
   JUR-default flip; the evidence re-base is the open
   both-lane soak TODO item).
 - **~300 M** differential fuzz cases vs re2j (overnight soaks): 0 divergences
-  (same lane note).
+  (same lane note). Failures shrink: `fuzz.one` replays delta-debug a
+  finding down to a minimal same-kind repro (pattern + input), and
+  `-Pfuzz.shrink=1` pre-shrinks every recorded soak failure.
 - Overnight-soak budget rejections — the documented non-divergence class
   (clean `PatternTooLargeException`s under the soak's scoped 8 M-tick
   compile budget): 0.023% of re2j-lane cases (2026-10-16); the 2026-10-24

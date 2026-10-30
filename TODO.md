@@ -22,7 +22,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 - [ ] Fuzz non-String CharSequence inputs against the reference sim
 - [ ] Fuzz budget-exhaustion paths with shrunk budget knobs
 - [ ] Fuzz the multi-valued lane ([plan](docs/fuzz-multi-valued-tags.md))
-- [ ] Property shrinking for minimal fuzz repros
 - [ ] Verify TDFA(1) conformance vs paper wording (lookahead delay)
 - [ ] Upstream re2j PRs #208/#212/#213: maintainer review
 
