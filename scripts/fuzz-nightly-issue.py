@@ -21,6 +21,15 @@ contract), HANG_ORACLE (oracle-side limit) — never open issues. HANG_ENGINE
 records are included; when the soak's post-hoc hang replay
 (hang-replays.log) has a verdict for the seed it is quoted inline.
 
+Every record-derived string is surrogate-escaped before it reaches the
+issue body: the fuzzer's POOL_LONE chars are lone surrogates that survive
+the ndjson JSON round-trip (json.loads happily unescapes ``\\ud800``) but
+cannot be written as strict UTF-8 — a raw body write crashed this step
+before the issue could file, and the night's findings died with the runner
+(2026-10-30 nightly, run 41028994833). The soak's seed base is parsed out
+of iterations.log into the body so the repro command is self-contained
+even though the runner is gone by the time anyone reads the issue.
+
 Usage (repo root, GH_TOKEN in env):
   python3 scripts/fuzz-nightly-issue.py [out-dir] [run-url]
 Exits 0 when nothing new (or nothing actionable at all); nonzero only on
@@ -44,6 +53,17 @@ CASES_PER_SIG = 8  # mirrors the fuzzer's own per-signature ndjson cap
 def shape(pattern: str) -> str:
     """DifferentialFuzzer.shape: structural chars only, capped at 24."""
     return "".join(ch for ch in pattern if ch in "()[]|*+?{}")[:24]
+
+
+def sanitize(s: str) -> str:
+    """Escape unencodable chars — lone surrogates — as ``\\udXXX`` text.
+
+    A POOL_LONE unit in a generated pattern unescapes from JSON into a lone
+    Python surrogate: a perfectly valid ``str`` that strict UTF-8 refuses to
+    encode. Writing one raw raised UnicodeEncodeError and killed the issue
+    step before the body file existed (2026-10-30 nightly, run 41028994833).
+    """
+    return s.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 def gh(*args: str) -> str:
@@ -106,6 +126,18 @@ def main() -> int:
                 if m:
                     replay_verdicts[m.group(1)] = m.group(2)
 
+    # The seed base makes the issue's repro command self-contained;
+    # iterations.log dies with the runner, so quote it in the body.
+    # (The log line is "<date> soak start: ... base-seed=N ..." — match the
+    # field, not the line head.)
+    seed_base = None
+    iterations_log = os.path.join(out_dir, "iterations.log")
+    if os.path.exists(iterations_log):
+        with open(iterations_log, encoding="utf-8", errors="replace") as fh:
+            m = re.search(r"base-seed=(\d+)", fh.read())
+            if m:
+                seed_base = m.group(1)
+
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     lines = [
         f"Nightly differential fuzz soak ({day}) found **{len(new_sigs)} new** mismatch "
@@ -114,8 +146,11 @@ def main() -> int:
         "",
         f"Soak run: {run_url}",
         f"Artifacts stayed on the runner; the records below carry the essentials. "
-        f"The seed base is recorded in `{out_dir}/iterations.log` — a local re-run "
-        f"reproduces the same case universe:",
+        + (f"Seed base `{seed_base}` (also in `{out_dir}/iterations.log`) — a local "
+           f"re-run reproduces the same case universe:"
+           if seed_base else
+           f"No seed base in `{out_dir}/iterations.log` — the night's universe is "
+           f"not reproducible; re-run with a fresh seed base:"),
         "",
         "```",
         "scripts/fuzz-soak.sh 240 1 build/fuzz-repro <seedBase>",
@@ -132,9 +167,11 @@ def main() -> int:
         lines += [f"## {sig} — {len(cases)} record(s)", ""]
         for r in cases[:CASES_PER_SIG]:
             seed = r.get("caseSeed", "?")
-            lines.append(f"- `caseSeed={seed}` kind=`{r.get('kind', '?')}` lane=`{r.get('lane', '?')}` "
-                         f"pattern=`{str(r.get('pattern', ''))[:80]}`")
-            if str(r.get("kind", "")).startswith("HANG_ENGINE") and str(seed) in replay_verdicts:
+            kind = str(r.get("kind", "?"))
+            lines.append(f"- `caseSeed={seed}` kind=`{sanitize(kind)}` "
+                         f"lane=`{sanitize(str(r.get('lane', '?')))}` "
+                         f"pattern=`{sanitize(str(r.get('pattern', ''))[:80])}`")
+            if kind.startswith("HANG_ENGINE") and str(seed) in replay_verdicts:
                 lines.append(f"  - replay verdict: {replay_verdicts[str(seed)]}")
         if len(cases) > CASES_PER_SIG:
             lines.append(f"- … {len(cases) - CASES_PER_SIG} more (see failures.ndjson on the runner)")
@@ -145,7 +182,9 @@ def main() -> int:
     gh("label", "create", LABEL, "--color", "B60205",
        "--description", "new mismatches found by the nightly fuzz soak")
     body_file = os.path.join(out_dir, "issue-body.md")
-    with open(body_file, "w", encoding="utf-8") as fh:
+    # errors="replace": belt-and-braces past sanitize() — an unanticipated
+    # field must degrade the body, never cost the night its issue.
+    with open(body_file, "w", encoding="utf-8", errors="replace") as fh:
         fh.write("\n".join(lines))
     url = gh("issue", "create",
              "--title", f"nightly fuzz {day}: {len(new_sigs)} new mismatch signature(s)",
