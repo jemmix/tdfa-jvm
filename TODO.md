@@ -27,7 +27,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 ## Performance
 
-- [ ] Prefix needle v2: fold-aware, \b-gated chains
 
 ## Benchmarks
 

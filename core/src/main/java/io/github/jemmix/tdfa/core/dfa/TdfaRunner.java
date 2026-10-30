@@ -311,15 +311,23 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      */
     private final String literalNeedle;
     /**
-     * Required literal prefix (see RunnerTables.detectPrefixNeedle): every
-     * match must START by consuming exactly these chars, so String.indexOf
-     * — the JIT's intrinsified, vectorized scan — enumerates exactly the
-     * possible start positions of a match; each hit gets an exact walk
-     * (masks, tags and stop-on-accept all evaluated by the walk). Null when
-     * the DFA has no such chain, or when the whole regex is a plain literal
-     * (literalNeedle already serves that shape).
+     * Required literal chain (see RunnerTables.detectPrefixChain): every
+     * match must START by consuming the chain's steps, and the longest
+     * case-stable run inside it is the needle — String.indexOf, the JIT's
+     * intrinsified vectorized scan, enumerates exactly the possible match
+     * starts (at a fixed offset when fold/class steps precede the run);
+     * each hit gets an exact walk (masks, gates, tags and stop-on-accept
+     * all evaluated by the walk). Null when the DFA has no usable chain,
+     * or when the whole regex is a plain literal (literalNeedle already
+     * serves that shape).
      */
     private final String prefixNeedle;
+    /**
+     * Units from the match start to {@link #prefixNeedle}'s first unit —
+     * the fold/class steps ahead of the needle run, each one unit wide.
+     * Zero on the v1 shape (the whole chain case-stable).
+     */
+    private final int prefixOffset;
 
     @EmittedSurface
     public TdfaRunner(Tdfa tdfa) {
@@ -387,7 +395,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         this.stateWords = (tdfa.stateCount + 31) >>> 5;
         this.acceptBits = RunnerTables.buildAcceptBits(tdfa);
         this.literalNeedle = RunnerTables.detectLiteralNeedle(tdfa);
-        this.prefixNeedle = this.literalNeedle == null ? RunnerTables.detectPrefixNeedle(tdfa) : null;
+        TdfaRunner.PrefixChain chain = this.literalNeedle == null ? RunnerTables.detectPrefixChain(tdfa) : null;
+        this.prefixNeedle = chain == null ? null : chain.needle;
+        this.prefixOffset = chain == null ? 0 : chain.offset;
         this.unicodeWordBoundary = tdfa.unicodeWordBoundary;
         this.wordRanges = tdfa.wordRanges;
         // Derived, not inferred: the tables themselves declare which posFlag bits
@@ -475,37 +485,28 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     }
 
     /**
-     * Required literal prefix of the compiled DFA, or null (implementation
-     * lives in RunnerTables). Public stable hook: the ASM backend asks at
-     * emit time so INLINED classes bake the needle in as a class constant —
-     * the emitted prefix loop and the VM's use the same string by
-     * construction.
+     * Required literal chain of the compiled DFA — its case-stable needle
+     * run plus the run's offset from the match start — or null
+     * (implementation lives in RunnerTables). Public stable hook: the ASM
+     * backend asks at emit time so INLINED classes bake needle + offset in
+     * as class constants — the emitted prefix loop and the VM's use the
+     * same pair by construction.
      */
-    public static String detectPrefixNeedle(Tdfa tdfa) {
-        return RunnerTables.detectPrefixNeedle(tdfa);
+    public static PrefixChain detectPrefixChain(Tdfa tdfa) {
+        return RunnerTables.detectPrefixChain(tdfa);
     }
 
     /**
-     * Whether an indexOf hit of a prefix needle at {@code idx} is a usable
-     * walk start: not the interior of a surrogate pair (codepoint-boundary
-     * semantics, same rule the candidate scans use) and not ending on the
-     * high half of a pair (the walk decodes the whole pair there and cannot
-     * match the needle's last unit as a lone symbol). Public static: the
-     * ASM-emitted prefix loop calls it for the same guards.
-     */
-    @EmittedSurface
-    public static boolean prefixHitUsable(String s, int idx, int needleLen) {
-        return !RunnerTables.needleEndOverlapsPair(s, idx, needleLen) && !Alphabet.pairInterior(s, idx);
-    }
-
-    /**
-     * Unit-semantics twin of {@link #prefixHitUsable(String, int, int)} (the
-     * CODEPOINT_BOUNDARIES axis unset): the needle-end guard stays — it is a
-     * walk-decode property (the walk consumes the whole pair a trailing high
-     * surrogate starts) — but hits may sit inside surrogate pairs, so the
-     * start guard is gone. Separate hook (not a boolean argument): the
-     * ASM-emitted prefix loop binds by name+descriptor at emit time, and
-     * ASM's frame computation chokes on the boolean-arg variant.
+     * End guard of an indexOf needle hit at {@code idx}: the hit must not
+     * end on the high half of a surrogate pair — the walk decodes the whole
+     * pair there and cannot match the needle's last unit as a lone symbol.
+     * The start guard (codepoint-boundary semantics: the WALK start, which
+     * sits {@code offset} units before the hit on fold-prefixed chains, is
+     * not a pair interior) is evaluated separately — by the scan loops here
+     * and inline in the ASM-emitted prefix loop via {@code
+     * Alphabet.pairInterior}, exactly like the candidate scan's guard.
+     * Public static: the emitted prefix loop binds it by name+descriptor at
+     * emit time.
      */
     @EmittedSurface
     public static boolean prefixHitUsableUnit(String s, int idx, int needleLen) {
@@ -531,26 +532,39 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     }
 
     /**
-     * Literal-prefix candidate scan with boolean walks: every match must
-     * start with the required literal prefix, so indexOf enumerates exactly
-     * the possible starts — no hits means no match. The walk budget bounds
-     * dense-hit adversarial shapes; on exhaustion the caller falls through
-     * to a complete-search ladder.
+     * Literal-chain candidate scan with boolean walks: every match must
+     * contain the needle at {@link #prefixOffset} units from its start, so
+     * indexOf enumerates exactly the possible starts (candidate = hit −
+     * offset, always ≥ searchFrom by the loop's own arithmetic) — no hits
+     * means no match. The resume floor is the HIT floor (idx + 1): the
+     * next candidate's hit may sit as early as idx + 1 when needle hits
+     * are denser than the offset (needle "a" at offset 1 on "a☺aa"). The
+     * end guard is evaluated at the hit, the start guard at the candidate;
+     * word gates ride the exact walk, which evaluates them at the
+     * candidate position. The walk budget bounds dense-hit adversarial
+     * shapes; on exhaustion the caller falls through to a complete-search
+     * ladder.
      */
     private int prefixScanBool(String input, int searchFrom, int to) {
         final String needle = this.prefixNeedle;
         final int nlen = needle.length();
+        final int off = this.prefixOffset;
+        int hitFloor = searchFrom + off;
         int walks = 0;
         while (true) {
-            int idx = input.indexOf(needle, searchFrom);
+            int idx = input.indexOf(needle, hitFloor);
             if (idx < 0) {
                 return PREFIX_DONE;
             }
-            searchFrom = idx + 1;
-            if (!(scanSkipsPairs ? prefixHitUsable(input, idx, nlen) : prefixHitUsableUnit(input, idx, nlen))) {
+            hitFloor = idx + 1;
+            int cand = idx - off;
+            if (RunnerTables.needleEndOverlapsPair(input, idx, nlen)) {
                 continue;
             }
-            if (boolWalkAt(input, idx, to)) {
+            if (scanSkipsPairs && Alphabet.pairInterior(input, cand)) {
+                continue;
+            }
+            if (boolWalkAt(input, cand, to)) {
                 return PREFIX_HIT;
             }
             if (++walks > PREFIX_WALK_BUDGET) {
@@ -560,33 +574,41 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     }
 
     /**
-     * Literal-prefix candidate scan with extract walks: indexOf enumerates
-     * exactly the possible starts; after {@link #ADAPTIVE_PREFILTER_AFTER}
-     * failed extract walks each usable hit gets the no-allocation boolean
-     * prefilter first, then the exact extract walk. Returns the match on a
-     * hit, null when no hits remain (no match can exist), or {@link
-     * #PREFIX_BUDGET_OUT} when the walk budget is spent.
+     * Literal-chain candidate scan with extract walks: indexOf enumerates
+     * exactly the possible starts (candidate = hit − offset, hit-floor
+     * resume as in {@link #prefixScanBool}); after {@link
+     * #ADAPTIVE_PREFILTER_AFTER} failed extract walks each usable hit gets
+     * the no-allocation boolean prefilter first, then the exact extract
+     * walk. Returns the match on a hit, null when no hits remain (no match
+     * can exist), or {@link #PREFIX_BUDGET_OUT} when the walk budget is
+     * spent.
      */
     private MatchHolder prefixScanExtract(String input, int searchFrom, int to, MatchScratch sc) {
         final String needle = this.prefixNeedle;
         final int nlen = needle.length();
+        final int off = this.prefixOffset;
+        int hitFloor = searchFrom + off;
         int walks = 0;
         while (true) {
-            int idx = input.indexOf(needle, searchFrom);
+            int idx = input.indexOf(needle, hitFloor);
             if (idx < 0) {
                 return null;
             }
-            searchFrom = idx + 1;
-            if (!(scanSkipsPairs ? prefixHitUsable(input, idx, nlen) : prefixHitUsableUnit(input, idx, nlen))) {
+            hitFloor = idx + 1;
+            int cand = idx - off;
+            if (RunnerTables.needleEndOverlapsPair(input, idx, nlen)) {
                 continue;
             }
-            if (walks >= ADAPTIVE_PREFILTER_AFTER && !boolWalkAt(input, idx, to)) {
+            if (scanSkipsPairs && Alphabet.pairInterior(input, cand)) {
+                continue;
+            }
+            if (walks >= ADAPTIVE_PREFILTER_AFTER && !boolWalkAt(input, cand, to)) {
                 if (++walks > PREFIX_WALK_BUDGET) {
                     break;
                 }
                 continue;
             }
-            MatchHolder h = extractWalkAt(input, idx, to, sc);
+            MatchHolder h = extractWalkAt(input, cand, to, sc);
             if (h != null) {
                 return h;
             }
@@ -3445,7 +3467,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      */
     public enum Strategy {
         LITERAL, // literalNeedle -> String.indexOf
-        PREFIX, // required literal prefix -> indexOf candidate walks
+        PREFIX, // required literal chain -> indexOf candidate walks
         CAND_SCAN, // first-char-set bit scan + exact walks (short input)
         EXACT_FROM, // one exact walk from the requested start
         ORIGIN_SIM, // budgeted origin-tracking multi-state simulation
@@ -3455,6 +3477,30 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         ANCHORED_FAST, // flat-table anchored loop (fastPath)
         ANCHORED, // generic anchored walk
         GENERIC // CharSequence (non-String) fallback
+    }
+
+    /**
+     * A required literal chain's search needle (see {@link
+     * RunnerTables#detectPrefixChain}): every match of the compiled DFA
+     * contains {@link #needle} at exactly {@link #offset} UTF-16 units
+     * from the match start, so {@code String.indexOf(needle)} enumerates
+     * exactly the possible match starts — each hit walks at {@code hit -
+     * offset} under the exact walk. {@code offset} is non-zero only on
+     * fold-aware chains, where case-fold or class steps (one unit wide
+     * each) precede the case-stable needle run.
+     */
+    public static final class PrefixChain {
+
+        /** Needle text, exactly as it must occur in every match; never empty. */
+        public final String needle;
+
+        /** Units between the match start and the needle's first unit. */
+        public final int offset;
+
+        PrefixChain(String needle, int offset) {
+            this.needle = needle;
+            this.offset = offset;
+        }
     }
 
     // ===== per-call scratch (hot-path allocation removal) =====

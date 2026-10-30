@@ -56,7 +56,10 @@ Known gap: `java.util.regex` still beats us ~2–4× on unicode wide-class
 scans (`\p{L}`, `(?u)\w`-shaped rows in the benchmark tables) — the next
 work item. Literal-prefixed search of medium inputs (the `ip=`-shaped log
 queries that used to lose ~2–4×) now rides `String.indexOf` over the
-required literal prefix and beats `java.util.regex` on both backends.
+required literal prefix and beats `java.util.regex` on both backends —
+including case-insensitive shapes (the needle is the chain's case-stable
+run, at a fixed offset past the fold steps) and `\b`-anchored ones (the
+candidate walk evaluates the gate).
 
 **Multi-valued tags** (BT22 §3.1): an opt-in flag (`MULTI_VALUED_TAGS`)
 where a group under repetition keeps every iteration's offsets

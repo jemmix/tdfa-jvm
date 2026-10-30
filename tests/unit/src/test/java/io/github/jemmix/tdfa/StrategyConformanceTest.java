@@ -42,6 +42,11 @@ class StrategyConformanceTest {
         {"zzqqxv", "The adventures of Tom Sawyer and Huckleberry Finn, by Mark."},
         {"(?i)sherlock", "Mr Sherlock Holmes, the consulting detective, walked in."},
         {"\\bword\\b", "a short sentence with word inside the text here"},
+        // v2 prefix chains: fold steps before a case-stable needle run
+        // (fastPath/INLINED — the emitted ladder carries the offset), and a
+        // word-gated chain (masked/DELEGATE — the VM walk evaluates the gate)
+        {"(?i)user_id=\\d+", "nothing here user_id=42 and USER_ID=7 tail"},
+        {"\\berror\\b", "errors error errorist error xerror here"},
         {"\\p{L}{2,}", "Привет мир, вот тестовое предложение короткое"},
         {"[а-яА-ЯёЁ]{4,}", "Привет мир, вот тестовое предложение короткое"},
         {"\"[^\"]{5,20}\"", "He said \"hello world\" today and left quite quietly"},
