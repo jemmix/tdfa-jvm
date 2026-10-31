@@ -115,7 +115,10 @@ class CaseShrinkerTest {
     void budgetRejectShrinksToMinimalStillRejecting() {
         System.setProperty("tdfa.budget.compile.compute", Long.toString(8L << 20));
         try {
-            DifferentialFuzzer.Case c = DifferentialFuzzer.generate(4980790746082797768L, DifferentialFuzzer.Lane.JUR);
+            // 2026-10-31 v4 re-record (the 2026-10-28 seed's batch draws a
+            // family pattern under the generator-v4 family axis): \w*(?i:(\w))
+            // is the same "trivial pattern" scoped-budget reject family.
+            DifferentialFuzzer.Case c = DifferentialFuzzer.generate(14657L, DifferentialFuzzer.Lane.JUR);
             assertThat(DifferentialFuzzer.findingKind(DifferentialFuzzer.runOne(c))).isEqualTo("BUDGET_REJECT");
             CaseShrinker.ShrinkReport r =
                 new CaseShrinker(DifferentialFuzzer.sameFinding("BUDGET_REJECT"), 60_000, 64).shrink(c);

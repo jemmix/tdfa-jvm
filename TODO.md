@@ -17,7 +17,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 - [ ] JUR-compat re-base tail: both-lane soak, README numbers
 - [ ] Watch JDK-8381696; retire `SKIP_RESTART_TAG_LEAK` on JDK fix ([analysis](docs/jdk-8381696-restart-tag-leak-fix.md))
 - [ ] Overnight cross-rung soak, both lanes; refresh README numbers
-- [ ] Fuzz families for fact-gated rungs: literal, prefix, cand-scan, anchored-fast
 - [ ] Oracle-check stretched inputs; compare ASM on them too
 - [ ] Fuzz non-String CharSequence inputs against the reference sim
 - [ ] Fuzz budget-exhaustion paths with shrunk budget knobs

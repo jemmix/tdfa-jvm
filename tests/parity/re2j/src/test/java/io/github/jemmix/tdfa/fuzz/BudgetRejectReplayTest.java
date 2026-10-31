@@ -29,28 +29,29 @@ class BudgetRejectReplayTest {
     /** The library's own compile compute budget (5 s of ticks = 500 M). */
     private static final String LIBRARY_TICKS = Long.toString(Budgets.DEFAULT_COMPILE_COMPUTE);
 
-    /** Raised-knob accept samples — six distinct shapes across both seed
-     * windows (2026-10-28 fresh draw; 202610241338 the campaign's own first
-     * chunk), each recorded as BUDGET_REJECT by the scoped soak. */
-    private static final long[] ACCEPT_SEEDS = {4980790746082797768L, // (\w)+ CI+DOTALL — the "trivial pattern" surprise family
-        3535361585978547224L, // \W+(.)
-        4454343824950301576L, // \Q@@#\E(\w\D)+
-        4093143974493173168L, // [^.\n]+(\w) — campaign chunk, non-trivial oracle spans
-        5156517996765150184L, // ((?:\w){3,}j\t){1,}a — counted nesting
-        3153916178798350840L, // {1,6}/{2,4} deep-nesting monster, flags=1
+    /** Raised-knob accept samples — six distinct shapes (2026-10-31 re-record
+     * on the generator-v4 tree: the 2026-10-28 seeds' batches draw family
+     * patterns under v4, so their pinned monsters are gone; these are the
+     * fresh 8 M-scoped rejections that compile at the library budget, one
+     * per batch), each recorded as BUDGET_REJECT by the scoped soak. */
+    private static final long[] ACCEPT_SEEDS = {7841L, // €.?(?U:… — CI+DOTALL+UCC, the ?U-scoped fold family
+        14657L, // \w*(?i:(\w)) — the "trivial pattern" surprise family
+        37689L, // 0𐀀(\-\S?(ab𐇇)|𝔄.{2,6})+? — lazy alternation under a group loop
+        64241L, // (?:((?m:Ωz\w)𐿿)x(\D{0,6}\D)){3} — counted nesting
+        81601L, // (\w{0,}\uDFFF){3} — counted nesting over a wide body
+        67681L, // (?s:тY\Wm𐀀|(?:\Q.-\E…) — unflagged wide alternation
     };
 
-    /** The stays-too-large family: unbounded atom under a counted loop —
-     * its ε-subgraph duplication fills any raised memory budget. */
-    private static final long CFG_BLOWUP_SEED = 7121637816971106064L; // (\w.{0,}){1,6}
+    /** The stays-too-large family: a quantified wide class under a counted
+     * loop — its ε-subgraph duplication fills any raised memory budget. */
+    private static final long CFG_BLOWUP_SEED = 59585L; // ((𐀀([\s𐀀𤿮ﷀ -.]{3,}.)\A){2}?.+)
 
-    /** Finding 5's frontier monster, seed 2845852313826387552: post-#104
-     * the zero-op frontier closure is metered per range, so the runaway
-     * compile burns the WHOLE library compute budget instead of spinning
-     * unmetered — clean rejection at any raise, the artifact unreachable
-     * (at the campaign base 8910439 it compiled at 500 M ticks and
-     * compared oracle-identical; see finding 7's coda). */
-    private static final long F5_FRONTIER_SEED = 2845852313826387552L;
+    /** Finding 5's frontier monster: post-#104 the zero-op frontier closure
+     * is metered per range, so the runaway compile burns the WHOLE library
+     * compute budget instead of spinning unmetered — clean rejection at any
+     * raise, the artifact unreachable (2026-10-31 re-record on v4; the
+     * 2026-10-24 seed's batch now draws a family pattern). */
+    private static final long F5_FRONTIER_SEED = 20273L;
 
     @Test
     void raisedComputeBudgetAcceptsAndMatchesJurOracle() {
