@@ -91,14 +91,17 @@ import java.util.concurrent.atomic.AtomicLong;
  *       GENERIC rung.</li>
  *   <li><b>{@code families}</b> — fact-gated rung families (TODO: "Fuzz
  *       families for fact-gated rungs: literal, prefix, cand-scan,
- *       anchored-fast"). Family-biased generators (pure literal needles,
- *       required-literal-prefix + tail, candidate-scan shapes on short
- *       inputs, fastPath-eligible anchored shapes) are checked against the
- *       re2j oracle on both engines, and the VM strategy trace records
- *       whether the family's target rung actually served the call
- *       (LITERAL/PREFIX/CAND_SCAN on find(), ANCHORED_FAST on matches()) —
- *       gate misses are coverage findings (the detector failed to fire),
- *       recorded with the routing histogram.</li>
+ *       anchored-fast"). The SHARED family generator (the soak's
+ *       generator-v4 family axis, {@code DifferentialFuzzer.genFam} —
+ *       compositional quoted-needle literal, needle+divergence-tail
+ *       prefix, set-atom cand-scan over a <= 64-char input, mask-free
+ *       anchored-fast shapes; the old fixed cand/fast pattern pools are
+ *       retired) is checked against the re2j oracle on both engines, and
+ *       the VM strategy trace records whether the family's target rung
+ *       actually served the call (LITERAL/PREFIX/CAND_SCAN on find(),
+ *       ANCHORED_FAST on matches()) — gate misses are coverage findings
+ *       (the detector failed to fire), recorded with the routing
+ *       histogram.</li>
  * </ul>
  *
  * <p>Run via the {@code camp} Gradle task (a soak, not a unit test —
@@ -154,21 +157,20 @@ public final class CampaignFuzzer {
     static final java.util.regex.Pattern STALE_ITERATION_SHAPE =
         java.util.regex.Pattern.compile("\\((?:\\?:|\\?<\\w+>)?[^()]*\\([^()]*\\)(?![*+?{])[^()]*\\)[*+{]");
 
-    // ---- families mode: family-biased shape pools (see genFamilies) ----
+    // ---- families mode: the fact-gated family generator (shared with the soak) ----
 
-    static final String[] PREFIX_TAILS =
-        {"\\w+", "\\d+", "[a-z0-9]{2,}", "(a|b)+", "\\S{1,4}", ".*x", "(?:ab|ba)+", "\\w\\d", "(q|1){2,}"};
-
-    static final String[] CAND_PATTERNS = {"(a|b)+c", "[wx9]{2,}z", "\\w\\s?k", "(ab|ba)*f", "[^a]{1,3}q", "\\d+x?",
-        "(z|9)[a-z]k", "[a-c]{3}[^x]", "(\\w\\d)+e"};
-
-    static final String[] FAST_PATTERNS =
-        {"\\d+", "[a-f0-9]{2,8}", "a+|b+", "\\w\\d\\w", "[0-9]+\\.[0-9]+", "[a-z]+!", "\\d\\s\\d"};
-
-    static final String LIT_ALPHABET = "abz09ZYqw_.";
-
-    /** Input pool for family shapes (ASCII-dominant). */
-    static final String INPUT_ALPHABET = "abz09ZY qw_-.#~\n";
+    static FamCase genFamilies(long caseSeed) {
+        SplittableRandom r = new SplittableRandom(caseSeed ^ 0xFA17L);
+        DifferentialFuzzer.FamPattern fam = DifferentialFuzzer.genFam(r);
+        // Embed transform roll across the whole index spectrum (the soak's
+        // per-index contract, drawn here since the campaign is per-case),
+        // then the CI roll — family shapes are ASCII-only, so CI is
+        // oracle-safe and exercises the documented gate-miss fall-through.
+        String input = DifferentialFuzzer.famInput(r, fam, r.nextInt(DifferentialFuzzer.BATCH_K));
+        boolean ci = r.nextInt(4) == 0;
+        int flags = ci ? DifferentialFuzzer.FLAG_CI : 0;
+        return new FamCase(fam.family(), fam.pattern(), input, flags, "anchored-fast".equals(fam.family()));
+    }
 
     public static void main(String[] argv) throws Exception {
         String mode = System.getProperty("camp.mode", "all");
@@ -1342,60 +1344,11 @@ public final class CampaignFuzzer {
     record FamCase(String family, String pattern, String input, int flags, boolean matchesProbe) {
     }
 
-    static FamCase genFamilies(long caseSeed) {
-        SplittableRandom r = new SplittableRandom(caseSeed ^ 0xFA17L);
-        int fam = r.nextInt(4);
-        boolean ci = r.nextInt(4) == 0; // ASCII-only family patterns: CI is oracle-safe
-        int flags = ci ? DifferentialFuzzer.FLAG_CI : 0;
-        switch (fam) {
-            case 0 -> { // LITERAL: pure literal needle
-                int n = 1 + r.nextInt(6);
-                StringBuilder b = new StringBuilder(n);
-                for (int i = 0; i < n; i++) {
-                    b.append(LIT_ALPHABET.charAt(r.nextInt(LIT_ALPHABET.length())));
-                }
-                return new FamCase("literal", io.github.jemmix.tdfa.Pattern.quote(b.toString()),
-                    asciiInput(r, 0, 30, b.toString(), 0.6), flags, false);
-            }
-            case 1 -> { // PREFIX: required literal prefix + tail
-                int n = 2 + r.nextInt(3);
-                StringBuilder b = new StringBuilder(n);
-                for (int i = 0; i < n; i++) {
-                    b.append(LIT_ALPHABET.charAt(r.nextInt(LIT_ALPHABET.length())));
-                }
-                return new FamCase("prefix",
-                    io.github.jemmix.tdfa.Pattern.quote(b.toString()) + PREFIX_TAILS[r.nextInt(PREFIX_TAILS.length)],
-                    asciiInput(r, 0, 30, b.toString(), 0.6), flags, false);
-            }
-            case 2 -> { // CAND_SCAN: class/alternation shape, short input
-                return new FamCase("cand-scan", CAND_PATTERNS[r.nextInt(CAND_PATTERNS.length)],
-                    asciiInput(r, 3, 40, null, 0), flags, false);
-            }
-            default -> { // ANCHORED_FAST: fastPath-eligible, checked via matches()
-                return new FamCase("anchored-fast", FAST_PATTERNS[r.nextInt(FAST_PATTERNS.length)],
-                    asciiInput(r, 0, 30, null, 0), flags, true);
-            }
-        }
-    }
-
-    /** ASCII-dominant input; 10% unicode chars from the soak pool; optionally
-     * embeds {@code needle} so the family's positive path runs. */
-    static String asciiInput(SplittableRandom r, int minLen, int maxLen, String needle, double embedP) {
-        int len = minLen + r.nextInt(maxLen - minLen + 1);
-        StringBuilder sb = new StringBuilder(len + (needle == null ? 0 : needle.length()));
-        for (int i = 0; i < len; i++) {
-            if (r.nextInt(10) == 0) {
-                sb.appendCodePoint(DifferentialFuzzer.POOL_UNICODE[r.nextInt(DifferentialFuzzer.POOL_UNICODE.length)]);
-            } else {
-                sb.append(INPUT_ALPHABET.charAt(r.nextInt(INPUT_ALPHABET.length())));
-            }
-        }
-        if (needle != null && !needle.isEmpty() && r.nextDouble() < embedP) {
-            sb.insert(r.nextInt(sb.length() + 1), needle);
-        }
-        return sb.toString();
-    }
-
+    /** One family case: the SHARED generator (DifferentialFuzzer.genFam —
+     *  the soak's generator-v4 family axis draws the same shapes per batch;
+     *  the campaign mode is the deep-dive twin: every case family-biased,
+     *  routing traced, per-family histogram + gate-miss coverage counts).
+     *  See {@link #genFamilies}. */
     static void familiesCase(long caseSeed, Camp camp, Counts counts) {
         FamCase c = genFamilies(caseSeed);
         DifferentialFuzzer.Prepared pr = DifferentialFuzzer.prepare(c.pattern(), c.flags());
@@ -1415,6 +1368,15 @@ public final class CampaignFuzzer {
         }
         if (kind != null) {
             counts.soft(kind);
+            return;
+        }
+        // Both-reject parity (oracle rejects the shape, both engines reject
+        // it too): clean compile parity, but there is NO artifact to trace —
+        // routing is a property of a compiled runner. Counted ok and done;
+        // the family contract is valid syntax (see famQuant/famBody), so
+        // this branch is rare and worth its own breadcrumb when it recurs.
+        if (pr.vm == null || pr.vmTag != null || pr.oracle == null) {
+            counts.ok();
             return;
         }
         // Routing: did the family's target rung actually serve the call?

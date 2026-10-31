@@ -146,6 +146,13 @@ back to a slower engine.
   Fowler's testregex corpus, OpenJDK's `java.util.regex` regression corpus,
   and a layered oracle (re2j / reference Pike VM / VM / ASM) that pins any
   divergence to a single layer.
+- Fact-gated rung families (generator v4): 1-in-8 soak batches generate a
+  literal-needle / prefix+tail / cand-scan / anchored-fast shape and run the
+  full differential protocol on it, so the fast rungs of the search ladder
+  (`String.indexOf` needle, required-prefix candidate walks, first-char-set
+  bit scan, flat-table anchored loop) get nightly coverage beyond their
+  accidental draws; `:tests:parity:re2j:camp -Pcamp.mode=families` is the
+  focused deep-dive (per-family routing histogram + gate-fire checks).
 
 ## Build & test
 

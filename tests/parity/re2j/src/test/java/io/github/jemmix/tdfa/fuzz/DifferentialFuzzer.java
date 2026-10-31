@@ -138,6 +138,22 @@ import java.util.function.Predicate;
  * forced runs against the natural VM run on the same stretched input.
  * ASM is not forced (its ladder is frozen at compile time); its coverage
  * comes from the layered vote on the natural protocol.
+ *
+ * <p><b>Fact-gated family axis (generator v4).</b> The four fast rungs of
+ * the search ladder — LITERAL, PREFIX, CAND_SCAN, ANCHORED_FAST — are gated
+ * on compile-time facts of the pattern (a literal needle, a
+ * required-literal prefix, a non-accepting start + short input, a mask-free
+ * fastPath artifact), and the general grammar hits those facts only by
+ * accident. 1-in-8 batches (a fresh stream, a pure function of the batch;
+ * non-family batches keep their v3 pattern and inputs byte-identical) draw
+ * from a family generator instead — a quoted literal needle with
+ * near-miss/doubled/truncated input embeds, a needle+divergence-tail prefix
+ * shape, a set-atom cand-scan shape over a <= 64-char input, or a mask-free
+ * anchored-fast shape — and run the full per-case protocol (both lanes, the
+ * whole flag matrix, cross-rung, stretch, the layer vote) on them like any
+ * other case. The family generator is shared with the campaign harness's
+ * families mode (the deep-dive rung-routing verifier,
+ * {@code CampaignFuzzer.genFamilies}).
  */
 public final class DifferentialFuzzer {
 
@@ -225,6 +241,32 @@ public final class DifferentialFuzzer {
     /** POOL_UNICODE as drawn for pattern runes under (?i) on the released
      *  oracle (hang-prone members excluded); the full pool everywhere else. */
     static final int[] POOL_UNICODE_CI = releasedCiPool();
+
+    // ---- fact-gated rung families: generator constants (see genFam) ----
+
+    /** Family-batch draw rate: 1-in-8 batches take a family-biased pattern. */
+    static final int FAM_EVERY = 8;
+
+    /** The family stream's salt (generator v4). */
+    static final long FAM_SALT = 0xFA17L;
+
+    /** Needle/input alphabets — plain ASCII incl. the metachars that ride
+     *  inside \Q..\E (the quote handles them). */
+    static final String FAM_LIT_ALPHABET = "abz09ZYqw_.";
+
+    static final String FAM_INPUT_ALPHABET = "abz09ZY qw_-.#~\n";
+
+    /** Fixed half of the prefix-tail pool (the composed half rides beside it —
+     *  the shapes the 2026-10-03 campaign pinned routing on, kept verbatim). */
+    static final String[] FAM_TAILS =
+        {"\\w+", "\\d+", "[a-z0-9]{2,}", "(a|b)+", "\\S{1,4}", ".*x", "(?:ab|ba)+", "\\w\\d", "(q|1){2,}"};
+
+    /** The trailing anchor literal of a cand-scan shape: half drawn from the
+     *  input body's alphabet (matches occur — the positive path), half from
+     *  its complement (the scan-only path; position-0 walks never succeed). */
+    static final String FAM_ANCHOR_PRESENT = "zq09Y._";
+
+    static final String FAM_ANCHOR_ABSENT = "xjkcfghmnpr";
 
     static final int MAX_DEPTH = 4;
     private static int ciSuppAvoided; // informational; generation-side counters
@@ -556,6 +598,10 @@ public final class DifferentialFuzzer {
         Lane lane = laneOf(batch);
         int flags = genFlags(batch, lane);
         String pattern = genPattern(batch);
+        FamPattern fam = genFamily(batch);
+        if (fam != null) {
+            r.famBatches.merge(fam.family(), 1L, Long::sum);
+        }
         boolean guarded = lane == Lane.JUR && jurOracleBomb(pattern);
         // pattern-level generation guards fold once per batch
         r.ciSuppAvoidedTotal += ciSuppAvoided;
@@ -1549,6 +1595,14 @@ public final class DifferentialFuzzer {
         // exists). CI batches must therefore generate under the guard
         // (ASCII-narrow ranges) like inline (?i:...) always has. Pure
         // function of the batch still (genFlags is), so replay holds.
+        // Family batches (generator v4) skip the guard: their shapes are
+        // ASCII-only by construction, so the fold-orbit/Range spin families
+        // cannot arise — a CI family batch instead exercises the documented
+        // gate-miss fall-through (folded literals lose their needles).
+        FamPattern fam = genFamily(batch);
+        if (fam != null) {
+            return fam.pattern();
+        }
         boolean ci = (genFlags(batch) & FLAG_CI) != 0;
         return expr(new SplittableRandom(batch), 0, ci);
     }
@@ -1561,6 +1615,15 @@ public final class DifferentialFuzzer {
      *  '\n' are inserted so ^/$ actually see lines (the per-index transforms
      *  provide at most one trailing '\n'). */
     static String genInput(long batch, int idx, int flags) {
+        // Family batches take the family-biased input (the needle embeds of
+        // famInput, keyed by the same stream salt as the family draw, so
+        // pattern+input change together on the family axis).
+        FamPattern fam = genFamily(batch);
+        if (fam != null) {
+            return famInput(
+                new SplittableRandom(batch * 0x9E3779B97F4A7C15L ^ (idx + 1) * 0xBF58476D1CE4E5B9L ^ FAM_SALT), fam,
+                idx);
+        }
         SplittableRandom rnd = new SplittableRandom(batch * 0x9E3779B97F4A7C15L ^ (idx + 1) * 0xBF58476D1CE4E5B9L);
         int inLen = rnd.nextInt(0, 25);
         StringBuilder in = new StringBuilder(inLen * 2);
@@ -1815,6 +1878,221 @@ public final class DifferentialFuzzer {
         return sb.toString();
     }
 
+    // ---- fact-gated rung families (generator v4: the per-batch family axis) ----
+    //
+    // The general generator above produces fact-gated rung coverage only by
+    // accident: a batch whose parts all draw literals IS a literal needle,
+    // but multi-char needles with embedded copies, needle+tail prefix
+    // shapes and mask-free anchored shapes are vanishingly rare draws. The
+    // four FAST rungs of the ladder — LITERAL (String.indexOf needle),
+    // PREFIX (required-literal-prefix candidate walks), CAND_SCAN
+    // (first-char-set bit scan, inputs <= 64 chars), ANCHORED_FAST
+    // (engine-tier flat-table matches()) — each get a family-biased
+    // generator below, and 1-in-8 batches (a fresh stream, a pure function
+    // of the batch) generate from their family instead of the general
+    // grammar. Family patterns are ASCII-only and wide-atom-safe by
+    // construction, so the existing flag matrix (CI folds literals — those
+    // batches exercise the documented gate-miss fall-through to
+    // CAND_SCAN/EXACT_FROM), both lanes (the jur oracle-bomb guard passes
+    // every family shape: no nested quantified wides), and the cross-rung
+    // machinery apply unchanged. Non-family batches keep their v3 pattern
+    // AND inputs byte-identical, so 7/8 of the caseSeed universe replays
+    // stable; family batches change pattern+input together.
+
+    /** One generated family case: family name, the pattern, and the needle
+     *  the input transform embeds (null for the set-shaped families). */
+    record FamPattern(String family, String pattern, String needle) {
+
+        static FamPattern of(String family, String pattern, String needle) {
+            return new FamPattern(family, pattern, needle);
+        }
+    }
+
+    /** The family draw of a batch: null (not a family batch) or one of the
+     *  four family cases. Pure function of the batch. */
+    static FamPattern genFamily(long batch) {
+        SplittableRandom r = new SplittableRandom(batch ^ FAM_SALT);
+        if (r.nextInt(FAM_EVERY) != 0) {
+            return null;
+        }
+        return genFam(r);
+    }
+
+    /** One family case from a seeded stream (the draw order is the contract:
+     *  family roll, then the family's own shape draws — harnesses seed the
+     *  stream with their own key and keep replay stable). */
+    static FamPattern genFam(SplittableRandom r) {
+        switch (r.nextInt(4)) {
+            case 0 : {
+                // LITERAL: a pure quoted needle, 1-8 chars — short needles
+                // exercise the detector's below-threshold family, long ones
+                // the indexOf rung itself.
+                String needle = famNeedle(r, 1 + r.nextInt(8));
+                return FamPattern.of("literal", "\\Q" + needle + "\\E", needle);
+            }
+            case 1 : {
+                // PREFIX: a quoted 2-6-char needle + a divergence tail (the
+                // tail makes the char after the needle non-singleton, so the
+                // prefix chain detector stops there with the needle in hand).
+                String needle = famNeedle(r, 2 + r.nextInt(5));
+                return FamPattern.of("prefix", "\\Q" + needle + "\\E" + famTail(r), needle);
+            }
+            case 2 :
+                // CAND_SCAN: a set-shaped first atom (class / alternation /
+                // shorthand) + a short body + a trailing anchor literal.
+                // Without the anchor a set-first shape usually matches AT
+                // position 0 and the exact-from rung answers before the
+                // bit scan runs; the anchor rides half present-in-body,
+                // half complement chars (the positive and the scan-only
+                // path). Inputs stay <= 64 chars (see famInput).
+                return FamPattern.of("cand-scan", famSetAtom(r) + famBody(r, 0, 2) + famAnchor(r), null);
+            default :
+                // ANCHORED_FAST: a mask-free disjoint-range shape (no anchors,
+                // no multiline flag in the harness's draws) for the
+                // engine-tier flat-table matches() rung. 1-3 atoms, each
+                // carrying its own quantifier — no trailing quantifier (a
+                // second one on an already-quantified atom is invalid syntax).
+                return FamPattern.of("anchored-fast", famBody(r, 1, 3), null);
+        }
+    }
+
+    static String famNeedle(SplittableRandom r, int n) {
+        StringBuilder b = new StringBuilder(n);
+        for (int i = 0; i < n; i++) {
+            b.append(FAM_LIT_ALPHABET.charAt(r.nextInt(FAM_LIT_ALPHABET.length())));
+        }
+        return b.toString();
+    }
+
+    /** The divergence tail after a prefix needle: half fixed pool (the
+     *  pinned shapes), half composed — always carrying a set atom, so the
+     *  tail actually diverges (a pure-literal tail would reduce the whole
+     *  shape to the literal family and change the family's routing). */
+    static String famTail(SplittableRandom r) {
+        if (r.nextInt(2) == 0) {
+            return FAM_TAILS[r.nextInt(FAM_TAILS.length)];
+        }
+        return r.nextInt(2) == 0 ? famSetAtom(r) + famBody(r, 0, 1) : famBody(r, 0, 1) + famSetAtom(r);
+    }
+
+    /** minAtoms..maxAtoms body atoms — set atoms and literals each carrying
+     *  their own quantifier, occasional capture. Wide atoms appear bare
+     *  (never inside a quantified group: the jur oracle-bomb guard would
+     *  trip on the shape). */
+    static String famBody(SplittableRandom r, int minAtoms, int maxAtoms) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0, n = minAtoms + r.nextInt(maxAtoms - minAtoms + 1); i < n; i++) {
+            boolean capture = r.nextInt(6) == 0;
+            String atom = r.nextInt(3) == 0 ? famSetAtom(r) : famLiteral(r) + famQuant(r, 2);
+            b.append(capture ? "(" + atom + ")" : atom);
+        }
+        return b.toString();
+    }
+
+    /** A set-shaped atom — the first-char-set bit scan's trigger. */
+    static String famSetAtom(SplittableRandom r) {
+        int roll = r.nextInt(6);
+        if (roll < 3) { // bracket class over 2-4 members (+ optional range)
+            StringBuilder b = new StringBuilder("[");
+            int n = 2 + r.nextInt(3);
+            for (int i = 0; i < n; i++) {
+                b.append(FAM_LIT_ALPHABET.charAt(r.nextInt(FAM_LIT_ALPHABET.length())));
+            }
+            b.append(']');
+            return b + famQuant(r, 3);
+        }
+        if (roll == 3) { // alternation of 2-3 literals
+            int n = 2 + r.nextInt(2);
+            StringBuilder b = new StringBuilder("(");
+            for (int i = 0; i < n; i++) {
+                b.append(i > 0 ? "|" : "").append(famLiteral(r));
+            }
+            return b.append(')').toString() + famQuant(r, 3);
+        }
+        if (roll == 4) { // shorthand
+            return switch (r.nextInt(6)) {
+                case 0 -> "\\w";
+                case 1 -> "\\d";
+                case 2 -> "\\s";
+                case 3 -> "\\W";
+                case 4 -> "\\D";
+                default -> "\\S";
+            } + famQuant(r, 3);
+        }
+        return "." + famQuant(r, 2); // dot — wide but mask-free (DOTALL-safe)
+    }
+
+    static String famLiteral(SplittableRandom r) {
+        char c = FAM_LIT_ALPHABET.charAt(r.nextInt(FAM_LIT_ALPHABET.length()));
+        return c == '.' ? "\\." : String.valueOf(c);
+    }
+
+    static String famAnchor(SplittableRandom r) {
+        String pool = r.nextInt(2) == 0 ? FAM_ANCHOR_PRESENT : FAM_ANCHOR_ABSENT;
+        char c = pool.charAt(r.nextInt(pool.length()));
+        return c == '.' ? "\\." : String.valueOf(c);
+    }
+
+    /** A quantifier roll (0 = none). Ranges draw max >= min+1 (the parser
+     *  rejects inverted bounds — the family contract is valid syntax). */
+    static String famQuant(SplittableRandom r, int noneWeight) {
+        if (r.nextInt(noneWeight + 1) == 0) {
+            return "";
+        }
+        return switch (r.nextInt(5)) {
+            case 0 -> "+";
+            case 1 -> "*";
+            case 2 -> "?";
+            case 3 -> { // {n,m}, m >= n+1
+                int lo = r.nextInt(0, 3);
+                yield "{" + lo + "," + (lo + 1 + r.nextInt(3)) + "}";
+            }
+            default -> "{" + r.nextInt(1, 3) + ",}";
+        };
+    }
+
+    /** Family-biased input (the per-index transform is the contract):
+     *  ASCII-dominant body + 10% unicode pool, then the family's embed —
+     *  plain embed (idx 0/7), at start (1), at end (2), near miss (3 —
+     *  needle + a snowman the tail cannot consume, the failed-walk path),
+     *  doubled (4 — the I-probe iteration), truncated needle (5), one-char
+     *  mutation (6). Set families draw a plain body; every family input
+     *  stays <= 64 chars so the cand-scan rung keeps its window. */
+    static String famInput(SplittableRandom r, FamPattern fam, int idx) {
+        int len = 3 + r.nextInt(38);
+        StringBuilder in = new StringBuilder(len + 16);
+        for (int i = 0; i < len; i++) {
+            if (r.nextInt(10) == 0) {
+                in.appendCodePoint(POOL_UNICODE[r.nextInt(POOL_UNICODE.length)]);
+            } else {
+                in.append(FAM_INPUT_ALPHABET.charAt(r.nextInt(FAM_INPUT_ALPHABET.length())));
+            }
+        }
+        String needle = fam.needle();
+        if (needle == null) {
+            return in.toString(); // set family: the plain body already carries candidates
+        }
+        switch (idx) {
+            case 0, 7 -> in.insert(r.nextInt(in.length() + 1), needle); // plain embed
+            case 1 -> in.insert(0, needle); // match at the start
+            case 2 -> in.append(needle); // match at the end
+            case 3 -> in.insert(r.nextInt(in.length() + 1), needle + '\u2603'); // near miss — ❄ consumes nothing
+            case 4 -> in.insert(r.nextInt(in.length() + 1), needle).append(needle); // two matches — the I probe
+            case 5 -> { // truncated needle — the prefix-miss path
+                if (needle.length() > 1) {
+                    in.insert(r.nextInt(in.length() + 1), needle.substring(0, needle.length() - 1));
+                }
+            }
+            case 6 -> { // one-char mutation — the negative path
+                StringBuilder mutant = new StringBuilder(needle);
+                mutant.setCharAt(r.nextInt(needle.length()), '\u2603');
+                in.insert(r.nextInt(in.length() + 1), mutant);
+            }
+            default -> in.insert(r.nextInt(in.length() + 1), needle);
+        }
+        return in.toString();
+    }
+
     // ---- outcome bookkeeping ----
 
     static final class Outcome {
@@ -1857,6 +2135,9 @@ public final class DifferentialFuzzer {
         long cases, failures, bothReject, flagged, ciSuppAvoidedTotal, ciRangeAvoidedTotal, knownDivergence;
         long crossRung, crossRouting;
         long jurCases, jurFailures, jurSkipped;
+        /** Generator v4's family axis: batches (not cases) drawn per family —
+         *  the family-bias coverage line of summary.txt. */
+        final Map<String, Long> famBatches = new LinkedHashMap<>();
         /** Jur-lane oracle-bomb guard hits: batches never executed (the
          *  counter keeps running; ndjson records cap at
          *  {@value #JUR_GUARD_RECORD_MAX} — the shape is one signature,
@@ -2378,6 +2659,9 @@ public final class DifferentialFuzzer {
                     + r.jurSkipped + " (by reason: " + r.jurSkipRecorded + ")  guardSkips=" + r.jurGuarded
                     + " (jur-oracle-bomb)    re2j lane: cases=" + (r.cases - r.jurCases) + "  failures="
                     + (r.failures - r.jurFailures));
+                if (!r.famBatches.isEmpty()) {
+                    w.println("fact-gated family batches: " + r.famBatches);
+                }
                 w.printf("rate: %.1f cases/min%n", r.casesPerMinute);
                 w.println("shrunk records: " + r.shrunkRecords
                     + (SHRINK_RECORD ? "" : "  (off — -Pfuzz.shrink=1 pre-shrinks recorded failures)"));
