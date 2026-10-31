@@ -159,6 +159,11 @@ back to a slower engine.
   typed clean "pattern too large" rejections, deterministic across a
   recompile, both tiers agreeing, accepts answering the oracle identically,
   and raised-knob replays byte-identical.
+- Non-String CharSequence inputs: every sampled soak case (1-in-4) re-runs
+  the five-probe protocol over StringBuilder/CharBuffer/char[] wrappers on
+  both engines against the String path and the oracle; the campaign's seq
+  mode adds the reference-sim (PikeSim) comparison, position-carrying
+  buffer views, and the GENERIC routing check.
 
 ## Build & test
 

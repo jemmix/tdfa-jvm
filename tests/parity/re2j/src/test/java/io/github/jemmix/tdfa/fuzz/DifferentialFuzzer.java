@@ -15,6 +15,7 @@ import java.io.PrintWriter;
 import java.lang.management.ManagementFactory;
 import java.lang.management.RuntimeMXBean;
 import java.lang.management.ThreadMXBean;
+import java.nio.CharBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -154,6 +155,20 @@ import java.util.function.Predicate;
  * other case. The family generator is shared with the campaign harness's
  * families mode (the deep-dive rung-routing verifier,
  * {@code CampaignFuzzer.genFamilies}).
+ *
+ * <p><b>CharSequence wrapper axis.</b> Every ladder rung except GENERIC is
+ * keyed on {@code input instanceof String}; any other CharSequence rides
+ * the GENERIC rung — a second implementation of the same semantics that
+ * the String-path probes never touch. A deterministic 1-in-N sample of
+ * cases (pattern+input hash, replay-stable — the stretch probe's keying
+ * twin) re-runs BOTH engines' five-probe protocol over three wrappers —
+ * StringBuilder, CharBuffer, a plain char[] view — and requires
+ * byte-identical answers to the String path (SEQ_PATH_MISMATCH), plus the
+ * lane's oracle answering the wrapper identically to its own String run
+ * (SEQ_ORACLE_WRAPPER — a harness sanity tripwire). The reference-sim
+ * (PikeSim) comparison, the GENERIC routing trace, and the wider wrapper
+ * zoo (position-carrying buffers) live in the campaign's seq mode — the
+ * deep-dive twin of this axis. {@code -Pfuzz.seq=0} turns the axis off.
  */
 public final class DifferentialFuzzer {
 
@@ -180,6 +195,12 @@ public final class DifferentialFuzzer {
 
     /** Cross-rung differential on/off (Gradle: -Pfuzz.crossRung=0). */
     static final boolean CROSS_RUNG = Long.getLong("fuzz.crossRung", 1) != 0;
+
+    /** CharSequence wrapper axis on/off; sampled 1-in-seqEvery cases
+     *  (Gradle: -Pfuzz.seq=0, -Pfuzz.seqEvery=N). */
+    static final boolean SEQ_WRAP = Long.getLong("fuzz.seq", 1) != 0;
+
+    static final int SEQ_EVERY = (int) (long) Long.getLong("fuzz.seqEvery", 4);
 
     /**
      * Determinism double-run (runner-immutability tripwire 2): re-run
@@ -856,7 +877,69 @@ public final class DifferentialFuzzer {
         if (CROSS_RUNG && pr.vm != null) {
             crossRung(pr, c, o);
         }
+        if (SEQ_WRAP && pr.vm != null && seqSampled(c)) {
+            seqProbes(pr, c, o);
+        }
         return o;
+    }
+
+    // ---- CharSequence wrapper axis (the seq family's standing coverage) ----
+    //
+    // The ladder's String paths (indexOf needles, flat-table walks, the
+    // fast extract ladders) are all keyed on `input instanceof String`;
+    // every other CharSequence rides the GENERIC rung — a different
+    // implementation of the same semantics. A deterministic 1-in-N sample
+    // of cases (hash of pattern+input, replay-stable) re-runs BOTH engines'
+    // full five-probe protocol over three wrappers — StringBuilder,
+    // CharBuffer, a plain char[] view — and requires byte-identical
+    // answers to the String path, plus the lane's oracle answering the
+    // wrapper identically to its own String run. The reference-sim (PikeSim)
+    // comparison, the GENERIC routing trace, and the wrapper zoo beyond
+    // these three live in the campaign's seq mode (the deep-dive twin);
+    // this axis is the standing nightly coverage on the full flag matrix.
+
+    static void seqProbes(Prepared pr, Case c, Outcome o) {
+        if (o.asm == null || o.vm == null || o.asm.startsWith("<") || o.vm.startsWith("<")) {
+            return; // compile-rejected: no match-time surface to compare
+        }
+        CharSequence[] wrappers =
+            {new StringBuilder(c.input()), CharBuffer.wrap(c.input()), new CharArraySeq(c.input())};
+        for (CharSequence w : wrappers) {
+            String wv;
+            String wa;
+            try {
+                wv = compute(pr.vm, w);
+                wa = compute(pr.asm, w);
+            } catch (RuntimeException | StackOverflowError e) {
+                o.cross.add("SEQ_PATH_MISMATCH " + w.getClass().getSimpleName() + " threw "
+                    + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
+                return;
+            }
+            if (!wv.equals(o.vm) || !wa.equals(o.asm)) {
+                o.cross.add("SEQ_PATH_MISMATCH " + w.getClass().getSimpleName() + " vm[" + wv + "] string[" + o.vm
+                    + "] asm[" + wa + "] string[" + o.asm + "]");
+                return;
+            }
+        }
+        // The lane's oracle must itself answer the wrapper identically to
+        // its String run (a harness sanity tripwire: an oracle that treats
+        // CharSequence differently would poison every comparison above).
+        String oracleStr = o.oracle;
+        if (oracleStr == null || oracleStr.startsWith("<")) {
+            return;
+        }
+        CharSequence w = wrappers[0];
+        String ow;
+        try {
+            ow = pr.lane == Lane.JUR ? compute(pr.jurOracle, w) : compute(pr.oracle, w);
+        } catch (RuntimeException | StackOverflowError e) {
+            o.cross.add("SEQ_ORACLE_WRAPPER threw " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
+            return;
+        }
+        if (!ow.equals(oracleStr)) {
+            o.cross.add("SEQ_ORACLE_WRAPPER " + w.getClass().getSimpleName() + " wrapper[" + ow + "] string["
+                + oracleStr + "]");
+        }
     }
 
     // ---- determinism double-run (runner-immutability tripwire 2) ----
@@ -982,6 +1065,13 @@ public final class DifferentialFuzzer {
     static boolean stretchSampled(Case c) {
         long h = c.pattern().hashCode() * 1000003L ^ c.input().hashCode();
         return Math.floorMod(h, STRETCH_EVERY) == 0;
+    }
+
+    /** The wrapper-axis sample draw (1-in-SEQ_EVERY cases; pattern+input
+     *  hash, replay-stable — the stretch probe's keying twin). */
+    static boolean seqSampled(Case c) {
+        long h = c.pattern().hashCode() * 31L ^ c.input().hashCode() * 1000003L;
+        return Math.floorMod(h, SEQ_EVERY) == 0;
     }
 
     static String runEngine(TDFAPattern p, String tag, String exc, String engTag, Case c, Outcome o) {
@@ -2205,7 +2295,11 @@ public final class DifferentialFuzzer {
                 } else {
                     crossRung++;
                 }
-                String kind = routing ? "CROSS_ROUTING" : "CROSS_RUNG";
+                // The kind rides the first word of the first cross entry (the
+                // wrapper axis's SEQ_* kinds share the list); ROUTED and the
+                // forced-rung family keep their cross names.
+                String first = firstWord(o.cross.get(0));
+                String kind = routing ? "CROSS_ROUTING" : first.startsWith("SEQ") ? first : "CROSS_RUNG";
                 String sig = kind + " | shape~" + shape(o.c.pattern());
                 Sig s = signatures.computeIfAbsent(sig, k -> new Sig(kind));
                 s.total++;
@@ -2735,5 +2829,39 @@ public final class DifferentialFuzzer {
             }
         }
         return sb.toString();
+    }
+
+    /** Minimal non-String CharSequence: a plain char[] view (no StringBuilder
+     *  internals, no Buffer position state — charAt is array indexing). The
+     *  wrapper axis's third shape, shared with the campaign seq mode. */
+    static final class CharArraySeq implements CharSequence {
+        private final char[] a;
+
+        CharArraySeq(CharSequence s) {
+            a = new char[s.length()];
+            for (int i = 0; i < a.length; i++) {
+                a[i] = s.charAt(i);
+            }
+        }
+
+        @Override
+        public int length() {
+            return a.length;
+        }
+
+        @Override
+        public char charAt(int index) {
+            return a[index];
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            return new String(a, start, end - start);
+        }
+
+        @Override
+        public String toString() {
+            return new String(a);
+        }
     }
 }

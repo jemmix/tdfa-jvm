@@ -18,7 +18,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 - [ ] Watch JDK-8381696; retire `SKIP_RESTART_TAG_LEAK` on JDK fix ([analysis](docs/jdk-8381696-restart-tag-leak-fix.md))
 - [ ] Overnight cross-rung soak, both lanes; refresh README numbers
 - [ ] Oracle-check stretched inputs; compare ASM on them too
-- [ ] Fuzz non-String CharSequence inputs against the reference sim
 - [ ] Fuzz the multi-valued lane ([plan](docs/fuzz-multi-valued-tags.md))
 - [ ] Verify TDFA(1) conformance vs paper wording (lookahead delay)
 - [ ] Upstream re2j PRs #208/#212/#213: maintainer review

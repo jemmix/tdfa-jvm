@@ -81,14 +81,18 @@ import java.util.concurrent.atomic.AtomicLong;
  *       against the stretched input.</li>
  *   <li><b>{@code seq}</b> — non-String CharSequence inputs against the
  *       reference sim (TODO: "Fuzz non-String CharSequence inputs against
- *       the reference sim"). Three CharSequence wrappers (StringBuilder,
- *       CharBuffer, a plain char[] view) must produce the identical
- *       five-probe protocol as the String path on BOTH engines (the
- *       GENERIC rung contract), and the find+iterate protocol over the
- *       wrappers must equal {@link PikeSim} — the specification-of-record —
- *       compiled on the same unicode universe as the soak lanes. Routing is
- *       traced: find() over a non-String input must be served by the
- *       GENERIC rung.</li>
+ *       the reference sim"). The wrapper zoo — StringBuilder, CharBuffer,
+ *       a position-carrying CharBuffer (an offset view whose charAt is
+ *       relative addressing, not array indexing), and a plain char[] view
+ *       — must produce the identical five-probe protocol as the String
+ *       path on BOTH engines (the GENERIC rung contract), and the
+ *       find+iterate protocol over the wrappers must equal {@link
+ *       PikeSim} — the specification-of-record — compiled on the same
+ *       unicode universe as the soak lanes. Routing is traced: find()
+ *       over a non-String input must be served by the GENERIC rung. The
+ *       soak's own wrapper axis (1-in-4 sampled cases there, the full
+ *       flag matrix and both lanes) is the standing nightly twin of this
+ *       mode's first check.</li>
  *   <li><b>{@code families}</b> — fact-gated rung families (TODO: "Fuzz
  *       families for fact-gated rungs: literal, prefix, cand-scan,
  *       anchored-fast"). The SHARED family generator (the soak's
@@ -1194,6 +1198,18 @@ public final class CampaignFuzzer {
 
     // ================ mode: seq — non-String CharSequence vs the reference sim ================
 
+    /** The wrapper zoo: StringBuilder, CharBuffer at position 0, a
+     *  position-carrying CharBuffer (offset view — subSequence/charAt
+     *  relative addressing), and the plain char[] view. */
+    static CharSequence[] wrappers(String input) {
+        char[] a = new char[input.length()];
+        input.getChars(0, a.length, a, 0);
+        char[] padded = new char[a.length + 8];
+        System.arraycopy(a, 0, padded, 5, a.length);
+        return new CharSequence[]{new StringBuilder(input), CharBuffer.wrap(input),
+            CharBuffer.wrap(padded, 5, a.length), new DifferentialFuzzer.CharArraySeq(input)};
+    }
+
     static void seqCase(long caseSeed, Camp camp, Counts counts) {
         long batch = Math.floorDiv(caseSeed, DifferentialFuzzer.BATCH_K);
         int idx = (int) Math.floorMod(caseSeed, DifferentialFuzzer.BATCH_K);
@@ -1214,7 +1230,7 @@ public final class CampaignFuzzer {
         }
         CharSequence sb = new StringBuilder(input);
         CharSequence cb = CharBuffer.wrap(input);
-        CharSequence ca = new CharArraySeq(input);
+        CharSequence ca = new DifferentialFuzzer.CharArraySeq(input);
         // (a) String-path vs CharSequence-path protocol equality, both engines.
         String vmStr = DifferentialFuzzer.compute(pr.vm, input);
         String asmStr = DifferentialFuzzer.compute(pr.asm, input);
@@ -1235,6 +1251,21 @@ public final class CampaignFuzzer {
                 return;
             }
         }
+        // (a2) The position-carrying buffer: a wrapper whose charAt is
+        // offset arithmetic, not array indexing — same protocol again.
+        for (CharSequence w : wrappers(input)) {
+            if (w == sb || w == cb || w == ca) {
+                continue; // already compared above
+            }
+            String wv = guarded(() -> DifferentialFuzzer.compute(pr.vm, w));
+            String wa = guarded(() -> DifferentialFuzzer.compute(pr.asm, w));
+            if (wv == null || wa == null || !wv.equals(vmStr) || !wa.equals(asmStr)) {
+                counts.hard("SEQ_PATH_MISMATCH");
+                camp.rec(caseSeed, "SEQ_PATH_MISMATCH", "pattern", pattern, "input", input, "wrapper",
+                    "offsetCharBuffer", "stringVm", vmStr, "stringAsm", asmStr, "wrapVm", wv, "wrapAsm", wa);
+                return;
+            }
+        }
         // (b) specification-of-record: PikeSim vs both engines over the wrapper.
         // Reaching here means (a) passed (wrapper == String protocol), so a
         // pike disagreement here is pike vs the String path too — a genuine
@@ -1251,11 +1282,16 @@ public final class CampaignFuzzer {
             return;
         }
         // (c) wrapper-to-wrapper equality (same engine, different wrappers).
-        if (!vmCs.equals(findIterate(pr.vm, cb)) || !vmCs.equals(findIterate(pr.vm, ca))) {
-            counts.hard("SEQ_WRAPPER_MISMATCH");
-            camp.rec(caseSeed, "SEQ_WRAPPER_MISMATCH", "pattern", pattern, "input", input, "sb", vmCs, "cb",
-                findIterate(pr.vm, cb), "ca", findIterate(pr.vm, ca));
-            return;
+        for (CharSequence w : wrappers(input)) {
+            String wv = findIterate(pr.vm, w);
+            if (!vmCs.equals(wv)) {
+                counts.hard("SEQ_WRAPPER_MISMATCH");
+                camp.rec(caseSeed, "SEQ_WRAPPER_MISMATCH", "pattern", pattern, "input", input, "sb", vmCs, "w",
+                    w.getClass().getSimpleName() + "@"
+                        + (w instanceof CharBuffer cb2 && cb2.position() != 0 ? "offset" : "0"),
+                    "wrapVm", wv);
+                return;
+            }
         }
         // (d) routing: find() over a non-String input is served by GENERIC.
         TdfaRunner.setTracing(true);
@@ -1333,37 +1369,6 @@ public final class CampaignFuzzer {
 
     /** Minimal non-String CharSequence: a plain char[] view (no StringBuilder
      * internals, no Buffer position state — charAt is array indexing). */
-    static final class CharArraySeq implements CharSequence {
-        private final char[] a;
-
-        CharArraySeq(CharSequence s) {
-            a = new char[s.length()];
-            for (int i = 0; i < a.length; i++) {
-                a[i] = s.charAt(i);
-            }
-        }
-
-        @Override
-        public int length() {
-            return a.length;
-        }
-
-        @Override
-        public char charAt(int index) {
-            return a[index];
-        }
-
-        @Override
-        public CharSequence subSequence(int start, int end) {
-            return new String(a, start, end - start);
-        }
-
-        @Override
-        public String toString() {
-            return new String(a);
-        }
-    }
-
     // ================ mode: families — fact-gated rung families ================
 
     record FamCase(String family, String pattern, String input, int flags, boolean matchesProbe) {
