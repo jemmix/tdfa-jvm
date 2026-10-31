@@ -141,6 +141,11 @@ tasks.register('fuzz', JavaExec) {
     systemProperty 'fuzz.crossRung', project.findProperty('fuzz.crossRung') ?: '1'
     systemProperty 'fuzz.crossRung.stretch', project.findProperty('fuzz.crossRung.stretch') ?: '1'
     systemProperty 'fuzz.crossRung.stretchEvery', project.findProperty('fuzz.crossRung.stretchEvery') ?: '8'
+    // CharSequence wrapper axis (sampled probes over StringBuilder/CharBuffer/
+    // char[] vs the String path): on by default; -Pfuzz.seq=0 opts out,
+    // -Pfuzz.seqEvery=N resamples.
+    systemProperty 'fuzz.seq', project.findProperty('fuzz.seq') ?: '1'
+    systemProperty 'fuzz.seqEvery', project.findProperty('fuzz.seqEvery') ?: '4'
     // Determinism double-run (runner-immutability tripwire 2): on by default;
     // -Pfuzz.double=0 opts out. Warm replay for fuzz.one (tripwire 3) is
     // opt-in: -Pfuzz.one=<caseSeed> -Pfuzz.warm=1 runs the case's batch
