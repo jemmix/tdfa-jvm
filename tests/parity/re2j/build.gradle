@@ -175,15 +175,18 @@ tasks.register('fuzz', JavaExec) {
 // Timeboxed fuzz campaigns for the TODO fuzzer items the overnight soak does
 // not cover: (?u) lane vs the java.util.regex oracle, oracle-check stretched
 // inputs (+ ASM), non-String CharSequence inputs vs the PikeSim reference,
-// fact-gated rung families (literal/prefix/cand-scan/anchored-fast).
+// fact-gated rung families (literal/prefix/cand-scan/anchored-fast), and
+// budget-exhaustion paths under shrunk -D tdfa.budget.* knobs (standalone
+// mode only — JVM-global properties, never inside -Pcamp.mode=all).
 // A soak, not a unit test (CampaignSmokeTest gates the harness in CI):
-//   ./gradlew :tests:parity:re2j:camp                              # all modes, 600 s each
+//   ./gradlew :tests:parity:re2j:camp                              # the four parallel modes, 600 s each
+//   ./gradlew :tests:parity:re2j:camp -Pcamp.mode=budget           # budget exhaustion (standalone)
 //   ./gradlew :tests:parity:re2j:camp -Pcamp.mode=jur -Pcamp.seconds=600 -Pcamp.seed=42
-//   ./gradlew :tests:parity:re2j:camp -Pcamp.mode=jur -Pcamp.one=<caseSeed>   # replay one case
+//   ./gradlew :tests:parity:re2j:camp -Pcamp.mode=budget -Pcamp.one=<caseSeed>   # replay one case
 // Exits nonzero on hard findings; artifacts land in build/fuzz-camp/<mode>/.
 tasks.register('camp', JavaExec) {
     group = 'verification'
-    description = 'Fuzz campaigns: (?u) vs jur, stretched oracle+asm, CharSequence vs PikeSim, rung families'
+    description = 'Fuzz campaigns: (?u) vs jur, stretched oracle+asm, CharSequence vs PikeSim, rung families, budget exhaustion'
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'io.github.jemmix.tdfa.fuzz.CampaignFuzzer'
     jvmArgs '-Xmx2g'

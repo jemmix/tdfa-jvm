@@ -153,6 +153,12 @@ back to a slower engine.
   bit scan, flat-table anchored loop) get nightly coverage beyond their
   accidental draws; `:tests:parity:re2j:camp -Pcamp.mode=families` is the
   focused deep-dive (per-family routing histogram + gate-fire checks).
+- Budget-exhaustion paths (shrunk knobs): `:tests:parity:re2j:camp
+  -Pcamp.mode=budget` draws each case from a shrunk-knob ladder across all
+  three `-D tdfa.budget.*` properties and holds the documented contract —
+  typed clean "pattern too large" rejections, deterministic across a
+  recompile, both tiers agreeing, accepts answering the oracle identically,
+  and raised-knob replays byte-identical.
 
 ## Build & test
 
