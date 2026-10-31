@@ -164,6 +164,12 @@ back to a slower engine.
   both engines against the String path and the oracle; the campaign's seq
   mode adds the reference-sim (PikeSim) comparison, position-carrying
   buffer views, and the GENERIC routing check.
+- Stretched inputs (~4.3k chars): every sampled soak case (1-in-8) runs
+  the ASM tier against the VM ladder on the stretched input beside the
+  forced-rung cross compares, and the re2j oracle completes the three-way
+  on a 1-in-16 sample (the jur oracle is unbounded at stretched lengths —
+  the same reason the campaign's stretch mode RE2J-pins its generation);
+  the campaign's stretch mode runs the full three-way on every case.
 
 ## Build & test
 

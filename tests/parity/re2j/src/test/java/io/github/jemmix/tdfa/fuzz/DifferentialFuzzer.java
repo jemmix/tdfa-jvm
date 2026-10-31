@@ -136,9 +136,15 @@ import java.util.function.Predicate;
  * 1-in-N subset also runs the probes on a stretched input (~4.3k chars,
  * whole-string repeats) so the memoized search-DFA path — unreachable on
  * the 0-24-char generator inputs — actually runs; stretched cases compare
- * forced runs against the natural VM run on the same stretched input.
+ * forced runs against the natural VM run on the same stretched input, and
+ * — the stretch family's standing coverage — the natural VM and ASM
+ * answers against the re2j oracle on the stretched input (the full
+ * three-way; the jur lane keeps the ASM-vs-VM cross-tier leg only — its
+ * backtracking oracle is unbounded at stretched lengths, the same reason
+ * the campaign's stretch mode RE2J-pins its generation).
  * ASM is not forced (its ladder is frozen at compile time); its coverage
- * comes from the layered vote on the natural protocol.
+ * comes from the layered vote on the natural protocol — and, on the
+ * stretched sample, from the stretched oracle compare above.
  *
  * <p><b>Fact-gated family axis (generator v4).</b> The four fast rungs of
  * the search ladder — LITERAL, PREFIX, CAND_SCAN, ANCHORED_FAST — are gated
@@ -1002,7 +1008,53 @@ public final class DifferentialFuzzer {
                     .add("THREW stretched baseline " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
                 return;
             }
+            stretchOracleAsm(pr, c, stretched, base, o);
             runForced(pr.vm, stretched, base, o, "stretched ");
+        }
+    }
+
+    /**
+     * The stretched-input oracle + ASM compares (the stretch family's
+     * standing coverage). RE2J lane: the natural VM answer on the stretched
+     * input — the baseline every forced rung is compared against — and the
+     * ASM tier's answer must BOTH equal the re2j oracle on the same
+     * stretched input (the full three-way; re2j is linear-time, safe at any
+     * length). JUR lane: the oracle leg is SKIPPED — java.util.regex is
+     * unbounded on stretched inputs (the 2026-10-24 finding-4 family burns
+     * 20-36 s there; the batch bomb guard stops the catastrophic shapes,
+     * never the slow-linear ones — the same reason the campaign's stretch
+     * mode RE2J-pins its generation), so the lane keeps the cross-tier leg:
+     * ASM on the stretched input must equal the natural VM baseline. The
+     * cross-rung-only stretch (forced-vs-natural VM, {@link #runForced})
+     * stays exactly as it was, lane-agnostic.
+     */
+    static void stretchOracleAsm(Prepared pr, Case c, CharSequence stretched, String base, Outcome o) {
+        String stOracle = null;
+        if (pr.lane == Lane.RE2J && o.oracle != null && !o.oracle.startsWith("<") && stretchOracleSampled(c)) {
+            try {
+                stOracle = compute(pr.oracle, stretched);
+            } catch (RuntimeException | StackOverflowError e) {
+                stOracle = null; // oracle limit on the stretched input — tier legs still run
+            }
+        }
+        if (stOracle != null && !base.equals(stOracle)) {
+            o.cross.add("STRETCH_MISMATCH vm on " + stretched.length() + " chars: ladder [" + base + "] oracle ["
+                + stOracle + "]");
+            return;
+        }
+        if (pr.asm != null && pr.asmTag == null) {
+            String asmSt;
+            try {
+                asmSt = compute(pr.asm, stretched);
+            } catch (RuntimeException | StackOverflowError e) {
+                o.cross.add("STRETCH_MISMATCH asm threw on " + stretched.length() + " chars: "
+                    + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
+                return;
+            }
+            if (stOracle != null ? !asmSt.equals(stOracle) : !asmSt.equals(base)) {
+                o.cross.add("STRETCH_MISMATCH asm on " + stretched.length() + " chars: asm [" + asmSt + "] "
+                    + (stOracle != null ? "oracle [" + stOracle + "]" : "ladder [" + base + "]"));
+            }
         }
     }
 
@@ -1065,6 +1117,16 @@ public final class DifferentialFuzzer {
     static boolean stretchSampled(Case c) {
         long h = c.pattern().hashCode() * 1000003L ^ c.input().hashCode();
         return Math.floorMod(h, STRETCH_EVERY) == 0;
+    }
+
+    /** The oracle leg of the stretched compares: 1-in-2 of the stretched
+     *  slice (a second hash bit). The re2j oracle's five probes on a 4.3k
+     *  char input are the slice's dominant cost; the full three-way at
+     *  1-in-16 cases still runs the oracle millions of times a night, and
+     *  the cross-tier leg keeps every stretched case covered. */
+    static boolean stretchOracleSampled(Case c) {
+        long h = c.pattern().hashCode() * 7L ^ c.input().hashCode();
+        return Math.floorMod(h, 2) == 0;
     }
 
     /** The wrapper-axis sample draw (1-in-SEQ_EVERY cases; pattern+input
@@ -2296,10 +2358,12 @@ public final class DifferentialFuzzer {
                     crossRung++;
                 }
                 // The kind rides the first word of the first cross entry (the
-                // wrapper axis's SEQ_* kinds share the list); ROUTED and the
-                // forced-rung family keep their cross names.
+                // wrapper and stretched-input axes carry their own kinds in
+                // the shared list); ROUTED and the forced-rung family keep
+                // their cross names.
                 String first = firstWord(o.cross.get(0));
-                String kind = routing ? "CROSS_ROUTING" : first.startsWith("SEQ") ? first : "CROSS_RUNG";
+                String kind = routing ? "CROSS_ROUTING"
+                    : first.startsWith("MISMATCH") || first.startsWith("THREW") ? "CROSS_RUNG" : first;
                 String sig = kind + " | shape~" + shape(o.c.pattern());
                 Sig s = signatures.computeIfAbsent(sig, k -> new Sig(kind));
                 s.total++;

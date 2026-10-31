@@ -48,7 +48,9 @@ LABEL = "nightly-fuzz"
 ACTIONABLE = ("RESULT_MISMATCH", "COMPILE_PARITY", "EXCEPTION", "MEMO_STATE_MISMATCH",
               "CROSS_RUNG", "CROSS_ROUTING", "HANG_ENGINE",
               # the CharSequence wrapper axis (soak-side, rides the cross list):
-              "SEQ_PATH_MISMATCH", "SEQ_ORACLE_WRAPPER")
+              "SEQ_PATH_MISMATCH", "SEQ_ORACLE_WRAPPER",
+              # the stretched-input oracle+asm compares (same list):
+              "STRETCH_MISMATCH")
 CASES_PER_SIG = 8  # mirrors the fuzzer's own per-signature ndjson cap
 
 
