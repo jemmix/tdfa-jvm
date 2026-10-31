@@ -102,12 +102,35 @@ import java.util.concurrent.atomic.AtomicLong;
  *       ANCHORED_FAST on matches()) — gate misses are coverage findings
  *       (the detector failed to fire), recorded with the routing
  *       histogram.</li>
+ *   <li><b>{@code budget}</b> — budget-exhaustion paths with shrunk budget
+ *       knobs (TODO: "Fuzz budget-exhaustion paths with shrunk budget
+ *       knobs"). Each case (the soak generator, both lanes) draws one
+ *       scenario from a shrunk-knob ladder across ALL THREE {@code -D
+ *       tdfa.budget.*} properties — compute ticks shrunk 40&times;/400&times;
+ *       (the 2026-10-03 R2/R3 classes), compile RAM shrunk to 2 MiB/512 KiB,
+ *       runtime RAM shrunk to 1 MiB/256 KiB, and a combined shrunk draw —
+ *       compiles BOTH engines under it, and holds the documented contract:
+ *       every rejection is the typed clean "pattern too large"
+ *       {@code PatternTooLargeException} naming the knob that tripped,
+ *       deterministic across a recompile, both tiers agreeing; every
+ *       scoped ACCEPT answers the five-probe protocol identical to the
+ *       lane's live oracle. Rejections get a raised-knob replay (sampled
+ *       1-in-2, wall-guarded): a library-budget accept must answer the
+ *       protocol byte-identical to the oracle, and a still-rejecting shape
+ *       gets one family-matched raise (2&times; the tripped memory knob)
+ *       before the documented genuinely-too-large classification. The knob
+ *       properties are JVM-global, so the mode runs STANDALONE
+ *       ({@code -Pcamp.mode=budget}) — never inside {@code all}'s parallel
+ *       mode threads — and a prop-leak tripwire asserts the knobs restore
+ *       to the entry baseline after every case (the 2026-10-24 draft-
+ *       harness leak lesson, now permanent).</li>
  * </ul>
  *
  * <p>Run via the {@code camp} Gradle task (a soak, not a unit test —
  * {@code CampaignSmokeTest} gates the harness in CI):
  * <pre>
- *   ./gradlew :tests:parity:re2j:camp                       # all four modes, 600 s each
+ *   ./gradlew :tests:parity:re2j:camp                       # the four parallel modes, 600 s each
+ *   ./gradlew :tests:parity:re2j:camp -Pcamp.mode=budget    # budget-exhaustion (standalone only)
  *   ./gradlew :tests:parity:re2j:camp -Pcamp.mode=jur -Pcamp.seconds=600 -Pcamp.seed=42
  *   ./gradlew :tests:parity:re2j:camp -Pcamp.mode=jur -Pcamp.one=&lt;caseSeed&gt;   # replay one case
  * </pre>
@@ -222,6 +245,7 @@ public final class CampaignFuzzer {
             case "stretch" -> replayStretch(caseSeed);
             case "seq" -> replaySeq(caseSeed);
             case "families" -> replayFamilies(caseSeed);
+            case "budget" -> replayBudget(caseSeed);
             default -> throw new IllegalArgumentException("unknown camp.mode " + mode);
         }
     }
@@ -265,6 +289,7 @@ public final class CampaignFuzzer {
                         case "stretch" -> stretchCase(caseSeed, camp, counts);
                         case "seq" -> seqCase(caseSeed, camp, counts);
                         case "families" -> familiesCase(caseSeed, camp, counts);
+                        case "budget" -> budgetCase(caseSeed, camp, counts);
                         default -> throw new IllegalStateException("unknown mode " + mode);
                     }
                 } catch (RuntimeException e) {
@@ -1418,6 +1443,352 @@ public final class CampaignFuzzer {
         return new TdfaRunner(Determinizer.compile(nfa, false));
     }
 
+    // ================ mode: budget — exhaustion paths under shrunk knobs ================
+
+    /** One shrunk-knob scenario: which of the three {@code tdfa.budget.*}
+     *  properties is shrunk, and to what (null = leave at the entry
+     *  baseline). Pure function of the caseSeed's own stream. */
+    record Scenario(String name, Long compute, Long memory, Long runtime) {
+
+        void apply() {
+            if (compute != null) {
+                System.setProperty(Budgets.COMPILE_COMPUTE_PROP, String.valueOf(compute));
+            }
+            if (memory != null) {
+                System.setProperty(Budgets.COMPILE_MEMORY_PROP, String.valueOf(memory));
+            }
+            if (runtime != null) {
+                System.setProperty(Budgets.RUNTIME_MEMORY_PROP, String.valueOf(runtime));
+            }
+        }
+    }
+
+    /** The shrunk-knob ladder (see the class doc): the two compute classes
+     *  the 2026-10-03 R2/R3 runs pinned (40x/400x below the fuzz scope),
+     *  two compile-RAM shrinks, two runtime-RAM shrinks, one combined draw,
+     *  and the plain 8 M fuzz scope (the soak's standing class — the
+     *  baseline the others are drawn against). */
+    static Scenario genScenario(long caseSeed) {
+        return switch (new SplittableRandom(caseSeed ^ 0xB0D9L).nextInt(8)) {
+            case 0 -> new Scenario("scoped8m", DifferentialFuzzer.fuzzWorkBudget(), null, null);
+            case 1 -> new Scenario("compute40x", 200_000L, null, null);
+            case 2 -> new Scenario("compute400x", 20_000L, null, null);
+            case 3 -> new Scenario("mem2m", null, 2L << 20, null);
+            case 4 -> new Scenario("mem512k", null, 512L << 10, null);
+            case 5 -> new Scenario("runtime1m", null, null, 1L << 20);
+            case 6 -> new Scenario("runtime256k", null, null, 256L << 10);
+            default -> new Scenario("combined200k", 200_000L, 512L << 10, 1L << 20);
+        };
+    }
+
+    /** Snapshot one budget property (null = unset). */
+    static Long knob(String prop) {
+        String v = System.getProperty(prop);
+        return v == null ? null : Long.valueOf(v);
+    }
+
+    /** Read the three knobs for a record's "seen" line. */
+    static String readKnobs() {
+        return knob(Budgets.COMPILE_COMPUTE_PROP) + "/" + knob(Budgets.COMPILE_MEMORY_PROP) + "/"
+            + knob(Budgets.RUNTIME_MEMORY_PROP);
+    }
+
+    /** Restore the three knobs to the given snapshot; false when the values
+     *  seen on entry differ from the snapshot (the leak tripwire's
+     *  comparison — a scenario block must always leave the baseline in
+     *  place when it finishes). */
+    static boolean restoreKnobs(Long c, Long m, Long r) {
+        boolean clean = restoreKnob(Budgets.COMPILE_COMPUTE_PROP, c);
+        clean &= restoreKnob(Budgets.COMPILE_MEMORY_PROP, m);
+        clean &= restoreKnob(Budgets.RUNTIME_MEMORY_PROP, r);
+        return clean;
+    }
+
+    private static boolean restoreKnob(String prop, Long v) {
+        long now = Long.parseLong(System.getProperty(prop, "-1"));
+        if (v != null) {
+            System.setProperty(prop, String.valueOf(v));
+        } else {
+            System.clearProperty(prop);
+        }
+        return now == (v == null ? -1 : v);
+    }
+
+    static void budgetCase(long caseSeed, Camp camp, Counts counts) {
+        // The lane is the case's own batch draw (replay-stable through
+        // generate); jur oracle-bomb batches are skipped whole — their
+        // accepts would need the bomb oracle.
+        DifferentialFuzzer.Case c = DifferentialFuzzer.generate(caseSeed);
+        if (c.lane() == DifferentialFuzzer.Lane.JUR && DifferentialFuzzer.jurOracleBomb(c.pattern())) {
+            counts.soft("BUDGET_GUARD");
+            return;
+        }
+        Scenario sc = genScenario(caseSeed);
+        Long baseC = knob(Budgets.COMPILE_COMPUTE_PROP);
+        Long baseM = knob(Budgets.COMPILE_MEMORY_PROP);
+        Long baseR = knob(Budgets.RUNTIME_MEMORY_PROP);
+        boolean ok;
+        try {
+            ok = budgetCaseScoped(caseSeed, c, sc, camp, counts, baseC, baseM, baseR);
+        } finally {
+            // The prop-leak tripwire: every phase of the case must leave the
+            // knobs at the mode's entry baseline (the 2026-10-24
+            // draft-harness leak lesson, now a permanent harness invariant).
+            String seen = readKnobs();
+            if (!restoreKnobs(baseC, baseM, baseR)) {
+                counts.hard("BUDGET_PROP_LEAK");
+                camp.rec(caseSeed, "BUDGET_PROP_LEAK", "pattern", c.pattern(), "scenario", sc.name(), "baseline",
+                    baseC + "/" + baseM + "/" + baseR, "seen", seen);
+            }
+        }
+        if (!ok) {
+            return;
+        }
+        counts.route("knob:" + sc.name());
+    }
+
+    /** The case body: the scenario scope first (compile + protocol +
+     *  rejection contract), then — for sampled rejections — the raised-knob
+     *  replay at library budgets. Every phase restores the baseline before
+     *  returning; false = a hard finding was recorded. */
+    private static boolean budgetCaseScoped(long caseSeed, DifferentialFuzzer.Case c, Scenario sc, Camp camp,
+        Counts counts, Long baseC, Long baseM, Long baseR) {
+        long t0 = System.nanoTime();
+        String oracle;
+        DifferentialFuzzer.Prepared pr;
+        try {
+            sc.apply();
+            pr = DifferentialFuzzer.prepare(c.pattern(), c.flags(), c.lane());
+            oracle = oracleProtocol(pr, c);
+        } catch (RuntimeException | StackOverflowError e) {
+            counts.hard("BUDGET_HARNESS_EXCEPTION");
+            camp.rec(caseSeed, "BUDGET_HARNESS_EXCEPTION", "pattern", c.pattern(), "scenario", sc.name(), "detail",
+                e + " @ " + firstFrame(e));
+            return false;
+        } finally {
+            restoreKnobs(baseC, baseM, baseR);
+        }
+        if (pr.asmTag != null != (pr.vmTag != null)) {
+            counts.hard("BUDGET_TIER_SPLIT");
+            camp.rec(caseSeed, "BUDGET_TIER_SPLIT", "pattern", c.pattern(), "scenario", sc.name(), "asm", pr.asmTag,
+                "vm", pr.vmTag);
+            return false;
+        }
+        if (pr.asmTag == null) {
+            return budgetAcceptPath(caseSeed, c, sc, pr, oracle, camp, counts, baseC, baseM, baseR);
+        }
+        return budgetRejectPath(caseSeed, c, sc, pr, oracle, camp, counts, t0, baseC, baseM, baseR);
+    }
+
+    /** Scoped ACCEPT: the whole five-probe protocol must equal the lane's
+     *  oracle answer (a shrunk budget that fits must not change semantics).
+     *  A protocol string carrying "pattern too large" is the documented
+     *  deferred-anchored class — soft. */
+    private static boolean budgetAcceptPath(long caseSeed, DifferentialFuzzer.Case c, Scenario sc,
+        DifferentialFuzzer.Prepared pr, String oracle, Camp camp, Counts counts, Long baseC, Long baseM, Long baseR) {
+        String asm, vm;
+        try {
+            sc.apply(); // same runtime-RAM scope the artifact compiled under
+            asm = guarded(() -> DifferentialFuzzer.compute(pr.asm, c.input()));
+            vm = guarded(() -> DifferentialFuzzer.compute(pr.vm, c.input()));
+        } finally {
+            restoreKnobs(baseC, baseM, baseR);
+        }
+        if (asm == null || vm == null) {
+            counts.hard("BUDGET_EXCEPTION");
+            camp.rec(caseSeed, "BUDGET_EXCEPTION", "pattern", c.pattern(), "scenario", sc.name(), "asm", asm, "vm", vm);
+            return false;
+        }
+        if (asm.contains("pattern too large") || vm.contains("pattern too large")) {
+            counts.soft("BUDGET_DEFERRED");
+            camp.rec(caseSeed, "BUDGET_DEFERRED", "pattern", c.pattern(), "scenario", sc.name(), "asm", asm, "vm", vm);
+            return true;
+        }
+        if (oracle.startsWith("<")) {
+            if (!asm.startsWith("<reject") || !vm.startsWith("<reject")) {
+                counts.hard("BUDGET_COMPILE_PARITY (oracle rejects, tdfa accepts)");
+                camp.rec(caseSeed, "BUDGET_COMPILE_PARITY", "pattern", c.pattern(), "scenario", sc.name(), "oracle",
+                    oracle, "asm", asm, "vm", vm);
+                return false;
+            }
+            counts.ok();
+            return true;
+        }
+        if (!asm.equals(oracle) || !vm.equals(oracle)) {
+            counts.hard("BUDGET_MISMATCH (scoped accept)");
+            camp.rec(caseSeed, "BUDGET_MISMATCH", "pattern", c.pattern(), "input", c.input(), "flags", c.flags(),
+                "scenario", sc.name(), "oracle", oracle, "asm", asm, "vm", vm);
+            camp.log("HARD BUDGET_MISMATCH seed=%d scenario=%s pat=%s", caseSeed, sc.name(),
+                DifferentialFuzzer.escape(c.pattern()));
+            return false;
+        }
+        counts.ok();
+        return true;
+    }
+
+    /** Scoped REJECTION: the typed/deterministic/clean contract, then the
+     *  sampled raised-knob replay (library budgets, then one family-matched
+     *  memory raise; a replayed accept must answer the protocol identical
+     *  to the oracle). */
+    private static boolean budgetRejectPath(long caseSeed, DifferentialFuzzer.Case c, Scenario sc,
+        DifferentialFuzzer.Prepared pr, String oracle, Camp camp, Counts counts, long t0, Long baseC, Long baseM,
+        Long baseR) {
+        if (!pr.asmTag.startsWith("<reject:pattern too large")) {
+            // A parse/other compile rejection, not a budget class: the soak's
+            // compile-parity family. Both tiers rejecting what the oracle
+            // also rejects is clean parity; an oracle accept is a finding.
+            if (oracle.startsWith("<")) {
+                counts.ok();
+                return true;
+            }
+            counts.hard("BUDGET_COMPILE_PARITY (tdfa rejects, oracle accepts)");
+            camp.rec(caseSeed, "BUDGET_COMPILE_PARITY", "pattern", c.pattern(), "scenario", sc.name(), "oracle", oracle,
+                "asm", pr.asmTag, "vm", pr.vmTag);
+            return false;
+        }
+        for (String tag : new String[]{pr.asmTag, pr.vmTag}) {
+            if (!tag.startsWith("<reject:pattern too large")) {
+                counts.hard("BUDGET_NOT_TYPED");
+                camp.rec(caseSeed, "BUDGET_NOT_TYPED", "pattern", c.pattern(), "scenario", sc.name(), "tag", tag);
+                return false;
+            }
+        }
+        try {
+            sc.apply();
+            DifferentialFuzzer.Prepared again = DifferentialFuzzer.prepare(c.pattern(), c.flags(), c.lane());
+            if (!pr.asmTag.equals(again.asmTag) || !pr.vmTag.equals(again.vmTag)) {
+                counts.hard("BUDGET_NONDETERMINISTIC");
+                camp.rec(caseSeed, "BUDGET_NONDETERMINISTIC", "pattern", c.pattern(), "scenario", sc.name(), "asm1",
+                    pr.asmTag, "asm2", again.asmTag, "vm1", pr.vmTag, "vm2", again.vmTag);
+                return false;
+            }
+        } catch (RuntimeException e) {
+            counts.hard("BUDGET_HARNESS_EXCEPTION");
+            camp.rec(caseSeed, "BUDGET_HARNESS_EXCEPTION (determinism recompile)", "pattern", c.pattern(), "scenario",
+                sc.name(), "detail", e + " @ " + firstFrame(e));
+            return false;
+        } finally {
+            restoreKnobs(baseC, baseM, baseR);
+        }
+        counts.route("reject:" + sc.name());
+        // Raised-knob replay, sampled 1-in-2 and wall-guarded: a case that
+        // already burned half the slow budget skips it (the 500 M monster
+        // compiles live here — SLOW is informational, never a failure).
+        if (Math.floorMod(caseSeed, 2) != 0 || (System.nanoTime() - t0) / 1_000_000 > CASE_SLOW_MS / 2) {
+            counts.route("noreplay");
+            return true;
+        }
+        try {
+            // Library budgets: all three knobs at their defaults.
+            System.clearProperty(Budgets.COMPILE_COMPUTE_PROP);
+            System.clearProperty(Budgets.COMPILE_MEMORY_PROP);
+            System.clearProperty(Budgets.RUNTIME_MEMORY_PROP);
+            DifferentialFuzzer.Prepared raised = DifferentialFuzzer.prepare(c.pattern(), c.flags(), c.lane());
+            if (raised.asmTag == null) {
+                return replayCompare(caseSeed, c, sc, raised, "raise:library:accept", camp, counts, t0);
+            }
+            String raisedTag = raised.asmTag;
+            // Compute-class rejections at 500 M are the documented burn-out
+            // monsters — the 500 M compile itself is the evidence, no
+            // further raise. Memory-class get one family-matched 2x raise.
+            String raiseProp = raisedTag.contains(Budgets.COMPILE_MEMORY_PROP) ? Budgets.COMPILE_MEMORY_PROP
+                : raisedTag.contains(Budgets.RUNTIME_MEMORY_PROP) ? Budgets.RUNTIME_MEMORY_PROP : null;
+            if (raiseProp == null) {
+                counts.soft("TOO_LARGE_ANY");
+                camp.rec(caseSeed, "TOO_LARGE_ANY (compute burn-out at library budget)", "pattern", c.pattern(),
+                    "scenario", sc.name(), "tag", raisedTag);
+                return true;
+            }
+            System.setProperty(raiseProp, String.valueOf(2 * (raiseProp.equals(Budgets.COMPILE_MEMORY_PROP)
+                ? Budgets.DEFAULT_COMPILE_MEMORY : Budgets.DEFAULT_RUNTIME_MEMORY)));
+            try {
+                DifferentialFuzzer.Prepared raised2 = DifferentialFuzzer.prepare(c.pattern(), c.flags(), c.lane());
+                if (raised2.asmTag != null) {
+                    counts.soft("TOO_LARGE_ANY");
+                    camp.rec(caseSeed, "TOO_LARGE_ANY (rejects at any raised budget)", "pattern", c.pattern(),
+                        "scenario", sc.name(), "tag1", raisedTag, "tag2", raised2.asmTag);
+                    return true;
+                }
+                return replayCompare(caseSeed, c, sc, raised2,
+                    "raise:2x" + (raiseProp.endsWith("compile.memory") ? "compile" : "runtime") + ":accept", camp,
+                    counts, t0);
+            } finally {
+                System.clearProperty(raiseProp);
+            }
+        } finally {
+            restoreKnobs(baseC, baseM, baseR);
+        }
+    }
+
+    /** A raised-knob accept must answer the five-probe protocol identical to
+     *  the oracle; the wall guard classifies the slow (monster-compile)
+     *  replays without failing them. */
+    private static boolean replayCompare(long caseSeed, DifferentialFuzzer.Case c, Scenario sc,
+        DifferentialFuzzer.Prepared raised, String route, Camp camp, Counts counts, long t0) {
+        String o = oracleProtocol(raised, c);
+        String asm = guarded(() -> DifferentialFuzzer.compute(raised.asm, c.input()));
+        String vm = guarded(() -> DifferentialFuzzer.compute(raised.vm, c.input()));
+        if (asm == null || vm == null || o.startsWith("<") || !asm.equals(o) || !vm.equals(o)) {
+            counts.hard("BUDGET_MISMATCH (raised-knob replay)");
+            camp.rec(caseSeed, "BUDGET_RAISED_MISMATCH", "pattern", c.pattern(), "input", c.input(), "flags", c.flags(),
+                "scenario", sc.name(), "oracle", o, "asm", asm, "vm", vm);
+            camp.log("HARD BUDGET_RAISED_MISMATCH seed=%d scenario=%s pat=%s", caseSeed, sc.name(),
+                DifferentialFuzzer.escape(c.pattern()));
+            return false;
+        }
+        if ((System.nanoTime() - t0) / 1_000_000 > CASE_SLOW_MS) {
+            counts.soft("BUDGET_SLOW");
+        }
+        counts.route(route);
+        return true;
+    }
+
+    /** The lane's oracle five-probe answer (rejections as {@code <reject>},
+     *  throws as {@code <exception:…>} — never null). */
+    static String oracleProtocol(DifferentialFuzzer.Prepared pr, DifferentialFuzzer.Case c) {
+        if (pr.lane == DifferentialFuzzer.Lane.JUR) {
+            if (pr.jurOracle == null) {
+                return pr.oracleTag;
+            }
+            String o = guarded(() -> DifferentialFuzzer.compute(pr.jurOracle, c.input()));
+            return o != null ? o : "<exception:jurOracle>";
+        }
+        if (pr.oracle == null) {
+            return pr.oracleTag;
+        }
+        String o = guarded(() -> DifferentialFuzzer.compute(pr.oracle, c.input()));
+        return o != null ? o : "<exception:oracle>";
+    }
+
+    static void replayBudget(long caseSeed) {
+        DifferentialFuzzer.Case c = DifferentialFuzzer.generate(caseSeed);
+        Scenario sc = genScenario(caseSeed);
+        System.out.println("pattern:  " + DifferentialFuzzer.escape(c.pattern()));
+        System.out.println("input:    " + DifferentialFuzzer.escape(c.input()));
+        System.out.println("flags:    " + c.flags() + "  lane: " + c.lane() + "  scenario: " + sc.name() + " [compute="
+            + sc.compute() + " memory=" + sc.memory() + " runtime=" + sc.runtime() + "]");
+        Long baseC = knob(Budgets.COMPILE_COMPUTE_PROP);
+        Long baseM = knob(Budgets.COMPILE_MEMORY_PROP);
+        Long baseR = knob(Budgets.RUNTIME_MEMORY_PROP);
+        try {
+            sc.apply();
+            DifferentialFuzzer.Prepared scoped = DifferentialFuzzer.prepare(c.pattern(), c.flags(), c.lane());
+            System.out.println("scoped:   asm=" + scoped.asmTag + "  vm=" + scoped.vmTag);
+        } finally {
+            restoreKnobs(baseC, baseM, baseR);
+        }
+        System.clearProperty(Budgets.COMPILE_COMPUTE_PROP);
+        System.clearProperty(Budgets.COMPILE_MEMORY_PROP);
+        System.clearProperty(Budgets.RUNTIME_MEMORY_PROP);
+        try {
+            DifferentialFuzzer.Prepared lib = DifferentialFuzzer.prepare(c.pattern(), c.flags(), c.lane());
+            System.out.println("library:  asm=" + lib.asmTag + "  vm=" + lib.vmTag);
+            System.out.println("oracle:   " + oracleProtocol(lib, c));
+        } finally {
+            restoreKnobs(baseC, baseM, baseR);
+        }
+    }
+
     // ================ replay ================
 
     static void replayJur(long caseSeed) {
@@ -1560,7 +1931,7 @@ public final class CampaignFuzzer {
             StringBuilder sb = new StringBuilder();
             soft.forEach((k, v) -> sb.append(String.format("  %6d  %s%n", v, k)));
             if (!routes.isEmpty()) {
-                sb.append(String.format("routing histogram (family->serving rung):%n"));
+                sb.append(String.format("histogram (per-mode: routing/scenario outcomes):%n"));
                 routes.forEach((k, v) -> sb.append(String.format("  %6d  %s%n", v, k)));
             }
             return sb.toString();

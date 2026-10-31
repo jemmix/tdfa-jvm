@@ -63,8 +63,13 @@ class CampaignSmokeTest {
 
     private static final Map<String, Set<String>> MODE_SOFT =
         Map.of("jur", JUR_SOFT, "stretch", Set.of("SKIP_EMPTY", "THREW", "SLOW", "STRETCH_BUDGET"), "seq",
-            Set.of("SIM_REJECT", "BUDGET", "SEQ_COMPILE"), "families", Set.of("FAMILY_BUDGET", "GATE_MISS_literal",
-                "GATE_MISS_prefix", "GATE_MISS_cand-scan", "GATE_MISS_anchored-fast"));
+            Set.of("SIM_REJECT", "BUDGET", "SEQ_COMPILE"), "families",
+            Set.of("FAMILY_BUDGET", "GATE_MISS_literal", "GATE_MISS_prefix", "GATE_MISS_cand-scan",
+                "GATE_MISS_anchored-fast"),
+            // budget mode: the jur oracle-bomb guard, the documented
+            // genuinely-too-large class (rejects at any raised budget), the
+            // deferred-anchored rejections, and the wall-guard skips
+            "budget", Set.of("BUDGET_GUARD", "TOO_LARGE_ANY", "BUDGET_DEFERRED", "BUDGET_SLOW"));
 
     private static CampaignFuzzer.Counts clean(String mode, Path tmp) {
         CampaignFuzzer.Counts c = CampaignFuzzer.runMode(mode, 0xCAFEBABEL, 60, 400, tmp);
@@ -92,5 +97,10 @@ class CampaignSmokeTest {
     @Test
     void familiesSliceIsClean(@TempDir Path tmp) {
         clean("families", tmp);
+    }
+
+    @Test
+    void budgetSliceIsClean(@TempDir Path tmp) {
+        clean("budget", tmp);
     }
 }
