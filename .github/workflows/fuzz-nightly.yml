@@ -1,6 +1,6 @@
 name: nightly-fuzz
 
-# Widest-surface differential soak, every night. scripts/fuzz-soak.sh runs
+# Widest-surface differential soak. scripts/fuzz-soak.sh runs
 # the chunked DifferentialFuzzer (one short-lived JVM per minute — hang-leak
 # containment) with ALL widening defaults left on:
 #   - lane mix: per-batch draw between the re2j surface vs the patched re2j
@@ -20,9 +20,15 @@ name: nightly-fuzz
 # (minutes/seed inputs; seed 0 = random).
 
 on:
-  schedule:
-    # 02:30 UTC — off the top-of-hour cron stampede.
-    - cron: '30 2 * * *'
+  # Nightly cron parked 2026-11-01, in-repo (not the GitHub toggle): the
+  # pipeline proved itself end-to-end (issue #127 + the evidence artifact,
+  # runs 41028994833/41061641546), and an unattended 4h runner tenancy per
+  # night is more than the campaign wants to burn while #127 triage is
+  # manual. workflow_dispatch below still fires on demand; resume the
+  # nightlies by uncommenting the schedule block.
+  # schedule:
+  #   # 02:30 UTC — off the top-of-hour cron stampede.
+  #   - cron: '30 2 * * *'
   workflow_dispatch:
     inputs:
       minutes:
