@@ -43,8 +43,8 @@ import java.util.stream.Stream;
  * each compile and run the same regex against the same haystack. A divergence
  * between the two engines shows up directly as a test failure rather than
  * being silently masked by a retry. The ASM backend handles every in-scope
- * pattern via its three {@code DispatchMode}s ({@code INLINED} / {@code TABLE_SCAN}
- * / {@code DELEGATE}), so VM is exercised as a peer engine, not as a fallback.
+ * pattern via its two {@code DispatchMode}s ({@code INLINED} / {@code DELEGATE}),
+ * so VM is exercised as a peer engine, not as a fallback.
  *
  * <p><b>Scope:</b> only scenarios rebar <em>actually tests against Java</em>
  * run at all — {@code engines = [...]} must contain a {@code java/.*} entry
