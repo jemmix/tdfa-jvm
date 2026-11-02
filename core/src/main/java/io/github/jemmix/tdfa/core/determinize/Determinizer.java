@@ -52,7 +52,7 @@ public final class Determinizer {
      * stay within one compile CPU budget.
      */
     public static Tdfa compile(Tnfa nfa, boolean longestMatch, CompileObserver observer, WorkMeter sharedMeter) {
-        return compileWithMeter(nfa, longestMatch, false, observer, sharedMeter);
+        return compileWithMeter(nfa, longestMatch ? CompileMode.POSIX : CompileMode.PERL_PRUNED, observer, sharedMeter);
     }
 
     /**
@@ -78,7 +78,10 @@ public final class Determinizer {
      */
     public static Tdfa compileUnpruned(Tnfa nfa, boolean longestMatch, CompileObserver observer,
         WorkMeter sharedMeter) {
-        return compileWithMeter(nfa, longestMatch, true, observer, sharedMeter);
+        // POSIX never pike-cuts (the cut is a leftmost-first concept), so an
+        // unpruned POSIX compile steps identically to the pruned one —
+        // both spell POSIX here.
+        return compileWithMeter(nfa, longestMatch ? CompileMode.POSIX : CompileMode.UNPRUNED, observer, sharedMeter);
     }
 
     /**
@@ -97,10 +100,17 @@ public final class Determinizer {
      * facade then REJECTS the compile (the whole surface did not build;
      * {@link #compileUnpruned} remains available to callers building
      * whole artifacts by hand, e.g. as test oracles).
+     *
+     * <p>With {@code longestMatch == true} this compiles
+     * {@link CompileMode#POSIX} and records no side — not a loss: the pike
+     * cut never fires under leftmost-longest, so whole walks on the
+     * artifact are exact by construction ({@link Tdfa#wholeWalkExact()} is
+     * unconditionally true). The old boolean-triplet encoding silently
+     * rewrote the side away here; the mode is explicit now.
      */
     public static Tdfa compileWithWholeSide(Tnfa nfa, boolean longestMatch, CompileObserver observer,
         WorkMeter sharedMeter) {
-        return compileWithMeter(nfa, longestMatch, false, true, observer, sharedMeter);
+        return compileWithMeter(nfa, longestMatch ? CompileMode.POSIX : CompileMode.PERL_WHOLE, observer, sharedMeter);
     }
 
     /**
@@ -110,15 +120,9 @@ public final class Determinizer {
      * materialization / minimization stages in {@link TdfaMaterializer}
      * over the determinized value. One meter spans both halves.
      */
-    private static Tdfa compileWithMeter(Tnfa nfa, boolean longestMatch, boolean unpruned, CompileObserver observer,
-        WorkMeter meter) {
-        return compileWithMeter(nfa, longestMatch, unpruned, false, observer, meter);
-    }
-
-    private static Tdfa compileWithMeter(Tnfa nfa, boolean longestMatch, boolean unpruned, boolean wholeSide,
-        CompileObserver observer, WorkMeter meter) {
-        DeterminizedDfa det = new TdfaCompiler(nfa, longestMatch, unpruned, wholeSide, meter).compile(observer);
-        return TdfaMaterializer.finish(det, nfa, longestMatch, meter, observer);
+    private static Tdfa compileWithMeter(Tnfa nfa, CompileMode mode, CompileObserver observer, WorkMeter meter) {
+        DeterminizedDfa det = new TdfaCompiler(nfa, mode, meter).compile(observer);
+        return TdfaMaterializer.finish(det, nfa, mode == CompileMode.POSIX, meter, observer);
     }
 
 }
