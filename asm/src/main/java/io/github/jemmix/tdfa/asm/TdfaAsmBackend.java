@@ -191,16 +191,18 @@ public final class TdfaAsmBackend {
             }
             genExtractOne(cw, tdfa, owner, stackRegs);
             genToResult(cw, tdfa, owner);
-            if (hasEntryMasks(tdfa)) {
-                genEntryOkC(cw, owner);
-            }
             if (tdfa.stateFinalOpsByMask() != null) {
                 genPhiMasked(cw, tdfa);
             }
             if (tdfa.registerCount() > 0 && !stackRegs) {
                 genPhi(cw, tdfa);
             }
-            genPositionFlagsC(cw, owner, tdfa.unicodeWordBoundary(), pfAxes(tdfa), tdfa.posFlagDeps());
+            // positionFlagsC's only emitted caller is wholeOne's EOF
+            // phiMasked path (stateFinalOpsByMask != null) — every INLINED
+            // class without the mask table would carry a caller-less method.
+            if (tdfa.stateFinalOpsByMask() != null) {
+                genPositionFlagsC(cw, owner, tdfa.unicodeWordBoundary(), pfAxes(tdfa), tdfa.posFlagDeps());
+            }
             if (tdfa.unicodeWordBoundary()) {
                 genIsUnicodeWordChar(cw, owner);
                 genIsWordBefore(cw, owner);
@@ -241,17 +243,10 @@ public final class TdfaAsmBackend {
 
     private static void genClinit(ClassWriter cw, Tdfa tdfa) {
         // Field declarations only; all data flows from the Tdfa arg through <init>.
-        // (Populating ENTRY_MASK/ACCEPT_MASK/IS_ACCEPT/STOP_MASK/FIXED_* via
+        // (Populating ACCEPT_MASK/IS_ACCEPT/STOP_MASK/FIXED_* via
         // per-element IASTORE in <clinit> would exceed the JVM 65 KB
         // method-size limit on DFAs with many states — e.g. dictionary alternation,
         // 21 K states × 64 STOP_MASK slots = 1.36 M entries.)
-        // ENTRY_MASK (like entryOkC below) only ships when some state actually
-        // carries an entry mask — INLINED classes are fastPath (all masks zero)
-        // and would otherwise retain a table no emitted path reads.
-        if (hasEntryMasks(tdfa)) {
-            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "ENTRY_MASK", "[I", null, null)
-                .visitEnd();
-        }
         for (String f : new String[]{"ACCEPT_MASK", "STOP_MASK", "IS_ACCEPT"}) {
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, f, "[I", null, null).visitEnd();
         }
@@ -281,7 +276,7 @@ public final class TdfaAsmBackend {
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "runner", RUNNER_D, null, null).visitEnd();
         if (tdfa.unicodeWordBoundary()) {
             // ACC_FINAL: static finals assigned in <init> via PUTSTATIC are the
-            // established emitted-class pattern here (ENTRY_MASK et al., verified
+            // established emitted-class pattern here (ACCEPT_MASK et al., verified
             // across JDK 8-26 CI) — one instance per generated class in practice,
             // and the second-instance rebind hazard dies (runner-immutability W4).
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "WORD_RANGES", "[I", null, null)
@@ -302,13 +297,6 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ALOAD, 1);
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "wordRanges", "()[I", false);
             mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "WORD_RANGES", "[I");
-        }
-        // ENTRY_MASK = tdfa.stateEntryMask() (reference copy — no per-element
-        // bytecode); gated on the same compile-time fact as the field decl.
-        if (hasEntryMasks(tdfa)) {
-            mv.visitVarInsn(Opcodes.ALOAD, 1);
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFA, "stateEntryMask", "()[I", false);
-            mv.visitFieldInsn(Opcodes.PUTSTATIC, owner, "ENTRY_MASK", "[I");
         }
         // ACCEPT_MASK = tdfa.stateAcceptMask()
         mv.visitVarInsn(Opcodes.ALOAD, 1);
@@ -917,40 +905,6 @@ public final class TdfaAsmBackend {
         mv.visitEnd();
     }
 
-    // ===== entryOkC — entry mask check over String (helper for DFA dispatch) =====
-
-    private static void genEntryOkC(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "entryOkC",
-            "(IIILjava/lang/String;)Z", null, null);
-        mv.visitCode();
-        // locals: 0=state, 1=pos, 2=len, 3=input, 4=required
-        mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ENTRY_MASK", "[I");
-        mv.visitVarInsn(Opcodes.ILOAD, 0);
-        mv.visitInsn(Opcodes.IALOAD);
-        mv.visitVarInsn(Opcodes.ISTORE, 4);
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
-        Label ok = new Label();
-        mv.visitJumpInsn(Opcodes.IFEQ, ok);
-        // (positionFlagsC(pos, len, input) & required) == required
-        mv.visitVarInsn(Opcodes.ILOAD, 1);
-        mv.visitVarInsn(Opcodes.ILOAD, 2);
-        mv.visitVarInsn(Opcodes.ALOAD, 3);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "positionFlagsC", "(IILjava/lang/String;)I", false);
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
-        mv.visitInsn(Opcodes.IAND);
-        mv.visitVarInsn(Opcodes.ILOAD, 4);
-        Label yes = new Label();
-        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, yes);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitInsn(Opcodes.IRETURN);
-        mv.visitLabel(ok);
-        mv.visitLabel(yes);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitInsn(Opcodes.IRETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
-    }
-
     // ===== positionFlagsC — position flags over String (helper) =====
 
     /**
@@ -1197,24 +1151,6 @@ public final class TdfaAsmBackend {
             }
         }
 
-        // Entry check for start state at ST — skip if ENTRY_MASK[0] == 0
-        if (tdfa.stateEntryMask()[0] != 0) {
-            mv.visitFieldInsn(Opcodes.GETSTATIC, owner, "ENTRY_MASK", "[I");
-            mv.visitInsn(Opcodes.ICONST_0);
-            mv.visitInsn(Opcodes.IALOAD);
-            mv.visitVarInsn(Opcodes.ISTORE, T1);
-            mv.visitVarInsn(Opcodes.ILOAD, T1);
-            Label initEntryOk = new Label();
-            mv.visitJumpInsn(Opcodes.IFEQ, initEntryOk);
-            emitPFInline(mv, owner, IN, ST, LEN, PF2, T2, T3, tdfa.unicodeWordBoundary(), pfAxes(tdfa));
-            mv.visitVarInsn(Opcodes.ILOAD, PF2);
-            mv.visitVarInsn(Opcodes.ILOAD, T1);
-            mv.visitInsn(Opcodes.IAND);
-            mv.visitVarInsn(Opcodes.ILOAD, T1);
-            mv.visitJumpInsn(Opcodes.IF_ICMPNE, searchNext);
-            mv.visitLabel(initEntryOk);
-        }
-
         // state=0, pos=start, haveAccept=false, lastAcceptPos=-1
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitVarInsn(Opcodes.ISTORE, STATE);
@@ -1391,7 +1327,7 @@ public final class TdfaAsmBackend {
         int nStates = tdfa.stateCount();
         // Hoisted locals: accessors are defensive copies (Tdfa policy) —
         // never call one inside the per-state/per-range emit loops below.
-        int[] sm = tdfa.stateMeta(), sb = tdfa.stateBase(), rg = tdfa.ranges(), sem = tdfa.stateEntryMask();
+        int[] sm = tdfa.stateMeta(), sb = tdfa.stateBase(), rg = tdfa.ranges();
 
         Label[] sl = new Label[nStates];
         Label def = new Label();
@@ -1463,28 +1399,9 @@ public final class TdfaAsmBackend {
                 // writes surface as skipped groups (parity with
                 // TdfaRunner's walk).
                 // Checked at pos+width without mutating POS — ops still need
-                // the source position for SET_POS.
-                if (sem[target] != 0) {
-                    ic(mv, target);
-                    mv.visitVarInsn(Opcodes.ILOAD, POS);
-                    mv.visitVarInsn(Opcodes.ILOAD, C_LV);
-                    mv.visitLdcInsn(0x10000);
-                    Label w1 = new Label(), wDone = new Label();
-                    mv.visitJumpInsn(Opcodes.IF_ICMPLT, w1);
-                    mv.visitInsn(Opcodes.ICONST_2);
-                    mv.visitJumpInsn(Opcodes.GOTO, wDone);
-                    mv.visitLabel(w1);
-                    mv.visitInsn(Opcodes.ICONST_1);
-                    mv.visitLabel(wDone);
-                    mv.visitInsn(Opcodes.IADD);
-                    mv.visitVarInsn(Opcodes.ILOAD, LEN);
-                    mv.visitVarInsn(Opcodes.ALOAD, IN);
-                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "entryOkC", "(IIILjava/lang/String;)Z", false);
-                    Label entryOk = new Label();
-                    mv.visitJumpInsn(Opcodes.IFNE, entryOk);
-                    mv.visitJumpInsn(Opcodes.GOTO, dfaEnd);
-                    mv.visitLabel(entryOk);
-                }
+                // the source position for SET_POS. (No emitted check: this
+                // emitter runs only on fastPath artifacts, whose entry masks
+                // are all zero — the VM walk owns the masked discipline.)
 
                 // register ops (extract only)
                 if (opsOff != 0) {
@@ -2664,7 +2581,7 @@ public final class TdfaAsmBackend {
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNNER, "takeTree", "(" + SCRATCH_D + ")" + TAGTREE_D, false);
             mv.visitVarInsn(Opcodes.ASTORE, TREE);
         }
-        // fastPath ⇒ ENTRY_MASK[0] == 0: no start-entry check to emit
+        // fastPath ⇒ every entry mask is zero: no start-entry check to emit
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitVarInsn(Opcodes.ISTORE, STATE);
         mv.visitInsn(Opcodes.ICONST_0);
@@ -2962,20 +2879,5 @@ public final class TdfaAsmBackend {
             }
         }
         return total;
-    }
-
-    /** Whether any state carries a nonzero entry mask. Always false for
-     *  emitted classes (TdfaRunner.fastPathEligible rejects any nonzero
-     *  mask before INLINED is picked), so ENTRY_MASK and entryOkC ship in
-     *  no generated class today — gated on this fact rather than deleted
-     *  so a future masked INLINED shape keeps its tables and its dispatch
-     *  stays a transcription of the runner walk. */
-    private static boolean hasEntryMasks(Tdfa tdfa) {
-        for (int m : tdfa.stateEntryMask()) {
-            if (m != 0) {
-                return true;
-            }
-        }
-        return false;
     }
 }
