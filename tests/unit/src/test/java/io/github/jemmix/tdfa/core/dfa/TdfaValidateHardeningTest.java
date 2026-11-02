@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa.core.dfa;
 
+import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,9 +31,12 @@ class TdfaValidateHardeningTest {
     }
 
     private static Tdfa build(Object[] a) {
+        // The fullest constructor, constants spelled: no side table, no
+        // multi-valued tags, the java.util.regex-parity lane (semantics is
+        // inert to the validation under test), the 64-cell flag table.
         return new Tdfa(0, 0, null, 0, 0, 0, (Integer) a[0], (int[]) a[1], (int[]) a[2], (int[]) a[3], (int[]) a[4],
             (int[]) a[5], (int[]) a[6], (int[]) a[7], (int[]) a[8], (int[]) a[9], false, null, null, false, false, null,
-            null, null);
+            null, null, false, null, null, null, null, false, false, Semantics.of(), 64, false);
     }
 
     private static Tdfa buildValid() {

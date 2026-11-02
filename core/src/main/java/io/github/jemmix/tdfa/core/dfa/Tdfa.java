@@ -309,37 +309,12 @@ public final class Tdfa {
      */
     private final boolean absBeginBound;
 
-    /** Every axis set (the RE2-lineage reading): the legacy-constructor default. */
-    private static final Semantics ALL_AXES = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
-        .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU();
-
-    public Tdfa(int tagCount, int groupCount, Map<String, Integer> namedGroups, int registerCount, int finalRegBase,
-        int startState, int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
-        int[] stateFinalOpsByMask, int[] ranges, int[] ops, int[] entryHiPrefix, int[] stateEntryMask,
-        int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
-        boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset) {
-        this(tagCount, groupCount, namedGroups, registerCount, finalRegBase, startState, stateCount, stateMeta,
-            stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges, ops, entryHiPrefix, stateEntryMask,
-            stateAcceptMask, longestMatch, stopOnAcceptMask, stopMaskUniform, multiline, unicodeWordBoundary,
-            wordRanges, fixedBase, fixedOffset, false, null, null, null, null, false, false, ALL_AXES, 64);
-    }
-
-    public Tdfa(int tagCount, int groupCount, Map<String, Integer> namedGroups, int registerCount, int finalRegBase,
-        int startState, int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
-        int[] stateFinalOpsByMask, int[] ranges, int[] ops, int[] entryHiPrefix, int[] stateEntryMask,
-        int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
-        boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset, boolean pikeCutMatters,
-        int[] wholeRanges, int[] wholeBase, int[] wholeCount, int[] wholeHiPrefix, boolean wholeSideComplete,
-        boolean multiValued, Semantics semantics, int posFlagCells) {
-        this(tagCount, groupCount, namedGroups, registerCount, finalRegBase, startState, stateCount, stateMeta,
-            stateBase, stateFinalOpsOff, stateFinalOpsByMask, ranges, ops, entryHiPrefix, stateEntryMask,
-            stateAcceptMask, longestMatch, stopOnAcceptMask, stopMaskUniform, multiline, unicodeWordBoundary,
-            wordRanges, fixedBase, fixedOffset, pikeCutMatters, wholeRanges, wholeBase, wholeCount, wholeHiPrefix,
-            wholeSideComplete, multiValued, semantics, posFlagCells, false);
-    }
-
     /** Fullest entry: the StartS-selection fact (see
-     *  {@link #hasSupplementaryStarts}) rides beside the policy. */
+     *  {@link #hasSupplementaryStarts}) rides beside the policy. The one
+     *  public constructor — the telescoping shortcuts it used to have (with
+     *  their fabricated all-axes lane default) are deleted; the two real
+     *  callers (the materializer, the hardening test) spell their
+     *  constants. */
     public Tdfa(int tagCount, int groupCount, Map<String, Integer> namedGroups, int registerCount, int finalRegBase,
         int startState, int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
         int[] stateFinalOpsByMask, int[] ranges, int[] ops, int[] entryHiPrefix, int[] stateEntryMask,

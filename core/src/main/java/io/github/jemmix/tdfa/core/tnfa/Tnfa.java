@@ -152,7 +152,10 @@ public final class Tnfa {
     public static final int ABS_END = 32;
     public static final int FINAL_END = 64;
 
-    /** Every axis set (the RE2-lineage reading): the legacy-overload default. */
+    /** Every axis set (the RE2-lineage reading): the compile-entry default
+     *  when a caller passes no explicit {@code Semantics} — the one spelling
+     *  of the lane in core (Tdfa's drifted seven-axis twin died with its
+     *  legacy constructors). */
     private static final Semantics ALL_AXES = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
         .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU().spaceRe2();
 
