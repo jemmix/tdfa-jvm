@@ -699,7 +699,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     // Test-only: starts the VM search ladder AT a given rung instead of at
     // the top — every rung at or above the forced one is skipped, rungs
     // below it still run (their natural fall-through, budgets included).
-    // Only the four complete-search rungs are forceable: any of them can
+    // Only the three complete-search rungs are forceable: any of them can
     // answer any find() alone, so a forced run must return exactly what the
     // natural ladder returns — the invariant the fuzzer checks per case.
     // ORIGIN_SIM is valid only on fastPath DFAs (mask-free simulation) and
@@ -1284,14 +1284,13 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 // The mask-free sim is fastPath-only; degrade to the trigger
                 // scan (the generic ladder's complete search).
                 // fall through
-            case TRIGGER :
             case RAW_SCAN : {
                 // The lane's own trigger rung: the codepoint memo under
                 // CODEPOINT_BOUNDARIES, the unit raw scan (interior seeds,
                 // see unitTrigger) under unit semantics — both bound the
                 // restart loop to the kill-point window below, mirroring
                 // the natural ladder's routing.
-                int w = scanSkipsPairs ? triggerScan(input, from, to, sc, force) : unitTrigger(input, from, to, sc);
+                int w = scanSkipsPairs ? triggerScan(input, from, to, sc) : unitTrigger(input, from, to, sc);
                 if (w < 0) {
                     return null;
                 }
@@ -1693,17 +1692,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     }
 
     /**
-     * Trigger scan: advance the search DFA over {@code [from, to)}; on the first
-     * position where an accepting state is (over-approximately) live, return the
-     * latest kill-point window start {@code W} ({@code from} if none) — every
-     * surviving configuration started at or after {@code W}, so the exact leftmost
-     * match lies in {@code [W, to]}. Returns -1 when no accept can fire at all.
-     */
-    private int triggerScan(String input, int from, int to, MatchScratch sc) {
-        return triggerScan(input, from, to, sc, null);
-    }
-
-    /**
      * The unit-semantics trigger entry (see {@link #unitRawScan}): raw —
      * the interior seeds break the memo's pure-row algebra — traced
      * RAW_SCAN like the codepoint lane's raw fallback. Same contract as
@@ -1721,10 +1709,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * restoration criteria live in docs/search-dfa-memo-tradeoffs.md.)
      * Returns the kill-point window start W — every configuration alive
      * before W is dead, so the restart loop may start there — or -1 =
-     * no match at all. {@code force} is kept for the forced-strategy
-     * hook; both TRIGGER and RAW_SCAN now serve the same raw path.
+     * no match at all. If the memo is ever restored the trigger rung
+     * re-diverges from RAW_SCAN — a two-line revert.
      */
-    private int triggerScan(String input, int from, int to, MatchScratch sc, Strategy force) {
+    private int triggerScan(String input, int from, int to, MatchScratch sc) {
         trace(Strategy.RAW_SCAN);
         return rawScan(input, from, to, from, null, sc);
     }
@@ -1947,7 +1935,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
     }
 
     /**
-     * Memoized search-DFA trigger scan: window start W, or -1 = no match.
+     * Kill-point trigger scan (see {@link #triggerScan}): window start W, or -1 = no match.
      * {@code sc} may be null (carrier-free engines' cold fallback).
      */
     @EmittedSurface
@@ -3471,8 +3459,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         CAND_SCAN, // first-char-set bit scan + exact walks (short input)
         EXACT_FROM, // one exact walk from the requested start
         ORIGIN_SIM, // budgeted origin-tracking multi-state simulation
-        TRIGGER, // trigger rung (kill-point scan; its search-DFA memo is deleted)
-        RAW_SCAN, // unmemoized live-set simulation
+        RAW_SCAN, // unmemoized live-set simulation (the former TRIGGER rung's kill-point scan; its memo is deleted)
         WALK_RESTART, // defensive per-start restart loop
         ANCHORED_FAST, // flat-table anchored loop (fastPath)
         ANCHORED, // generic anchored walk

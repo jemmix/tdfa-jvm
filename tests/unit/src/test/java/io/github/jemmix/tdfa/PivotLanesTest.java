@@ -226,7 +226,7 @@ class PivotLanesTest {
             assertThat(probe(vm, sbW)).as("%s: StringBuilder path on %s / %s", what, pattern, esc(in)).isEqualTo(vmStr);
             assertThat(probe(vm, cbW)).as("%s: CharBuffer path on %s / %s", what, pattern, esc(in)).isEqualTo(vmStr);
             for (TdfaRunner.Strategy f : new TdfaRunner.Strategy[]{TdfaRunner.Strategy.ORIGIN_SIM,
-                TdfaRunner.Strategy.TRIGGER, TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART}) {
+                TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART}) {
                 String forced;
                 try {
                     TdfaRunner.setForcedStrategy(f);
@@ -270,7 +270,7 @@ class PivotLanesTest {
             assertThat(probe(vm, cbW)).as("%s: CharBuffer path on %s / %s", what, lanePattern, esc(in))
                 .isEqualTo(vmStr);
             for (TdfaRunner.Strategy f : new TdfaRunner.Strategy[]{TdfaRunner.Strategy.ORIGIN_SIM,
-                TdfaRunner.Strategy.TRIGGER, TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART}) {
+                TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART}) {
                 String forced;
                 try {
                     TdfaRunner.setForcedStrategy(f);

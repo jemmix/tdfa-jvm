@@ -192,7 +192,7 @@ class Family6BatteryTest {
         assertThat(engineProto(vm, CharBuffer.wrap(r.input))).as("%s: CharBuffer /%s/", r.id, r.pattern)
             .isEqualTo(want);
         for (TdfaRunner.Strategy f : new TdfaRunner.Strategy[]{TdfaRunner.Strategy.ORIGIN_SIM,
-            TdfaRunner.Strategy.TRIGGER, TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART}) {
+            TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART}) {
             String forced;
             try {
                 TdfaRunner.setForcedStrategy(f);
