@@ -25,10 +25,9 @@ package io.github.jemmix.tdfa.core.unicode;
  *
  * <h2>Selection</h2>
  * Resolved at first use via {@link UnicodeProviders#get()} based on the
- * system property {@value UnicodeProviders#PROPERTY_NAME}. Built-in values:
- * {@code "jdk"} (default; backed by {@link java.lang.Character}) and
- * {@code "no-unicode"} (disables {@code \p{}} entirely). Any other value is
- * treated as a fully-qualified class name implementing this interface.
+ * system property {@value UnicodeProviders#PROPERTY_NAME}. Built-in value:
+ * {@code "jdk"} (default; backed by {@link java.lang.Character}); any other
+ * value is treated as a fully-qualified class name implementing this interface.
  *
  * <h2>Thread-safety</h2>
  * Implementations must be safe for concurrent use after initialisation; the

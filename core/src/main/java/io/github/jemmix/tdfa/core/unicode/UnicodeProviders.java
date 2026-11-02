@@ -9,8 +9,6 @@ package io.github.jemmix.tdfa.core.unicode;
  * <h2>Property values</h2>
  * <ul>
  *   <li>{@code "jdk"} (default if unset) — {@link JdkUnicodeDataProvider}</li>
- *   <li>{@code "no-unicode"} — {@link NoUnicodeProvider}; compiling any pattern
- *       containing {@code \p{...}} or {@code \P{...}} throws at parse time</li>
  *   <li>Any other value — treated as the fully-qualified name of a class
  *       implementing {@link UnicodeDataProvider}, loaded reflectively</li>
  * </ul>
@@ -73,8 +71,6 @@ public final class UnicodeProviders {
         switch (v) {
             case "jdk" :
                 return JdkUnicodeDataProvider.INSTANCE;
-            case "no-unicode" :
-                return NoUnicodeProvider.INSTANCE;
             default :
                 Class<?> cls;
                 try {
@@ -92,15 +88,6 @@ public final class UnicodeProviders {
                     throw new IllegalStateException(
                         "Unicode provider class " + v + " has no accessible no-arg constructor", e);
                 }
-        }
-    }
-
-    /** Test-only: clears the cached provider so the property can be re-read. */
-    @SuppressWarnings("StaticAssignmentOfThrowable")
-    static void resetForTest() {
-        synchronized (UnicodeProviders.class) {
-            cached = null;
-            failure = null;
         }
     }
 }
