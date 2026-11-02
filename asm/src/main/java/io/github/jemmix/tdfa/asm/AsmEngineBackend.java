@@ -20,8 +20,8 @@ public final class AsmEngineBackend implements EngineBackend {
     }
 
     @Override
-    public RegexEngine generate(Tdfa artifact, long memoBudgetBytes) {
-        return TdfaAsmBackend.generate(artifact, memoBudgetBytes);
+    public RegexEngine generate(Tdfa artifact) {
+        return TdfaAsmBackend.generate(artifact);
     }
 
     @Override

@@ -84,8 +84,13 @@ public final class CompiledRegex {
                     obs, ledger);
         }
         Tdfa find = Determinizer.compile(nfa, options.isLongestMatch(), obs, ledger.fork(0));
+        // The same end-of-compile execution-RAM check the facades run: a
+        // pattern whose retained tables alone exceed the runtime budget
+        // rejects identically on every tier (the javadoc's
+        // "budget rejections" promise covers this class).
+        PatternCompiler.checkRetainedFootprint(find, obs);
         long t0 = System.nanoTime();
-        RegexEngine engine = new TdfaRunner(find, Budgets.runtimeMemoryBytes());
+        RegexEngine engine = new TdfaRunner(find);
         obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
         obs.note("engine", "interpreter");
         return new CompiledRegex(pattern, engine);

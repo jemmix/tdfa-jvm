@@ -64,7 +64,7 @@ class BudgetModelTest {
         // (The runtime memory budget's memo caps — sdfa rows/blocks, walk
         //  blocks — were deleted with the memos they bounded; see
         //  docs/search-dfa-memo-tradeoffs.md. runtimeMemoryBytes stays as
-        //  the compile-time execution-RAM bound via runtimeMemoAllowance.)
+        //  the compile-time execution-RAM bound: the retained-tables check.)
         assertThat(Budgets.runtimeMemoryBytes()).isEqualTo(16_777_216L);
     }
 

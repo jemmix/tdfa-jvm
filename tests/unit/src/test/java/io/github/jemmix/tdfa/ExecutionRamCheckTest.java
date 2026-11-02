@@ -94,13 +94,13 @@ class ExecutionRamCheckTest {
     }
 
     /** The check is transparent: every compile emits a runtimeFootprint
-     *  note with the retained/allowance/budget ledger. */
+     *  note with the retained/budget ledger. */
     @Test
     void footprintNoteIsRecorded() {
         CompilationReport r = new CompilationReport();
         Pattern.compile("a(b|c)*d", CompileOptions.of().observer(r));
         String note = r.notes().get("runtimeFootprint");
-        assertThat(note).isNotNull().contains("retained ").contains("memo allowance ").contains("budget 16777216 B");
+        assertThat(note).isNotNull().contains("retained ").contains("budget 16777216 B");
     }
 
     /** The artifact term is the weighted flat sum of the artifact's own
@@ -119,10 +119,6 @@ class ExecutionRamCheckTest {
         // POSIX (longest) mode: no stop tier at all
         Tdfa posix = Determinizer.compile(Tnfa.compile("a[bc]*(d|e?)"), true);
         assertThat(posix.retainedTableBytes()).isEqualTo(flatSum(posix));
-        // and the allowance derivation clamps at zero:
-        assertThat(Budgets.runtimeMemoAllowance(perl.retainedTableBytes()))
-            .isEqualTo((16L << 20) - perl.retainedTableBytes());
-        assertThat(Budgets.runtimeMemoAllowance((16L << 20) + 1)).isZero();
     }
 
     private static long flatSum(Tdfa t) {

@@ -1,7 +1,6 @@
 package io.github.jemmix.tdfa.core.dfa;
 
 import io.github.jemmix.tdfa.core.ast.Alphabet;
-import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.emit.EmittedSurface;
 import io.github.jemmix.tdfa.core.engine.MatchResult;
 import io.github.jemmix.tdfa.core.engine.MatchScratch;
@@ -331,26 +330,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
 
     @EmittedSurface
     public TdfaRunner(Tdfa tdfa) {
-        this(tdfa, Budgets.runtimeMemoryBytes());
-    }
-
-    /**
-     * Construct with an explicit lazy-memo budget. HISTORICAL: the two lazy
-     * memos this budget capped (search-DFA rows/blocks, walk blocks) are
-     * both deleted — see docs/search-dfa-memo-tradeoffs.md — so the runner
-     * retains nothing lazy; the parameter survives for the public surface
-     * and the facade's end-of-compile execution-RAM check ({@link
-     * Budgets#runtimeMemoAllowance(long)}, which still splits a pattern's
-     * residual across its engines and rejects compiles whose tables alone
-     * overshoot the runtime budget).
-     *
-     * @param memoBudgetBytes lazy-memo byte budget for this runner (&gt;0)
-     */
-    public TdfaRunner(Tdfa tdfa, long memoBudgetBytes) {
         this.tdfa = tdfa;
-        // memoBudgetBytes: accepted and unused (both lazy memos deleted —
-        // see docs/search-dfa-memo-tradeoffs.md); the parameter stays for
-        // the public surface the facade and emitters call.
         this.stateMeta = tdfa.stateMeta;
         this.stateBase = tdfa.stateBase;
         this.stateFinalOpsOff = tdfa.stateFinalOpsOff;

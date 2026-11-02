@@ -214,8 +214,8 @@ class PivotLanesTest {
         String[] expected) {
         assertThat(inputs.length).as("%s: battery sizes", what).isEqualTo(expected.length);
         Tdfa tdfa = compileTdfa(pattern, semantics);
-        RegexEngine vm = new TdfaRunner(tdfa, 1 << 20);
-        RegexEngine asm = TdfaAsmBackend.generate(tdfa, 1 << 20);
+        RegexEngine vm = new TdfaRunner(tdfa);
+        RegexEngine asm = TdfaAsmBackend.generate(tdfa);
         for (int i = 0; i < inputs.length; i++) {
             String in = inputs[i];
             String vmStr = probe(vm, in);
@@ -257,8 +257,8 @@ class PivotLanesTest {
     private static void assertDualOracleParity(String what, String lanePattern, String oraclePattern, int jurFlags,
         Semantics lane, String[] inputs) {
         Tdfa tdfa = compileTdfa(lanePattern, lane);
-        RegexEngine vm = new TdfaRunner(tdfa, 1 << 20);
-        RegexEngine asm = TdfaAsmBackend.generate(tdfa, 1 << 20);
+        RegexEngine vm = new TdfaRunner(tdfa);
+        RegexEngine asm = TdfaAsmBackend.generate(tdfa);
         Pattern oracle = Pattern.compile(oraclePattern, jurFlags);
         for (String in : inputs) {
             String vmStr = probe(vm, in);
@@ -635,8 +635,8 @@ class PivotLanesTest {
             "a\u212A", "s\u017F", "Stra\u00dfe", "STRASSE", "aaa", "aab", "ab"};
         for (String pat : pats) {
             Tdfa tdfa = compileTdfa(pat, RE2);
-            RegexEngine vm = new TdfaRunner(tdfa, 1 << 20);
-            RegexEngine asm = TdfaAsmBackend.generate(tdfa, 1 << 20);
+            RegexEngine vm = new TdfaRunner(tdfa);
+            RegexEngine asm = TdfaAsmBackend.generate(tdfa);
             for (String in : inputs) {
                 String want = re2jProbe(pat, in);
                 assertThat(probe(vm, in)).as("RE2 core == facade: %s / %s", pat, esc(in)).isEqualTo(want);

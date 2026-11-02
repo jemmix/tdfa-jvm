@@ -154,8 +154,8 @@ cache, with the tripwires unchanged.)* Concretely, as `SearchDfa` had it:
   than it reclaims at these sizes, and eviction is only observable as
   warmth under budget churn, a regime no soak has evidenced; the bench
   and the tripwires own that claim, and the alternative stays listed.
-- **Both tiers.** The ASM tier embeds `new TdfaRunner(tdfa, memoBudget)`
-  in emitted code, so both backends share the one memo shape; the
+- **Both tiers.** The ASM tier embeds `new TdfaRunner(tdfa)`
+  in emitted code, so both backends share the one runner shape; the
   emitted classes shed their locking machinery (G4 is the only emitted
   mutable field, and it goes final).
 

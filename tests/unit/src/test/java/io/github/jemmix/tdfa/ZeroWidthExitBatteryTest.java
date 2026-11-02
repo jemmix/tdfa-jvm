@@ -143,10 +143,10 @@ class ZeroWidthExitBatteryTest {
         Tnfa nfa =
             Tnfa.compile(r.pattern, false, false, false, JUR, UnicodeProviders.get(), CompileObserver.NONE, ledger);
         Tdfa tdfa = Determinizer.compileWithWholeSide(nfa, false, CompileObserver.NONE, ledger.fork(0));
-        TdfaRunner vm = new TdfaRunner(tdfa, 1 << 20);
+        TdfaRunner vm = new TdfaRunner(tdfa);
         String want = engineProto(vm, r.input);
-        assertThat(engineProto(TdfaAsmBackend.generate(tdfa, 1 << 20), r.input))
-            .as("%s: ASM == VM /%s/", r.id, r.pattern).isEqualTo(want);
+        assertThat(engineProto(TdfaAsmBackend.generate(tdfa), r.input)).as("%s: ASM == VM /%s/", r.id, r.pattern)
+            .isEqualTo(want);
         assertThat(engineProto(vm, new StringBuilder(r.input))).as("%s: StringBuilder /%s/", r.id, r.pattern)
             .isEqualTo(want);
         assertThat(engineProto(vm, CharBuffer.wrap(r.input))).as("%s: CharBuffer /%s/", r.id, r.pattern)

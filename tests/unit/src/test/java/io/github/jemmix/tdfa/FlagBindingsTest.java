@@ -76,12 +76,12 @@ class FlagBindingsTest {
     void customLetterSelectsTheFoldUniverse() {
         // (?v) bound to UNICODE_CASE — the JUR (?U) reading under a
         // renamed letter, scoped like every inline flag
-        RegexEngine eng = new TdfaRunner(compile("(?v)(?i)k", V_AS_FOLD), 1 << 20);
+        RegexEngine eng = new TdfaRunner(compile("(?v)(?i)k", V_AS_FOLD));
         assertThat(first(eng, "\u212A")).as("v-bound fold widens to the Kelvin sign").isEqualTo("0..1");
         assertThat(first(eng, "\u017F")).as("ſ is not in k's orbit").isEqualTo("none");
         assertThat(Pattern.compile("(?u)(?i)k").matcher("\u212A").find())
             .as("the live JDK reading under java's own spelling").isTrue();
-        RegexEngine scoped = new TdfaRunner(compile("(?i)(?v:k)k", V_AS_FOLD), 1 << 20);
+        RegexEngine scoped = new TdfaRunner(compile("(?i)(?v:k)k", V_AS_FOLD));
         assertThat(first(scoped, "\u212Ak")).as("v-scoped fold widens inside, restores at ')'").isEqualTo("0..2");
         assertThat(first(scoped, "\u212A\u212A")).as("the atom after the scoped group folds ASCII").isEqualTo("none");
         assertThat(Pattern.compile("(?i)(?u:k)k").matcher("\u212Ak").find()).isTrue();
@@ -91,12 +91,12 @@ class FlagBindingsTest {
     @Test
     void customLetterSelectsTheClassTables() {
         // (?v) bound to UNICODE_CHARACTER_CLASS — java's (?U) reading
-        RegexEngine eng = new TdfaRunner(compile("(?v)\\w", V_AS_UCC), 1 << 20);
+        RegexEngine eng = new TdfaRunner(compile("(?v)\\w", V_AS_UCC));
         assertThat(first(eng, "é")).as("v-bound UCC widens \\w to Unicode").isEqualTo("0..1");
         assertThat(Pattern.compile("(?U)\\w").matcher("é").find()).as("the live JDK reading under java's own spelling")
             .isTrue();
         // and the ASCII tables return after the scope closes
-        RegexEngine scoped = new TdfaRunner(compile("(?v:\\w)\\w", V_AS_UCC), 1 << 20);
+        RegexEngine scoped = new TdfaRunner(compile("(?v:\\w)\\w", V_AS_UCC));
         assertThat(first(scoped, "é")).as("the atom after the scoped group keeps ASCII \\w").isEqualTo("none");
     }
 
@@ -106,19 +106,19 @@ class FlagBindingsTest {
             .isInstanceOf(PatternSyntaxException.class);
         assertThatThrownBy(() -> compile("(?u)\\w", NO_DOTALL)).isInstanceOf(PatternSyntaxException.class);
         assertThatCode(() -> compile("a", NO_DOTALL)).doesNotThrowAnyException();
-        assertThat(first(new TdfaRunner(compile("(?i)K", NO_DOTALL), 1 << 20), "k"))
+        assertThat(first(new TdfaRunner(compile("(?i)K", NO_DOTALL)), "k"))
             .as("the bound letters still activate their behaviors").isEqualTo("0..1");
     }
 
     @Test
     void stockLanesDisagreeOnExactlyTheULetter() {
         // U = UNGREEDY: (?U)a+ is lazy, (?U)a+? is greedy (double swap)
-        assertThat(first(new TdfaRunner(compile("(?U)a+", FlagBindings.RE2_LANE), 1 << 20), "aaa"))
+        assertThat(first(new TdfaRunner(compile("(?U)a+", FlagBindings.RE2_LANE)), "aaa"))
             .as("RE2 lane: U swaps the quantifier preference").isEqualTo("0..1");
-        assertThat(first(new TdfaRunner(compile("(?U)a+?", FlagBindings.RE2_LANE), 1 << 20), "aaa"))
+        assertThat(first(new TdfaRunner(compile("(?U)a+?", FlagBindings.RE2_LANE)), "aaa"))
             .as("RE2 lane: a+? under U is greedy").isEqualTo("0..3");
         // U = UNICODE_CASE: the quantifier is untouched
-        assertThat(first(new TdfaRunner(compile("(?U)a+", FlagBindings.JUR_LANE), 1 << 20), "aaa"))
+        assertThat(first(new TdfaRunner(compile("(?U)a+", FlagBindings.JUR_LANE)), "aaa"))
             .as("JUR lane: U does not touch greed").isEqualTo("0..3");
         // the two lanes agree on every other letter
         assertThat(FlagBindings.JUR_LANE.asMap().get('u')).isEqualTo(FlagBindings.RE2_LANE.asMap().get('u'));

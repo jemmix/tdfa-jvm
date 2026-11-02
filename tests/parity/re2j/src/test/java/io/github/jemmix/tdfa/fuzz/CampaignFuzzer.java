@@ -537,8 +537,8 @@ public final class CampaignFuzzer {
         String jurLaneVm;
         String jurLaneAsm;
         try {
-            jurLaneVm = engineProtocol(new TdfaRunner(find, 1 << 20), c.input());
-            jurLaneAsm = engineProtocol(TdfaAsmBackend.generate(find, 1 << 20), c.input());
+            jurLaneVm = engineProtocol(new TdfaRunner(find), c.input());
+            jurLaneAsm = engineProtocol(TdfaAsmBackend.generate(find), c.input());
         } catch (RuntimeException | StackOverflowError e) {
             // The compile catch-all's twin, flipped hard by the same
             // re-base philosophy: a match-time engine exception is an
