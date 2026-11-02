@@ -58,48 +58,13 @@ public final class PatternCompiler {
     }
 
     /**
-     * The user-bit mapping: each JUR-compat opt-out bit sets its axis,
-     * on top of the surface's default lane; no bits is that default —
-     * for the jur surface every axis unset (the
-     * {@code java.util.regex}-parity reading throughout), for the re2j
-     * surface the RE2-lineage reading throughout (which the bits then
-     * cannot move — its roster does not carry them).
-     */
-    static Semantics semanticsOf(int flags, PatternSurface surface) {
-        Semantics s = surface.defaultSemantics();
-        if ((flags & PatternSurface.UNIX_LINES) != 0) {
-            s = s.unixLines();
-        }
-        if ((flags & PatternSurface.UNICODE_CASE) != 0) {
-            s = s.unicodeCase();
-        }
-        if ((flags & PatternSurface.CODEPOINT_BOUNDARIES) != 0) {
-            s = s.codepointBoundaries();
-        }
-        if ((flags & PatternSurface.EMPTY_LAST_LINE) != 0) {
-            s = s.emptyLastLine();
-        }
-        if ((flags & PatternSurface.END_OF_TEXT_ONLY) != 0) {
-            s = s.endOfTextOnly();
-        }
-        if ((flags & PatternSurface.EMPTY_ITERATION_SPANS) != 0) {
-            s = s.emptyIterationSpans();
-        }
-        if ((flags & PatternSurface.UNGREEDY_U) != 0) {
-            s = s.ungreedyU();
-        }
-        if ((flags & PatternSurface.SPACE_RE2) != 0) {
-            s = s.spaceRe2();
-        }
-        return s;
-    }
-
-    /**
      * The one machinery entry: an explicit {@link Semantics} (the
      * surfaces' options route — {@code compile(regex, CompileOptions)})
-     * selects the compile's interpretation policy; {@code null} maps the
-     * user's flag bits onto the {@link PatternSurface surface's} default
-     * lane.
+     * selects the compile's interpretation policy; {@code null} takes the
+     * {@link PatternSurface surface's} default lane — no accepted flag
+     * bit selects a semantics axis (the rosters' bits are all spelled
+     * into the pattern itself by the rewrites below or baked into the
+     * surface at registration).
      */
     public static TDFAPattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider provider,
         CompileObserver observer, Semantics explicitSemantics, PatternSurface surface) {
@@ -109,13 +74,7 @@ public final class PatternCompiler {
         if ((flags & ~surface.validFlags()) != 0) {
             throw new IllegalArgumentException(surface.flagsMessage());
         }
-        // JUR-compat, post-flip: the opt-out bits map onto the axes —
-        // a bit set restores the RE2-lineage side of that axis, unset
-        // selects the java.util.regex-parity side, and the surface's
-        // default lane runs wherever no bit speaks. RE2_COMPAT (the
-        // bits' OR) was the pre-flip default in one constant; the
-        // re2j surface bakes the same lane in as its default.
-        Semantics semantics = explicitSemantics != null ? explicitSemantics : semanticsOf(flags, surface);
+        Semantics semantics = explicitSemantics != null ? explicitSemantics : surface.defaultSemantics();
         String fl = regex;
         if ((flags & PatternSurface.CASE_INSENSITIVE) != 0) {
             fl = "(?i)" + fl;

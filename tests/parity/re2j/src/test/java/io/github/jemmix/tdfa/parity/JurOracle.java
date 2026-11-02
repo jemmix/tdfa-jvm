@@ -2,7 +2,6 @@ package io.github.jemmix.tdfa.parity;
 
 import io.github.jemmix.tdfa.core.compile.CompileOptions;
 import io.github.jemmix.tdfa.core.compile.PatternMatcher;
-import io.github.jemmix.tdfa.core.compile.PatternSurface;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.tnfa.Semantics;
@@ -65,9 +64,9 @@ public final class JurOracle {
     /**
      * Translate facade flag bits to {@code java.util.regex.Pattern} flags:
      * {@code CASE_INSENSITIVE}/{@code DOTALL}/{@code MULTILINE}/
-     * {@code UNICODE_CHARACTER_CLASS} one-to-one, plus the machinery axes
-     * {@code UNIX_LINES}/{@code UNICODE_CASE} (the
-     * {@link CompileOptions#semantics(Semantics)} route's JDK side).
+     * {@code UNICODE_CHARACTER_CLASS} one-to-one (axis probes reach the
+     * JDK side through the {@link CompileOptions#semantics(Semantics)}
+     * route with hand-built {@code java.util.regex} flags).
      * {@code LONGEST_MATCH}, {@code MULTI_VALUED_TAGS}, {@code FIND_ONLY}
      * and {@code DISABLE_UNICODE_GROUPS} have no jur reading and reject —
      * a suite pinning those stays RE2-lane-pinned by construction.
@@ -85,12 +84,6 @@ public final class JurOracle {
         }
         if ((flags & io.github.jemmix.tdfa.Pattern.UNICODE_CHARACTER_CLASS) != 0) {
             jdk |= java.util.regex.Pattern.UNICODE_CHARACTER_CLASS;
-        }
-        if ((flags & PatternSurface.UNIX_LINES) != 0) {
-            jdk |= java.util.regex.Pattern.UNIX_LINES;
-        }
-        if ((flags & PatternSurface.UNICODE_CASE) != 0) {
-            jdk |= java.util.regex.Pattern.UNICODE_CASE;
         }
         int noJurReading = flags & (io.github.jemmix.tdfa.Pattern.LONGEST_MATCH
             | io.github.jemmix.tdfa.Pattern.FIND_ONLY | io.github.jemmix.tdfa.Pattern.MULTI_VALUED_TAGS
