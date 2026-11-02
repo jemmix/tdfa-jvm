@@ -12,9 +12,7 @@ package io.github.jemmix.tdfa.core.unicode;
  *   <li>{@code "no-unicode"} — {@link NoUnicodeProvider}; compiling any pattern
  *       containing {@code \p{...}} or {@code \P{...}} throws at parse time</li>
  *   <li>Any other value — treated as the fully-qualified name of a class
- *       implementing {@link UnicodeDataProvider}, loaded reflectively; the
- *       separate {@code tdfa-unicode-re2j} jar provides such a class for
- *       bit-exact re2j parity</li>
+ *       implementing {@link UnicodeDataProvider}, loaded reflectively</li>
  * </ul>
  *
  * <p>If the custom class can't be loaded, instantiated, or doesn't implement
