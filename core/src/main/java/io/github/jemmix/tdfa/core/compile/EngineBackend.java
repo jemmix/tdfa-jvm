@@ -19,9 +19,9 @@ public interface EngineBackend {
 
     /**
      * Generate a dedicated engine for {@code artifact} (the per-pattern
-     * generated-class tier), with an explicit lazy-memo budget.
+     * generated-class tier).
      */
-    RegexEngine generate(Tdfa artifact, long memoBudgetBytes);
+    RegexEngine generate(Tdfa artifact);
 
     /**
      * Emit and instantiate the per-pattern shell described by

@@ -76,9 +76,9 @@ class OriginSimLeftmostStartTest {
     @Test
     void minimalFamilyLeftmostZeroUnderEveryRung() {
         Tdfa tdfa = compileTdfa(PATTERN);
-        RegexEngine vm = new TdfaRunner(tdfa, 1 << 20);
-        RegexEngine asm = TdfaAsmBackend.generate(tdfa, 1 << 20);
-        TdfaRunner sim = new TdfaRunner(tdfa, 1 << 20);
+        RegexEngine vm = new TdfaRunner(tdfa);
+        RegexEngine asm = TdfaAsmBackend.generate(tdfa);
+        TdfaRunner sim = new TdfaRunner(tdfa);
         Pattern oracle = Pattern.compile(PATTERN);
         for (int k = 3; k <= 5; k++) {
             String in = BASE.repeat(k);
@@ -107,8 +107,8 @@ class OriginSimLeftmostStartTest {
     @Test
     void stretchedCampaignShapeAgreesAcrossRungs() {
         Tdfa tdfa = compileTdfa(PATTERN);
-        RegexEngine vm = new TdfaRunner(tdfa, 1 << 20);
-        RegexEngine asm = TdfaAsmBackend.generate(tdfa, 1 << 20);
+        RegexEngine vm = new TdfaRunner(tdfa);
+        RegexEngine asm = TdfaAsmBackend.generate(tdfa);
         Pattern oracle = Pattern.compile(PATTERN);
         String in = BASE.repeat(4300 / BASE.length() + 1);
         String natural = firstFind(vm, in);

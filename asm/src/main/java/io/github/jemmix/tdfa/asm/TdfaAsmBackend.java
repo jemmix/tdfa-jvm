@@ -1,6 +1,5 @@
 package io.github.jemmix.tdfa.asm;
 
-import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
@@ -95,23 +94,14 @@ public final class TdfaAsmBackend {
         }
     }
 
-    public static RegexEngine generate(Tdfa tdfa) {
-        return generate(tdfa, Budgets.runtimeMemoryBytes());
-    }
-
     /**
-     * Generate with an explicit budget constant for the embedded runner.
-     * HISTORICAL: the memo budget once capped the two lazy memos, both
-     * deleted (#97/#98) — the value is accepted and unused by the runner
-     * today. (The "half the pattern's residual" hand-off this javadoc
-     * long described never existed: the facade passes one identical
-     * allowance to every engine — see C39 in the complexity review; the
-     * parameter goes away with C32.) The
-     * emitted class's constructor signature is unchanged: the budget is
-     * burned in as a long constant on the embedded {@code new
-     * TdfaRunner(tdfa, budget)} call.
+     * Generate the engine: emit the per-pattern class and instantiate it.
+     * (The overload this replaces took a lazy-memo budget constant for the
+     * embedded runner — both lazy memos are deleted (#97/#98) and the
+     * runner ignored the value; the emitted {@code new TdfaRunner(tdfa)}
+     * call takes no budget.)
      */
-    public static RegexEngine generate(Tdfa tdfa, long memoBudgetBytes) {
+    public static RegexEngine generate(Tdfa tdfa) {
         // Bytecode emission runs OUTSIDE any handler: an emitter bug is an
         // IllegalStateException/Error and propagates raw (it is a bug in
         // this code, not a shape to re-type). Only the load/instantiate
@@ -121,7 +111,7 @@ public final class TdfaAsmBackend {
         long id = COUNTER.incrementAndGet();
         String cn = "io.github.jemmix.tdfa.gen.Gen" + id;
         String owner = cn.replace('.', '/');
-        byte[] bc = generateBytes(tdfa, owner, memoBudgetBytes);
+        byte[] bc = generateBytes(tdfa, owner);
         if (Boolean.getBoolean("tdfa.asm.dump")) {
             dumpClass(owner, bc);
         }
@@ -141,7 +131,7 @@ public final class TdfaAsmBackend {
         INLINED, DELEGATE
     }
 
-    private static byte[] generateBytes(Tdfa tdfa, String owner, long memoBudgetBytes) {
+    private static byte[] generateBytes(Tdfa tdfa, String owner) {
         // One brain, one ladder: the search strategy (literal / candidate
         // scan / origin sim / trigger / walk ordering) lives in TdfaRunner;
         // generated code CALLS it (monomorphic hooks) and owns only the leaf
@@ -171,7 +161,7 @@ public final class TdfaAsmBackend {
         if (delegate) {
             // Minimal class: just an init storing the runner, and forwarding stubs
             // for the RegexEngine interface. No static tables, no <clinit>.
-            genDelegateInit(cw, owner, memoBudgetBytes);
+            genDelegateInit(cw, owner);
             genMatches(cw, owner);
             genFind(cw, owner);
             genDelegateMatch(cw, owner);
@@ -179,7 +169,7 @@ public final class TdfaAsmBackend {
             genMetadataMethods(cw, owner);
         } else {
             genClinit(cw, tdfa);
-            genInit(cw, owner, tdfa, memoBudgetBytes);
+            genInit(cw, owner, tdfa);
             genMatches(cw, owner);
             genFind(cw, owner);
             genMatch(cw, tdfa, owner);
@@ -269,7 +259,7 @@ public final class TdfaAsmBackend {
 
     // ===== <init> =====
 
-    private static void genInit(ClassWriter cw, String owner, Tdfa tdfa, long memoBudgetBytes) {
+    private static void genInit(ClassWriter cw, String owner, Tdfa tdfa) {
         // Instance field holding the TdfaRunner: the shared strategy brain
         // (ladder hooks are monomorphic final-class calls) and the full
         // delegate path for everything the generated class doesn't own.
@@ -290,8 +280,7 @@ public final class TdfaAsmBackend {
         mv.visitTypeInsn(Opcodes.NEW, RUNNER);
         mv.visitInsn(Opcodes.DUP);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitLdcInsn(memoBudgetBytes);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, RUNNER, "<init>", "(" + TDFA_D + "J)V", false);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, RUNNER, "<init>", "(" + TDFA_D + ")V", false);
         mv.visitFieldInsn(Opcodes.PUTFIELD, owner, "runner", RUNNER_D);
         if (tdfa.unicodeWordBoundary()) {
             mv.visitVarInsn(Opcodes.ALOAD, 1);
@@ -2399,7 +2388,7 @@ public final class TdfaAsmBackend {
      * {@code <clinit>} — the generated class is a thin wrapper for DFAs too
      * large to inline (e.g. dictionary alternations with 20 K+ states).
      */
-    private static void genDelegateInit(ClassWriter cw, String owner, long memoBudgetBytes) {
+    private static void genDelegateInit(ClassWriter cw, String owner) {
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "runner", RUNNER_D, null, null).visitEnd();
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(" + TDFA_D + ")V", null, null);
         mv.visitCode();
@@ -2409,8 +2398,7 @@ public final class TdfaAsmBackend {
         mv.visitTypeInsn(Opcodes.NEW, RUNNER);
         mv.visitInsn(Opcodes.DUP);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitLdcInsn(memoBudgetBytes);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, RUNNER, "<init>", "(" + TDFA_D + "J)V", false);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, RUNNER, "<init>", "(" + TDFA_D + ")V", false);
         mv.visitFieldInsn(Opcodes.PUTFIELD, owner, "runner", RUNNER_D);
         mv.visitInsn(Opcodes.RETURN);
         mv.visitMaxs(0, 0);

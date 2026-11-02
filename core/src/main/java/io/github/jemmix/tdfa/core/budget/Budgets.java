@@ -121,21 +121,6 @@ public final class Budgets {
         return Long.getLong(RUNTIME_MEMORY_PROP, DEFAULT_RUNTIME_MEMORY);
     }
 
-    /**
-     * The residual lazy-memo allowance after the retained artifact
-     * tables: {@code max(0, runtimeMemoryBytes() - retainedArtifactBytes)}.
-     * The facade splits this per engine slot (the whole residual to a
-     * shared engine, half each to a find+whole pair), so a pattern's
-     * retained tables plus its memo shares stay within one budget ("if
-     * it compiles, it will execute within budget"). (The memo-cap
-     * derivations that once consumed this split were deleted with the
-     * memos they bounded — see docs/search-dfa-memo-tradeoffs.md; the
-     * split stays as the engine-slot accounting.)
-     */
-    public static long runtimeMemoAllowance(long retainedArtifactBytes) {
-        return Math.max(0, runtimeMemoryBytes() - retainedArtifactBytes);
-    }
-
     // ===== compile RAM-derived caps =====
 
     /**
@@ -185,11 +170,12 @@ public final class Budgets {
 
     // ===== runtime RAM-derived caps =====
     // (The lazy-memo cap derivations that lived here — sdfaMaxRows,
-    //  sdfaMaxBlocks, walkMaxBytes and the eighths partition — were deleted
-    //  with the memos they bounded; see docs/search-dfa-memo-tradeoffs.md.
-    //  runtimeMemoryBytes/runtimeMemoAllowance stay as the compile-time
-    //  execution-RAM bound: a compile whose retained tables alone overshoot
-    //  the runtime budget still rejects.)
+    //  sdfaMaxBlocks, walkMaxBytes, the eighths partition, and the
+    //  runtimeMemoAllowance residual split — were deleted with the memos
+    //  they bounded; see docs/search-dfa-memo-tradeoffs.md.
+    //  runtimeMemoryBytes stays as the compile-time execution-RAM bound:
+    //  a compile whose retained tables alone overshoot the runtime budget
+    //  still rejects.)
 
     private static int clampInt(long v) {
         return (int) Math.max(1, Math.min(v, Integer.MAX_VALUE));

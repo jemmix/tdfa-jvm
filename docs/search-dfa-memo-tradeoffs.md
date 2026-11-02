@@ -94,11 +94,14 @@ work (W4 precompute + W5 gate-to-end-state) is unaffected — one honest
 cache (`WalkIndex`, walk blocks) remains, and it is uncontroversial:
 tiny, input-visited, with an exact binary-search fallback.
 
-Deliberately left behind for the review (TODO): the now-unused budget
+Deliberately left behind for the review (TODO): ~~the now-unused budget
 split (`Budgets.sdfaMaxRows`/`sdfaMaxBlocks`, the RUNTIME_ROW/BLOCK
 weights, and the eighths partition — the walk memo can take the whole
 memo share), and `Strategy.TRIGGER` (kept as a forced-rung identity;
-it now traces RAW_SCAN).
+it now traces RAW_SCAN)~~ — **resolved by the review**: the budget
+split's remnants (the weight constants went with #109) and the
+`runtimeMemoAllowance`/`memoBudgetBytes` plumbing went with the C32
+endgame; `Strategy.TRIGGER` merged into `RAW_SCAN` (C3).
 
 ## Restoration criteria — when to bring it back
 
