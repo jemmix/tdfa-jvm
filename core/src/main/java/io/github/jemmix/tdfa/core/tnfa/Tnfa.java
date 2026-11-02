@@ -156,54 +156,6 @@ public final class Tnfa {
     private static final Semantics ALL_AXES = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
         .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU().spaceRe2();
 
-    public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
-        int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
-        boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
-        int[] fixedBase, int[] fixedOffset) {
-        this(stateCount, epsFrom, epsTo, epsPri, epsTag, epsEmptyMask, symFrom, symTo, symClass, start, accept,
-            tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset, null,
-            null, false, ALL_AXES);
-    }
-
-    /** Legacy convenience (no family-6 marks — the RE2-lane reading). */
-    public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
-        int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
-        boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
-        int[] fixedBase, int[] fixedOffset, boolean[] dissolvedTags) {
-        this(stateCount, epsFrom, epsTo, epsPri, epsTag, epsEmptyMask, symFrom, symTo, symClass, start, accept,
-            tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
-            dissolvedTags, null, false, ALL_AXES);
-    }
-
-    /** Legacy convenience (no family-6 marks — the RE2-lane reading). */
-    public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
-        int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
-        boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
-        int[] fixedBase, int[] fixedOffset, boolean[] dissolvedTags, boolean[] surfaceFinalTags) {
-        this(stateCount, epsFrom, epsTo, epsPri, epsTag, epsEmptyMask, symFrom, symTo, symClass, start, accept,
-            tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
-            dissolvedTags, surfaceFinalTags, false, ALL_AXES);
-    }
-
-    public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
-        int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
-        boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
-        int[] fixedBase, int[] fixedOffset, boolean multiValuedTags) {
-        this(stateCount, epsFrom, epsTo, epsPri, epsTag, epsEmptyMask, symFrom, symTo, symClass, start, accept,
-            tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset, null,
-            null, multiValuedTags, ALL_AXES);
-    }
-
-    public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
-        int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
-        boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
-        int[] fixedBase, int[] fixedOffset, boolean[] dissolvedTags, boolean[] surfaceFinalTags,
-        boolean multiValuedTags, Semantics semantics) {
-        this(stateCount, epsFrom, epsTo, epsPri, epsTag, epsEmptyMask, symFrom, symTo, symClass, start, accept,
-            tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
-            dissolvedTags, surfaceFinalTags, multiValuedTags, semantics, false);
-    }
-
     /** Fullest entry: the StartS-selection fact (see
      *  {@link #hasSupplementaryStarts}) rides beside the policy. */
     public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
