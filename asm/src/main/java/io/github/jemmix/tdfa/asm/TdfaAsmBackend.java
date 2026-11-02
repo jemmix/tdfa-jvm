@@ -170,8 +170,8 @@ public final class TdfaAsmBackend {
             // Minimal class: just an init storing the runner, and forwarding stubs
             // for the RegexEngine interface. No static tables, no <clinit>.
             genDelegateInit(cw, owner, memoBudgetBytes);
-            genDelegateMatches(cw, owner);
-            genDelegateFind(cw, owner);
+            genMatches(cw, owner);
+            genFind(cw, owner);
             genDelegateMatch(cw, owner);
             genMatchWhole(cw, owner);
             genMetadataMethods(cw, owner);
@@ -2494,30 +2494,6 @@ public final class TdfaAsmBackend {
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, RUNNER, "<init>", "(" + TDFA_D + "J)V", false);
         mv.visitFieldInsn(Opcodes.PUTFIELD, owner, "runner", RUNNER_D);
         mv.visitInsn(Opcodes.RETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
-    }
-
-    private static void genDelegateMatches(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matches", "(" + CS_D + ")Z", null, null);
-        mv.visitCode();
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "matches", "(" + CS_D + ")Z", false);
-        mv.visitInsn(Opcodes.IRETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
-    }
-
-    private static void genDelegateFind(ClassWriter cw, String owner) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "find", "(" + CS_D + ")Z", null, null);
-        mv.visitCode();
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "find", "(" + CS_D + ")Z", false);
-        mv.visitInsn(Opcodes.IRETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
