@@ -63,10 +63,11 @@ import java.util.function.Predicate;
  * (continuation + empty-match advance), {@code matches()}, {@code
  * lookingAt()}, and {@code find(len/2)} restart.
  *
- * <p>On the jur lane the two evidence-re-base residuals are conscious
- * domain exclusions (mirroring {@code CampaignFuzzer.jurLaneCase}; WBS item
- * 6): the family-6 tail slice and the surrogate-unit-semantics family —
- * recorded as {@code JURLANE_SKIP} records and counted, not failed. The
+ * <p>On the jur lane the classified {@code java.util.regex} divergences
+ * are conscious domain exclusions (mirroring {@code CampaignFuzzer.jurLaneCase};
+ * WBS item 6) — recorded as {@code JURLANE_SKIP} records and counted, not
+ * failed. (The family-6 tail slice and the lone-surrogate family once
+ * headed this list; both retired — see {@code jurLaneDomain}.) The
  * İ/ı full-fold residual is FIXED (the jur surface's default fold universe
  * is the java.util.regex reading). Everything else on the lane compares
  * hard: compile parity, group clauses, terminator set, anchors, fold.
@@ -134,8 +135,9 @@ import java.util.function.Predicate;
  * CROSS_ROUTING (forced entry served by unexpected rungs — the trace hook
  * must stay within the forced rung's fall-through family). A deterministic
  * 1-in-N subset also runs the probes on a stretched input (~4.3k chars,
- * whole-string repeats) so the memoized search-DFA path — unreachable on
- * the 0-24-char generator inputs — actually runs; stretched cases compare
+ * whole-string repeats) so the long-input scan paths (kill-point windows,
+ * origin-sim budgets) — unreachable on the 0-24-char generator inputs —
+ * actually run; stretched cases compare
  * forced runs against the natural VM run on the same stretched input, and
  * — the stretch family's standing coverage — the natural VM and ASM
  * answers against the re2j oracle on the stretched input (the full
@@ -296,8 +298,8 @@ public final class DifferentialFuzzer {
     static final String FAM_ANCHOR_ABSENT = "xjkcfghmnpr";
 
     static final int MAX_DEPTH = 4;
-    private static int ciSuppAvoided; // informational; generation-side counters
-    private static int ciRangeAvoided; // (known-gap / oracle-hang constructs not generated)
+    private static int ciRangeAvoided; // informational; generation-side counter
+                                       // (oracle-hang constructs not generated)
 
     // ---- compile-flag matrix + the lane axis ----
 
@@ -631,7 +633,6 @@ public final class DifferentialFuzzer {
         }
         boolean guarded = lane == Lane.JUR && jurOracleBomb(pattern);
         // pattern-level generation guards fold once per batch
-        r.ciSuppAvoidedTotal += ciSuppAvoided;
         r.ciRangeAvoidedTotal += ciRangeAvoided;
         String[] inputs = new String[BATCH_K];
         for (int i = 0; i < BATCH_K; i++) {
@@ -1739,7 +1740,6 @@ public final class DifferentialFuzzer {
     }
 
     static String genPattern(long batch) {
-        ciSuppAvoided = 0;
         ciRangeAvoided = 0;
         // Compile-level CASE_INSENSITIVE folds the WHOLE pattern in re2j's
         // parser, and re2j folds class ranges codepoint by codepoint — a
@@ -2284,7 +2284,7 @@ public final class DifferentialFuzzer {
 
     static final class Results {
         final long masterSeed;
-        long cases, failures, bothReject, flagged, ciSuppAvoidedTotal, ciRangeAvoidedTotal, knownDivergence;
+        long cases, failures, bothReject, flagged, ciRangeAvoidedTotal, knownDivergence;
         long crossRung, crossRouting;
         long jurCases, jurFailures, jurSkipped;
         /** Generator v4's family axis: batches (not cases) drawn per family —
@@ -2522,10 +2522,6 @@ public final class DifferentialFuzzer {
          *       gated and signature-gated ({@link
          *       CampaignFuzzer#staleIterationSpan}); pinned both ways in
          *       {@code GroupCurlyStaleWriteParityTest}.</li>
-         *   <li><b>surrogate-unit-semantics</b> — the lane's designed unit
-         *       semantics vs java's pair-aware UTF-16 discipline (java's
-         *       classes never match a surrogate unit inside a well-formed
-         *       pair; a pair-aware JUR reading is the open engine work).</li>
          * </ul>
          */
         static String jurLaneDomain(Outcome o) {
@@ -2823,8 +2819,7 @@ public final class DifferentialFuzzer {
                 w.printf("rate: %.1f cases/min%n", r.casesPerMinute);
                 w.println("shrunk records: " + r.shrunkRecords
                     + (SHRINK_RECORD ? "" : "  (off — -Pfuzz.shrink=1 pre-shrinks recorded failures)"));
-                w.println("ciSuppAvoided (known-gap constructs not generated): " + r.ciSuppAvoidedTotal
-                    + "  ciWideRangeAvoided (oracle-hang guard): " + r.ciRangeAvoidedTotal);
+                w.println("ciWideRangeAvoided (oracle-hang guard): " + r.ciRangeAvoidedTotal);
                 if (!r.layerCounts.isEmpty()) {
                     w.println();
                     w.println("failure layers (attributed):");
