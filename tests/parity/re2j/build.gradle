@@ -152,6 +152,25 @@ tasks.register('fuzz', JavaExec) {
     // siblings on the same artifact first (warmth-dependent records replay).
     systemProperty 'fuzz.double', project.findProperty('fuzz.double') ?: '1'
     systemProperty 'fuzz.warm', project.findProperty('fuzz.warm') ?: '0'
+    // The knobs a misbehaving overnight soak wants on the spot: threads,
+    // hang-grace, JFR, per-case timeout. JavaExec forks a fresh JVM passing
+    // only the properties declared here, so the fuzzer's documented
+    // -Dfuzz.threads/graceMs/jfr/caseTimeoutMs were unreachable through
+    // -Pfuzz.… (fuzz-soak.sh advertises threads and JFR in its own header).
+    // Forwarded only when set — the fuzzer's in-code defaults (cores-1
+    // capped, 50 s, on, 10 s) stay authoritative otherwise.
+    if (project.hasProperty('fuzz.threads')) {
+        systemProperty 'fuzz.threads', project.getProperty('fuzz.threads')
+    }
+    if (project.hasProperty('fuzz.graceMs')) {
+        systemProperty 'fuzz.graceMs', project.getProperty('fuzz.graceMs')
+    }
+    if (project.hasProperty('fuzz.jfr')) {
+        systemProperty 'fuzz.jfr', project.getProperty('fuzz.jfr')
+    }
+    if (project.hasProperty('fuzz.caseTimeoutMs')) {
+        systemProperty 'fuzz.caseTimeoutMs', project.getProperty('fuzz.caseTimeoutMs')
+    }
     // Lane axis (evidence re-base): mix (default) draws the lane per batch —
     // jur facade vs live java.util.regex beside the re2j surface vs re2j;
     // pin for a lane-pure soak (re-running the re2j-pinned evidence, or a
