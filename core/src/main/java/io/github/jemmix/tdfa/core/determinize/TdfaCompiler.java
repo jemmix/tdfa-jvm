@@ -89,8 +89,8 @@ final class TdfaCompiler {
      */
     final boolean unpruned;
     /**
-     * The partial-whole side table is recorded for this compile: a pruned
-     * Perl-mode compile that ASKED for it (the facade's one-artifact
+     * The partial-whole side table is recorded for this compile: a
+     * {@link CompileMode#PERL_WHOLE} build (the facade's one-artifact
      * build, {@link Determinizer#compileWithWholeSide}; find-only consumers never
      * do — the side has no reader there). Every cut context then also
      * contributes its UNCUT transitions to the source state's whole list
@@ -344,11 +344,13 @@ final class TdfaCompiler {
      *        the whole compile: this class ticks it during determinization
      *        and hands the same instance on to the post-determinization
      *        stages, so a single CPU budget covers the entire pipeline.
-     * @param wholeSide record the partial-whole side table (the facade's
-     *        one-artifact compile; see {@link Determinizer#compileWithWholeSide}).
-     *        Find-only consumers pass false — the side has no reader there.
+     * @param mode the determinization mode (see {@link CompileMode}) — the
+     *        whole side is recorded only for {@link CompileMode#PERL_WHOLE};
+     *        find-only consumers pass {@link CompileMode#PERL_PRUNED} — the
+     *        side has no reader there.
      */
-    TdfaCompiler(Tnfa nfa, boolean longestMatch, boolean unpruned, boolean wholeSide, WorkMeter sharedMeter) {
+    TdfaCompiler(Tnfa nfa, CompileMode mode, WorkMeter sharedMeter) {
+        boolean longestMatch = mode == CompileMode.POSIX;
         this.nfa = nfa;
         this.tags = nfa.tagCount;
         this.meter = sharedMeter;
@@ -372,10 +374,10 @@ final class TdfaCompiler {
         this.breakpoints = computeBreakpoints();
         this.longest = longestMatch;
         this.multi = nfa.multiValuedTags;
-        this.unpruned = unpruned;
-        // The side is recorded whenever requested (pruned Perl mode; the
-        // facade always requests, find-only tiers never do).
-        this.wholeSide = wholeSide && !longestMatch && !unpruned;
+        this.unpruned = mode == CompileMode.UNPRUNED;
+        // The side is recorded only for the PERL_WHOLE mode (the facade
+        // always requests it, find-only tiers never do).
+        this.wholeSide = mode == CompileMode.PERL_WHOLE;
         this.maxClosureBytes = Budgets.maxClosureSpikeBytes();
         this.cellCount = breakpoints.length - 1;
         this.activeSetCount = precomputeActiveSets(cellCount);

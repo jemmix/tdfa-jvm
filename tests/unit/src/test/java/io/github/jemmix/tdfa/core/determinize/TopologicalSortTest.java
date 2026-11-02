@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class TopologicalSortTest {
 
     private static TdfaCompiler compiler() {
-        return new TdfaCompiler(Tnfa.compile("(a)(b)"), false, false, false, new WorkMeter(1L << 32));
+        return new TdfaCompiler(Tnfa.compile("(a)(b)"), CompileMode.PERL_PRUNED, new WorkMeter(1L << 32));
     }
 
     private static List<int[]> ops(int[]... triples) {
