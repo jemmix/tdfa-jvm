@@ -64,44 +64,6 @@ public final class PatternSurface {
     /** Multi-valued tags (BT22 &sect;3.1) — per-iteration group spans. */
     public static final int MULTI_VALUED_TAGS = 128;
 
-    // The JUR-compat axis bits: a set bit selects the RE2-lineage
-    // side of that axis (see Semantics). The jur facade exposed them (and
-    // their OR) as opt-out flags before the two-surface split; post-split
-    // they are machinery-internal vocabulary — no surface accepts them,
-    // and the default lane of each surface (or an explicit
-    // CompileOptions.semantics) is the only public way to select axes.
-
-    /** Axis bit: {@code .}/{@code ^}/{@code $} recognize only {@code \n}. */
-    public static final int UNIX_LINES = 256;
-
-    /** Axis bit: bare case-insensitivity folds the full Unicode universe. */
-    public static final int UNICODE_CASE = 512;
-
-    /** Axis bit: codepoint discipline (scans skip surrogate-pair interiors). */
-    public static final int CODEPOINT_BOUNDARIES = 1024;
-
-    /** Axis bit: a multiline {@code ^} may match the empty last line. */
-    public static final int EMPTY_LAST_LINE = 2048;
-
-    /** Axis bit: {@code $} matches only at end of input (exactly {@code \z}). */
-    public static final int END_OF_TEXT_ONLY = 4096;
-
-    /** Axis bit: zero-width final loop iterations report their group spans. */
-    public static final int EMPTY_ITERATION_SPANS = 8192;
-
-    /** Axis bit: {@code (?U)} means ungreedy (the PCRE/RE2 reading). */
-    public static final int UNGREEDY_U = 16384;
-
-    /** Axis bit: the ASCII {@code \s}/{@code \S} table excludes U+000B (re2j's). */
-    public static final int SPACE_RE2 = 32768;
-
-    /** The axis bits' OR — the machinery-side spelling of the
-     *  pre-split {@code RE2_COMPAT} preset mask (the original seven; the
-     *  {@code SPACE_RE2} axis joined after the split, found by the WBS
-     *  item-7 parity-suite widening). */
-    public static final int RE2_AXES = UNIX_LINES | UNICODE_CASE | CODEPOINT_BOUNDARIES | EMPTY_LAST_LINE
-        | END_OF_TEXT_ONLY | EMPTY_ITERATION_SPANS | UNGREEDY_U | SPACE_RE2;
-
     private static final Map<String, PatternSurface> REGISTERED = new ConcurrentHashMap<>();
 
     private final String id;

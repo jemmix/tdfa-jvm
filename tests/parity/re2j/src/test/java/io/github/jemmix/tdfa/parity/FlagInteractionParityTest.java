@@ -1,6 +1,5 @@
 package io.github.jemmix.tdfa.parity;
 
-import io.github.jemmix.tdfa.core.compile.PatternSurface;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
 import io.github.jemmix.tdfa.core.tnfa.Semantics;
@@ -121,10 +120,10 @@ class FlagInteractionParityTest {
             .isInstanceOf(IllegalArgumentException.class);
         // the semantics route (no facade bits for these axes)
         JurOracle.assertSemanticsSameFind("(?m)^a$", "a\rb", Semantics.of().unixLines(),
-            JurOracle.jdkFlags(PatternSurface.UNIX_LINES)); // \r not a line edge
+            java.util.regex.Pattern.UNIX_LINES); // \r not a line edge
         JurOracle.assertSameFind("(?m)^a$", "a\rb", factory); // default lane: \r IS a terminator
         JurOracle.assertSemanticsSameFind("(?i)k", "\u212a", Semantics.of().unicodeCase(),
-            JurOracle.jdkFlags(PatternSurface.UNICODE_CASE)); // kelvin folds
+            java.util.regex.Pattern.UNICODE_CASE); // kelvin folds
         JurOracle.assertSameFind("(?i)k", "\u212a", factory); // default lane: ASCII fold only
     }
 }
