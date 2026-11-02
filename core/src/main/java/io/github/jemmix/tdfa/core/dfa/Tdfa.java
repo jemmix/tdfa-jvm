@@ -381,7 +381,7 @@ public final class Tdfa {
         this.fixedBase = fixedBase;
         this.fixedOffset = fixedOffset;
         this.posFlagCells = posFlagCells;
-        // Well-formedness gate: every consumer (VM runner, search-DFA memo,
+        // Well-formedness gate: every consumer (VM runner,
         // ASM emitter, minimizer) trusts these arrays. Violations must surface
         // here, at construction — not as a wrong match 2,000 lines away. Runs
         // BEFORE any array-indexing field read so every corruption (short
@@ -1078,8 +1078,9 @@ public final class Tdfa {
      * partial-whole side table) at its flat JVM cost (16 B array header
      * + 4 B per int cell, 1 B per byte cell). The end-of-compile
      * execution-RAM check charges this against {@code
-     * tdfa.budget.runtime.memory} (the facade derives the lazy-memo
-     * allowances from the residual); engine-tier tables built FROM these
+     * tdfa.budget.runtime.memory} (retained tables alone must fit — the
+     * lazy memos that once drew from the residual are deleted);
+     * engine-tier tables built FROM these
      * arrays (dispatch tiers, generated-class statics, the materialized
      * 2D stop-mask copies) are disclosed construction-time constants
      * outside the budget — the r11 scope line, see {@link io.github.jemmix.tdfa.core.budget.Budgets}.
@@ -1167,7 +1168,7 @@ public final class Tdfa {
     //   tdfa.debug.finals                          (compile)
     //   tdfa.engine                                                 (facade, per compile)
     // The derived determinization caps (states/kernels/closure/cfg-edges/
-    // norm-cells, the search-DFA memo caps) are
+    // norm-cells) are
     // all linear functions of the two compile budgets / the runtime budget
     // through the weight model (BudgetWeights) — one knob per resource, so
     // the caps can never drift out of sync with the budgets that derive

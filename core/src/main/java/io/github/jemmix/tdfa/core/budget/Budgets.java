@@ -6,7 +6,8 @@ package io.github.jemmix.tdfa.core.budget;
  * <b>RAM budget</b> (bytes of transient compile-time structures, weighted
  * per structure via {@link BudgetWeights}) and a <b>CPU budget</b>
  * (abstract ticks of compile work, metered by {@link WorkMeter}); the
- * match-time scan is bounded by a <b>RAM budget</b> (lazy memos) — no
+ * compiled pattern's retained artifact tables are bounded at
+ * end-of-compile by a <b>RAM budget</b> — no
  * backtracking engine exists to burn CPU exponentially, and the search
  * ladder's degenerate shapes were root-fixed (see the 2026-10-16
  * campaign doc: the abs-begin ladder bound, the unit-semantics trigger,
@@ -20,15 +21,14 @@ package io.github.jemmix.tdfa.core.budget;
  *   <tr><td>{@code tdfa.budget.compile.compute}</td><td>compile CPU, ticks
  *       (one tick &asymp; 10 ns; see {@link BudgetWeights#TICKS_PER_SECOND})</td>
  *       <td>5 s &times; tick rate = 500 M ticks</td></tr>
- *   <tr><td>{@code tdfa.budget.runtime.memory}</td><td>match-time RAM per
- *       compiled pattern: retained artifact tables + lazy memo allowances,
- *       bytes</td><td>16 MiB</td></tr>
+ *   <tr><td>{@code tdfa.budget.runtime.memory}</td><td>execution RAM per
+ *       compiled pattern: retained artifact tables, bytes</td>
+ *       <td>16 MiB</td></tr>
  * </table>
  *
  * <p>The derived caps (max DFA states, kernel totals, &epsilon;-closure
  * spike, active-set precompute, boxed transition ranges, CFG edges,
- * minimizer normalization cells, tag-history tables, search-DFA memo
- * rows/blocks, walk-memo blocks/per-state tables) are all linear
+ * minimizer normalization cells, tag-history tables) are all linear
  * functions of the two compile budgets / the runtime budget through the
  * weight model (BudgetWeights) — one knob per resource, so the caps can
  * never drift out of sync with the budgets that derive them. Raise the
@@ -46,20 +46,19 @@ package io.github.jemmix.tdfa.core.budget;
  * check fails the compile when they alone exceed the budget, the
  * standard clean "pattern too large" rejection pointing at {@value
  * #RUNTIME_MEMORY_PROP}; the partial-whole side table counts as retained
- * bytes of the one artifact) plus the lazy match-time memos, which draw
- * from the RESIDUAL allowance after the retained tables. A pattern
- * retaining TWO engines (find plus a dedicated cut-free whole runner —
- * the side-table abandonment corner) splits the residual in half per
- * engine, so the pattern's combined memos stay within one budget; a
- * shared artifact (one engine, the partial-whole single-artifact form)
- * gets the whole residual. Engine-tier construction-time tables (the
+ * bytes of the one artifact). (The lazy match-time memos that once drew
+ * from the residual after the retained tables are deleted with #97/#98;
+ * the "half each" per-engine split this paragraph long documented never
+ * existed — the facade passes one identical allowance to every engine
+ * and the runner ignores it — see C39 in the complexity review.)
+ * Engine-tier construction-time tables (the
  * eager ascii/latin dispatch tiers, generated-class statics, derived
  * bitsets) remain disclosed constants outside the budget — the r11
  * scope decision: flooring them on it would flip the flagship
  * dictionary shapes off their fast paths. BYO-factory engines retain
  * unaccountable state by construction (documented at the facade); the
  * artifact tables and any native fallback runner still draw from the
- * same residual.
+ * same budget.
  *
  * <p>Knob policy (see the inventory note in {@link io.github.jemmix.tdfa.core.dfa.Tdfa}): every read is
  * fresh — budgets take effect on the next compile (or the next runner
