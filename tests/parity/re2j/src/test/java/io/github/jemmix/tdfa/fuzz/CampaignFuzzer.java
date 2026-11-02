@@ -164,8 +164,6 @@ public final class CampaignFuzzer {
 
     private static final int JUR_UCC = java.util.regex.Pattern.UNICODE_CHARACTER_CLASS;
 
-    private static final int JUR_UCASE = java.util.regex.Pattern.UNICODE_CASE;
-
     /** Soft wall guard per case; over it the case is recorded SLOW and skipped. */
     private static final long CASE_SLOW_MS = 3_000;
 
@@ -361,7 +359,9 @@ public final class CampaignFuzzer {
             // folds fully. When the two disagree the case is fold-ambiguous (the
             // engines' universes legitimately differ there) — skip, don't guess.
             try {
-                jurAlt = computeJur(java.util.regex.Pattern.compile(c.pattern(), c.jurFlags() | JUR_UCASE), c.input());
+                jurAlt = computeJur(
+                    java.util.regex.Pattern.compile(c.pattern(), c.jurFlags() | DifferentialFuzzer.JUR_UCASE),
+                    c.input());
                 if (jur != null && !jur.equals(jurAlt)) {
                     counts.soft("SKIP_CI_FOLD_AMBIGUOUS");
                     return;
@@ -889,12 +889,6 @@ public final class CampaignFuzzer {
         return false;
     }
 
-    /** Interior unit of a well-formed surrogate pair? */
-    static boolean startsInterior(String input, int st) {
-        return st > 0 && st < input.length() && input.charAt(st) >= 0xDC00 && input.charAt(st) <= 0xDFFF
-            && input.charAt(st - 1) >= 0xD800 && input.charAt(st - 1) <= 0xDBFF;
-    }
-
     /**
      * The ordered s..e spans of a protocol's F/I section (the section ends
      * at the M probe; both sides' group clauses are stripped by the
@@ -909,20 +903,6 @@ public final class CampaignFuzzer {
             out.add(new int[]{Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2))});
         }
         return out;
-    }
-
-    /** The R probe's single s..e span, or null for {@code R=-}. */
-    static int[] rSpanOf(String protocol) {
-        int at = protocol.indexOf(" R=");
-        if (at < 0) {
-            return null;
-        }
-        java.util.regex.Matcher m =
-            java.util.regex.Pattern.compile("(\\d+)\\.\\.(\\d+)").matcher(protocol.substring(at));
-        if (!m.find()) {
-            return null;
-        }
-        return new int[]{Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2))};
     }
 
     /** Any well-formed surrogate pair (an interior the scan could miss). */
