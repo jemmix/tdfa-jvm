@@ -100,11 +100,13 @@ public final class TdfaAsmBackend {
     }
 
     /**
-     * Generate with an explicit lazy-memo budget for the embedded runner
-     * (the facade hands HALF the pattern's residual memo allowance — the
-     * runtime RAM budget minus retained artifact tables — when the pattern
-     * keeps a second, dedicated whole engine beside this one; the
-     * per-pattern runtime split; see {@code TdfaRunner(Tdfa, long)}). The
+     * Generate with an explicit budget constant for the embedded runner.
+     * HISTORICAL: the memo budget once capped the two lazy memos, both
+     * deleted (#97/#98) — the value is accepted and unused by the runner
+     * today. (The "half the pattern's residual" hand-off this javadoc
+     * long described never existed: the facade passes one identical
+     * allowance to every engine — see C39 in the complexity review; the
+     * parameter goes away with C32.) The
      * emitted class's constructor signature is unchanged: the budget is
      * burned in as a long constant on the embedded {@code new
      * TdfaRunner(tdfa, budget)} call.
