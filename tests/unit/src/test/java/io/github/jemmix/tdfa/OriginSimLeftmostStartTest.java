@@ -44,8 +44,8 @@ class OriginSimLeftmostStartTest {
      * 4x/5x diverged the same way and stay pinned with it. */
     private static final String[] EXPECTED = {"0..54 (40..54)", "0..71 (57..71)", "0..87 (73..87)"};
 
-    private static final TdfaRunner.Strategy[] FORCED_RUNGS = {TdfaRunner.Strategy.ORIGIN_SIM,
-        TdfaRunner.Strategy.TRIGGER, TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART};
+    private static final TdfaRunner.Strategy[] FORCED_RUNGS =
+        {TdfaRunner.Strategy.ORIGIN_SIM, TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART};
 
     private static Tdfa compileTdfa(String pattern) {
         WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());

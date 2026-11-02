@@ -126,7 +126,7 @@ import java.util.function.Predicate;
  * <p>Cross-rung differential (on by default, {@code -Pfuzz.crossRung=0}
  * off): after the normal protocol, every case is re-run on the VM engine
  * with each complete-search ladder rung forced via
- * {@link TdfaRunner#setForcedStrategy} — ORIGIN_SIM, TRIGGER, RAW_SCAN,
+ * {@link TdfaRunner#setForcedStrategy} — ORIGIN_SIM, RAW_SCAN,
  * WALK_RESTART. A forced rung must return the identical protocol string to
  * the natural ladder (any rung can serve any find() alone), so every case
  * doubles as a fast-rung-vs-complete-rung oracle the re2j comparison cannot
@@ -242,8 +242,8 @@ public final class DifferentialFuzzer {
     static final int STRETCH_EVERY = (int) (long) Long.getLong("fuzz.crossRung.stretchEvery", 8);
 
     /** The complete-search rungs (any can answer any find() alone). */
-    static final TdfaRunner.Strategy[] FORCED_RUNGS = {TdfaRunner.Strategy.ORIGIN_SIM, TdfaRunner.Strategy.TRIGGER,
-        TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART};
+    static final TdfaRunner.Strategy[] FORCED_RUNGS =
+        {TdfaRunner.Strategy.ORIGIN_SIM, TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART};
 
     /** Stretched-input floor: past twice the old search-DFA memo window
      *  (2048) so the long-scan paths — never reachable on 0-24-char
@@ -1095,9 +1095,9 @@ public final class DifferentialFuzzer {
      * probes ignore the force hook by design and must stay identical.
      */
     static EnumSet<TdfaRunner.Strategy> allowedUnder(TdfaRunner.Strategy f) {
-        EnumSet<TdfaRunner.Strategy> a = EnumSet.of(TdfaRunner.Strategy.EXACT_FROM, TdfaRunner.Strategy.TRIGGER,
-            TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART, TdfaRunner.Strategy.ANCHORED,
-            TdfaRunner.Strategy.ANCHORED_FAST, TdfaRunner.Strategy.GENERIC);
+        EnumSet<TdfaRunner.Strategy> a =
+            EnumSet.of(TdfaRunner.Strategy.EXACT_FROM, TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART,
+                TdfaRunner.Strategy.ANCHORED, TdfaRunner.Strategy.ANCHORED_FAST, TdfaRunner.Strategy.GENERIC);
         a.add(f);
         return a;
     }

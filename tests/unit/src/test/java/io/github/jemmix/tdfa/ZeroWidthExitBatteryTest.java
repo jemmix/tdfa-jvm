@@ -63,7 +63,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *     structural reading keeps the permissive copies, so its artifacts
  *     stay bit-identical through the fix.</li>
  * <li><b>The JUR lane holds on every rung.</b> Forced-strategy audit:
- *     every battery row through ORIGIN_SIM/TRIGGER/RAW_SCAN/WALK_RESTART.</li>
+ *     every battery row through ORIGIN_SIM/RAW_SCAN/WALK_RESTART.</li>
  * </ul>
  */
 class ZeroWidthExitBatteryTest {
@@ -152,7 +152,7 @@ class ZeroWidthExitBatteryTest {
         assertThat(engineProto(vm, CharBuffer.wrap(r.input))).as("%s: CharBuffer /%s/", r.id, r.pattern)
             .isEqualTo(want);
         for (TdfaRunner.Strategy f : new TdfaRunner.Strategy[]{TdfaRunner.Strategy.ORIGIN_SIM,
-            TdfaRunner.Strategy.TRIGGER, TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART}) {
+            TdfaRunner.Strategy.RAW_SCAN, TdfaRunner.Strategy.WALK_RESTART}) {
             String forced;
             try {
                 TdfaRunner.setForcedStrategy(f);
