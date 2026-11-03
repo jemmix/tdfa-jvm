@@ -13,7 +13,7 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 ## Correctness
 
-- [ ] Review memo deletions; restore if unicode regimes matter ([pricing](docs/search-dfa-memo-tradeoffs.md))
+- [ ] Fix pre-existing `(?U:\w)` lone-surrogate divergence vs jur
 - [ ] JUR-compat re-base tail: both-lane soak, README numbers
 - [ ] Watch JDK-8381696; retire `SKIP_RESTART_TAG_LEAK` on JDK fix ([analysis](docs/jdk-8381696-restart-tag-leak-fix.md))
 - [ ] Overnight cross-rung soak, both lanes; refresh README numbers
@@ -23,6 +23,7 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 ## Performance
 
+- [ ] Sim→trigger live-set handoff: one pass, not two ([why](docs/wide-dispatch-index.md))
 
 ## Benchmarks
 

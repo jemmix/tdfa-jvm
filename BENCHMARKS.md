@@ -71,25 +71,34 @@ row alone moves the geomean from ~1× to ~0.6×/0.2×.
 
 Unanchored `Matcher.find()` on 30–65-char inputs — the regime where lazy NFA
 engines usually win and per-call overhead dominates. Artifact:
-`benchmarks/results-shortfind-jmh.txt`.
+`benchmarks/results-shortfind-jmh.txt` (re-run 2026-11-03, post
+wide-dispatch-index; single-shot cells wobble ±30 % run-to-run — within-run
+engine ratios are the durable claims).
 
 | shape | jur | re2j | reggie | VM | ASM |
 |---|---:|---:|---:|---:|---:|
-| literal find | 81.7 | 215.6 | **17.2** | 36.3 | 39.2 |
-| `(?i)sherlock` | **34.7** | 365.6 | 15.6 | 53.2 | 65.7 |
-| `\bword\b` | 196.1 | 586.0 | 53.9 | **97.0** | 109.4 |
-| `\p{L}{2,}` (Cyrillic) | **42.0** | 345.3 | 95.0 | 79.7 | 88.8 |
-| `[а-яА-ЯёЁ]{4,}` | 78.6 | 327.0 | 5.3 | 121.5 | **35.2** |
-| `"[^"]{5,20}"` | 58.6 | 587.0 | 40.5 | 90.1 | **61.2** |
-| IPv4 extract | 294.8 | 1,429.4 | 148.4 | 161.4 | **86.8** |
-| `(a\|b)*c` find | 148.4 | 519.6 | 836.8 | 82.3 | **36.7** |
-| email no-match | 457.3 | 1,994.7 | 308.7 | **768.7** | 883.9 |
-| literal no-match | 45.3 | 45.2 | 13.1 | **31.1** | 35.3 |
-| **geomean** | | | | 0.94× jur / 0.22× re2j | **0.75× jur** / 0.17× re2j |
+| literal find | 74.7 | 175.2 | **13.2** | 31.1 | 30.7 |
+| `(?i)sherlock` | 34.0 | 280.2 | 12.0 | 63.8 | **32.9** |
+| `\bword\b` | 174.2 | 463.8 | 41.9 | **76.5** | 83.2 |
+| `\p{L}{2,}` (Cyrillic) | 33.2 | 274.2 | 81.0 | 65.7 | **68.0** |
+| `[а-яА-ЯёЁ]{4,}` | 52.7 | 257.7 | 4.4 | 80.1 | **22.9** |
+| `"[^"]{5,20}"` | 39.5 | 452.1 | 31.2 | 91.0 | **52.7** |
+| IPv4 extract | 144.9 | 1193.0 | 117.4 | 156.9 | **67.4** |
+| `(a\|b)*c` find | 131.2 | 414.5 | 538.5 | 82.8 | **30.9** |
+| email no-match | 345.3 | 1586.2 | 241.3 | 944.2 | **913.1** |
+| literal no-match | 39.7 | 37.4 | 11.7 | **26.1** | 27.7 |
+| **geomean** | | | | 1.11× jur | **0.73× jur** |
 
-**ASM beats `java.util.regex` on the geomean** (0.75×); both backends beat
-re2j 4.5×+. The rows jur still wins are the known gaps: `(?i)` and
-unicode-class scans, dense-candidate no-match scans.
+**ASM beats `java.util.regex` on the geomean** (0.73×); the wide dispatch
+index (2026-11-03, [`docs/wide-dispatch-index.md`](docs/wide-dispatch-index.md))
+removed the unicode wide-class walk penalty — the `\p{L}{2,}` row's walk
+term measured 3.7× faster per codepoint, and what remains on that row is
+the short-input per-call floor (compare literal no-match, where our bare
+floor already beats jur), not class scanning. The rows jur still wins on
+per-call work: `(?i)` folding and dense-candidate no-match scans; on the
+16 KB scan regimes the unicode wide-class rows sit at ~2.1× jur with the
+residue priced as the ladder's double pass (TODO), and the shapes where
+jur has no first-char shortcut stay wins by 2–3 orders of magnitude.
 
 ## 3. rebar corpus — `RebarBench` (110 scenarios, full haystacks, 5 engines)
 
@@ -106,16 +115,20 @@ literal-prefixed family has improved since).
 - Per-row (accurate artifact, 92 rows where both engines printed a number —
   count-divergent `*` rows excluded, ties within ±5%): VM vs re2j
   **74 W / 4 T / 14 L**; VM vs jur **51 W / 4 T / 47 L** — losses cluster
-  in unicode wide classes (the remaining known gap; the literal-prefixed
-  family got its dedicated fix in §4, 2026-09-29 — these per-row counts
-  predate it).
+  in unicode wide classes (the wide dispatch index of §2, 2026-11-03,
+  addresses the class; these per-row counts predate it — the both-lane
+  re-base TODO refreshes them); the literal-prefixed family got its
+  dedicated fix in §4, 2026-09-29 — these per-row counts predate it, too.
 - The 2026-08-era blowouts are gone or flipped: **dictionary is now a 64×
   WIN vs jur** (373 vs 23,701 ms/MB — the Sep-2 interning/hash-cons rounds),
   i1095-ascii is a win (18.2 vs 30.1 ms/MB), lexer-veryl narrowed 12× → 2.2×.
 - Literal search `"Twain"` (16 MB): **~0.5 ns/char** — `String.indexOf`
-  intrinsic path, re2j parity. Remaining weak unicode rows: `\p{L}` non-BMP
-  scans (ASM 2521 vs jur 250 ms/MB on pLbraced-nonbmp) — the unicode-class
-  gap of §2.
+  intrinsic path, re2j parity. The unicode-class rows the wide dispatch
+  index serves (`\p{L}`-shaped scans: the 2026-09-04 artifact showed ASM
+  2521 vs jur 250 ms/MB on pLbraced-nonbmp, a micro-row-dominated cell;
+  post-index walks and scans ride one-load dispatch — see
+  [`docs/wide-dispatch-index.md`](docs/wide-dispatch-index.md) for the
+  16 KB-regime table) remain the re-base TODO's evidence gap.
 
 ## 4. Log-pipeline extraction — `LogExtractMacro` (200 k logfmt lines)
 

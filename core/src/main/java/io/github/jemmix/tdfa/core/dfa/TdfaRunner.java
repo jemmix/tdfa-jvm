@@ -289,6 +289,14 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      * Eager ASCII dispatch tables present (rangesDisjoint ∧ small enough).
      */
     private final boolean asciiTables;
+    /**
+     * The wide-class dispatch index (see {@link WideDispatch}): O(1)
+     * codepoint→range-entry lookup for wide Unicode classes, serving every
+     * walk / simulation / raw-scan dispatch site the Latin-1 tables cannot
+     * (codepoints at or above the Latin-1 table limit). Null when the
+     * artifact does not qualify — sites then keep the binary search.
+     */
+    private final WideDispatch wide;
 
     // ===== strategy trace (conformance instrument) =====
     //
@@ -360,6 +368,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             this.latinTarget = null;
         }
         this.fastPath = computeFastPath(tdfa);
+        this.wide = WideDispatch.build(tdfa, rangesDisjoint);
         this.longestMatch = tdfa.longestMatch;
         this.multi = tdfa.multiValued;
         this.semantics = tdfa.semantics();
@@ -788,6 +797,44 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         }
     }
 
+    /**
+     * Wide-class dispatch (see {@link #wide}): the range-entry index for
+     * {@code cp} in {@code state} — {@code -1} dead, {@link
+     * Integer#MIN_VALUE} state not indexed (caller keeps its binary
+     * search). Exact wherever built: disjoint ranges admit at most one
+     * containing entry, so this resolves precisely the entry the binary
+     * search finds; masks, dead markers, and ops stay in the entry.
+     */
+    private int wideRangeIndex(int state, int cp) {
+        return wide.rangeIndex(state, cp);
+    }
+
+    /**
+     * The containing entry's target for {@code cp} in state {@code s} by
+     * binary search ({@code -1} dead or absent) — the disjoint artifacts'
+     * dispatch, shared by the simulations' non-indexed states and the
+     * paths with no wide index (see {@link WideDispatch}). Fast-path
+     * callers guarantee pairwise-disjoint ranges, so the one entry the
+     * search finds is the whole answer.
+     */
+    private int disjointTarget(int s, int c) {
+        final int[] rg = this.ranges;
+        int base = stateBase[s];
+        int rlo = 0, rhi = ((stateMeta[s] >>> 1) & 0xFFFF) - 1;
+        while (rlo <= rhi) {
+            int mid = (rlo + rhi) >>> 1;
+            int mo = (base + mid) * 5;
+            if (c < rg[mo]) {
+                rhi = mid - 1;
+            } else if (c > rg[mo + 1]) {
+                rlo = mid + 1;
+            } else {
+                return rg[mo + 2];
+            }
+        }
+        return -1;
+    }
+
     @EmittedSurface
     @Override
     public int groupCount() {
@@ -1045,6 +1092,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 // Disjoint ranges: at most one entry contains c, so entry
                 // priority is moot and the flat table is exact.
                 ri = arf[state * limit + c];
+            } else if (wide != null) {
+                // Same exactness contract as the flat table above (see
+                // WideDispatch); MIN_VALUE = not indexed → binary search.
+                ri = wideRangeIndex(state, c);
             } else {
                 ri = Integer.MIN_VALUE;
             }
@@ -1460,6 +1511,11 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 // Disjoint ranges: at most one entry contains c, so entry
                 // priority is moot and the flat table is exact.
                 ri = arf[state * limit + c];
+            } else if (wide != null) {
+                // Wide dispatch: exact under the same disjointness contract
+                // (see WideDispatch); MIN_VALUE = state not indexed → the
+                // binary search below (overlapping masked artifacts).
+                ri = wideRangeIndex(state, c);
             } else {
                 ri = Integer.MIN_VALUE;
             }
@@ -1731,6 +1787,56 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         return rawScan(input, from, to, wIn, liveIn, sc, true);
     }
 
+    /**
+     * One state's transition step for the raw scan: OR every target the
+     * state's entries admit for {@code c} into {@code next} (the wakeup
+     * semantics — ALL containing entries, masked artifacts included),
+     * returning whether anything fired. Wide-indexed states dispatch in
+     * one lookup (disjoint ⇒ the single containing entry); the rest keep
+     * the anchor search + prefix-max walk-back.
+     */
+    private boolean scanStep(int s, int c, String input, int pos, int to, int[] next) {
+        final int[] rg = this.ranges;
+        final WideDispatch wd = this.wide;
+        int ri = wd != null ? wd.rangeIndex(s, c) : WideDispatch.NONE;
+        if (ri != WideDispatch.NONE) {
+            if (ri < 0) {
+                return false;
+            }
+            int mo = (stateBase[s] + ri) * 5;
+            int t = rg[mo + 2];
+            if (t >= 0 && (!rangeMaskGates || maskSatisfied(input, pos, to, rg[mo + 4]))) {
+                next[t >>> 5] |= 1 << (t & 31);
+                return true;
+            }
+            return false;
+        }
+        boolean fired = false;
+        int base = stateBase[s];
+        int count = (stateMeta[s] >>> 1) & 0xFFFF;
+        int rlo = 0, rhi = count - 1, anchor = -1;
+        while (rlo <= rhi) {
+            int mid = (rlo + rhi) >>> 1;
+            if (rg[(base + mid) * 5] <= c) {
+                anchor = mid;
+                rlo = mid + 1;
+            } else {
+                rhi = mid - 1;
+            }
+        }
+        for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+            int mo = (base + i) * 5;
+            if (c <= rg[mo + 1]) {
+                int t = rg[mo + 2];
+                if (t >= 0 && (!rangeMaskGates || maskSatisfied(input, pos, to, rg[mo + 4]))) {
+                    next[t >>> 5] |= 1 << (t & 31);
+                    fired = true;
+                }
+            }
+        }
+        return fired;
+    }
+
     private int rawScan(String input, int from, int to, int wIn, int[] liveIn, MatchScratch sc, boolean unitSeeds) {
         final int nwords = stateWords;
         int[] live = sc.takeLive(nwords);
@@ -1741,8 +1847,14 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             Arrays.fill(live, 0, nwords, 0);
             live[startState >>> 5] |= 1 << (startState & 31);
         }
-        final int[] sm = stateMeta, rg = ranges, ab = acceptBits;
-        final boolean rangeGates = this.rangeMaskGates;
+        final int ss = startState;
+        final int ssMask = 1 << (ss & 31);
+        // Seed-only regime: the live set is exactly the re-seeded start
+        // state — the shape of every sparse-candidate scan between kills.
+        // The step is then ONE dispatch instead of the bitset iteration
+        // (same products: targets ∪ reseed, kill ⇒ W advance). Single-word
+        // DFAs only — wider ones re-derive the flag from `next` anyway.
+        boolean seedOnly = nwords == 1 && live[0] == ssMask;
         int W = wIn;
         int[] pf = {-1}; // per-position posFlags cache (φ-gated probes)
         for (int pos = from; pos <= to; pos++) {
@@ -1757,33 +1869,18 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             int adv = Alphabet.width(c);
             Arrays.fill(next, 0, nwords, 0);
             boolean empty = true;
-            for (int w = 0; w < nwords; w++) {
-                int bits = live[w];
-                while (bits != 0) {
-                    int bit = Integer.numberOfTrailingZeros(bits);
-                    bits &= bits - 1;
-                    int s = (w << 5) + bit;
-                    int meta = sm[s];
-                    int base = stateBase[s];
-                    int count = (meta >>> 1) & 0xFFFF;
-                    int rlo = 0, rhi = count - 1, anchor = -1;
-                    while (rlo <= rhi) {
-                        int mid = (rlo + rhi) >>> 1;
-                        if (rg[(base + mid) * 5] <= c) {
-                            anchor = mid;
-                            rlo = mid + 1;
-                        } else {
-                            rhi = mid - 1;
-                        }
-                    }
-                    for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
-                        int mo = (base + i) * 5;
-                        if (c <= rg[mo + 1]) {
-                            int t = rg[mo + 2];
-                            if (t >= 0 && (!rangeGates || maskSatisfied(input, pos, to, rg[mo + 4]))) {
-                                next[t >>> 5] |= 1 << (t & 31);
-                                empty = false;
-                            }
+            if (seedOnly) {
+                if (scanStep(ss, c, input, pos, to, next)) {
+                    empty = false;
+                }
+            } else {
+                for (int w = 0; w < nwords; w++) {
+                    int bits = live[w];
+                    while (bits != 0) {
+                        int bit = Integer.numberOfTrailingZeros(bits);
+                        bits &= bits - 1;
+                        if (scanStep((w << 5) + bit, c, input, pos, to, next)) {
+                            empty = false;
                         }
                     }
                 }
@@ -1804,36 +1901,19 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 // consumed as a lone BMP char rejoins the aligned stream at
                 // pos+2 — merge its start-state targets into the next set,
                 // gated on required masks like every other transition.
-                int base = stateBase[startState];
-                int count = (stateMeta[startState] >>> 1) & 0xFFFF;
-                int lo = input.charAt(pos + 1);
-                int rlo = 0, rhi = count - 1, anchor = -1;
-                while (rlo <= rhi) {
-                    int mid = (rlo + rhi) >>> 1;
-                    if (rg[(base + mid) * 5] <= lo) {
-                        anchor = mid;
-                        rlo = mid + 1;
-                    } else {
-                        rhi = mid - 1;
-                    }
-                }
-                for (int i = anchor; i >= 0 && rhp[base + i] >= lo; i--) {
-                    int mo = (base + i) * 5;
-                    if (lo <= rg[mo + 1]) {
-                        int t = rg[mo + 2];
-                        if (t >= 0 && (!rangeGates || maskSatisfied(input, pos + 1, to, rg[mo + 4]))) {
-                            next[t >>> 5] |= 1 << (t & 31);
-                            empty = false;
-                        }
-                    }
+                if (scanStep(startState, input.charAt(pos + 1), input, pos + 1, to, next)) {
+                    empty = false;
                 }
             }
             // Always re-seed: after a kill the live set must be the pure seed
             // (match may start at pos+1), not empty — an empty live set would
             // kill every subsequent step too and mask real matches.
-            next[startState >>> 5] |= 1 << (startState & 31);
+            next[ss >>> 5] |= ssMask;
             if (empty) {
                 W = pos + adv;
+            }
+            if (nwords == 1) {
+                seedOnly = next[0] == ssMask;
             }
             int[] tmp = live;
             live = next;
@@ -1974,9 +2054,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         if (nwords == 0) {
             return -1;
         }
-        final int[] sm = stateMeta;
         final int[] rg = ranges;
         final int[] at = asciiTarget;
+        final WideDispatch wd = this.wide;
         final int[] ab = acceptBits;
         final int ss = startState;
 
@@ -1996,6 +2076,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         Arrays.fill(live, 0, nwords, 0);
         live[ss >>> 5] |= 1 << (ss & 31);
         origin[ss] = from;
+        // Seed-only regime (see the transition step below): single-word DFAs
+        // track "live == {ss}" in one compare per step.
+        final int ssBit = 1 << (ss & 31);
+        boolean seedOnly = nwords == 1;
 
         int best = -1;
         final int limit = budget < 0 ? Integer.MAX_VALUE : from + budget;
@@ -2047,7 +2131,25 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             int adv = Alphabet.width(c);
 
             Arrays.fill(next, 0, nwords, 0); // grown carrier: zero only our prefix
-            if (at != null && c < 128) {
+            if (seedOnly) {
+                // Seed-only regime (see rawScan): the live set is exactly the
+                // re-seeded start state — the sparse-scan shape between
+                // kills. One dispatch instead of the bitset iteration; the
+                // origin carried to the target is origin[ss], exactly what
+                // the general loop below would read for the lone live state.
+                int ri = wd != null ? wd.rangeIndex(ss, c) : WideDispatch.NONE;
+                int target;
+                if (ri == WideDispatch.NONE) {
+                    target = disjointTarget(ss, c);
+                } else if (ri >= 0) {
+                    target = rg[(stateBase[ss] + ri) * 5 + 2];
+                } else {
+                    target = -1;
+                }
+                if (target >= 0) {
+                    setOrigin(next, originNext, target, origin[ss]);
+                }
+            } else if (at != null && c < 128) {
                 for (int w = 0; w < nwords; w++) {
                     int bits = live[w];
                     while (bits != 0) {
@@ -2060,6 +2162,31 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                         }
                     }
                 }
+            } else if (wd != null && c >= 128) {
+                // Wide classes past Latin-1: one index lookup per live state
+                // (see WideDispatch) — the sim's per-char cost on unicode
+                // text drops from a range search to a couple of loads.
+                // Narrow states under the index threshold keep the search.
+                for (int w = 0; w < nwords; w++) {
+                    int bits = live[w];
+                    while (bits != 0) {
+                        int bit = Integer.numberOfTrailingZeros(bits);
+                        bits &= bits - 1;
+                        int s = (w << 5) + bit;
+                        int ri = wd.rangeIndex(s, c);
+                        int target;
+                        if (ri == WideDispatch.NONE) {
+                            target = disjointTarget(s, c);
+                        } else if (ri >= 0) {
+                            target = rg[(stateBase[s] + ri) * 5 + 2];
+                        } else {
+                            target = -1;
+                        }
+                        if (target >= 0) {
+                            setOrigin(next, originNext, target, origin[s]);
+                        }
+                    }
+                }
             } else {
                 for (int w = 0; w < nwords; w++) {
                     int bits = live[w];
@@ -2067,32 +2194,18 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                         int bit = Integer.numberOfTrailingZeros(bits);
                         bits &= bits - 1;
                         int s = (w << 5) + bit;
-                        int meta = sm[s];
-                        int base = stateBase[s];
-                        int count = (meta >>> 1) & 0xFFFF;
                         // rangesDisjoint == true on the fast path — binary search
-                        int rlo = 0, rhi = count - 1;
-                        while (rlo <= rhi) {
-                            int mid = (rlo + rhi) >>> 1;
-                            int mo = (base + mid) * 5;
-                            if (c < rg[mo]) {
-                                rhi = mid - 1;
-                                continue;
-                            }
-                            if (c > rg[mo + 1]) {
-                                rlo = mid + 1;
-                                continue;
-                            }
-                            int target = rg[mo + 2];
-                            if (target >= 0) {
-                                setOrigin(next, originNext, target, origin[s]);
-                            }
-                            break;
+                        int target = disjointTarget(s, c);
+                        if (target >= 0) {
+                            setOrigin(next, originNext, target, origin[s]);
                         }
                     }
                 }
             }
             setOrigin(next, originNext, ss, pos + adv); // unanchored re-seed (min-merge if already re-added)
+            if (nwords == 1) {
+                seedOnly = next[0] == ssBit;
+            }
 
             int[] tmp = live;
             live = next;
@@ -2197,6 +2310,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             int ri;
             if (c < limit) {
                 ri = arf[state * limit + c];
+            } else if (wide != null) {
+                ri = wideRangeIndex(state, c);
             } else {
                 ri = Integer.MIN_VALUE;
             }
@@ -2318,9 +2433,11 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
 
     /**
      * One single-start extract walk (no restart loop); null if no match starts
-     * exactly at {@code start}. Non-Latin-1 codepoints mid-walk fall back to
-     * the generic exact walk from the SAME start (single-start semantics —
-     * callers treat null as "no match here", not "no match anywhere").
+     * exactly at {@code start}. Non-Latin-1 codepoints dispatch through the
+     * wide index where the artifact has one (keeping the walk inline, pair
+     * advance and all); otherwise they fall back to the generic exact walk
+     * from the SAME start (single-start semantics — callers treat null as
+     * "no match here", not "no match anywhere").
      */
     private MatchHolder tryStartFast(String input, int start, int to, MatchScratch sc) {
         final int[] sm = this.stateMeta;
@@ -2392,11 +2509,26 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             if (pos == to) {
                 break;
             }
-            char c = input.charAt(pos);
-            if (c >= latinLimit) {
+            char cu = input.charAt(pos);
+            int ri;
+            int width = 1;
+            if (cu < latinLimit) {
+                ri = arf[state * latinLimit + cu];
+            } else if (wide != null) {
+                // Wide dispatch covers the non-Latin-1 span in place — the
+                // walk keeps its registers/accept state instead of bailing
+                // to extractFrom. MIN_VALUE (state not indexed) still bails.
+                int cp = Alphabet.decode(input, pos, to);
+                ri = wideRangeIndex(state, cp);
+                if (ri != Integer.MIN_VALUE) {
+                    width = cp > 0xFFFF ? 2 : 1;
+                }
+            } else {
+                ri = Integer.MIN_VALUE;
+            }
+            if (ri == Integer.MIN_VALUE) {
                 return extractFrom(input, start, to, sc);
             }
-            int ri = arf[state * latinLimit + c];
             if (ri < 0) {
                 break;
             }
@@ -2412,6 +2544,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 }
             }
             state = target;
+            if (width == 2) {
+                pos++;
+            }
             // posFlags belongs to the OLD position — invalidate (extractFrom /
             // matchFrom / anchored / generic all reset here; skipping the
             // reset feeds stale flags to the next accept / stopNow probe).
@@ -2470,8 +2605,17 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             int count = (meta >>> 1) & 0xFFFF;
             boolean matched = false;
             if (asciiTables) {
-                // ASCII fast path: direct table lookup
-                int ri = c < latinLimit ? asciiRangeFlat[state * latinLimit + c] : -2;
+                // ASCII fast path: direct table lookup; wide classes keep it
+                // past Latin-1 via the wide dispatch index (exact under the
+                // same disjointness; MIN_VALUE → binary search below).
+                int ri;
+                if (c < latinLimit) {
+                    ri = asciiRangeFlat[state * latinLimit + c];
+                } else if (wide != null) {
+                    ri = wideRangeIndex(state, c);
+                } else {
+                    ri = -2;
+                }
                 if (ri >= 0) {
                     int mo = (base + ri) * 5;
                     int target = rg[mo + 2];
@@ -2677,6 +2821,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
             int riFlat;
             if (arf != null && c < limit) {
                 riFlat = arf[state * limit + c];
+            } else if (wide != null) {
+                // Wide dispatch (exact under disjointness — see WideDispatch);
+                // MIN_VALUE = state not indexed → the binary search below.
+                riFlat = wideRangeIndex(state, c);
             } else {
                 riFlat = Integer.MIN_VALUE;
             }
@@ -2904,38 +3052,60 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
                 int c = Alphabet.decode(input, pos, to);
                 int base = stateBase[state];
                 int count = (meta >>> 1) & 0xFFFF;
-                // Binary search + prefix-max walk (CharSequence variant).
-                int rlo = 0, rhi = count - 1, anchor = -1;
-                while (rlo <= rhi) {
-                    int mid = (rlo + rhi) >>> 1;
-                    if (ranges[(base + mid) * 5] <= c) {
-                        anchor = mid;
-                        rlo = mid + 1;
-                    } else {
-                        rhi = mid - 1;
-                    }
-                }
                 int chosen = -1, chosenTarget = 0;
-                // Most-specific satisfied mask owns the step (popcount, ties
-                // to lowest index) — see extractFrom for the protocol.
-                int bestSpec = -1;
-                for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
-                    int o = (base + i) * 5;
-                    if (c <= ranges[o + 1]) {
+                int riW = wide != null ? wideRangeIndex(state, c) : Integer.MIN_VALUE;
+                if (riW != Integer.MIN_VALUE) {
+                    // Wide dispatch (see WideDispatch): the one containing
+                    // entry, exact under disjointness. A dead marker or an
+                    // unsatisfied required mask ends the walk — no other
+                    // entry contains c, so there is nothing to fall to.
+                    if (riW >= 0) {
+                        int o = (base + riW) * 5;
+                        chosen = o;
+                        chosenTarget = ranges[o + 2];
                         int requiredMask = ranges[o + 4];
                         if (requiredMask != 0) {
                             if (posFlags < 0) {
                                 posFlags = positionFlagsCS(input, pos, to);
                             }
                             if ((posFlags & requiredMask) != requiredMask) {
-                                continue;
+                                chosen = -1;
                             }
                         }
-                        int spec = Integer.bitCount(requiredMask);
-                        if (spec >= bestSpec) {
-                            chosen = o;
-                            chosenTarget = ranges[o + 2];
-                            bestSpec = spec;
+                    }
+                } else {
+                    // Binary search + prefix-max walk (CharSequence variant).
+                    int rlo = 0, rhi = count - 1, anchor = -1;
+                    while (rlo <= rhi) {
+                        int mid = (rlo + rhi) >>> 1;
+                        if (ranges[(base + mid) * 5] <= c) {
+                            anchor = mid;
+                            rlo = mid + 1;
+                        } else {
+                            rhi = mid - 1;
+                        }
+                    }
+                    // Most-specific satisfied mask owns the step (popcount, ties
+                    // to lowest index) — see extractFrom for the protocol.
+                    int bestSpec = -1;
+                    for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+                        int o = (base + i) * 5;
+                        if (c <= ranges[o + 1]) {
+                            int requiredMask = ranges[o + 4];
+                            if (requiredMask != 0) {
+                                if (posFlags < 0) {
+                                    posFlags = positionFlagsCS(input, pos, to);
+                                }
+                                if ((posFlags & requiredMask) != requiredMask) {
+                                    continue;
+                                }
+                            }
+                            int spec = Integer.bitCount(requiredMask);
+                            if (spec >= bestSpec) {
+                                chosen = o;
+                                chosenTarget = ranges[o + 2];
+                                bestSpec = spec;
+                            }
                         }
                     }
                 }

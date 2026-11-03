@@ -105,6 +105,14 @@ endgame; `Strategy.TRIGGER` merged into `RAW_SCAN` (C3).
 
 ## Restoration criteria — when to bring it back
 
+**Resolved 2026-11-03, without restoration**: criteria 1 and 2 were
+answered by the wide dispatch index ([wide-dispatch-index.md](wide-dispatch-index.md))
+— an eager, immutable `(state, codepoint)` dispatch table that gives
+wide classes one-load dispatch on every walk AND both simulations. The
+regime's cost was never the simulation shape the memo cached; it was the
+per-codepoint range search. The memos stay deleted; the historical
+criteria are kept below for the record.
+
 Bring the memo back (as the W2 honest cache, or the two-level variant
 below) if **any** of these measures flips:
 
