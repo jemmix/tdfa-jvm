@@ -52,11 +52,17 @@ divergence blows that side's budget fails the whole compile. If you only ever
 the whole machinery entirely, accepts exactly what a find-only consumer can
 run, and throws `UnsupportedOperationException` from whole-input methods.
 
-Known gap: `java.util.regex` still beats us ~2–4× on unicode wide-class
-scans (`\p{L}`, `(?u)\w`-shaped rows in the benchmark tables) — the next
-work item. Literal-prefixed search of medium inputs (the `ip=`-shaped log
-queries that used to lose ~2–4×) now rides `String.indexOf` over the
-required literal prefix and beats `java.util.regex` on both backends —
+Unicode wide-class scans (`\p{L}`, unicode-`\w` shapes) ride the **wide
+dispatch index** — an eager, immutable two-level `(state, codepoint)` map
+that gives ~700-range classes one-load dispatch on every walk and scan
+path, past the Latin-1 tables. That closed the old 2–4× `java.util.regex`
+gap (walk rows now ~1.2× jur; scan rows ~2.1×, the residue of the
+ladder's double pass — see
+[`docs/wide-dispatch-index.md`](docs/wide-dispatch-index.md)) and
+outperformed the deleted search-DFA memo's regime without restoring any
+lazily built cache. Literal-prefixed search of medium inputs (the `ip=`
+-shaped log queries that used to lose ~2–4×) rides `String.indexOf` over
+the required literal prefix and beats `java.util.regex` on both backends —
 including case-insensitive shapes (the needle is the chain's case-stable
 run, at a fixed offset past the fold steps) and `\b`-anchored ones (the
 candidate walk evaluates the gate).
@@ -83,9 +89,9 @@ JMH, JDK 26, short inputs, ns/op — lower is better
 ¹ 20 × `a` + `c` — `java.util.regex` pays its quadratic backtracking (~1.9 µs);
 every engine here that is linear by construction is µs-free.
 
-On unanchored search (the harder regime for DFA engines): geomean **0.75×**
-`java.util.regex` and **0.17×** re2j on short-input `find()` (ASM; VM 0.94× /
-0.22×); **0.45–0.47×** re2j (VM) / **0.65–0.69×** (ASM) across the
+On unanchored search (the harder regime for DFA engines): geomean **0.73×**
+`java.util.regex` and **0.17×** re2j on short-input `find()` (ASM; VM 1.11× /
+0.25× — 2026-11-03 artifact, the wide-dispatch re-run); **0.45–0.47×** re2j (VM) / **0.65–0.69×** (ASM) across the
 110-scenario rebar corpus; ~1.3–2× faster than `java.util.regex` on the
 literal-prefixed log-extraction rows (re2j is 4–10× slower there). Reproduce
 with `./gradlew :benchmarks:micro:jmh -PjmhInclude='ParameterizedShortInputBench'`.
