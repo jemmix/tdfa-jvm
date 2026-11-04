@@ -81,6 +81,7 @@ class BudgetRejectReplayTest {
             assertThat(o.exceptions).as("seed %s exceptions", seed).isEmpty();
             assertThat(o.memo).as("seed %s determinism double-run", seed).isEmpty();
             assertThat(o.cross).as("seed %s cross-rung", seed).isEmpty();
+            assertThat(o.mvt).as("seed %s multi-valued lane", seed).isEmpty();
             assertThat(o.oracle).as("seed %s oracle answered", seed).doesNotStartWith("<");
             assertThat(o.asm).as("seed %s asm vs java.util.regex", seed).isEqualTo(o.oracle);
             assertThat(o.vm).as("seed %s vm vs java.util.regex", seed).isEqualTo(o.oracle);

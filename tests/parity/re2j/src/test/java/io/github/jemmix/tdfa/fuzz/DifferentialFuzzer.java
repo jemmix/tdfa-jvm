@@ -7,6 +7,7 @@ import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
 import io.github.jemmix.tdfa.parity.LayeredComparator;
 import io.github.jemmix.tdfa.parity.LayeredComparator.Layer;
+import io.github.jemmix.tdfa.sim.PikeSim;
 import jdk.jfr.Configuration;
 import jdk.jfr.Recording;
 
@@ -24,6 +25,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
@@ -177,6 +179,33 @@ import java.util.function.Predicate;
  * (PikeSim) comparison, the GENERIC routing trace, and the wider wrapper
  * zoo (position-carrying buffers) live in the campaign's seq mode — the
  * deep-dive twin of this axis. {@code -Pfuzz.seq=0} turns the axis off.
+ *
+ * <p>The multi-valued lane (BT22 §3.1, on by default, {@code
+ * -Pfuzz.mvt=0} off; 1-in-N sampling via {@code fuzz.mvtEvery} — the lane
+ * is compile-bound): every batch additionally compiles as ASM and VM with
+ * {@code flags | MULTI_VALUED_TAGS} — a tdfa-only bit that never reaches
+ * either oracle compile — and runs four independent oracles over those
+ * artifacts (docs/fuzz-multi-valued-tags.md): <b>MVT_SELF</b>, the
+ * {@code groupSpans} self-consistency invariants (last pair == the
+ * single-valued report; never-matched group == exactly {@code (-1,-1)};
+ * pairs well-formed within the whole match with non-decreasing starts —
+ * and no {@code -1} padding, decided illegal: open/close crossings
+ * alternate along any accepting path, so histories are equinumerous);
+ * <b>MVT_SINGLE</b>, the multi compile's single-value protocol must equal
+ * the plain compile's (itself oracle-checked — generalizes the fixed
+ * parity corpus to the whole random grammar × flag matrix, LONGEST_MATCH
+ * composition included); <b>MVT_TIER</b>, MVT-ASM vs MVT-VM equality of a
+ * spans-suffixed protocol (the only oracle covering the ASM tier's tree
+ * plumbing); <b>MVT_SIM</b>, the PikeSim multi-valued write log
+ * ({@code spansOf}) must equal {@code groupSpans} exactly — RE2J lane,
+ * flags=0 batches only (the reference reads the RE2 lineage and cannot
+ * express compile-level flag bits). The cross-rung forced ladder and the
+ * stretched-input probes also run on the multi-valued VM compile
+ * (MVT_RUNG): the tree must survive every forced rung and thousands of
+ * appends identically. One expected class is classified, never a finding:
+ * <b>MVT_BUDGET_REJECT</b> — plain fits, multi rejects by budget (the
+ * lane permanently skips fixed-tag and regopt, so a near-budget pattern
+ * can reject where the plain compile fits; multi-valued-tags.md).
  */
 public final class DifferentialFuzzer {
 
@@ -242,6 +271,25 @@ public final class DifferentialFuzzer {
     static final boolean CROSS_STRETCH = Long.getLong("fuzz.crossRung.stretch", 1) != 0;
 
     static final int STRETCH_EVERY = (int) (long) Long.getLong("fuzz.crossRung.stretchEvery", 8);
+
+    /** The multi-valued lane (BT22 §3.1) on/off (Gradle: -Pfuzz.mvt=0). */
+    static final boolean MULTI = Long.getLong("fuzz.mvt", 1) != 0;
+
+    /** Multi-valued lane sampling: 1-in-N batches (Gradle:
+     *  -Pfuzz.mvtEvery=N). The lane is compile-bound — two extra tdfa
+     *  compiles plus (on RE2J/flags=0) one PikeSim compile per batch,
+     *  roughly +30-50% batch time; N>1 trades span coverage for soak
+     *  rate the way {@link #STRETCH_EVERY} does. Default 1 = every
+     *  batch. The draw is a pure function of the pattern, so
+     *  {@code fuzz.one} replay holds. */
+    static final int MULTI_EVERY = (int) (long) Long.getLong("fuzz.mvtEvery", 1);
+
+    /** The multi-valued compile bit (BT22 §3.1; both surfaces carry the
+     *  same {@code PatternSurface} value). tdfa-only: ORed onto the
+     *  batch's flags for the derived lane compiles, never passed to
+     *  either oracle compile — the matrix contract covers shared bits
+     *  only. */
+    static final int FLAG_MVT = io.github.jemmix.tdfa.Pattern.MULTI_VALUED_TAGS;
 
     /** The complete-search rungs (any can answer any find() alone). */
     static final TdfaRunner.Strategy[] FORCED_RUNGS =
@@ -403,8 +451,16 @@ public final class DifferentialFuzzer {
                 System.out.println("oracle:  " + o.oracle);
                 System.out.println("asm:     " + o.asm);
                 System.out.println("vm:     " + o.vm);
+                if (o.mvtRan || o.mvtBudget) {
+                    System.out.println("mvtAsm:  " + o.mvtAsm);
+                    System.out.println("mvtVm:   " + o.mvtVm);
+                    if (o.mvtBudget) {
+                        System.out.println("mvt:     <budget reject — plain fits, multi too large (expected class)>");
+                    }
+                }
                 o.memo.forEach(m -> System.out.println("memo:    " + m));
                 o.cross.forEach(x -> System.out.println("cross:   " + x));
+                o.mvt.forEach(x -> System.out.println("mvt:     " + x));
                 if (!o.exceptions.isEmpty()) {
                     o.exceptions.forEach(System.out::println);
                 }
@@ -684,7 +740,11 @@ public final class DifferentialFuzzer {
      *  lines to attach to each Outcome — the same strings a per-case
      *  compile path would emit. The oracle column is the lane's: re2j on
      *  the RE2J lane, a compiled {@code java.util.regex} Pattern on the
-     *  JUR lane ({@link #jurFlags} carries its translated flag bits). */
+     *  JUR lane ({@link #jurFlags} carries its translated flag bits).
+     *  The {@code mvt*} fields are the derived multi-valued lane (BT22
+     *  §3.1): the same pattern compiled with {@code flags |
+     *  MULTI_VALUED_TAGS} per tier, plus the PikeSim multi-valued
+     *  reference twin where it applies (RE2J lane, flags=0 batches). */
     static final class Prepared {
         String pattern;
         int flags;
@@ -698,6 +758,14 @@ public final class DifferentialFuzzer {
         TDFAPattern vm;
         String vmTag;
         String vmExc;
+        boolean mvt;
+        TDFAPattern mvtAsm;
+        String mvtAsmTag;
+        String mvtAsmExc;
+        TDFAPattern mvtVm;
+        String mvtVmTag;
+        String mvtVmExc;
+        PikeSim sim;
     }
 
     /** The oracle pattern a JUR-lane compile compares against: the
@@ -808,51 +876,84 @@ public final class DifferentialFuzzer {
             } catch (RuntimeException e) {
                 p.oracleTag = "<reject>";
             }
+        } else {
+            // The re2j lane: the tdfa side compiles through the re2j surface
+            // (the lane baked in; the facade default is java.util.regex parity)
+            // and re2j is the oracle.
             try {
-                p.asm = (TDFAPattern) io.github.jemmix.tdfa.Pattern.compile(pattern, flags, null, null);
-            } catch (PatternSyntaxException | PatternTooLargeException e) {
-                p.asmTag = "<reject:" + firstLine(e.getMessage()) + ">";
+                p.oracle = com.google.re2j.Pattern.compile(pattern, flags);
             } catch (RuntimeException e) {
-                p.asmTag = "<exception:" + e.getClass().getSimpleName() + ">";
-                p.asmExc = "asm " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage());
+                p.oracleTag = "<reject>";
             }
-            try {
-                p.vm = (TDFAPattern) io.github.jemmix.tdfa.Pattern.compile(pattern, flags, TdfaRunner::new, null);
-            } catch (PatternSyntaxException | PatternTooLargeException e) {
-                p.vmTag = "<reject:" + firstLine(e.getMessage()) + ">";
-            } catch (RuntimeException e) {
-                p.vmTag = "<exception:" + e.getClass().getSimpleName() + ">";
-                p.vmExc = "vm " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage());
+        }
+        compileLane(p, pattern, flags, lane, false, false);
+        compileLane(p, pattern, flags, lane, true, false);
+        // The derived multi-valued lane (BT22 §3.1): the same pattern under
+        // MULTI_VALUED_TAGS, both tiers — the bit is tdfa-only and never
+        // reaches the oracle compiles above. The PikeSim multi-valued
+        // reference twin rides RE2J-lane flags=0 batches only (see
+        // multiValued): it reads the RE2 lineage and compiles bare patterns.
+        p.mvt = mvtSampled(pattern);
+        if (p.mvt) {
+            compileLane(p, pattern, flags | FLAG_MVT, lane, false, true);
+            compileLane(p, pattern, flags | FLAG_MVT, lane, true, true);
+            if (lane == Lane.RE2J && flags == 0) {
+                try {
+                    p.sim = PikeSim.compileMulti(pattern, Re2jUnicodeProvider.INSTANCE);
+                } catch (RuntimeException e) {
+                    p.sim = null; // reference declined its own compile — skip, not a finding
+                }
             }
-            return p;
-        }
-        // The re2j lane: the tdfa side compiles through the re2j surface
-        // (the lane baked in; the facade default is java.util.regex parity)
-        // and re2j is the oracle.
-        try {
-            p.oracle = com.google.re2j.Pattern.compile(pattern, flags);
-        } catch (RuntimeException e) {
-            p.oracleTag = "<reject>";
-        }
-        try {
-            p.asm = (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, flags, null,
-                Re2jUnicodeProvider.INSTANCE);
-        } catch (PatternSyntaxException | PatternTooLargeException e) {
-            p.asmTag = "<reject:" + firstLine(e.getMessage()) + ">";
-        } catch (RuntimeException e) {
-            p.asmTag = "<exception:" + e.getClass().getSimpleName() + ">";
-            p.asmExc = "asm " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage());
-        }
-        try {
-            p.vm = (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, flags, TdfaRunner::new,
-                Re2jUnicodeProvider.INSTANCE);
-        } catch (PatternSyntaxException | PatternTooLargeException e) {
-            p.vmTag = "<reject:" + firstLine(e.getMessage()) + ">";
-        } catch (RuntimeException e) {
-            p.vmTag = "<exception:" + e.getClass().getSimpleName() + ">";
-            p.vmExc = "vm " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage());
         }
         return p;
+    }
+
+    /** One tdfa compile through the batch's lane surface ({@code vm} picks
+     *  the interpreter factory, {@code multi} targets the derived
+     *  multi-valued fields), carrying the compile-time outcome strings a
+     *  per-case compile path would emit. */
+    static void compileLane(Prepared p, String pattern, int flags, Lane lane, boolean vm, boolean multi) {
+        TDFAPattern compiled = null;
+        String tag = null;
+        String exc = null;
+        try {
+            compiled = lane == Lane.JUR
+                ? (TDFAPattern) io.github.jemmix.tdfa.Pattern.compile(pattern, flags, vm ? TdfaRunner::new : null, null)
+                : (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, flags, vm ? TdfaRunner::new : null,
+                    Re2jUnicodeProvider.INSTANCE);
+        } catch (PatternSyntaxException | PatternTooLargeException e) {
+            tag = "<reject:" + firstLine(e.getMessage()) + ">";
+        } catch (RuntimeException e) {
+            tag = "<exception:" + e.getClass().getSimpleName() + ">";
+            exc = (vm ? "vm" : "asm") + (multi ? " mvt" : "") + " " + e.getClass().getSimpleName() + ": "
+                + firstLine(e.getMessage());
+        }
+        if (multi) {
+            if (vm) {
+                p.mvtVm = compiled;
+                p.mvtVmTag = tag;
+                p.mvtVmExc = exc;
+            } else {
+                p.mvtAsm = compiled;
+                p.mvtAsmTag = tag;
+                p.mvtAsmExc = exc;
+            }
+        } else if (vm) {
+            p.vm = compiled;
+            p.vmTag = tag;
+            p.vmExc = exc;
+        } else {
+            p.asm = compiled;
+            p.asmTag = tag;
+            p.asmExc = exc;
+        }
+    }
+
+    /** Multi-valued lane draw: pure function of the PATTERN (itself a pure
+     *  function of the batch), so the soak and {@code fuzz.one} replay
+     *  agree at any sampling width. */
+    static boolean mvtSampled(String pattern) {
+        return MULTI && Math.floorMod(pattern.hashCode() * 1000003L ^ 0x4D5654L, MULTI_EVERY) == 0; // "MVT"
     }
 
     /** One (pattern, input) case against prepared engines. Protocol strings
@@ -886,6 +987,9 @@ public final class DifferentialFuzzer {
         }
         if (SEQ_WRAP && pr.vm != null && seqSampled(c)) {
             seqProbes(pr, c, o);
+        }
+        if (pr.mvt) {
+            multiValued(pr, c, o);
         }
         return o;
     }
@@ -947,6 +1051,353 @@ public final class DifferentialFuzzer {
             o.cross.add("SEQ_ORACLE_WRAPPER " + w.getClass().getSimpleName() + " wrapper[" + ow + "] string["
                 + oracleStr + "]");
         }
+    }
+
+    // ---- the multi-valued lane (BT22 §3.1; docs/fuzz-multi-valued-tags.md) ----
+
+    /**
+     * Four independent oracles over the batch's {@code MULTI_VALUED_TAGS}
+     * compiles, only one of which needs a reference:
+     * <ol>
+     * <li><b>MVT_SELF</b> — the {@code groupSpans} self-consistency
+     *     invariants, asserted per probe on both tiers (details on
+     *     {@link #selfCheck}); no reference at all.</li>
+     * <li><b>MVT_SINGLE</b> — the multi compile's single-value protocol
+     *     must equal the plain compile's (itself oracle-checked): the
+     *     opt-in lane adds offset lists without moving one reported span,
+     *     at every flag combination including LONGEST_MATCH.</li>
+     * <li><b>MVT_TIER</b> — MVT-ASM vs MVT-VM equality of the
+     *     spans-suffixed protocol — the only oracle that covers the ASM
+     *     tier's tree plumbing (the static appendVal hook, holder-carried
+     *     tree snapshots), which nothing oracle-derived can touch.</li>
+     * <li><b>MVT_SIM</b> — PikeSim's multi-valued write log: every group's
+     *     {@code spansOf(g)} must equal {@code groupSpans(g)} exactly, on
+     *     the first find(). RE2J lane, flags=0 batches only: the reference
+     *     reads the RE2 lineage and compiles the bare pattern, so neither
+     *     the jur facade's java-parity axes nor compile-level flag bits
+     *     (CI/DOTALL/MULTILINE, and LONGEST — leftmost-first is the
+     *     reference's only mode) can be followed.</li>
+     * </ol>
+     * Plus the free extras: the forced complete-search ladder and the
+     * stretched-input probes re-run on the multi-valued VM compile
+     * ({@link #runForcedMulti}, MVT_RUNG) — the tree must survive every
+     * forced rung and thousands of appends with identical spans.
+     *
+     * <p>Activation: the plain pair must have compiled — every oracle here
+     * is relative to the plain protocols. Expected class, classified
+     * before any comparison: <b>MVT_BUDGET_REJECT</b> — plain fits while
+     * BOTH multi tiers reject by budget (the lane permanently skips
+     * fixed-tag and regopt, so a near-budget pattern can reject where the
+     * plain compile fits; multi-valued-tags.md). Anything else — a
+     * one-tier reject, a non-budget reject — falls through and fails as
+     * SINGLE/TIER.
+     */
+    static void multiValued(Prepared pr, Case c, Outcome o) {
+        if (pr.asm == null || pr.vm == null) {
+            return; // the plain lane owns that failure; nothing to compare here
+        }
+        if (budgetReject(pr.mvtAsmTag) && budgetReject(pr.mvtVmTag)) {
+            o.mvtBudget = true;
+            o.mvtAsm = pr.mvtAsmTag;
+            o.mvtVm = pr.mvtVmTag;
+            return;
+        }
+        o.mvtRan = true;
+        // SINGLE: latest == plain. A tagged multi column against a real
+        // plain protocol is itself the finding (asymmetric rejects — one
+        // tier budget-rejecting where its sibling compiles — fail here
+        // too, not just as unequal protocols).
+        o.mvtAsm = runMvt(pr.mvtAsm, pr.mvtAsmTag, pr.mvtAsmExc, "mvtAsm", c, o);
+        o.mvtVm = runMvt(pr.mvtVm, pr.mvtVmTag, pr.mvtVmExc, "mvtVm", c, o);
+        if (o.asm != null && !o.asm.startsWith("<") && o.mvtAsm != null && !o.mvtAsm.equals(o.asm)) {
+            o.mvt.add("MVT_SINGLE mvtAsm [" + o.mvtAsm + "] plain [" + o.asm + "] probe "
+                + Results.probeDiff(o.asm, o.mvtAsm.startsWith("<") ? o.asm : o.mvtAsm));
+        }
+        if (o.vm != null && !o.vm.startsWith("<") && o.mvtVm != null && !o.mvtVm.equals(o.vm)) {
+            o.mvt.add("MVT_SINGLE mvtVm [" + o.mvtVm + "] plain [" + o.vm + "] probe "
+                + Results.probeDiff(o.vm, o.mvtVm.startsWith("<") ? o.vm : o.mvtVm));
+        }
+        // TIER: the spans-suffixed protocols carry the tree readout; SELF
+        // rides the same walks (findings == null on forced re-runs, where
+        // equality to the baseline subsumes the invariants).
+        String asmS = null;
+        String vmS = null;
+        if (pr.mvtAsm != null && o.mvtAsm != null && !o.mvtAsm.startsWith("<")) {
+            try {
+                asmS = computeMulti(pr.mvtAsm, c.input(), "mvtAsm", o.mvt);
+            } catch (RuntimeException | StackOverflowError e) {
+                o.mvt.add("MVT_THREW mvtAsm spans " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
+            }
+        }
+        if (pr.mvtVm != null && o.mvtVm != null && !o.mvtVm.startsWith("<")) {
+            try {
+                vmS = computeMulti(pr.mvtVm, c.input(), "mvtVm", o.mvt);
+            } catch (RuntimeException | StackOverflowError e) {
+                o.mvt.add("MVT_THREW mvtVm spans " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
+            }
+        }
+        if (asmS != null && vmS != null && !asmS.equals(vmS)) {
+            o.mvt.add("MVT_TIER asm [" + asmS + "] vm [" + vmS + "]");
+        }
+        // SIM: the write-log reference (first find only — leftmost-first).
+        if (pr.sim != null && pr.mvtVm != null && o.mvtVm != null && !o.mvtVm.startsWith("<")) {
+            o.mvtSimRan = true;
+            simOracle(pr.sim, pr.mvtVm, c, o);
+        }
+        // The forced ladder and stretched probes on the multi VM compile.
+        if (CROSS_RUNG && vmS != null) {
+            runForcedMulti(pr.mvtVm, c.input(), vmS, o, "");
+            if (CROSS_STRETCH && stretchSampled(c)) {
+                CharSequence stretched = stretch(c.input());
+                String base;
+                try {
+                    base = computeMulti(pr.mvtVm, stretched, "mvtVm", o.mvt);
+                } catch (RuntimeException e) {
+                    o.mvt.add("MVT_THREW stretched baseline " + e.getClass().getSimpleName() + ": "
+                        + firstLine(e.getMessage()));
+                    return;
+                }
+                runForcedMulti(pr.mvtVm, stretched, base, o, "stretched ");
+            }
+        }
+    }
+
+    /** A compile tag carrying the documented budget rejection. */
+    static boolean budgetReject(String tag) {
+        return tag != null && tag.startsWith("<reject:pattern too large");
+    }
+
+    /** The single-value protocol of one multi-valued tier, tagged-path
+     *  handling mirroring {@link #runEngine} but recording into the MVT
+     *  findings lane. */
+    static String runMvt(TDFAPattern p, String tag, String exc, String engTag, Case c, Outcome o) {
+        if (tag != null) {
+            if (exc != null) {
+                o.mvt.add("MVT_THREW " + exc);
+            }
+            return tag;
+        }
+        if (p == null) {
+            return "?";
+        }
+        try {
+            return compute(p, c.input());
+        } catch (RuntimeException | StackOverflowError e) {
+            o.mvt.add("MVT_THREW " + engTag + " " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
+            return "<exception:" + e.getClass().getSimpleName() + ">";
+        }
+    }
+
+    /** Oracle 4: the PikeSim multi-valued write log vs the multi-valued VM
+     *  compile's {@code groupSpans}, first find() — the parity suite's
+     *  spansMatchTheReferenceSim generalized to random shapes. */
+    static void simOracle(PikeSim sim, TDFAPattern mvtVm, Case c, Outcome o) {
+        try {
+            PikeSim.PikeMatcher pm = sim.matcher(c.input());
+            io.github.jemmix.tdfa.core.engine.Matcher vm = mvtVm.matcher(c.input());
+            boolean sf = pm.find();
+            boolean vf = vm.find();
+            if (sf != vf) {
+                o.mvt.add("MVT_SIM find sim=" + sf + " vm=" + vf);
+                return;
+            }
+            if (pm.groupCount() != vm.groupCount()) {
+                o.mvt.add("MVT_SIM groupCount sim=" + pm.groupCount() + " vm=" + vm.groupCount());
+                return;
+            }
+            if (!sf) {
+                return;
+            }
+            for (int g = 0; g <= vm.groupCount(); g++) {
+                int[] ss = pm.spansOf(g);
+                int[] vs = vm.groupSpans(g);
+                if (!Arrays.equals(ss, vs)) {
+                    o.mvt.add("MVT_SIM g" + g + " sim " + fmtSpans(ss) + " vm " + fmtSpans(vs));
+                }
+            }
+        } catch (RuntimeException | StackOverflowError e) {
+            o.mvt.add("MVT_THREW sim " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
+        }
+    }
+
+    /**
+     * The five-probe protocol (F/I/M/L/R) over a multi-valued compile,
+     * spans-suffixed: every successful probe's span blob carries each
+     * group's full {@code groupSpans} list as {@code <[s,e][s,e]…>} — the
+     * multi-valued readout, so tier and forced-rung equality cover the
+     * tree, not just the single-value report. {@code findings != null}
+     * additionally asserts the self-consistency invariants at every probe
+     * ({@link #selfCheck}); forced re-runs pass null — equality to the
+     * baseline subsumes the invariants there, and probe attribution lives
+     * on the baseline walk.
+     */
+    static String computeMulti(TDFAPattern p, CharSequence in, String tier, List<String> findings) {
+        StringBuilder sb = new StringBuilder(128);
+        io.github.jemmix.tdfa.core.engine.Matcher m = p.matcher(in);
+        boolean found = m.find();
+        if (found) {
+            spanMulti(sb.append("F=true "), m, tier, 'F', findings);
+        } else {
+            sb.append("F=false");
+        }
+        sb.append(" I=[");
+        int n = 0;
+        if (found) {
+            spanMulti(sb, m, tier, 'I', findings);
+            while (++n < MAX_MATCHES && m.find()) {
+                spanMulti(sb, m, tier, 'I', findings);
+            }
+        }
+        sb.append(n == MAX_MATCHES ? "]+$" : "]");
+        io.github.jemmix.tdfa.core.engine.Matcher mm = p.matcher(in);
+        if (mm.matches()) {
+            spanMulti(sb.append(" M=true "), mm, tier, 'M', findings);
+        } else {
+            sb.append(" M=false");
+        }
+        io.github.jemmix.tdfa.core.engine.Matcher ml = p.matcher(in);
+        if (ml.lookingAt()) {
+            spanMulti(sb.append(" L=true "), ml, tier, 'L', findings);
+        } else {
+            sb.append(" L=false");
+        }
+        io.github.jemmix.tdfa.core.engine.Matcher mr = p.matcher(in);
+        if (mr.find(in.length() / 2)) {
+            spanMulti(sb.append(" R=true "), mr, tier, 'R', findings);
+        } else {
+            sb.append(" R=false");
+        }
+        return sb.toString();
+    }
+
+    /** {@link #spanTdfa}'s blob plus every group's spans list; groups-only,
+     *  mirroring the single-value format (group 0's list is exactly the
+     *  whole-match span the blob already carries). */
+    static void spanMulti(StringBuilder sb, io.github.jemmix.tdfa.core.engine.Matcher m, String tier, char probe,
+        List<String> findings) {
+        spanTdfa(sb, m);
+        int gc = m.groupCount();
+        if (gc <= 0) {
+            return;
+        }
+        sb.append(" <");
+        for (int i = 1; i <= gc; i++) {
+            if (i > 1) {
+                sb.append(' ');
+            }
+            int[] sp = m.groupSpans(i);
+            for (int k = 0; k < sp.length; k += 2) {
+                sb.append('[').append(sp[k]).append(',').append(sp[k + 1]).append(']');
+            }
+            if (findings != null) {
+                selfCheck(m, sp, i, tier, probe, findings);
+            }
+        }
+        sb.append('>');
+    }
+
+    /**
+     * Oracle 1 — the {@code groupSpans} self-consistency invariants
+     * documented on {@code MatchResult.groupSpans}, asserted per probe;
+     * these catch TagTree readout corruption on any random shape with no
+     * reference at all:
+     * <ul>
+     * <li>the LAST pair of every group's list is exactly the single-valued
+     *     {@code start(g)..end(g)} report;</li>
+     * <li>a group that never matched yields the single pair
+     *     {@code (-1,-1)};</li>
+     * <li>pairs are well-formed ({@code start(0) ≤ s ≤ e ≤ end(0)}) with
+     *     non-decreasing starts — positions never move backwards along a
+     *     match.</li>
+     * </ul>
+     * The {@code -1} PADDING path (open/close histories of different
+     * length) is decided ILLEGAL here, not skipped: open and close
+     * crossings of a group alternate along any accepting path (every
+     * entered group is exited before the pattern's end state), so the
+     * histories are equinumerous and {@code groupSpans}'s {@code -1}
+     * padding is defensive dead code — reachable only through readout
+     * corruption, which is exactly what this lane exists to catch
+     * (recorded as MVT_PAD, its own kind).
+     */
+    static void selfCheck(io.github.jemmix.tdfa.core.engine.Matcher m, int[] sp, int g, String tier, char probe,
+        List<String> findings) {
+        String where = tier + " " + probe + " g" + g;
+        int s = m.start(g);
+        int e = m.end(g);
+        if (s < 0 || e < 0) {
+            if (sp.length != 2 || sp[0] != -1 || sp[1] != -1) {
+                findings.add("MVT_SELF " + where + " unset group but spans " + fmtSpans(sp));
+            }
+            return;
+        }
+        if (sp.length == 0) {
+            findings.add("MVT_SELF " + where + " empty spans vs start/end " + s + ".." + e);
+            return;
+        }
+        if (sp.length % 2 != 0 || sp[sp.length - 2] != s || sp[sp.length - 1] != e) {
+            findings.add("MVT_SELF " + where + " last pair [" + sp[sp.length - 2] + "," + sp[sp.length - 1]
+                + "] vs start/end " + s + ".." + e);
+        }
+        int ms = m.start(0);
+        int me = m.end(0);
+        int prevStart = Integer.MIN_VALUE;
+        for (int k = 0; k < sp.length; k += 2) {
+            int a = sp[k];
+            int b = sp[k + 1];
+            if (a < 0 || b < 0) {
+                findings.add("MVT_PAD " + where + " padded pair [" + a + "," + b + "] — open/close histories differ");
+                continue;
+            }
+            if (a < ms || b > me || a > b) {
+                findings.add("MVT_SELF " + where + " pair [" + a + "," + b + "] escapes whole match " + ms + ".." + me);
+            }
+            if (a < prevStart) {
+                findings.add("MVT_SELF " + where + " start " + a + " after " + prevStart + " — non-monotonic");
+            }
+            prevStart = a;
+        }
+    }
+
+    /**
+     * The forced complete-search ladder over the multi-valued VM compile
+     * ({@link #runForced}'s twin): every forced rung must reproduce the
+     * natural spans-suffixed protocol exactly — the tree must survive every
+     * rung — and route within the forced rung's fall-through family.
+     */
+    static void runForcedMulti(TDFAPattern vm, CharSequence in, String base, Outcome o, String tag) {
+        TdfaRunner.setTracing(true);
+        for (TdfaRunner.Strategy f : FORCED_RUNGS) {
+            TdfaRunner.traceSnapshot();
+            TdfaRunner.setForcedStrategy(f);
+            String forced;
+            List<TdfaRunner.Strategy> routed;
+            try {
+                forced = computeMulti(vm, in, null, null);
+                routed = TdfaRunner.traceSnapshot();
+            } catch (RuntimeException e) {
+                TdfaRunner.traceSnapshot();
+                o.mvt.add("MVT_RUNG THREW " + tag + f + " " + e.getClass().getSimpleName() + ": "
+                    + firstLine(e.getMessage()));
+                continue;
+            } finally {
+                TdfaRunner.setForcedStrategy(null);
+            }
+            if (!forced.equals(base)) {
+                o.mvt.add("MVT_RUNG MISMATCH " + tag + f + ": forced [" + forced + "] ladder [" + base + "]");
+            } else if (!allowedUnder(f).containsAll(routed)) {
+                o.mvt.add("MVT_RUNG ROUTED " + tag + f + " served by " + routed);
+            }
+        }
+    }
+
+    /** Flat spans as {@code [s,e][s,e]…} — the finding-line spelling of the
+     *  protocol suffix. */
+    static String fmtSpans(int[] sp) {
+        StringBuilder sb = new StringBuilder(sp.length * 5 + 2);
+        for (int k = 0; k < sp.length; k += 2) {
+            sb.append('[').append(sp[k]).append(',').append(sp[k + 1]).append(']');
+        }
+        return sb.toString();
     }
 
     // ---- determinism double-run (runner-immutability tripwire 2) ----
@@ -2250,6 +2701,21 @@ public final class DifferentialFuzzer {
     static final class Outcome {
         final Case c;
         String oracle = "?", asm = "?", vm = "?";
+        /** The multi-valued lane's single-value columns (protocol string,
+         *  tier tag on a reject, {@code ?} when the lane never ran). */
+        String mvtAsm = "?", mvtVm = "?";
+        /** Multi-valued lane findings (MVT_SELF/PAD/SINGLE/TIER/SIM/RUNG/
+         *  THREW) — non-empty fails the case regardless of the oracle
+         *  outcome. */
+        final List<String> mvt = new ArrayList<>();
+        /** The classified expected class: plain fits, both multi tiers
+         *  budget-reject (counted, never a finding). */
+        boolean mvtBudget;
+        /** The lane's comparisons executed (wiring guard for the smoke
+         *  test: a silently-dead lane must fail the gate). */
+        boolean mvtRan;
+        /** The PikeSim write-log oracle executed (same guard, sim side). */
+        boolean mvtSimRan;
         final List<String> exceptions = new ArrayList<>();
         /** Cross-rung findings (MISMATCH/ROUTED/THREW) — non-empty fails the
          *  case regardless of the oracle outcome. */
@@ -2270,6 +2736,9 @@ public final class DifferentialFuzzer {
                 return true;
             }
             if (!cross.isEmpty()) {
+                return true;
+            }
+            if (!mvt.isEmpty()) {
                 return true;
             }
             if (!exceptions.isEmpty()) {
@@ -2307,11 +2776,23 @@ public final class DifferentialFuzzer {
         /** Failure records pre-shrunk into shrunkPattern/shrunkInput
          *  (soak opt-in -Pfuzz.shrink=1; see shrinkInto). */
         long shrunkRecords;
+        /** Multi-valued lane (BT22 §3.1): cases whose comparisons ran,
+         *  cases the PikeSim write-log oracle served, findings, and the
+         *  classified expected class (plain fits, both multi tiers
+         *  budget-reject — counted, never findings; ndjson records cap
+         *  at {@value #MVT_BUDGET_RECORD_MAX}, the class is one
+         *  signature and every case is caseSeed-reproducible). */
+        long mvtCases, mvtSimCases, mvtFailures, mvtBudgetSkips;
+        int mvtBudgetRecorded;
         double casesPerMinute;
         final Map<String, Sig> signatures = new LinkedHashMap<>();
         /** ndjson record cap for JURLANE_GUARD (one shape — breadcrumbs,
          *  not a log). */
         static final int JUR_GUARD_RECORD_MAX = 8;
+
+        /** ndjson record cap for MVT_BUDGET_REJECT (same breadcrumb
+         *  discipline as the jur guard). */
+        static final int MVT_BUDGET_RECORD_MAX = 8;
 
         Results(long masterSeed) {
             this.masterSeed = masterSeed;
@@ -2344,6 +2825,24 @@ public final class DifferentialFuzzer {
             if (o.c.lane() == Lane.JUR) {
                 jurCases++;
             }
+            if (o.mvtRan) {
+                mvtCases++;
+            }
+            if (o.mvtSimRan) {
+                mvtSimCases++;
+            }
+            if (o.mvtBudget) {
+                // The classified expected class (multi-valued-tags.md): the
+                // multi lane permanently skips fixed-tag and regopt, so a
+                // near-budget pattern rejects where the plain compile fits.
+                // Counted, capped-logged, never a finding; the plain
+                // comparison below stands on its own.
+                mvtBudgetSkips++;
+                if (mvtBudgetRecorded < MVT_BUDGET_RECORD_MAX) {
+                    mvtBudgetRecorded++;
+                    logs.failure(caseSeed, o, "MVT_BUDGET_REJECT (plain fits, multi too large)", "MVT");
+                }
+            }
             if (!o.cross.isEmpty()) {
                 // Cross-rung findings are oracle-independent (VM vs itself);
                 // no known-divergence classification, no layered attribution.
@@ -2371,6 +2870,27 @@ public final class DifferentialFuzzer {
                     s.recorded++;
                     shrinkInto(o, kind);
                     logs.failure(caseSeed, o, kind + " (" + firstWord(o.cross.get(0)) + ")", "CROSS");
+                }
+                return;
+            }
+            if (!o.mvt.isEmpty()) {
+                // Multi-valued lane findings are oracle-independent too
+                // (multi vs plain-vs-itself tiers and the sim reference);
+                // kind is the first word of the first finding
+                // (MVT_SELF/PAD/SINGLE/TIER/SIM/RUNG/THREW), the detail
+                // lines ride the record's mvt column.
+                failures++;
+                mvtFailures++;
+                if (o.c.lane() == Lane.JUR) {
+                    jurFailures++;
+                }
+                String kind = firstWord(o.mvt.get(0));
+                String sig = kind + " | shape~" + shape(o.c.pattern());
+                Sig s = signatures.computeIfAbsent(sig, k -> new Sig(kind));
+                s.total++;
+                if (s.recorded < 8) {
+                    s.recorded++;
+                    logs.failure(caseSeed, o, kind, "MVT");
                 }
                 return;
             }
@@ -2724,13 +3244,15 @@ public final class DifferentialFuzzer {
                 + RUNTIME_MX.getUptime() + ",\"lane\":\"" + o.c.lane() + "\",\"flags\":" + o.c.flags() + ",\"kind\":\""
                 + kind.replace('"', '\'') + "\",\"layer\":\"" + layer + "\"" + ",\"pattern\":\"" + escape(o.c.pattern())
                 + "\",\"input\":\"" + escape(o.c.input()) + "\",\"oracle\":\"" + escape(o.oracle) + "\",\"asm\":\""
-                + escape(o.asm) + "\",\"vm\":\"" + escape(o.vm) + "\""
+                + escape(o.asm) + "\",\"vm\":\"" + escape(o.vm) + "\"" + ",\"mvtAsm\":\"" + escape(o.mvtAsm)
+                + "\",\"mvtVm\":\"" + escape(o.mvtVm) + "\""
                 + (o.shrunkPattern == null ? ""
                     : ",\"shrunkPattern\":\"" + escape(o.shrunkPattern) + "\",\"shrunkInput\":\""
                         + escape(o.shrunkInput) + "\"")
                 + (o.exceptions.isEmpty() ? ""
                     : ",\"ex\":" + o.exceptions.stream().map(e -> "\"" + escape(e) + "\"").toList())
                 + (o.cross.isEmpty() ? "" : ",\"cross\":" + o.cross.stream().map(e -> "\"" + escape(e) + "\"").toList())
+                + (o.mvt.isEmpty() ? "" : ",\"mvt\":" + o.mvt.stream().map(e -> "\"" + escape(e) + "\"").toList())
                 + "}");
             failures.flush();
         }
@@ -2816,6 +3338,8 @@ public final class DifferentialFuzzer {
                 if (!r.famBatches.isEmpty()) {
                     w.println("fact-gated family batches: " + r.famBatches);
                 }
+                w.println("mvt lane: cases=" + r.mvtCases + "  simCases=" + r.mvtSimCases + "  failures="
+                    + r.mvtFailures + "  budgetSkips=" + r.mvtBudgetSkips + " (plain fits, multi too large)");
                 w.printf("rate: %.1f cases/min%n", r.casesPerMinute);
                 w.println("shrunk records: " + r.shrunkRecords
                     + (SHRINK_RECORD ? "" : "  (off — -Pfuzz.shrink=1 pre-shrinks recorded failures)"));
