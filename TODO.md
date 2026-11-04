@@ -35,6 +35,7 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 - [ ] Complexity review: land recorded removals, simplifications ([review](docs/complexity-review.md))
 - [ ] Namespace move jemmix → tagmaton (gates publish)
 - [ ] First Maven publish
+- [ ] Dispatch-engine spin-off covering tdfa weak points ([design](docs/dispatch-engine.md))
 - [ ] japicmp baselines ×4
 - [ ] License headers
 - [ ] TdfaRunner trace → per-engine (test-only)
