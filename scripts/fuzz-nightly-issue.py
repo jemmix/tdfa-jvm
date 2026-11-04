@@ -17,7 +17,9 @@ re-arms its signatures.
 Records the fuzzer counts but that are not findings — KNOWN_DIVERGENCE
 (classified), JURLANE_SKIP / JURLANE_GUARD (jur-lane domain exclusions and
 oracle-bomb guards), BUDGET_REJECT (documented fuzz-scoped budget
-contract), HANG_ORACLE (oracle-side limit) — never open issues. HANG_ENGINE
+contract), MVT_BUDGET_REJECT (the multi-valued lane's budget edge — plain
+fits, multi too large; multi-valued-tags.md), HANG_ORACLE (oracle-side
+limit) — never open issues. HANG_ENGINE
 records are included; when the soak's post-hoc hang replay
 (hang-replays.log) has a verdict for the seed it is quoted inline.
 
@@ -50,7 +52,12 @@ ACTIONABLE = ("RESULT_MISMATCH", "COMPILE_PARITY", "EXCEPTION", "MEMO_STATE_MISM
               # the CharSequence wrapper axis (soak-side, rides the cross list):
               "SEQ_PATH_MISMATCH", "SEQ_ORACLE_WRAPPER",
               # the stretched-input oracle+asm compares (same list):
-              "STRETCH_MISMATCH")
+              "STRETCH_MISMATCH",
+              # multi-valued lane (BT22 §3.1): self-consistency, padding,
+              # latest==plain, tier equality, sim write-log, forced rungs,
+              # runtime throws — all real findings (MVT_BUDGET_REJECT is
+              # the lane's one counted-not-actionable class, absent here)
+              "MVT_SELF", "MVT_PAD", "MVT_SINGLE", "MVT_TIER", "MVT_SIM", "MVT_RUNG", "MVT_THREW")
 CASES_PER_SIG = 8  # mirrors the fuzzer's own per-signature ndjson cap
 
 

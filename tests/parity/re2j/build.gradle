@@ -194,6 +194,14 @@ tasks.register('fuzz', JavaExec) {
     systemProperty 'fuzz.replay.input', project.findProperty('fuzz.replay.input') ?: ''
     systemProperty 'fuzz.replay.flags', project.findProperty('fuzz.replay.flags') ?: '0'
     systemProperty 'fuzz.replay.lane', project.findProperty('fuzz.replay.lane') ?: 'RE2J'
+    // Multi-valued lane (BT22 §3.1): every batch additionally compiles both
+    // tiers with MULTI_VALUED_TAGS and runs the four MVT oracles (self-
+    // consistency, latest==plain, tier equality, PikeSim write-log) plus
+    // the forced ladder and stretched probes on the multi VM compile.
+    // On by default; -Pfuzz.mvt=0 restores the two-compile protocol, and
+    // -Pfuzz.mvtEvery=N samples the lane 1-in-N batches (compile-bound).
+    systemProperty 'fuzz.mvt', project.findProperty('fuzz.mvt') ?: '1'
+    systemProperty 'fuzz.mvtEvery', project.findProperty('fuzz.mvtEvery') ?: '1'
 }
 
 // Timeboxed fuzz campaigns for the TODO fuzzer items the overnight soak does

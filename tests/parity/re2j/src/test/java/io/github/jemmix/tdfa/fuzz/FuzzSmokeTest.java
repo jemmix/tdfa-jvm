@@ -13,6 +13,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * between soak runs. A failure here is either a real divergence (great news
  * for a fuzzer, bad news for the engine) or broken harness plumbing — the
  * ndjson in the temp dir distinguishes them.
+ *
+ * <p>The multi-valued lane (BT22 §3.1) runs by default; the lane-count
+ * asserts keep its wiring honest — a lane that silently stopped executing
+ * (or whose PikeSim reference stopped riding RE2J flags=0 batches) must
+ * fail the gate, not report a clean-but-empty soak.
  */
 class FuzzSmokeTest {
 
@@ -22,5 +27,7 @@ class FuzzSmokeTest {
         assertThat(r.cases).as("cases executed").isEqualTo(500);
         assertThat(r.failures)
             .as("failures (inspect %s/failures.ndjson; reproduce any line with -Dfuzz.one=<caseSeed>)", tmp).isZero();
+        assertThat(r.mvtCases).as("multi-valued lane cases (wiring guard)").isPositive();
+        assertThat(r.mvtSimCases).as("multi-valued sim-oracle cases (wiring guard)").isPositive();
     }
 }

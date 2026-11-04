@@ -60,7 +60,9 @@ The ledger:
   cannot match (a reason to adopt this library rather than swap it in);
   paper conformance for §3.1; demand pockets proven by .NET precedent and
   re2c users; the lane is fenced — opt-in flag, single values asserted
-  bit-identical, PikeSim write-log oracle, parity and determinism suites.
+  bit-identical, PikeSim write-log oracle, parity and determinism suites,
+  and the differential fuzzer's four-oracle lane
+  ([fuzz-multi-valued-tags.md](fuzz-multi-valued-tags.md)).
 - **Against:** ~50 `multi` branch sites threaded through the determinizer
   and both engine tiers — the two highest-complexity components in the
   tree; a second pass-configuration semantics (the lane permanently skips
@@ -84,4 +86,5 @@ differentiator is library-wide. That is the keep.
   are immutable trimmed copies, so `MatchResult` stays shareable across
   threads.
 
-Fuzzing the lane is planned: [fuzz-multi-valued-tags.md](fuzz-multi-valued-tags.md).
+Fuzzing the lane: landed — see
+[fuzz-multi-valued-tags.md](fuzz-multi-valued-tags.md).
