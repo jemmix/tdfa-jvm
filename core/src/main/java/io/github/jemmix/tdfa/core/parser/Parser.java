@@ -850,6 +850,12 @@ public final class Parser {
      * word table reflects the final top-level flag state. */
     private Ast openGroup(Deque<GroupFrame> stack, FrameBudget frames) {
         expect('(');
+        // java's atom() ends a literal run at ANY non-literal — a '(' is a
+        // run boundary exactly like '|' or a non-literal part, so the
+        // pending single-char candidate must flush here: in `a(a)` both
+        // 'a's are single-char atoms (each flips under a fold lane),
+        // never one two-char Slice (which never flips).
+        flushLiteralRun();
         boolean savedCi = caseInsensitive, savedDs = dotall, savedMl = multiline;
         boolean savedUs = unicodeShorthand, savedUc = unicodeCase, savedUg = ungreedy;
         boolean capturing = true;
@@ -1045,6 +1051,11 @@ public final class Parser {
         // two-sided image test while single members take the orbit closure
         // (see foldRangeExtras), so the distinction is semantic, not cosmetic.
         List<Boolean> writtenRange = new ArrayList<>();
+        // Shorthand markers, also parallel: item i came from a \w/\d/\s-family
+        // escape. java.util.regex never folds those (any universe — the
+        // SHORTHAND_FOLD axis), so on the non-folding lane their fold
+        // expansion is skipped (see foldExpandClass).
+        List<Boolean> shorthandItem = new ArrayList<>();
         // POSIX/RE2: a `]` as the FIRST char in the class (after an optional `^`)
         // is a literal class member, not the terminator. So `[]]` matches a single `]`,
         // `[]a]` matches `]` or `a`, etc.
@@ -1052,6 +1063,7 @@ public final class Parser {
             ranges.add((int) ']');
             ranges.add((int) ']');
             writtenRange.add(false);
+            shorthandItem.add(false);
             memberFlip(']');
             pos++;
         }
@@ -1064,6 +1076,7 @@ public final class Parser {
                 }
                 for (int v = 0; v < posix.length; v += 2) {
                     writtenRange.add(false);
+                    shorthandItem.add(false);
                 }
                 continue;
             }
@@ -1081,6 +1094,7 @@ public final class Parser {
                     }
                     for (int v = 0; v < sr.length; v += 2) {
                         writtenRange.add(false);
+                        shorthandItem.add(true);
                     }
                     continue;
                 }
@@ -1091,6 +1105,7 @@ public final class Parser {
                     appendUnicodeToRanges(ranges, next == 'p');
                     for (int i = before; i < ranges.size(); i += 2) {
                         writtenRange.add(false);
+                        shorthandItem.add(false);
                     }
                     continue;
                 }
@@ -1114,6 +1129,7 @@ public final class Parser {
             ranges.add(lo);
             ranges.add(hi);
             writtenRange.add(dashed);
+            shorthandItem.add(false);
         }
         expect(']');
         int[] arr = ranges.stream().mapToInt(Integer::intValue).toArray();
@@ -1124,8 +1140,9 @@ public final class Parser {
             // Fold members join the POSITIVE set before CharClass negation, so
             // negated classes exclude fold equivalents automatically. In-class
             // shorthands (\w inside [...]) are ordinary ranges here and fold
-            // through the same path.
-            arr = foldExpandClass(arr, toBooleanArray(writtenRange));
+            // through the same path — on the folding lane only; java.util.regex
+            // keeps them at their plain tables (the SHORTHAND_FOLD axis).
+            arr = foldExpandClass(arr, toBooleanArray(writtenRange), toBooleanArray(shorthandItem));
         }
         return new CharClass(arr, negated);
     }
@@ -1178,12 +1195,19 @@ public final class Parser {
      *  pins the range semantics take that reading (java.util.regex's
      *  two-sided image test, see {@link #foldRangeExtras}); everything
      *  else — single members, programmatic shorthand/POSIX sets — takes
-     *  the per-member orbit closure of the active fold universe. */
-    private int[] foldExpandClass(int[] arr, boolean[] writtenRange) {
+     *  the per-member orbit closure of the active fold universe, EXCEPT
+     *  shorthand-derived items on the non-folding lane (java.util.regex
+     *  keeps the predefined classes at their plain tables under CI —
+     *  the SHORTHAND_FOLD axis). */
+    private int[] foldExpandClass(int[] arr, boolean[] writtenRange, boolean[] shorthandItem) {
+        boolean foldShorthand = options.isShorthandFold();
         List<int[]> ivs = new ArrayList<>(arr.length);
         for (int i = 0; i < arr.length; i += 2) {
             int lo = arr[i], hi = arr[i + 1];
             ivs.add(new int[]{lo, hi});
+            if (shorthandItem[i / 2] && !foldShorthand) {
+                continue; // the JDK reading: a shorthand never folds
+            }
             int[] extras = writtenRange[i / 2] ? foldRangeExtras(lo, hi) : null;
             if (extras != null) {
                 for (int v : extras) {
@@ -1258,9 +1282,11 @@ public final class Parser {
      */
     private int[] shorthandRanges(char c) {
         // Under (?i), uppercase shorthands complement the FOLDED positive set
-        // (re2j folds before negation: (?i)[\W] does not match ſ). The positive
-        // lowercase forms fold later via the class-level foldExpandRanges.
-        boolean ci = caseInsensitive;
+        // (re2j folds before negation: (?i)[\W] does not match ſ) — the RE2
+        // reading only; java.util.regex never folds a shorthand (the
+        // SHORTHAND_FOLD axis). The positive lowercase forms fold later via
+        // the class-level foldExpandRanges on the folding lane.
+        boolean ci = caseInsensitive && options.isShorthandFold();
         if (!unicodeShorthand) {
             switch (c) {
                 case 'd' :
@@ -1301,10 +1327,12 @@ public final class Parser {
     private Ast shorthandEscape(char c) {
         boolean negated = Character.isUpperCase(c);
         char base = Character.toLowerCase(c);
-        // Under (?i) the word shorthands fold (re2j: (?i)\w matches ſ via the
-        // s-orbit of a-z); digits/spaces have no fold orbits and stay as-is.
+        // Under (?i) the word shorthands fold on the RE2-lineage lane only
+        // (re2j: (?i)\w matches ſ via the s-orbit of a-z); java.util.regex
+        // never folds a shorthand — the SHORTHAND_FOLD axis. Digits/spaces
+        // have no fold orbits and stay as-is in both readings.
         // \W folds the POSITIVE set first, then complements.
-        if (caseInsensitive && base == 'w') {
+        if (options.isShorthandFold() && caseInsensitive && base == 'w') {
             int[] pos = unicodeShorthand ? foldExpandRanges(computeUnicodeWordRanges()) : foldExpandRanges(R_WORD);
             return new CharClass(negated ? complementRanges(pos) : pos, false);
         }

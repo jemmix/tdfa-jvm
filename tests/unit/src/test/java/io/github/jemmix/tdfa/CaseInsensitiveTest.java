@@ -325,6 +325,21 @@ class CaseInsensitiveTest {
         assertThat(match("(?iu)[sx]", "S", f)).isNotNull();
     }
 
+    /** The shorthand fold — re2j's reading, kept on this surface by the
+     *  SHORTHAND_FOLD axis (the JUR facade never folds a shorthand; #127's
+     *  scoped {@code (?U:...)} family, pinned in
+     *  {@code ShorthandFoldParityTest}). re2j folds the class tables
+     *  themselves: the s-orbit of {@code a-z} pulls ſ into {@code \w}. */
+    @ParameterizedTest
+    @MethodSource("factories")
+    void shorthandFoldUnderCi(RegexEngineFactory f) {
+        assertThat(match("(?i)\\w", "\u017F", f)).as("(?i)\\w → ſ (re2j folds the table)").isNotNull();
+        assertThat(match("(?i)[\\w]", "\u017F", f)).as("(?i)[\\w] → ſ").isNotNull();
+        assertThat(match("(?i)[a\\w]", "\u017F", f)).as("(?i)[a\\w] → ſ").isNotNull();
+        assertThat(match("(?i)\\W", "\u017F", f)).as("(?i)\\W folds the positive set first: ſ excluded").isNull();
+        assertThat(match("(?i)\\w", "\u0131", f)).as("ı outside every ASCII-word orbit").isNull();
+    }
+
     @ParameterizedTest
     @MethodSource("factories")
     void foldClassSingleChar(RegexEngineFactory f) {

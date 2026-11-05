@@ -66,6 +66,8 @@ public final class Semantics {
 
     private static final int SPACE_RE2_BIT = 128;
 
+    private static final int SHORTHAND_FOLD_BIT = 256;
+
     private final int bits;
 
     private Semantics(int bits) {
@@ -160,6 +162,24 @@ public final class Semantics {
         return with(SPACE_RE2_BIT);
     }
 
+    /**
+     * Axis: the predefined shorthands case-fold under
+     * {@code CASE_INSENSITIVE} — {@code (?i)\w} matches {@code ſ} via
+     * the s-orbit of {@code a-z} (re2j's reading: it folds the class
+     * tables themselves); unset never folds a shorthand —
+     * {@code java.util.regex} keeps {@code \w}/{@code \W} (and the
+     * digit/space twins, which have no fold orbits in either lineage)
+     * at their plain tables under every fold universe
+     * ({@code CASE_INSENSITIVE}, {@code UNICODE_CASE},
+     * {@code UNICODE_CHARACTER_CLASS}, scoped {@code (?u:...)}/{@code (?U:...)}
+     * included — live-JDK verified). Found by the 2026-10-30 nightly
+     * soak (#127): the scoped {@code (?U:...)} shapes diverged on
+     * İ/ı/ſ, the fold-orbit members the ASCII {@code \w} cannot match.
+     */
+    public Semantics shorthandFold() {
+        return with(SHORTHAND_FOLD_BIT);
+    }
+
     private Semantics with(int bit) {
         return (bits & bit) != 0 ? this : new Semantics(bits | bit);
     }
@@ -204,6 +224,11 @@ public final class Semantics {
         return (bits & SPACE_RE2_BIT) != 0;
     }
 
+    /** Axis set? (Shorthands fold under {@code CASE_INSENSITIVE} — re2j's reading.) */
+    public boolean isShorthandFold() {
+        return (bits & SHORTHAND_FOLD_BIT) != 0;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -224,9 +249,9 @@ public final class Semantics {
     public String toString() {
         StringBuilder sb = new StringBuilder("Semantics[");
         String[] names = {"UNIX_LINES", "UNICODE_CASE", "CODEPOINT_BOUNDARIES", "EMPTY_LAST_LINE", "END_OF_TEXT_ONLY",
-            "EMPTY_ITERATION_SPANS", "UNGREEDY_U", "SPACE_RE2"};
+            "EMPTY_ITERATION_SPANS", "UNGREEDY_U", "SPACE_RE2", "SHORTHAND_FOLD"};
         int[] axisBits = {UNIX_LINES_BIT, UNICODE_CASE_BIT, CODEPOINT_BOUNDARIES_BIT, EMPTY_LAST_LINE_BIT,
-            END_OF_TEXT_ONLY_BIT, EMPTY_ITERATION_SPANS_BIT, UNGREEDY_U_BIT, SPACE_RE2_BIT};
+            END_OF_TEXT_ONLY_BIT, EMPTY_ITERATION_SPANS_BIT, UNGREEDY_U_BIT, SPACE_RE2_BIT, SHORTHAND_FOLD_BIT};
         boolean first = true;
         for (int i = 0; i < names.length; i++) {
             if ((bits & axisBits[i]) != 0) {

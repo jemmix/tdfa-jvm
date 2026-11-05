@@ -121,7 +121,19 @@ class GroupCurlyStaleWriteParityTest {
             // discarded 2..3, the engine the participating 1..2
             new Case("(?:( ))* ", "x  y", new int[]{1, 3, 2, 3}, new int[]{1, 3, 1, 2}),
             // the bounded {1,3} spelling: same match0 backoff from cmin
-            new Case("(?:(b)){1,3}b", "xbb y", new int[]{1, 3, 2, 3}, new int[]{1, 3, 1, 2}));
+            new Case("(?:(b)){1,3}b", "xbb y", new int[]{1, 3, 2, 3}, new int[]{1, 3, 1, 2}),
+            // #127's 2026-10-30 nightly family (seed 5260087618748571468's
+            // shape): the dot consumed the supplementary pair then z, the
+            // loop backed off one, the tail re-consumed z — java keeps the
+            // discarded z-iteration's g2, the engine the participating pair
+            new Case("((.))*z", "\ud800\udc00z", new int[]{0, 3, 0, 2, 2, 3}, new int[]{0, 3, 0, 2, 0, 2}),
+            // the complement-escape twin (seed 976285723873386158's shape)
+            new Case("((\\D))*.", "\ud800\udc00\udfff", new int[]{0, 3, 0, 2, 2, 3}, new int[]{0, 3, 0, 2, 0, 2}),
+            // the non-capturing wrapper (seed 3468131368402150664's
+            // shape): the \S loop took the 𐐡 pair as its last iteration,
+            // backed off, the literal re-consumed it
+            new Case("(?:(\\S))*\ud801\udc21", "\ud800\udfff~\ud801\udc21", new int[]{0, 5, 3, 5},
+                new int[]{0, 5, 2, 3}));
     }
 
     /** Shapes whose nested writes DO unwind — both engines agree, no
