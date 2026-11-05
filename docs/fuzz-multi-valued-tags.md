@@ -109,9 +109,16 @@ classified away:
   `(\B|b){2,}?c` on `"bc"` (reference write log `[0,1][1,1]`, engine
   `[0,1][1,-1]` — the padding path firing, i.e. open/close histories
   diverge, while the single-value report stays `1..1` on both sides).
-  Filed as #149 for the determinizer's final-variant machinery
-  (dissolve/surface × zero-width-exit split); the nightly's issue gate
-  picks the signature up from night one.
+  Filed as #149, initially suspected on the final-variant machinery
+  (dissolve/surface × zero-width-exit split) — the actual cause was
+  upstream of both, in `tryMap`'s register-renaming: the rewrite maps
+  an append chain's dst but left the CHAIN-INTERNAL self-append's src
+  unmapped, so the step read a register nothing on the merged path
+  wrote and rebuilt the tag's tree from a garbage head, dropping the
+  earlier participations (any state-merging compile of the shape, both
+  tiers — the zero-width final iteration is just where the count
+  diverges first). Fixed with the src mapping; the minimized shapes
+  are pinned in MultiValuedTagsTest and ride the parity corpus.
 - the soak's plain-lane RESULT_MISMATCH records are the pre-existing #127
   family the nightly already tracks — unrelated to this lane.
 

@@ -154,6 +154,34 @@ class MultiValuedTagsTest {
         }
     }
 
+    /**
+     * Issue #149: a counted loop over a body with a zero-width branch —
+     * the final zero-width iteration's CLOSE append must survive the
+     * determinizer's register-renaming ({@code tryMap}). The rewritten
+     * append chain's self-referential step ({@code APPEND dst <- dst})
+     * used to keep reading the UNMAPPED dst — a register nothing wrote on
+     * the merged path — so the tag's tree dropped every participation but
+     * the last append's ({@code no != nc}: the {@code -1} padding path,
+     * engine {@code [0,1][1,-1]} vs the reference write log
+     * {@code [0,1][1,1]}). Pinned here for both spellings (lazy/greedy)
+     * and both tiers; the PikeSim write-log reference covers the wider
+     * family through the parity corpus (MultiValuedParityTest).
+     */
+    @ParameterizedTest
+    @MethodSource("engines")
+    void zeroWidthFinalIterationKeepsItsCloseAppend(RegexEngineFactory f) {
+        // the soak's minimized shape: iteration 1 consumes b, iteration 2
+        // matches \B zero-width at 1
+        assertThat(spans(f, "(\\B|b){2,}?c", "bc", 1)).containsExactly(0, 1, 1, 1);
+        assertThat(spans(f, "(\\B|b){2,}c", "bc", 1)).containsExactly(0, 1, 1, 1);
+        // branch order swapped and a bounded max — same final-iteration shape
+        assertThat(spans(f, "(b|\\B){2,}?c", "bc", 1)).containsExactly(0, 1, 1, 1);
+        assertThat(spans(f, "(\\B|b){2,3}?c", "bc", 1)).containsExactly(0, 1, 1, 1);
+        // the fuzzer's own shrink of the finding: an empty-body group
+        // counted twice — both zero-width iterations participate
+        assertThat(spans(f, ".+(){2}c", "xyc", 1)).containsExactly(2, 2, 2, 2);
+    }
+
     @ParameterizedTest
     @MethodSource("engines")
     void wholeMatchAndIterationReuseTheCarrier(RegexEngineFactory f) {

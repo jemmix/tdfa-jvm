@@ -35,12 +35,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class MultiValuedParityTest {
 
-    private static final String[] PATTERNS = {"(a)+", "(a|b)+", "(?:(a)|(b))+", "(a?)*", "(a){2,4}", "((a)(b))+",
-        "(a*)*", "(x)?(a)+", "a(b)", "(a+)(b+)", "((a)|b|c)*", "(a(b?)*)+", "((b|)|c)*", "(?:x|((?:a|bb)+)y)+",
-        "(b|){2,3}", "(ab|a)(b?)+", "(?:(a)|b|(c))*"};
+    // Issue #149's family (zero-width final iteration of a counted loop
+    // over a body with a zero-width branch) rides the corpus: the sim's
+    // write log is the reference the engine's groupSpans must equal.
+    private static final String[] PATTERNS =
+        {"(a)+", "(a|b)+", "(?:(a)|(b))+", "(a?)*", "(a){2,4}", "((a)(b))+", "(a*)*", "(x)?(a)+", "a(b)", "(a+)(b+)",
+            "((a)|b|c)*", "(a(b?)*)+", "((b|)|c)*", "(?:x|((?:a|bb)+)y)+", "(b|){2,3}", "(ab|a)(b?)+", "(?:(a)|b|(c))*",
+            "(\\B|b){2,}?c", "(\\B|b){2,}c", "(b|\\B){2,3}?c", ".+(){2}c", "(\\B|b|c){2,}?b?"};
 
     private static final String[] INPUTS = {"", "a", "b", "ab", "ba", "aa", "abab", "aab", "abb", "abcab", "abba",
-        "abc", "cbb", "bcc", "cc", "bbbb", "bbbaa", "ababab", "abababab"};
+        "abc", "cbb", "bcc", "cc", "bbbb", "bbbaa", "ababab", "abababab", "bc", "bcbc", "bcb", "xyc"};
 
     static Stream<RegexEngineFactorySrc> engines() {
         return Re2jOracle.engineFactories().map(RegexEngineFactorySrc::new);
