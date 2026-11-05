@@ -541,6 +541,18 @@ final class TdfaStateIndex {
         // occurrence BY DESIGN (one logical assignment), so they keep the
         // pair stamped — and their prepend copy is skipped below (the
         // chain establishes the value; a copy would only be overwritten).
+        // An append's src maps only in the CHAIN-INTERNAL step (src ==
+        // dst): the value that step must read is the one the previous
+        // step's REWRITTEN append wrote — m[dst], never the unmapped dst
+        // (nothing writes it anymore; reading it appends onto a stale or
+        // never-written head and drops the tag's earlier participations —
+        // issue #149's (\B|b){2,}?c). A chain HEAD's src stays unmapped:
+        // new-side registers are frozen for the whole op block (prepends
+        // and rewritten ops write old-side registers only), and the
+        // topological sort below orders that read before any unit writing
+        // it. Heads always have src != dst — MultiVmap's registers are
+        // allocated fresh (nextReg++), so a destination never collides
+        // with the key's src.
         List<int[]> rewritten = new ArrayList<>();
         boolean hasAppend = false;
         for (int i = 0; i < ops.length; i += 3) {
@@ -555,7 +567,7 @@ final class TdfaStateIndex {
             if (eO[mapped] != stamp || mp[mapped] != dst) {
                 return null;
             }
-            rewritten.add(new int[]{op, mapped, src});
+            rewritten.add(append && src == dst ? new int[]{op, mapped, mapped} : new int[]{op, mapped, src});
             if (!append) {
                 eN[dst] = 0;
                 eO[mapped] = 0;
