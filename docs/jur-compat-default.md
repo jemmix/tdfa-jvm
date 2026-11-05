@@ -165,6 +165,7 @@ Set = today's behavior (the opt-out). Unset = the new JUR-parity default.
 | `EMPTY_ITERATION_SPANS` | last-completed-iteration protocol: a final zero-width iteration reports its span (`(a*)*` on `"aa"` → g1 `2..2`) EXCEPT all-zero-width min-0 bodies stay non-participating (`(\z)*` on `""` → g1 `−1` — java's `GroupCurly` rollback; see the family-6 mechanics note) | maximal-iteration protocol: `(a*)*` → g1 `0..2`; a sole zero-width iteration still reports (`(\z)*` → `0..0`) |
 | `UNGREEDY_U` | `(?U:`/`(?U)` = scoped `UNICODE_CASE` | ungreedy (PCRE/RE2 meaning) |
 | `SPACE_RE2` | ASCII `\s`/`\S` = `[ \t\n\x0B\f\r]` (U+000B is whitespace — the JDK's table) | re2j's `[\t\n\f\r ]` (no U+000B) |
+| `SHORTHAND_FOLD` | the predefined shorthands never fold under CI — `\w`/`\W` (and the digit/space twins, orbit-free either way) keep their plain tables under every fold universe, scoped `(?U:...)`/`(?u:...)` and in-class `[\w]` spellings included (#127's 137-record family; live-JDK verified) | re2j folds the class tables themselves (`(?i)\w` matches ſ) |
 
 `SPACE_RE2` joined after the two-surface split — found by the WBS item-7
 parity-suite widening (the `\s`-vs-`\u000B` cell silently kept re2j's table
@@ -187,7 +188,7 @@ no semantic gain. A single `RE2_LINE_ANCHORS` bundle remains off the table.
 public static final int RE2_COMPAT =
     UNIX_LINES | UNICODE_CASE | CODEPOINT_BOUNDARIES
   | EMPTY_LAST_LINE | END_OF_TEXT_ONLY
-  | EMPTY_ITERATION_SPANS | UNGREEDY_U;
+  | EMPTY_ITERATION_SPANS | UNGREEDY_U | SHORTHAND_FOLD;
 ```
 
 Composition rules:

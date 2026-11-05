@@ -33,6 +33,6 @@ final class Surfaces {
     /** The RE2-lineage lane: every JUR-compat axis set. */
     private static Semantics re2() {
         return Semantics.of().unixLines().unicodeCase().codepointBoundaries().emptyLastLine().endOfTextOnly()
-            .emptyIterationSpans().ungreedyU().spaceRe2();
+            .emptyIterationSpans().ungreedyU().spaceRe2().shorthandFold();
     }
 }

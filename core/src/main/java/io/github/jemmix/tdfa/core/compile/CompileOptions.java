@@ -74,12 +74,12 @@ public final class CompileOptions {
      * JUR-compat axes: {@code UNIX_LINES}, {@code UNICODE_CASE},
      * {@code CODEPOINT_BOUNDARIES}, {@code EMPTY_LAST_LINE},
      * {@code END_OF_TEXT_ONLY}, {@code EMPTY_ITERATION_SPANS},
-     * {@code UNGREEDY_U}). {@code null} (the default) keeps the default
-     * lane — every axis unset, the {@code java.util.regex}-parity
-     * reading; the withers compose any per-axis selection, and every
-     * axis set restores the RE2-lineage side. This is the core-tier
-     * spelling of the lane selection; the facade's int-flag mapping of
-     * the axes is the other.
+     * {@code UNGREEDY_U}, {@code SHORTHAND_FOLD}). {@code null} (the
+     * default) keeps the default lane — every axis unset, the
+     * {@code java.util.regex}-parity reading; the withers compose any
+     * per-axis selection, and every axis set restores the RE2-lineage
+     * side. This is the core-tier spelling of the lane selection; the
+     * facade's int-flag mapping of the axes is the other.
      */
     public CompileOptions semantics(Semantics semantics) {
         return new CompileOptions(longestMatch, multiValuedTags, disableUnicodeGroups, unicodeProvider, observer,
