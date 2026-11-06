@@ -629,6 +629,19 @@ capped them is largely still here. The tradeoffs doc already flags this
   lane survives and the unknown-id failure throws as documented — if (a)
   cannot be made to re-register through the documented path, that is a
   latent bug in the pinned contract.
+  **Update (2026-11-06): landed** — `PatternSurfaceEvictionTest`. The
+  faithful emulation needed a classloader boundary, not just eviction:
+  with the holder already initialized in-JVM, `Class.forName` is a no-op
+  and resolve correctly fails, so the test evicts the registration (via a
+  package-private `swapRegistrationForTest` seam, the only test-visible
+  mutation of the write-once registry) and deserializes under a
+  child-first loader for the re2j module — the holder's static init then
+  re-registers through the documented path into the shared registry,
+  exactly as a fresh reader process would. Lane survival is pinned on
+  `\s` vs U+000B (jur's `\s` has it, re2j's does not); both
+  unknown-surface failure modes (bare unknown id; unresolvable holder
+  class) assert the documented `IllegalArgumentException`. No latent bug:
+  the documented path re-registers cleanly.
 - **C53 — `Tdfa.ALL_AXES` drifted from `Tnfa.ALL_AXES` (7 axes vs 8)**
   (S, simplify). Tnfa's constant spells all eight axes (incl.
   `.spaceRe2()`); Tdfa's stops at seven while claiming "Every axis set" —
