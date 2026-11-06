@@ -713,6 +713,20 @@ capped them is largely still here. The tradeoffs doc already flags this
   patterns (≤+1 elsewhere) AND the bench gate stays green AND REGOPT
   stage time drops ≥15 % on the CompileLatencyGuardTest bombs; else keep
   and record the deltas.)
+  **Update (2026-11-06): keep — the delete gate is structurally
+  unsatisfiable.** Measured with the throwaway per-iteration
+  `cfg.regCount` hook: iteration 2 changed the final register count on
+  **zero** of the 28/28 corpus patterns where REGOPT runs at all
+  (100 % ≥ the 95 % criterion, ≤+0 everywhere). But the third criterion
+  cannot exist: REGOPT is *skipped* on every CompileLatencyGuardTest bomb
+  (tag-less or >2 000 states — the skip path costs 0.2–1.9 µs), so
+  "REGOPT stage −15 % on the bombs" measures nothing there. Where REGOPT
+  does run on a heavy real shape (nested-repeats, 20.3 ms compile wall),
+  N=1 saves ~40 % of that wall — a real but off-gate win, recorded here
+  as the standing cost of iteration 2. Kept: the register-count safety
+  margin costs no measurable compile latency on the shapes the guard
+  bombs exist for; re-price only if a bomb-class shape ever becomes
+  regopt-runnable (e.g. after a tag-rich bomb enters the guard).
 - **C26 — `DfaMinimizer` range normalization + degrade path** (M, examine).
   The normalizer (same per-codepoint behavior, different boundaries) has
   its own cell budget and a degrade-to-unnormalized fallback. How much does
