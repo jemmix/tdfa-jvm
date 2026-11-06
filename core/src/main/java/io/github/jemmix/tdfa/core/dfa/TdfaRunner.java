@@ -1267,19 +1267,13 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         switch (force) {
             case ORIGIN_SIM :
                 if (fastPath && scanSkipsPairs) {
-                    // Verbatim rung 2 of runStringExtractFast: budgeted sim,
-                    // trigger assist on exhaustion, exact walk, defensive
+                    // Verbatim rung 2 of runStringExtractFast: budgeted sim
+                    // with the live-set handoff to the trigger on exhaustion
+                    // (one pass, see originSimRungTop), exact walk, defensive
                     // restart. (The prefix/candidate scans above it are
                     // skipped — the sim is a complete search on its own.)
                     trace(Strategy.ORIGIN_SIM);
-                    int leftmost = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS, sc);
-                    if (leftmost == LSS_BUDGET) {
-                        int w = triggerScan(input, from, to, sc);
-                        if (w < 0) {
-                            return null;
-                        }
-                        leftmost = multiStateLeftmostStart(input, w, to, sc);
-                    }
+                    int leftmost = originSimRungTop(input, from, to, LSS_BUDGET_CHARS, sc);
                     if (leftmost < 0) {
                         return null;
                     }
@@ -1982,6 +1976,48 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
     }
 
     /**
+     * Rung 2's sim/trigger core in one hook (see {@code runStringExtractFast}):
+     * the budgeted origin sim and — on budget exhaustion — the trigger raw
+     * scan CONTINUING from the sim's live set, position, and kill-point
+     * window instead of re-scanning from {@code from}. Before the handoff
+     * the same 4 096+ budget chars were simulated twice per restart window
+     * (the wide-dispatch fix's measured ~2.1× residue on wide-class scans);
+     * now the pair scans once. Answers are identical to the fresh-scan
+     * composition it replaces ({@link #originSimLeftmost} →
+     * {@link #triggerScanTop} → {@code originSimLeftmost} over the window):
+     * fastPath guarantees the sim's disjoint-target step resolves the same
+     * single entry the raw scan's wakeup step ORs, its plain accept-bits
+     * check is the raw scan's ungated one, and the parked window follows
+     * {@link #rawScan}'s kill rule step for step — so the continuation is
+     * state-identical to a fresh trigger scan at that position, and the
+     * windowed re-sim that follows sees the same W. Returns the leftmost
+     * match start in {@code [from, to]}, or -1 = no match (the
+     * {@link #LSS_BUDGET} sentinel never escapes; it is consumed by the
+     * handoff). Traces {@code RAW_SCAN} exactly when the trigger continues,
+     * where the fresh-scan ladder traced it. Valid where the sim is:
+     * fastPath artifacts on the codepoint lane.
+     * {@code sc} may be null (carrier-free engines' cold fallback).
+     */
+    @EmittedSurface
+    public int originSimRungTop(String input, int from, int to, int budget, MatchScratch sc) {
+        sc = sc != null ? sc : new MatchScratch();
+        // Caller-owned one-element slot: the runner stays field-free
+        // (the finality gate) — the sim fills slot 0 with the immutable
+        // bail state, only at the bail.
+        final SimHandoff[] handoff = {null};
+        int leftmost = multiStateLeftmostStart(input, from, to, budget, sc, handoff);
+        if (leftmost != LSS_BUDGET) {
+            return leftmost;
+        }
+        trace(Strategy.RAW_SCAN);
+        int w = rawScan(input, handoff[0].pos, to, handoff[0].w, handoff[0].live, sc);
+        if (w < 0) {
+            return -1;
+        }
+        return multiStateLeftmostStart(input, w, to, sc);
+    }
+
+    /**
      * The unit-semantics trigger bound (see {@link #unitTrigger}): window
      * start W, or -1 = no match. Emitted-ladder hook — the ASM tier
      * delegates so both ladders run the ONE scan definition.
@@ -2024,10 +2060,47 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
     /**
      * Budgeted variant: aborts with {@link #LSS_BUDGET} after {@code budget}
      * chars without an accept (dense matches early-stop far inside; a distant
-     * or absent match is better served by the memoized trigger scan, so the
+     * or absent match is better served by the trigger raw scan, so the
      * caller falls back to it instead of bitset-scanning the whole tail).
      */
     private int multiStateLeftmostStart(CharSequence input, int from, int to, int budget, MatchScratch sc) {
+        return multiStateLeftmostStart(input, from, to, budget, sc, null);
+    }
+
+    /**
+     * The sim→trigger handoff (see {@link #originSimRungTop} and
+     * {@link #rawScan(String, int, int, int, int[], MatchScratch)}): what the
+     * budgeted sim holds at its {@link #LSS_BUDGET} bail — the position its
+     * live set describes (the first boundary past the budget limit; the
+     * accept check there has NOT run), the kill-point window a raw scan
+     * started at {@code from} would have tracked to that position, and the
+     * live-set array itself. Allocated by the rung caller, written only at
+     * the bail, consumed by the trigger continuation within the same
+     * operation.
+     */
+    private static final class SimHandoff {
+        final int pos;
+        final int w;
+        final int[] live;
+
+        SimHandoff(int pos, int w, int[] live) {
+            this.pos = pos;
+            this.w = w;
+            this.live = live;
+        }
+    }
+
+    /**
+     * Handoff-carrying twin of the budgeted variant: with {@code handoff}
+     * non-null, the sim additionally tracks the raw scan's kill-point window
+     * ({@code w}: advanced to {@code pos + adv} on every step where no
+     * target fired, exactly {@link #rawScan}'s {@code empty} rule) and parks
+     * its live set, position, and window at the budget bail, so the trigger
+     * continuation starts state-identical to a fresh scan from
+     * {@code from} — one pass over the budget window, not two.
+     */
+    private int multiStateLeftmostStart(CharSequence input, int from, int to, int budget, MatchScratch sc,
+        SimHandoff[] handoff) {
         final int nwords = stateWords;
         if (nwords == 0) {
             return -1;
@@ -2060,9 +2133,13 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         boolean seedOnly = nwords == 1;
 
         int best = -1;
+        int killW = from; // the raw scan's kill-point window (SimHandoff twin)
         final int limit = budget < 0 ? Integer.MAX_VALUE : from + budget;
         for (int pos = from; pos <= to; pos++) {
             if (best < 0 && pos > limit) {
+                if (handoff != null) {
+                    handoff[0] = new SimHandoff(pos, killW, live);
+                }
                 return LSS_BUDGET;
             }
             // accept check with origin tracking
@@ -2109,6 +2186,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             int adv = Alphabet.width(c);
 
             Arrays.fill(next, 0, nwords, 0); // grown carrier: zero only our prefix
+            boolean fired = false; // rawScan's `empty` twin: no target ⇒ kill
             if (seedOnly) {
                 // Seed-only regime (see rawScan): the live set is exactly the
                 // re-seeded start state — the sparse-scan shape between
@@ -2126,6 +2204,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 }
                 if (target >= 0) {
                     setOrigin(next, originNext, target, origin[ss]);
+                    fired = true;
                 }
             } else if (at != null && c < 128) {
                 for (int w = 0; w < nwords; w++) {
@@ -2137,6 +2216,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                         int target = at[s * 128 + c];
                         if (target >= 0) {
                             setOrigin(next, originNext, target, origin[s]);
+                            fired = true;
                         }
                     }
                 }
@@ -2162,6 +2242,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                         }
                         if (target >= 0) {
                             setOrigin(next, originNext, target, origin[s]);
+                            fired = true;
                         }
                     }
                 }
@@ -2176,11 +2257,15 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                         int target = disjointTarget(s, c);
                         if (target >= 0) {
                             setOrigin(next, originNext, target, origin[s]);
+                            fired = true;
                         }
                     }
                 }
             }
             setOrigin(next, originNext, ss, pos + adv); // unanchored re-seed (min-merge if already re-added)
+            if (!fired) {
+                killW = pos + adv; // kill: nothing alive before pos + adv (rawScan's rule)
+            }
             if (nwords == 1) {
                 seedOnly = next[0] == ssBit;
             }
@@ -2368,12 +2453,13 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         // 2) No match starting at `from`: budgeted origin-tracking sim. Dense
         //    matches early-stop inside the budget and never touch the trigger
         //    (an unconditional pre-scan would double the work on dense findAll
-        //    scans). A distant/absent match exhausts the budget and hands off
-        //    to the memoized trigger scan, which bounds the window to [W, to]
-        //    via kill points; the sim then finishes over just that window.
-        //    Retrying every failed start with a full walk instead costs O(n)
-        //    restarts × O(n) walk = O(n²) on dense-match regexes like
-        //    [a-zA-Z]+ing.
+        //    scans). A distant/absent match exhausts the budget and hands the
+        //    sim's live set + position to the trigger raw scan (one pass over
+        //    the budget window, not two — see originSimRungTop), which bounds
+        //    the window to [W, to] via kill points; the sim then finishes over
+        //    just that window. Retrying every failed start with a full walk
+        //    instead costs O(n) restarts × O(n) walk = O(n²) on dense-match
+        //    regexes like [a-zA-Z]+ing.
         //    Unit semantics (CODEPOINT_BOUNDARIES unset): the sim/trigger
         //    steps codepoints, so the unit raw-scan trigger serves (interior
         //    seeds, see unitTrigger) — same window bound, one linear pass
@@ -2387,14 +2473,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             return restartExtract(input, Math.max(from + 1, w), to, from, sc);
         }
         trace(Strategy.ORIGIN_SIM);
-        int leftmost = multiStateLeftmostStart(input, from, to, LSS_BUDGET_CHARS, sc);
-        if (leftmost == LSS_BUDGET) {
-            int w = triggerScan(input, from, to, sc);
-            if (w < 0) {
-                return null;
-            }
-            leftmost = multiStateLeftmostStart(input, w, to, sc);
-        }
+        int leftmost = originSimRungTop(input, from, to, LSS_BUDGET_CHARS, sc);
         if (leftmost < 0) {
             return null;
         }

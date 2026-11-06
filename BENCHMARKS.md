@@ -102,8 +102,9 @@ term measured 3.7× faster per codepoint, and what remains on that row is
 the short-input per-call floor (compare literal no-match, where our bare
 floor already beats jur), not class scanning. The rows jur still wins on
 per-call work: `(?i)` folding and dense-candidate no-match scans; on the
-16 KB scan regimes the unicode wide-class rows sit at ~2.1× jur with the
-residue priced as the ladder's double pass (TODO), and the shapes where
+16 KB scan regimes the unicode wide-class rows sit at ~1.0–1.7× jur
+after the sim→trigger live-set handoff collapsed the ladder's double
+pass (2026-11-06, wide-dispatch-index addendum), and the shapes where
 jur has no first-char shortcut stay wins by 2–3 orders of magnitude.
 
 ## 3. rebar corpus — `RebarBench` (110 scenarios, full haystacks, 5 engines)

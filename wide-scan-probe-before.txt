@@ -1,0 +1,6 @@
+| L{2,}x no-match sparse     |      9.1 |     18.4 |     18.4 |
+| L{2,}x no-match dense      |  56040.5 |     52.5 |     52.5 |
+| L{2,}x no-match dense words |     30.3 |     35.8 |     35.8 |
+| L{2,}x no-match non-BMP    |  17588.6 |     27.2 |     27.2 |
+| unicode-w no-match dense   | 104773.4 |     56.4 |     56.4 |
+| L{2,}x match-at-end        |      4.7 |     86.9 |     86.7 |
