@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.bench;
 
 import io.github.jemmix.tdfa.Pattern;
+import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.core.dfa.StreamMatcher;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
@@ -102,12 +103,12 @@ public class StreamingBench {
             }
             text = sb.toString();
             utf8 = text.getBytes(StandardCharsets.UTF_8);
-            String regex = shape.equals("needle") ? "needle"
-                : shape.equals("ipExtract") ? "ip=(\\d+\\.\\d+\\.\\d+\\.\\d+)"
+            String regex =
+                shape.equals("needle") ? "needle" : shape.equals("ipExtract") ? "ip=(\\d+\\.\\d+\\.\\d+\\.\\d+)"
                     : shape.equals("noMatch") ? "[a-z]+@[a-z]+\\.[a-z]{3}" : "(?s)BEGIN.*THEEND";
             RegexEngineFactory factory = engine.equals("vm") ? TdfaRunner::new : null;
             pattern = Pattern.compile(regex, 0, factory);
-            io.github.jemmix.tdfa.core.compile.PatternMatcher m = pattern.matcher(text);
+            PatternMatcher m = pattern.matcher(text);
             long count = 0;
             while (m.find()) {
                 count++;
@@ -174,7 +175,7 @@ public class StreamingBench {
 
     @Benchmark
     public long stringScan(BenchState s, Blackhole bh) {
-        io.github.jemmix.tdfa.core.compile.PatternMatcher m = s.pattern.matcher(s.text);
+        PatternMatcher m = s.pattern.matcher(s.text);
         long count = 0;
         while (m.find()) {
             count++;
