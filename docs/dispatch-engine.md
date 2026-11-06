@@ -32,7 +32,7 @@ are the durable claims).
 | W1 | short-input per-call floor | literal find: reggie 13.2 vs ASM 30.7; `(?i)sherlock`: 12.0 vs 32.9 | generated-class dispatch shell + no per-alternative literal lane (BENCHMARKS §1 fn 2 names this exactly) |
 | W2 | short anchored class shapes | IPv4: reggie 12.7 vs ASM 40.0; `(\w+)\s+(\w+)`: 19.5 vs 64.9 | same; a needle/onepass-shaped shape pays the full DFA shell |
 | W3 | dense no-match scans | email no-match: jur 345 vs ASM 913; class no-match (§4): 1341 vs 1502 | one needle strategy per pattern; fold-all-the-way chains (`(?i)kelvin`) have **no** needle — 2^k variants cannot be one `indexOf` |
-| W4 | unicode wide-class 16 KB scans | ~2.1× jur post-[wide-dispatch-index](wide-dispatch-index.md); residue = the ladder's double pass (open TODO) | two passes (trigger sim → DFA) where one would do |
+| W4 | unicode wide-class 16 KB scans | ~1.0–1.7× jur post-handoff ([addendum](wide-dispatch-index.md#post-handoff-addendum-2026-11-06)); the former double pass is collapsed | (was) two passes (trigger sim → DFA) where one would do |
 | W5 | compile latency | 291 µs VM / 1273 µs ASM vs jur 16.4 / re2j 28.0 | eager determinization + emission — the price of the linear-time guarantee; ruinous for one-shot patterns |
 
 What is **not** a weak point, and must not become one: ReDoS linearity

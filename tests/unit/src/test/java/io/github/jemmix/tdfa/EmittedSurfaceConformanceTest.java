@@ -93,6 +93,7 @@ class EmittedSurfaceConformanceTest {
         hookM(TdfaRunner.class, "originSimLeftmost", CharSequence.class, int.class, int.class, int.class,
             MatchScratch.class);
         hookM(TdfaRunner.class, "triggerScanTop", String.class, int.class, int.class, MatchScratch.class);
+        hookM(TdfaRunner.class, "originSimRungTop", String.class, int.class, int.class, int.class, MatchScratch.class);
         hookM(TdfaRunner.class, "booleanMatchFrom", String.class, int.class, int.class);
         hookM(TdfaRunner.class, "prefixHitUsableUnit", String.class, int.class, int.class);
         hookM(TdfaRunner.class, "groupCount");

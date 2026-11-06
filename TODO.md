@@ -22,7 +22,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 ## Performance
 
-- [ ] Sim→trigger live-set handoff: one pass, not two ([why](docs/wide-dispatch-index.md))
 
 ## Benchmarks
 

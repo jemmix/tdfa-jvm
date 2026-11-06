@@ -114,6 +114,34 @@ reasoning burden. Both restoration criteria (unicode-heavy long-input
 rows; jur-class competition there) are answered by a structure the
 frozen-at-construction invariant already accommodates.
 
+## Post-handoff addendum (2026-11-06)
+
+The double pass this doc priced as the scan rows' residue is gone: the
+budgeted origin sim now hands its live set and scan position to the
+trigger scan at budget exhaustion (one pass over the budget window, not
+two; the parked-state continuation rides `rawScan`'s existing
+`liveIn`/`wIn` parameters, and the fused `originSimRungTop` hook serves
+the VM ladder, the forced-rung path, and the emitted ASM ladder from one
+definition). Same-session interleaved probe (16 KB, min-of-5, ns/char,
+before = origin/main, after = the handoff):
+
+| shape | jur | VM before → after | ASM before → after |
+|---|---:|---|---|
+| `\p{L}{2,}x` no-match, sparse letters | 11.5 | 23.0 → **20.1** | 21.7 → **20.2** |
+| `\p{L}{2,}x` no-match, dense letters | 104 621 (quadratic) | 62.8 → **43.2** | 63.0 → **43.2** |
+| `\p{L}{2,}x` no-match, dense words | 39.9 | 45.4 → **28.0** | 45.5 → **28.0** |
+| `\p{L}{2,}x` no-match, non-BMP | 25 111 (quadratic) | 32.9 → **22.1** | 32.7 → **22.1** |
+| unicode-`\w` no-match, dense | 176 312 (quadratic) | 73.5 → **46.5** | 69.5 → **46.4** |
+| `\p{L}{2,}x` match at end | 5.9 | 100.2 → **78.7** | 100.6 → **78.7** |
+
+Reading: the scan rows the README's residue note priced at ~2.1× jur now
+sit at ~1.0–1.7× (dense-words 0.93× — ahead of jur; sparse 1.65×; the
+quadratic-jur shapes stay 3–4 orders ahead). Correctness: the fuzz
+cross-rung differential (224 648 cases, both lanes, forced-rung
+ORIGIN_SIM + stretch) recorded zero cross-rung/cross-routing
+divergences, and `SimTriggerHandoffTest` pins the handoff against the
+pre-handoff composition over an exhaustive budget sweep.
+
 ## Tests
 
 `WideDispatchTest` — exhaustive index-vs-binary-search agreement over

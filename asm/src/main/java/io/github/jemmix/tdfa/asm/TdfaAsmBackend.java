@@ -712,6 +712,12 @@ public final class TdfaAsmBackend {
             mv.visitVarInsn(Opcodes.ISTORE, 7);
         } else if (scanSkipsPairs) {
             emitTrace(mv, "ORIGIN_SIM");
+            // The rung's sim/trigger core in ONE runner hook: budgeted sim,
+            // and on exhaustion the raw-scan trigger CONTINUING from the
+            // sim's parked live set + position + kill window (one pass over
+            // the budget window, not two — the sim→trigger handoff; the
+            // hook traces RAW_SCAN itself exactly on that bail, where the
+            // old triggerScanTop call traced it), then the windowed re-sim.
             mv.visitVarInsn(Opcodes.ALOAD, 0);
             mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
             mv.visitVarInsn(Opcodes.ALOAD, 4);
@@ -721,35 +727,9 @@ public final class TdfaAsmBackend {
             mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "originSimBudget", "()I", false);
             mv.visitVarInsn(Opcodes.ALOAD, 3);
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "originSimLeftmost",
-                "(" + CS_D + "III" + SCRATCH_D + ")I", false);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "originSimRungTop",
+                "(Ljava/lang/String;III" + SCRATCH_D + ")I", false);
             mv.visitVarInsn(Opcodes.ISTORE, 7);
-            Label noBudget = new Label();
-            mv.visitVarInsn(Opcodes.ILOAD, 7);
-            mv.visitFieldInsn(Opcodes.GETSTATIC, RUNNER, "LSS_BUDGET", "I");
-            mv.visitJumpInsn(Opcodes.IF_ICMPNE, noBudget);
-            mv.visitVarInsn(Opcodes.ALOAD, 0);
-            mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
-            mv.visitVarInsn(Opcodes.ALOAD, 4);
-            mv.visitVarInsn(Opcodes.ILOAD, 2);
-            mv.visitVarInsn(Opcodes.ILOAD, 5);
-            mv.visitVarInsn(Opcodes.ALOAD, 3);
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "triggerScanTop",
-                "(Ljava/lang/String;II" + SCRATCH_D + ")I", false);
-            mv.visitVarInsn(Opcodes.ISTORE, 7);
-            mv.visitVarInsn(Opcodes.ILOAD, 7);
-            mv.visitJumpInsn(Opcodes.IFLT, noMatch1);
-            mv.visitVarInsn(Opcodes.ALOAD, 0);
-            mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
-            mv.visitVarInsn(Opcodes.ALOAD, 4);
-            mv.visitVarInsn(Opcodes.ILOAD, 7);
-            mv.visitVarInsn(Opcodes.ILOAD, 5);
-            mv.visitInsn(Opcodes.ICONST_M1);
-            mv.visitVarInsn(Opcodes.ALOAD, 3);
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "originSimLeftmost",
-                "(" + CS_D + "III" + SCRATCH_D + ")I", false);
-            mv.visitVarInsn(Opcodes.ISTORE, 7);
-            mv.visitLabel(noBudget);
             mv.visitVarInsn(Opcodes.ILOAD, 7);
             mv.visitJumpInsn(Opcodes.IFLT, noMatch1);
             // exact walk from leftmost
