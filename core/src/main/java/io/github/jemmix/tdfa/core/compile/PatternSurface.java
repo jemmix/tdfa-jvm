@@ -158,6 +158,19 @@ public final class PatternSurface {
     }
 
     /**
+     * Test-only seam (eviction coverage for {@link #resolve}'s lazy
+     * registration path): swap a surface's registration — a {@code null}
+     * replacement evicts it — and return the previous registration so the
+     * caller can restore process state. No production caller: the registry
+     * is write-once per process, filled by the surfaces' own static
+     * initialization; only a test needs the not-yet-compiled-through state
+     * of a reading process.
+     */
+    static PatternSurface swapRegistrationForTest(String id, PatternSurface replacement) {
+        return replacement == null ? REGISTERED.remove(id) : REGISTERED.put(id, replacement);
+    }
+
+    /**
      * Compile through this surface: the machinery compile with this
      * surface's lane/roster/backend baked in, then (only on the
      * no-codegen path, which comes back bare) wrap into the surface's
