@@ -1,8 +1,8 @@
 package io.github.jemmix.tdfa.re2j;
 
 import io.github.jemmix.tdfa.core.compile.CompileOptions;
+import io.github.jemmix.tdfa.core.compile.PatternCompiler;
 import io.github.jemmix.tdfa.core.compile.PatternMatcher;
-import io.github.jemmix.tdfa.core.compile.PatternSurface;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.StreamMatcher;
@@ -13,13 +13,13 @@ import java.io.Serializable;
 import java.util.Map;
 
 /**
- * A compiled regular expression — the re2j-compat surface, mirroring the
+ * A compiled regular expression — the re2j-compat facade, mirroring the
  * {@code com.google.re2j.Pattern} reading of the shared API shape,
  * executed by the TDFA engine. The re2j interpretation is <b>baked
  * in</b>: every axis on which the RE2 lineage and {@code java.util.regex}
  * diverge (line terminators, fold universe, UTF-16 vs codepoint
  * boundaries, anchor end-of-line rules, zero-width iteration spans,
- * {@code (?U)}) is simply this surface's default — there is no migration
+ * {@code (?U)}) is simply this facade's default — there is no migration
  * OR, no per-axis opt-out ceremony; the lane is un-gettable-wrong. The
  * jur-parity reading of the same shape lives in the root facade's
  * {@code io.github.jemmix.tdfa.Pattern}.
@@ -38,13 +38,13 @@ import java.util.Map;
  * with an options-carried
  * {@link io.github.jemmix.tdfa.core.tnfa.Semantics Semantics} selects any
  * mixed-axis interpretation policy (a debugging tool, not a user
- * contract); absent it, this surface's default lane applies throughout.
+ * contract); absent it, this facade's default lane applies throughout.
  *
  * <p><b>Engines.</b> By default each pattern is backed by a dedicated
  * generated class (ASM tier): the whole Matcher.find() &rarr; engine ladder
  * &rarr; walk-leaf chain devirtualizes and inlines end-to-end. Supplying a
  * {@link RegexEngineFactory} swaps in a custom engine (tracer, experimental
- * backend, alternative generator) — the surface then emits a shell around
+ * backend, alternative generator) — the facade then emits a shell around
  * it, preserving the monomorphic call chain. {@code -Dtdfa.engine=VM}
  * forces the shared interpreter implementation everywhere (no code
  * generation at all).
@@ -56,9 +56,10 @@ import java.util.Map;
  * may re-read indices at any point during a call, so a concurrent mutation
  * produces unspecified results (the String/byte[] overloads are immune).
  *
- * <p><b>Serialization.</b> Patterns serialize as surface + pattern + flags
- * + pinned provider identity and recompile through this surface on read
- * (generated classes cannot cross processes). A pattern compiled against
+ * <p><b>Serialization.</b> Patterns serialize as facade + pattern + flags
+ * + pinned provider identity and recompile through this facade's own
+ * compile on read (generated classes cannot cross processes). A pattern
+ * compiled against
  * a pinned {@code UnicodeDataProvider} keeps it across serialization —
  * see that interface's serialization convention; a pattern compiled
  * against the process default recompiles against the READER's default
@@ -68,33 +69,33 @@ public interface Pattern extends Serializable {
 
     /**
      * Flag: case insensitive matching — folds the full Unicode simple-fold
-     * universe (this surface's fold universe; there is no ASCII-only bare
+     * universe (this facade's fold universe; there is no ASCII-only bare
      * variant and no {@code UNICODE_CASE} bit to OR in).
      */
-    int CASE_INSENSITIVE = PatternSurface.CASE_INSENSITIVE;
+    int CASE_INSENSITIVE = PatternCompiler.CASE_INSENSITIVE;
 
     /**
      * Flag: dot ({@code .}) matches all characters, including newline.
      */
-    int DOTALL = PatternSurface.DOTALL;
+    int DOTALL = PatternCompiler.DOTALL;
 
     /**
      * Flag: multiline matching ({@code ^}/{@code $} at line boundaries).
      */
-    int MULTILINE = PatternSurface.MULTILINE;
+    int MULTILINE = PatternCompiler.MULTILINE;
 
     /**
      * Flag: matches longest possible string (leftmost-longest, POSIX).
      */
-    int LONGEST_MATCH = PatternSurface.LONGEST_MATCH;
+    int LONGEST_MATCH = PatternCompiler.LONGEST_MATCH;
 
     /**
      * Flag: disable Unicode groups ({@code \p{...}} / {@code \P{...}}
      * rejected at compile time) — the re2j dial for property classes; this
-     * surface has no {@code UNICODE_CHARACTER_CLASS} bit (the lane's class
+     * facade has no {@code UNICODE_CHARACTER_CLASS} bit (the lane's class
      * sets are already the re2j reading).
      */
-    int DISABLE_UNICODE_GROUPS = PatternSurface.DISABLE_UNICODE_GROUPS;
+    int DISABLE_UNICODE_GROUPS = PatternCompiler.DISABLE_UNICODE_GROUPS;
 
     /**
      * Flag: compile for find-shaped matching only — the whole-match
@@ -114,7 +115,7 @@ public interface Pattern extends Serializable {
      *
      * <p>A tdfa extension (re2j has no equivalent).
      */
-    int FIND_ONLY = PatternSurface.FIND_ONLY;
+    int FIND_ONLY = PatternCompiler.FIND_ONLY;
 
     /**
      * Flag: multi-valued tags (BT22 &sect;3.1) — every capture group keeps
@@ -130,7 +131,7 @@ public interface Pattern extends Serializable {
      *
      * <p>A tdfa extension (re2j has no equivalent).
      */
-    int MULTI_VALUED_TAGS = PatternSurface.MULTI_VALUED_TAGS;
+    int MULTI_VALUED_TAGS = PatternCompiler.MULTI_VALUED_TAGS;
 
     /**
      * Compile {@code regex} with default flags (leftmost-first, generated engine).
@@ -166,14 +167,14 @@ public interface Pattern extends Serializable {
      * pinned-Unicode-version provider for reproducible matching across JVMs.
      */
     static Pattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider unicodeProvider) {
-        return (Pattern) Surfaces.RE2J.compile(regex, flags, factory, unicodeProvider, null, null);
+        return Lane.compile(regex, flags, factory, unicodeProvider, null, null);
     }
 
     /**
      * Compile with explicit options (semantics, tables, observer). An
      * options-carried {@link io.github.jemmix.tdfa.core.tnfa.Semantics
      * Semantics} selects the compile's interpretation policy — the
-     * per-axis escape hatch; absent, this surface's re2j lane applies.
+     * per-axis escape hatch; absent, this facade's re2j lane applies.
      */
     static Pattern compile(String regex, CompileOptions options) {
         if (options == null) {
@@ -189,8 +190,7 @@ public interface Pattern extends Serializable {
         if (options.isDisableUnicodeGroups()) {
             flags |= DISABLE_UNICODE_GROUPS;
         }
-        return (Pattern) Surfaces.RE2J.compile(regex, flags, null, options.unicodeProvider(), options.observer(),
-            options.semantics());
+        return Lane.compile(regex, flags, null, options.unicodeProvider(), options.observer(), options.semantics());
     }
 
     /**
@@ -217,7 +217,7 @@ public interface Pattern extends Serializable {
         if (regex == null) {
             throw new NullPointerException("pattern is null");
         }
-        return (Pattern) Surfaces.RE2J.compile(regex, flags | FIND_ONLY, null, null, null, null);
+        return Lane.compile(regex, flags | FIND_ONLY, null, null, null, null);
     }
 
     /**

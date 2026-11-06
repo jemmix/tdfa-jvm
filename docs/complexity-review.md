@@ -557,6 +557,16 @@ capped them is largely still here. The tradeoffs doc already flags this
   `PatternSurface.compile`. Contract pinned by PatternSerializationTest +
   Re2jSurfaceTest. One nit: the two `VmPattern` copy ctors spell 7 fields
   by hand and rot silently.)
+  **Superseded 2026-11: remove** (owner decision — the keep over-weighted
+  the reflective tail: the facade's own `Pattern.compile` static IS a
+  reflective tail, one `getMethod`+`invoke` in `SerialProxy` with no
+  registry, no id/triggerClass identity, no registration lifecycle.
+  Landed as the `Lane` funnels: each facade validates its roster, defaults
+  its lane and provider, passes its `Pattern.class` +
+  `AsmEngineBackend.INSTANCE` to `PatternCompiler.compile`, and wraps the
+  no-codegen result itself; `TDFAPattern` carries the facade `Class`
+  (serialization target, equality axis, shell interface). C52 went moot
+  with the registry.)
 - **C18 — `Pattern.reset()` no-op** (S, remove). Documented no-op on both
   facades ("releases internal caches" — there are none since the memos
   died). Pure re2j-API-compat residue; drop before the 1.0 API lock or
@@ -642,6 +652,13 @@ capped them is largely still here. The tradeoffs doc already flags this
   unknown-surface failure modes (bare unknown id; unresolvable holder
   class) assert the documented `IllegalArgumentException`. No latent bug:
   the documented path re-registers cleanly.
+  **Verdict: moot** (2026-11, with C17's removal — the registry,
+  `resolve`, `triggerClass` and the eviction seam are deleted, harness
+  included: its subject no longer exists. The load-on-read property now
+  rides stock Java serialization of the facade `Class` in `SerialProxy`,
+  and the reflection tail is the facade's own compile static — same
+  fresh-reader contract (`Re2jSurfaceTest` pins the lane survival), no
+  hand-rolled lazy-registration branch remains to test.)
 - **C53 — `Tdfa.ALL_AXES` drifted from `Tnfa.ALL_AXES` (7 axes vs 8)**
   (S, simplify). Tnfa's constant spells all eight axes (incl.
   `.spaceRe2()`); Tdfa's stops at seven while claiming "Every axis set" —

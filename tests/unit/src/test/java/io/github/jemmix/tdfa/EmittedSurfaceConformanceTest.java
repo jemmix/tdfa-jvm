@@ -1,7 +1,6 @@
 package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.compile.PatternMatcher;
-import io.github.jemmix.tdfa.core.compile.PatternSurface;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.MatchHolder;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
@@ -135,9 +134,9 @@ class EmittedSurfaceConformanceTest {
         // descriptors (match/matchWhole/takeRegs/extractOne/wholeOne).
         hookC(MatchScratch.class);
         // Machinery ctors/members linked by descriptor from ShellEmitter
-        // (core.compile since the two-surface split).
+        // (core.compile since the two-facade split).
         hookC(TDFAPattern.class, String.class, int.class, int.class, RegexEngine.class, WholeEngine.class,
-            UnicodeDataProvider.class, PatternSurface.class);
+            UnicodeDataProvider.class, Class.class);
         hookC(PatternMatcher.class, TDFAPattern.class, CharSequence.class);
         hookM(TDFAPattern.class, "decodeUtf8", byte[].class);
     }

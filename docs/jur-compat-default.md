@@ -170,8 +170,8 @@ Set = today's behavior (the opt-out). Unset = the new JUR-parity default.
 `SPACE_RE2` joined after the two-surface split — found by the WBS item-7
 parity-suite widening (the `\s`-vs-`\u000B` cell silently kept re2j's table
 under the JUR default). Same shape as the other axes (machinery bit
-`PatternSurface.SPACE_RE2`, `Semantics.spaceRe2()`, parser-selected table;
-the re2j surface sets it, the jur facade leaves it unset); the Unicode
+`Semantics.spaceRe2()`, parser-selected table;
+the re2j facade sets it, the jur facade leaves it unset); the Unicode
 (`(?u)`) `\s` table is lineage-shared and unaffected.
 
 `EMPTY_LAST_LINE` + `END_OF_TEXT_ONLY` are the old bundled

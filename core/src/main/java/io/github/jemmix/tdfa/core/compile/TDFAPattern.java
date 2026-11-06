@@ -18,11 +18,11 @@ import java.util.Map;
 
 /**
  * Shared {@code Pattern} machinery implementation: holds the compiled
- * engines and the pattern/flags state of every surface's patterns. Used
- * directly on the interpreter path (wrapped by each surface's
+ * engines and the pattern/flags state of every facade's patterns. Used
+ * directly on the interpreter path (wrapped by each facade's
  * not-generated carrier) and as the emission-failure fallback base;
  * generated per-pattern shells ({@code GenNNNPattern}) extend it,
- * implement their surface's {@code Pattern} interface, and declare a
+ * implement their facade's {@code Pattern} interface, and declare a
  * public final engine field of the concrete (or {@link RegexEngine})
  * type that their matchers call directly.
  *
@@ -30,7 +30,7 @@ import java.util.Map;
  * (a different runtime package) and must subclass and call into it.
  *
  * <p>Public-but-internal: machinery tier ({@code core.compile}) — the
- * surfaces' {@code Pattern} interfaces are the shipped API, this class
+ * facades' {@code Pattern} interfaces are the shipped API, this class
  * is their shared brain and is not itself shipped API.
  *
  * <p><b>Thread safety:</b> instances are immutable after construction
@@ -65,20 +65,26 @@ public class TDFAPattern implements Serializable {
      * and resolves per the UnicodeDataProvider serialization convention.
      */
     private transient UnicodeDataProvider provider;
-    /** The surface this pattern compiled through — the lane identity
-     *  (serialization target, equality axis, shell interface). */
-    private final PatternSurface surface;
+    /**
+     * The facade this pattern compiled through — the {@code Class} of the
+     * facade's {@code Pattern} interface: the serialization target (the
+     * {@link SerialProxy} reflects the facade's own {@code compile} on
+     * read), the equality axis (a jur-facade and a re2j-facade compile of
+     * the same regex+flags answer in different lanes and are never
+     * equal), and the interface generated shells implement.
+     */
+    private final Class<?> facade;
 
     @EmittedSurface // shells super-ctor call: signature feeds ShellEmitter descriptor
     public TDFAPattern(String pattern, int flags, int programSize, RegexEngine engine, WholeEngine wholeEngine,
-        UnicodeDataProvider provider, PatternSurface surface) {
+        UnicodeDataProvider provider, Class<?> facade) {
         this.pattern = pattern;
         this.flags = flags;
         this.programSize = programSize;
         this.engine = engine;
         this.wholeEngine = wholeEngine;
         this.provider = provider;
-        this.surface = surface;
+        this.facade = facade;
     }
 
     /**
@@ -96,11 +102,12 @@ public class TDFAPattern implements Serializable {
     }
 
     /**
-     * The surface this pattern compiled through ({@code PatternSurface}
-     * machinery identity: lane, roster, recompile target).
+     * The facade this pattern compiled through (the {@code Class} of the
+     * facade's {@code Pattern} interface: serialization target, equality
+     * axis, recompile lane).
      */
-    public PatternSurface surface() {
-        return surface;
+    public Class<?> facade() {
+        return facade;
     }
 
     /**
@@ -210,11 +217,12 @@ public class TDFAPattern implements Serializable {
     }
 
     /**
-     * Serialize as the {@link SerialProxy} — surface + pattern + flags +
-     * provider identity, recompiled on read. Generated subclasses'
-     * classes live in child loaders that won't exist in the reading
-     * process, so the state proxy is the only stable form. The pinned
-     * provider (if any) round-trips as its class name, resolved per the
+     * Serialize as the {@link SerialProxy} — facade + pattern + flags +
+     * provider identity, recompiled on read (the proxy reflects the
+     * facade's own compile). Generated subclasses' classes live in child
+     * loaders that won't exist in the reading process, so the state
+     * proxy is the only stable form. The pinned provider (if any)
+     * round-trips as its class name, resolved per the
      * UnicodeDataProvider serialization convention; a pattern compiled
      * against the process default serializes without a provider and
      * recompiles against the READER's default.
@@ -226,17 +234,16 @@ public class TDFAPattern implements Serializable {
     // raw fields (including the non-serializable engine) hit the wire and
     // serialization throws NotSerializableException.
     public Object writeReplace() {
-        return new SerialProxy(surface.id(), surface.triggerClass(), pattern, flags,
-            provider == null ? null : provider.getClass().getName());
+        return new SerialProxy(facade, pattern, flags, provider == null ? null : provider.getClass().getName());
     }
 
     /**
      * Recompile the (transient) engines after deserialization, from
-     * {@code pattern}+{@code flags} through this pattern's surface.
+     * {@code pattern}+{@code flags} through this pattern's facade.
      */
     private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
         in.defaultReadObject();
-        TDFAPattern tmp = surface.recompile(pattern, flags, provider);
+        TDFAPattern tmp = SerialProxy.recompile(facade, pattern, flags, provider);
         this.engine = tmp.engine;
         this.wholeEngine = tmp.wholeEngine;
         this.provider = tmp.provider;
@@ -271,8 +278,8 @@ public class TDFAPattern implements Serializable {
     public boolean equals(Object o) {
         // State-based equality across implementations (shared, wrapped and
         // generated): re2j semantics — same pattern string + same flags —
-        // AND the same surface: a jur-surface and a re2j-surface compile
-        // of the same regex+flags answer in different lanes and are never
+        // AND the same facade: a jur-facade and a re2j-facade compile of
+        // the same regex+flags answer in different lanes and are never
         // equal.
         if (this == o) {
             return true;
@@ -281,11 +288,11 @@ public class TDFAPattern implements Serializable {
             return false;
         }
         TDFAPattern p = (TDFAPattern) o;
-        return surface == p.surface && flags == p.flags && pattern.equals(p.pattern);
+        return facade == p.facade && flags == p.flags && pattern.equals(p.pattern);
     }
 
     @Override
     public int hashCode() {
-        return 31 * (31 * pattern.hashCode() + flags) + surface.id().hashCode();
+        return 31 * (31 * pattern.hashCode() + flags) + facade.getName().hashCode();
     }
 }

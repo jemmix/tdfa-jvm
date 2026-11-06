@@ -35,7 +35,7 @@ class DefaultEngineSelectionTest {
         try {
             System.setProperty("tdfa.engine", "VM");
             Pattern p = Pattern.compile("abc");
-            // The no-codegen path hands out the surface's wrapped machinery
+            // The no-codegen path hands out the facade's wrapped machinery
             // instance (VmPattern) — not a generated shell, not the bare
             // machinery class either.
             assertThat(p).isInstanceOf(TDFAPattern.class);
