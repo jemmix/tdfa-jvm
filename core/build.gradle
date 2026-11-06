@@ -17,7 +17,7 @@ repositories {
 
 dependencies {
     errorprone 'com.google.errorprone:error_prone_core:2.50.0'
-    spotbugs 'com.github.spotbugs:spotbugs:4.9.8'
+    spotbugs 'com.github.spotbugs:spotbugs:4.10.5'
 }
 
 jar {
@@ -57,22 +57,13 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 // SpotBugs: hard-fails on findings AND on analysis errors (never a false
-// green — a degraded analysis exits non-zero). Analyzer 4.9.8 (Java 25
-// classfile support). Exclusions are exclusively documented design
-// decisions — see config/spotbugs/exclusions.xml. On JDK >= 26 the tasks
-// self-skip (SpotBugs cannot scan JDK 26 runtime classes); on <= 25 they
-// enforce. Standalone: scripts/lint-spotbugs.sh.
+// green — a degraded analysis exits non-zero). Analyzer 4.10.5 (Java 26
+// classfile support — see root for the full account). Exclusions are
+// exclusively documented design decisions — see
+// config/spotbugs/exclusions.xml. Standalone: scripts/lint-spotbugs.sh.
 tasks.withType(com.github.spotbugs.snom.SpotBugsTask).configureEach {
     ignoreFailures = false
     excludeFilter = rootProject.file('config/spotbugs/exclusions.xml')
-    onlyIf {
-        if (org.gradle.api.JavaVersion.current().majorVersion.toInteger() >= 26) {
-            logger.lifecycle("spotbugs: skipped - SpotBugs 4.9.x cannot scan JDK 26 runtime classes; run scripts/lint-spotbugs.sh on JDK <= 25")
-            false
-        } else {
-            true
-        }
-    }
     reports {
         xml.required = true
         html.required = true
