@@ -417,6 +417,12 @@ capped them is largely still here. The tradeoffs doc already flags this
   scan compiled on the `:re2j` surface, supplementary-bearing input),
   `--capture`, then they gate every C6–C9 change. Until then
   ORIGIN_SIM's keep-verdict is provisional.
+  **Update (2026-11-06): landed.** `re2jFindAllWide.vm/.asm` +
+  `re2jScanWideNoMatch.vm/.asm` in QuickBench (quick gate, baseline
+  re-captured at 25 rows) and RegressionBench (JMH gate) — wide-class
+  shapes over Cyrillic + Deseret supplementary letters compiled through
+  the `:re2j` surface, so ORIGIN_SIM, the codepoint `triggerScan`, and
+  pair-interior skips are now gated on every PR.
 - **C47 — `runStringAnchored`, a third copy of the mask-aware transition
   protocol** (M, simplify). ~186 lines transcribing the same
   most-specific-mask/dispatch protocol as `extractFrom` and

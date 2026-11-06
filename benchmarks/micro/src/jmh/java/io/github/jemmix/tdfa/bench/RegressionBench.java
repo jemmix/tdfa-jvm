@@ -63,10 +63,23 @@ public class RegressionBench {
     static final Pattern VM_SPARSE = Pattern.compile("z[0-9]{3}q", 0, TdfaRunner::new);
     static final Pattern ASM_SPARSE = Pattern.compile("z[0-9]{3}q");
 
+    // Codepoint-lane rows (the :re2j surface) — wide classes, dense findAll
+    // and a dense no-match scan, supplementary letters included (review item
+    // C46; no ASCII 'x' anywhere, so the no-match shape cannot match).
+    static final io.github.jemmix.tdfa.re2j.Pattern VM_RE2J_WIDE =
+        io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}{2,}", 0, TdfaRunner::new);
+    static final io.github.jemmix.tdfa.re2j.Pattern ASM_RE2J_WIDE =
+        io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}{2,}");
+    static final io.github.jemmix.tdfa.re2j.Pattern VM_RE2J_WIDE_X =
+        io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}{2,}x", 0, TdfaRunner::new);
+    static final io.github.jemmix.tdfa.re2j.Pattern ASM_RE2J_WIDE_X =
+        io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}{2,}x");
+
     // ===== haystacks (built statically; each ~64 KB) =====
     static final String NO_MATCH_64K = buildNoMatch(1 << 16);
     static final String DENSE_64K = buildDense(1 << 16);
     static final String SPARSE_64K = buildSparse(1 << 16);
+    static final String WIDE_RE2J_64K = buildWideRe2j(1 << 16);
 
     static String buildNoMatch(int len) {
         StringBuilder b = new StringBuilder(len + 16);
@@ -90,6 +103,16 @@ public class RegressionBench {
     static String buildSparse(int len) {
         StringBuilder b = new StringBuilder(len + 16);
         String unit = "lorem ipsum dolor sit z123q amet consec z987q tetur adiscing elit ";
+        while (b.length() < len) {
+            b.append(unit);
+        }
+        return b.toString();
+    }
+
+    static String buildWideRe2j(int len) {
+        StringBuilder b = new StringBuilder(len + 16);
+        String unit =
+            "\u0441\u043b\u043e\u0432\u043e \u0437\u0430\u043f\u0430\u0441 \uD801\uDC00\uD801\uDC01 \u043e\u0431\u0441\u0442\u043e\u044f\u0442\u0435\u043b\u044c\u043d\u043e ";
         while (b.length() < len) {
             b.append(unit);
         }
@@ -149,6 +172,37 @@ public class RegressionBench {
     @Benchmark
     public int asmFindAllSparse() {
         return findAll(ASM_SPARSE, SPARSE_64K);
+    }
+
+    // ===== codepoint lane (:re2j surface): wide-class dense findAll and
+    // dense no-match scan — ORIGIN_SIM / codepoint triggerScan / pair-interior
+    // skips, the rungs the C6–C9 folds touch (review item C46) =====
+    @Benchmark
+    public int vmRe2jFindAllWide() {
+        return findAll(VM_RE2J_WIDE, WIDE_RE2J_64K);
+    }
+
+    @Benchmark
+    public int asmRe2jFindAllWide() {
+        return findAll(ASM_RE2J_WIDE, WIDE_RE2J_64K);
+    }
+
+    @Benchmark
+    public boolean vmRe2jScanWideNoMatch() {
+        return VM_RE2J_WIDE_X.matcher(WIDE_RE2J_64K).find();
+    }
+
+    @Benchmark
+    public boolean asmRe2jScanWideNoMatch() {
+        return ASM_RE2J_WIDE_X.matcher(WIDE_RE2J_64K).find();
+    }
+
+    static int findAll(io.github.jemmix.tdfa.re2j.Pattern r, String in) {
+        int n = 0;
+        for (Matcher m = r.matcher(in); m.find();) {
+            n++;
+        }
+        return n;
     }
 
     static int findAll(Pattern r, String in) {
