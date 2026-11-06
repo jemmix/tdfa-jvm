@@ -1,6 +1,5 @@
 package io.github.jemmix.tdfa.core.determinize;
 
-import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
 import io.github.jemmix.tdfa.core.dfa.OpSeq;
@@ -9,7 +8,6 @@ import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.TreeSet;
 
 /**
  * Register-aware Moore's algorithm for tagged-DFA minimization (paper §6.2.2).
@@ -27,19 +25,21 @@ import java.util.TreeSet;
  * O(1) comparison strategy). Comparison may have false negatives —
  * non-identical but semantically equivalent op lists are treated as
  * different — but this only yields a suboptimal minimization, never an
- * incorrect one. Best results require applying after register optimizations
- * (not yet implemented), which can normalize op lists.
+ * incorrect one. Applying after register optimization (as the pipeline
+ * does) narrows the false negatives: coalesced states then carry
+ * identical op lists.
  *
- * <p><b>Range normalization:</b> states whose transitions have the same
- * per-codepoint behavior but different range boundaries (e.g. one state
- * has [(0..9), (10..MAX)] and another has [(0..99), (100..MAX)] with the
- * same targets) should still merge. We compute global breakpoints (the
- * union of every state's range boundaries) and rebuild each state's
- * transition signature on the global partition. This is the difference
- * between minimization working for large literal-alternation DFAs
- * (dictionary, lexer) vs. not working at all. If any state has overlapping
- * ranges (assertion-gated transitions), we conservatively fall back to the
- * unnormalized form for the whole DFA.
+ * <p>Signatures are built per stored range row (lo, hi, target, ops,
+ * requiredMask) — no range normalization. A normalized variant (rebuilding
+ * signatures on the union of every state's breakpoints so states with the
+ * same per-codepoint behavior but different boundaries could merge) was
+ * retired by measurement (2026-11-06): with normalization compiled off,
+ * final state counts matched ±0 on every CompileLatencyGuardTest bomb,
+ * all 334 compiled rebar corpus scenarios, and the 58-pattern
+ * determinism/partial-whole corpus — including the dictionary
+ * alternation (19 986 → 7 087 states) the pass was built for — while
+ * the normalize path's n×K row table cost 2-4× minimize wall on exactly
+ * those shapes. See complexity-review C26.
  *
  * <p>Complexity: O((n + R) · I) where R = total ranges and I = iterations
  * to fixpoint (bounded by n in the worst case, typically O(log n)).
@@ -55,8 +55,7 @@ final class DfaMinimizer {
      * relation. Two states may only merge when their WHOLE behavior
      * matches too — the whole walk is a reader of the merged state — so
      * the whole entries join both the attribute and transition
-     * signatures (unnormalized rows; the pruned rows keep their
-     * normalization).
+     * signatures (same per-range rows as the pruned transitions).
      */
     final int[] wholeBase, wholeCount, wholeRanges;
     final boolean longest;
@@ -67,15 +66,6 @@ final class DfaMinimizer {
      */
     final int posFlagCells;
     /**
-     * Cap on n×K range-normalization cells. Derived per compile from
-     * the compile RAM budget ({@link Budgets#maxMinimizeNormCells()})
-     * through the weight model — at the 128 MiB default, 32 M cells =
-     * 128 MiB of compile-time scratch worst case. Over it (or on
-     * overlapping ranges), minimization degrades to the unnormalized
-     * (correct, less-merging) path.
-     */
-    final long maxNormCells;
-    /**
      * Compile work meter (shared with determinization/regopt): the
      * Moore fixpoint is O((n+R)·I) — I rounds of n signature builds —
      * and without metering would be an unbounded loop inside
@@ -83,8 +73,7 @@ final class DfaMinimizer {
      * round ⇒ O(n²) sig builds, minutes of unmetered wall time.
      * Exhaustion propagates as {@link PatternTooLargeException}; the
      * CALLER degrades to the unminimized DFA instead of failing the
-     * compile (minimization is an optional pass — same semantics as
-     * the norm-cell degrade).
+     * compile (minimization is an optional pass).
      */
     final WorkMeter meter;
     /**
@@ -95,19 +84,6 @@ final class DfaMinimizer {
      * Cached op-sequence id per ops[] offset (lazily computed). -1 = not computed.
      */
     final int[] opsIdAt;
-
-    /**
-     * Global breakpoints partitioning the codepoint space; sorted ascending, includes 0 and 0x110000 sentinel.
-     */
-    int[] globalBps;
-    /**
-     * Per (state, global-bp-index): the state-range index covering that global range, or -1 if no range.
-     */
-    int[] stateRangeAt;
-    /**
-     * True iff every state's ranges are non-overlapping (so per-bp lookup is well-defined).
-     */
-    boolean useNormalized;
 
     DfaMinimizer(int n, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff, int[] ranges, int[] ops,
         int[] stateEntryMask, int[] stateAcceptMask, int[] stateStopOnAcceptMask, int[] stateFinalOpsByMask,
@@ -128,102 +104,8 @@ final class DfaMinimizer {
         this.longest = longest;
         this.posFlagCells = posFlagCells;
         this.meter = meter;
-        this.maxNormCells = Budgets.maxMinimizeNormCells();
         this.opsIdAt = new int[ops.length];
         Arrays.fill(this.opsIdAt, -1);
-        detectOverlapsAndInit();
-    }
-
-    /**
-     * Detect overlapping ranges; if any state has them, disable normalization (conservative fallback).
-     */
-    private void detectOverlapsAndInit() {
-        useNormalized = true;
-        outer : for (int s = 0; s < n; s++) {
-            int base = stateBase[s];
-            int count = Tdfa.rangeCount(stateMeta[s]);
-            int prevHi = -1;
-            for (int r = 0; r < count; r++) {
-                int o = (base + r) * 5;
-                int lo = ranges[o];
-                if (lo <= prevHi) {
-                    useNormalized = false;
-                    break outer;
-                }
-                prevHi = ranges[o + 1];
-            }
-        }
-        if (!useNormalized) {
-            return;
-        }
-        computeGlobalBreakpoints();
-        computeStateRangeMapping();
-    }
-
-    private void computeGlobalBreakpoints() {
-        TreeSet<Integer> bps = new TreeSet<>();
-        bps.add(0);
-        bps.add(0x110000); // sentinel upper bound (exclusive)
-        for (int s = 0; s < n; s++) {
-            int base = stateBase[s];
-            int count = Tdfa.rangeCount(stateMeta[s]);
-            for (int r = 0; r < count; r++) {
-                int o = (base + r) * 5;
-                bps.add(ranges[o]);
-                int hi = ranges[o + 1];
-                if (hi < 0x10FFFF) {
-                    bps.add(hi + 1);
-                }
-            }
-        }
-        globalBps = new int[bps.size()];
-        int i = 0;
-        for (int b : bps) {
-            globalBps[i++] = b;
-        }
-    }
-
-    /**
-     * Per state, per global bp, find the state-range index covering it. Linear merge scan.
-     * Dimension guard: n×K is bounded by a cell budget read
-     * PER COMPILE (constructor stores it) — K is the union of every
-     * state's breakpoints and no other cap covers it, so without this a
-     * wide DFA under the 20 K-state minimize gate could overflow int
-     * (NegativeArraySizeException) or request a multi-GB row table. Over
-     * the budget, minimization degrades to the unnormalized (correct,
-     * less-merging) path — same fallback as overlapping ranges.
-     */
-    private void computeStateRangeMapping() {
-        int K = globalBps.length;
-        if ((long) n * (long) K > maxNormCells) {
-            useNormalized = false;
-            stateRangeAt = null;
-            return;
-        }
-        stateRangeAt = new int[n * K];
-        for (int s = 0; s < n; s++) {
-            meter.tick(); // n×K merge scan — budget-visible
-            int base = stateBase[s];
-            int count = Tdfa.rangeCount(stateMeta[s]);
-            int rangeIdx = 0;
-            int rowBase = s * K;
-            for (int k = 0; k < K; k++) {
-                int cp = globalBps[k];
-                if (cp >= 0x110000) {
-                    stateRangeAt[rowBase + k] = -1;
-                    continue;
-                }
-                while (rangeIdx < count && ranges[(base + rangeIdx) * 5 + 1] < cp) {
-                    rangeIdx++;
-                }
-                if (rangeIdx < count) {
-                    int o = (base + rangeIdx) * 5;
-                    stateRangeAt[rowBase + k] = (ranges[o] <= cp) ? rangeIdx : -1;
-                } else {
-                    stateRangeAt[rowBase + k] = -1;
-                }
-            }
-        }
     }
 
     /**
@@ -364,58 +246,32 @@ final class DfaMinimizer {
     }
 
     /**
-     * Transition signature, normalized on global breakpoints when
-     * possible. Whole-side entries (when present) are appended as
-     * unnormalized (lo, hi, target_partition, opSeqId, requiredMask)
-     * rows — the whole walk's dispatch must stay distinct per state, so
-     * any whole-row difference blocks the merge (false negatives only
-     * cost merging quality, never correctness).
+     * Transition signature, one row per stored range
+     * (lo, hi, target_partition, opSeqId, requiredMask). Whole-side
+     * entries (when present) are appended the same way — the whole
+     * walk's dispatch must stay distinct per state, so any whole-row
+     * difference blocks the merge (false negatives only cost merging
+     * quality, never correctness).
      */
     SigKey transSig(int s, int[] partition) {
         int extra = attrExtra();
         int base = stateBase[s];
         int count = Tdfa.rangeCount(stateMeta[s]);
         int wCount = wholeRows(s);
-        int[] sig;
-        int i;
-        if (useNormalized) {
-            int K = globalBps.length - 1; // # of codepoint-covering ranges
-            sig = new int[5 + extra + (wholeRanges != null ? 1 : 0) + K * 3 + wCount * 5];
-            i = fillAttrs(sig, s, 0);
-            if (wholeRanges != null) {
-                sig[i++] = wholeBase != null && wholeBase[s] >= 0 ? wholeCount[s] : 0;
-            }
-            int rowBase = s * globalBps.length;
-            for (int k = 0; k < K; k++) {
-                int rIdx = stateRangeAt[rowBase + k];
-                if (rIdx < 0) {
-                    sig[i++] = -1;
-                    sig[i++] = 0;
-                    sig[i++] = 0;
-                } else {
-                    int o = (base + rIdx) * 5;
-                    int t = ranges[o + 2];
-                    sig[i++] = (t == -1) ? -1 : partition[t];
-                    sig[i++] = opSeqId(ranges[o + 3]);
-                    sig[i++] = ranges[o + 4];
-                }
-            }
-        } else {
-            // Unnormalized fallback: per-range (lo, hi, target_partition, opSeqId, requiredMask).
-            sig = new int[5 + extra + (wholeRanges != null ? 1 : 0) + count * 5 + wCount * 5];
-            i = fillAttrs(sig, s, 0);
-            if (wholeRanges != null) {
-                sig[i++] = wholeBase != null && wholeBase[s] >= 0 ? wholeCount[s] : 0;
-            }
-            for (int r = 0; r < count; r++) {
-                int o = (base + r) * 5;
-                int t = ranges[o + 2];
-                sig[i++] = ranges[o]; // lo
-                sig[i++] = ranges[o + 1]; // hi
-                sig[i++] = (t == -1) ? -1 : partition[t]; // target's current partition
-                sig[i++] = opSeqId(ranges[o + 3]); // transition-ops content id
-                sig[i++] = ranges[o + 4]; // requiredMask
-            }
+        // Per-range rows: (lo, hi, target_partition, opSeqId, requiredMask).
+        int[] sig = new int[5 + extra + (wholeRanges != null ? 1 : 0) + count * 5 + wCount * 5];
+        int i = fillAttrs(sig, s, 0);
+        if (wholeRanges != null) {
+            sig[i++] = wholeBase != null && wholeBase[s] >= 0 ? wholeCount[s] : 0;
+        }
+        for (int r = 0; r < count; r++) {
+            int o = (base + r) * 5;
+            int t = ranges[o + 2];
+            sig[i++] = ranges[o]; // lo
+            sig[i++] = ranges[o + 1]; // hi
+            sig[i++] = (t == -1) ? -1 : partition[t]; // target's current partition
+            sig[i++] = opSeqId(ranges[o + 3]); // transition-ops content id
+            sig[i++] = ranges[o + 4]; // requiredMask
         }
         if (wCount > 0) {
             int wbase = wholeBase[s];

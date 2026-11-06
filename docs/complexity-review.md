@@ -743,6 +743,28 @@ capped them is largely still here. The tradeoffs doc already flags this
   `useNormalized = false` patch, compile the four latency-guard shapes +
   rebar corpus, compare final `states=`; retire iff counts match ±0 and
   dictionary keeps 6.8K; any movement goes through bench-regression.sh.)
+  **Update (2026-11-06): retired.** With `useNormalized = false` (one
+  line), final state counts matched the baseline ±0 on every compile:
+  31/31 CompileLatencyGuardTest bomb runs (datefinder ascii/unicode
+  2448/2454→1145/1149, aws-keys 9267→8217, dictionary 19986→**7087** —
+  today's number for the bullet's "6.8K" shape, preserved exactly),
+  359/359 rebar corpus rows (334 compiled — 77 merge something, 51 merge
+  >10 %, the dictionary rows dominate — plus 25 budget-rejects), and
+  58/58 determinism/partial-whole patterns. The normalizer merged
+  nothing anywhere — its n×K row table only cost time: minimize wall
+  (median-of-reps) fell to 45 % (datefinder-ascii 9.2→4.1 ms), 24 %
+  (unicode 16.8→4.1 ms), 64 % (aws 155→100 ms), 34 % (dictionary
+  74.5→25.6 ms); the 17 corpus rows with >500 pre-minimize states that
+  merge fell 71.1→23.4 ms median. The degrade fallback never fired on
+  any run (0 budget notes). Deleted: the normalized signature path,
+  global-breakpoint + n×K mapping machinery,
+  `Budgets.maxMinimizeNormCells`, `BudgetWeights.MINIMIZE_CELL_BYTES`,
+  and the overlapping-range degrade (per-range rows compare lo/hi per
+  row, so overlap needs no special case). The compute-budget degrade in
+  `computePartition` stays. The "difference between minimization
+  working vs not" javadoc claim was stale: equivalent states from the
+  current determinizer already carry bit-identical boundaries.
+  Evidence tables in the PR body; quick bench gate green.
 - **C27 — `TdfaStateIndex` key zoo** (S/M, examine). `ProbeKey` vs
   `DfaStateKey`, class-signature canonicalization, `tryMap` register
   bijection, addState. The probe-reuse trick saves 2 KB per hit (1.4 M

@@ -1142,8 +1142,8 @@ public final class Tdfa {
     //   tdfa.debug, tdfa.debug.closure,
     //   tdfa.debug.finals                          (compile)
     //   tdfa.engine                                                 (facade, per compile)
-    // The derived determinization caps (states/kernels/closure/cfg-edges/
-    // norm-cells) are
+    // The derived determinization caps (states/kernels/closure/cfg-edges)
+    // are
     // all linear functions of the two compile budgets / the runtime budget
     // through the weight model (BudgetWeights) — one knob per resource, so
     // the caps can never drift out of sync with the budgets that derive

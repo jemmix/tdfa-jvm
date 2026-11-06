@@ -137,11 +137,9 @@ public final class BudgetWeights {
      * materialization).
      */
     public static final int CFG_EDGE_BYTES = 32;
-    /**
-     * A minimizer range-normalization cell (one int in the n&times;K row
-     * table) weighs 4 bytes.
-     */
-    public static final int MINIMIZE_CELL_BYTES = 4;
+    // (MINIMIZE_CELL_BYTES — the weight of one minimizer
+    //  range-normalization cell — was deleted with the normalization
+    //  pass it priced; see complexity-review C26.)
     /**
      * One live explicit-stack frame (parser group frame, fixed-tags walk
      * frame, or TNFA build frame) is assumed to weigh 64 bytes. The
