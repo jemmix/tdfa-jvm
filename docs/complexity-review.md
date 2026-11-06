@@ -327,6 +327,25 @@ capped them is largely still here. The tradeoffs doc already flags this
   `./scripts/bench-regression.sh` (15 %) then `--jmh` (10 %) plus
   ShortFindBench `emailNoMatch` on vm/asm — a ≥15 % emailNoMatch
   regression closes scope 2 with numbers.)
+  **Update (2026-11-06): scope 1 landed; scope 2's counter-evidence is
+  superseded but the fold stays gate-blocked.** Scope 1: each
+  candidate-enumeration pair (`prefixScanBool`/`prefixScanExtract`,
+  `candScanBool`/`candScanExtract`) became one parameterized scan —
+  boolean paths return a `SCAN_HIT_OUT` sentinel, the extract prefilter
+  keeps its boolean walk (C12's mechanism untouched);
+  StrategyConformance + EmittedSurfaceConformance trace-equal, quick
+  rows flat in a four-run same-session A/B. Scope 2 (fold the walk
+  leaves): a dedicated interleaved probe on the `emailNoMatch` shape
+  (min-of-3 × 500 k finds per engine per round, vm+asm) measured the
+  fold at 0.98–0.99 × — no cost — and the quick prefilter rows were
+  flat: the recorded 1143-vs-498 ns counterargument (d192462, pre-#97
+  walk pair) no longer describes the current walks. The fold is NOT
+  landed: "<10 % everywhere" needs a clean full gate (quick + `--jmh`)
+  on a quiet host — this pass's machine showed bimodal ~2× states on
+  plain main during active desktop use — and the quick corpus lacks a
+  many-register dense no-match row, the regime where extract-walk regs
+  cost would concentrate. Re-open the fold only with that row added and
+  a quiet-host gate.
 - **C8 — unit/codepoint scan twins** (M, simplify). `triggerScan` vs
   `unitTrigger`, `rawScan` vs `unitRawScan` (plus a `unitSeeds` flag
   variant): the same simulation twice, once per boundary discipline. The
