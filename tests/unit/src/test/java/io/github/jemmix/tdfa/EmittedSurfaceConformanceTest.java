@@ -7,6 +7,7 @@ import io.github.jemmix.tdfa.core.dfa.MatchHolder;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.emit.EmittedSurface;
+import io.github.jemmix.tdfa.core.engine.ChunkSource;
 import io.github.jemmix.tdfa.core.engine.MatchResult;
 import io.github.jemmix.tdfa.core.engine.MatchScratch;
 import io.github.jemmix.tdfa.core.engine.Matcher;
@@ -84,6 +85,7 @@ class EmittedSurfaceConformanceTest {
         hookM(TdfaRunner.class, "find", CharSequence.class);
         hookM(TdfaRunner.class, "match", CharSequence.class, int.class, MatchScratch.class);
         hookM(TdfaRunner.class, "matchWhole", CharSequence.class, MatchScratch.class);
+        hookM(TdfaRunner.class, "streamingMatcher", ChunkSource.class);
         hookM(TdfaRunner.class, "startBits");
         hookM(TdfaRunner.class, "candScanMax");
         hookM(TdfaRunner.class, "restartExtract", String.class, int.class, int.class, int.class, MatchScratch.class);

@@ -1,7 +1,7 @@
 package io.github.jemmix.tdfa.core.budget;
 
 /**
- * The user-facing resource budgets, as three system properties, and the
+ * The user-facing resource budgets, as four system properties, and the
  * derived caps the pipeline actually checks. Compilation is bounded by a
  * <b>RAM budget</b> (bytes of transient compile-time structures, weighted
  * per structure via {@link BudgetWeights}) and a <b>CPU budget</b>
@@ -24,6 +24,10 @@ package io.github.jemmix.tdfa.core.budget;
  *   <tr><td>{@code tdfa.budget.runtime.memory}</td><td>execution RAM per
  *       compiled pattern: retained artifact tables, bytes</td>
  *       <td>16 MiB</td></tr>
+ *   <tr><td>{@code tdfa.budget.stream.window}</td><td>streaming input:
+ *       retained window (leftmost undecided start &rarr; frontier),
+ *       UTF-16 units — see {@code docs/streaming-input.md}</td>
+ *       <td>8 M units (16 MiB)</td></tr>
  * </table>
  *
  * <p>The derived caps (max DFA states, kernel totals, &epsilon;-closure
@@ -81,6 +85,14 @@ public final class Budgets {
      */
     public static final String RUNTIME_MEMORY_PROP = "tdfa.budget.runtime.memory";
     /**
+     * System property: streaming-input window budget in UTF-16 units —
+     * the retained input a streaming matcher may hold from the leftmost
+     * undecided match start to the frontier
+     * (see {@code docs/streaming-input.md}); exceeding it fails the
+     * stream with {@link StreamWindowOverflowException}.
+     */
+    public static final String STREAM_WINDOW_PROP = "tdfa.budget.stream.window";
+    /**
      * Default compile RAM budget: 128 MiB.
      */
     public static final long DEFAULT_COMPILE_MEMORY = 128L << 20;
@@ -88,6 +100,11 @@ public final class Budgets {
      * Default match-time RAM budget (per pattern): 16 MiB.
      */
     public static final long DEFAULT_RUNTIME_MEMORY = 16L << 20;
+    /**
+     * Default streaming window budget: 8 M UTF-16 units = 16 MiB, the
+     * same RAM as the match-time budget's default.
+     */
+    public static final long DEFAULT_STREAM_WINDOW = 8L << 20;
     /**
      * Default compile CPU budget: {@link BudgetWeights#DEFAULT_COMPILE_COMPUTE_SECONDS}
      * seconds at the assumed tick rate.
@@ -119,6 +136,14 @@ public final class Budgets {
      */
     public static long runtimeMemoryBytes() {
         return Long.getLong(RUNTIME_MEMORY_PROP, DEFAULT_RUNTIME_MEMORY);
+    }
+
+    /**
+     * Streaming window budget, UTF-16 units ({@value #STREAM_WINDOW_PROP}).
+     * Read fresh per streaming matcher — the knob policy above.
+     */
+    public static long streamWindowUnits() {
+        return Long.getLong(STREAM_WINDOW_PROP, DEFAULT_STREAM_WINDOW);
     }
 
     // ===== compile RAM-derived caps =====

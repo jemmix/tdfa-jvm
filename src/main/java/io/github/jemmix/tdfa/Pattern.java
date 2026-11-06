@@ -5,6 +5,8 @@ import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.compile.PatternSurface;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
+import io.github.jemmix.tdfa.core.dfa.StreamMatcher;
+import io.github.jemmix.tdfa.core.engine.ChunkSource;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 import java.io.Serializable;
@@ -309,6 +311,25 @@ public interface Pattern extends Serializable {
      * Create a {@link PatternMatcher} for this pattern against UTF-8-decoded {@code input}.
      */
     PatternMatcher matcher(byte[] input);
+
+    /**
+     * Create a {@link StreamMatcher} that matches this pattern over
+     * chunked/streaming input — an {@code InputStream}, a
+     * {@code Reader}, a {@code ByteBuffer} feed — without materializing
+     * the whole input as a String. One matcher per stream,
+     * single-threaded; match offsets are absolute UTF-16 unit positions
+     * in the whole stream; matches are reported as soon as they are
+     * decidable, byte-identical to the String surface over the growing
+     * prefix. The retained window is budgeted
+     * ({@code -Dtdfa.budget.stream.window}); group text is readable
+     * until the next {@code next()}. A pattern compiled with a custom
+     * engine factory that does not support streaming is rejected loudly
+     * here. See {@code docs/streaming-input.md}.
+     *
+     * @param source the chunk feed (see {@code ChunkSources} for adapters)
+     * @return a fresh streaming matcher owned by the caller
+     */
+    StreamMatcher streamingMatcher(ChunkSource source);
 
     /**
      * Split {@code input} around matches of this pattern. Trailing empty strings are omitted.

@@ -84,6 +84,15 @@ final class RunnerFinalityGateTest {
         CARRIERS.add("io.github.jemmix.tdfa.core.engine.MatchScratch");
         CARRIERS.add("io.github.jemmix.tdfa.core.engine.TagTree");
         CARRIERS.add("io.github.jemmix.tdfa.core.engine.RegexEngine$1"); // findAll iterator
+        CARRIERS.add("io.github.jemmix.tdfa.core.dfa.StreamMatcher"); // streaming search state (one per stream)
+        // ChunkSources adapters: one feed's decode/pull state (the
+        // streaming input's carrier-side siblings — single-threaded per
+        // the ChunkSource contract, released with the stream).
+        CARRIERS.add("io.github.jemmix.tdfa.core.engine.ChunkSources$ByteFeedSource");
+        CARRIERS.add("io.github.jemmix.tdfa.core.engine.ChunkSources$DecodingSource");
+        CARRIERS.add("io.github.jemmix.tdfa.core.engine.ChunkSources$ByteBufferSource");
+        CARRIERS.add("io.github.jemmix.tdfa.core.engine.ChunkSources$ReaderSource");
+        CARRIERS.add("io.github.jemmix.tdfa.core.engine.ChunkSources$1"); // the of() one-shot
     }
 
     /** Compile-time-only builders: never reachable from a compiled Pattern. */

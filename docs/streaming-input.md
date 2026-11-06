@@ -41,15 +41,17 @@ not-yet-decided part of the search can still touch.
 // the SPI: pull-based, CharSequence chunks of UTF-16 units
  CharSequence next();          // next non-empty chunk, null = end of input
 
-// adapters (io.github.jemmix.tdfa.core.stream.ChunkSources)
+// adapters (io.github.jemmix.tdfa.core.engine.ChunkSources)
 ChunkSources.utf8(inputStream)            // incremental UTF-8 via java.nio.charset
                                           // CharsetDecoder (Java-4 API; multi-byte
                                           // sequences and surrogate pairs carry
                                           // across chunk boundaries)
 ChunkSources.utf8(inputStream, chunkChars)
 ChunkSources.reader(reader)               // any charset, incremental
-ChunkSources.decoder(charsetDecoder)      // the ByteBuffer case: feed the decoder
-                                          // ByteBuffers; chunks come out as chars
+ChunkSources.decoder(charsetDecoder)      // arbitrary decoder over the stream feed
+ChunkSources.byteBuffers(iterator, decoder, chunkChars)
+                                          // the ByteBuffer case: decode buffers as
+                                          // they arrive; splits carry
 
 // both facades (jur default + re2j lane), both engines (VM + ASM)
 StreamMatcher m = Pattern.compile("(\\w+)@(\\w+)").streamingMatcher(source);
@@ -59,15 +61,20 @@ while (m.next()) {
 }
 ```
 
-- `StreamMatcher` (core.dfa, beside the runner — it reads the frozen
-  tables package-privately, exactly like `RunnerTables`): `next()`
-  advances to the next confirmed match, `result()` returns the immutable
-  `MatchResult` (absolute offsets, all groups, multi-valued readouts),
-  `group(int)`/`group(String)` slice the retained window. One matcher
-  per stream, single-threaded — the `Matcher` contract, verbatim.
+- The SPI (`ChunkSource`, the adapters, the overflow rejection) lives in
+  `core.engine` beside the other match-time surface types;
+  `StreamMatcher` and the narrow `StreamEngine` seam live in `core.dfa`
+  beside the runner — the seam returns the dfa-tier carrier, and the
+  core package DAG keeps `engine` below `dfa`.
+- `StreamMatcher`: `next()` advances to the next confirmed match,
+  `result()` returns the immutable `MatchResult` (absolute offsets, all
+  groups, multi-valued readouts), `group(int)`/`group(String)` slice the
+  retained window. One matcher per stream, single-threaded — the
+  `Matcher` contract, verbatim.
 - Offsets are absolute UTF-16 unit positions in the whole stream, the
   same coordinate system the String surface reports over the
-  concatenated text.
+  concatenated text (a stream longer than 2³¹−1 units is rejected
+  loudly — the engine's coordinate system is `int`).
 - **Group text is valid until the next `next()`** — the window compacts
   past a reported match as the search advances. Slicing a span the
   window has dropped fails with `IllegalStateException` naming the span
@@ -104,16 +111,20 @@ first walk that accepts wins, exactly the WALK_RESTART rung's contract.
   frontier) the answer could change with the next chunk, so the walk
   pends instead of deciding. This one rule is the whole soundness
   argument for mid-stream confirmation.
-- **The carried simulation.** The kill-point raw scan (the RAW_SCAN
-  rung) resumes across chunks the same way: live set + window start W.
-  Mid-stream it only ever *bounds* (restarts may start at W), so a
-  window-local FINAL_END misjudgment costs a weaker bound, never a
-  wrong answer. At EOF it gains its full String-ladder power: a dead
-  live set past W proves no match exists, and the restart enumeration
-  is confined to the window the simulation admits — the same
+- **The EOF-endgame simulation.** The kill-point raw scan (the RAW_SCAN
+  rung) runs over the final window once per search epoch — at EOF every
+  position predicate is exact, so it delivers its full String-ladder
+  power there: a dead live set past W proves no match exists (the
+  no-match verdict, in one linear pass), and the restart enumeration is
+  confined to the window the simulation admits — the same
   linear-time-with-bounded-restarts guarantee the String ladder has,
   including its honest corner (the defensive per-start loop when the
   simulation and the walks disagree — bounded by the same window).
+  Mid-stream the simulation is not needed at all: the leftmost pending
+  walk *blocks* candidate enumeration (a match at an earlier start beats
+  anything later), so restarts cannot pile up before EOF — which is
+  also why the walk carry, not a carried simulation, is the load-bearing
+  mid-stream machinery.
 - **Candidate enumeration** skips non-startBits chars when the start
   state cannot accept (the CAND_SCAN gate), skips surrogate-pair
   interiors under codepoint-boundary semantics, and collapses entirely
@@ -146,8 +157,9 @@ numbers land in BENCHMARKS.md with the gap named.
   pattern shape responsible — the "pattern too large" family's
   runtime-side sibling: a typed rejection, never a silent spill, never
   a truncated answer.
-- **Time**: per chunk, the walk resumes (no re-read of the window), the
-  simulation steps the new units once, and confirmations report. No
+- **Time**: per chunk, the walk resumes (no re-read of the window) and
+  confirmations report; at EOF the kill-point simulation bounds the
+  endgame in one linear pass. No
   backtracking exists to budget — the restart enumeration is bounded by
   the simulation's kill window exactly as in the String ladder.
   Zero-width protocol preserved: an empty confirmed match advances the
@@ -155,12 +167,13 @@ numbers land in BENCHMARKS.md with the gap named.
 
 ## Engines, immutability, and the oracle ladder
 
-- **VM**: the driver lives in core.dfa beside `TdfaRunner`, reading the
-  frozen tables package-privately (the `RunnerTables` pattern). No
-  `TdfaRunner` field changes; the walk/simulation state rides the
-  `StreamMatcher` — a per-call carrier in the finality gate's sanctioned
-  sense (per-stream, contractually single-threaded, `Matcher`-shaped),
-  named in the gate's carrier list.
+- **VM**: the driver lives in `TdfaRunner` as a streaming section
+  beside the ladder (the walk/simulation logic reads the frozen tables
+  directly, the `wholeWalk` precedent for a transplanted machine); the
+  mutable search state rides the `StreamMatcher` carrier in `core.dfa`.
+  No `TdfaRunner` field changes; the carrier is a per-call carrier in
+  the finality gate's sanctioned sense (per-stream, contractually
+  single-threaded, `Matcher`-shaped), named in the gate's carrier list.
 - **ASM**: generated classes implement the new narrow seam
   `StreamEngine.streamingMatcher(source)` by delegating to their
   embedded `TdfaRunner` — the same both-tiers-one-definition move the

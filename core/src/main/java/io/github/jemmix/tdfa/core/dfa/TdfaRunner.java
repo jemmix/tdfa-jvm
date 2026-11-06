@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.core.dfa;
 
 import io.github.jemmix.tdfa.core.ast.Alphabet;
 import io.github.jemmix.tdfa.core.emit.EmittedSurface;
+import io.github.jemmix.tdfa.core.engine.ChunkSource;
 import io.github.jemmix.tdfa.core.engine.MatchResult;
 import io.github.jemmix.tdfa.core.engine.MatchScratch;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
@@ -33,7 +34,7 @@ import java.util.Map;
  * - Lazy accept snapshot
  * - String specialization
  */
-public final class TdfaRunner implements RegexEngine, WholeEngine {
+public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine {
     /**
      * After this many failed extract walks the candidate loop switches to a
      * boolean pre-filter per candidate (cheaper to reject, same answer).
@@ -121,6 +122,16 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
      *  {@link #setForcedStrategy}). */
     private static volatile boolean anyForced;
     private static final ThreadLocal<Strategy> FORCED = new ThreadLocal<>();
+    // Streaming-driver outcomes (see the streaming section below).
+    private static final int SW_CONFIRMED = 0;
+    private static final int SW_DIED = 1;
+    private static final int SW_PENDING = 2;
+    /** Tri-state mask answer for an open frontier. */
+    private static final int SME_NO = 0;
+    private static final int SME_YES = 1;
+    private static final int SME_PEND = 2;
+    /** Sentinel for an undecidable position-flags word. */
+    private static final int SPF_PEND = Integer.MIN_VALUE;
 
     final int[] stateMeta;
     final int[] stateBase;
@@ -3614,6 +3625,636 @@ public final class TdfaRunner implements RegexEngine, WholeEngine {
         ANCHORED_FAST, // flat-table anchored loop (fastPath)
         ANCHORED, // generic anchored walk
         GENERIC // CharSequence (non-String) fallback
+    }
+
+    // ===== streaming input (docs/streaming-input.md) =====
+    //
+    // The streaming driver: leftmost-first search over a chunk-fed
+    // window, carried across pulls, without materializing the input.
+    // The protocol is the String ladder's definitive semantics made
+    // resumable — the walk (extractFrom's machine) runs until it
+    // confirms, dies, or pends at the open frontier; all mutable state
+    // rides the StreamMatcher carrier (the per-call carrier of
+    // docs/runner-immutability.md — the runner stays frozen). The
+    // pending rule is the whole soundness argument: every position
+    // predicate this engine evaluates reads at most the units around
+    // `pos` and compares `pos` with the end (see positionFlags /
+    // maskSatisfied), so at pos < frontier the window-local answers are
+    // provably identical to the true-EOF answers, and only
+    // frontier-touching evaluations pend (streamMaskSatisfied /
+    // streamPositionFlags encode exactly that; a lone high surrogate at
+    // the frontier pends because its pair-completing unit decides both
+    // the decode and the word flags). The literal-needle rung and the
+    // first-char-set candidate gate serve their shapes; the kill-point
+    // simulation runs once per epoch at EOF — mid-stream the leftmost
+    // pending walk blocks candidate enumeration, so no bound is needed
+    // before then. Answers are identical to the String surface over the
+    // growing prefix; the chunk-split differential battery pins it.
+
+    /**
+     * A streaming matcher over {@code source} (see
+     * {@code docs/streaming-input.md}): leftmost-first search over
+     * chunked input, absolute stream offsets, one matcher per stream.
+     * Linked by name from the generated classes' {@code StreamEngine}
+     * implementation — both tiers serve streaming through this one
+     * driver, so their answers are identical by construction.
+     */
+    @EmittedSurface
+    @Override
+    public StreamMatcher streamingMatcher(ChunkSource source) {
+        return new StreamMatcher(this, source);
+    }
+
+    /** Advance the stream's search to the next confirmed match (the driver). */
+    boolean streamAdvance(StreamMatcher m) {
+        if (m.done) {
+            return false;
+        }
+        if (literalNeedle != null) {
+            return streamLiteralAdvance(m);
+        }
+        for (;;) {
+            if (m.walkActive) {
+                int st = streamWalkRun(m);
+                if (st == SW_PENDING) {
+                    m.fill();
+                    continue;
+                }
+                MatchResult r = st == SW_CONFIRMED ? streamResult(m) : null;
+                if (r != null) {
+                    m.report(r);
+                    return true;
+                }
+                m.walkActive = false;
+                m.from = Math.max(m.from, m.walkStart + 1);
+                continue;
+            }
+            int f = m.length();
+            if (m.atEof()) {
+                if (m.from > f) {
+                    m.done = true;
+                    return false;
+                }
+                if (!m.eofScanned) {
+                    // EOF endgame: the kill-point simulation bounds the
+                    // restart enumeration (its String-ladder role) and
+                    // answers the no-match verdict in one linear pass.
+                    m.eofScanned = true;
+                    int w = streamEofScan(m);
+                    if (w < 0) {
+                        m.done = true;
+                        return false;
+                    }
+                    if (w > m.from) {
+                        m.from = w;
+                    }
+                }
+            } else if (m.from > f) {
+                m.fill(); // zero-width advance past the frontier: wait for the next position
+                continue;
+            }
+            if (absBeginBound && m.from > 0) {
+                // Every walk past 0 crosses an \A gate and dies —
+                // restartExtract's bound, one check instead of n walks.
+                m.done = true;
+                return false;
+            }
+            int cand = streamCandidate(m);
+            if (cand < 0) {
+                if (m.atEof()) {
+                    m.done = true;
+                    return false;
+                }
+                m.fill();
+                continue;
+            }
+            int entryReq = stateEntryMask[startState];
+            if (entryReq != 0) {
+                int r = streamMaskSatisfied(m, cand, entryReq);
+                if (r == SME_PEND) {
+                    m.fill();
+                    continue;
+                }
+                if (r == SME_NO) {
+                    m.from = cand + 1;
+                    continue;
+                }
+            }
+            m.startWalk(cand, regSize, multi);
+        }
+    }
+
+    /**
+     * Next candidate start: the epoch's origin is tried as-is (the find()
+     * from-position discipline); enumeration past it takes the
+     * first-char-set gate (when the start state cannot accept) and the
+     * surrogate-pair interior skip. The frontier itself is always a
+     * candidate — the empty-match potential at end of input.
+     */
+    private int streamCandidate(StreamMatcher m) {
+        final int f = m.length();
+        int p = m.from;
+        if (p > f) {
+            return -1;
+        }
+        if (p == m.epochFrom) {
+            return p;
+        }
+        final long[] sb = this.startBits;
+        while (p < f) {
+            char c = m.charAt(p);
+            if (sb != null && (sb[c >>> 6] >>> (c & 63) & 1L) == 0L) {
+                p++;
+                continue;
+            }
+            if (scanSkipsPairs && Alphabet.pairInterior(m, p)) {
+                p++;
+                continue;
+            }
+            break;
+        }
+        return p;
+    }
+
+    /**
+     * Run the active walk to an outcome — extractFrom's transition
+     * machinery (flat dispatch / wide index / binary search with
+     * most-specific-mask ownership, eager final ops, the stop table)
+     * over the window, resumable: every suspension point is a pending
+     * rule violation, and {@code walkAcceptDone} carries the one record
+     * that can complete before a pending stop decision, so a resumed
+     * walk skips the record and re-decides the stop. Transition phases
+     * suspend only before any mutation (ops, state, position), so
+     * re-entry recomputes them deterministically.
+     */
+    private int streamWalkRun(StreamMatcher m) {
+        final int[] sm = this.stateMeta;
+        final int[] rg = this.ranges;
+        final int[] op = this.ops;
+        for (;;) {
+            final int f = m.length();
+            final boolean eof = m.atEof();
+            final int pos = m.walkPos;
+            final int state = m.walkState;
+            final int[] regs = m.walkRegs; // null iff regSize == 0
+            final TagTree tree = m.walkTree; // non-null iff multi
+
+            if (!m.walkAcceptDone) {
+                m.walkAcceptDone = true;
+                if ((sm[state] & 1) != 0) {
+                    final int[] fm = this.finalOpsByMask;
+                    if (fm != null) {
+                        if (m.walkPosFlags < 0) {
+                            int pf = streamPositionFlags(m, pos);
+                            if (pf == SPF_PEND) {
+                                m.walkAcceptDone = false;
+                                return SW_PENDING;
+                            }
+                            m.walkPosFlags = pf;
+                        }
+                        int cell = fm[state * posCells + m.walkPosFlags];
+                        if (cell >= 0) {
+                            m.walkLastAccept = pos;
+                            m.walkHaveAccept = true;
+                            if (regs != null && cell != 0) {
+                                applyOps(op, cell, regs, pos, tree);
+                            }
+                        }
+                    } else if (stateAcceptMask[state] == 0) {
+                        m.walkLastAccept = pos;
+                        m.walkHaveAccept = true;
+                        if (regs != null) {
+                            applyFinalOps(state, regs, pos, tree);
+                        }
+                    } else {
+                        int acceptMask = stateAcceptMask[state];
+                        if (m.walkPosFlags < 0) {
+                            int pf = streamPositionFlags(m, pos);
+                            if (pf == SPF_PEND) {
+                                m.walkAcceptDone = false;
+                                return SW_PENDING;
+                            }
+                            m.walkPosFlags = pf;
+                        }
+                        if ((m.walkPosFlags & acceptMask) == acceptMask) {
+                            m.walkLastAccept = pos;
+                            m.walkHaveAccept = true;
+                            if (regs != null) {
+                                applyFinalOps(state, regs, pos, tree);
+                            }
+                        }
+                    }
+                }
+            }
+            // Stop-on-accept for a record at THIS position: uniform tables
+            // need no flags; the lazy flags here may pend (resume skips the
+            // record above — walkAcceptDone — and re-decides the stop).
+            if (m.walkHaveAccept && m.walkLastAccept == pos && !longestMatch) {
+                if (stopMaskUniform == null && m.walkPosFlags < 0) {
+                    int pf = streamPositionFlags(m, pos);
+                    if (pf == SPF_PEND) {
+                        return SW_PENDING;
+                    }
+                    m.walkPosFlags = pf;
+                }
+                if (stopNow(state, m.walkPosFlags)) {
+                    return SW_CONFIRMED;
+                }
+            }
+            if (pos >= f) {
+                if (eof) {
+                    return m.walkHaveAccept ? SW_CONFIRMED : SW_DIED;
+                }
+                return SW_PENDING;
+            }
+            char cu = m.charAt(pos);
+            if (!eof && cu >= Character.MIN_HIGH_SURROGATE && cu <= Character.MAX_HIGH_SURROGATE && pos + 1 >= f) {
+                return SW_PENDING; // pair-completing unit at the frontier
+            }
+            int c = Alphabet.decode(m, pos, f);
+            int base = stateBase[state];
+            int count = (sm[state] >>> 1) & 0xFFFF;
+            int chosen = -1, chosenTarget = 0;
+            int ri;
+            if (asciiRangeFlat != null && c < latinLimit) {
+                // Disjoint ranges: the flat table is exact (see extractFrom).
+                ri = asciiRangeFlat[state * latinLimit + c];
+            } else if (wide != null) {
+                ri = wideRangeIndex(state, c);
+            } else {
+                ri = Integer.MIN_VALUE;
+            }
+            if (ri == Integer.MIN_VALUE) {
+                // Binary search rightmost entry with lo <= c, walk back over
+                // containing entries; the MOST SPECIFIC satisfied mask owns
+                // the step (see extractFrom).
+                int rlo = 0, rhi = count - 1, anchor = -1;
+                while (rlo <= rhi) {
+                    int mid = (rlo + rhi) >>> 1;
+                    if (rg[(base + mid) * 5] <= c) {
+                        anchor = mid;
+                        rlo = mid + 1;
+                    } else {
+                        rhi = mid - 1;
+                    }
+                }
+                int best = -1, bestSpec = -1;
+                for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+                    int o = (base + i) * 5;
+                    if (c <= rg[o + 1]) {
+                        int requiredMask = rg[o + 4];
+                        if (requiredMask != 0) {
+                            if (m.walkPosFlags < 0) {
+                                int pf = streamPositionFlags(m, pos);
+                                if (pf == SPF_PEND) {
+                                    return SW_PENDING;
+                                }
+                                m.walkPosFlags = pf;
+                            }
+                            if ((m.walkPosFlags & requiredMask) != requiredMask) {
+                                continue;
+                            }
+                        }
+                        int spec = Integer.bitCount(requiredMask);
+                        if (spec >= bestSpec) {
+                            best = i;
+                            bestSpec = spec;
+                        } // >= : lower index wins ties
+                    }
+                }
+                if (best >= 0) {
+                    int o = (base + best) * 5;
+                    int target = rg[o + 2];
+                    if (target < 0) {
+                        // Dead marker of the owning context: no continuation
+                        // under this posFlags — a recorded accept still reports.
+                        return m.walkHaveAccept ? SW_CONFIRMED : SW_DIED;
+                    }
+                    chosen = o;
+                    chosenTarget = target;
+                }
+            } else if (ri >= 0) {
+                int o = (base + ri) * 5;
+                int target = rg[o + 2];
+                if (target >= 0) {
+                    int requiredMask = rg[o + 4];
+                    boolean ok = requiredMask == 0;
+                    if (!ok) {
+                        if (m.walkPosFlags < 0) {
+                            int pf = streamPositionFlags(m, pos);
+                            if (pf == SPF_PEND) {
+                                return SW_PENDING;
+                            }
+                            m.walkPosFlags = pf;
+                        }
+                        ok = (m.walkPosFlags & requiredMask) == requiredMask;
+                    }
+                    if (ok) {
+                        chosen = o;
+                        chosenTarget = target;
+                    }
+                }
+            }
+            if (chosen < 0) {
+                return m.walkHaveAccept ? SW_CONFIRMED : SW_DIED;
+            }
+            // Target entry mask is evaluated before the transition's ops run
+            // (a mask-failing transition is never taken — see extractFrom).
+            int width = c > 0xFFFF ? 2 : 1;
+            int entryReqNext = stateEntryMask[chosenTarget];
+            if (entryReqNext != 0) {
+                int r = streamMaskSatisfied(m, pos + width, entryReqNext);
+                if (r == SME_PEND) {
+                    return SW_PENDING;
+                }
+                if (r == SME_NO) {
+                    return m.walkHaveAccept ? SW_CONFIRMED : SW_DIED;
+                }
+            }
+            if (regs != null) {
+                int opsOff = rg[chosen + 3];
+                if (opsOff != 0) {
+                    applyOps(op, opsOff, regs, pos, tree);
+                }
+            }
+            m.walkState = chosenTarget;
+            m.walkPos = pos + width;
+            m.walkAcceptDone = false;
+            m.walkPosFlags = -1;
+        }
+    }
+
+    /** Build the confirmed match's result snapshot (the match() shape). */
+    private MatchResult streamResult(StreamMatcher m) {
+        int[] r = m.walkRegs == null ? new int[0] : m.walkRegs.clone();
+        if (tdfa.fixedBase != null) {
+            MatchResult.reconstructFixed(r, tdfa.finalRegBase, tdfa.fixedBase, tdfa.fixedOffset);
+        }
+        return new MatchResult(r, tdfa.finalRegBase, tdfa.groupCount, m.walkStart, m.walkLastAccept,
+            multi ? m.walkTree.snapshot() : null);
+    }
+
+    /**
+     * The literal-needle rung: every match is one whole-needle occurrence
+     * (no captures, no masks — see RunnerTables.detectLiteralNeedle), so
+     * the scan keeps only the needle-length tail at the frontier. Guards
+     * mirror {@link RunnerTables#literalIndexOf}: a hit whose last unit is
+     * a high surrogate ending exactly at the frontier is HELD (the
+     * completing unit decides it), a hit ending on a pair's high half is
+     * rejected, and codepoint-boundary lanes skip pair-interior starts
+     * past the epoch origin.
+     */
+    private boolean streamLiteralAdvance(StreamMatcher m) {
+        final String needle = this.literalNeedle;
+        final int nlen = needle.length();
+        for (;;) {
+            final int f = m.length();
+            while (m.scanPos + nlen <= f) {
+                int p = m.scanPos;
+                if (windowMatches(m, p, needle)) {
+                    char last = m.charAt(p + nlen - 1);
+                    if (last >= Character.MIN_HIGH_SURROGATE && last <= Character.MAX_HIGH_SURROGATE && p + nlen == f
+                        && !m.atEof()) {
+                        break; // held: the completing unit is at the frontier
+                    }
+                    boolean pairHalf = false;
+                    if (p + nlen < f) {
+                        char after = m.charAt(p + nlen);
+                        pairHalf = last >= Character.MIN_HIGH_SURROGATE && last <= Character.MAX_HIGH_SURROGATE
+                            && after >= Character.MIN_LOW_SURROGATE && after <= Character.MAX_LOW_SURROGATE;
+                    }
+                    if (!pairHalf && !(scanSkipsPairs && p > m.epochFrom && Alphabet.pairInterior(m, p))) {
+                        int end = p + nlen;
+                        m.scanPos = end;
+                        m.report(new MatchResult(new int[0], tdfa.finalRegBase, tdfa.groupCount, p, end));
+                        return true;
+                    }
+                }
+                m.scanPos = p + 1;
+            }
+            if (m.atEof()) {
+                m.done = true;
+                return false;
+            }
+            m.compactTo(Math.max(m.scanPos - 1, 0)); // the scan's tail: bounded window, needle-length at most
+            m.fill();
+        }
+    }
+
+    private static boolean windowMatches(StreamMatcher m, int p, String needle) {
+        for (int i = 0; i < needle.length(); i++) {
+            if (m.charAt(p + i) != needle.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The EOF endgame bound: rawScan's kill-point simulation over the
+     * final window (unit-semantics seeds when the lane steps units).
+     * At EOF every position predicate is exact, so this is the String
+     * ladder's trigger rung verbatim: window start W — every
+     * configuration alive before W is dead — or -1 = no match at all.
+     */
+    private int streamEofScan(StreamMatcher m) {
+        final int nwords = stateWords;
+        final MatchScratch sc = m.scratch;
+        int[] live = sc.takeLive(nwords);
+        int[] next = sc.takeNext(nwords);
+        Arrays.fill(live, 0, nwords, 0);
+        live[startState >>> 5] |= 1 << (startState & 31);
+        final int ss = startState;
+        final int ssMask = 1 << (ss & 31);
+        final boolean unitSeeds = !scanSkipsPairs;
+        final int from = m.from;
+        final int to = m.length();
+        int w = from;
+        int[] pf = {-1};
+        for (int pos = from; pos <= to; pos++) {
+            pf[0] = -1;
+            if (streamAcceptLive(m, pos, to, live, pf)) {
+                return w;
+            }
+            if (pos == to) {
+                break;
+            }
+            int c = Alphabet.decode(m, pos, to);
+            int adv = Alphabet.width(c);
+            Arrays.fill(next, 0, nwords, 0);
+            boolean empty = true;
+            for (int wd = 0; wd < nwords; wd++) {
+                int bits = live[wd];
+                while (bits != 0) {
+                    int bit = Integer.numberOfTrailingZeros(bits);
+                    bits &= bits - 1;
+                    if (streamScanStep(m, (wd << 5) + bit, c, pos, to, next)) {
+                        empty = false;
+                    }
+                }
+            }
+            if (unitSeeds && adv == 2) {
+                // Interior-unit seeds (see unitRawScan): the empty-match probe
+                // at the pair's low unit, then its start-state targets merged.
+                if ((stateMeta[startState] & 1) != 0) {
+                    pf[0] = -1;
+                    if (streamAcceptStateLive(m, pos + 1, to, startState, pf)) {
+                        return w;
+                    }
+                }
+                if (streamScanStep(m, startState, m.charAt(pos + 1), pos + 1, to, next)) {
+                    empty = false;
+                }
+            }
+            next[ss >>> 5] |= ssMask;
+            if (empty) {
+                w = pos + adv;
+            }
+            int[] tmp = live;
+            live = next;
+            next = tmp;
+            if (adv == 2) {
+                pos++;
+            }
+        }
+        return -1;
+    }
+
+    /** CharSequence twin of {@link #acceptLive} over the streaming window. */
+    private boolean streamAcceptLive(StreamMatcher m, int pos, int to, int[] live, int[] flags) {
+        final int[] ab = acceptBits;
+        if (maskedAcceptStates == null) {
+            for (int wd = 0; wd < stateWords; wd++) {
+                if ((live[wd] & ab[wd]) != 0) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        for (int wd = 0; wd < stateWords; wd++) {
+            int both = live[wd] & ab[wd];
+            while (both != 0) {
+                int bit = Integer.numberOfTrailingZeros(both);
+                both &= both - 1;
+                if (streamAcceptStateLive(m, pos, to, (wd << 5) + bit, flags)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** CharSequence twin of {@link #acceptStateLive} (the EOF scan's gates are exact). */
+    private boolean streamAcceptStateLive(StreamMatcher m, int pos, int to, int s, int[] flags) {
+        final int[] sam = stateAcceptMask;
+        final int[] fm = this.finalOpsByMask;
+        int gate = fm != null ? -1 : (sam == null ? 0 : sam[s]);
+        if (gate == 0) {
+            return true;
+        }
+        if (gate < 0) {
+            if (flags[0] < 0) {
+                flags[0] = positionFlagsCS(m, pos, to);
+            }
+            return fm[s * posCells + flags[0]] >= 0;
+        }
+        return maskSatisfiedCS(m, pos, to, gate);
+    }
+
+    /** CharSequence twin of {@link #scanStep} over the streaming window. */
+    private boolean streamScanStep(StreamMatcher m, int s, int c, int pos, int to, int[] next) {
+        final int[] rg = this.ranges;
+        final WideDispatch wd = this.wide;
+        int ri = wd != null ? wd.rangeIndex(s, c) : WideDispatch.NONE;
+        if (ri != WideDispatch.NONE) {
+            if (ri < 0) {
+                return false;
+            }
+            int mo = (stateBase[s] + ri) * 5;
+            int t = rg[mo + 2];
+            if (t >= 0 && (!rangeMaskGates || maskSatisfiedCS(m, pos, to, rg[mo + 4]))) {
+                next[t >>> 5] |= 1 << (t & 31);
+                return true;
+            }
+            return false;
+        }
+        boolean fired = false;
+        int base = stateBase[s];
+        int count = (stateMeta[s] >>> 1) & 0xFFFF;
+        int rlo = 0, rhi = count - 1, anchor = -1;
+        while (rlo <= rhi) {
+            int mid = (rlo + rhi) >>> 1;
+            if (rg[(base + mid) * 5] <= c) {
+                anchor = mid;
+                rlo = mid + 1;
+            } else {
+                rhi = mid - 1;
+            }
+        }
+        for (int i = anchor; i >= 0 && rhp[base + i] >= c; i--) {
+            int mo = (base + i) * 5;
+            if (c <= rg[mo + 1]) {
+                int t = rg[mo + 2];
+                if (t >= 0 && (!rangeMaskGates || maskSatisfiedCS(m, pos, to, rg[mo + 4]))) {
+                    next[t >>> 5] |= 1 << (t & 31);
+                    fired = true;
+                }
+            }
+        }
+        return fired;
+    }
+
+    /**
+     * {@link #maskSatisfiedCS} for an open frontier: {@link #SME_PEND}
+     * when the answer could change with the next chunk — an evaluation at
+     * the frontier itself, a final-terminator run touching the frontier
+     * (locally true, really maybe-false), or a word probe at a high
+     * surrogate whose completing unit is unknown. Everything else is
+     * decided: the predicates read at most the units around {@code pos},
+     * all inside the window.
+     */
+    private int streamMaskSatisfied(StreamMatcher m, int pos, int mask) {
+        if (!m.atEof()) {
+            int f = m.length();
+            if (pos >= f) {
+                return SME_PEND;
+            }
+            if ((mask & Tnfa.FINAL_END) != 0 && finalEnd(m, pos, f)) {
+                return SME_PEND;
+            }
+            if (unicodeWordBoundary && (mask & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY)) != 0 && pos == f - 1) {
+                char c = m.charAt(pos);
+                if (c >= Character.MIN_HIGH_SURROGATE && c <= Character.MAX_HIGH_SURROGATE) {
+                    return SME_PEND;
+                }
+            }
+        }
+        return maskSatisfiedCS(m, pos, m.length(), mask) ? SME_YES : SME_NO;
+    }
+
+    /**
+     * {@link #positionFlagsCS} for an open frontier: {@link #SPF_PEND}
+     * when any axis the artifact's tables consult is undecidable — the
+     * same three cases as {@link #streamMaskSatisfied}, restricted to
+     * {@link #needsFinalEnd} / {@link #needsWordFlags}.
+     */
+    private int streamPositionFlags(StreamMatcher m, int pos) {
+        if (!m.atEof()) {
+            int f = m.length();
+            if (pos >= f) {
+                return SPF_PEND;
+            }
+            if (needsFinalEnd && finalEnd(m, pos, f)) {
+                return SPF_PEND;
+            }
+            if (needsWordFlags && unicodeWordBoundary && pos == f - 1) {
+                char c = m.charAt(pos);
+                if (c >= Character.MIN_HIGH_SURROGATE && c <= Character.MAX_HIGH_SURROGATE) {
+                    return SPF_PEND;
+                }
+            }
+        }
+        return positionFlagsCS(m, pos, m.length());
     }
 
     /**

@@ -1,6 +1,9 @@
 package io.github.jemmix.tdfa.core.compile;
 
+import io.github.jemmix.tdfa.core.dfa.StreamEngine;
+import io.github.jemmix.tdfa.core.dfa.StreamMatcher;
 import io.github.jemmix.tdfa.core.emit.EmittedSurface;
+import io.github.jemmix.tdfa.core.engine.ChunkSource;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
 import io.github.jemmix.tdfa.core.engine.WholeEngine;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
@@ -118,6 +121,21 @@ public class TDFAPattern implements Serializable {
 
     public PatternMatcher matcher(byte[] input) {
         return new PatternMatcher(this, decodeUtf8(input));
+    }
+
+    /**
+     * Streaming matcher over {@code source}: the engine must implement
+     * the {@link StreamEngine} seam (both built-in tiers do — the
+     * generated class delegates to its embedded runner); a custom
+     * factory engine that does not is rejected loudly, never silently
+     * degraded.
+     */
+    public StreamMatcher streamingMatcher(ChunkSource source) {
+        if (engine instanceof StreamEngine) {
+            return ((StreamEngine) engine).streamingMatcher(source);
+        }
+        throw new UnsupportedOperationException("streaming input is not supported by engine "
+            + engine.getClass().getName() + " — the engine must implement StreamEngine");
     }
 
     /**
