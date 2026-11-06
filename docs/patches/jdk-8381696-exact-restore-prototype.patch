@@ -1,0 +1,708 @@
+diff --git a/src/java.base/share/classes/java/util/regex/Matcher.java b/src/java.base/share/classes/java/util/regex/Matcher.java
+index 4d48e702cdc..8d1dc8293f8 100644
+--- a/src/java.base/share/classes/java/util/regex/Matcher.java
++++ b/src/java.base/share/classes/java/util/regex/Matcher.java
+@@ -26,6 +26,7 @@
+ package java.util.regex;
+ 
+ import java.io.IOException;
++import java.util.Arrays;
+ import java.util.ConcurrentModificationException;
+ import java.util.Iterator;
+ import java.util.Map;
+@@ -186,6 +187,23 @@ public final class Matcher implements MatchResult {
+      */
+     IntHashSet[] localsPos;
+ 
++    /**
++     * Growable stack used by GroupCurly nodes to save the positions of the
++     * capture groups nested inside the body of the quantified group, before
++     * each repetition of the body is attempted. When a repetition that
++     * matched is undone by backtracking, the saved positions are restored,
++     * so that after a successful match the nested groups reflect only the
++     * repetitions that are part of the match. The nodes themselves are
++     * stateless, so they rely on this field to hold state during a match.
++     */
++    int[] groupPosStack;
++
++    /**
++     * The current top of {@code groupPosStack}, that is, the index in the
++     * stack where the next saved group positions are written.
++     */
++    int groupPosTop;
++
+     /**
+      * Boolean indicating whether or not more input could change
+      * the results of the last match.
+@@ -1736,6 +1754,81 @@ public boolean requireEnd() {
+         return requireEnd;
+     }
+ 
++    /**
++     * Saves the positions currently held by the {@code n} capture group
++     * slots {@code groups[fromSlot]}, ..., {@code groups[fromSlot + n - 1]}
++     * on the group positions stack.
++     *
++     * Called by GroupCurly nodes before attempting a repetition of the body
++     * of the quantified group, so that the positions of the capture groups
++     * nested in the body can be restored if the repetition is undone by
++     * backtracking.
++     */
++    void saveGroupPos(int fromSlot, int n) {
++        int top = groupPosTop;
++        int[] stack = groupPosStack;
++        if (stack == null || stack.length - top < n) {
++            stack = growGroupPosStack(top, n);
++        }
++        if (n == 2) {   // a single nested capture group: the common case
++            stack[top] = groups[fromSlot];
++            stack[top + 1] = groups[fromSlot + 1];
++        } else {
++            System.arraycopy(groups, fromSlot, stack, top, n);
++        }
++        groupPosTop = top + n;
++    }
++
++    private int[] growGroupPosStack(int top, int n) {
++        int[] stack = groupPosStack;
++        int newLen = stack == null ? 64 : stack.length;
++        while (newLen - top < n) {
++            if (newLen >= (1 << 30)) {
++                newLen = Integer.MAX_VALUE;
++                if (newLen - top < n)
++                    throw new OutOfMemoryError("Group positions stack");
++            } else {
++                newLen <<= 1;
++            }
++        }
++        return groupPosStack = (stack == null)
++                ? new int[newLen]
++                : Arrays.copyOf(stack, newLen);
++    }
++
++    /**
++     * Pops the most recently saved {@code n} group positions and restores
++     * them into {@code groups[fromSlot]}, ...,
++     * {@code groups[fromSlot + n - 1]}. Called when a repetition that
++     * matched is undone by backtracking, or when the attempt of a
++     * repetition failed.
++     */
++    void restoreGroupPos(int fromSlot, int n) {
++        groupPosTop -= n;
++        int top = groupPosTop;
++        int[] stack = groupPosStack;
++        if (n == 2) {   // a single nested capture group: the common case
++            groups[fromSlot] = stack[top];
++            groups[fromSlot + 1] = stack[top + 1];
++        } else {
++            System.arraycopy(stack, top, groups, fromSlot, n);
++        }
++    }
++
++    /**
++     * Restores the group positions that were saved at the stack position
++     * {@code base} and drops all the positions saved above it. Called when
++     * the quantified group fails after some repetitions matched: the group
++     * positions must then be left as they were before the first repetition
++     * was attempted.
++     */
++    void restoreGroupPosBase(int base, int fromSlot, int n) {
++        if (groupPosTop > base) {
++            System.arraycopy(groupPosStack, base, groups, fromSlot, n);
++        }
++        groupPosTop = base;
++    }
++
+     /**
+      * Initiates a search to find a Pattern within the given bounds.
+      * The groups are filled with default values and the match of the root
+@@ -1761,6 +1854,7 @@ boolean search(int from) {
+             if (localsPos[i] != null)
+                 localsPos[i].clear();
+         }
++        groupPosTop = 0;
+         acceptMode = NOANCHOR;
+         boolean result = parentPattern.root.match(this, from, text);
+         if (!result)
+@@ -1788,6 +1882,7 @@ boolean match(int from, int anchor) {
+             if (localsPos[i] != null)
+                 localsPos[i].clear();
+         }
++        groupPosTop = 0;
+         acceptMode = anchor;
+         boolean result = parentPattern.matchRoot.match(this, from, text);
+         if (!result)
+diff --git a/src/java.base/share/classes/java/util/regex/Pattern.java b/src/java.base/share/classes/java/util/regex/Pattern.java
+index fc59f389ba3..34d331f431b 100644
+--- a/src/java.base/share/classes/java/util/regex/Pattern.java
++++ b/src/java.base/share/classes/java/util/regex/Pattern.java
+@@ -3144,6 +3144,10 @@ private Node group0() {
+         Node tail;
+         int save = flags0;
+         int saveTCNCount = topClosureNodes.size();
++        // Index that the first capture group nested in this group's body
++        // will be assigned; used to compute the range of group positions
++        // that a GroupCurly for this group must save and restore.
++        int saveGroupCount = capturingGroupCount;
+         root = null;
+         int ch = next();
+         if (ch == '?') {
+@@ -3155,20 +3159,22 @@ private Node group0() {
+                     head.next = expr(tail);
+                 }
+                 case '=', '!' -> {   // (?=xxx) and (?!xxx) lookahead
++                    int startGroup = capturingGroupCount;
+                     head = createGroup(true);
+                     tail = root;
+                     head.next = expr(tail);
+-                    if (ch == '=') {
+-                        head = tail = new Pos(head);
+-                    } else {
+-                        head = tail = new Neg(head);
+-                    }
++                    head = tail = (ch == '=') ? new Pos(head) : new Neg(head);
++                    head.slotFirst = startGroup * 2;
++                    head.slotCount = (capturingGroupCount - startGroup) * 2;
+                 }
+                 case '>' -> {   // (?>xxx)  independent group
++                    int startGroup = capturingGroupCount;
+                     head = createGroup(true);
+                     tail = root;
+                     head.next = expr(tail);
+                     head = tail = new Ques(head, Qtype.INDEPENDENT);
++                    head.slotFirst = startGroup * 2;
++                    head.slotCount = (capturingGroupCount - startGroup) * 2;
+                 }
+                 case '<' -> {   // (?<xxx)  look behind
+                     ch = read();
+@@ -3186,6 +3192,7 @@ private Node group0() {
+                         break;
+                     }
+                     int start = cursor;
++                    int startGroup = capturingGroupCount;
+                     head = createGroup(true);
+                     tail = root;
+                     head.next = expr(tail);
+@@ -3210,6 +3217,8 @@ private Node group0() {
+                             new NotBehind(head, info.maxLength,
+                                 info.minLength));
+                     }
++                    head.slotFirst = startGroup * 2;
++                    head.slotCount = (capturingGroupCount - startGroup) * 2;
+                     // clear all top-closure-nodes inside lookbehind
+                     if (saveTCNCount < topClosureNodes.size())
+                         topClosureNodes.subList(saveTCNCount, topClosureNodes.size()).clear();
+@@ -3256,8 +3265,23 @@ private Node group0() {
+         if (saveTCNCount < topClosureNodes.size())
+             topClosureNodes.subList(saveTCNCount, topClosureNodes.size()).clear();
+ 
++        // Index of the first capture group nested in this group's body;
++        // [nestedFirstGroup, capturingGroupCount) is the range of group
++        // positions that a GroupCurly for this group must save and restore
++        int nestedFirstGroup = saveGroupCount + (capturingGroup ? 1 : 0);
++
+         if (node instanceof Ques ques) {
+             if (ques.type == Qtype.POSSESSIVE) {
++                // A possessive Ques on a group whose body can set group
++                // positions must use a GroupCurly, which restores the
++                // positions if the quantified group fails as a whole
++                if (capturingGroup || nestedFirstGroup < capturingGroupCount) {
++                    GroupTail temp = (GroupTail) tail;
++                    root = new GroupCurly(head.next, 0, 1, Qtype.POSSESSIVE,
++                            temp.localIndex, temp.groupIndex,
++                            capturingGroup, nestedFirstGroup, capturingGroupCount);
++                    return root;
++                }
+                 root = node;
+                 return node;
+             }
+@@ -3272,6 +3296,18 @@ private Node group0() {
+             return head;
+         } else if (node instanceof Curly curly) {
+             if (curly.type == Qtype.POSSESSIVE) {
++                // A possessive Curly on a group recurses through the group
++                // nodes, which do not restore the group positions when the
++                // quantified group fails as a whole; use a GroupCurly
++                // instead, which does restore them
++                if (capturingGroup || nestedFirstGroup < capturingGroupCount) {
++                    GroupTail temp = (GroupTail) tail;
++                    root = new GroupCurly(head.next, curly.cmin, curly.cmax,
++                            Qtype.POSSESSIVE,
++                            temp.localIndex, temp.groupIndex,
++                            capturingGroup, nestedFirstGroup, capturingGroupCount);
++                    return root;
++                }
+                 root = node;
+                 return node;
+             }
+@@ -3283,7 +3319,9 @@ private Node group0() {
+                         curly.cmax, curly.type,
+                         temp.localIndex,
+                         temp.groupIndex,
+-                        capturingGroup);
++                        capturingGroup,
++                        nestedFirstGroup,
++                        capturingGroupCount);
+                 return head;
+             } else { // Non-deterministic
+                 int temp = ((GroupHead) head).localIndex;
+@@ -3730,6 +3768,12 @@ private Node newSlice(int[] buf, int count, boolean hasSupplementary) {
+      */
+     static class Node extends Object {
+         Node next;
++        // Range, in the groups array, of the positions of the capture
++        // groups inside a zero-width assertion or an atomic group; empty
++        // for every other node.  The assertion and atomic group nodes use
++        // it to restore those positions when the construct fails, so that
++        // the captures of an abandoned attempt do not leak into the match.
++        int slotFirst, slotCount;
+         Node() {
+             next = Pattern.accept;
+         }
+@@ -3752,6 +3796,21 @@ boolean study(TreeInfo info) {
+                 return info.deterministic;
+             }
+         }
++        int saveInnerGroupPos(Matcher matcher) {
++            int base = matcher.groupPosTop;
++            if (slotCount > 0)
++                matcher.saveGroupPos(slotFirst, slotCount);
++            return base;
++        }
++        void restoreInnerGroupPos(Matcher matcher, int base, boolean matched) {
++            if (slotCount == 0)
++                return;
++            if (matched) {
++                matcher.groupPosTop = base;
++            } else {
++                matcher.restoreGroupPosBase(base, slotFirst, slotCount);
++            }
++        }
+     }
+ 
+     static class LastNode extends Node {
+@@ -4419,7 +4478,13 @@ boolean match(Matcher matcher, int i, CharSequence seq) {
+                 if (atom.match(matcher, i, seq)) i = matcher.last;
+                 return next.match(matcher, i, seq);
+             default:
+-                return atom.match(matcher, i, seq) && next.match(matcher, matcher.last, seq);
++                // An atomic group restores the positions of the capture
++                // groups inside it when the group fails
++                int base = saveInnerGroupPos(matcher);
++                boolean matched = atom.match(matcher, i, seq)
++                        && next.match(matcher, matcher.last, seq);
++                restoreInnerGroupPos(matcher, base, matched);
++                return matched;
+             }
+         }
+         boolean study(TreeInfo info) {
+@@ -4674,9 +4739,15 @@ static final class GroupCurly extends Node {
+         int localIndex;
+         int groupIndex;
+         boolean capture;
++        // Range, in the groups array, of the positions of the capture
++        // groups nested in the atom; empty if the atom has no nested
++        // capture groups.
++        int nestedFirst;
++        int nestedCount;
+ 
+         GroupCurly(Node node, int cmin, int cmax, Qtype type, int local,
+-                   int group, boolean capture) {
++                   int group, boolean capture,
++                   int nestedFirstGroup, int nestedLastGroup) {
+             this.atom = node;
+             this.type = type;
+             this.cmin = cmin;
+@@ -4684,6 +4755,8 @@ static final class GroupCurly extends Node {
+             this.localIndex = local;
+             this.groupIndex = group;
+             this.capture = capture;
++            this.nestedFirst = nestedFirstGroup * 2;
++            this.nestedCount = (nestedLastGroup - nestedFirstGroup) * 2;
+         }
+         boolean match(Matcher matcher, int i, CharSequence seq) {
+             int[] groups = matcher.groups;
+@@ -4701,6 +4774,24 @@ boolean match(Matcher matcher, int i, CharSequence seq) {
+             // because it will be set here
+             locals[localIndex] = -1;
+ 
++            // Save the positions of the nested groups before the first
++            // repetition is attempted, to restore them below if the group
++            // as a whole fails.  For a single nested group the saved
++            // positions are kept in locals of this invocation; for more,
++            // they are kept on the group positions stack.
++            int n0 = 0, n1 = 0;
++            int undoBase = 0;
++            boolean stacked = nestedCount > 2;
++            if (nestedCount > 0 && cmin > 0) {
++                if (stacked) {
++                    undoBase = matcher.groupPosTop;
++                    matcher.saveGroupPos(nestedFirst, nestedCount);
++                } else {
++                    n0 = groups[nestedFirst];
++                    n1 = groups[nestedFirst+1];
++                }
++            }
++
+             boolean ret = true;
+             for (int j = 0; j < cmin; j++) {
+                 if (atom.match(matcher, i, seq)) {
+@@ -4729,6 +4820,21 @@ boolean match(Matcher matcher, int i, CharSequence seq) {
+                     groups[groupIndex] = save1;
+                     groups[groupIndex+1] = save2;
+                 }
++                // Leave the nested group positions as they were before the
++                // first repetition was attempted
++                if (nestedCount > 0 && cmin > 0) {
++                    if (stacked) {
++                        matcher.restoreGroupPosBase(undoBase,
++                                nestedFirst, nestedCount);
++                    } else {
++                        groups[nestedFirst] = n0;
++                        groups[nestedFirst+1] = n1;
++                    }
++                }
++            } else if (stacked && nestedCount > 0 && cmin > 0) {
++                // The match succeeds with the current nested group
++                // positions; only the saved positions are dropped
++                matcher.groupPosTop = undoBase;
+             }
+             return ret;
+         }
+@@ -4743,11 +4849,21 @@ boolean match0(Matcher matcher, int i, int j, CharSequence seq) {
+                 save0 = groups[groupIndex];
+                 save1 = groups[groupIndex+1];
+             }
++            int undoBase = matcher.groupPosTop;
+             for (;;) {
+                 if (j >= cmax)
+                     break;
+-                if (!atom.match(matcher, i, seq))
++                if (nestedCount > 0)
++                    matcher.saveGroupPos(nestedFirst, nestedCount);
++                if (!atom.match(matcher, i, seq)) {
++                    // Restore the saved positions: the unwinding of the
++                    // nodes inside the atom restores those of its capture
++                    // groups, but nodes that never unwind, like lookaheads
++                    // that matched, are covered as well
++                    if (nestedCount > 0)
++                        matcher.restoreGroupPos(nestedFirst, nestedCount);
+                     break;
++                }
+                 int k = matcher.last - i;
+                 if (k <= 0) {
+                     if (capture) {
+@@ -4765,20 +4881,44 @@ boolean match0(Matcher matcher, int i, int j, CharSequence seq) {
+                     i = i + k;
+                     if (++j >= cmax)
+                         break;
+-                    if (!atom.match(matcher, i, seq))
++                    if (nestedCount > 0)
++                        matcher.saveGroupPos(nestedFirst, nestedCount);
++                    if (!atom.match(matcher, i, seq)) {
++                        // Restore the saved positions: the unwinding of the
++                        // nodes inside the atom restores those of its capture
++                        // groups, but nodes that never unwind, like lookaheads
++                        // that matched, are covered as well
++                        if (nestedCount > 0)
++                            matcher.restoreGroupPos(nestedFirst, nestedCount);
+                         break;
++                    }
+                     if (i + k != matcher.last) {
+-                        if (match0(matcher, i, j, seq))
++                        // This attempt matched with a different length:
++                        // its result is discarded and retried by the
++                        // recursive invocation, which re-establishes a
++                        // new constant length.  Undo its writes to the
++                        // nested group positions first, so that the
++                        // recursive invocation starts from the state of
++                        // the repetitions it resumes, not from the state
++                        // the discarded attempt left behind.
++                        if (nestedCount > 0)
++                            matcher.restoreGroupPos(nestedFirst, nestedCount);
++                        if (match0(matcher, i, j, seq)) {
++                            matcher.groupPosTop = undoBase;
+                             return true;
++                        }
+                         break;
+                     }
+                 }
+                 while (j > min) {
+                     if (next.match(matcher, i, seq)) {
+-                        if (capture) {
+-                            groups[groupIndex+1] = i;
+-                            groups[groupIndex] = i - k;
+-                        }
++                        // The group positions are already those of the
++                        // last repetition matched; they must not be
++                        // rewritten here: the continuation may have run
++                        // more repetitions of this same group through an
++                        // enclosing quantifier, and the positions of those
++                        // repetitions are the correct result.
++                        matcher.groupPosTop = undoBase;
+                         return true;
+                     }
+                     // backing off
+@@ -4788,7 +4928,10 @@ boolean match0(Matcher matcher, int i, int j, CharSequence seq) {
+                         groups[groupIndex] = i - k;
+                     }
+                     j--;
+-
++                    // Restore the nested group positions of the
++                    // repetition just undone
++                    if (nestedCount > 0)
++                        matcher.restoreGroupPos(nestedFirst, nestedCount);
+                 }
+                 break;
+             }
+@@ -4796,43 +4939,127 @@ boolean match0(Matcher matcher, int i, int j, CharSequence seq) {
+                 groups[groupIndex] = save0;
+                 groups[groupIndex+1] = save1;
+             }
++            // Try the continuation with the repetitions made so far; if it
++            // fails, leave the nested group positions as they were before
++            // the first repetition was attempted here
++            if (nestedCount > 0) {
++                if (next.match(matcher, i, seq)) {
++                    matcher.groupPosTop = undoBase;
++                    return true;
++                }
++                matcher.restoreGroupPosBase(undoBase,
++                        nestedFirst, nestedCount);
++                return false;
++            }
+             return next.match(matcher, i, seq);
+         }
+         // Reluctant matching
+         boolean match1(Matcher matcher, int i, int j, CharSequence seq) {
++            int[] groups = matcher.groups;
++            // Only the positions from before the first repetition was
++            // attempted are ever restored below.  The save is deferred
++            // until a repetition is actually attempted, so that a match
++            // with zero repetitions, the most common case for a reluctant
++            // quantifier, does not pay for it.  For a single nested group
++            // the saved positions are kept in locals of this invocation;
++            // for more, on the group positions stack.
++            int n0 = 0, n1 = 0;
++            int undoBase = 0;
++            boolean stacked = nestedCount > 2;
++            boolean saved = false;
+             for (;;) {
+-                if (next.match(matcher, i, seq))
++                if (next.match(matcher, i, seq)) {
++                    if (saved && stacked)
++                        matcher.groupPosTop = undoBase;
+                     return true;
++                }
+                 if (j >= cmax)
+-                    return false;
++                    break;
++                if (nestedCount > 0 && !saved) {
++                    if (stacked) {
++                        undoBase = matcher.groupPosTop;
++                        matcher.saveGroupPos(nestedFirst, nestedCount);
++                    } else {
++                        n0 = groups[nestedFirst];
++                        n1 = groups[nestedFirst+1];
++                    }
++                    saved = true;
++                }
+                 if (!atom.match(matcher, i, seq))
+-                    return false;
++                    break;
+                 if (i == matcher.last)
+-                    return false;
++                    break;
+                 if (capture) {
+-                    matcher.groups[groupIndex] = i;
+-                    matcher.groups[groupIndex+1] = matcher.last;
++                    groups[groupIndex] = i;
++                    groups[groupIndex+1] = matcher.last;
+                 }
+                 i = matcher.last;
+                 j++;
+             }
++            // Leave the nested group positions as they were before the
++            // first repetition attempted here was attempted
++            if (saved) {
++                if (stacked) {
++                    matcher.restoreGroupPosBase(undoBase,
++                            nestedFirst, nestedCount);
++                } else {
++                    groups[nestedFirst] = n0;
++                    groups[nestedFirst+1] = n1;
++                }
++            }
++            return false;
+         }
+         // Possessive matching
+         boolean match2(Matcher matcher, int i, int j, CharSequence seq) {
++            int[] groups = matcher.groups;
++            // A single save of the positions from before the first
++            // repetition suffices: they are restored below if the
++            // quantified group as a whole fails.  For a single nested
++            // group the saved positions are kept in locals of this
++            // invocation; for more, on the group positions stack.
++            int n0 = 0, n1 = 0;
++            int undoBase = 0;
++            boolean stacked = nestedCount > 2;
++            boolean saved = nestedCount > 0 && j < cmax;
++            if (saved) {
++                if (stacked) {
++                    undoBase = matcher.groupPosTop;
++                    matcher.saveGroupPos(nestedFirst, nestedCount);
++                } else {
++                    n0 = groups[nestedFirst];
++                    n1 = groups[nestedFirst+1];
++                }
++            }
+             for (; j < cmax; j++) {
+                 if (!atom.match(matcher, i, seq)) {
+                     break;
+                 }
+                 if (capture) {
+-                    matcher.groups[groupIndex] = i;
+-                    matcher.groups[groupIndex+1] = matcher.last;
++                    groups[groupIndex] = i;
++                    groups[groupIndex+1] = matcher.last;
+                 }
+                 if (i == matcher.last) {
+                     break;
+                 }
+                 i = matcher.last;
+             }
+-            return next.match(matcher, i, seq);
++            if (next.match(matcher, i, seq)) {
++                if (saved && stacked)
++                    matcher.groupPosTop = undoBase;
++                return true;
++            }
++            // Leave the nested group positions as they were before the
++            // first repetition attempted here was attempted
++            if (saved) {
++                if (stacked) {
++                    matcher.restoreGroupPosBase(undoBase,
++                            nestedFirst, nestedCount);
++                } else {
++                    groups[nestedFirst] = n0;
++                    groups[nestedFirst+1] = n1;
++                }
++            }
++            return false;
+         }
+         boolean study(TreeInfo info) {
+             // Save original info
+@@ -5342,6 +5569,7 @@ static final class Pos extends Node {
+             this.cond = cond;
+         }
+         boolean match(Matcher matcher, int i, CharSequence seq) {
++            int base = saveInnerGroupPos(matcher);
+             int savedTo = matcher.to;
+             boolean conditionMatched;
+ 
+@@ -5354,7 +5582,9 @@ boolean match(Matcher matcher, int i, CharSequence seq) {
+                 // Reinstate region boundaries
+                 matcher.to = savedTo;
+             }
+-            return conditionMatched && next.match(matcher, i, seq);
++            boolean matched = conditionMatched && next.match(matcher, i, seq);
++            restoreInnerGroupPos(matcher, base, matched);
++            return matched;
+         }
+     }
+ 
+@@ -5367,6 +5597,7 @@ static final class Neg extends Node {
+             this.cond = cond;
+         }
+         boolean match(Matcher matcher, int i, CharSequence seq) {
++            int base = saveInnerGroupPos(matcher);
+             int savedTo = matcher.to;
+             boolean conditionMatched;
+ 
+@@ -5386,7 +5617,9 @@ boolean match(Matcher matcher, int i, CharSequence seq) {
+                 // Reinstate region boundaries
+                 matcher.to = savedTo;
+             }
+-            return conditionMatched && next.match(matcher, i, seq);
++            boolean matched = conditionMatched && next.match(matcher, i, seq);
++            restoreInnerGroupPos(matcher, base, matched);
++            return matched;
+         }
+     }
+ 
+@@ -5417,6 +5650,7 @@ static class Behind extends Node {
+         }
+ 
+         boolean match(Matcher matcher, int i, CharSequence seq) {
++            int base = saveInnerGroupPos(matcher);
+             int savedFrom = matcher.from;
+             boolean conditionMatched = false;
+             int startIndex = (!matcher.transparentBounds) ?
+@@ -5433,7 +5667,9 @@ boolean match(Matcher matcher, int i, CharSequence seq) {
+             }
+             matcher.from = savedFrom;
+             matcher.lookbehindTo = savedLBT;
+-            return conditionMatched && next.match(matcher, i, seq);
++            boolean matched = conditionMatched && next.match(matcher, i, seq);
++            restoreInnerGroupPos(matcher, base, matched);
++            return matched;
+         }
+     }
+ 
+@@ -5446,6 +5682,7 @@ static final class BehindS extends Behind {
+             super(cond, rmax, rmin);
+         }
+         boolean match(Matcher matcher, int i, CharSequence seq) {
++            int base = saveInnerGroupPos(matcher);
+             int rmaxChars = countChars(seq, i, -rmax);
+             int rminChars = countChars(seq, i, -rmin);
+             int savedFrom = matcher.from;
+@@ -5467,7 +5704,9 @@ boolean match(Matcher matcher, int i, CharSequence seq) {
+             }
+             matcher.from = savedFrom;
+             matcher.lookbehindTo = savedLBT;
+-            return conditionMatched && next.match(matcher, i, seq);
++            boolean matched = conditionMatched && next.match(matcher, i, seq);
++            restoreInnerGroupPos(matcher, base, matched);
++            return matched;
+         }
+     }
+ 
+@@ -5484,6 +5723,7 @@ static class NotBehind extends Node {
+         }
+ 
+         boolean match(Matcher matcher, int i, CharSequence seq) {
++            int base = saveInnerGroupPos(matcher);
+             int savedLBT = matcher.lookbehindTo;
+             int savedFrom = matcher.from;
+             boolean conditionMatched = false;
+@@ -5500,7 +5740,9 @@ boolean match(Matcher matcher, int i, CharSequence seq) {
+             // Reinstate region boundaries
+             matcher.from = savedFrom;
+             matcher.lookbehindTo = savedLBT;
+-            return !conditionMatched && next.match(matcher, i, seq);
++            boolean matched = !conditionMatched && next.match(matcher, i, seq);
++            restoreInnerGroupPos(matcher, base, matched);
++            return matched;
+         }
+     }
+ 
+@@ -5513,6 +5755,7 @@ static final class NotBehindS extends NotBehind {
+             super(cond, rmax, rmin);
+         }
+         boolean match(Matcher matcher, int i, CharSequence seq) {
++            int base = saveInnerGroupPos(matcher);
+             int rmaxChars = countChars(seq, i, -rmax);
+             int rminChars = countChars(seq, i, -rmin);
+             int savedFrom = matcher.from;
+@@ -5533,7 +5776,9 @@ boolean match(Matcher matcher, int i, CharSequence seq) {
+             //Reinstate region boundaries
+             matcher.from = savedFrom;
+             matcher.lookbehindTo = savedLBT;
+-            return !conditionMatched && next.match(matcher, i, seq);
++            boolean matched = !conditionMatched && next.match(matcher, i, seq);
++            restoreInnerGroupPos(matcher, base, matched);
++            return matched;
+         }
+     }
+ 
