@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa;
 
+import io.github.jemmix.tdfa.core.compile.MachineryCarrier;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
@@ -58,7 +59,7 @@ class AbsBeginLadderBoundTest {
             String pattern = (String) c[0];
             int flags = (Integer) c[1];
             boolean expect = (Boolean) c[2];
-            TDFAPattern p = (TDFAPattern) Pattern.compile(pattern, flags, TdfaRunner::new, null);
+            TDFAPattern p = ((MachineryCarrier) Pattern.compile(pattern, flags, TdfaRunner::new, null)).machinery();
             Tdfa tdfa = (Tdfa) f.get(p.engine());
             assertThat(tdfa.absBeginBound()).as("absBeginBound /%s/ flags %d", pattern, flags).isEqualTo(expect);
         }

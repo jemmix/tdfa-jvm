@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa;
 
+import io.github.jemmix.tdfa.core.compile.MachineryCarrier;
 import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
@@ -60,14 +61,14 @@ class PatternSerializationTest {
     @Test
     void pinnedProviderSurvivesRoundTrip() throws Exception {
         Pattern p = Pattern.compile("\\p{L}+", 0, null, Unicode6_0.provider());
-        assertThat(((TDFAPattern) p).unicodeProvider()).isNotNull();
+        assertThat(((MachineryCarrier) p).machinery().unicodeProvider()).isNotNull();
 
         Pattern copy = roundTrip(p);
 
         // The pin survived: same provider class, resolvable by the proxy's
         // convention (static provider()), and semantics follow the pinned
         // tables.
-        assertThat(((TDFAPattern) copy).unicodeProvider()).isEqualTo(Unicode6_0.provider());
+        assertThat(((MachineryCarrier) copy).machinery().unicodeProvider()).isEqualTo(Unicode6_0.provider());
         assertThat(copy.matcher("Gr\u00fc\u00dfe").matches()).isTrue();
         assertThat(copy.matcher("abc1").matches()).isFalse();
     }
@@ -78,7 +79,7 @@ class PatternSerializationTest {
         // the reading process's default provider (historical behavior).
         Pattern p = Pattern.compile("[a-z]+");
         Pattern copy = roundTrip(p);
-        assertThat(((TDFAPattern) copy).unicodeProvider()).isNull();
+        assertThat(((MachineryCarrier) copy).machinery().unicodeProvider()).isNull();
         assertThat(copy.matcher("abc").matches()).isTrue();
     }
 }

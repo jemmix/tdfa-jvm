@@ -3,6 +3,7 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.compile.CompileOptions;
 import io.github.jemmix.tdfa.core.compile.CompiledRegex;
+import io.github.jemmix.tdfa.core.compile.MachineryCarrier;
 import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
@@ -75,7 +76,7 @@ class PartialWholeTest {
             // re2j surface: compared against core-tier legacy compiles
             // (Tnfa.compile overloads default to the RE2 lane) — same
             // lane on both sides.
-            WholeEngine facadeWhole = ((TDFAPattern) Pattern.compile(p)).wholeEngine();
+            WholeEngine facadeWhole = ((MachineryCarrier) Pattern.compile(p)).machinery().wholeEngine();
             TdfaRunner unpruned;
             TdfaRunner anchored;
             try {
@@ -111,7 +112,7 @@ class PartialWholeTest {
             WholeEngine facadeWhole;
             TdfaRunner unpruned;
             try {
-                facadeWhole = ((TDFAPattern) Pattern.compile(p)).wholeEngine();
+                facadeWhole = ((MachineryCarrier) Pattern.compile(p)).machinery().wholeEngine();
                 Tnfa nfa = Tnfa.compile(p, false, false, UnicodeProviders.get());
                 unpruned = new TdfaRunner(Determinizer.compileUnpruned(nfa, false, null));
             } catch (RuntimeException e) {
@@ -294,7 +295,7 @@ class PartialWholeTest {
 
     private static List<String> wholeResults(String p, Void unused) {
         List<String> out = new ArrayList<>();
-        WholeEngine w = ((TDFAPattern) Pattern.compile(p)).wholeEngine();
+        WholeEngine w = ((MachineryCarrier) Pattern.compile(p)).machinery().wholeEngine();
         for (String s : INPUTS) {
             out.add(span(w.matchWhole(s, new MatchScratch())));
         }

@@ -1,0 +1,68 @@
+package io.github.jemmix.tdfa;
+
+import io.github.jemmix.tdfa.core.compile.SerialProxy;
+import io.github.jemmix.tdfa.core.compile.TDFAPattern;
+import io.github.jemmix.tdfa.core.tnfa.Semantics;
+import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
+
+import java.io.ObjectStreamException;
+import java.io.Serializable;
+
+/**
+ * The jur facade's serialization proxy — the wrapper's anchor. The
+ * generated wrappers ({@code WrapperEmitter}) live in child classloaders
+ * that will not exist in the reading process, so each serializes as this
+ * proxy: pattern + flags + lane + provider identity. Read back through
+ * this facade's own compile funnel — a direct call, no reflection — so
+ * the roster validation, the default lane and the provider default all
+ * apply from one place. The lane travels as data ({@link Semantics}
+ * bits): a pattern compiled through a per-axis probe keeps its probe
+ * lane across the wire.
+ *
+ * <p>Provider pinning round-trips: a pattern compiled against a pinned
+ * {@link UnicodeDataProvider} keeps that provider (resolved per the
+ * UnicodeDataProvider serialization convention, machinery-resolved by
+ * {@link SerialProxy#resolveProvider}); a pattern compiled against the
+ * process default serializes without a provider and recompiles against
+ * the READER's default. Failures throw {@link java.io.InvalidObjectException}
+ * — loud, never a silent fallback to different tables or a different
+ * lane.
+ *
+ * <p>Public-but-internal: referenced by name from the facade-generated
+ * wrappers (which live in the gen package, another runtime package) —
+ * not shipped API.
+ */
+public final class SerializationProxy implements Serializable {
+
+    private static final long serialVersionUID = 1L;
+
+    private final String pattern;
+
+    private final int flags;
+
+    private final int semanticsBits;
+
+    /**
+     * FQCN of the pinned UnicodeDataProvider, or {@code null} = process default.
+     */
+    private final String providerClass;
+
+    private SerializationProxy(String pattern, int flags, int semanticsBits, String providerClass) {
+        this.pattern = pattern;
+        this.flags = flags;
+        this.semanticsBits = semanticsBits;
+        this.providerClass = providerClass;
+    }
+
+    /** The wrapper-emitter hook: the proxy for a wrapped machinery pattern. */
+    public static Object serialProxy(TDFAPattern p) {
+        UnicodeDataProvider provider = p.unicodeProvider();
+        return new SerializationProxy(p.pattern(), p.flags(), p.semantics().bits(),
+            provider == null ? null : provider.getClass().getName());
+    }
+
+    private Object readResolve() throws ObjectStreamException {
+        UnicodeDataProvider provider = providerClass == null ? null : SerialProxy.resolveProvider(providerClass);
+        return Lane.compile(pattern, flags, null, provider, null, Semantics.ofBits(semanticsBits));
+    }
+}

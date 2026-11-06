@@ -44,8 +44,8 @@ import java.util.Map;
  * generated class (ASM tier): the whole Matcher.find() &rarr; engine ladder
  * &rarr; walk-leaf chain devirtualizes and inlines end-to-end. Supplying a
  * {@link RegexEngineFactory} swaps in a custom engine (tracer, experimental
- * backend, alternative generator) — the facade then emits a shell around
- * it, preserving the monomorphic call chain. {@code -Dtdfa.engine=VM}
+ * backend, alternative generator) — the machinery emits a shell around it
+ * and the facade wraps that, preserving the monomorphic call chain. {@code -Dtdfa.engine=VM}
  * forces the shared interpreter implementation everywhere (no code
  * generation at all).
  *

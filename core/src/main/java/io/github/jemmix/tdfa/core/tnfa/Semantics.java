@@ -1,5 +1,7 @@
 package io.github.jemmix.tdfa.core.tnfa;
 
+import java.io.Serializable;
+
 /**
  * A compile's interpretation policy: one side of each behavioral
  * axis. The engine accepts one syntax; the axes are the respects in
@@ -42,13 +44,16 @@ package io.github.jemmix.tdfa.core.tnfa;
  * </ul>
  *
  * <p>Immutable value class — field equality; a wither returns the
- * same instance when its axis is already set. The axes below are
+ * same instance when its axis is already set. Serializable as its
+ * axis bit-set ({@link #bits()}/{@link #ofBits(int)}) or whole (the
+ * single {@code bits} field round-trips by default serialization).
+ * The axes below are
  * the known lineage divergences the JUR-compat flip turned into
  * opt-outs — a starting set, since grown ({@code SPACE_RE2} joined
  * after the two-surface split); new axes join by the membership
  * rule above, not by that starting set.
  */
-public final class Semantics {
+public final class Semantics implements Serializable {
 
     private static final int UNIX_LINES_BIT = 1;
 
@@ -68,6 +73,12 @@ public final class Semantics {
 
     private static final int SHORTHAND_FOLD_BIT = 256;
 
+    private static final int ALL_AXES =
+        UNIX_LINES_BIT | UNICODE_CASE_BIT | CODEPOINT_BOUNDARIES_BIT | EMPTY_LAST_LINE_BIT | END_OF_TEXT_ONLY_BIT
+            | EMPTY_ITERATION_SPANS_BIT | UNGREEDY_U_BIT | SPACE_RE2_BIT | SHORTHAND_FOLD_BIT;
+
+    private static final long serialVersionUID = 1L;
+
     private final int bits;
 
     private Semantics(int bits) {
@@ -80,6 +91,26 @@ public final class Semantics {
      */
     public static Semantics of() {
         return new Semantics(0);
+    }
+
+    /**
+     * The lane's wire form: the axis bit-set this {@link Semantics} was
+     * built from, round-tripped by {@link #ofBits(int)}. Machinery tier —
+     * the serialization proxies carry a lane as data, never as the
+     * facade that compiled it. An unknown bit fails loudly (a stream
+     * from a newer library must not silently recompile in a lane the
+     * reader cannot name).
+     */
+    public static Semantics ofBits(int bits) {
+        if ((bits & ~ALL_AXES) != 0) {
+            throw new IllegalArgumentException("unknown semantics axis bits: 0x" + Integer.toHexString(bits));
+        }
+        return new Semantics(bits);
+    }
+
+    /** The axis bit-set (the {@link #ofBits(int)} wire form). */
+    public int bits() {
+        return bits;
     }
 
     /**

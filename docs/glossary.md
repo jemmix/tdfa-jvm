@@ -53,7 +53,8 @@ defining file(s), not every occurrence.
 - **facade (root facade)** — the top-level `Pattern` API class; "facade
   tier" is the layer above core. The jur facade is the default since the
   flip. Each facade compiles through its package-private `Lane` funnel
-  (roster validation, default lane, default provider, VM-path wrap).
+  (roster validation, default lane, default provider) and mints its own
+  generated API wrapper around the facade-blind machinery result.
 - **thin surface / two-surface split** — the architectural event/shape of the
   API split: minimal API-only modules over one blind machinery.
 - **lane** — a fixed bundle of semantics decisions a compile runs in (jur
@@ -275,10 +276,20 @@ defining file(s), not every occurrence.
   tiers consult (`fastPathEligible`, "the ONE predicate") for flat-table
   dispatch.
 - **shell / GenNNNPattern / Shell\<hex\> / GenClassLoader** — the emitted
-  per-pattern `Pattern`/`PatternMatcher` wrapper pair ("one brain, thin
-  generated hot paths"); BYO shells wrap factory engines; generated classes
-  load through a per-pattern `GenClassLoader` under the
-  `io.github.jemmix.tdfa.gen` package.
+  per-pattern machinery `Pattern`/`PatternMatcher` pair ("one brain, thin
+  generated hot paths") — core-typed only, no facade interface; BYO
+  shells wrap factory engines; generated classes load through a
+  per-pattern `GenClassLoader` under the `io.github.jemmix.tdfa.gen`
+  package.
+- **wrapper / Wrap\<hex\> / WrapperEmitter** — the facade-owned API layer:
+  the per-pattern class each facade mints around a machinery pattern
+  (composition, one delegation per API method, monomorphic sites; the
+  interpreter tier reuses one cached wrapper per facade). Minted by asm's
+  facade-agnostic `WrapperEmitter` with the facade's own interface +
+  serialization anchor; interface↔machinery drift fails the mint loudly.
+- **MachineryCarrier** — the machinery view of a facade pattern
+  (`machinery()`): the unwrap tests and harnesses use instead of casting;
+  a bare `TDFAPattern` is its own carrier.
 - **INLINED / DELEGATE / pickMode** — the ASM dispatch modes: inline the
   ladder into the generated class (under the 30 KB `INLINE_BUDGET_BYTES`,
   below the JVM's 65 KB per-method cliff) or delegate to the embedded

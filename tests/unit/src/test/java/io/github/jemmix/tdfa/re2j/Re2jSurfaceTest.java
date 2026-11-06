@@ -161,7 +161,10 @@ class Re2jSurfaceTest {
     @Test
     void engineFactoryRouteServesTheInterpreter() {
         Pattern p = Pattern.compile("a+", 0, TdfaRunner::new);
-        assertThat(p).isInstanceOf(TDFAPattern.class);
+        // BYO engines ride the same wrap: an emitted core shell around the
+        // factory engine, the facade's generated wrapper around that.
+        assertThat(p.getClass().getSimpleName()).startsWith("Wrap");
+        assertThat(p).isNotInstanceOf(TDFAPattern.class);
         PatternMatcher m = p.matcher("aaa");
         assertThat(m.find()).isTrue();
         assertThat(m.start()).isZero();
@@ -174,8 +177,11 @@ class Re2jSurfaceTest {
         try {
             System.setProperty("tdfa.engine", "VM");
             Pattern p = Pattern.compile("a+");
-            assertThat(p).isInstanceOf(TDFAPattern.class);
-            assertThat(p.getClass().getSimpleName()).isEqualTo("VmPattern");
+            // The no-codegen tier still hands out the facade's generated
+            // wrapper (one cached Wrap class), around the bare machinery
+            // instance.
+            assertThat(p.getClass().getSimpleName()).startsWith("Wrap");
+            assertThat(p).isNotInstanceOf(TDFAPattern.class);
             assertThat(p.matcher("aaa").find()).isTrue();
         } finally {
             if (prev == null) {
@@ -198,8 +204,11 @@ class Re2jSurfaceTest {
     @Test
     void serializationRecompilesThroughThisFacade() throws Exception {
         Pattern p = Pattern.compile("a$");
-        assertThat(p).isInstanceOf(TDFAPattern.class);
-        assertThat(((TDFAPattern) p).facade()).isEqualTo(Pattern.class);
+        // The facade hands out its generated wrapper, not the machinery
+        // class — and serialization travels through the facade's own
+        // proxy (pattern + flags + lane), not through machinery state.
+        assertThat(p.getClass().getSimpleName()).startsWith("Wrap");
+        assertThat(p).isNotInstanceOf(TDFAPattern.class);
 
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         try (ObjectOutputStream out = new ObjectOutputStream(bos)) {
@@ -211,7 +220,6 @@ class Re2jSurfaceTest {
         }
         assertThat(copy).isEqualTo(p);
         // The lane survived the round trip: still the re2j reading.
-        assertThat(((TDFAPattern) copy).facade()).isEqualTo(Pattern.class);
         assertThat(((Pattern) copy).matcher("a\n").find()).isFalse();
         assertThat(((Pattern) copy).matcher("a").find()).isTrue();
 

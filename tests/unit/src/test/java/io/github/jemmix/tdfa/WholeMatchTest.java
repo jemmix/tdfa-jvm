@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.compile.CompiledRegex;
+import io.github.jemmix.tdfa.core.compile.MachineryCarrier;
 import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
@@ -209,7 +210,7 @@ class WholeMatchTest {
         assertThat(q.matcher("aaa").matches()).isTrue();
 
         Pattern asm = Pattern.compile("(a|ab)");
-        assertThat(((TDFAPattern) asm).wholeEngine().getClass().getSimpleName())
+        assertThat(((MachineryCarrier) asm).machinery().wholeEngine().getClass().getSimpleName())
             .as("default tier whole engine is generated, not the interpreter").startsWith("Gen");
     }
 
@@ -242,7 +243,8 @@ class WholeMatchTest {
             }
             // re2j surface: the anchored/unpruned artifacts come from the
             // core-tier legacy compiles (RE2 lane) — same lane both sides.
-            WholeEngine facadeWhole = ((TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(p)).wholeEngine();
+            WholeEngine facadeWhole =
+                ((MachineryCarrier) io.github.jemmix.tdfa.re2j.Pattern.compile(p)).machinery().wholeEngine();
             for (String s : inputs) {
                 MatchResult am = anchored.matchWhole(s, new MatchScratch());
                 MatchResult fm = facadeWhole.matchWhole(s, new MatchScratch());

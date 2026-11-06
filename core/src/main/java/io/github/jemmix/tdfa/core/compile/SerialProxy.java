@@ -1,71 +1,79 @@
 package io.github.jemmix.tdfa.core.compile;
 
+import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 import java.io.InvalidObjectException;
 import java.io.ObjectStreamException;
 import java.io.Serializable;
 import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 
 /**
- * Serialization proxy for {@code Pattern} implementations of every
- * facade: serializes {@code facade + pattern + flags + provider
- * identity} and recompiles on readResolve by reflecting the facade
- * interface's own {@code compile(String, int, RegexEngineFactory,
- * UnicodeDataProvider)} — the same static a caller hits, so the
- * facade's roster validation, default lane and provider default all
- * apply, and a serialized re2j-facade pattern stays re2j on read. This
- * is also what makes generated per-pattern Patterns — whose classes
- * live in a child classloader that will not exist in the reading
- * process — serializable without pinning generated classes.
+ * Serialization proxy for the machinery's own {@link TDFAPattern} level:
+ * serializes {@code pattern + flags + lane + provider identity} and
+ * recompiles through {@link PatternCompiler} on readResolve — pure
+ * machinery data, no facade identity, no reflection. This is what makes
+ * generated per-pattern Patterns — whose classes live in a child
+ * classloader that will not exist in the reading process — serializable
+ * without pinning generated classes. The facade {@code Pattern} types
+ * serialize through their own facade-owned proxies (same shape, plus the
+ * route back into the facade's compile funnel); this proxy serves the
+ * core tier and any bare machinery pattern.
  *
- * <p>The facade travels as its {@code Pattern} interface {@link Class}
- * (serializable by name): deserializing it loads the facade module if
- * the reading process has not compiled through it yet. Provider
- * pinning round-trips: a pattern compiled against a pinned
- * {@link UnicodeDataProvider} keeps that provider across serialization
- * — silently recompiling with the reader's default tables would be
- * exactly the reproducibility bug the pinned-provider API exists to
- * prevent. The provider travels as its class NAME (providers are not
- * required to be Serializable) and is resolved on read per the
+ * <p>Provider pinning round-trips: a pattern compiled against a pinned
+ * {@link UnicodeDataProvider} keeps that provider across serialization —
+ * silently recompiling with the reader's default tables would be exactly
+ * the reproducibility bug the pinned-provider API exists to prevent. The
+ * provider travels as its class NAME (providers
+ * are not required to be Serializable) and is resolved on read per the
  * convention documented on {@code UnicodeDataProvider}: a static no-arg
- * {@code provider()} method returning the instance, else a public
- * no-arg constructor. A pattern compiled against the process default
- * serializes with a {@code null} provider class and recompiles against
- * the reader's default.
+ * {@code provider()} method returning the instance, else a public no-arg
+ * constructor. A pattern compiled against the process default serializes
+ * with a {@code null} provider class and recompiles against the reader's
+ * default (the machinery level's default — the property resolution).
  *
  * <p>Resolution failures throw {@link InvalidObjectException} — loud, never
- * a silent fallback to different Unicode tables or a different facade.
+ * a silent fallback to different Unicode tables or a different lane.
  *
  * <p>Public-but-internal: machinery tier ({@code core.compile}) — not
  * shipped API.
  */
 public final class SerialProxy implements Serializable {
 
-    private static final long serialVersionUID = 4L;
-
-    private final Class<?> facade;
+    private static final long serialVersionUID = 5L;
 
     private final String pattern;
 
     private final int flags;
+
+    /** The lane's wire form — {@link Semantics#bits()}, resolved at compile. */
+    private final int semanticsBits;
 
     /**
      * FQCN of the pinned UnicodeDataProvider, or {@code null} = process default.
      */
     private final String providerClass;
 
-    SerialProxy(Class<?> facade, String pattern, int flags, String providerClass) {
-        this.facade = facade;
+    SerialProxy(String pattern, int flags, int semanticsBits, String providerClass) {
         this.pattern = pattern;
         this.flags = flags;
+        this.semanticsBits = semanticsBits;
         this.providerClass = providerClass;
     }
 
-    private static UnicodeDataProvider resolveProvider(String cls) throws ObjectStreamException {
+    /**
+     * Resolve a serialized provider by class name, per the
+     * {@code UnicodeDataProvider} serialization convention: a static
+     * no-arg {@code provider()} method returning the instance (the shape
+     * of the shipped pinned-table providers), else a no-arg constructor
+     * (may be private for singletons). Shared by the facade-owned
+     * serialization proxies — one convention, one resolver, machinery
+     * tier. Failures throw {@link InvalidObjectException}, for use from
+     * a proxy's {@code readResolve}.
+     */
+    public static UnicodeDataProvider resolveProvider(String cls) throws ObjectStreamException {
         try {
             Class<?> c = Class.forName(cls);
             if (!UnicodeDataProvider.class.isAssignableFrom(c)) {
@@ -106,35 +114,14 @@ public final class SerialProxy implements Serializable {
     }
 
     /**
-     * Recompile through the facade: its own four-arg {@code compile}
-     * static, reflected — the machinery cannot name either facade
-     * module (the module DAG is root &rarr; core and re2j &rarr; core),
-     * and the facade's entry is the one recompile path that keeps every
-     * facade-local rule (roster, lane, provider default) in one place.
-     * Default engine tier; the pinned provider, if any, rides along.
+     * Recompile through the machinery: the recorded lane, the default
+     * engine tier (the read path does not depend on the bytecode backend
+     * — a bare machinery pattern recompiles on the shared interpreter,
+     * same matches, no generated classes to pin).
      */
-    static TDFAPattern recompile(Class<?> facade, String pattern, int flags, UnicodeDataProvider provider)
+    static TDFAPattern recompile(String pattern, int flags, Semantics semantics, UnicodeDataProvider provider)
         throws ObjectStreamException {
-        try {
-            Method compile = facade.getMethod("compile", String.class, int.class, RegexEngineFactory.class,
-                UnicodeDataProvider.class);
-            return (TDFAPattern) compile.invoke(null, pattern, flags, null, provider);
-        } catch (InvocationTargetException e) {
-            // The underlying compile already threw; surface it as itself —
-            // a runtime exception (PatternSyntaxException, the budget
-            // family) propagates raw, exactly like an in-process recompile.
-            Throwable c = e.getCause();
-            if (c instanceof RuntimeException) {
-                throw (RuntimeException) c;
-            }
-            if (c instanceof Error) {
-                throw (Error) c;
-            }
-            throw new InvalidObjectException("recompile through facade " + facade.getName() + " failed: " + c);
-        } catch (ReflectiveOperationException e) {
-            throw new InvalidObjectException("serialized facade " + facade.getName() + " does not declare"
-                + " Pattern compile(String, int, RegexEngineFactory, UnicodeDataProvider): " + e);
-        }
+        return PatternCompiler.compile(pattern, flags, null, null, provider, null, null, semantics);
     }
 
     private Object readResolve() throws ObjectStreamException {
@@ -142,6 +129,6 @@ public final class SerialProxy implements Serializable {
         if (providerClass != null) {
             p = resolveProvider(providerClass);
         }
-        return recompile(facade, pattern, flags, p);
+        return recompile(pattern, flags, Semantics.ofBits(semanticsBits), p);
     }
 }

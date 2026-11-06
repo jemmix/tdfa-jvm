@@ -567,6 +567,20 @@ capped them is largely still here. The tradeoffs doc already flags this
   no-codegen result itself; `TDFAPattern` carries the facade `Class`
   (serialization target, equality axis, shell interface). C52 went moot
   with the registry.)
+  **Superseded again 2026-11: facade-owned shells** (the facade `Class`
+  still flowed down — the emitted shell implemented the facade interface,
+  so the machinery kept facade knowledge in its ABI and its reflection
+  tail. Removed: `PatternCompiler`/`ShellSpec`/`EngineBackend.emit` are
+  facade-free, `ShellEmitter` emits a machinery-only core shell, and each
+  facade mints its own API-typed wrapper per pattern via asm's
+  `WrapperEmitter` (facade-agnostic: opaque interface + serialization
+  anchor Classes, interface↔machinery compatibility verified at emission,
+  fails loudly on drift). `TDFAPattern` carries the resolved `Semantics`
+  lane instead of a facade `Class` (equality axis; the wire form is pure
+  machinery data); each facade's `SerializationProxy` calls its own
+  compile funnel directly — zero reflection anywhere. `VmPattern`
+  carriers deleted (both engine tiers wrap uniformly); the
+  `MachineryCarrier` view is the sanctioned unwrap for tests/harnesses.)
 - **C18 — `Pattern.reset()` no-op** (S, remove). Documented no-op on both
   facades ("releases internal caches" — there are none since the memos
   died). Pure re2j-API-compat residue; drop before the 1.0 API lock or

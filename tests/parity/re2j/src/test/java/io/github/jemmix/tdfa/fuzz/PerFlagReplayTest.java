@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.fuzz;
 
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.compile.MachineryCarrier;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -115,13 +116,16 @@ class PerFlagReplayTest {
         String vm;
         String asm;
         try {
-            TDFAPattern v = (TDFAPattern) io.github.jemmix.tdfa.Pattern.compile(pattern, flags, TdfaRunner::new, null);
+            TDFAPattern v =
+                ((MachineryCarrier) io.github.jemmix.tdfa.Pattern.compile(pattern, flags, TdfaRunner::new, null))
+                    .machinery();
             vm = DifferentialFuzzer.compute(v, input);
         } catch (RuntimeException | StackOverflowError e) {
             vm = tag(e);
         }
         try {
-            TDFAPattern a = (TDFAPattern) io.github.jemmix.tdfa.Pattern.compile(pattern, flags, null, null);
+            TDFAPattern a =
+                ((MachineryCarrier) io.github.jemmix.tdfa.Pattern.compile(pattern, flags, null, null)).machinery();
             asm = DifferentialFuzzer.compute(a, input);
         } catch (RuntimeException | StackOverflowError e) {
             asm = tag(e);

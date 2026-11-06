@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.asm;
 
 import io.github.jemmix.tdfa.core.compile.EngineBackend;
 import io.github.jemmix.tdfa.core.compile.ShellSpec;
+import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
 
@@ -25,7 +26,7 @@ public final class AsmEngineBackend implements EngineBackend {
     }
 
     @Override
-    public Object emit(ShellSpec spec) {
+    public TDFAPattern emit(ShellSpec spec) {
         return ShellEmitter.emit(spec);
     }
 }

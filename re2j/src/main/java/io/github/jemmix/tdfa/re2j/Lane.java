@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.re2j;
 
 import io.github.jemmix.tdfa.asm.AsmEngineBackend;
+import io.github.jemmix.tdfa.asm.WrapperEmitter;
 import io.github.jemmix.tdfa.core.compile.PatternCompiler;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
@@ -17,12 +18,14 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
  * defaults to (every JUR-compat axis set: {@code \n}-only terminators,
  * full-Unicode bare fold, codepoint boundaries, empty-last-line caret,
  * end-of-text dollar, maximal-iteration spans, ungreedy {@code (?U)},
- * re2j's ASCII {@code \s} table without U+000B), the RE2-lineage fold
- * universe a provider-less compile resolves to, and the wrap of
- * no-codegen results ({@code -Dtdfa.engine=VM}) into the facade's own
- * carrier. The machinery below is facade-blind otherwise: same
- * pipeline, same budgets, same shells — the lane is the one argument
- * the two facades differ by.
+ * re2j's ASCII {@code \s} table without U+000B), and the RE2-lineage
+ * fold universe a provider-less compile resolves to. The machinery
+ * below is facade-blind end to end — it compiles a core-typed
+ * {@link TDFAPattern} with no knowledge of this facade — and this
+ * funnel performs the one facade-owned step on the way out: minting the
+ * API-typed wrapper (with this module's own {@link SerializationProxy}
+ * as its serialization anchor). Same pipeline, same budgets, same
+ * shells; the lane is the one argument the two facades differ by.
  */
 final class Lane {
 
@@ -49,12 +52,12 @@ final class Lane {
         if ((flags & ~VALID_FLAGS) != 0) {
             throw new IllegalArgumentException(FLAGS_MESSAGE);
         }
-        TDFAPattern p = PatternCompiler.compile(regex, flags, factory, AsmEngineBackend.INSTANCE, Pattern.class,
-            provider, Re2jUniverseProvider::instance, observer,
+        TDFAPattern p = PatternCompiler.compile(regex, flags, factory, AsmEngineBackend.INSTANCE, provider,
+            Re2jUniverseProvider::instance, observer,
             explicitSemantics != null ? explicitSemantics : DEFAULT_SEMANTICS);
-        if (p.getClass() != TDFAPattern.class) {
-            return (Pattern) p; // generated shell: implements the facade interface by emission
-        }
-        return new VmPattern(p); // no-codegen path: wrap into the facade's carrier
+        // The one facade-owned step: wrap the machinery pattern in this
+        // facade's API type, generated per pattern (monomorphic delegation
+        // sites), serializing through this facade's proxy.
+        return (Pattern) WrapperEmitter.wrap(p, Pattern.class, SerializationProxy.class);
     }
 }

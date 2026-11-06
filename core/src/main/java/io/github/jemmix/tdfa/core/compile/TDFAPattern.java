@@ -6,6 +6,7 @@ import io.github.jemmix.tdfa.core.emit.EmittedSurface;
 import io.github.jemmix.tdfa.core.engine.ChunkSource;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
 import io.github.jemmix.tdfa.core.engine.WholeEngine;
+import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 import java.io.IOException;
@@ -17,14 +18,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Shared {@code Pattern} machinery implementation: holds the compiled
- * engines and the pattern/flags state of every facade's patterns. Used
- * directly on the interpreter path (wrapped by each facade's
- * not-generated carrier) and as the emission-failure fallback base;
- * generated per-pattern shells ({@code GenNNNPattern}) extend it,
- * implement their facade's {@code Pattern} interface, and declare a
- * public final engine field of the concrete (or {@link RegexEngine})
- * type that their matchers call directly.
+ * Shared {@code Pattern} machinery implementation — the machinery level's
+ * own Pattern: holds the compiled engines and the pattern/flags/lane
+ * state of every compile. Used directly on the interpreter path and as
+ * the base of the generated per-pattern shells ({@code GenNNNPattern}),
+ * which extend it (no facade interface — that wrap is the calling
+ * facade's own generated wrapper) and declare a public final engine
+ * field of the concrete (or {@link RegexEngine}) type that their
+ * matchers call directly.
  *
  * <p>Public because generated shells are defined in a child classloader
  * (a different runtime package) and must subclass and call into it.
@@ -38,7 +39,7 @@ import java.util.Map;
  * {@link PatternMatcher matchers} they produce are NOT thread-safe —
  * one matcher per thread.
  */
-public class TDFAPattern implements Serializable {
+public class TDFAPattern implements Serializable, MachineryCarrier {
 
     private static final long serialVersionUID = 1L;
 
@@ -66,25 +67,26 @@ public class TDFAPattern implements Serializable {
      */
     private transient UnicodeDataProvider provider;
     /**
-     * The facade this pattern compiled through — the {@code Class} of the
-     * facade's {@code Pattern} interface: the serialization target (the
-     * {@link SerialProxy} reflects the facade's own {@code compile} on
-     * read), the equality axis (a jur-facade and a re2j-facade compile of
-     * the same regex+flags answer in different lanes and are never
-     * equal), and the interface generated shells implement.
+     * The lane this pattern compiled in (the resolved {@link Semantics}
+     * — the facade's default when the caller gave none): the equality
+     * axis (a jur-lane and a re2j-lane compile of the same regex+flags
+     * answer differently and are never equal; two same-lane compiles
+     * are, whichever facade minted them) and the serialization payload
+     * (the proxy recompiles in exactly this lane, no facade identity
+     * on the wire).
      */
-    private final Class<?> facade;
+    private final Semantics semantics;
 
     @EmittedSurface // shells super-ctor call: signature feeds ShellEmitter descriptor
     public TDFAPattern(String pattern, int flags, int programSize, RegexEngine engine, WholeEngine wholeEngine,
-        UnicodeDataProvider provider, Class<?> facade) {
+        UnicodeDataProvider provider, Semantics semantics) {
         this.pattern = pattern;
         this.flags = flags;
         this.programSize = programSize;
         this.engine = engine;
         this.wholeEngine = wholeEngine;
         this.provider = provider;
-        this.facade = facade;
+        this.semantics = semantics;
     }
 
     /**
@@ -102,12 +104,12 @@ public class TDFAPattern implements Serializable {
     }
 
     /**
-     * The facade this pattern compiled through (the {@code Class} of the
-     * facade's {@code Pattern} interface: serialization target, equality
-     * axis, recompile lane).
+     * The lane this pattern compiled in (the resolved {@link Semantics}):
+     * equality axis and serialization payload — the machinery never
+     * records which facade compiled through it.
      */
-    public Class<?> facade() {
-        return facade;
+    public Semantics semantics() {
+        return semantics;
     }
 
     /**
@@ -120,6 +122,12 @@ public class TDFAPattern implements Serializable {
     @EmittedSurface
     public WholeEngine wholeEngine() {
         return wholeEngine;
+    }
+
+    /** A machinery pattern is its own {@link MachineryCarrier} view. */
+    @Override
+    public TDFAPattern machinery() {
+        return this;
     }
 
     public PatternMatcher matcher(CharSequence input) {
@@ -217,9 +225,10 @@ public class TDFAPattern implements Serializable {
     }
 
     /**
-     * Serialize as the {@link SerialProxy} — facade + pattern + flags +
-     * provider identity, recompiled on read (the proxy reflects the
-     * facade's own compile). Generated subclasses' classes live in child
+     * Serialize as the {@link SerialProxy} — pattern + flags + lane +
+     * provider identity, recompiled on read (the proxy recompiles
+     * through the machinery in exactly this lane; no facade identity
+     * travels). Generated subclasses' classes live in child
      * loaders that won't exist in the reading process, so the state
      * proxy is the only stable form. The pinned provider (if any)
      * round-trips as its class name, resolved per the
@@ -234,16 +243,18 @@ public class TDFAPattern implements Serializable {
     // raw fields (including the non-serializable engine) hit the wire and
     // serialization throws NotSerializableException.
     public Object writeReplace() {
-        return new SerialProxy(facade, pattern, flags, provider == null ? null : provider.getClass().getName());
+        return new SerialProxy(pattern, flags, semantics.bits(),
+            provider == null ? null : provider.getClass().getName());
     }
 
     /**
      * Recompile the (transient) engines after deserialization, from
-     * {@code pattern}+{@code flags} through this pattern's facade.
+     * {@code pattern}+{@code flags}+{@code semantics} through the
+     * machinery (no facade involved).
      */
     private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
         in.defaultReadObject();
-        TDFAPattern tmp = SerialProxy.recompile(facade, pattern, flags, provider);
+        TDFAPattern tmp = SerialProxy.recompile(pattern, flags, semantics, provider);
         this.engine = tmp.engine;
         this.wholeEngine = tmp.wholeEngine;
         this.provider = tmp.provider;
@@ -278,21 +289,30 @@ public class TDFAPattern implements Serializable {
     public boolean equals(Object o) {
         // State-based equality across implementations (shared, wrapped and
         // generated): re2j semantics — same pattern string + same flags —
-        // AND the same facade: a jur-facade and a re2j-facade compile of
-        // the same regex+flags answer in different lanes and are never
-        // equal.
+        // AND the same lane: a jur-lane and a re2j-lane compile of the
+        // same regex+flags answer differently and are never equal. The
+        // axis is the resolved Semantics, not the compiling facade: the
+        // machinery does not know which facade minted a pattern, and two
+        // same-lane compiles are equal whichever facade handed them out
+        // (a facade wrapper compares as the machinery pattern it carries).
         if (this == o) {
             return true;
+        }
+        // Unwrap first: a facade's generated wrapper (or any carrier) of a
+        // machinery pattern compares as the pattern it carries — symmetric
+        // with the wrapper's own delegation of equals down to here.
+        if (o instanceof MachineryCarrier) {
+            o = ((MachineryCarrier) o).machinery();
         }
         if (!(o instanceof TDFAPattern)) {
             return false;
         }
         TDFAPattern p = (TDFAPattern) o;
-        return facade == p.facade && flags == p.flags && pattern.equals(p.pattern);
+        return semantics.equals(p.semantics) && flags == p.flags && pattern.equals(p.pattern);
     }
 
     @Override
     public int hashCode() {
-        return 31 * (31 * pattern.hashCode() + flags) + facade.getName().hashCode();
+        return 31 * (31 * pattern.hashCode() + flags) + semantics.hashCode();
     }
 }

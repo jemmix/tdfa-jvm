@@ -13,6 +13,7 @@ import io.github.jemmix.tdfa.core.engine.Matcher;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
 import io.github.jemmix.tdfa.core.engine.TagTree;
 import io.github.jemmix.tdfa.core.engine.WholeEngine;
+import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 import org.junit.jupiter.api.Test;
 
@@ -136,7 +137,7 @@ class EmittedSurfaceConformanceTest {
         // Machinery ctors/members linked by descriptor from ShellEmitter
         // (core.compile since the two-facade split).
         hookC(TDFAPattern.class, String.class, int.class, int.class, RegexEngine.class, WholeEngine.class,
-            UnicodeDataProvider.class, Class.class);
+            UnicodeDataProvider.class, Semantics.class);
         hookC(PatternMatcher.class, TDFAPattern.class, CharSequence.class);
         hookM(TDFAPattern.class, "decodeUtf8", byte[].class);
     }

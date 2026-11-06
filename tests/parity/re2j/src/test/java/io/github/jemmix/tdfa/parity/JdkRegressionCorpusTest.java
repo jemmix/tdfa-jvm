@@ -2,6 +2,7 @@ package io.github.jemmix.tdfa.parity;
 
 import com.google.re2j.Re2jUnicodeProvider;
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
+import io.github.jemmix.tdfa.core.compile.MachineryCarrier;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
@@ -289,8 +290,8 @@ class JdkRegressionCorpusTest {
 
         TDFAPattern tdfaPattern;
         try {
-            tdfaPattern =
-                (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(c.pattern(), c.flags(), factory, UNICODE);
+            tdfaPattern = ((MachineryCarrier) io.github.jemmix.tdfa.re2j.Pattern.compile(c.pattern(), c.flags(),
+                factory, UNICODE)).machinery();
         } catch (PatternSyntaxException | PatternTooLargeException e) {
             record(c, "tdfa rejects but re2j (contract) compiles", "reason: " + e.getMessage());
             return;
