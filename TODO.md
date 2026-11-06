@@ -40,6 +40,7 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 - [ ] TdfaRunner trace → per-engine (test-only)
 - [ ] JPMS module-info
 - [ ] JavaDoc all public API
+- [ ] Glossary: prune mannered/unnecessary terms, keep load-bearing ones
 - [ ] Decide Semantics scope (parity axes vs knobs) before lock
 - [ ] Lock 1.0 API stability guarantees
 - [ ] JaCoCo coverage targets
