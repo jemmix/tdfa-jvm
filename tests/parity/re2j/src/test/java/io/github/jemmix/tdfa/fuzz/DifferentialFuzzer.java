@@ -284,8 +284,8 @@ public final class DifferentialFuzzer {
      *  {@code fuzz.one} replay holds. */
     static final int MULTI_EVERY = (int) (long) Long.getLong("fuzz.mvtEvery", 1);
 
-    /** The multi-valued compile bit (BT22 §3.1; both surfaces carry the
-     *  same {@code PatternSurface} value). tdfa-only: ORed onto the
+    /** The multi-valued compile bit (BT22 §3.1; both facades carry the
+     *  same shared value). tdfa-only: ORed onto the
      *  batch's flags for the derived lane compiles, never passed to
      *  either oracle compile — the matrix contract covers shared bits
      *  only. */

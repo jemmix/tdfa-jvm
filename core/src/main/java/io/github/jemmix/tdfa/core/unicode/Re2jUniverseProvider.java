@@ -22,7 +22,7 @@ public final class Re2jUniverseProvider implements UnicodeDataProvider {
     private Re2jUniverseProvider() {
     }
 
-    /** Supplier shape for {@code PatternSurface.register}. */
+    /** Supplier shape for the re2j facade's default-provider pass-through. */
     public static Re2jUniverseProvider instance() {
         return INSTANCE;
     }

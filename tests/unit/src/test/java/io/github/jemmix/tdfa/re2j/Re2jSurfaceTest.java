@@ -16,16 +16,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The re2j surface, pinned: the RE2-lineage lane is baked in (every
+ * The re2j facade, pinned: the RE2-lineage lane is baked in (every
  * JUR-compat axis set by construction — there are no opt-out bits to
  * forget), the flag roster is the re2j dial set (+ the two documented
- * tdfa extensions), serialization recompiles through this surface, and
+ * tdfa extensions), serialization recompiles through this facade, and
  * the facade's jur default answers differently on the same inputs — the
- * two-surface split's whole point.
+ * two-facade split's whole point.
  */
 class Re2jSurfaceTest {
 
-    private static final String SURFACE_MISMATCH =
+    private static final String ROSTER_MISMATCH =
         "Flags should only be a combination of MULTILINE, DOTALL," + " CASE_INSENSITIVE, DISABLE_UNICODE_GROUPS,";
 
     @Test
@@ -124,11 +124,11 @@ class Re2jSurfaceTest {
         // No UNICODE_CHARACTER_CLASS (the lane's class sets are the re2j
         // reading), no JUR-compat opt-out bits (the lane is the default).
         assertThatThrownBy(() -> Pattern.compile("a", 32)).isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining(SURFACE_MISMATCH);
+            .hasMessageContaining(ROSTER_MISMATCH);
         assertThatThrownBy(() -> Pattern.compile("a", 256)).isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining(SURFACE_MISMATCH);
+            .hasMessageContaining(ROSTER_MISMATCH);
         assertThatThrownBy(() -> Pattern.compile("a", 1 << 20)).isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining(SURFACE_MISMATCH);
+            .hasMessageContaining(ROSTER_MISMATCH);
     }
 
     @Test
@@ -147,12 +147,12 @@ class Re2jSurfaceTest {
 
     @Test
     void compileOptionsIsThePerAxisEscapeHatch() {
-        // A jur-lane Semantics on the re2j surface selects that reading —
+        // A jur-lane Semantics on the re2j facade selects that reading —
         // mixed-axis probes are a debugging tool, not a user contract.
         PatternMatcher m = Pattern.compile("a$", CompileOptions.of().semantics(Semantics.of())).matcher("a\n");
         assertThat(m.find()).isTrue();
         assertThat(m.end()).isEqualTo(1);
-        // And the plain options (POSIX longest) ride the surface default.
+        // And the plain options (POSIX longest) ride the facade default.
         PatternMatcher l = Pattern.compile("a|ab", CompileOptions.of().longestMatch()).matcher("ab");
         assertThat(l.find()).isTrue();
         assertThat(l.end()).isEqualTo(2);
@@ -169,7 +169,7 @@ class Re2jSurfaceTest {
     }
 
     @Test
-    void vmSwitchHandsOutTheWrappedSurfaceCarrier() {
+    void vmSwitchHandsOutTheWrappedFacadeCarrier() {
         String prev = System.getProperty("tdfa.engine");
         try {
             System.setProperty("tdfa.engine", "VM");
@@ -187,8 +187,8 @@ class Re2jSurfaceTest {
     }
 
     @Test
-    void surfacesAreDistinctInEquality() {
-        // Same regex + same flags, different surface: different lanes,
+    void facadesAreDistinctInEquality() {
+        // Same regex + same flags, different facade: different lanes,
         // never equal.
         assertThat(Pattern.compile("a")).isNotEqualTo(io.github.jemmix.tdfa.Pattern.compile("a"));
         assertThat(Pattern.compile("a")).isEqualTo(Pattern.compile("a"));
@@ -196,10 +196,10 @@ class Re2jSurfaceTest {
     }
 
     @Test
-    void serializationRecompilesThroughThisSurface() throws Exception {
+    void serializationRecompilesThroughThisFacade() throws Exception {
         Pattern p = Pattern.compile("a$");
         assertThat(p).isInstanceOf(TDFAPattern.class);
-        assertThat(((TDFAPattern) p).surface().id()).isEqualTo("re2j");
+        assertThat(((TDFAPattern) p).facade()).isEqualTo(Pattern.class);
 
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         try (ObjectOutputStream out = new ObjectOutputStream(bos)) {
@@ -211,11 +211,11 @@ class Re2jSurfaceTest {
         }
         assertThat(copy).isEqualTo(p);
         // The lane survived the round trip: still the re2j reading.
-        assertThat(((TDFAPattern) copy).surface().id()).isEqualTo("re2j");
+        assertThat(((TDFAPattern) copy).facade()).isEqualTo(Pattern.class);
         assertThat(((Pattern) copy).matcher("a\n").find()).isFalse();
         assertThat(((Pattern) copy).matcher("a").find()).isTrue();
 
-        // Facade patterns round-trip through their own surface.
+        // Facade patterns round-trip through their own facade.
         io.github.jemmix.tdfa.Pattern jur = io.github.jemmix.tdfa.Pattern.compile("a$");
         bos = new ByteArrayOutputStream();
         try (ObjectOutputStream out = new ObjectOutputStream(bos)) {

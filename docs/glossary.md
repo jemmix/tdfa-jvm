@@ -44,19 +44,22 @@ defining file(s), not every occurrence.
 
 ## Surfaces, lanes, and semantics
 
-- **surface** — a published API persona over the shared machinery, registered
-  as a `PatternSurface` (id, flag roster, backend, default lane). Two ship:
-  the jur surface (root facade, `io.github.jemmix.tdfa.Pattern`) and the
-  re2j surface (`:re2j`). Also "String surface" vs streaming, "whole/find
-  surface" for API areas. Lives in: `core/compile/PatternSurface.java`.
-- **facade (root facade)** — the top-level `Pattern` API class; "facade tier"
-  is the layer above core. The jur facade is the default since the flip.
+- **surface** — a published API persona over the shared machinery. Two
+  ship as facades: the jur facade (root, `io.github.jemmix.tdfa.Pattern`)
+  and the re2j facade (`:re2j`); before C17's removal they were registered
+  as `PatternSurface` entities — now each persona is just its facade plus
+  a `Lane` funnel. Also "String surface" vs streaming, "whole/find
+  surface" for API areas.
+- **facade (root facade)** — the top-level `Pattern` API class; "facade
+  tier" is the layer above core. The jur facade is the default since the
+  flip. Each facade compiles through its package-private `Lane` funnel
+  (roster validation, default lane, default provider, VM-path wrap).
 - **thin surface / two-surface split** — the architectural event/shape of the
   API split: minimal API-only modules over one blind machinery.
 - **lane** — a fixed bundle of semantics decisions a compile runs in (jur
   lane = every axis unset; RE2 lane = every axis set; also codepoint/unit
-  lane, multi-valued lane, fold lane, default lane, stock lanes). A surface
-  *bakes in* its lane.
+  lane, multi-valued lane, fold lane, default lane, stock lanes). A facade
+  *bakes in* its lane (`Lane.DEFAULT_SEMANTICS`).
 - **the flip / pre-flip / post-flip** — the switch of the shipped default
   from the RE2 reading to jur parity (`docs/jur-compat-default.md`).
 - **reading** — one coherent interpretation of the syntax ("the jur reading
@@ -74,16 +77,17 @@ defining file(s), not every occurrence.
   "parameterize the pivots" in the WBS). `PivotLanesTest` audits them.
 - **mixed probes / canned lane / per-axis ceremony / un-gettable-wrong** —
   `CompileOptions.semantics(...)` picks axes individually ("mixed probes");
-  a canned lane is a preset; the re2j surface removes the "ceremony" so its
+  a canned lane is a preset; the re2j facade removes the "ceremony" so its
   reading is "un-gettable-wrong".
-- **roster / alphabet** — the exact closed set of flag bits a surface accepts
-  (out-of-roster bits reject); the set of inline flag *letters* it binds.
+- **roster / alphabet** — the exact closed set of flag bits a facade accepts
+  (out-of-roster bits reject, validated in its `Lane`); the set of inline
+  flag *letters* it binds.
   `FlagAction` is the closed behavior vocabulary; `FlagBindings` the
   letter→behavior map (`JUR_LANE` / `RE2_LANE` are the stock bindings).
 - **crossed u/U** — the engine's `(?u)`/`(?U)` letters are swapped vs the
   JDK: our `(?U)` is java's `(?u)`.
 - **fold universe** — the set of case-fold equivalences in force (ASCII-only,
-  full Unicode simple fold, snapshot-pinned). Rides the surface default.
+  full Unicode simple fold, snapshot-pinned). Rides the facade default.
 - **orbit / i-orbit / s-orbit** *(borrowed: math/re2j `CASE_ORBIT`)* — a
   case-fold equivalence class; the i-orbit is the one İ/ı either join (jur)
   or don't (RE2). A codepoint whose orbit is a singleton is **fold-inert**;
@@ -525,7 +529,7 @@ defining file(s), not every occurrence.
   dotted rows: `info.anchored.asm`, `info.extract.vm`,
   `re2jFindAllWide`, `scanNoMatch`, `findAllDense`,
   `prefixWordDense`, `compile.re2j`; `.vm` = interpreter, `.asm` =
-  generated, `.re2j` = through the re2j surface. CaptureBench instead
+  generated, `.re2j` = through the re2j facade. CaptureBench instead
   says `tdfa`/`asmc` for the same two tiers.
 - **slug** — a short key selecting a (pattern, input) pair
   (litFind, wordUnicodeCls, lettersRu, ipExtract, redos...).

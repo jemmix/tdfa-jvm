@@ -7,11 +7,11 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 /**
  * Shell emission spec, carried from the compile machinery to the
  * {@link EngineBackend#emit} implementor. All core/reflection
- * types — the backend resolves the surface's {@link PatternSurface
- * pattern interface} by descriptor at class-load time.
+ * types — the backend resolves the compile's facade
+ * {@code Pattern} interface by descriptor at class-load time.
  *
  * <p>Components: {@code pattern} is the regex source text (recompiled by
- * the serialization proxy); {@code flags} the surface's flag bits;
+ * the serialization proxy); {@code flags} the facade's flag bits;
  * {@code programSize} the states in the compiled DFA (cost estimate);
  * {@code engine} the per-pattern engine instance; {@code wholeEngine}
  * the whole-match engine for matches() (the engine itself when the
@@ -20,9 +20,10 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
  * generated engine class for concrete-type wiring, or {@code null} to
  * type the shell's engine field as {@link RegexEngine};
  * {@code provider} the pinned Unicode tables ({@code null} = process
- * default); {@code surface} the compile's surface (names the shell's
- * implemented {@code Pattern} interface and rides the constructor into
- * the machinery base class).
+ * default); {@code facade} the calling facade's {@code Pattern}
+ * interface — the emitted shell implements it, and it rides the
+ * constructor into the machinery base class (serialization target +
+ * equality axis).
  *
  * <p>Public-but-internal machinery vocabulary — not shipped API.
  */
@@ -36,10 +37,10 @@ public final class ShellSpec {
     private final WholeEngine wholeEngine;
     private final String engineInternalName;
     private final UnicodeDataProvider provider;
-    private final PatternSurface surface;
+    private final Class<?> facade;
 
     public ShellSpec(String pattern, int flags, int programSize, RegexEngine engine, WholeEngine wholeEngine,
-        String engineInternalName, UnicodeDataProvider provider, PatternSurface surface) {
+        String engineInternalName, UnicodeDataProvider provider, Class<?> facade) {
         this.pattern = pattern;
         this.flags = flags;
         this.programSize = programSize;
@@ -47,7 +48,7 @@ public final class ShellSpec {
         this.wholeEngine = wholeEngine;
         this.engineInternalName = engineInternalName;
         this.provider = provider;
-        this.surface = surface;
+        this.facade = facade;
     }
 
     /**
@@ -60,9 +61,9 @@ public final class ShellSpec {
      * emitted bytecode can name. The one place that decision lives.
      */
     public static ShellSpec of(String pattern, int flags, int programSize, RegexEngine engine, WholeEngine wholeEngine,
-        RegexEngineFactory factory, UnicodeDataProvider provider, PatternSurface surface) {
+        RegexEngineFactory factory, UnicodeDataProvider provider, Class<?> facade) {
         String engineInternalName = factory == null ? engine.getClass().getName().replace('.', '/') : null;
-        return new ShellSpec(pattern, flags, programSize, engine, wholeEngine, engineInternalName, provider, surface);
+        return new ShellSpec(pattern, flags, programSize, engine, wholeEngine, engineInternalName, provider, facade);
     }
 
     public String pattern() {
@@ -93,7 +94,7 @@ public final class ShellSpec {
         return provider;
     }
 
-    public PatternSurface surface() {
-        return surface;
+    public Class<?> facade() {
+        return facade;
     }
 }

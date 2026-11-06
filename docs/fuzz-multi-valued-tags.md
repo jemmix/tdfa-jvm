@@ -21,7 +21,8 @@ The seams were where the plan said they are:
 
 - **Derived flag axis.** `prepare()` additionally compiles the batch's
   pattern as ASM and VM with `flags | MULTI_VALUED_TAGS` (bit 128,
-  `PatternSurface`-shared across surfaces). The bit is tdfa-only and never
+  one shared assignment across both facades — `PatternCompiler`). The
+  bit is tdfa-only and never
   reaches either oracle compile — the matrix contract ("identical values
   in both libraries") covers the shared bits only.
 - **Protocol reuse.** The same five-probe `compute()` protocol runs on the

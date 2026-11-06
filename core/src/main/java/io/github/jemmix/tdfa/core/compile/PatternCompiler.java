@@ -13,22 +13,23 @@ import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
+import java.util.function.Supplier;
+
 /**
- * The compile machinery behind every {@code Pattern} surface: fold the
- * surface's flags into an inline-flag prefix, parse to a TNFA,
- * determinize once, and translate the artifact to an engine through one
- * source ({@code -Dtdfa.engine=VM} interpreter, a custom
- * {@link RegexEngineFactory}, or per-pattern ASM generation via the
- * surface's {@link EngineBackend}). The single artifact serves find()
- * AND matches(): the pruned determinization records a partial-whole side
- * table at every pike-cut point (the uncut continuations whole-input
- * walks need). When that bounded side exploration exhausts its budget,
- * the compile FAILS with the standard "pattern too large" family —
- * accept-only-what-ships, the same compile-time budget contract the find
- * artifact always had; there is no second cut-free determinization (its
- * ledger arithmetic is doomed: it would redo the primary prefix plus the
- * divergence that just exhausted the side's half of the remaining ticks,
- * on the half left).
+ * The compile machinery behind every {@code Pattern} facade: translate the
+ * flag bits into an inline-flag prefix, parse to a TNFA, determinize once,
+ * and translate the artifact to an engine through one source ({@code
+ * -Dtdfa.engine=VM} interpreter, a custom {@link RegexEngineFactory}, or
+ * per-pattern ASM generation via the passed {@link EngineBackend}). The
+ * single artifact serves find() AND matches(): the pruned determinization
+ * records a partial-whole side table at every pike-cut point (the uncut
+ * continuations whole-input walks need). When that bounded side
+ * exploration exhausts its budget, the compile FAILS with the standard
+ * "pattern too large" family — accept-only-what-ships, the same
+ * compile-time budget contract the find artifact always had; there is no
+ * second cut-free determinization (its ledger arithmetic is doomed: it
+ * would redo the primary prefix plus the divergence that just exhausted
+ * the side's half of the remaining ticks, on the half left).
  *
  * <p>The find-only escape hatch ({@code FIND_ONLY} /
  * {@code compileFind}): consumers who never call whole-input methods
@@ -46,57 +47,93 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
  * lazy-memo allowances draw from the residual — "if it compiles, it
  * will execute within budget", see {@link Budgets}). Malformed syntax
  * is a {@link io.github.jemmix.tdfa.core.parser.PatternSyntaxException}
- * raised by the parser and passes through untouched; anything else is a
- * bug and propagates as itself.
+ * raised by the parser and passes through untouched; anything else is
+ * a bug and propagates as itself.
  *
  * <p>Public-but-internal: machinery tier ({@code core.compile}),
- * entered by the surfaces' compile entry points only — not shipped API.
+ * entered by the facades' {@code Lane} funnels only — not shipped API.
  */
 public final class PatternCompiler {
+
+    // ---- the shared flag-bit assignments ----
+    // Each facade spells these constants publicly on its own Pattern
+    // interface (with its own javadoc) and validates its own roster in
+    // place before calling in; the machinery decodes by these values.
+    // Bit values are this library's own — names and semantics mirror the
+    // JDK flags they snapped onto, numerics do not. Both facades share
+    // the assignments, so the same int round-trips both.
+
+    /** Case insensitive matching (folds the facade's default universe). */
+    public static final int CASE_INSENSITIVE = 1;
+
+    /** Dot ({@code .}) matches all characters, including newline. */
+    public static final int DOTALL = 2;
+
+    /** Multiline matching ({@code ^}/{@code $} at line boundaries). */
+    public static final int MULTILINE = 4;
+
+    /** Reject {@code \p{...}} / {@code \P{...}} at compile time. */
+    public static final int DISABLE_UNICODE_GROUPS = 8;
+
+    /** Leftmost-longest (POSIX) matching. */
+    public static final int LONGEST_MATCH = 16;
+
+    /** Unicode-aware predefined classes (the jur reading; jur facade only). */
+    public static final int UNICODE_CHARACTER_CLASS = 32;
+
+    /** Compile for find-shaped matching only (whole-input methods refuse). */
+    public static final int FIND_ONLY = 64;
+
+    /** Multi-valued tags (BT22 &sect;3.1) — per-iteration group spans. */
+    public static final int MULTI_VALUED_TAGS = 128;
 
     private PatternCompiler() {
     }
 
     /**
-     * The one machinery entry: an explicit {@link Semantics} (the
-     * surfaces' options route — {@code compile(regex, CompileOptions)})
-     * selects the compile's interpretation policy; {@code null} takes the
-     * {@link PatternSurface surface's} default lane — no accepted flag
-     * bit selects a semantics axis (the rosters' bits are all spelled
-     * into the pattern itself by the rewrites below or baked into the
-     * surface at registration).
+     * The one machinery entry. The facades' {@code Lane} funnels do the
+     * facade-local work in place — flag-roster validation, the default
+     * {@link Semantics} lane, the default Unicode source — and hand the
+     * machinery resolved values: {@code semantics} is never {@code null}
+     * (the funnel picked the facade's lane when the caller gave none),
+     * {@code facade} is the calling facade's {@code Pattern} interface
+     * (the interface generated shells implement, and the identity the
+     * result carries for serialization and {@code equals}), and
+     * {@code provider} may be {@code null} — {@code defaultProvider}
+     * then serves the compile, and the {@code null} is what the result
+     * retains, so a default-compiled pattern serializes without a
+     * provider and recompiles against the READER's default (only an
+     * explicitly pinned provider travels).
      */
-    public static TDFAPattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider provider,
-        CompileObserver observer, Semantics explicitSemantics, PatternSurface surface) {
+    public static TDFAPattern compile(String regex, int flags, RegexEngineFactory factory, EngineBackend backend,
+        Class<?> facade, UnicodeDataProvider provider, Supplier<UnicodeDataProvider> defaultProvider,
+        CompileObserver observer, Semantics semantics) {
         if (regex == null) {
             throw new NullPointerException("pattern is null");
         }
-        if ((flags & ~surface.validFlags()) != 0) {
-            throw new IllegalArgumentException(surface.flagsMessage());
-        }
-        Semantics semantics = surface.effectiveSemantics(explicitSemantics);
         String fl = regex;
-        if ((flags & PatternSurface.CASE_INSENSITIVE) != 0) {
+        if ((flags & CASE_INSENSITIVE) != 0) {
             fl = "(?i)" + fl;
         }
-        if ((flags & PatternSurface.DOTALL) != 0) {
+        if ((flags & DOTALL) != 0) {
             fl = "(?s)" + fl;
         }
-        if ((flags & PatternSurface.MULTILINE) != 0) {
+        if ((flags & MULTILINE) != 0) {
             fl = "(?m)" + fl;
         }
-        if ((flags & PatternSurface.UNICODE_CHARACTER_CLASS) != 0) {
+        if ((flags & UNICODE_CHARACTER_CLASS) != 0) {
             fl = "(?u)" + fl;
         }
-        boolean longest = (flags & PatternSurface.LONGEST_MATCH) != 0;
-        boolean disableUnicodeGroups = (flags & PatternSurface.DISABLE_UNICODE_GROUPS) != 0;
-        boolean findOnly = (flags & PatternSurface.FIND_ONLY) != 0;
-        boolean multiValued = (flags & PatternSurface.MULTI_VALUED_TAGS) != 0;
+        boolean longest = (flags & LONGEST_MATCH) != 0;
+        boolean disableUnicodeGroups = (flags & DISABLE_UNICODE_GROUPS) != 0;
+        boolean findOnly = (flags & FIND_ONLY) != 0;
+        boolean multiValued = (flags & MULTI_VALUED_TAGS) != 0;
         // Null knobs resolve to their defaults exactly once, here at the
-        // single machinery entry: the surface's lane and fold-universe
-        // tables (see the effective* policies on PatternSurface), and the
-        // no-op observer — everything below takes all three as non-null.
-        UnicodeDataProvider prov = surface.effectiveProvider(provider);
+        // single machinery entry: the facade's fold-universe tables (its
+        // default-provider pass-through) and the no-op observer —
+        // everything below takes both as non-null (the semantics and
+        // roster were already resolved by the calling facade's funnel).
+        UnicodeDataProvider prov = provider != null ? provider : defaultProvider.get();
         CompileObserver obs = CompileObserver.effective(observer);
         // One CPU ledger for the whole compile. Full compiles: the
         // front-end and the find determinization with its partial-whole
@@ -141,29 +178,29 @@ public final class PatternCompiler {
         //
         // -Dtdfa.engine=VM bypasses the translation entirely (and the
         // shell below): the shared interpreter serves the find surface
-        // (and the FIND_ONLY refusal, when set). The caller wraps the
-        // bare result into its surface type.
+        // (and the FIND_ONLY refusal, when set). The calling facade
+        // wraps the bare result into its own carrier.
         if (vmSwitched()) {
             long t0 = System.nanoTime();
             TdfaRunner eng = new TdfaRunner(find);
             obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
             obs.note("engine", "shared-interpreter (tdfa.engine=VM)");
             WholeEngine wholeEng = findOnly ? new FindOnlyWholeEngine(regex) : eng;
-            return new TDFAPattern(regex, flags, ps, eng, wholeEng, provider, surface);
+            return new TDFAPattern(regex, flags, ps, eng, wholeEng, provider, facade);
         }
         long t0 = System.nanoTime();
-        RegexEngine eng = engineOf(find, factory, surface.backend());
+        RegexEngine eng = engineOf(find, factory, backend);
         WholeEngine wholeEng = findOnly ? new FindOnlyWholeEngine(regex) : wholeOf(eng, find);
         obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
 
         // Shell around the engines — concrete-typed for generated ones
         // (the engine's own class names the shell's field type and
-        // classes), implementing the compile's surface interface.
+        // classes), implementing the compile's facade interface.
         // Emission failures propagate like engine-emission
         // failures (see engineOf): they are bugs, not shapes to route
-        // around. ShellSpec.of owns the generated-vs-byo wiring decision.
-        TDFAPattern p = (TDFAPattern) surface.backend()
-            .emit(ShellSpec.of(regex, flags, ps, eng, wholeEng, factory, provider, surface));
+        // around). ShellSpec.of owns the generated-vs-byo wiring decision.
+        TDFAPattern p =
+            (TDFAPattern) backend.emit(ShellSpec.of(regex, flags, ps, eng, wholeEng, factory, provider, facade));
         obs.note("engine", factory == null ? "generated" : "byo-shell");
         return p;
     }
@@ -180,10 +217,11 @@ public final class PatternCompiler {
 
     /**
      * The compile's engine source, applied to every artifact of the compile:
-     * the custom factory's engine, or the surface backend's per-pattern
-     * generated class. Emission failures (IllegalStateException,
-     * LinkageError from broken generated bytecode) propagate — they are
-     * bugs, not shapes to route around.
+     * the custom factory's engine, or the passed backend's per-pattern
+     * generated class (each facade wires the backend it ships — the ASM
+     * one). Emission failures (IllegalStateException, LinkageError from
+     * broken generated bytecode) propagate — they are bugs, not shapes
+     * to route around.
      */
     private static RegexEngine engineOf(Tdfa tdfa, RegexEngineFactory factory, EngineBackend backend) {
         if (factory != null) {

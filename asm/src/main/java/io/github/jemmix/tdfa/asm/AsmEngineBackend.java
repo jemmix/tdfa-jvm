@@ -8,9 +8,9 @@ import io.github.jemmix.tdfa.core.engine.RegexEngine;
 /**
  * The {@link EngineBackend} SPI implemented by this module: per-pattern
  * engine generation ({@link TdfaAsmBackend}) and facade-shell emission
- * ({@link ShellEmitter}). Each surface wires {@link #INSTANCE} into its
- * {@code PatternSurface} — the one line where a surface touches the
- * bytecode backend; the compile machinery itself never does.
+ * ({@link ShellEmitter}). Each facade passes {@link #INSTANCE} to
+ * {@code PatternCompiler.compile} — the one line where a facade touches
+ * the bytecode backend; the compile machinery itself never does.
  */
 public final class AsmEngineBackend implements EngineBackend {
 

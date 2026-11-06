@@ -1,8 +1,8 @@
 package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.compile.CompileOptions;
+import io.github.jemmix.tdfa.core.compile.PatternCompiler;
 import io.github.jemmix.tdfa.core.compile.PatternMatcher;
-import io.github.jemmix.tdfa.core.compile.PatternSurface;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.StreamMatcher;
@@ -25,7 +25,7 @@ import java.util.Map;
  * diverges from the RE2 lineage on (line terminators, bare-CI fold
  * universe, UTF-16 unit boundaries, anchor end-of-line rules,
  * zero-width iteration spans, {@code (?U)}); the RE2-lineage reading of
- * those axes ships as its own surface — the {@code :re2j} module's
+ * those axes ships as its own facade — the {@code :re2j} module's
  * {@code io.github.jemmix.tdfa.re2j.Pattern}, with the lane baked in —
  * and a per-axis mixed probe remains available through
  * {@link CompileOptions#semantics(io.github.jemmix.tdfa.core.tnfa.Semantics)}.
@@ -63,22 +63,22 @@ public interface Pattern extends Serializable {
     /**
      * Flag: case insensitive matching.
      */
-    int CASE_INSENSITIVE = PatternSurface.CASE_INSENSITIVE;
+    int CASE_INSENSITIVE = PatternCompiler.CASE_INSENSITIVE;
 
     /**
      * Flag: dot ({@code .}) matches all characters, including newline.
      */
-    int DOTALL = PatternSurface.DOTALL;
+    int DOTALL = PatternCompiler.DOTALL;
 
     /**
      * Flag: multiline matching ({@code ^}/{@code $} at line boundaries).
      */
-    int MULTILINE = PatternSurface.MULTILINE;
+    int MULTILINE = PatternCompiler.MULTILINE;
 
     /**
      * Flag: matches longest possible string (leftmost-longest).
      */
-    int LONGEST_MATCH = PatternSurface.LONGEST_MATCH;
+    int LONGEST_MATCH = PatternCompiler.LONGEST_MATCH;
 
     /**
      * Flag: enables Unicode-aware versions of the predefined character classes
@@ -102,7 +102,7 @@ public interface Pattern extends Serializable {
      * universe freezes the same definition at its Unicode version. The
      * exact set is differentially pinned in {@code UnicodeBoundaryParityTest}.
      */
-    int UNICODE_CHARACTER_CLASS = PatternSurface.UNICODE_CHARACTER_CLASS;
+    int UNICODE_CHARACTER_CLASS = PatternCompiler.UNICODE_CHARACTER_CLASS;
 
     /**
      * Flag: compile for find-shaped matching only — the whole-match machinery
@@ -137,12 +137,12 @@ public interface Pattern extends Serializable {
      * tier's {@link io.github.jemmix.tdfa.core.compile.CompiledRegex core.CompiledRegex}
      * is find-only in the same sense, by construction.
      */
-    int FIND_ONLY = PatternSurface.FIND_ONLY;
+    int FIND_ONLY = PatternCompiler.FIND_ONLY;
 
     /**
      * Flag: disable Unicode groups ({@code \p{...}} / {@code \P{...}} rejected at compile time, like re2j).
      */
-    int DISABLE_UNICODE_GROUPS = PatternSurface.DISABLE_UNICODE_GROUPS;
+    int DISABLE_UNICODE_GROUPS = PatternCompiler.DISABLE_UNICODE_GROUPS;
 
     /**
      * Flag: multi-valued tags (BT22 &sect;3.1) — every capture group keeps
@@ -163,7 +163,7 @@ public interface Pattern extends Serializable {
      * factor over the plain walk). POSIX {@link #LONGEST_MATCH} composes
      * with this flag.
      */
-    int MULTI_VALUED_TAGS = PatternSurface.MULTI_VALUED_TAGS;
+    int MULTI_VALUED_TAGS = PatternCompiler.MULTI_VALUED_TAGS;
 
     /**
      * Compile {@code regex} with default flags (leftmost-first, generated engine).
@@ -199,7 +199,7 @@ public interface Pattern extends Serializable {
      * pinned-Unicode-version provider for reproducible matching across JVMs.
      */
     static Pattern compile(String regex, int flags, RegexEngineFactory factory, UnicodeDataProvider unicodeProvider) {
-        return (Pattern) Surfaces.JUR.compile(regex, flags, factory, unicodeProvider, null, null);
+        return Lane.compile(regex, flags, factory, unicodeProvider, null, null);
     }
 
     /**
@@ -222,8 +222,7 @@ public interface Pattern extends Serializable {
         if (options.isDisableUnicodeGroups()) {
             flags |= DISABLE_UNICODE_GROUPS;
         }
-        return (Pattern) Surfaces.JUR.compile(regex, flags, null, options.unicodeProvider(), options.observer(),
-            options.semantics());
+        return Lane.compile(regex, flags, null, options.unicodeProvider(), options.observer(), options.semantics());
     }
 
     /**
@@ -250,7 +249,7 @@ public interface Pattern extends Serializable {
         if (regex == null) {
             throw new NullPointerException("pattern is null");
         }
-        return (Pattern) Surfaces.JUR.compile(regex, flags | FIND_ONLY, null, null, null, null);
+        return Lane.compile(regex, flags | FIND_ONLY, null, null, null, null);
     }
 
     /**

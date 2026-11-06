@@ -1,6 +1,5 @@
 package io.github.jemmix.tdfa.asm;
 
-import io.github.jemmix.tdfa.core.compile.PatternSurface;
 import io.github.jemmix.tdfa.core.compile.ShellSpec;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
@@ -31,18 +30,18 @@ import java.util.concurrent.atomic.AtomicLong;
  * it emits references to ({@code core.compile.TDFAPattern},
  * {@code core.compile.PatternMatcher}) appear as internal-name / descriptor
  * strings — resolved at class-load time in whatever runtime loaded the
- * surface (the surface is what triggered emission, so its classes are
+ * facade (the facade is what triggered emission, so its classes are
  * linkable by construction) — except the reflection tail, which links
  * {@code core.compile} types directly (the {@code :asm → :core} edge).
- * Each shell implements the compile's {@link PatternSurface surface}
- * interface, named by descriptor.
+ * Each shell implements the compile's facade {@code Pattern} interface
+ * ({@link ShellSpec#facade()}), named by descriptor.
  *
  * <pre>
- * final class GenNNNPattern extends core.compile.TDFAPattern implements &lt;surface Pattern&gt; {
+ * final class GenNNNPattern extends core.compile.TDFAPattern implements &lt;facade Pattern&gt; {
  *     public final GenNNN eng;              // concrete engine class (per-pattern), or
  *                                            // RegexEngine-typed for bring-your-own engines
  *     GenNNNPattern(String pattern, int flags, int ps, RegexEngine e, WholeEngine w,
- *                   UnicodeDataProvider prov, PatternSurface surface, GenNNN eng) { ... }
+ *                   UnicodeDataProvider prov, Class facade, GenNNN eng) { ... }
  *     {@literal @Override} public PatternMatcher matcher(CharSequence in) { return new GenNNNMatcher(this, in); }
  * }
  * final class GenNNNMatcher extends core.compile.PatternMatcher {
@@ -76,7 +75,7 @@ public final class ShellEmitter {
     /**
      * Emit and instantiate the shell described by {@code spec}. Returns
      * the generated {@code Pattern} instance as {@link Object} — the
-     * calling surface casts it (it owns the type). Throws
+     * calling facade casts it (it owns the type). Throws
      * {@link IllegalStateException} on emission problems; failures
      * propagate to the caller (they are bugs, not shapes to route
      * around).
@@ -90,7 +89,8 @@ public final class ShellEmitter {
         String engOwner = concrete ? engName : ENGINE_ITF;
         String engDesc = "L" + engOwner + ";";
         RegexEngine engInstance = spec.engine();
-        PatternSurface surface = spec.surface();
+        Class<?> facade = spec.facade();
+        String facadeInternal = facade.getName().replace('.', '/');
 
         // Per-instance naming: derive from the engine's class when concrete,
         // else from the monotonic shell sequence.
@@ -281,17 +281,17 @@ public final class ShellEmitter {
         cw.visitEnd();
         byte[] matBytes = cw.toByteArray();
 
-        // ---- GenNNNPattern extends core.compile.TDFAPattern implements <surface Pattern> ----
+        // ---- GenNNNPattern extends core.compile.TDFAPattern implements <facade Pattern> ----
         cw = new FrameClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER, patOwner, null, TDFAPATTERN,
-            new String[]{surface.patternInterface()});
+            new String[]{facadeInternal});
         cw.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, "eng", engDesc, null, null).visitEnd();
         // (String pattern, int flags, int ps, RegexEngine e, RegexEngine w, UnicodeDataProvider prov,
-        //  PatternSurface surface, Eng eng)
+        //  Class facade, Eng eng)
         String provDesc = "Lio/github/jemmix/tdfa/core/unicode/UnicodeDataProvider;";
-        String surfaceDesc = "Lio/github/jemmix/tdfa/core/compile/PatternSurface;";
+        String facadeDesc = "Ljava/lang/Class;";
         mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>",
-            "(Ljava/lang/String;IIL" + ENGINE_ITF + ";L" + WHOLE_ITF + ";" + provDesc + surfaceDesc + engDesc + ")V",
+            "(Ljava/lang/String;IIL" + ENGINE_ITF + ";L" + WHOLE_ITF + ";" + provDesc + facadeDesc + engDesc + ")V",
             null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -303,7 +303,7 @@ public final class ShellEmitter {
         mv.visitVarInsn(Opcodes.ALOAD, 6);
         mv.visitVarInsn(Opcodes.ALOAD, 7);
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, TDFAPATTERN, "<init>",
-            "(Ljava/lang/String;IIL" + ENGINE_ITF + ";L" + WHOLE_ITF + ";" + provDesc + surfaceDesc + ")V", false);
+            "(Ljava/lang/String;IIL" + ENGINE_ITF + ";L" + WHOLE_ITF + ";" + provDesc + facadeDesc + ")V", false);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitVarInsn(Opcodes.ALOAD, 8);
         mv.visitFieldInsn(Opcodes.PUTFIELD, patOwner, "eng", engDesc);
@@ -348,8 +348,8 @@ public final class ShellEmitter {
             Class<?> patCls = Class.forName(patOwner.replace('/', '.'), true, gcl);
             Class<?> engCls = concrete ? Class.forName(engOwner.replace('/', '.'), true, gcl) : RegexEngine.class;
             return patCls.getDeclaredConstructor(String.class, int.class, int.class, RegexEngine.class,
-                WholeEngine.class, UnicodeDataProvider.class, PatternSurface.class, engCls).newInstance(spec.pattern(),
-                    spec.flags(), spec.programSize(), engInstance, spec.wholeEngine(), spec.provider(), surface,
+                WholeEngine.class, UnicodeDataProvider.class, Class.class, engCls).newInstance(spec.pattern(),
+                    spec.flags(), spec.programSize(), engInstance, spec.wholeEngine(), spec.provider(), facade,
                     engInstance);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("shell emission failed", e);
