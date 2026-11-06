@@ -42,6 +42,19 @@ public interface CompileObserver {
     CompileObserver NONE = new CompileObserver() {
     };
 
+    /**
+     * The observer a compile runs with: {@code observer} when one is
+     * attached, {@link #NONE} otherwise — the one place the null-means-
+     * none policy lives. Each compile boundary resolves its observer
+     * through this exactly once and hands a non-null observer to
+     * everything below; pipeline code then calls {@code stage}/{@code
+     * note} unconditionally (a compile with no observer attached pays a
+     * handful of virtual calls into the no-op — see class doc).
+     */
+    static CompileObserver effective(CompileObserver observer) {
+        return observer != null ? observer : NONE;
+    }
+
     /** A stage completed: {@code nanos} wall-clock, {@code detail} per-stage value (see class doc). */
     default void stage(Stage stage, long nanos, int detail) {
     }

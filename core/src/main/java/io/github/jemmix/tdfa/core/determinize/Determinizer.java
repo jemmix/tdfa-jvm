@@ -121,8 +121,11 @@ public final class Determinizer {
      * over the determinized value. One meter spans both halves.
      */
     private static Tdfa compileWithMeter(Tnfa nfa, CompileMode mode, CompileObserver observer, WorkMeter meter) {
-        DeterminizedDfa det = new TdfaCompiler(nfa, mode, meter).compile(observer);
-        return TdfaMaterializer.finish(det, nfa, mode == CompileMode.POSIX, meter, observer);
+        // The public overloads accept a null observer ("no hook"); resolve
+        // it to NONE once here so both pipeline halves below take non-null.
+        CompileObserver obs = CompileObserver.effective(observer);
+        DeterminizedDfa det = new TdfaCompiler(nfa, mode, meter).compile(obs);
+        return TdfaMaterializer.finish(det, nfa, mode == CompileMode.POSIX, meter, obs);
     }
 
 }

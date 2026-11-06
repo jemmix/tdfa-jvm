@@ -85,9 +85,10 @@ public final class ShellEmitter {
     }
 
     public static Object emit(ShellSpec spec) {
-        String engOwner = spec.engineInternalName() != null ? spec.engineInternalName() : ENGINE_ITF;
+        String engName = spec.engineInternalName();
+        boolean concrete = engName != null;
+        String engOwner = concrete ? engName : ENGINE_ITF;
         String engDesc = "L" + engOwner + ";";
-        boolean concrete = spec.engineInternalName() != null;
         RegexEngine engInstance = spec.engine();
         PatternSurface surface = spec.surface();
 

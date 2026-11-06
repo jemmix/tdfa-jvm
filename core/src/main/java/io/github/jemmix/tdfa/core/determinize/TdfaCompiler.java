@@ -18,6 +18,7 @@ import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Objects;
 import java.util.TreeSet;
 
 import static io.github.jemmix.tdfa.core.dfa.Tdfa.NEVER_STOP;
@@ -731,7 +732,10 @@ final class TdfaCompiler {
      * closure scratch) is unreachable.
      */
     DeterminizedDfa compile(CompileObserver observer) {
-        final CompileObserver obs = observer != null ? observer : CompileObserver.NONE;
+        // Non-null by contract: the Determinizer funnels resolve the
+        // observer before reaching either pipeline half (a null here is a
+        // wiring bug — fail loudly, never silently drop observations).
+        final CompileObserver obs = Objects.requireNonNull(observer, "observer");
         long tDet = System.nanoTime();
         determinize();
         StateTables tables = computeStateTables();

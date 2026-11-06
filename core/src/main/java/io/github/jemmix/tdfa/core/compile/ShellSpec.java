@@ -50,6 +50,21 @@ public final class ShellSpec {
         this.surface = surface;
     }
 
+    /**
+     * A spec for a compile's shell, deriving the engine wiring from how
+     * the engine was sourced: a per-pattern generated engine
+     * ({@code factory == null}) is wired by its concrete class — its
+     * internal name is the {@code engineInternalName}; a bring-your-own
+     * factory engine is wired as {@link RegexEngine} ({@code null} name),
+     * because a factory may hand back an anonymous or lambda class no
+     * emitted bytecode can name. The one place that decision lives.
+     */
+    public static ShellSpec of(String pattern, int flags, int programSize, RegexEngine engine, WholeEngine wholeEngine,
+        RegexEngineFactory factory, UnicodeDataProvider provider, PatternSurface surface) {
+        String engineInternalName = factory == null ? engine.getClass().getName().replace('.', '/') : null;
+        return new ShellSpec(pattern, flags, programSize, engine, wholeEngine, engineInternalName, provider, surface);
+    }
+
     public String pattern() {
         return pattern;
     }

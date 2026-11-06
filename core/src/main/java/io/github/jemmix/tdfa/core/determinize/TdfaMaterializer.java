@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
+import java.util.Objects;
 
 import static io.github.jemmix.tdfa.core.dfa.Tdfa.OP_APPEND_POS;
 import static io.github.jemmix.tdfa.core.dfa.Tdfa.OP_COPY;
@@ -64,7 +65,7 @@ final class TdfaMaterializer {
      * determinization ticked, so one CPU budget covers the whole compile.
      */
     static Tdfa finish(DeterminizedDfa det, Tnfa nfa, boolean longest, WorkMeter meter, CompileObserver observer) {
-        return new TdfaMaterializer(nfa, longest, meter, observer != null ? observer : CompileObserver.NONE).run(det);
+        return new TdfaMaterializer(nfa, longest, meter, Objects.requireNonNull(observer, "observer")).run(det);
     }
 
     private Tdfa run(DeterminizedDfa det) {

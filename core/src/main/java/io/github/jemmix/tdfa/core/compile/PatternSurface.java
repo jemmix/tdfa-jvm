@@ -198,6 +198,39 @@ public final class PatternSurface {
         return defaultSemantics;
     }
 
+    /**
+     * The lane a compile through this surface runs in: the explicit
+     * {@code semantics} when the caller carried one (the options route),
+     * this surface's {@link #defaultSemantics() default lane} otherwise —
+     * the one place the null-means-default-lane policy lives. The compile
+     * boundary resolves its semantics through this exactly once; the
+     * pipeline below takes the result as non-null.
+     */
+    public Semantics effectiveSemantics(Semantics semantics) {
+        return semantics != null ? semantics : defaultSemantics;
+    }
+
+    /** The Unicode source a provider-less compile through this surface
+     *  resolves to (the surface's fold-universe default). */
+    public Supplier<UnicodeDataProvider> defaultProvider() {
+        return defaultProvider;
+    }
+
+    /**
+     * The Unicode tables a compile through this surface resolves against —
+     * the fold-universe seam: the explicit {@code provider} when the
+     * compile carried one (never wrapped), this surface's
+     * {@link #defaultProvider() default} otherwise — the jur surface the
+     * property resolution (JDK tables, java.util.regex folds incl. the
+     * merged İ/ı orbit), the re2j surface the same tables under the
+     * built-in RE2-lineage reading (İ/ı inert, its oracle's orbits). The
+     * one place the null-means-surface-default policy lives; the compile
+     * boundary resolves its provider through this exactly once.
+     */
+    public UnicodeDataProvider effectiveProvider(UnicodeDataProvider provider) {
+        return provider != null ? provider : defaultProvider.get();
+    }
+
     /** The flag bits this surface accepts (the roster mask). */
     public int validFlags() {
         return validFlags;
@@ -211,12 +244,6 @@ public final class PatternSurface {
     /** The engine backend this surface's compiles are served by. */
     public EngineBackend backend() {
         return backend;
-    }
-
-    /** The Unicode source a provider-less compile through this surface
-     *  resolves to (the surface's fold-universe default). */
-    public Supplier<UnicodeDataProvider> defaultProvider() {
-        return defaultProvider;
     }
 
     @Override

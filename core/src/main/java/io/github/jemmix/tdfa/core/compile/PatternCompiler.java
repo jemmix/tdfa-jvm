@@ -74,7 +74,7 @@ public final class PatternCompiler {
         if ((flags & ~surface.validFlags()) != 0) {
             throw new IllegalArgumentException(surface.flagsMessage());
         }
-        Semantics semantics = explicitSemantics != null ? explicitSemantics : surface.defaultSemantics();
+        Semantics semantics = surface.effectiveSemantics(explicitSemantics);
         String fl = regex;
         if ((flags & PatternSurface.CASE_INSENSITIVE) != 0) {
             fl = "(?i)" + fl;
@@ -92,14 +92,12 @@ public final class PatternCompiler {
         boolean disableUnicodeGroups = (flags & PatternSurface.DISABLE_UNICODE_GROUPS) != 0;
         boolean findOnly = (flags & PatternSurface.FIND_ONLY) != 0;
         boolean multiValued = (flags & PatternSurface.MULTI_VALUED_TAGS) != 0;
-        // Provider-less compiles resolve to the SURFACE's default — the
-        // fold-universe seam: the jur surface the property resolution (JDK
-        // tables, java.util.regex folds incl. the merged İ/ı orbit), the
-        // re2j surface the same tables under the built-in RE2-lineage
-        // reading (İ/ı inert, its oracle's orbits). An explicit provider is
-        // never wrapped.
-        UnicodeDataProvider prov = provider != null ? provider : surface.defaultProvider().get();
-        CompileObserver obs = observer != null ? observer : CompileObserver.NONE;
+        // Null knobs resolve to their defaults exactly once, here at the
+        // single machinery entry: the surface's lane and fold-universe
+        // tables (see the effective* policies on PatternSurface), and the
+        // no-op observer — everything below takes all three as non-null.
+        UnicodeDataProvider prov = surface.effectiveProvider(provider);
+        CompileObserver obs = CompileObserver.effective(observer);
         // One CPU ledger for the whole compile. Full compiles: the
         // front-end and the find determinization with its partial-whole
         // side table (when the pike cut bites) all debit the same pool.
@@ -163,10 +161,9 @@ public final class PatternCompiler {
         // classes), implementing the compile's surface interface.
         // Emission failures propagate like engine-emission
         // failures (see engineOf): they are bugs, not shapes to route
-        // around.
-        String owner = factory == null ? eng.getClass().getName().replace('.', '/') : null;
+        // around. ShellSpec.of owns the generated-vs-byo wiring decision.
         TDFAPattern p = (TDFAPattern) surface.backend()
-            .emit(new ShellSpec(regex, flags, ps, eng, wholeEng, owner, provider, surface));
+            .emit(ShellSpec.of(regex, flags, ps, eng, wholeEng, factory, provider, surface));
         obs.note("engine", factory == null ? "generated" : "byo-shell");
         return p;
     }
