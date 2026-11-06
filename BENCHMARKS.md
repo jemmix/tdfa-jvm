@@ -14,7 +14,12 @@ default the flip shipped moves only divergence-axis behavior (terminator
 sets, fold universe, unit boundaries, anchor EOL rules, iteration spans,
 `(?U)`), none of which this corpus's shapes exercise beyond noise. The
 evidence re-base (the open both-lane soak TODO item) re-runs and
-refreshes the numbers in both lanes.
+refreshes the numbers in both lanes. Since 2026-11-06 the landing gate
+additionally carries two codepoint-lane rows compiled through the
+`:re2j` surface (`re2jFindAllWide`, `re2jScanWideNoMatch` — review item
+C46), so ORIGIN_SIM and the codepoint trigger/raw scans are gated on
+every PR even though the artifact tables below still reflect the default
+lane.
 
 Measurement-context note: tables captured before the 2026-08 module
 restructure (the sub-10 ns anchored-match era) are preserved in this file's

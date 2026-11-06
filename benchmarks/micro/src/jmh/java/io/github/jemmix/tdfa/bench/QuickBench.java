@@ -38,6 +38,16 @@ public final class QuickBench {
         "d\u00e9veloppement \u00e9tablissement \u00e9v\u00e9nement diff\u00e9rent \u00e0 c\u00f4t\u00e9 engagement ",
         1 << 14);
 
+    // Codepoint-lane rows (compiled through the :re2j surface — the only lane
+    // that routes ORIGIN_SIM / triggerScan / scanSkipsPairs): wide classes,
+    // dense hits and a dense no-match scan, supplementary letters included
+    // (Deseret). No ASCII 'x' anywhere, so \p{L}{2,}x cannot match by
+    // construction — the no-match row's expected count must NOT be priced
+    // with the jur oracle (jur is quadratic on exactly this shape).
+    static final String WIDE_RE2J_INPUT = rep(
+        "\u0441\u043b\u043e\u0432\u043e \u0437\u0430\u043f\u0430\u0441 \uD801\uDC00\uD801\uDC01 \u043e\u0431\u0441\u0442\u043e\u044f\u0442\u0435\u043b\u044c\u043d\u043e ",
+        1 << 14);
+
     private QuickBench() {
     }
 
@@ -133,10 +143,21 @@ public final class QuickBench {
         Pattern vmWordNo = Pattern.compile("\\bxylophone\\b", 0, TdfaRunner::new);
         Pattern asmWordNo = Pattern.compile("\\bxylophone\\b");
 
+        // Codepoint lane: same shapes compiled through the :re2j surface so
+        // the gate sees ORIGIN_SIM / the codepoint triggerScan / pair-interior
+        // skips — the rungs the C6–C9 folds touch (review item C46).
+        io.github.jemmix.tdfa.re2j.Pattern vmWide =
+            io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}{2,}", 0, TdfaRunner::new);
+        io.github.jemmix.tdfa.re2j.Pattern asmWide = io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}{2,}");
+        io.github.jemmix.tdfa.re2j.Pattern vmWideX =
+            io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}{2,}x", 0, TdfaRunner::new);
+        io.github.jemmix.tdfa.re2j.Pattern asmWideX = io.github.jemmix.tdfa.re2j.Pattern.compile("\\p{L}{2,}x");
+
         String noMatch = rep("the quick brown fox jumps over lazy dogs 0123 ", 1 << 14) + "tail";
         String dense = DENSE_INPUT;
         String sparse = SPARSE_INPUT;
         String latin1 = LATIN1_INPUT;
+        String wideRe2j = WIDE_RE2J_INPUT;
 
         String compileRe = "(\\w+)@(\\w+)\\.(com|org|net)|#([0-9a-f]{6})|\\bword\\b";
 
@@ -159,6 +180,10 @@ public final class QuickBench {
         ops.add(new Op("prefixWordDense.asm", () -> findAll(asmWordDense, dense)));
         ops.add(new Op("prefixWordNoMatch.vm", () -> vmWordNo.matcher(dense).find() ? 1 : 0));
         ops.add(new Op("prefixWordNoMatch.asm", () -> asmWordNo.matcher(dense).find() ? 1 : 0));
+        ops.add(new Op("re2jFindAllWide.vm", () -> findAll(vmWide, wideRe2j)));
+        ops.add(new Op("re2jFindAllWide.asm", () -> findAll(asmWide, wideRe2j)));
+        ops.add(new Op("re2jScanWideNoMatch.vm", () -> vmWideX.matcher(wideRe2j).find() ? 1 : 0));
+        ops.add(new Op("re2jScanWideNoMatch.asm", () -> asmWideX.matcher(wideRe2j).find() ? 1 : 0));
         ops.add(new Op("compile.vm", () -> System.identityHashCode(Pattern.compile(compileRe, 0, TdfaRunner::new))));
         ops.add(new Op("compile.asm", () -> System.identityHashCode(Pattern.compile(compileRe))));
         // re2j shim compile: eager find engine + eagerly compiled anchored-both engine
@@ -168,6 +193,14 @@ public final class QuickBench {
     }
 
     static int findAll(Pattern r, String in) {
+        int n = 0;
+        for (io.github.jemmix.tdfa.core.engine.Matcher m = r.matcher(in); m.find();) {
+            n++;
+        }
+        return n;
+    }
+
+    static int findAll(io.github.jemmix.tdfa.re2j.Pattern r, String in) {
         int n = 0;
         for (io.github.jemmix.tdfa.core.engine.Matcher m = r.matcher(in); m.find();) {
             n++;
@@ -316,6 +349,12 @@ public final class QuickBench {
         m.put("prefixWordDense.asm", jurFindAll("\\bsinging\\b", DENSE_INPUT));
         m.put("prefixWordNoMatch.vm", jurFind("\\bxylophone\\b", DENSE_INPUT));
         m.put("prefixWordNoMatch.asm", jurFind("\\bxylophone\\b", DENSE_INPUT));
+        // jur is linear on the dense findAll shape, safe to oracle; the
+        // no-match row is 0 by construction (see WIDE_RE2J_INPUT).
+        m.put("re2jFindAllWide.vm", jurFindAll("\\p{L}{2,}", WIDE_RE2J_INPUT));
+        m.put("re2jFindAllWide.asm", jurFindAll("\\p{L}{2,}", WIDE_RE2J_INPUT));
+        m.put("re2jScanWideNoMatch.vm", 0L);
+        m.put("re2jScanWideNoMatch.asm", 0L);
         return m;
     }
 

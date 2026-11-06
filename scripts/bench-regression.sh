@@ -33,7 +33,7 @@ if [[ $QUICK == 1 ]]; then
     # Module-restructure layout: QuickBench exercises the facade (root) plus the
     # core interpreter and the ASM backend's generated-code path — all three
     # class dirs must be on the runtime classpath.
-    java -cp "benchmarks/micro/build/classes/java/jmh:build/classes/java/main:core/build/classes/java/main:asm/build/classes/java/main:$ASM_JAR" \
+    java -cp "benchmarks/micro/build/classes/java/jmh:build/classes/java/main:core/build/classes/java/main:asm/build/classes/java/main:re2j/build/classes/java/main:$ASM_JAR" \
         io.github.jemmix.tdfa.bench.QuickBench "$RESULTS" 1>&2
     THRESHOLD=0.15   # quick harness: min-of-3 keeps noise low, but allow a bit more than JMH
 else

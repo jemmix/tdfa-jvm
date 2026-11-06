@@ -10,6 +10,7 @@ repositories {
 
 dependencies {
     jmh project(':')
+    jmh project(':re2j')
     jmh project(':testlib:rebar')
     jmh 'com.google.re2j:re2j:1.8'
     // Pinned to a specific commit on JitPack (replaces previous main-SNAPSHOT).
