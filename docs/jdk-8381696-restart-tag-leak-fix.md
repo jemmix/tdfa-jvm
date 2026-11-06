@@ -1,4 +1,4 @@
-# JDK-8381696: the restart-tag leak from the JDK side
+# JDK-8381696: the capture-group leaks in java.util.regex, and the fix shape we expect upstream
 
 The exclusion PR #85 decided (`SKIP_RESTART_TAG_LEAK`, pinned both ways in
 `RestartTagLeakParityTest`) is a *java.util.regex* bug with a public record:
@@ -10,175 +10,262 @@ with the deepest public analysis), verified by Oracle on JDK 8u481 and
 27-ea, triaged **P4 / fixVersion tbd** — open, unfixed, as of 2026-10-24.
 Our campaign found it independently six months later (seed 2819403508500839673,
 `(?:(\A))*(\n)` on `"a\n"`; [#84](https://github.com/jemmix/tdfa-jvm/pull/84)
-classified it, #85 decided it).
+classified it, #85 decided it), and the later campaigns added two adjacent
+families now pinned in `GroupCurlyStaleWriteParityTest`: the stale nested
+write after a greedy back-off, and its displaced twin.
 
-This doc records what we learned taking the bug apart from the JDK side —
-the exact mechanism in the JDK 26 sources, a prototype fix, its measured
-performance, and what lands for us the day the JDK fixes it either way.
+This doc records the JDK-side analysis: the mechanism, the fix direction a
+prototype implements, the decisions and tradeoffs behind that direction, the
+alternatives rejected and why, the verification, and what lands for us the
+day the JDK fixes it. An earlier revision of this document proposed a
+different fix — clearing the group array at every scan-loop restart — and
+that proposal is kept below under "Alternatives", with the reasons it was
+dropped.
 
-## The mechanism (JDK 26.0.2 sources, verified by instrumented trace)
+## The mechanism (verified by instrumented runs against JDK sources)
 
-Two facts compose into the leak:
+Three facts compose into the leaks.
 
 1. **`Matcher.search(int from)` resets the group array once per `find()`**
-   (`for (i…) groups[i] = -1;`) and hands off to `root.match`. The scan
-   loop's restart attempts — `Start`/`StartS`'s `for (; i <= guard; i++)`
-   — never re-clear. A span committed during a failed start position
-   survives into every later attempt of the same `find()`.
+   and hands off to `root.match`. The scan loops (`Start`, `StartS`, `First`)
+   retry at successive positions without re-clearing. A capture written
+   during a failed position survives into every later attempt of the same
+   `find()`.
 
-2. **Quantifier drivers commit captures outside any transaction that a
-   later failure unwinds.** The decisive contrast, from a
-   `--patch-module` instrumented build (`(?:(a))*$` on `"aaab"`):
+2. **A quantified group compiles to one of two drivers.** If the body
+   `study()`s as deterministic, `group0()` builds `GroupCurly`, which runs
+   repetitions in a loop and backs off by decrementing counters. Otherwise
+   it builds the recursive `Prolog`/`Loop` pair. The recursive driver is
+   transactional for free: each `GroupTail` in the body saves its group's
+   positions on entry and restores them on failure, through the Java call
+   stack. `GroupCurly` is not: it restores its *own* group's two slots when
+   `capture` is true, and never touches the slots of groups *nested in its
+   body*. Those writes are made by the inner `GroupTail` as each repetition
+   completes; nothing undoes them when the repetition is undone.
 
-   ```
-   (a)*$      → GroupCurly capture=true  … FAILED → restore g1 [-1,-1]     (clean)
-   (?:(a))*$  → GroupCurly capture=false … GT g1 write [0,1][1,2][2,3]
-                                        … FAILED → restore g0 (locals only)  g1=[2,3] stands
-   ```
+3. **Two adjacent defects widen the same hole.** Possessive quantifiers on
+   groups (`(a)*+`) compile to a plain `Curly`/`Ques` wrapping the group
+   nodes, which restores nothing on failure. And `GroupCurly.match0`'s
+   back-off success path rewrote its own group's slots from stale offsets
+   (`i-k`), clobbering values written when the continuation re-ran the same
+   group through an enclosing quantifier — a wrong *value*, not just a stale
+   one (`(?:(a){0,2})*` on `"aaa"` reported `(1,2)` where the participating
+   iteration ended at `(2,3)`).
 
-   When a quantifier applies to a *bare* capture (`(a)*`), `closure()`
-   extracts it into `GroupCurly(capture=true)`, which snapshots the
-   group's slots on entry and restores them on its own failure — fully
-   transactional (and it sets `locals[localIndex] = -1` so the inner
-   `GroupTail` takes its no-op "group reference" branch). When the
-   quantified atom merely *contains* a capture — wrapped in `(?:…)`, or
-   with neighbors — the atom runs under `capture=false`, the inner
-   `GroupTail` writes each completed iteration, and its own save/restore
-   ends at the atom boundary: by the time the driver's exit continuation
-   fails, the stack holds no `GroupTail` frame, so every completed
-   iteration's write stands.
+The zero-width assertions and atomic groups leak through the same opening
+by a different route: `(?=…)`, `(?!…)`, `(?<=…)`, `(?<!…)` and `(?>…)`
+never unwind the captures their condition or body wrote when the construct
+fails (`(?!(a))b` on `"ab"` leaves g1 set; `(?>(a))x|(.)` on `"ab"` leaks
+g1 into the `(.)` match). When such a construct *succeeds*, its captures
+persist by documented behavior and must be kept.
 
-   This is why the leak is family-shaped, not one node's bug: the
-   `GroupCurly capture=false` escape explains `(?:(a))*$`; the
-   `Loop`-driven inner-atom shape `(a(b))*c` on `"aba c"` (outer group
-   restored, inner `g2 1..2` leaked outside match `4..5`) escapes the
-   same way through a different driver; the [#89 displaced-write
-   variant](https://github.com/jemmix/tdfa-jvm/pull/89) is the same carry
-   landing past the accepted match from the loop's last atomic span.
-   Node-by-node fixing is whack-a-mole — the same conclusion our
-   classifier's exact signature (skeleton-equal + an oracle group span
-   outside its own match, displaced-write variants included per #89)
-   encodes: detect the carry, not the node.
+Our engine pins the correct reading in three tiers: `RestartTagLeakParityTest`
+(cross-restart carry), `GroupCurlyStaleWriteParityTest.staleWrites` (the
+discarded iteration's span reported as set), and its `displacedWrites` (the
+discarded iteration reported where the participating one belongs). All
+three are one bug class: a capture from an abandoned attempt or iteration
+outliving it.
 
-## The fix: capture reset at the restart boundary
+## The fix: restore the exact saved positions when an attempt is undone
 
-The coherent boundary is the one `search()` already uses — reset capture
-state per restart attempt. Ship shape (30 changed lines; the full
-diff is [`docs/patches/jdk-8381696-restart-reset-prototype.patch`]
-(docs/patches/jdk-8381696-restart-reset-prototype.patch), generated
-against JDK 26.0.2 `src.zip`, OpenJDK repo layout):
+The prototype patch
+([`docs/patches/jdk-8381696-exact-restore-prototype.patch`](docs/patches/jdk-8381696-exact-restore-prototype.patch),
+generated from an `openjdk/jdk` tree, base `d39a62afc66`, JDK 28 dev)
+implements the transaction at the level that owns the repetition — the
+quantifier driver. The principle:
 
-- `Matcher`: a `capturesDirty` flag plus `resetCaptures()` (fill
-  `groups[2..] = -1`); `search()` clears the flag with its existing reset.
-- `Start`/`StartS`: after a failed attempt, `if (matcher.capturesDirty)
-  matcher.resetCaptures();`
-- The flag is set at exactly two choke points that cover every capture
-  write outside the already-transactional `capture=true` path:
-  `GroupTail`'s normal-case write, and `GroupCurly`'s entry when
-  `capture` (its writes are restored on failure, but the flag is
-  conservative and costs nothing).
+> Before an attempt that can be undone, save the group positions its body
+> can write. When the attempt is undone, restore the saved values. When the
+> construct fails as a whole, restore the values from before its first
+> attempt. When it succeeds, keep the current values.
 
-The patch file is a pure unified diff (no preamble, `patch -p1` and
-`git apply` clean): a derivative of OpenJDK `java.util.regex` (Oracle,
-GPLv2+CE), kept as an upstream prototype — not vendored code, never on
-any tdfa classpath.
+This mirrors what the recursive path obtains from `GroupTail` unwinding,
+which is also the arbiter for every semantics question below.
 
-This is *our* reading — per-restart reset — implemented in the oracle
-itself: groups describe the accepted match; within-match retention the
-javadoc promises (`(a(b)?)+` on `"aba"` keeps g2 `"b"`) is untouched,
-because it lives inside a single attempt.
+### Decision 1: transaction at the driver, exact values
 
-### Verification (all on JDK 26.0.2 via `--patch-module`)
+The transaction boundary is the repetition, not the scan loop and not
+`GroupTail`. Restoring *values* (not markers) matters because the state
+being restored is the positions of earlier, still-standing iterations, not
+a blank slate. It also preserves the documented within-match retention —
+`(a(b)?)+` on `"aba"` keeps g2 `"b"` — because only *undone* repetitions
+restore.
 
-- **Battery**: every published leak shape goes clean — the JBS/safere
-  set (`(?:(a))*$` greedy/lazy/`{0,}`, on `"aaab"`/`"ab"`), our #85 set
-  (`(?:(\A))*(\n)` canonical + lazy mirror, `(a(b))*c`,
-  `(?:(\A))*(?:b)`) — and the fixed JDK's spans are **identical to the
-  `tdfaSpans` pinned in `RestartTagLeakParityTest`**, case for case.
-  Controls (`(x)*y`, `(\A)?x*(a)`) and the documented `(a(b)?)+`
-  retention are unchanged.
-- **945-case differential fuzzer** (25 base patterns × 15 inputs × 35
-  core×tail mutations, backreference shapes included — `(a)(b)?\2`,
-  `((a)\2?)*`, `(a)?b(\1)`): 29 cases differ between stock and fixed;
-  **all 29 are exactly the leak signature** (identical match spans and
-  counts; only a group span strictly outside the match → `-1,-1`).
-  Zero collateral change; no case where a backreference's view of
-  leaked state changes matching itself.
+### Decision 2: compile-time range, runtime stack
 
-### Performance (best-of-6 after 4 warmups, Apple Silicon, 26.0.2)
+`group0()` records the capture-group count before parsing a quantified
+group's body. Group numbering in `java.util.regex` is lexical and has no
+branch resets, so `[count-before, count-after)` is exactly the contiguous
+range of groups nested in the body, in `groups[]` slot terms. `GroupCurly`
+carries that range. At match time a growable `int[]` stack on the Matcher
+(`groupPosStack`, top reset by `search()`/`match()`) holds the saved
+frames. Nodes are shared across matchers, so all mutable state lives on
+the Matcher.
 
-| bench                              | stock   | naive reset          | guarded reset |
-|------------------------------------|---------|----------------------|---------------|
-| B1 fail-fast scan, 20 grp, 4 MB    | 0.67 ms | **14.27 ms (21×)**   | 0.67 ms       |
-| B1x fail-fast scan, 100 grp, 4 MB  | 5.38 ms | **34.57 ms (6.4×)**  | 5.75 ms       |
-| B2 dirty-then-fail, 20 grp, 1 MB   | 5.91 ms | 8.11 ms (+37%)       | 5.95 ms       |
-| B3 find-all emails, 4 MB           | 14.99 ms| 13.99 ms             | 14.29 ms      |
+Frame discipline per driver:
 
-The **naive** fix — unconditional `groups[2..] = -1` per failed scan
-position — is unshippable: O(groups) per *scanned position* lands on the
-hottest `find()` path (pure failing scans), 21× at 20 groups. The
-**guarded** fix costs one boolean store per capture write and one test
-per restart; the O(groups) fill runs only after attempts that actually
-dirtied captures — within run-to-run noise on every bench, including the
-adversarial B2 (20 captures written at every position). No allocation,
-no successful-path change, `matches()`/`lookingAt()` untouched.
+| driver | frames |
+|---|---|
+| `match` (cmin loop) | one frame before the first repetition |
+| `match0` (greedy) | one frame per repetition attempt; one pop-restore per repetition undone on back-off; entry frame on total failure |
+| `match1` (lazy) | one frame, deferred until a repetition is attempted — a zero-repetition match, the common lazy case, saves nothing |
+| `match2` (possessive) | one frame before the first repetition |
+| assertions, atomic group | one frame; restored when the construct fails, kept when it succeeds |
 
-## Alternatives, and why the restart boundary wins
+For a single nested group — the common case — the single-frame drivers keep
+the two values in Java locals of the invocation; only the greedy driver
+needs the heap stack, because its frames must outlive the Java stack.
 
-- **Fully transactional `GroupTail`** (restore on every downstream
-  failure): breaks the javadoc'd within-match retention — `(a(b)?)+`
-  must keep g2 `"b"` per the `Pattern` "Groups and capturing" contract.
-  A spec change, not a fix.
-- **Driver-level snapshot/restore of the atom's compile-time capture
-  set**: fixes `GroupCurly(capture=false)` "properly" but must be
-  replicated across every driver (`Curly`, `Ques`, `Branch`, `Loop`/
-  `LazyLoop` bodies) — whack-a-mole, and per-attempt snapshot cost
-  scales with backtracking depth rather than scan positions.
-- **Generation-tagged groups** (validate slots on read): O(1) restarts
-  but touches every read path plus `toMatchResult`/`usePattern`; far
-  more invasive for no measurable gain over the guard.
+### Decision 3: bookkeeping gated on nested captures
 
-The restart boundary is one-size: cross-attempt carry becomes impossible
-by construction, for every current and future driver, while
-within-attempt semantics stay byte-identical.
+`nestedCount > 0` guards every save and restore. A pattern without a
+capture nested in a quantified group, like `(a)*`, pays nothing: no
+allocation, no stack traffic, no measurable change.
+
+### Decision 4: possessive quantifiers route to `GroupCurly`
+
+`group0()` builds `GroupCurly(POSSESSIVE)` instead of the raw `Curly`/
+`Ques` whenever the group can write group slots. The iterative possessive
+driver restores on failure; the recursive one never did.
+
+### Decision 5: the greedy back-off rewrite is deleted
+
+The rewrite of the group's own slots in `match0`'s back-off success path
+was redundant — every other writer already maintains exact per-iteration
+values — and was the source of the stale-offset wrong values. Removing it
+fixes the displaced family.
+
+### Decision 6: assertions and atomic groups restore on failure
+
+Each such node carries the range of groups inside it and wraps its result:
+failure restores, success keeps. One addition in `GroupCurly.match0` covers
+the lookahead that matched inside a later-failing repetition: a failed
+repetition attempt restores its saved frame rather than assuming the body
+unwound itself.
+
+### Invariant worth writing down
+
+`GroupCurly.match0` restarts its inner loop with a fresh constant length
+when a repetition's width changes: the attempt that revealed the change is
+discarded and retried recursively. A discarded attempt must be undone
+*before* the recursion captures its entry state, or the recursion's failure
+restore writes the discarded attempt's values back. The prototype had this
+bug; only inputs mixing one-unit and two-unit characters (surrogate pairs
+with lone surrogates) can trigger the width change, which is why ASCII-only
+differential corpora missed it. It is fixed by restoring the frame before
+the recursive call, and it is the reason the verification below includes a
+surrogate-heavy corpus.
+
+## Semantics after the fix
+
+A group reports the positions of its last repetition that participated in
+the accepted match, or null if none did. Successful lookahead and atomic
+captures persist; failed ones do not. Backreferences make the cleanup
+visible in match results: a backreference to a group that did not
+participate fails, so patterns that matched *because of* a leaked span stop
+matching (`(?<mn>a(?!(b))){0,3}+\2` on `"ab"`). Python `re` agrees on
+every such case examined. The fixed JDK's spans equal our pinned engine
+spans on all fourteen cases of `RestartTagLeakParityTest` and
+`GroupCurlyStaleWriteParityTest` — all three tiers.
+
+## Verification
+
+- **Differential fuzzing against a reference build** that forces every
+  slot-writing quantified group onto the recursive `Prolog`/`Loop` path
+  (correct by construction): 588k generated cases over greedy, lazy,
+  possessive, alternation, backreference, named-group, lookaround,
+  supplementary and surrogate-mixing alphabets — zero divergences; stock
+  diverges on ~4,500.
+- **Python `re` as an independent oracle** on 104k cases (possessive
+  included): the only divergences are the documented engine differences
+  (empty-match advance policy; Python's per-code-point string model makes
+  it unusable as an oracle on surrogate-mixing inputs).
+- **The JDK's own suite**: `test/jdk/java/util/regex` in full (1,002
+  framework tests) passes unchanged — no existing test relies on the
+  leaking behavior.
+- **Targeted batteries**: the published reproducer set, zero-length
+  repetition participation (`(?:(a?))*` keeps `(1,1)`), within-match
+  retention, region/flags/`CANON_EQ` matrices, `hitEnd`/`requireEnd`,
+  matcher reuse, adversarial memory shapes.
+- **Adversarial review** of API contracts, compilation-graph invariants
+  (the nested-range computation audited against an independent lexical
+  scanner over 24k generated patterns), and performance/memory.
+
+## Performance and memory
+
+Isolated JMH measurements (one fork per benchmark; shared forks give
+polluted JIT profiles and wildly wrong numbers):
+
+- Patterns without nested captures: unchanged.
+- Zero-repetition lazy, possessive optional: within noise of stock.
+- Realistic deterministic bodies with one nested group: −7% to +33%
+  (about 3 ns per repetition — two loads, two stores, a counter).
+- The recursive alternative (decision 2's reference build) is 1.2–2.1×
+  slower than the fixed driver on the same shapes.
+
+Memory: the greedy driver's stack is O(repetitions × nested groups) while
+backtracking through them, comparable in kind to Python's capture stack
+(4.4× our footprint on the same shape) and friendlier than the recursive
+path, which overflows the Java stack far earlier. The stack is retained at
+its high-water mark for the Matcher's life, like `localsPos`. Early
+versions pushed one frame per repetition in *all* drivers; an adversarial
+reviewer demonstrated an `OutOfMemoryError` reachable with a tiny input and
+a large `{n}` bound, which is why the single-frame drivers save once (and
+the lazy one defers even that).
+
+## Alternatives, and why they were rejected
+
+- **Reset the group array at every scan-loop restart** (this document's
+  earlier proposal). It clears cross-restart carry but nothing else: the
+  stale nested write after a greedy back-off (`(?:(b))*b`), the displaced
+  write, the possessive leaks, the assertion leaks, and the stale-offset
+  wrong values all survive, because they live *within* one scan position.
+  It also costs a flag write on every `GroupTail` commit — on every
+  pattern, including those that cannot leak — and an O(groups) fill per
+  dirty restart. Fuzzing its 945-case battery found no backreference
+  interactions; the exact-restore battery did (`{0,3}+\2` above), which
+  is a sampling statement, not a semantic one.
+- **Force the recursive `Loop` path** for every slot-writing quantified
+  group. Correct by construction, and the reference implementation used to
+  verify the prototype. Rejected as the fix: 1.2–2.1× slower on the
+  affected patterns, and it changes the compiled shape of common patterns.
+- **Transactional `GroupTail`** (restore on any downstream failure).
+  Breaks the documented within-match retention. The tail is also the wrong
+  owner: the repetition, not the group, is the transaction.
+- **Generation-tagged groups** (validate slots on read). O(1) restarts,
+  but it touches every read path plus `toMatchResult`/`usePattern`, for no
+  measured gain over exact restore.
 
 ## What lands for us
 
-`RestartTagLeakParityTest` was built as the tripwire: the day a JDK
-fixes JDK-8381696 this way, the *"live oracle must still leak"*
-assertions fail on purpose, the fixed JDK's spans already match our
-pinned engine spans (verified above, case for case), and
-`SKIP_RESTART_TAG_LEAK` retires like `SKIP_SCOPED_U_UNTRANSLATABLE`
-(#82) and `SKIP_SURROGATE_UNIT_SEMANTICS` (#86) did — the exclusion
-becomes a hard comparison. TODO tracks it. A JDK-side fix shaped
-differently (e.g. normalization to RE2-style sticky captures) would
-instead surface as new hard mismatches — the classifier retirement is
-the reviewable moment either way.
-
-Upstream appetite is the bottleneck, not difficulty: P4/tbd, 20+ years
-old, rare impact. The analysis above (mechanism, guard, the naive-perf
-trap, the backreference non-issue) is exactly the review packet the JDK
-assignee needs.
+The parity pins were built as the retirement signal, and this fix shape
+retires all of them: the fixed JDK's spans equal the pinned engine spans
+on every case of `RestartTagLeakParityTest` and both tiers of
+`GroupCurlyStaleWriteParityTest` — verified case for case against the
+prototype. The day a JDK carries such a fix, the *"live oracle must still
+leak"* assertions fail on purpose and `SKIP_RESTART_TAG_LEAK` and
+`SKIP_GROUPCURLY_STALE_WRITE` retire the way earlier exclusions did. A JDK
+fix shaped differently (say, normalization to RE2-style sticky captures)
+would instead surface as new hard mismatches; the classifier retirement is
+the reviewable moment either way. TODO tracks it.
 
 ## Reproducing
 
-Everything runs against the running JDK's own `src.zip` — no OpenJDK
-checkout needed:
+The patch applies to an `openjdk/jdk` checkout (base `d39a62afc66`) with
+`patch -p1` / `git apply`. It is a derivative of OpenJDK
+`java.util.regex` (Oracle, GPLv2+CE), kept as an upstream prototype — not
+vendored code, never on any tdfa classpath. To build and run it without a
+full JDK build, compile the two touched files against a matching JDK and
+use `--patch-module`:
 
 ```sh
-JH=$(/usr/libexec/java_home)          # macOS; JDK 26.0.2 used here
-mkdir -p jdk/src/java.base/share/classes/java/util/regex mod
-unzip -o "$JH/lib/src.zip" 'java.base/java/util/regex/Pattern.java' \
-      'java.base/java/util/regex/Matcher.java' -d raw
-cp raw/java.base/java/util/regex/*.java jdk/src/java.base/share/classes/java/util/regex/
-(cd jdk && patch -p1 < ../docs/patches/jdk-8381696-restart-reset-prototype.patch)
-javac --patch-module java.base=jdk/src/java.base -d mod \
-      jdk/src/java.base/share/classes/java/util/regex/*.java
-java --patch-module java.base=$PWD/mod …   # fixed oracle; omit the flag
-java …                                     # for stock; diff the outputs
+javac --patch-module java.base=src -d mod \
+      src/java.base/share/classes/java/util/regex/*.java
+java --patch-module java.base=$PWD/mod …   # patched engine
+java …                                     # stock; diff the outputs
 ```
 
-The patch's diff paths use the OpenJDK repo layout
-(`src/java.base/share/classes/java/util/regex/…`) so it drops into an
-`openjdk/jdk` checkout with `patch -p1` unchanged; verified to apply
-cleanly to 26.0.2 pristine sources and to produce the tree tested above.
+The differential harnesses used for the numbers above are not part of this
+repository; the battery that matters here is the two parity tests — point
+`JurOracle` at a patched JDK and the pins above become the acceptance
+criteria.
