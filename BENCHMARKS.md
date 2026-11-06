@@ -32,6 +32,7 @@ Reproduce:
 ```bash
 ./gradlew :benchmarks:micro:jmh -PjmhInclude='ParameterizedShortInputBench'   # anchored short inputs
 ./gradlew :benchmarks:micro:jmh -PjmhInclude='ShortFindBench'                 # short-input search
+./gradlew :benchmarks:micro:jmh -PjmhInclude='StreamingBench'                 # streaming vs String surface
 ./scripts/bench-rebar.sh fast|accurate                                          # rebar corpus
 # LogExtractMacro: classpath per scripts/bench-rebar.sh, then
 #   java io.github.jemmix.tdfa.bench.LogExtractMacro
@@ -216,6 +217,38 @@ compile (QuickBench, gated rows in the landing baseline): VM ~32 µs /
 ASM ~38 µs — the µs-scale constant once first-compiles and classloading are
 amortized. Dictionary-scale patterns cost more (see the rebar artifacts);
 this is the known price of the linear-time guarantee, tracked in TODO.md.
+
+## 7. Streaming input — `StreamingBench` (JMH SingleShotTime, ns per full 2 M-char scan)
+
+Streaming vs the materialized String surface over the same data, same
+engine ([design](../docs/streaming-input.md); artifact
+`benchmarks/results-streaming-jmh.txt`, 2026-11-06). The streaming pitch
+is the memory shape — the window stays at the retention floor while the
+String surface materializes the whole stream — so read the rows as the
+price of that trade:
+
+| shape | String ASM | stream ASM/VM¹ | utf8 pipeline | stream/String |
+|---|---:|---:|---:|---:|
+| literal needle | 50 µs | 407–419 µs | 480–496 µs | ~8× |
+| `ip=(…)` capture extract | 103–107 µs | 421–472 µs | 489–554 µs | ~4× |
+| no-match scan | 1.58–1.74 ms | 1.72–1.95 ms | 1.77–1.95 ms | **~1.1×** |
+| live tail (`BEGIN.*THEEND`, never resolving) | 185 µs | 1.59–1.63 ms | 1.67–1.74 ms | 2.2×² |
+
+¹ Streaming is served by the one driver in `TdfaRunner` (generated
+classes delegate — the `matchWhole` move), so ASM and VM stream at the
+same speed by construction; the bench shows it (≤3 % apart on every
+row).
+² vs ASM's String surface; vs VM's (715 µs) it is ~2.2× too.
+
+**Reading:** no-match scans — the pure walk/simulation regime — stream
+at parity (the walk is carried, not re-run). Needle and prefix-chain
+extraction pay ~4–8×: the String surface rides the intrinsified
+`String.indexOf` (SIMD) and the literal-prefix scan, which the windowed
+scan cannot reuse (the documented no-PREFIX-rung gap in the design
+record); the utf8 pipeline adds ~15 % of decode on top. The live tail
+is the honest worst case: the undecided walk pins the retention floor
+at its start, so the window grows to the stream — bounded by
+`tdfa.budget.stream.window`, tripping loudly past it.
 
 ## Historical
 
