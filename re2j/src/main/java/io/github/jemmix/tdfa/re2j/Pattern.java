@@ -5,6 +5,8 @@ import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.compile.PatternSurface;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
+import io.github.jemmix.tdfa.core.dfa.StreamMatcher;
+import io.github.jemmix.tdfa.core.engine.ChunkSource;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 import java.io.Serializable;
@@ -276,6 +278,19 @@ public interface Pattern extends Serializable {
      * Create a {@link PatternMatcher} for this pattern against UTF-8-decoded {@code input}.
      */
     PatternMatcher matcher(byte[] input);
+
+    /**
+     * Create a {@link StreamMatcher} that matches this pattern over
+     * chunked/streaming input without materializing the whole input as a
+     * String — this lane's reading baked in, one matcher per stream,
+     * absolute UTF-16 stream offsets, matches reported as soon as they
+     * are decidable. See the root facade's twin and
+     * {@code docs/streaming-input.md}.
+     *
+     * @param source the chunk feed (see {@code ChunkSources} for adapters)
+     * @return a fresh streaming matcher owned by the caller
+     */
+    StreamMatcher streamingMatcher(ChunkSource source);
 
     /**
      * Split {@code input} around matches of this pattern. Trailing empty strings are omitted.

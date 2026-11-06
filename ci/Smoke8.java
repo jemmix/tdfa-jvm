@@ -2,12 +2,17 @@ import io.github.jemmix.tdfa.Pattern;
 import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
+import io.github.jemmix.tdfa.core.dfa.StreamMatcher;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.engine.ChunkSources;
 import io.github.jemmix.tdfa.core.engine.MatchResult;
 import io.github.jemmix.tdfa.core.engine.MatchScratch;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
+
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 
 /**
  * JDK 8 runtime smoke for the Java 8 floor modules (CI job jars-and-tests).
@@ -92,6 +97,27 @@ public class Smoke8 {
         expect("re2j find g", rm.find(), true);
         expect("re2j g1", rm.group(1), "order");
         expect("re2j jur contrast", io.github.jemmix.tdfa.Pattern.compile("a$").matcher("a\n").find(), true);
+
+        // --- streaming input: chunked matching over a UTF-8 stream ---
+        // The streaming surface runs on the Java 8 floor end-to-end:
+        // adapter (incremental decode), both facades, both engine tiers.
+        ByteArrayInputStream utf8 = new ByteArrayInputStream("id-42, key-7!".getBytes(StandardCharsets.UTF_8));
+        StreamMatcher sm = p.streamingMatcher(ChunkSources.utf8(utf8, 3));
+        int streamMatches = 0;
+        String firstGroup = null;
+        while (sm.next()) {
+            if (streamMatches == 0) {
+                firstGroup = sm.group(1);
+            }
+            streamMatches++;
+        }
+        expect("stream matches", streamMatches, 2);
+        expect("stream group", firstGroup, "id");
+        StreamMatcher smVm = io.github.jemmix.tdfa.re2j.Pattern.compile("(\\w+)-(\\d+)")
+            .streamingMatcher(ChunkSources.of(new StringBuilder("order-77!")));
+        expect("re2j stream find", smVm.next(), true);
+        expect("re2j stream g1", smVm.group(1), "order");
+        expect("re2j stream end", smVm.next(), false);
 
         if (failures > 0) {
             System.err.println("SMOKE8 FAILURES: " + failures);

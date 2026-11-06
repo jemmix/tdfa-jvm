@@ -27,6 +27,9 @@ public final class TdfaAsmBackend {
     private static final AtomicLong COUNTER = new AtomicLong();
     private static final String ENGINE = "io/github/jemmix/tdfa/core/engine/RegexEngine";
     private static final String WHOLE = "io/github/jemmix/tdfa/core/engine/WholeEngine";
+    private static final String STREAM_ENGINE = "io/github/jemmix/tdfa/core/dfa/StreamEngine";
+    private static final String STREAM_MATCHER = "io/github/jemmix/tdfa/core/dfa/StreamMatcher";
+    private static final String CHUNK_SOURCE = "io/github/jemmix/tdfa/core/engine/ChunkSource";
     private static final String HOLDER = "io/github/jemmix/tdfa/core/dfa/MatchHolder";
     private static final String RESULT = "io/github/jemmix/tdfa/core/engine/MatchResult";
 
@@ -157,7 +160,7 @@ public final class TdfaAsmBackend {
         boolean wholeDelegate = delegate || tdfa.wholeRanges() != null;
         FrameClassWriter cw = new FrameClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, owner, null, "java/lang/Object",
-            new String[]{ENGINE, WHOLE});
+            new String[]{ENGINE, WHOLE, STREAM_ENGINE});
         if (delegate) {
             // Minimal class: just an init storing the runner, and forwarding stubs
             // for the RegexEngine interface. No static tables, no <clinit>.
@@ -166,6 +169,7 @@ public final class TdfaAsmBackend {
             genFind(cw, owner);
             genDelegateMatch(cw, owner);
             genMatchWhole(cw, owner);
+            genStreaming(cw, owner);
             genMetadataMethods(cw, owner);
         } else {
             genClinit(cw, tdfa);
@@ -198,6 +202,7 @@ public final class TdfaAsmBackend {
                 genIsWordBefore(cw, owner);
                 genIsWordAt(cw, owner);
             }
+            genStreaming(cw, owner);
             genMetadataMethods(cw, owner);
             // Carrier-free INLINED classes (stack-register or zero-register
             // leaves): hot paths never take carrier buffers, so tell
@@ -2381,6 +2386,27 @@ public final class TdfaAsmBackend {
     }
 
     // ===== DELEGATE-mode emitters (forward every hot method to the embedded runner) =====
+
+    /**
+     * The {@code StreamEngine} implementation, emitted for EVERY generated
+     * class (INLINED and DELEGATE alike): one forwarding stub to the
+     * embedded runner's driver — the same one-definition move INLINED
+     * classes make for whole-input matching on partial-whole artifacts
+     * (see docs/streaming-input.md: both tiers serve streaming through
+     * the one driver, so their answers are identical by construction).
+     */
+    private static void genStreaming(ClassWriter cw, String owner) {
+        String d = "(L" + CHUNK_SOURCE + ";)L" + STREAM_MATCHER + ";";
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "streamingMatcher", d, null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "streamingMatcher", d, false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
 
     /**
      * Emit a minimal {@code <init>(Tdfa)} that stores a fresh {@link TdfaRunner}
