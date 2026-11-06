@@ -184,14 +184,10 @@ public final class Budgets {
         return compileMemoryBytes() / BudgetWeights.CFG_EDGE_BYTES;
     }
 
-    /**
-     * Cap on minimizer range-normalization cells (compile-time scratch):
-     * RAM budget / bytes per cell. Over it, minimization degrades to the
-     * unnormalized (correct, less-merging) path.
-     */
-    public static long maxMinimizeNormCells() {
-        return compileMemoryBytes() / BudgetWeights.MINIMIZE_CELL_BYTES;
-    }
+    // (maxMinimizeNormCells — the cap on minimizer range-normalization
+    //  cells — was deleted with the normalization pass it bounded; see
+    //  complexity-review C26. The compute-budget degrade for minimization
+    //  itself remains, metered in DfaMinimizer.computePartition.)
 
     // ===== runtime RAM-derived caps =====
     // (The lazy-memo cap derivations that lived here — sdfaMaxRows,

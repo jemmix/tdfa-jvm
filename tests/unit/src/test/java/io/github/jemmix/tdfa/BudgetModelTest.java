@@ -60,7 +60,8 @@ class BudgetModelTest {
         assertThat(Budgets.maxKernelConfigs()).isEqualTo(1_677_721L);
         assertThat(Budgets.maxClosureSpikeBytes()).isEqualTo(8_388_608L);
         assertThat(Budgets.maxCfgEdges()).isEqualTo(4_194_304L);
-        assertThat(Budgets.maxMinimizeNormCells()).isEqualTo(33_554_432L);
+        // (maxMinimizeNormCells was deleted with the minimizer
+        //  range-normalization pass it bounded; see complexity-review C26.)
         // (The runtime memory budget's memo caps — sdfa rows/blocks, walk
         //  blocks — were deleted with the memos they bounded; see
         //  docs/search-dfa-memo-tradeoffs.md. runtimeMemoryBytes stays as
