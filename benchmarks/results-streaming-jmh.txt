@@ -1,0 +1,56 @@
+# StreamingBench — streaming input vs the materialized String surface
+# JMH 1.37, JDK 26.0.2, macOS arm64 (same caveats as every artifact here:
+# machine drifts; engine-vs-engine ratios within one run are the durable claims).
+# 2 M-char synthetic log stream, SCANS=20 per invocation, SingleShotTime.
+# Columns: benchmark chunkChars engine shape mode iter score unit.
+# Reproduce: ./gradlew :benchmarks:micro:jmh -PjmhInclude='StreamingBench'
+# (2026-11-06)
+
+StreamingBench.streamScan              4096        vm     needle    ss    2   417729,175          ns/op
+StreamingBench.streamScan              4096        vm  ipExtract    ss    2   603782,300          ns/op
+StreamingBench.streamScan              4096        vm    noMatch    ss    2  1729031,250          ns/op
+StreamingBench.streamScan              4096        vm   liveTail    ss    2  1614396,900          ns/op
+StreamingBench.streamScan              4096       asm     needle    ss    2   407462,525          ns/op
+StreamingBench.streamScan              4096       asm  ipExtract    ss    2   421032,300          ns/op
+StreamingBench.streamScan              4096       asm    noMatch    ss    2  1716042,725          ns/op
+StreamingBench.streamScan              4096       asm   liveTail    ss    2  1594477,075          ns/op
+StreamingBench.streamScan             65536        vm     needle    ss    2   401843,750          ns/op
+StreamingBench.streamScan             65536        vm  ipExtract    ss    2   489309,350          ns/op
+StreamingBench.streamScan             65536        vm    noMatch    ss    2  1707835,425          ns/op
+StreamingBench.streamScan             65536        vm   liveTail    ss    2  1618408,325          ns/op
+StreamingBench.streamScan             65536       asm     needle    ss    2   419270,850          ns/op
+StreamingBench.streamScan             65536       asm  ipExtract    ss    2   472327,075          ns/op
+StreamingBench.streamScan             65536       asm    noMatch    ss    2  1954731,250          ns/op
+StreamingBench.streamScan             65536       asm   liveTail    ss    2  1630820,825          ns/op
+StreamingBench.stringScan              4096        vm     needle    ss    2    50466,675          ns/op
+StreamingBench.stringScan              4096        vm  ipExtract    ss    2   154097,925          ns/op
+StreamingBench.stringScan              4096        vm    noMatch    ss    2  1581370,850          ns/op
+StreamingBench.stringScan              4096        vm   liveTail    ss    2   714513,550          ns/op
+StreamingBench.stringScan              4096       asm     needle    ss    2    49838,550          ns/op
+StreamingBench.stringScan              4096       asm  ipExtract    ss    2   103320,825          ns/op
+StreamingBench.stringScan              4096       asm    noMatch    ss    2  1694439,575          ns/op
+StreamingBench.stringScan              4096       asm   liveTail    ss    2   184722,900          ns/op
+StreamingBench.stringScan             65536        vm     needle    ss    2    51590,625          ns/op
+StreamingBench.stringScan             65536        vm  ipExtract    ss    2   158718,775          ns/op
+StreamingBench.stringScan             65536        vm    noMatch    ss    2  1687343,750          ns/op
+StreamingBench.stringScan             65536        vm   liveTail    ss    2   717783,325          ns/op
+StreamingBench.stringScan             65536       asm     needle    ss    2    51572,925          ns/op
+StreamingBench.stringScan             65536       asm  ipExtract    ss    2   106614,600          ns/op
+StreamingBench.stringScan             65536       asm    noMatch    ss    2  1737287,475          ns/op
+StreamingBench.stringScan             65536       asm   liveTail    ss    2   186293,750          ns/op
+StreamingBench.utf8StreamScan          4096        vm     needle    ss    2   501397,900          ns/op
+StreamingBench.utf8StreamScan          4096        vm  ipExtract    ss    2   508284,375          ns/op
+StreamingBench.utf8StreamScan          4096        vm    noMatch    ss    2  1950264,600          ns/op
+StreamingBench.utf8StreamScan          4096        vm   liveTail    ss    2  1674431,250          ns/op
+StreamingBench.utf8StreamScan          4096       asm     needle    ss    2   479772,925          ns/op
+StreamingBench.utf8StreamScan          4096       asm  ipExtract    ss    2   519300,025          ns/op
+StreamingBench.utf8StreamScan          4096       asm    noMatch    ss    2  1931337,500          ns/op
+StreamingBench.utf8StreamScan          4096       asm   liveTail    ss    2  1680947,900          ns/op
+StreamingBench.utf8StreamScan         65536        vm     needle    ss    2   484245,825          ns/op
+StreamingBench.utf8StreamScan         65536        vm  ipExtract    ss    2   488494,800          ns/op
+StreamingBench.utf8StreamScan         65536        vm    noMatch    ss    2  1787603,125          ns/op
+StreamingBench.utf8StreamScan         65536        vm   liveTail    ss    2  1744880,200          ns/op
+StreamingBench.utf8StreamScan         65536       asm     needle    ss    2   496282,300          ns/op
+StreamingBench.utf8StreamScan         65536       asm  ipExtract    ss    2   553955,200          ns/op
+StreamingBench.utf8StreamScan         65536       asm    noMatch    ss    2  1771823,950          ns/op
+StreamingBench.utf8StreamScan         65536       asm   liveTail    ss    2  1700409,375          ns/op

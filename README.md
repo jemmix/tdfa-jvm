@@ -74,6 +74,18 @@ re2j cannot match. Single-value results stay bit-identical. An obscure
 corner, kept deliberately: reasoning, usage examples and costs in
 [`docs/multi-valued-tags.md`](docs/multi-valued-tags.md).
 
+**Streaming input**: `pattern.streamingMatcher(source)` matches over
+chunked input — an `InputStream`, a `Reader`, a `ByteBuffer` feed —
+without materializing the whole stream as a String. Pull chunks, read
+confirmed matches as absolute offsets (capture groups correct across
+chunk boundaries, reported the moment they are decidable); the retained
+window stays at the search's retention floor (needle-length for literal
+searches) under a loud budget (`-Dtdfa.budget.stream.window`). Both
+engines serve it through the one driver; design and honest costs in
+[`docs/streaming-input.md`](docs/streaming-input.md) and
+[`BENCHMARKS.md`](BENCHMARKS.md) §7 (no-match scans at parity with the
+String surface; needle shapes pay the un-intrinsified scan).
+
 ## Headline numbers
 
 JMH, JDK 26, short inputs, ns/op — lower is better
@@ -170,6 +182,13 @@ back to a slower engine.
   both engines against the String path and the oracle; the campaign's seq
   mode adds the reference-sim (PikeSim) comparison, position-carrying
   buffer views, and the GENERIC routing check.
+- Streaming input: chunk-split differential batteries — every split
+  position on a shape corpus spanning the pend-rule axes (terminator
+  runs, anchors, surrogate-pair halves, zero-width, priority
+  alternations), both engines, both lanes, against the String surface,
+  the live `java.util.regex` / re2j oracles, and PikeSim over the whole
+  input (the spec-of-record pin; see
+  [docs/streaming-input.md](docs/streaming-input.md)).
 - Stretched inputs (~4.3k chars): every sampled soak case (1-in-8) runs
   the ASM tier against the VM ladder on the stretched input beside the
   forced-rung cross compares, and the re2j oracle completes the three-way
