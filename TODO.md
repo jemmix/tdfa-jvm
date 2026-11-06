@@ -51,7 +51,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 ## Wishlist
 
 - [ ] POSIX longest-leftmost capture groups
-- [ ] Streaming input (InputStream / ByteBuffer) ([design](docs/streaming-input.md))
 - [ ] condy / invokedynamic per-regex specialization
 - [ ] Ahead-of-time class persistence (.class on disk)
 - [ ] Tiered compilation hints (@Contended, @Stable)
