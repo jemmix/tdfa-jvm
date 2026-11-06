@@ -9,7 +9,7 @@ plugins {
     // Applied only to the four library modules (facade, core, asm, re2j) —
     // tests/benchmarks stay lint-free.
     id 'net.ltgt.errorprone' version '5.1.1'
-    id 'com.github.spotbugs' version '6.5.11'
+    id 'com.github.spotbugs' version '6.5.13'
     id "org.jetbrains.qodana" version "2026.2.1"
     // Codestyle reformatter: version declared here, applied to all
     // non-generated modules from the codestyle block below.
@@ -49,7 +49,7 @@ dependencies {
     // itself never links a backend (the module graph stays the strategy).
     api project(':asm')
     errorprone 'com.google.errorprone:error_prone_core:2.50.0'
-    spotbugs 'com.github.spotbugs:spotbugs:4.9.8'
+    spotbugs 'com.github.spotbugs:spotbugs:4.10.5'
 }
 
 // Materialize vendored third-party sources/resources into build/generated/.
@@ -101,25 +101,36 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 // SpotBugs: hard-fails on findings AND on analysis errors (never a false
-// green — a degraded analysis exits non-zero). Analyzer 4.9.8 (Java 25
-// classfile support). Exclusions are exclusively documented design
-// decisions — see config/spotbugs/exclusions.xml. On JDK >= 26 the tasks
-// self-skip (SpotBugs cannot scan JDK 26 runtime classes); on <= 25 they
-// enforce. Standalone: scripts/lint-spotbugs.sh.
+// green — a degraded analysis exits non-zero). Analyzer 4.10.5 (BCEL 6.13
+// + ASM 9.11: reads current-JDK runtime classes, so the tasks enforce on
+// any daemon JDK — the old 4.9.x self-skip on >= 26 is gone). Exclusions
+// are exclusively documented design decisions — see
+// config/spotbugs/exclusions.xml. Standalone: scripts/lint-spotbugs.sh.
 tasks.withType(com.github.spotbugs.snom.SpotBugsTask).configureEach {
     ignoreFailures = false
     excludeFilter = rootProject.file('config/spotbugs/exclusions.xml')
-    onlyIf {
-        if (org.gradle.api.JavaVersion.current().majorVersion.toInteger() >= 26) {
-            logger.lifecycle("spotbugs: skipped - SpotBugs 4.9.x cannot scan JDK 26 runtime classes; run scripts/lint-spotbugs.sh on JDK <= 25")
-            false
-        } else {
-            true
-        }
-    }
     reports {
         xml.required = true
         html.required = true
+    }
+}
+
+// Materialize the resolved SpotBugs tool classpath (the thin Central jar
+// alone cannot run — its deps ride the classpath) for
+// scripts/lint-spotbugs.sh: the standalone script then needs only a plain
+// `java -cp <file> edu.umd.cs.findbugs.LaunchAppropriateUI`, no Gradle,
+// on any JVM. Riding the `spotbugs` configuration keeps the script in
+// lockstep with the analyzer version above.
+tasks.register('spotbugsToolClasspath') {
+    description = 'Writes the resolved SpotBugs tool classpath to build/spotbugs-standalone/tool.classpath for scripts/lint-spotbugs.sh.'
+    def outFile = layout.buildDirectory.file('spotbugs-standalone/tool.classpath')
+    inputs.files configurations.spotbugs
+    outputs.file outFile
+    doLast {
+        def cp = configurations.spotbugs.collect { it.absolutePath }.join(File.pathSeparator)
+        def f = outFile.get().asFile
+        f.parentFile.mkdirs()
+        f.text = cp
     }
 }
 

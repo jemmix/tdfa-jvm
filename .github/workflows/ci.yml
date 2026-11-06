@@ -7,8 +7,10 @@ name: ci
 #       — comparable core count to ubuntu-latest, faster single core, far
 #       shorter queue). The old single `check` job put ~95% of its ~11 min
 #       into four test tasks; the legs give each of them a whole runner:
-#         lint      — compile + ErrorProne + checkstyle + spotless + TODO
-#                     gate (check minus every test task)
+#         lint      — compile + ErrorProne + SpotBugs + checkstyle + spotless
+#                     + TODO gate (check minus every test task; SpotBugs
+#                     rides here since analyzer 4.10.5 reads the JDK 26
+#                     daemon's runtime classes)
 #         unit      — :tests:unit:test forked (-Ptdfa.testForks=3), plus the
 #                     tiny :tests:parity:rebar:test piggybacked here
 #         parity-re2j     — :tests:parity:re2j:test, forked (-Ptdfa.testForks=3;
@@ -21,8 +23,6 @@ name: ci
 #                     single vendored ExecTest class — intra-suite forking
 #                     cannot split one class across forks, so parallelism
 #                     comes from one runner per leg instead.
-#   spotbugs: JDK 25 (4.9.x cannot scan JDK 26 runtime classes; the build
-#       self-skips it there, so this row is where it actually ENFORCES),
 #   jars-and-tests: THE floor proof — core+asm+facade+re2j compiled by a
 #       REAL JDK 8 javac (Gradle toolchain, -PrealJdk8), the rest by JDK 25;
 #       then the unit tests are compiled AND run on JDK 25 against the
@@ -77,23 +77,6 @@ jobs:
         with:
           validate-wrappers: true
       - run: ./gradlew ${{ matrix.gradle }} --stacktrace
-
-  spotbugs:
-    name: spotbugs (JDK 25)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
-        with:
-          distribution: temurin
-          java-version: '25'
-      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
-        with:
-          validate-wrappers: true
-      # Tasks self-skip (loudly) on JDK >= 26; on 25 they enforce with
-      # hard-fail on findings AND analysis errors.
-      - run: ./gradlew spotbugsMain spotbugsTest --stacktrace
 
   jars-and-tests:
     name: jars by jdk 8 + unit tests on jdk 25 (latest LTS)

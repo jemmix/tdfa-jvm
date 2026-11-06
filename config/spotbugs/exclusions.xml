@@ -3,8 +3,9 @@
   SpotBugs exclusions: findings that are deliberate, documented design
   decisions. The gate
   stays hard-fail for anything NOT listed here — new findings still break the
-  build. Analyzer 4.9.8 (Java 25, major 69, classfile support); its newer
-  detector waves flag the set below.
+  build. Analyzer 4.10.5 (BCEL 6.13 + ASM 9.11 — classfile support
+  beyond the current JDK); the 4.9.x/4.10.x detector waves flag the set
+  below.
 
   Do not add entries without documenting the reason here.
 -->
@@ -77,6 +78,16 @@
          entries above). -->
     <Match classregex="^io\.github\.jemmix\.tdfa\.core\.compile\.PatternMatcher$">
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
+
+    <!-- JdkUnicodeDataProvider.tableFor hands its private static final
+          Unicode tables (Any, Join_Control) to the compile pipeline —
+          provider-owned and never mutated post-init: same trusted-tier
+          posture as Tdfa's construction entries above. Flagged by the
+          4.10.x detector wave (4.9.8 missed direct static-array
+          returns). -->
+    <Match classregex="^io\.github\.jemmix\.tdfa\.core\.unicode\.JdkUnicodeDataProvider$">
+        <Bug pattern="EI_EXPOSE_REP"/>
     </Match>
 
     <!-- TDFAPattern's non-transient `surface` field (PatternSurface, not
