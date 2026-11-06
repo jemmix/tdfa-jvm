@@ -65,9 +65,11 @@ public final class CompiledRegex {
         if (pattern == null) {
             throw new NullPointerException("pattern is null");
         }
-        UnicodeDataProvider provider =
-            options.unicodeProvider() != null ? options.unicodeProvider() : UnicodeProviders.get();
-        CompileObserver obs = options.observer() != null ? options.observer() : CompileObserver.NONE;
+        // Null knobs resolve exactly once, here at the core tier's entry:
+        // pinned-else-process-default tables, and the no-op observer —
+        // everything below takes both as non-null.
+        UnicodeDataProvider provider = UnicodeProviders.effective(options.unicodeProvider());
+        CompileObserver obs = CompileObserver.effective(options.observer());
         WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
         // An explicit Semantics rides the fullest Tnfa entries; null keeps
         // the default lane (the legacy overloads' every-axis-set value).

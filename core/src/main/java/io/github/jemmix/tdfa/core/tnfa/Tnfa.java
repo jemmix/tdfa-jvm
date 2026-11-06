@@ -262,6 +262,11 @@ public final class Tnfa {
     public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
         boolean multiValuedTags, Semantics semantics, FlagBindings flagBindings, UnicodeDataProvider provider,
         CompileObserver observer, WorkMeter meter) {
+        // The overloads above accept a null observer ("no hook"); resolve
+        // it to NONE once here so the stage callbacks below fire
+        // unconditionally (the no-op pays a handful of virtual calls —
+        // see CompileObserver's class doc).
+        CompileObserver obs = CompileObserver.effective(observer);
         long t0 = System.nanoTime();
         // Front-end budget: ONE work meter (CPU, ticks) spans parse + TNFA
         // build so the pre-determinization surface is bounded too — the
@@ -284,9 +289,7 @@ public final class Tnfa {
                 .emptyIterationSpans(semantics.isEmptyIterationSpans()).spaceRe2(semantics.isSpaceRe2())
                 .shorthandFold(semantics.isShorthandFold()),
             provider, meter);
-        if (observer != null) {
-            observer.stage(CompileObserver.Stage.PARSE, System.nanoTime() - t0, parsed.tagCount());
-        }
+        obs.stage(CompileObserver.Stage.PARSE, System.nanoTime() - t0, parsed.tagCount());
         long t1 = System.nanoTime();
         Ast ast = parsed.ast();
         // The nested-loop inner-capture quirk (JUR lane): mark the greedy
@@ -332,9 +335,7 @@ public final class Tnfa {
         Tnfa nfa = b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(), parsed.unicodeShorthand(),
             parsed.unicodeWordRanges(), parsed.namedGroups(), fixedBase, fixedOffset, dissolved, surfaced,
             multiValuedTags, semantics, parsed.hasSupplementaryStarts());
-        if (observer != null) {
-            observer.stage(CompileObserver.Stage.TNFA, System.nanoTime() - t1, nfa.stateCount);
-        }
+        obs.stage(CompileObserver.Stage.TNFA, System.nanoTime() - t1, nfa.stateCount);
         return nfa;
     }
 

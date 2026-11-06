@@ -144,8 +144,8 @@ public final class CompileOptions {
     public int hashCode() {
         int h = (longestMatch ? 1 : 0) * 31 + (multiValuedTags ? 1 : 0);
         h = h * 31 + (disableUnicodeGroups ? 1 : 0);
-        h = h * 31 + (unicodeProvider == null ? 0 : unicodeProvider.hashCode());
-        h = h * 31 + (semantics == null ? 0 : semantics.hashCode());
+        h = h * 31 + Objects.hashCode(unicodeProvider);
+        h = h * 31 + Objects.hashCode(semantics);
         return h * 31 + System.identityHashCode(observer);
     }
 }

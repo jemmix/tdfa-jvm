@@ -59,6 +59,19 @@ public final class UnicodeProviders {
         }
     }
 
+    /**
+     * The tables a compile resolves against: the pinned
+     * {@code provider} when the compile carried one, the process default
+     * ({@link #get()}) otherwise — the one place the null-means-default
+     * policy lives for the core tier. Compile boundaries resolve their
+     * provider through this exactly once and hand a non-null provider to
+     * everything below. (The surface tier's default differs by design —
+     * see {@code PatternSurface.effectiveProvider}.)
+     */
+    public static UnicodeDataProvider effective(UnicodeDataProvider provider) {
+        return provider != null ? provider : get();
+    }
+
     /** Fresh-wrapped resolution failure — same diagnosis each call, current
      *  stack. The cause is the memoized original. */
     private static IllegalStateException initFailure(Throwable cause) {
