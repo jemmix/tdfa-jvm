@@ -5,8 +5,10 @@ import io.github.jemmix.tdfa.core.engine.RegexEngine;
 
 /**
  * The two-method engine SPI the compile machinery calls into: generate a
- * per-pattern engine from an artifact, and emit the facade shell around
- * the translated engines. Implemented by the bytecode backend
+ * per-pattern engine from an artifact, and emit the core shell around
+ * the translated engines (a {@link TDFAPattern} subclass carrying the
+ * concrete engine field — no API interface, that wrap is the calling
+ * facade's own business). Implemented by the bytecode backend
  * ({@code :asm}); each facade passes the implementation it ships into
  * {@code PatternCompiler.compile} — the machinery itself never links a
  * backend, so {@code :asm → :core} stays the only module edge.
@@ -24,11 +26,11 @@ public interface EngineBackend {
     RegexEngine generate(Tdfa artifact);
 
     /**
-     * Emit and instantiate the per-pattern shell described by
-     * {@code spec}. Returns the generated shell instance as
-     * {@link Object} — the calling surface casts it (it owns the type).
-     * Throws {@link IllegalStateException} on emission problems; failures
-     * propagate (they are bugs, not shapes to route around).
+     * Emit and instantiate the per-pattern core shell described by
+     * {@code spec}: a {@link TDFAPattern} whose class carries the
+     * concrete engine field. Throws {@link IllegalStateException} on
+     * emission problems; failures propagate (they are bugs, not shapes
+     * to route around).
      */
-    Object emit(ShellSpec spec);
+    TDFAPattern emit(ShellSpec spec);
 }

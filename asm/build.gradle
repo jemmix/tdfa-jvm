@@ -17,7 +17,10 @@ repositories {
 
 dependencies {
     api project(':core')
-    implementation 'org.ow2.asm:asm:9.9.1'
+    // api, not implementation: the facades drive their own codegen (they
+    // mint their API-typed subclasses with ClassWriter themselves), so the
+    // ASM library is part of this module's surface to them.
+    api 'org.ow2.asm:asm:9.9.1'
     errorprone 'com.google.errorprone:error_prone_core:2.50.0'
     spotbugs 'com.github.spotbugs:spotbugs:4.10.5'
 }

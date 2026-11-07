@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa;
 
+import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import org.junit.jupiter.api.Test;
 
@@ -20,8 +21,13 @@ class DefaultEngineSelectionTest {
         try {
             System.clearProperty("tdfa.engine");
             Pattern p = Pattern.compile("abc");
-            assertThat(p.getClass().getSimpleName()).as("generated shell expected").startsWith("Gen")
-                .endsWith("Pattern");
+            // The facade hands out its minted API subclass (WrapNNN, a
+            // subclass of the emitted GenNNNPattern) and the matcher is
+            // the emitted core pair's — the hot path lives under the mint.
+            assertThat(p.getClass().getSimpleName()).as("minted facade shell expected").startsWith("Wrap");
+            assertThat(p).isInstanceOf(TDFAPattern.class);
+            assertThat(p.matcher("abc").getClass().getSimpleName()).as("emitted matcher expected").startsWith("Gen")
+                .endsWith("Matcher");
             assertThat(p.matcher("abc").matches()).isTrue();
             assertThat(p.matcher("abcd").matches()).isFalse();
         } finally {
@@ -35,11 +41,12 @@ class DefaultEngineSelectionTest {
         try {
             System.setProperty("tdfa.engine", "VM");
             Pattern p = Pattern.compile("abc");
-            // The no-codegen path hands out the facade's wrapped machinery
-            // instance (VmPattern) — not a generated shell, not the bare
-            // machinery class either.
+            // The no-codegen path still hands out the facade's minted
+            // carrier (one cached Wrap class around the bare machinery
+            // base) — and the matcher is the shared interpreter carrier.
+            assertThat(p.getClass().getSimpleName()).as("interpreter-tier carrier expected").startsWith("Wrap");
             assertThat(p).isInstanceOf(TDFAPattern.class);
-            assertThat(p.getClass()).isEqualTo(VmPattern.class);
+            assertThat(p.matcher("abc").getClass()).isEqualTo(PatternMatcher.class);
             assertThat(p.matcher("abc").matches()).isTrue();
         } finally {
             restore(prev);

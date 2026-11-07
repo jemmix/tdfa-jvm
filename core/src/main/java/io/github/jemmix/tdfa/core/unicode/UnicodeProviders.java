@@ -66,7 +66,7 @@ public final class UnicodeProviders {
      * policy lives for the core tier. Compile boundaries resolve their
      * provider through this exactly once and hand a non-null provider to
      * everything below. (The surface tier's default differs by design —
-     * see {@code PatternSurface.effectiveProvider}.)
+     * see {@code PatternCompiler.compile}'s provider resolution.)
      */
     public static UnicodeDataProvider effective(UnicodeDataProvider provider) {
         return provider != null ? provider : get();

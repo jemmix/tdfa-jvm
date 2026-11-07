@@ -12,6 +12,7 @@ import io.github.jemmix.tdfa.core.report.CompileObserver;
 import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
+import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
 
 import java.util.function.Supplier;
 
@@ -94,20 +95,23 @@ public final class PatternCompiler {
      * The one machinery entry. The facades' {@code Lane} funnels do the
      * facade-local work in place — flag-roster validation, the default
      * {@link Semantics} lane, the default Unicode source — and hand the
-     * machinery resolved values: {@code semantics} is never {@code null}
-     * (the funnel picked the facade's lane when the caller gave none),
-     * {@code facade} is the calling facade's {@code Pattern} interface
-     * (the interface generated shells implement, and the identity the
-     * result carries for serialization and {@code equals}), and
-     * {@code provider} may be {@code null} — {@code defaultProvider}
-     * then serves the compile, and the {@code null} is what the result
-     * retains, so a default-compiled pattern serializes without a
-     * provider and recompiles against the READER's default (only an
-     * explicitly pinned provider travels).
+     * machinery resolved values, all of them core types: {@code
+     * semantics} is never {@code null} (the funnel picked the facade's
+     * lane when the caller gave none) and rides the result as its
+     * equality axis and serialization payload; {@code provider} may be
+     * {@code null} — {@code defaultProvider} then serves the compile,
+     * and the {@code null} is what the result retains, so a
+     * default-compiled pattern serializes without a provider and
+     * recompiles against the READER's default (only an explicitly
+     * pinned provider travels). A {@code null} {@code defaultProvider}
+     * takes the machinery level's own default (the property
+     * resolution); a {@code null} {@code backend} serves the compile on
+     * the shared interpreter (the serialization read path — the wire
+     * form never pins an engine tier).
      */
     public static TDFAPattern compile(String regex, int flags, RegexEngineFactory factory, EngineBackend backend,
-        Class<?> facade, UnicodeDataProvider provider, Supplier<UnicodeDataProvider> defaultProvider,
-        CompileObserver observer, Semantics semantics) {
+        UnicodeDataProvider provider, Supplier<UnicodeDataProvider> defaultProvider, CompileObserver observer,
+        Semantics semantics) {
         if (regex == null) {
             throw new NullPointerException("pattern is null");
         }
@@ -133,7 +137,8 @@ public final class PatternCompiler {
         // default-provider pass-through) and the no-op observer —
         // everything below takes both as non-null (the semantics and
         // roster were already resolved by the calling facade's funnel).
-        UnicodeDataProvider prov = provider != null ? provider : defaultProvider.get();
+        UnicodeDataProvider prov =
+            provider != null ? provider : defaultProvider != null ? defaultProvider.get() : UnicodeProviders.get();
         CompileObserver obs = CompileObserver.effective(observer);
         // One CPU ledger for the whole compile. Full compiles: the
         // front-end and the find determinization with its partial-whole
@@ -176,31 +181,34 @@ public final class PatternCompiler {
         // compiles: the whole surface is the refusing non-engine — the
         // artifact carries no whole relation to walk.
         //
-        // -Dtdfa.engine=VM bypasses the translation entirely (and the
-        // shell below): the shared interpreter serves the find surface
-        // (and the FIND_ONLY refusal, when set). The calling facade
-        // wraps the bare result into its own carrier.
-        if (vmSwitched()) {
+        // -Dtdfa.engine=VM — or a null backend (the serialization read
+        // path, which never pins an engine tier) — bypasses the
+        // translation entirely (and the shell below): the shared
+        // interpreter serves the find surface (and the FIND_ONLY
+        // refusal, when set). The calling facade wraps the bare result
+        // into its own API type.
+        if (vmSwitched() || backend == null) {
             long t0 = System.nanoTime();
             TdfaRunner eng = new TdfaRunner(find);
             obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
             obs.note("engine", "shared-interpreter (tdfa.engine=VM)");
             WholeEngine wholeEng = findOnly ? new FindOnlyWholeEngine(regex) : eng;
-            return new TDFAPattern(regex, flags, ps, eng, wholeEng, provider, facade);
+            return new TDFAPattern(regex, flags, ps, eng, wholeEng, provider, semantics);
         }
         long t0 = System.nanoTime();
         RegexEngine eng = engineOf(find, factory, backend);
         WholeEngine wholeEng = findOnly ? new FindOnlyWholeEngine(regex) : wholeOf(eng, find);
         obs.stage(CompileObserver.Stage.ENGINE, System.nanoTime() - t0, 0);
 
-        // Shell around the engines — concrete-typed for generated ones
-        // (the engine's own class names the shell's field type and
-        // classes), implementing the compile's facade interface.
-        // Emission failures propagate like engine-emission
-        // failures (see engineOf): they are bugs, not shapes to route
-        // around). ShellSpec.of owns the generated-vs-byo wiring decision.
-        TDFAPattern p =
-            (TDFAPattern) backend.emit(ShellSpec.of(regex, flags, ps, eng, wholeEng, factory, provider, facade));
+        // Core shell around the engines — concrete-typed for generated
+        // ones (the engine's own class names the shell's field type and
+        // classes), extending the machinery base only: no facade type
+        // flows this far, and the calling facade wraps the result into
+        // its own API type afterwards. Emission failures propagate like
+        // engine-emission failures (see engineOf): they are bugs, not
+        // shapes to route around. ShellSpec.of owns the
+        // generated-vs-byo wiring decision.
+        TDFAPattern p = backend.emit(ShellSpec.of(regex, flags, ps, eng, wholeEng, factory, provider, semantics));
         obs.note("engine", factory == null ? "generated" : "byo-shell");
         return p;
     }

@@ -161,6 +161,9 @@ class Re2jSurfaceTest {
     @Test
     void engineFactoryRouteServesTheInterpreter() {
         Pattern p = Pattern.compile("a+", 0, TdfaRunner::new);
+        // BYO engines ride the same mint: an emitted core shell around
+        // the factory engine, the facade's API subclass around that.
+        assertThat(p.getClass().getSimpleName()).startsWith("Wrap");
         assertThat(p).isInstanceOf(TDFAPattern.class);
         PatternMatcher m = p.matcher("aaa");
         assertThat(m.find()).isTrue();
@@ -174,8 +177,10 @@ class Re2jSurfaceTest {
         try {
             System.setProperty("tdfa.engine", "VM");
             Pattern p = Pattern.compile("a+");
+            // The no-codegen tier still hands out the facade's minted
+            // carrier (one cached Wrap class around the machinery base).
+            assertThat(p.getClass().getSimpleName()).startsWith("Wrap");
             assertThat(p).isInstanceOf(TDFAPattern.class);
-            assertThat(p.getClass().getSimpleName()).isEqualTo("VmPattern");
             assertThat(p.matcher("aaa").find()).isTrue();
         } finally {
             if (prev == null) {
@@ -198,8 +203,11 @@ class Re2jSurfaceTest {
     @Test
     void serializationRecompilesThroughThisFacade() throws Exception {
         Pattern p = Pattern.compile("a$");
+        // The facade hands out its minted API subclass of the machinery
+        // shell, and serialization travels through the facade's own proxy
+        // (pattern + flags + lane), not through machinery identity.
+        assertThat(p.getClass().getSimpleName()).startsWith("Wrap");
         assertThat(p).isInstanceOf(TDFAPattern.class);
-        assertThat(((TDFAPattern) p).facade()).isEqualTo(Pattern.class);
 
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         try (ObjectOutputStream out = new ObjectOutputStream(bos)) {
@@ -211,7 +219,6 @@ class Re2jSurfaceTest {
         }
         assertThat(copy).isEqualTo(p);
         // The lane survived the round trip: still the re2j reading.
-        assertThat(((TDFAPattern) copy).facade()).isEqualTo(Pattern.class);
         assertThat(((Pattern) copy).matcher("a\n").find()).isFalse();
         assertThat(((Pattern) copy).matcher("a").find()).isTrue();
 
