@@ -56,8 +56,8 @@ Unicode wide-class scans (`\p{L}`, unicode-`\w` shapes) ride the **wide
 dispatch index** — an eager, immutable two-level `(state, codepoint)` map
 that gives ~700-range classes one-load dispatch on every walk and scan
 path, past the Latin-1 tables. That closed the old 2–4× `java.util.regex`
-gap (walk rows now ~1.2× jur; scan rows ~2.1×, the residue of the
-ladder's double pass — see
+gap (walk rows ~1.2× jur; scan rows ~1.0–1.7× after the sim→trigger
+live-set handoff collapsed the ladder's double pass — see
 [`docs/wide-dispatch-index.md`](docs/wide-dispatch-index.md)) and
 outperformed the deleted search-DFA memo's regime without restoring any
 lazily built cache. Literal-prefixed search of medium inputs (the `ip=`
