@@ -3,7 +3,6 @@ package io.github.jemmix.tdfa;
 import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
-import io.github.jemmix.tdfa.core.compile.MachineryCarrier;
 import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
@@ -112,9 +111,8 @@ class ZeroWidthExitBatteryTest {
     @ParameterizedTest
     @MethodSource("rows")
     void facadeDefaultPinsTheJurProtocol(Row r) {
-        TDFAPattern asm = ((MachineryCarrier) io.github.jemmix.tdfa.Pattern.compile(r.pattern)).machinery();
-        TDFAPattern vm =
-            ((MachineryCarrier) io.github.jemmix.tdfa.Pattern.compile(r.pattern, 0, TdfaRunner::new)).machinery();
+        TDFAPattern asm = (TDFAPattern) io.github.jemmix.tdfa.Pattern.compile(r.pattern);
+        TDFAPattern vm = (TDFAPattern) io.github.jemmix.tdfa.Pattern.compile(r.pattern, 0, TdfaRunner::new);
         assertThat(facadeProto(asm, r.input)).as("%s: default ASM tier vs recorded JUR column /%s/", r.id, r.pattern)
             .isEqualTo(r.jur);
         assertThat(facadeProto(vm, r.input)).as("%s: default VM tier vs recorded JUR column /%s/", r.id, r.pattern)
@@ -126,9 +124,8 @@ class ZeroWidthExitBatteryTest {
     @ParameterizedTest
     @MethodSource("rows")
     void re2SurfacePinsTheRecordedProtocol(Row r) {
-        TDFAPattern asm = ((MachineryCarrier) io.github.jemmix.tdfa.re2j.Pattern.compile(r.pattern)).machinery();
-        TDFAPattern vm =
-            ((MachineryCarrier) io.github.jemmix.tdfa.re2j.Pattern.compile(r.pattern, 0, TdfaRunner::new)).machinery();
+        TDFAPattern asm = (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(r.pattern);
+        TDFAPattern vm = (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(r.pattern, 0, TdfaRunner::new);
         assertThat(facadeProto(asm, r.input)).as("%s: RE2 ASM tier vs recorded RE2 column /%s/", r.id, r.pattern)
             .isEqualTo(r.re2);
         assertThat(facadeProto(vm, r.input)).as("%s: RE2 VM tier vs recorded RE2 column /%s/", r.id, r.pattern)

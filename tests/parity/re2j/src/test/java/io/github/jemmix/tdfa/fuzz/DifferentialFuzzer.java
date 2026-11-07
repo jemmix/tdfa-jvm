@@ -2,7 +2,6 @@ package io.github.jemmix.tdfa.fuzz;
 
 import com.google.re2j.Re2jUnicodeProvider;
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
-import io.github.jemmix.tdfa.core.compile.MachineryCarrier;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
@@ -919,10 +918,9 @@ public final class DifferentialFuzzer {
         String exc = null;
         try {
             compiled = lane == Lane.JUR
-                ? ((MachineryCarrier) io.github.jemmix.tdfa.Pattern.compile(pattern, flags, vm ? TdfaRunner::new : null,
-                    null)).machinery()
-                : ((MachineryCarrier) io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, flags,
-                    vm ? TdfaRunner::new : null, Re2jUnicodeProvider.INSTANCE)).machinery();
+                ? (TDFAPattern) io.github.jemmix.tdfa.Pattern.compile(pattern, flags, vm ? TdfaRunner::new : null, null)
+                : (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, flags, vm ? TdfaRunner::new : null,
+                    Re2jUnicodeProvider.INSTANCE);
         } catch (PatternSyntaxException | PatternTooLargeException e) {
             tag = "<reject:" + firstLine(e.getMessage()) + ">";
         } catch (RuntimeException e) {

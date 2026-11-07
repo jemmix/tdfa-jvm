@@ -2,7 +2,6 @@ package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.compile.CompiledRegex;
-import io.github.jemmix.tdfa.core.compile.MachineryCarrier;
 import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
@@ -115,8 +114,7 @@ class FindOnlyCompileTest {
                 .isInstanceOf(UnsupportedOperationException.class).hasMessageContaining("FIND_ONLY");
             // The refusing engine itself (the generated shell's matches()
             // funnels through it by contract).
-            assertThatThrownBy(
-                () -> ((MachineryCarrier) p).machinery().wholeEngine().matchWhole("ab", new MatchScratch()))
+            assertThatThrownBy(() -> ((TDFAPattern) p).wholeEngine().matchWhole("ab", new MatchScratch()))
                 .isInstanceOf(UnsupportedOperationException.class);
         }
     }

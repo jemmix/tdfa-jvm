@@ -1,7 +1,6 @@
 package io.github.jemmix.tdfa.parity;
 
 import com.google.re2j.Re2jUnicodeProvider;
-import io.github.jemmix.tdfa.core.compile.MachineryCarrier;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.engine.Matcher;
@@ -238,8 +237,8 @@ class TestregexFowlerTest {
     /** Full span array from our engine (LONGEST_MATCH), or null on no-match.
      *  re2j surface: the re2j contract lane (baked in). */
     static int[][] tdfaSpans(String regex, String subject, int cap, RegexEngineFactory factory) {
-        TDFAPattern p = ((MachineryCarrier) io.github.jemmix.tdfa.re2j.Pattern.compile(regex,
-            io.github.jemmix.tdfa.re2j.Pattern.LONGEST_MATCH, factory, UNICODE)).machinery();
+        TDFAPattern p = (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(regex,
+            io.github.jemmix.tdfa.re2j.Pattern.LONGEST_MATCH, factory, UNICODE);
         Matcher m = p.matcher(subject);
         if (!m.find()) {
             return null;

@@ -22,10 +22,10 @@ import java.util.Map;
  * own Pattern: holds the compiled engines and the pattern/flags/lane
  * state of every compile. Used directly on the interpreter path and as
  * the base of the generated per-pattern shells ({@code GenNNNPattern}),
- * which extend it (no facade interface — that wrap is the calling
- * facade's own generated wrapper) and declare a public final engine
- * field of the concrete (or {@link RegexEngine}) type that their
- * matchers call directly.
+ * which extend it (no facade interface — the calling facade mints its
+ * own API-typed subclass of the shell, in its own module) and declare a
+ * public final engine field of the concrete (or {@link RegexEngine})
+ * type that their matchers call directly.
  *
  * <p>Public because generated shells are defined in a child classloader
  * (a different runtime package) and must subclass and call into it.
@@ -39,7 +39,7 @@ import java.util.Map;
  * {@link PatternMatcher matchers} they produce are NOT thread-safe —
  * one matcher per thread.
  */
-public class TDFAPattern implements Serializable, MachineryCarrier {
+public class TDFAPattern implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
@@ -92,6 +92,7 @@ public class TDFAPattern implements Serializable, MachineryCarrier {
     /**
      * The main (unanchored) engine.
      */
+    @EmittedSurface // the facades' minted shells copy through it by name
     public RegexEngine engine() {
         return engine;
     }
@@ -99,6 +100,7 @@ public class TDFAPattern implements Serializable, MachineryCarrier {
     /**
      * The pinned Unicode tables this pattern compiles against ({@code null} = process default).
      */
+    @EmittedSurface // the facades' minted shells copy through it by name
     public UnicodeDataProvider unicodeProvider() {
         return provider;
     }
@@ -108,6 +110,7 @@ public class TDFAPattern implements Serializable, MachineryCarrier {
      * equality axis and serialization payload — the machinery never
      * records which facade compiled through it.
      */
+    @EmittedSurface // the facades' minted shells copy through it by name
     public Semantics semantics() {
         return semantics;
     }
@@ -122,12 +125,6 @@ public class TDFAPattern implements Serializable, MachineryCarrier {
     @EmittedSurface
     public WholeEngine wholeEngine() {
         return wholeEngine;
-    }
-
-    /** A machinery pattern is its own {@link MachineryCarrier} view. */
-    @Override
-    public TDFAPattern machinery() {
-        return this;
     }
 
     public PatternMatcher matcher(CharSequence input) {
@@ -260,14 +257,17 @@ public class TDFAPattern implements Serializable, MachineryCarrier {
         this.provider = tmp.provider;
     }
 
+    @EmittedSurface // the facades' minted shells copy through it by name
     public int programSize() {
         return programSize;
     }
 
+    @EmittedSurface // the facades' minted shells copy through it by name
     public String pattern() {
         return pattern;
     }
 
+    @EmittedSurface // the facades' minted shells copy through it by name
     public int flags() {
         return flags;
     }
@@ -294,15 +294,9 @@ public class TDFAPattern implements Serializable, MachineryCarrier {
         // axis is the resolved Semantics, not the compiling facade: the
         // machinery does not know which facade minted a pattern, and two
         // same-lane compiles are equal whichever facade handed them out
-        // (a facade wrapper compares as the machinery pattern it carries).
+        // (a facade's minted subclass IS a machinery pattern here).
         if (this == o) {
             return true;
-        }
-        // Unwrap first: a facade's generated wrapper (or any carrier) of a
-        // machinery pattern compares as the pattern it carries — symmetric
-        // with the wrapper's own delegation of equals down to here.
-        if (o instanceof MachineryCarrier) {
-            o = ((MachineryCarrier) o).machinery();
         }
         if (!(o instanceof TDFAPattern)) {
             return false;

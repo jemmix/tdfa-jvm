@@ -41,7 +41,8 @@ import java.util.Map;
  * &rarr; walk-leaf chain devirtualizes and inlines end-to-end. Supplying a
  * {@link RegexEngineFactory} swaps in a custom engine (tracer, experimental
  * backend, alternative generator) — the machinery emits a shell around it
- * and the facade wraps that, preserving the monomorphic call chain.
+ * and the facade mints its own subclass around that, preserving the
+ * monomorphic call chain.
  * {@code -Dtdfa.engine=VM} forces the
  * shared interpreter implementation everywhere (no code generation at all).
  *

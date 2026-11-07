@@ -281,15 +281,13 @@ defining file(s), not every occurrence.
   shells wrap factory engines; generated classes load through a
   per-pattern `GenClassLoader` under the `io.github.jemmix.tdfa.gen`
   package.
-- **wrapper / Wrap\<hex\> / WrapperEmitter** — the facade-owned API layer:
-  the per-pattern class each facade mints around a machinery pattern
-  (composition, one delegation per API method, monomorphic sites; the
-  interpreter tier reuses one cached wrapper per facade). Minted by asm's
-  facade-agnostic `WrapperEmitter` with the facade's own interface +
-  serialization anchor; interface↔machinery drift fails the mint loudly.
-- **MachineryCarrier** — the machinery view of a facade pattern
-  (`machinery()`): the unwrap tests and harnesses use instead of casting;
-  a bare `TDFAPattern` is its own carrier.
+- **facade mint / Wrap\<hex\> / Shells** — the facade-owned API layer:
+  the per-pattern subclass each facade's own `Shells` emitter mints over
+  a machinery shell (`Wrap extends Gen*Pattern implements <facade
+  Pattern>` — pure type tag: everything inherited, hot chain untouched;
+  the interpreter tier reuses one cached carrier per facade). Facade
+  codegen in the facade module, hardcoded to its own interface; the
+  machinery neither knows nor helps.
 - **INLINED / DELEGATE / pickMode** — the ASM dispatch modes: inline the
   ladder into the generated class (under the 30 KB `INLINE_BUDGET_BYTES`,
   below the JVM's 65 KB per-method cliff) or delegate to the embedded

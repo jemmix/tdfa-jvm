@@ -1,6 +1,5 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.compile.MachineryCarrier;
 import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
@@ -67,14 +66,14 @@ final class RunnerImmutabilityTest {
             String regex = pf[0];
             int flags = Integer.parseInt(pf[1]);
             // Both tiers share the TdfaRunner memo machinery; hammer both.
-            hammer(regex, flags, ((MachineryCarrier) Pattern.compile(regex, flags)).machinery());
-            hammer(regex, flags, ((MachineryCarrier) Pattern.compile(regex, flags, TdfaRunner::new)).machinery());
+            hammer(regex, flags, (TDFAPattern) Pattern.compile(regex, flags));
+            hammer(regex, flags, (TDFAPattern) Pattern.compile(regex, flags, TdfaRunner::new));
         }
     }
 
     private static void hammer(String regex, int flags, TDFAPattern warm) throws Exception {
-        TDFAPattern cold = ((MachineryCarrier) (warm.engine() instanceof TdfaRunner
-            ? Pattern.compile(regex, flags, TdfaRunner::new) : Pattern.compile(regex, flags))).machinery();
+        TDFAPattern cold = (TDFAPattern) (warm.engine() instanceof TdfaRunner
+            ? Pattern.compile(regex, flags, TdfaRunner::new) : Pattern.compile(regex, flags));
         Map<String, Integer> frozenBefore = frozenFingerprint(warm);
         ExecutorService pool = Executors.newFixedThreadPool(THREADS);
         try {
@@ -104,7 +103,7 @@ final class RunnerImmutabilityTest {
     void emittedClassesCarryOnlyFinalFields() throws Exception {
         List<String> errors = new ArrayList<>();
         for (String[] pf : PATTERNS) {
-            TDFAPattern p = ((MachineryCarrier) Pattern.compile(pf[0], Integer.parseInt(pf[1]))).machinery();
+            TDFAPattern p = (TDFAPattern) Pattern.compile(pf[0], Integer.parseInt(pf[1]));
             assertAllFieldsFinal(p.engine().getClass(), errors);
             if (p.wholeEngine() != null) {
                 assertAllFieldsFinal(p.wholeEngine().getClass(), errors);

@@ -9,9 +9,9 @@ import java.io.ObjectStreamException;
 import java.io.Serializable;
 
 /**
- * The jur facade's serialization proxy — the wrapper's anchor. The
- * generated wrappers ({@code WrapperEmitter}) live in child classloaders
- * that will not exist in the reading process, so each serializes as this
+ * The jur facade's serialization proxy — the minted shells' anchor.
+ * The minted shells ({@code Shells}) live in child classloaders that
+ * will not exist in the reading process, so each serializes as this
  * proxy: pattern + flags + lane + provider identity. Read back through
  * this facade's own compile funnel — a direct call, no reflection — so
  * the roster validation, the default lane and the provider default all
@@ -28,8 +28,8 @@ import java.io.Serializable;
  * — loud, never a silent fallback to different tables or a different
  * lane.
  *
- * <p>Public-but-internal: referenced by name from the facade-generated
- * wrappers (which live in the gen package, another runtime package) —
+ * <p>Public-but-internal: referenced by name from this facade's minted
+ * shells (which live in the gen package, another runtime package) —
  * not shipped API.
  */
 public final class SerializationProxy implements Serializable {

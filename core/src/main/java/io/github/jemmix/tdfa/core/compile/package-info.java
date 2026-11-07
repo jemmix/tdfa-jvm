@@ -4,10 +4,9 @@
  * (RegexEngineFactory), and — since the two-facade split — the shared Pattern
  * machinery the thin facades compile through (PatternCompiler with its
  * flag-bit vocabulary, TDFAPattern, PatternMatcher, SerialProxy,
- * FindOnlyWholeEngine, the EngineBackend/ShellSpec emission SPI, the
- * MachineryCarrier unwrap view). Facade-blind: no facade type appears in
- * this package's API — the facades mint their own API wrappers around the
- * machinery result. Top layer —
+ * FindOnlyWholeEngine, the EngineBackend/ShellSpec emission SPI).
+ * Facade-blind: no facade type appears in this package's API — the facades
+ * mint their own API-typed subclasses of the machinery result. Top layer —
  * the only tier that wires the whole pipeline; the machinery classes are
  * public-but-internal (documented, not shipped API — the facades' Pattern
  * interfaces are the API).

@@ -5,7 +5,6 @@ import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
-import io.github.jemmix.tdfa.core.compile.MachineryCarrier;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
@@ -781,9 +780,9 @@ public final class CampaignFuzzer {
         String pattern = (c.tdfaFlags() & UCC) != 0 ? "(?u)" + c.pattern() : c.pattern();
         int flags = c.tdfaFlags() & ~UCC;
         try {
-            TDFAPattern p = ((MachineryCarrier) (vm
-                ? io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, flags, TdfaRunner::new, null)
-                : io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, flags, null, null))).machinery();
+            TDFAPattern p =
+                (TDFAPattern) (vm ? io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, flags, TdfaRunner::new, null)
+                    : io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, flags, null, null));
             return DifferentialFuzzer.compute(p, c.input());
         } catch (io.github.jemmix.tdfa.core.parser.PatternSyntaxException | PatternTooLargeException e) {
             return "<reject:" + DifferentialFuzzer.firstLine(e.getMessage()) + ">";
@@ -1789,16 +1788,14 @@ public final class CampaignFuzzer {
             System.out.println("jur:     <reject> " + e);
         }
         try {
-            System.out
-                .println("vm:      " + DifferentialFuzzer.compute(((MachineryCarrier) io.github.jemmix.tdfa.re2j.Pattern
-                    .compile(c.pattern(), c.tdfaFlags(), TdfaRunner::new, null)).machinery(), c.input()));
+            System.out.println("vm:      " + DifferentialFuzzer.compute((TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern
+                .compile(c.pattern(), c.tdfaFlags(), TdfaRunner::new, null), c.input()));
         } catch (RuntimeException e) {
             System.out.println("vm:      <reject> " + DifferentialFuzzer.firstLine(e.getMessage()));
         }
         try {
             System.out.println("asm:     " + DifferentialFuzzer.compute(
-                ((MachineryCarrier) io.github.jemmix.tdfa.re2j.Pattern.compile(c.pattern(), c.tdfaFlags(), null, null))
-                    .machinery(),
+                (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(c.pattern(), c.tdfaFlags(), null, null),
                 c.input()));
         } catch (RuntimeException e) {
             System.out.println("asm:     <reject> " + DifferentialFuzzer.firstLine(e.getMessage()));
@@ -1839,13 +1836,14 @@ public final class CampaignFuzzer {
         System.out.println("input:   " + DifferentialFuzzer.escape(input));
         PikeSim sim = PikeSim.compile(pattern, Re2jUnicodeProvider.INSTANCE);
         System.out.println("pike(String):    " + pikeIterate(sim, input));
-        TDFAPattern vm = ((MachineryCarrier) io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, TdfaRunner::new,
-            Re2jUnicodeProvider.INSTANCE)).machinery();
+        TDFAPattern vm = (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, TdfaRunner::new,
+            Re2jUnicodeProvider.INSTANCE);
         System.out.println("vm(String):      " + findIterate(vm, input));
         System.out.println("pike(wrapper):   " + pikeIterate(sim, new StringBuilder(input)));
         System.out.println("vm(wrapper):     " + findIterate(vm, new StringBuilder(input)));
-        System.out.println("asm(wrapper):    " + findIterate(((MachineryCarrier) io.github.jemmix.tdfa.re2j.Pattern
-            .compile(pattern, 0, null, Re2jUnicodeProvider.INSTANCE)).machinery(), new StringBuilder(input)));
+        System.out.println("asm(wrapper):    " + findIterate(
+            (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(pattern, 0, null, Re2jUnicodeProvider.INSTANCE),
+            new StringBuilder(input)));
     }
 
     static void replayFamilies(long caseSeed) {

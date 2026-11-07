@@ -1,6 +1,5 @@
 package io.github.jemmix.tdfa;
 
-import io.github.jemmix.tdfa.core.compile.MachineryCarrier;
 import io.github.jemmix.tdfa.core.compile.PatternMatcher;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
@@ -144,7 +143,7 @@ class CharSequencePairInteriorTest {
      *  obligation (the finding-1 fix's lane since the flip); the facade
      *  default is UTF-16 unit semantics, where interior starts are legal. */
     private static TDFAPattern compile(String regex, boolean vm) {
-        return ((MachineryCarrier) Pattern.compile(regex, 0, vm ? TdfaRunner::new : null)).machinery();
+        return (TDFAPattern) Pattern.compile(regex, 0, vm ? TdfaRunner::new : null);
     }
 
     private static CharSequence[] wrappers(String s) {

@@ -36,9 +36,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * time in whatever runtime loaded the compile's classes — except the
  * reflection tail, which links {@code core.compile} types directly (the
  * {@code :asm → :core} edge). The emitted pattern implements no API
- * interface; the facade that triggered the compile wraps the instance
- * into its own API type afterwards, on its own ({@link WrapperEmitter}
- * is the reusable mint).
+ * interface; each facade drives its own codegen on top — it mints a
+ * per-pattern subclass implementing its own {@code Pattern}, in its own
+ * module, with no help from (and no knowledge in) this one.
  *
  * <pre>
  * final class GenNNNPattern extends core.compile.TDFAPattern {
@@ -285,8 +285,9 @@ public final class ShellEmitter {
 
         // ---- GenNNNPattern extends core.compile.TDFAPattern (machinery only) ----
         cw = new FrameClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
-        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER, patOwner, null, TDFAPATTERN,
-            null);
+        // Not final: the calling facade mints its API-typed subclass of this
+        // class (its own codegen); the matcher below stays final.
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, patOwner, null, TDFAPATTERN, null);
         cw.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, "eng", engDesc, null, null).visitEnd();
         // (String pattern, int flags, int ps, RegexEngine e, RegexEngine w, UnicodeDataProvider prov,
         //  Semantics lane, Eng eng)

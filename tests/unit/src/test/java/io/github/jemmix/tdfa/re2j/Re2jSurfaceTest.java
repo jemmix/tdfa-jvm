@@ -161,10 +161,10 @@ class Re2jSurfaceTest {
     @Test
     void engineFactoryRouteServesTheInterpreter() {
         Pattern p = Pattern.compile("a+", 0, TdfaRunner::new);
-        // BYO engines ride the same wrap: an emitted core shell around the
-        // factory engine, the facade's generated wrapper around that.
+        // BYO engines ride the same mint: an emitted core shell around
+        // the factory engine, the facade's API subclass around that.
         assertThat(p.getClass().getSimpleName()).startsWith("Wrap");
-        assertThat(p).isNotInstanceOf(TDFAPattern.class);
+        assertThat(p).isInstanceOf(TDFAPattern.class);
         PatternMatcher m = p.matcher("aaa");
         assertThat(m.find()).isTrue();
         assertThat(m.start()).isZero();
@@ -177,11 +177,10 @@ class Re2jSurfaceTest {
         try {
             System.setProperty("tdfa.engine", "VM");
             Pattern p = Pattern.compile("a+");
-            // The no-codegen tier still hands out the facade's generated
-            // wrapper (one cached Wrap class), around the bare machinery
-            // instance.
+            // The no-codegen tier still hands out the facade's minted
+            // carrier (one cached Wrap class around the machinery base).
             assertThat(p.getClass().getSimpleName()).startsWith("Wrap");
-            assertThat(p).isNotInstanceOf(TDFAPattern.class);
+            assertThat(p).isInstanceOf(TDFAPattern.class);
             assertThat(p.matcher("aaa").find()).isTrue();
         } finally {
             if (prev == null) {
@@ -204,11 +203,11 @@ class Re2jSurfaceTest {
     @Test
     void serializationRecompilesThroughThisFacade() throws Exception {
         Pattern p = Pattern.compile("a$");
-        // The facade hands out its generated wrapper, not the machinery
-        // class — and serialization travels through the facade's own
-        // proxy (pattern + flags + lane), not through machinery state.
+        // The facade hands out its minted API subclass of the machinery
+        // shell, and serialization travels through the facade's own proxy
+        // (pattern + flags + lane), not through machinery identity.
         assertThat(p.getClass().getSimpleName()).startsWith("Wrap");
-        assertThat(p).isNotInstanceOf(TDFAPattern.class);
+        assertThat(p).isInstanceOf(TDFAPattern.class);
 
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         try (ObjectOutputStream out = new ObjectOutputStream(bos)) {

@@ -140,6 +140,16 @@ class EmittedSurfaceConformanceTest {
             UnicodeDataProvider.class, Semantics.class);
         hookC(PatternMatcher.class, TDFAPattern.class, CharSequence.class);
         hookM(TDFAPattern.class, "decodeUtf8", byte[].class);
+        // The facades' mints (their own Shells emitters) link the machinery
+        // getters by name for the copy-constructor, and the SerializationProxy
+        // hooks capture through them too.
+        hookM(TDFAPattern.class, "pattern");
+        hookM(TDFAPattern.class, "flags");
+        hookM(TDFAPattern.class, "programSize");
+        hookM(TDFAPattern.class, "engine");
+        hookM(TDFAPattern.class, "wholeEngine");
+        hookM(TDFAPattern.class, "unicodeProvider");
+        hookM(TDFAPattern.class, "semantics");
     }
 
     @Test

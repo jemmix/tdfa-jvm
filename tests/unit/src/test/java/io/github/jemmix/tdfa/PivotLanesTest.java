@@ -4,7 +4,6 @@ import io.github.jemmix.tdfa.asm.TdfaAsmBackend;
 import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
 import io.github.jemmix.tdfa.core.compile.CompileOptions;
-import io.github.jemmix.tdfa.core.compile.MachineryCarrier;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
@@ -170,12 +169,12 @@ class PivotLanesTest {
 
     /** The facade's own engines (a flags lane) on the same protocol. */
     private static String facadeProbe(String pattern, int flags, CharSequence in) {
-        return patternProbe(((MachineryCarrier) io.github.jemmix.tdfa.Pattern.compile(pattern, flags)).machinery(), in);
+        return patternProbe((TDFAPattern) io.github.jemmix.tdfa.Pattern.compile(pattern, flags), in);
     }
 
     /** The re2j surface's own engines (the lane baked in) on the same protocol. */
     private static String re2jProbe(String pattern, CharSequence in) {
-        return patternProbe(((MachineryCarrier) io.github.jemmix.tdfa.re2j.Pattern.compile(pattern)).machinery(), in);
+        return patternProbe((TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(pattern), in);
     }
 
     private static String patternProbe(TDFAPattern p, CharSequence in) {

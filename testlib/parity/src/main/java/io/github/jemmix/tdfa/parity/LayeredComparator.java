@@ -1,6 +1,5 @@
 package io.github.jemmix.tdfa.parity;
 
-import io.github.jemmix.tdfa.core.compile.MachineryCarrier;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
@@ -192,8 +191,7 @@ public final class LayeredComparator {
             // re2j surface: this comparator's contract is the re2j/sim
             // lineage (R and S answer RE2) — the lane the surface bakes
             // in; the facade default is java.util.regex parity.
-            pat = ((MachineryCarrier) io.github.jemmix.tdfa.re2j.Pattern.compile(p, 0, vm ? TdfaRunner::new : null,
-                provider)).machinery();
+            pat = (TDFAPattern) io.github.jemmix.tdfa.re2j.Pattern.compile(p, 0, vm ? TdfaRunner::new : null, provider);
         } catch (Throwable t) {
             return "<reject>";
         }

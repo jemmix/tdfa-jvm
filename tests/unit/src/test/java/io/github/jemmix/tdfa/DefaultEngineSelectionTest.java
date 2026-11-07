@@ -21,11 +21,11 @@ class DefaultEngineSelectionTest {
         try {
             System.clearProperty("tdfa.engine");
             Pattern p = Pattern.compile("abc");
-            // The facade hands out its generated wrapper (WrapNNN), and the
-            // matcher it produces is the emitted core pair (GenNNNMatcher)
-            // — the devirtualized hot path lives under the wrapper.
-            assertThat(p.getClass().getSimpleName()).as("generated wrapper expected").startsWith("Wrap");
-            assertThat(p).isNotInstanceOf(TDFAPattern.class);
+            // The facade hands out its minted API subclass (WrapNNN, a
+            // subclass of the emitted GenNNNPattern) and the matcher is
+            // the emitted core pair's — the hot path lives under the mint.
+            assertThat(p.getClass().getSimpleName()).as("minted facade shell expected").startsWith("Wrap");
+            assertThat(p).isInstanceOf(TDFAPattern.class);
             assertThat(p.matcher("abc").getClass().getSimpleName()).as("emitted matcher expected").startsWith("Gen")
                 .endsWith("Matcher");
             assertThat(p.matcher("abc").matches()).isTrue();
@@ -41,12 +41,11 @@ class DefaultEngineSelectionTest {
         try {
             System.setProperty("tdfa.engine", "VM");
             Pattern p = Pattern.compile("abc");
-            // The no-codegen path still hands out the facade's generated
-            // wrapper (one cached Wrap class for the interpreter tier),
-            // wrapping the bare machinery instance — and the matcher is
-            // the shared interpreter carrier, not an emitted class.
-            assertThat(p.getClass().getSimpleName()).as("interpreter-tier wrapper expected").startsWith("Wrap");
-            assertThat(p).isNotInstanceOf(TDFAPattern.class);
+            // The no-codegen path still hands out the facade's minted
+            // carrier (one cached Wrap class around the bare machinery
+            // base) — and the matcher is the shared interpreter carrier.
+            assertThat(p.getClass().getSimpleName()).as("interpreter-tier carrier expected").startsWith("Wrap");
+            assertThat(p).isInstanceOf(TDFAPattern.class);
             assertThat(p.matcher("abc").getClass()).isEqualTo(PatternMatcher.class);
             assertThat(p.matcher("abc").matches()).isTrue();
         } finally {
