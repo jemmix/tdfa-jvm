@@ -53,7 +53,8 @@ defining file(s), not every occurrence.
 - **facade (root facade)** — the top-level `Pattern` API class; "facade
   tier" is the layer above core. The jur facade is the default since the
   flip. Each facade compiles through its package-private `Lane` funnel
-  (roster validation, default lane, default provider, VM-path wrap).
+  (roster validation, default lane, default provider) and mints its own
+  generated API wrapper around the facade-blind machinery result.
 - **thin surface / two-surface split** — the architectural event/shape of the
   API split: minimal API-only modules over one blind machinery.
 - **lane** — a fixed bundle of semantics decisions a compile runs in (jur
@@ -275,10 +276,18 @@ defining file(s), not every occurrence.
   tiers consult (`fastPathEligible`, "the ONE predicate") for flat-table
   dispatch.
 - **shell / GenNNNPattern / Shell\<hex\> / GenClassLoader** — the emitted
-  per-pattern `Pattern`/`PatternMatcher` wrapper pair ("one brain, thin
-  generated hot paths"); BYO shells wrap factory engines; generated classes
-  load through a per-pattern `GenClassLoader` under the
-  `io.github.jemmix.tdfa.gen` package.
+  per-pattern machinery `Pattern`/`PatternMatcher` pair ("one brain, thin
+  generated hot paths") — core-typed only, no facade interface; BYO
+  shells wrap factory engines; generated classes load through a
+  per-pattern `GenClassLoader` under the `io.github.jemmix.tdfa.gen`
+  package.
+- **facade mint / Wrap\<hex\> / Shells** — the facade-owned API layer:
+  the per-pattern subclass each facade's own `Shells` emitter mints over
+  a machinery shell (`Wrap extends Gen*Pattern implements <facade
+  Pattern>` — pure type tag: everything inherited, hot chain untouched;
+  the interpreter tier reuses one cached carrier per facade). Facade
+  codegen in the facade module, hardcoded to its own interface; the
+  machinery neither knows nor helps.
 - **INLINED / DELEGATE / pickMode** — the ASM dispatch modes: inline the
   ladder into the generated class (under the 30 KB `INLINE_BUDGET_BYTES`,
   below the JVM's 65 KB per-method cliff) or delegate to the embedded

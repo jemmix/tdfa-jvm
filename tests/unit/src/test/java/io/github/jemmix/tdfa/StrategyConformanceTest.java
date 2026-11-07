@@ -115,13 +115,14 @@ class StrategyConformanceTest {
         assertThat(checks).isGreaterThan(100);
     }
 
-    /** Generated-pattern sanity: the default compile returns generated
-     *  Pattern/Matcher classes (Gen* in a child loader) and they behave
-     *  exactly like the BYO-interpreter composition. */
+    /** Generated-pattern sanity: the default compile returns the facade's
+     *  generated wrapper (Wrap*) over the emitted core shell, whose
+     *  matcher is the generated Gen* class in a child loader — and they
+     *  behave exactly like the BYO-interpreter composition. */
     @Test
     void generatedPatternClassShapeAndBehavior() {
         var p = Pattern.compile("[a-z]+\\d+");
-        assertThat(p.getClass().getSimpleName()).startsWith("Gen").endsWith("Pattern");
+        assertThat(p.getClass().getSimpleName()).startsWith("Wrap");
         var m = p.matcher("abc123 rest");
         assertThat(m.getClass().getSimpleName()).startsWith("Gen").endsWith("Matcher");
         assertThat(m.find()).isTrue();

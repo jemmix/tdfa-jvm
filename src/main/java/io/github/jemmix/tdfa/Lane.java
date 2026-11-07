@@ -14,11 +14,14 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
  * place before the machinery is called: the JDK-mirroring flag roster
  * ({@link Pattern} spells the same bits publicly; out-of-roster bits
  * reject here), the {@code java.util.regex}-parity lane a semantics-less
- * compile defaults to, the property-resolution Unicode default, and the
- * wrap of no-codegen results ({@code -Dtdfa.engine=VM}) into the
- * facade's own carrier. The machinery below is facade-blind otherwise:
- * same pipeline, same budgets, same shells — the lane is the one
- * argument the two facades differ by.
+ * compile defaults to, the property-resolution Unicode default. The
+ * machinery below is facade-blind end to end — it compiles a core-typed
+ * {@link TDFAPattern} with no knowledge of this facade — and this
+ * funnel performs the one facade-owned step on the way out: this
+ * module's own codegen ({@link Shells}) mints the API-typed subclass of
+ * the machinery shell, serializing through this module's own
+ * {@link SerializationProxy}. Same pipeline, same budgets, same core
+ * shells; the lane is the one argument the two facades differ by.
  */
 final class Lane {
 
@@ -45,12 +48,10 @@ final class Lane {
         if ((flags & ~VALID_FLAGS) != 0) {
             throw new IllegalArgumentException(FLAGS_MESSAGE);
         }
-        TDFAPattern p =
-            PatternCompiler.compile(regex, flags, factory, AsmEngineBackend.INSTANCE, Pattern.class, provider,
-                UnicodeProviders::get, observer, explicitSemantics != null ? explicitSemantics : DEFAULT_SEMANTICS);
-        if (p.getClass() != TDFAPattern.class) {
-            return (Pattern) p; // generated shell: implements the facade interface by emission
-        }
-        return new VmPattern(p); // no-codegen path: wrap into the facade's carrier
+        TDFAPattern p = PatternCompiler.compile(regex, flags, factory, AsmEngineBackend.INSTANCE, provider,
+            UnicodeProviders::get, observer, explicitSemantics != null ? explicitSemantics : DEFAULT_SEMANTICS);
+        // The one facade-owned step: mint this facade's API-typed subclass
+        // of the machinery shell (this module's own codegen).
+        return Shells.mint(p);
     }
 }

@@ -2,13 +2,15 @@ package io.github.jemmix.tdfa.core.compile;
 
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
 import io.github.jemmix.tdfa.core.engine.WholeEngine;
+import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 /**
  * Shell emission spec, carried from the compile machinery to the
- * {@link EngineBackend#emit} implementor. All core/reflection
- * types — the backend resolves the compile's facade
- * {@code Pattern} interface by descriptor at class-load time.
+ * {@link EngineBackend#emit} implementor. All core types — the emitted
+ * shell is machinery-only (it extends {@code TDFAPattern} and implements
+ * no API interface); the facade that triggered the compile wraps the
+ * result into its own API type afterwards, on its own.
  *
  * <p>Components: {@code pattern} is the regex source text (recompiled by
  * the serialization proxy); {@code flags} the facade's flag bits;
@@ -20,10 +22,9 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
  * generated engine class for concrete-type wiring, or {@code null} to
  * type the shell's engine field as {@link RegexEngine};
  * {@code provider} the pinned Unicode tables ({@code null} = process
- * default); {@code facade} the calling facade's {@code Pattern}
- * interface — the emitted shell implements it, and it rides the
- * constructor into the machinery base class (serialization target +
- * equality axis).
+ * default); {@code semantics} the compile's resolved lane (rides the
+ * shell's constructor into the base, where it is the equality axis and
+ * serialization payload).
  *
  * <p>Public-but-internal machinery vocabulary — not shipped API.
  */
@@ -37,10 +38,11 @@ public final class ShellSpec {
     private final WholeEngine wholeEngine;
     private final String engineInternalName;
     private final UnicodeDataProvider provider;
-    private final Class<?> facade;
 
-    public ShellSpec(String pattern, int flags, int programSize, RegexEngine engine, WholeEngine wholeEngine,
-        String engineInternalName, UnicodeDataProvider provider, Class<?> facade) {
+    private final Semantics semantics;
+
+    ShellSpec(String pattern, int flags, int programSize, RegexEngine engine, WholeEngine wholeEngine,
+        String engineInternalName, UnicodeDataProvider provider, Semantics semantics) {
         this.pattern = pattern;
         this.flags = flags;
         this.programSize = programSize;
@@ -48,7 +50,7 @@ public final class ShellSpec {
         this.wholeEngine = wholeEngine;
         this.engineInternalName = engineInternalName;
         this.provider = provider;
-        this.facade = facade;
+        this.semantics = semantics;
     }
 
     /**
@@ -61,9 +63,9 @@ public final class ShellSpec {
      * emitted bytecode can name. The one place that decision lives.
      */
     public static ShellSpec of(String pattern, int flags, int programSize, RegexEngine engine, WholeEngine wholeEngine,
-        RegexEngineFactory factory, UnicodeDataProvider provider, Class<?> facade) {
+        RegexEngineFactory factory, UnicodeDataProvider provider, Semantics semantics) {
         String engineInternalName = factory == null ? engine.getClass().getName().replace('.', '/') : null;
-        return new ShellSpec(pattern, flags, programSize, engine, wholeEngine, engineInternalName, provider, facade);
+        return new ShellSpec(pattern, flags, programSize, engine, wholeEngine, engineInternalName, provider, semantics);
     }
 
     public String pattern() {
@@ -94,7 +96,8 @@ public final class ShellSpec {
         return provider;
     }
 
-    public Class<?> facade() {
-        return facade;
+    /** The compile's resolved lane (rides the constructor into the base class). */
+    public Semantics semantics() {
+        return semantics;
     }
 }
