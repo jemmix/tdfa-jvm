@@ -114,6 +114,25 @@ ends at an owner decision — the evidence is ours, the intent is not.
   axis; the class win is then the same "2–7× inside one narrow regime"
   the search-DFA memo died of. If the headline rows do carry it, the
   keep stands with a better argument than it has today.
+  **Update (2026-11-06): deleted — the headline does not carry the
+  axis.** Re-priced per protocol with stack-regs disabled, both tiers,
+  on the five ParameterizedShortInput shapes: a control-normalized
+  interleaved probe (min over 2×3 rounds per arm, adjacent control loop
+  per rep) measured the ASM geomean at **0.94× with the axis OFF** —
+  alt 0.99×, `(\w+)\s+(\w+)` 0.77×, IPv4 0.92×, `abc` 1.02×,
+  `(a+)+b` 1.05× — the deletion does not slow the flagship (point
+  estimate improves), while the VM control column (which never touches
+  the axis) shows the ±30 % per-shape wobble these ride on. A parallel
+  JMH ParameterizedShortInput round was discarded as unresolvable: its
+  java.util.regex control column moved +39 % between arms on the
+  shared-active host. With C14's own curve (win confined to 4–16-
+  register extract walks, parity at 40+) this is exactly the
+  "2–7× inside one narrow regime" shape the memo precedent retires:
+  deleted `stackRegsEligible`, `STACK_REGS_MAX`, the stack-register
+  emission variants, and the carrier-free-class axis plumbing (−212
+  lines; `RegexEngine.wantsScratch` javadoc narrowed to the
+  zero-register truth). C14's recorded curve stands as the deleted
+  win's history. Quick baseline re-captured (axis-off world).
 
 Challenged and **survived** (recorded so the sweep is complete):
 `LONGEST_MATCH` (advertised in the pitch, both facades expose it);
@@ -492,7 +511,10 @@ capped them is largely still here. The tradeoffs doc already flags this
   ~120-line axis regresses 4–16-register extract walks at or past the
   gate. Corrections: the soft budget is **30 KB** (`INLINE_BUDGET_BYTES`
   — 65 KB is the JVM hard cap it leaves headroom under), and it guards
-  the INLINED tier (C13), not this axis.)
+  the INLINED tier (C13), not this axis.) **Superseded by C59 (2026-11-06): the axis
+  is deleted — the headline re-price measured the flagship geomean at
+  0.94× with the axis off; the curve below is the deleted win's
+  history.**
 - **C15 — emitted-shell machinery** (M, simplify). `ShellEmitter` (402),
   `ShellSpec`, `genDelegateInit`, `genMetadataMethods`, the
   `@EmittedSurface` 7-field shell contract on `engine.Matcher`, and

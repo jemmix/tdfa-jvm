@@ -88,10 +88,10 @@ public interface RegexEngine {
     /**
      * Whether this engine's hot paths consume the caller's {@link MatchScratch}
      * carrier. Used by {@link Matcher} to skip carrier allocation entirely for
-     * engines that don't want one (the ASM tier's stack-register and
-     * zero-register leaves borrow nothing on their hot paths — only cold
-     * fallback strategies need a carrier, and those allocate on demand).
-     * A pure hint for allocation: the carrier is never semantic either way.
+     * engines that don't want one (the ASM tier's zero-register leaves borrow
+     * nothing on their hot paths — only cold fallback strategies need a
+     * carrier, and those allocate on demand). A pure hint for allocation:
+     * the carrier is never semantic either way.
      */
     default boolean wantsScratch() {
         return true;
