@@ -55,15 +55,12 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      */
     @EmittedSurface
     public static final int PREFIX_WALK_BUDGET = 16;
-    /** Literal-prefix scan outcomes: a walk hit; no further hits (no match
-     *  can exist); or the walk budget spent (fall to the next ladder — a
-     *  complete search). */
-    private static final int PREFIX_HIT = 1;
-    private static final int PREFIX_DONE = 0;
-    private static final int PREFIX_EXHAUSTED = -1;
-    /** Sentinel from {@link #prefixScanExtract}: the walk budget is spent —
-     *  keep climbing the ladder (a complete search), do not answer null. */
+    /** Sentinel from {@link #prefixScan}: the walk budget is spent — keep
+     *  climbing the ladder (a complete search), do not answer null. */
     private static final MatchHolder PREFIX_BUDGET_OUT = new MatchHolder(-1, -1, null);
+    /** Sentinel from {@link #prefixScan}/{@link #candScan} in boolean mode:
+     *  a walk answered true — there is no match object to carry. */
+    private static final MatchHolder SCAN_HIT_OUT = new MatchHolder(-2, -2, null);
     /**
      * Budget-exceeded sentinel for {@link #multiStateLeftmostStart}.
      */
@@ -516,14 +513,20 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
     // ===== shared candidate-scan loops =====
     //
     // Both scans enumerate exactly the positions a leftmost match can start
-    // at and run an exact walk per candidate. The boolean and extract
-    // ladders share them; they differ only in the walk run per candidate —
-    // selected here by the runner's fastPath, since each ladder site is
-    // reached in exactly one mode.
+    // at and run an exact walk per candidate — written once each,
+    // parameterized by mode: boolean ladders (find) pass extract=false and
+    // get the cheap no-allocation walk per candidate; extract ladders
+    // (match) pass extract=true and get the register-recording walk plus
+    // the adaptive boolean pre-filter after repeated failures (the C12
+    // mechanism — prefiltering a boolean walk with a boolean walk would be
+    // the same work twice, so bool mode has no prefilter). The walk itself
+    // is mode-selected by the runner's fastPath (boolWalkAt/extractWalkAt),
+    // since each ladder site is reached in exactly one mode.
 
-    /** Boolean single-start walk for the scan loops, mode-selected. */
-    private boolean boolWalkAt(String input, int start, int to) {
-        return fastPath ? matchFromFast(input, start, to) : runStringMatchFrom(input, start, to) >= 0;
+    /** Boolean single-start walk for the scan loops: thin wrapper over the
+     *  extract walk (the C7 scope-2 fold — pays regs cost on failed walks). */
+    private boolean boolWalkAt(String input, int start, int to, MatchScratch sc) {
+        return extractWalkAt(input, start, to, sc) != null;
     }
 
     /** Extract single-start walk for the scan loops, mode-selected. */
@@ -532,58 +535,26 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
     }
 
     /**
-     * Literal-chain candidate scan with boolean walks: every match must
-     * contain the needle at {@link #prefixOffset} units from its start, so
-     * indexOf enumerates exactly the possible starts (candidate = hit −
-     * offset, always ≥ searchFrom by the loop's own arithmetic) — no hits
-     * means no match. The resume floor is the HIT floor (idx + 1): the
-     * next candidate's hit may sit as early as idx + 1 when needle hits
-     * are denser than the offset (needle "a" at offset 1 on "a☺aa"). The
-     * end guard is evaluated at the hit, the start guard at the candidate;
-     * word gates ride the exact walk, which evaluates them at the
-     * candidate position. The walk budget bounds dense-hit adversarial
-     * shapes; on exhaustion the caller falls through to a complete-search
-     * ladder.
+     * Literal-chain candidate scan: every match must contain the needle at
+     * {@link #prefixOffset} units from its start, so indexOf enumerates
+     * exactly the possible starts (candidate = hit − offset, always ≥
+     * searchFrom by the loop's own arithmetic) — no hits means no match.
+     * The resume floor is the HIT floor (idx + 1): the next candidate's hit
+     * may sit as early as idx + 1 when needle hits are denser than the
+     * offset (needle "a" at offset 1 on "a☺aa"). The end guard is evaluated
+     * at the hit, the start guard at the candidate; word gates ride the
+     * exact walk, which evaluates them at the candidate position.
+     * <p>
+     * Boolean mode (extract=false) runs a boolean walk per candidate and
+     * returns {@link #SCAN_HIT_OUT} on a hit. Extract mode (extract=true)
+     * runs an extract walk per candidate, pre-filtered by the boolean walk
+     * after {@link #ADAPTIVE_PREFILTER_AFTER} failed extract walks, and
+     * returns the match on a hit. Both modes return null when no hits
+     * remain (no match can exist) or {@link #PREFIX_BUDGET_OUT} when the
+     * walk budget is spent (dense-hit adversarial shapes — the caller falls
+     * through to a complete-search ladder).
      */
-    private int prefixScanBool(String input, int searchFrom, int to) {
-        final String needle = this.prefixNeedle;
-        final int nlen = needle.length();
-        final int off = this.prefixOffset;
-        int hitFloor = searchFrom + off;
-        int walks = 0;
-        while (true) {
-            int idx = input.indexOf(needle, hitFloor);
-            if (idx < 0) {
-                return PREFIX_DONE;
-            }
-            hitFloor = idx + 1;
-            int cand = idx - off;
-            if (RunnerTables.needleEndOverlapsPair(input, idx, nlen)) {
-                continue;
-            }
-            if (scanSkipsPairs && Alphabet.pairInterior(input, cand)) {
-                continue;
-            }
-            if (boolWalkAt(input, cand, to)) {
-                return PREFIX_HIT;
-            }
-            if (++walks > PREFIX_WALK_BUDGET) {
-                return PREFIX_EXHAUSTED;
-            }
-        }
-    }
-
-    /**
-     * Literal-chain candidate scan with extract walks: indexOf enumerates
-     * exactly the possible starts (candidate = hit − offset, hit-floor
-     * resume as in {@link #prefixScanBool}); after {@link
-     * #ADAPTIVE_PREFILTER_AFTER} failed extract walks each usable hit gets
-     * the no-allocation boolean prefilter first, then the exact extract
-     * walk. Returns the match on a hit, null when no hits remain (no match
-     * can exist), or {@link #PREFIX_BUDGET_OUT} when the walk budget is
-     * spent.
-     */
-    private MatchHolder prefixScanExtract(String input, int searchFrom, int to, MatchScratch sc) {
+    private MatchHolder prefixScan(String input, int searchFrom, int to, boolean extract, MatchScratch sc) {
         final String needle = this.prefixNeedle;
         final int nlen = needle.length();
         final int off = this.prefixOffset;
@@ -602,48 +573,40 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             if (scanSkipsPairs && Alphabet.pairInterior(input, cand)) {
                 continue;
             }
-            if (walks >= ADAPTIVE_PREFILTER_AFTER && !boolWalkAt(input, cand, to)) {
-                if (++walks > PREFIX_WALK_BUDGET) {
-                    break;
+            if (extract) {
+                if (walks >= ADAPTIVE_PREFILTER_AFTER && !boolWalkAt(input, cand, to, sc)) {
+                    if (++walks > PREFIX_WALK_BUDGET) {
+                        return PREFIX_BUDGET_OUT;
+                    }
+                    continue;
                 }
-                continue;
-            }
-            MatchHolder h = extractWalkAt(input, cand, to, sc);
-            if (h != null) {
-                return h;
+                MatchHolder h = extractWalkAt(input, cand, to, sc);
+                if (h != null) {
+                    return h;
+                }
+            } else if (boolWalkAt(input, cand, to, sc)) {
+                return SCAN_HIT_OUT;
             }
             if (++walks > PREFIX_WALK_BUDGET) {
-                break;
+                return PREFIX_BUDGET_OUT;
             }
         }
-        return PREFIX_BUDGET_OUT;
     }
 
     /**
-     * First-char-set candidate scan with boolean walks (short inputs): one
-     * bit test per char, exact boolean walk per candidate. Coverage is
-     * complete — startBits is only built when the start state cannot
-     * accept, so every match consumes a first char carrying its bit.
+     * First-char-set candidate scan (short inputs): one bit test per char,
+     * exact walk per candidate. Coverage is complete — startBits is only
+     * built when the start state cannot accept, so every match consumes a
+     * first char carrying its bit.
+     * <p>
+     * Boolean mode (extract=false) runs a boolean walk per candidate and
+     * returns {@link #SCAN_HIT_OUT} on a hit. Extract mode (extract=true)
+     * runs an extract walk per candidate, pre-filtered by the boolean walk
+     * after {@link #ADAPTIVE_PREFILTER_AFTER} failed extract walks
+     * (dense-candidate no-match shapes), and returns the match on a hit.
+     * Both modes return null when the scan exhausts with no hit.
      */
-    private boolean candScanBool(String input, int from, int to) {
-        final long[] sb = this.startBits;
-        for (int p = from; p < to; p++) {
-            char c = input.charAt(p);
-            if ((sb[c >>> 6] >>> (c & 63) & 1L) != 0L
-                && (c < 0xDC00 || !scanSkipsPairs || !Alphabet.pairInterior(input, p)) && boolWalkAt(input, p, to)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * First-char-set candidate scan with extract walks (short inputs);
-     * after {@link #ADAPTIVE_PREFILTER_AFTER} failed extract walks the
-     * no-allocation boolean walk pre-filters the remaining candidates
-     * (dense-candidate no-match shapes).
-     */
-    private MatchHolder candScanExtract(String input, int from, int to, MatchScratch sc) {
+    private MatchHolder candScan(String input, int from, int to, boolean extract, MatchScratch sc) {
         final long[] sb = this.startBits;
         int fails = 0;
         for (int p = from; p < to; p++) {
@@ -654,14 +617,18 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             if (scanSkipsPairs && c >= 0xDC00 && Alphabet.pairInterior(input, p)) {
                 continue;
             }
-            if (fails >= ADAPTIVE_PREFILTER_AFTER && !boolWalkAt(input, p, to)) {
-                continue;
+            if (extract) {
+                if (fails >= ADAPTIVE_PREFILTER_AFTER && !boolWalkAt(input, p, to, sc)) {
+                    continue;
+                }
+                MatchHolder h = extractWalkAt(input, p, to, sc);
+                if (h != null) {
+                    return h;
+                }
+                fails++;
+            } else if (boolWalkAt(input, p, to, sc)) {
+                return SCAN_HIT_OUT;
             }
-            MatchHolder h = extractWalkAt(input, p, to, sc);
-            if (h != null) {
-                return h;
-            }
-            fails++;
         }
         return null;
     }
@@ -909,16 +876,16 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 if (runStringMatchFrom(s, 0, len) >= 0) {
                     return true;
                 }
-                // Literal-prefix candidate scan (see prefixScanBool): no
+                // Literal-prefix candidate scan (see prefixScan): no
                 // hits ⇒ no match. Budget exhaustion falls through to the
                 // trigger scan + restart loop below.
                 if (prefixNeedle != null) {
                     trace(Strategy.PREFIX);
-                    int pr = prefixScanBool(s, 1, len);
-                    if (pr == PREFIX_HIT) {
+                    MatchHolder ph = prefixScan(s, 1, len, false, null);
+                    if (ph == SCAN_HIT_OUT) {
                         return true;
                     }
-                    if (pr == PREFIX_DONE) {
+                    if (ph == null) {
                         return false;
                     }
                 }
@@ -926,7 +893,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 // (mask-aware) walks instead of the raw-scan simulation.
                 if (startBits != null && len <= CAND_SCAN_MAX) {
                     trace(Strategy.CAND_SCAN);
-                    return candScanBool(s, 1, len);
+                    return candScan(s, 1, len, false, null) != null;
                 }
                 // The trigger scan and the origin sim step CODEPOINTS; under
                 // unit semantics (CODEPOINT_BOUNDARIES unset) the unit twin
@@ -1235,12 +1202,12 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 return direct;
             }
         }
-        // Literal-prefix candidate scan (see prefixScanExtract): no hits ⇒
+        // Literal-prefix candidate scan (see prefixScan): no hits ⇒
         // no match. Budget exhaustion falls through to the trigger scan,
         // which is a complete search.
         if (maxStart > 0 && prefixNeedle != null) {
             trace(Strategy.PREFIX);
-            MatchHolder hp = prefixScanExtract(input, from + 1, to, sc);
+            MatchHolder hp = prefixScan(input, from + 1, to, true, sc);
             if (hp != PREFIX_BUDGET_OUT) {
                 return hp; // the hit, or no hits at all — either way decided
             }
@@ -1251,7 +1218,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         // state cannot accept), so bit coverage is complete.
         if (maxStart > 0 && startBits != null && to - from <= CAND_SCAN_MAX) {
             trace(Strategy.CAND_SCAN);
-            return candScanExtract(input, from + 1, to, sc);
+            return candScan(input, from + 1, to, true, sc);
         }
         // Trigger scan: multi-state pass that both proves no-match and
         // bounds the restart loop to the kill-point window (no configuration
@@ -2261,16 +2228,16 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      * Unanchored boolean search via single-pass multi-state simulation. O(n × |states|).
      */
     private boolean runStringFindFast(String input, int to, MatchScratch sc) {
-        // Literal-prefix candidate scan first (see prefixScanBool): no hits ⇒
+        // Literal-prefix candidate scan first (see prefixScan): no hits ⇒
         // no match. Budget exhaustion falls through to the ladders below
         // (complete searches).
         if (prefixNeedle != null) {
             trace(Strategy.PREFIX);
-            int pr = prefixScanBool(input, 0, to);
-            if (pr == PREFIX_HIT) {
+            MatchHolder ph = prefixScan(input, 0, to, false, null);
+            if (ph == SCAN_HIT_OUT) {
                 return true;
             }
-            if (pr == PREFIX_DONE) {
+            if (ph == null) {
                 return false;
             }
         }
@@ -2278,7 +2245,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         // exact walk per candidate) beats the raw-scan live-set simulation.
         if (startBits != null && to <= CAND_SCAN_MAX) {
             trace(Strategy.CAND_SCAN);
-            return candScanBool(input, 0, to);
+            return candScan(input, 0, to, false, null) != null;
         }
         // Unit semantics: the unit raw-scan trigger (interior seeds, see
         // unitTrigger) — no match anywhere answers false in one pass; a
@@ -2377,7 +2344,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         if (h != null) {
             return h;
         }
-        // 1a) Literal-prefix candidate scan (see prefixScanExtract): the
+        // 1a) Literal-prefix candidate scan (see prefixScan): the
         //     intrinsified vectorized indexOf beats the per-char ladders
         //     below on any needle-prefixed shape; no hits ⇒ no match at all
         //     (the exact walk above ruled out a start at `from`). On budget
@@ -2385,7 +2352,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         //     search from `from`.
         if (prefixNeedle != null) {
             trace(Strategy.PREFIX);
-            h = prefixScanExtract(input, from + 1, to, sc);
+            h = prefixScan(input, from + 1, to, true, sc);
             if (h != PREFIX_BUDGET_OUT) {
                 return h; // the hit, or no hits at all — either way decided
             }
@@ -2396,7 +2363,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         //     gets an exact walk, so the first hit is the true leftmost match.
         if (startBits != null && to - from <= CAND_SCAN_MAX) {
             trace(Strategy.CAND_SCAN);
-            return candScanExtract(input, from + 1, to, sc);
+            return candScan(input, from + 1, to, true, sc);
         }
         // 2) No match starting at `from`: budgeted origin-tracking sim. Dense
         //    matches early-stop inside the budget and never touch the trigger
