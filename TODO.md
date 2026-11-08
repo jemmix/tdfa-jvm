@@ -14,9 +14,9 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 ## Correctness
 
 - [ ] Fix pre-existing `(?U:\w)` lone-surrogate divergence vs jur
-- [ ] JUR-compat re-base tail: both-lane soak, README numbers
+- [ ] JUR-compat re-base tail: local soak, README numbers
 - [ ] Watch JDK-8381696; retire `SKIP_RESTART_TAG_LEAK` on JDK fix ([analysis](docs/jdk-8381696-restart-tag-leak-fix.md))
-- [ ] Overnight cross-rung soak, both lanes; refresh README numbers
+- [ ] Local overnight cross-rung soak; refresh README numbers
 - [ ] Verify TDFA(1) conformance vs paper wording (lookahead delay)
 - [ ] Upstream re2j PRs #208/#212/#213: maintainer review
 

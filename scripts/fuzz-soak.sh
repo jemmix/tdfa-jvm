@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Overnight differential fuzz soak, chunked into short-lived JVMs.
 #
+# LOCAL hardware only (2026-11-08): never point this at GitHub-hosted
+# runners — Actions soak tenancy was ruled an undue burden with real
+# account-ban risk (see .github/workflows/fuzz-nightly.yml). Local
+# findings still file through the same gate:
+#   python3 scripts/fuzz-nightly-issue.py <out-dir>
+#
 #   scripts/fuzz-soak.sh [iterations=480] [minutes-per-iter=1] [out=build/fuzz] [seed-base=random] [extra gradle args...]
 #
 # Both lanes since the evidence re-base: the per-batch lane draw mixes the

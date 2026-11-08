@@ -1,5 +1,15 @@
 name: nightly-fuzz
 
+# DOA on GitHub-hosted hardware (2026-11-08) — do not run soaks on GitHub's
+# runners, nightly OR manual dispatch. A 4h x2 unattended soak tenancy per
+# night on gratis shared compute was judged an undue burden on the platform,
+# with a real risk of the account being banned. Soaks and the issue gate
+# below run identically on local hardware:
+#   scripts/fuzz-soak.sh 240 1 build/fuzz-nightly <seedBase>
+#   python3 scripts/fuzz-nightly-issue.py build/fuzz-nightly
+# This file stays as the documented contract (soak shape, record kinds,
+# gate/dedup behavior, evidence layout) — not as an invitation to run it.
+
 # Widest-surface differential soak. scripts/fuzz-soak.sh runs
 # the chunked DifferentialFuzzer (one short-lived JVM per minute — hang-leak
 # containment) with ALL widening defaults left on:
@@ -26,9 +36,11 @@ on:
   # Nightly cron parked 2026-11-01, in-repo (not the GitHub toggle): the
   # pipeline proved itself end-to-end (issue #127 + the evidence artifact,
   # runs 41028994833/41061641546), and an unattended 4h runner tenancy per
-  # night is more than the campaign wants to burn while #127 triage is
-  # manual. workflow_dispatch below still fires on demand; resume the
-  # nightlies by uncommenting the schedule block.
+  # night is more than the campaign wanted to burn while #127 triage was
+  # manual. Then ruled DOA entirely (2026-11-08, see the banner above):
+  # never resume the schedule onto GitHub-hosted runners — a resumed
+  # nightly lives on self-hosted or local hardware only, which needs no
+  # workflow at all (fuzz-soak.sh + fuzz-nightly-issue.py).
   # schedule:
   #   # 02:30 UTC — off the top-of-hour cron stampede.
   #   - cron: '30 2 * * *'
