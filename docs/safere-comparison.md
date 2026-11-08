@@ -6,9 +6,10 @@ living relative of this library: linear-time by construction, a
 `Pattern`/`Matcher` String API, RE2 lineage — and, unlike re2j, an
 actively optimized 2026 engine. This page records what a same-run
 head-to-head measured, *why* each side wins where it does (SafeRE's own
-runtime diagnostics attribute the rows), and which of its devices could
-be borrowed without betraying the [vision](../README.md#vision) — mapping
-onto the weak-point table of the
+runtime diagnostics attribute the rows), which of its devices could be
+borrowed without betraying the [vision](../README.md#vision), what this
+library could contribute *back*, and what the comparison implies for
+off-JVM AOT — mapping onto the weak-point table of the
 [dispatch-engine record](dispatch-engine.md) (W1–W5, 2026-11-04).
 
 Environment: JDK 26.0.2, macOS arm64 (M-series laptop — ratios
@@ -155,6 +156,128 @@ per-call regimes to the ASM tier (0.87× geomeans); it has prefilters and
 wins whole-haystack rejection. The designs are near-complements — which
 is the spin-off's thesis (tdfa as the G lane under an L0 scanner), now
 with a same-run number attached to every row of it.
+
+## Their approach — RE2's engine stack, extended
+
+Not "an optimized Pike VM": the Pike NFA is the semantic *floor*, not
+the working engine. SafeRE is a faithful port of RE2's multi-engine
+design — `Prog`/`Inst`, `OnePass`, `BitState`, `Nfa` are RE2's class
+names; `Nfa$NfaThread`/`QueueState` is RE2's sparse-set thread queue
+verbatim — extended well past re2j. Compile is *analysis* (~110× jur);
+match time executes the plan down a dispatch stack, in roughly this
+order (all observed in our traces except where noted):
+
+1. `LENGTH` — minimum-match-length rejection before any engine.
+2. Literal / character-class / keyword paths, literal alternation.
+3. Start acceleration — skip positions that cannot begin a match
+   (literal at fixed offset, class, folded literal).
+4. Reject prefilters — required-literal/char/composite; "cannot match
+   anywhere" without running an engine (the 452× row).
+5. **ShiftDFA** — a port of RE2's 2025 ShiftDFA (`ShiftDfa` +
+   `Pattern$ShiftDfaAnalysis` + prepared runners): automaton state in a
+   machine word, transitions by shift/mask arithmetic, near-zero table
+   memory; lazy resolution with a fallback runner.
+6. Lazy memoized **DFA**, forward and reverse, state budgets.
+7. **OnePass** — deterministic-per-position programs, capture-capable,
+   actions packed into `long` cells (our anchored rows).
+8. **BitState** — RE2's bounded backtracker with visited bits; linear
+   via work caps.
+9. **Pike VM NFA** — only when nothing simpler is authoritative:
+   nullable-loop semantics and deferred-capture resolution (the
+   group-read bench forced it: 1.43–1.70×).
+
+Two input lanes — String (UTF-16 `StringInputScanner`) and UTF-8 bytes
+(`Utf8InputScanner` + `Utf8Matcher`); the SWAR scans are portable
+plain-Java, the Vector kernels byte-lane only (measured inert on every
+String cell).
+
+One philosophical contrast worth naming: their budget story is
+**graceful degradation** — an exhausted DFA cache falls back to a
+slower-but-still-linear engine, so matching never fails. Ours is
+**typed rejection** — `PatternTooLargeException`, deterministic on
+recompile, so match time never surprises. Different contracts, both
+defensible; neither is obviously the right one for every consumer.
+
+## Knowledge that could flow the other way
+
+- **The JDK-8381696 fix shape.** The capture-leak bug was *filed from
+  SafeRE's own cross-engine effort* (eaftan/safere#52, their deepest
+  public analysis) and remains open P4. This library found it
+  independently, classified all three defect families, and prototyped
+  the OpenJDK patch
+  ([jdk-8381696-restart-tag-leak-fix.md](jdk-8381696-restart-tag-leak-fix.md)):
+  transaction at the quantifier driver, exact-value restore, possessive
+  routing to `GroupCurly`, and the surrogate width-change invariant
+  their ASCII-only fuzzing would miss. Their oracle *is* the buggy jur —
+  the analysis would let them pre-adapt to the fixed JDK and cross-check
+  their own nullable-loop capture handling.
+- **The hot-pattern codegen tier evidence.** Their interpreted OnePass
+  loses per-call work to our compiled TDFA (0.87× geomeans, `alt` 0.52×,
+  IPv4 0.48×), and their own report concedes a real-world `matches()`
+  row at 3.16× slower than jur. The BT22 TDFA implementation knowledge
+  (tag registers in JVM locals, eager determinization under budgets) is
+  the missing tier — for them as much as for the spin-off.
+- **Multi-valued tags** (BT22 §3.1, `groupSpans`): every iteration's
+  offsets under repetition — neither jur nor SafeRE can express it;
+  semantics and costs are written up in
+  [multi-valued-tags.md](multi-valued-tags.md).
+- **Streaming with a retention floor** — chunked matching with captures
+  correct across boundaries, the window pinned at the search's retention
+  floor under a loud budget, and the every-split-position differential
+  battery ([streaming-input.md](streaming-input.md)); their closest
+  surface is direct UTF-8, not chunked streaming.
+- **Budget-contract testing discipline** — typed rejections,
+  recompile-determinism, raised-knob replay byte-identical, both tiers
+  agreeing; a testable contract even for a fallback-based design.
+- **Datapoints** — the arm64 same-run head-to-head including the
+  String-lane vector null result (their published numbers are Intel
+  WSL2), and the cross-engine `\p{Greek}`/`\p{IsGreek}` syntax
+  divergence map hit while making the corpus portable.
+
+## Kotlin/Native compile-time compilation — port versus lower
+
+The question: pattern → specialized native matcher at build time
+(proc-macro style), on Kotlin/Native. The two architectures sit at
+opposite ends of it.
+
+**SafeRE: a port of most of the library that still interprets.** Two
+hard blockers stack. (1) K/N has no JVM interop — no JARs, no Java
+bytecode — so even *using* it means a KMP port of the ~300-class engine
+stack, regenerating the Unicode tables (their generators ride JDK
+`Character`/ICU4J, which do not exist on K/N), and re-implementing the
+SIMD story (the Vector API is JVM-only). (2) Even ported, there is no
+per-pattern code to compile *to*: compile produces `Prog` (data)
+interpreted by generic engines; lazy-DFA memoization, engine re-selection
+per input regime, and deferred captures are runtime machinery. Build-time
+precompilation buys exactly the 268–491 µs Prog build (a serialized
+`Pattern`); the match-time zoo ships and runs regardless. A codegen tier
+would have to be built first — the per-call rows above are the evidence
+it is missing.
+
+**tdfa: nearly the designed-for case.** The TDFA is pure data and match
+time is generated code by design — no lazy caches, no engine dispatch,
+no input-dependent strategy, nothing runtime-adaptive to port. The
+compiler side runs where build tools already run (KSP/Gradle execute on
+the JVM), so the build step *is* this library; a `KotlinEmitterBackend`
+plugs into `core`'s `EngineBackend` SPI without a fork (the facades pass
+`AsmEngineBackend` in one line today). The dense dispatch lowers to
+native jump tables; compile budgets become build errors. Costs, honestly:
+the Unicode tables are data to emit (mechanical, bulky), and the search
+ladder (needle/prefix/first-char rungs) lives in the facade, not the
+automaton — port it into the emitter or the long-scan no-match regimes
+regress to raw-DFA scanning.
+
+| | SafeRE → K/N | tdfa → K/N |
+|---|---|---|
+| what ships at match time | the ported engine zoo, interpreted | only the generated per-pattern loop |
+| port scope | ~300 classes + table regeneration + SIMD re-implementation | one emitter backend + table/ladder emission |
+| what build-time buys | the Prog build (~0.3–0.5 ms/pattern) | all runtime compile + interpretation |
+| perf character after | scan/prefilter wins (if kept); per-call stays interpreted | per-call wins carry over, amplified natively; scans need the ladder port |
+
+This is the same family as the Engineering/Wishlist items
+*condy/invokedynamic per-regex specialization*, *ahead-of-time class
+persistence*, and *GraalVM native-image compatibility* — that idea
+generalized off the JVM.
 
 ## Reproducing
 
