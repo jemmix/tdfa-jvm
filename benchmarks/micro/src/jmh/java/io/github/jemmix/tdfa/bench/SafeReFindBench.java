@@ -1,0 +1,137 @@
+package io.github.jemmix.tdfa.bench;
+
+import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OperationsPerInvocation;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.Warmup;
+import org.openjdk.jmh.infra.Blackhole;
+
+import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
+
+/**
+ * Short-input find() head-to-head vs SafeRE (org.safere:safere, the RE2-lineage
+ * linear-time engine): same slugs and inputs as {@code ShortFindBench}, one
+ * added engine lane. Unanchored search on 30-65-char strings — per-call
+ * overhead regime (Matcher allocation + scan + extraction).
+ *
+ * <p>All engines go through their Pattern/Matcher String API. Setup verifies
+ * every engine agrees on match presence.
+ */
+@BenchmarkMode(Mode.SingleShotTime)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
+@State(Scope.Benchmark)
+@Warmup(iterations = 3)
+@Measurement(iterations = 8)
+@Fork(1)
+@OperationsPerInvocation(SafeReFindBench.ITERS)
+public class SafeReFindBench {
+
+    static final int ITERS = 2_000_000;
+
+    @State(Scope.Benchmark)
+    public static class BenchState {
+        @Param({"jur", "re2j", "safere", "vm", "asm"})
+        public String engine;
+
+        @Param({"litFind", "caseiLit", "wordB", "wordUnicodeCls", "lettersRu", "boundedSpan", "ipExtract",
+            "alternation", "emailNoMatch", "litNoMatch"})
+        public String slug;
+
+        String input;
+        Predicate<String> findOnce;
+
+        @Setup(Level.Trial)
+        public void setUp() {
+            String regex = switch (slug) {
+                case "litFind" -> "Twain";
+                case "caseiLit" -> "(?i)sherlock";
+                case "wordB" -> "\\bword\\b";
+                case "wordUnicodeCls" -> "\\p{L}{2,}";
+                case "lettersRu" -> "[а-яА-ЯёЁ]{4,}";
+                case "boundedSpan" -> "\"[^\"]{5,20}\"";
+                case "ipExtract" -> "(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)";
+                case "alternation" -> "(a|b)*c";
+                case "emailNoMatch" -> "\\w+@\\w+\\.(com|org|net)";
+                case "litNoMatch" -> "zzqqxv";
+                default -> throw new UnsupportedOperationException(slug);
+            };
+            input = switch (slug) {
+                case "litFind" -> "The adventures of Tom Sawyer and Huckleberry Finn, by Mark Twain.";
+                case "caseiLit" -> "Mr Sherlock Holmes, the consulting detective, walked in.";
+                case "wordB" -> "a short sentence with word inside the text here";
+                case "wordUnicodeCls" -> "Привет мир, вот тестовое предложение короткое";
+                case "lettersRu" -> "Привет мир, вот тестовое предложение короткое";
+                case "boundedSpan" -> "He said \"hello world\" today and left quite quietly";
+                case "ipExtract" -> "connecting from ip=192.168.1.77 port 443 ok";
+                case "alternation" -> "aabbaabbc";
+                case "emailNoMatch" -> "no addresses anywhere in this particular line at all";
+                case "litNoMatch" -> "The adventures of Tom Sawyer and Huckleberry Finn, by Mark.";
+                default -> throw new UnsupportedOperationException(slug);
+            };
+            final String in = input;
+            switch (engine) {
+                case "jur" -> {
+                    var p = java.util.regex.Pattern.compile(regex);
+                    findOnce = s -> {
+                        var m = p.matcher(s);
+                        return m.find();
+                    };
+                }
+                case "re2j" -> {
+                    var p = com.google.re2j.Pattern.compile(regex);
+                    findOnce = s -> {
+                        var m = p.matcher(s);
+                        return m.find();
+                    };
+                }
+                case "safere" -> {
+                    var p = org.safere.Pattern.compile(regex);
+                    findOnce = s -> {
+                        var m = p.matcher(s);
+                        return m.find();
+                    };
+                }
+                case "vm" -> {
+                    var p = io.github.jemmix.tdfa.Pattern.compile(regex, 0, TdfaRunner::new);
+                    findOnce = s -> {
+                        var m = p.matcher(s);
+                        return m.find();
+                    };
+                }
+                case "asm" -> {
+                    var p = io.github.jemmix.tdfa.Pattern.compile(regex);
+                    findOnce = s -> {
+                        var m = p.matcher(s);
+                        return m.find();
+                    };
+                }
+                default -> throw new UnsupportedOperationException(engine);
+            }
+            boolean expect = switch (slug) {
+                case "emailNoMatch", "litNoMatch" -> false;
+                default -> true;
+            };
+            if (findOnce.test(in) != expect) {
+                throw new IllegalStateException("presence mismatch for " + engine + "/" + slug);
+            }
+        }
+    }
+
+    @Benchmark
+    public void bench(BenchState bs, Blackhole bh) {
+        for (int i = 0; i < ITERS; i++) {
+            bh.consume(bs.findOnce.test(bs.input));
+        }
+    }
+}

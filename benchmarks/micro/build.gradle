@@ -13,6 +13,10 @@ dependencies {
     jmh project(':re2j')
     jmh project(':testlib:rebar')
     jmh 'com.google.re2j:re2j:1.8'
+    // SafeRE 1.1.0 (org.safere) — RE2-lineage linear-time engine, the
+    // SafeRe*Bench head-to-head lane. Requires Java 21+ at runtime; the
+    // benchmark JVMs run on the build JDK (26), fine.
+    jmh 'org.safere:safere:1.1.0'
     // Pinned to a specific commit on JitPack (replaces previous main-SNAPSHOT).
     jmh 'com.github.DataDog:java-reggie:f437ac8d77c0e4e8faf2bc931f24947b8039ffbb'
     jmh 'org.ow2.asm:asm:9.9.1'
@@ -40,5 +44,12 @@ jmh {
     // because the flag was ignored).
     if (project.hasProperty('jmhInclude')) {
         includes = [project.getProperty('jmhInclude')]
+    }
+    // SafeRE's experimental vectorized scan provider: run the JMH task with
+    // -PsafereVector to enable it in every forked benchmark JVM (module +
+    // provider flag, mirroring SafeRE's run-java-benchmarks.sh).
+    if (project.hasProperty('safereVector')) {
+        jvmArgsAppend = ['--add-modules=jdk.incubator.vector',
+                         '-Dorg.safere.experimental.vectorScanProvider=vector']
     }
 }

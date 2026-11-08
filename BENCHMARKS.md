@@ -251,6 +251,34 @@ is the honest worst case: the undecided walk pins the retention floor
 at its start, so the window grows to the stream — bounded by
 `tdfa.budget.stream.window`, tripping loudly past it.
 
+## 8. SafeRE head-to-head — `SafeRe*Bench` (5 engines, same-run ratios)
+
+SafeRE 1.1.0 (`org.safere:safere` — RE2-lineage linear-time, the closest
+living relative) vs this library, jur, re2j: anchored/short-input find,
+64 KB scans (counting and group-reading find-alls), compile. Artifact:
+`benchmarks/results-safere-headtohead-jmh.txt` (2026-11-08); design,
+strategy attribution (SafeRE's own diagnostics) and the borrowability
+analysis mapped to the dispatch-engine W1–W5 table:
+[`docs/safere-comparison.md`](docs/safere-comparison.md).
+
+| regime (geomean) | tdfa ASM | tdfa VM | SafeRE | jur | re2j |
+|---|---:|---:|---:|---:|---:|
+| anchored short matches (ns/op) | **32.9** | 86.2 | 38.0 | 111.6 | 301.6 |
+| short-input find (ns/op) | **60.0** | 83.5 | 69.2 | 76.8 | 337.7 |
+| 64 KB scans (µs/pass) | 340.8 | 363.8 | **80.4** | 190.2 | 728.2 |
+| compile (µs/pattern) | 2 480–3 210 | 1 390–1 620 | **268–491** | 16–54 | 33–74 |
+
+**Reading:** the compiled automaton wins per-call work (0.87× SafeRE on
+both per-call regimes — SafeRE has no codegen; its ONE_PASS interpreter
+pays engine selection per call); SafeRE's compile-time prefilter layer
+wins whole-haystack rejection (required-char class skip on email
+no-match: 3.3 vs 1 512 µs per 64 KB; folded-literal `(?i)` scan: 19.6×);
+tdfa keeps literal-family extraction (`\d{2}/\d{2}/\d{4}` find-all
+0.72×, 0.62× with group reads). Group reads narrow SafeRE's find-all
+lead (deferred captures 1.43–1.70× vs inline tags 1.11–1.26×). SafeRE's
+Vector API kernels are UTF-8-byte-lane devices — zero measured effect on
+any String cell.
+
 ## Historical
 
 Tables from earlier eras (2026-08-15 pre-restructure headline with sub-10 ns

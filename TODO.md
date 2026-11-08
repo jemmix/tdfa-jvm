@@ -22,6 +22,7 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 ## Performance
 
+- [ ] Required-infix needle-set prefilter: decision record ([SafeRE comparison](docs/safere-comparison.md))
 
 ## Benchmarks
 
