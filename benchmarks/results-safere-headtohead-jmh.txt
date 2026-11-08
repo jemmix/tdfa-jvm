@@ -1,0 +1,83 @@
+# SafeRE head-to-head — SafeRe*Bench (JMH, 5 engines, same-run ratios)
+# Run: 2026-11-08, JDK 26.0.2, macOS arm64 (M-series), SafeRE 1.1.0 (default
+# provider), re2j 1.8. Anchored/find: SingleShotTime ns/op per call (OPI 1M/2M);
+# scan: AverageTime us/op per full 64 KB pass; compile: SingleShotTime us/op.
+# Every cell count-/presence-verified against java.util.regex at trial setup.
+# Two full scan passes (default + -PsafereVector): all cells within ±5%.
+# Within-run engine ratios are the durable claims (BENCHMARKS.md header).
+# slugs mirror ParameterizedShortInputBench/ShortFindBench shapes; the 64 KB
+# corpus is a deterministic LCG word soup + dd/mm/yyyy dates + one "Twain"
+# needle (no '@'), with a Cyrillic twin for the ru rows. Design and strategy
+# attribution: docs/safere-comparison.md.
+
+== SafeReAnchoredBench — anchored matches(), ns/op ==
+slug              jur     re2j  safere      vm     asm  asm/sr
+alt             104.4   224.6    48.0    75.7    25.1   0.52x
+ip               60.9   365.2    75.1   116.4    35.8   0.48x
+two              49.4   432.3    68.6   133.9    57.3   0.84x
+lit              35.1    84.4    17.9    27.1    27.3   1.53x
+redos          1564.4   833.9    18.0   149.0    27.3   1.52x
+# geomean: jur 111.6  re2j 301.6  safere 38.0  vm 86.2  asm 32.9
+# asm/safere 0.87x  vm/safere 2.27x  safere/jur 0.34x  asm/jur 0.29x
+
+== SafeReFindBench — short-input find(), ns/op ==
+slug              jur     re2j  safere      vm     asm  asm/sr
+alternation     124.1   418.4    87.7    78.4    57.5   0.66x
+boundedSpan      39.6   444.6    84.5    90.6    52.7   0.62x
+caseiLit         32.4   276.2    44.3    61.3    39.7   0.90x
+emailNoMatch    359.0  1602.8    43.4  1112.3   934.5  21.55x
+ipExtract       142.0  1181.7   115.4   154.3    75.7   0.66x
+lettersRu        55.6   249.6    98.6    76.2    22.5   0.23x
+litFind          74.9   172.8    55.2    30.8    31.7   0.57x
+litNoMatch       39.2    36.8    44.7    26.3    25.9   0.58x
+wordB           169.3   459.4    73.8    53.5    59.0   0.80x
+wordUnicodeCls   32.0   272.0    85.6    66.9    64.6   0.75x
+# geomean: jur 76.8  re2j 337.7  safere 69.2  vm 83.5  asm 60.0
+# asm/safere 0.87x  vm/safere 1.21x  safere/jur 0.90x  asm/jur 0.78x
+
+== SafeReScanBench — 64 KB scans, us/pass (run 2 of 2; run 1 within ±5%) ==
+slug              jur     re2j  safere      vm     asm  asm/sr   matches
+caseiLit        196.2  1352.8    42.9   867.1   839.7  19.56x        1
+datesAll        204.4  1399.9    24.6    28.5    17.7   0.72x      278
+emailNoMatch    490.9  1951.1     3.3  1555.9  1512.5 452.06x        0
+litHit           84.4    30.9    30.5    33.0    30.9   1.01x        1
+litNoMatch       67.1    25.6    25.5    25.3    25.2   0.99x        0
+luNoMatch       145.4  1270.0   139.8  1227.2  1219.9   8.73x        0
+pLAll           197.7  2430.8   745.5  1201.9  1180.9   1.58x    10306
+ruAll           561.5  2517.4   786.8  1597.3  1595.8   2.03x     8507
+wordsAll        180.9  2533.1   620.7  1473.3  1540.5   2.48x     7636
+# geomean: jur 190.2  re2j 728.2  safere 80.4  vm 363.8  asm 340.8
+# asm/safere 4.24x (2.36x excl. emailNoMatch)  safere/jur 0.42x  asm/jur 1.79x
+
+== SafeReCaptureScanBench — same find-alls READING group(1), us/pass ==
+slug              jur     re2j  safere      vm     asm   asm/sr  delta-vs-counting
+wordsCaps       276.2  5927.3   890.6  1656.2  1708.3   1.92x   sr 1.43x  asm 1.11x
+datesCaps       352.9  1809.3    35.9    41.7    22.4   0.62x   sr 1.46x  asm 1.26x
+ruCaps          654.5  6147.4  1334.8  1949.5  2009.6   1.51x   sr 1.70x  asm 1.26x
+# jur deltas 1.53/1.73/1.17 — jur WINS dense find-all+capture (wordsCaps row);
+# lazy NFA is ideal there; both automaton engines pay restart/match overhead.
+
+== SafeReCompileBench — Pattern.compile, us/pattern ==
+slug              jur     re2j  safere      vm     asm
+alt              18.6    35.9   273.0  1385.6  2478.2
+caseiLit         17.5    33.3   268.5  1401.1  2680.8
+dates            19.0    47.2   399.1  1399.7  2808.2
+ip               54.1    73.7   491.0  1620.0  3172.9
+two              15.9    43.5   354.9  1598.9  3209.8
+
+== SafeRE strategy attribution (SafeReMatchDiagnostics, observed) ==
+# anchored alt/two/ip -> ONE_PASS; lit -> LITERAL; redos -> CHARACTER_CLASS
+#   reject prefilter (required char 'b' absent — no engine ran)
+# lettersRu/ipExtract find -> CHAR_CLASS|LITERAL start-accel + lazy DFA
+# emailNoMatch -> CHARACTER_CLASS reject prefilter ('@' absent)
+# caseiLit -> LITERAL (folded-literal scanner, 0.66 ns/char)
+# find-all counting rows -> lazy DFA boundary, captures deferred (NONE)
+# scan corpus has no '@'; Greek property syntax diverges per engine
+#   (\p{Greek} re2j/tdfa ok, jur rejects; \p{IsGreek} jur/safere ok) —
+#   luNoMatch ([\p{Lu}\d]{5,}) is the portable wide-class no-match row.
+
+== Vector-provider A/B (-PsafereVector, jdk.incubator.vector + flag) ==
+# Every safere String-API cell 0.97x-1.03x vs default provider: the SIMD
+# kernels (ScanKind BYTE/PAIR/TRIPLE/CLASS/IGNORE_CASE/TEDDY) are byte-lane
+# (UTF-8) devices. String-lane literals ride the same String.indexOf
+# intrinsic for everyone (litHit/litNoMatch parity rows).
