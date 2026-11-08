@@ -56,6 +56,7 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 - [ ] Ahead-of-time class persistence (.class on disk)
 - [ ] Tiered compilation hints (@Contended, @Stable)
 - [ ] Loop-based bounded repetition (only if ever needed)
+- [ ] Kotlin/Native compile-time TDFA emitter ([SafeRE comparison](docs/safere-comparison.md))
 - [ ] Shared Tdfa for asm+vm (halve fuzz compile churn)
 - [ ] CFG successors deboxing (perf polish)
 - [ ] ZGC vs G1 A/B
