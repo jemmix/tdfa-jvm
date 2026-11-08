@@ -95,8 +95,9 @@ import java.util.function.Predicate;
  *
  * <p>Known, documented divergences are avoided by construction rather than
  * filtered after the fact: case-insensitive + supplementary/lone-surrogate
- * combinations are not generated (tdfa has no supplementary simple-fold
- * table yet; re2j folds fully — TODO.md tracks the gap), and {@code (?i)}
+ * combinations are not generated (a pre-CaseFoldTable avoidance — the fold
+ * universe has covered supplementary codepoints on both providers since;
+ * retiring the avoidance is TODO-tracked), and {@code (?i)}
  * class ranges are generated ASCII-narrow only (re2j's own parser expands
  * case folds over every codepoint in a range — wide {@code (?i)} ranges
  * can hang the ORACLE). Everything else
@@ -2443,7 +2444,8 @@ public final class DifferentialFuzzer {
     }
 
     /** Class member/range endpoint. Under (?i): supplementary and lone
-     *  surrogates avoided (tdfa lacks a supplementary fold table; re2j folds). */
+     *  surrogates avoided (pre-CaseFoldTable avoidance, TODO-tracked —
+     *  the fold universe covers supplementary since). */
     static int pickClassCp(SplittableRandom rnd, boolean ci) {
         return switch (rnd.nextInt(8)) {
             case 0, 1, 2 -> POOL_ASCII[rnd.nextInt(POOL_ASCII.length)];
