@@ -13,7 +13,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 ## Correctness
 
-- [ ] Fuzz CI×supplementary shapes: retire the generation avoidance
 - [ ] JUR-compat re-base tail: local soak, README numbers
 - [ ] Watch JDK-8381696; retire `SKIP_RESTART_TAG_LEAK` on JDK fix ([analysis](docs/jdk-8381696-restart-tag-leak-fix.md))
 - [ ] Local overnight cross-rung soak; refresh README numbers

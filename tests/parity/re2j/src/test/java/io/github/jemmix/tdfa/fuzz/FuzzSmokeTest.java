@@ -30,4 +30,39 @@ class FuzzSmokeTest {
         assertThat(r.mvtCases).as("multi-valued lane cases (wiring guard)").isPositive();
         assertThat(r.mvtSimCases).as("multi-valued sim-oracle cases (wiring guard)").isPositive();
     }
+
+    /**
+     * Generation-coverage pin: CI batches draw supplementary and lone
+     * surrogate codepoints into patterns — the un-avoidance of 12d9921
+     * (full-Unicode {@code (?i)} folding), without which the soak silently
+     * stops comparing the CI x supplementary region. Pure generator sweep,
+     * no engine involved.
+     */
+    @Test
+    void ciBatchesGenerateSupplementaryAndLoneSurrogates() {
+        int ciBatches = 0;
+        boolean supp = false;
+        boolean lone = false;
+        for (long batch = 0; batch < 5000 && !(supp && lone); batch++) {
+            if ((DifferentialFuzzer.genFlags(batch) & DifferentialFuzzer.FLAG_CI) == 0) {
+                continue;
+            }
+            ciBatches++;
+            String p = DifferentialFuzzer.genPattern(batch);
+            for (int i = 0; i < p.length(); i++) {
+                char c = p.charAt(i);
+                if (c >= 0xD800 && c <= 0xDFFF) {
+                    if (c <= 0xDBFF && i + 1 < p.length() && p.charAt(i + 1) >= 0xDC00 && p.charAt(i + 1) <= 0xDFFF) {
+                        supp = true; // adjacent high+low: one supplementary codepoint
+                        i++;
+                    } else {
+                        lone = true;
+                    }
+                }
+            }
+        }
+        assertThat(ciBatches).as("CI batches scanned").isPositive();
+        assertThat(supp).as("supplementary codepoints generated under CI (12d9921 un-avoidance)").isTrue();
+        assertThat(lone).as("lone surrogates generated under CI (12d9921 un-avoidance)").isTrue();
+    }
 }
