@@ -93,15 +93,18 @@ import java.util.function.Predicate;
  * chunked soak ({@code scripts/fuzz-soak.sh}: many short JVMs, so threads
  * leaked by hang watchdogs die with their process) shares one out dir.
  *
- * <p>Known, documented divergences are avoided by construction rather than
- * filtered after the fact: case-insensitive + supplementary/lone-surrogate
- * combinations are not generated (a pre-CaseFoldTable avoidance — the fold
- * universe has covered supplementary codepoints on both providers since;
- * retiring the avoidance is TODO-tracked), and {@code (?i)}
- * class ranges are generated ASCII-narrow only (re2j's own parser expands
- * case folds over every codepoint in a range — wide {@code (?i)} ranges
- * can hang the ORACLE). Everything else
- * must agree with re2j or it is a finding.
+ * <p>Generation coverage: case-insensitive × supplementary/lone-surrogate
+ * combinations ARE generated (un-avoided since full-Unicode {@code (?i)}
+ * folding landed — 12d9921; pinned in {@code FuzzSmokeTest}) and compare
+ * hard on both lanes. The remaining generation guards are ORACLE-SIDE,
+ * both for the RELEASED re2j build only (never the default patched fork):
+ * fold-hang codepoints leave the {@code (?i)} literal pool
+ * ({@code releasedCiPool}), and {@code (?i)} class ranges narrow to ASCII
+ * — pristine re2j folds every codepoint in a range with an unbounded
+ * orbit walk, and a range reaching U+1C80..U+1C88 never terminates (patch
+ * 0003 declines the asymmetric mappings, so the patched oracle generates
+ * full-width ranges). Everything else must agree with the oracles or it
+ * is a finding.
  *
  * <p>On the jur lane the ORACLE itself is a backtracking engine, so one
  * more family is avoided rather than compared: nested-quantifier bombs
@@ -2133,7 +2136,9 @@ public final class DifferentialFuzzer {
         return out;
     }
 
-    /** POOL_UNICODE draw for pattern context. */
+    /** POOL_UNICODE draw for pattern context; under {@code (?i)} on the
+     *  RELEASED oracle, fold-hang codepoints leave the pool
+     *  ({@code releasedCiPool}). */
     static int unicodeCp(SplittableRandom rnd, boolean ci) {
         int[] pool = ci ? POOL_UNICODE_CI : POOL_UNICODE;
         return pool[rnd.nextInt(pool.length)];
@@ -2193,16 +2198,14 @@ public final class DifferentialFuzzer {
 
     static String genPattern(long batch) {
         ciRangeAvoided = 0;
-        // Compile-level CASE_INSENSITIVE folds the WHOLE pattern in re2j's
-        // parser, and re2j folds class ranges codepoint by codepoint — a
-        // wide range is an oracle-side spin (the reason the ci guard
-        // exists). CI batches must therefore generate under the guard
-        // (ASCII-narrow ranges) like inline (?i:...) always has. Pure
-        // function of the batch still (genFlags is), so replay holds.
-        // Family batches (generator v4) skip the guard: their shapes are
-        // ASCII-only by construction, so the fold-orbit/Range spin families
-        // cannot arise — a CI family batch instead exercises the documented
-        // gate-miss fall-through (folded literals lose their needles).
+        // The ci range guard is RELEASED-oracle-only (see classBody): the
+        // patched fork and the jur oracle fold bounded, so CI batches
+        // generate full-width there — supplementary and lone-surrogate
+        // codepoints included (pinned in FuzzSmokeTest). Pure function of
+        // the batch still (genFlags is), so replay holds. Family batches
+        // (generator v4) are ASCII-only by construction — a CI family batch
+        // instead exercises the documented gate-miss fall-through (folded
+        // literals lose their needles).
         FamPattern fam = genFamily(batch);
         if (fam != null) {
             return fam.pattern();
@@ -2443,9 +2446,10 @@ public final class DifferentialFuzzer {
         return cp > 0xFFFF ? new StringBuilder().appendCodePoint(cp).toString() : String.valueOf((char) cp);
     }
 
-    /** Class member/range endpoint. Under (?i): supplementary and lone
-     *  surrogates avoided (pre-CaseFoldTable avoidance, TODO-tracked —
-     *  the fold universe covers supplementary since). */
+    /** Class member/range endpoint — supplementary and lone surrogates
+     *  drawn unconditionally, {@code (?i)} included (un-avoided with the
+     *  full Unicode fold, 12d9921; pinned in FuzzSmokeTest). The
+     *  RELEASED-oracle range narrowing lives in {@link #classBody}. */
     static int pickClassCp(SplittableRandom rnd, boolean ci) {
         return switch (rnd.nextInt(8)) {
             case 0, 1, 2 -> POOL_ASCII[rnd.nextInt(POOL_ASCII.length)];
