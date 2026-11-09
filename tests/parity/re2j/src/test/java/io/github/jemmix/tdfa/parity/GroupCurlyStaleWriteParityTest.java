@@ -44,7 +44,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * control below. {@code CampaignFuzzer}'s
  * {@code SKIP_GROUPCURLY_STALE_WRITE} classifies the exact recorded
  * signature (skeleton-equal, the GroupCurly-nested-capture shape, an
- * oracle span the engines report as none INSIDE the match); this test
+ * oracle span the engines report as none OVERLAPPING the match —
+ * contained in it or straddling an empty match inside it); this test
  * pins the boundary visibly so the exclusion can never go silent.
  *
  * <p>The DISPLACED twin — the oracle reporting the deepest discarded
@@ -80,7 +81,16 @@ class GroupCurlyStaleWriteParityTest {
             // record's shape, seed 2858084537373459748 minimized): g2 is
             // the directly-quantified group (java restores it to nil on
             // the exhaust path), g3 the nested stale write
-            new Case("((a)){0,}a", "ab", new int[]{0, 1, -1, -1, 0, 1}, new int[]{0, 1, -1, -1, -1, -1}));
+            new Case("((a)){0,}a", "ab", new int[]{0, 1, -1, -1, 0, 1}, new int[]{0, 1, -1, -1, -1, -1}),
+            // the empty-match straddle variant (soak 2026-11-09, seed
+            // 1090575583851012516, shrunk `(b(.))*\B` on the U+10004
+            // input): the loop's b+pair attempt wrote g2 1..3, unwound
+            // when \B rejected its continuation, and the EMPTY match
+            // java then reports at 2..2 sits INSIDE the stale span —
+            // neither contained in it nor strictly outside, the geometry
+            // gap that let it land as RESULT_MISMATCH before the
+            // classifier learned straddles (live-oracle-pinned both ways)
+            new Case("(b(.))*\\B", "b\ud800\udd04_", new int[]{2, 2, -1, -1, 1, 3}, new int[]{2, 2, -1, -1, -1, -1}));
     }
 
     /** The oracle keeps the stale write AND the engine keeps the clean

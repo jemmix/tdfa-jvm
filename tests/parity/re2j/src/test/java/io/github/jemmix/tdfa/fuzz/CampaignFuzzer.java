@@ -963,12 +963,16 @@ public final class CampaignFuzzer {
      *  (SKIP_GROUPCURLY_STALE_WRITE's predicate): the protocols agree on
      *  everything but the group clauses, AND some clause — the F probe's
      *  first match, an I entry, or the R restart clause — reports an
-     *  oracle group span where the engines report none, the span INSIDE
-     *  the oracle's own overall match (the strictly-outside twin is
-     *  {@link #leakedRestartSpan}, checked first; the pattern shape gate
-     *  is {@link #STALE_ITERATION_SHAPE}). Only java's never-restored
-     *  {@code GroupTail} write can leave a span the accepted path never
-     *  reported; the shape gate keeps plain missing-write bugs out. */
+     *  oracle group span where the engines report none, the span
+     *  OVERLAPPING the oracle's own overall match: contained (the
+     *  original geometry) or straddling an EMPTY match that sits inside
+     *  the stale span ({@code (b(.))*\B}, soak 2026-11-09). The
+     *  strictly-outside twin is {@link #leakedRestartSpan}, checked
+     *  first; boundary-touching spans are its geometry, so strict
+     *  overlap here keeps the two predicates disjoint and together
+     *  exhaustive. Only java's never-restored {@code GroupTail} write
+     *  can leave a span the accepted path never reported; the shape gate
+     *  keeps plain missing-write bugs out. */
     static boolean staleIterationSpan(String oracle, String vm) {
         if (clauseStale(firstFindClause(oracle), firstFindClause(vm))) {
             return true;
@@ -1006,9 +1010,14 @@ public final class CampaignFuzzer {
         }
         for (int i = 0; i < oGroups.length; i++) {
             int[] span = spanOf(oGroups[i]);
-            // a span the engine does not report, inside the reported match:
-            // the stale iteration write
-            if (span != null && "-".equals(vGroups[i]) && span[0] >= overall[0] && span[1] <= overall[1]) {
+            // a span the engine does not report, overlapping the reported
+            // match: contained (the stale iteration write) or straddling
+            // it — the same write surfacing through an EMPTY match inside
+            // the stale span ((b(.))*\B, soak 2026-11-09). Boundary-
+            // touching spans are the leak's geometry and the leak
+            // predicate runs first, so strict overlap here keeps the two
+            // disjoint and together exhaustive.
+            if (span != null && "-".equals(vGroups[i]) && span[1] > overall[0] && span[0] < overall[1]) {
                 return true;
             }
         }
