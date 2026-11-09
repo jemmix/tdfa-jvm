@@ -64,6 +64,53 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+// Patched jur oracle — the JDK-8381696 exact-restore dress rehearsal
+// (vendor/jdk-regex-jemmix/), exactly parallel to the patched re2j fork above:
+// vanilla OpenJDK 26.0.2-ga sources vendored as one sha256-pinned archive +
+// per-fix patches, built on demand (module dir is a gitignored build output)
+// and mounted with --patch-module on the fuzz fork ONLY. The daemon, workers
+// and every parity test stay on the stock JDK: the leak pins
+// (RestartTagLeakParityTest, GroupCurlyStaleWriteParityTest) assert the stock
+// oracle still leaks ON PURPOSE and must keep doing so. The fuzzer probes the
+// live oracle (DifferentialFuzzer.JUR_LEAKS) and demotes its leak-family soft
+// classes under the fix — with this oracle every jur-lane divergence is a
+// real finding. The oracle needs JDK >= 26 (vendored sources use 26-only
+// APIs); the fork runs the daemon's JVM (no toolchain configured here).
+// -Pfuzz.pristineJur=true / -Pcamp.pristineJur=true restores the stock
+// (leaking) java.util.regex oracle.
+def patchedJurDir = rootProject.file('vendor/jdk-regex-jemmix/openjdk-regex-exact-restore')
+tasks.register('buildPatchedJurOracle', Exec) {
+    group = 'build'
+    description = 'Rebuild the patched java.util.regex oracle module (exact restore) from the vendored archive + patches'
+    workingDir rootProject.projectDir
+    commandLine './vendor/jdk-regex-jemmix/build-patched.sh'
+    inputs.files fileTree(dir: rootProject.projectDir, include: [
+            'vendor/archives/jdk26u-regex-*.tar.gz', 'vendor/archives/jdk26u-regex-*.tar.gz.sha256',
+            'vendor/jdk-regex-jemmix/patches/*.patch', 'vendor/jdk-regex-jemmix/build-patched.sh'])
+    outputs.dir patchedJurDir
+}
+def usePatchedJurOracle(JavaExec t, String prefix, File patchedJurDir) {
+    if (project.hasProperty(prefix + '.pristineJur')) {
+        return   // stock (leaking) java.util.regex oracle, opt-in
+    }
+    // fuzz.lane=re2j never consults java.util.regex; camp modes other than
+    // jur/all (stretch/seq/families/budget) don't either.
+    if (prefix == 'fuzz' && project.findProperty('fuzz.lane') == 're2j') return
+    if (prefix == 'camp') {
+        def mode = project.findProperty('camp.mode') ?: 'all'
+        if (mode != 'jur' && mode != 'all') return
+    }
+    if (JavaVersion.current().majorVersion.toInteger() < 26)
+        throw new GradleException("patched jur oracle needs JDK >= 26 (running ${JavaVersion.current()});"
+                + " use -P${prefix}.pristineJur=true or a newer JDK")
+    t.dependsOn 'buildPatchedJurOracle'
+    t.jvmArgs "--patch-module=java.base=${patchedJurDir.absolutePath}"
+}
+// The vendored build rides check: a rotted archive/patch (new JDK major,
+// upstream regex drift breaking the compile) fails the gate instead of the
+// first fuzz night that needs it.
+tasks.named('check') { dependsOn 'buildPatchedJurOracle' }
+
 test {
     useJUnitPlatform()
     jvmArgs '-Xmx512m', '-XX:+HeapDumpOnOutOfMemoryError'
@@ -94,6 +141,7 @@ test {
 //   ./gradlew :tests:parity:re2j:fuzz                      # 8h both lanes, logs to build/fuzz
 //   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.minutes=60 -Pfuzz.seed=42 -Pfuzz.out=/tmp/soak
 //   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.lane=re2j     # lane-pure re2j evidence
+//   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.lane=jur -Pfuzz.pristineJur=true   # jur lane vs STOCK java.util.regex
 // Chunked soak (hang-leak containment, shared out dir via append):
 //   scripts/fuzz-soak.sh [iters=480] [minutes=1] [out=build/fuzz] [seedBase] [-Pfuzz.lane=...]
 // Reproduce a failures.ndjson line turnkey:
@@ -176,6 +224,7 @@ tasks.register('fuzz', JavaExec) {
     // pin for a lane-pure soak (re-running the re2j-pinned evidence, or a
     // jur-only night): -Pfuzz.lane=jur | -Pfuzz.lane=re2j
     systemProperty 'fuzz.lane', project.findProperty('fuzz.lane') ?: 'mix'
+    usePatchedJurOracle(delegate, 'fuzz', patchedJurDir)
     // Property shrinking (minimal repros): 'auto' (default) shrinks in
     // fuzz.one/replay triage and stays off in the soak; 1 forces it on
     // (the soak then pre-shrinks every recorded failure record into
@@ -214,6 +263,7 @@ tasks.register('fuzz', JavaExec) {
 //   ./gradlew :tests:parity:re2j:camp                              # the four parallel modes, 600 s each
 //   ./gradlew :tests:parity:re2j:camp -Pcamp.mode=budget           # budget exhaustion (standalone)
 //   ./gradlew :tests:parity:re2j:camp -Pcamp.mode=jur -Pcamp.seconds=600 -Pcamp.seed=42
+//   ./gradlew :tests:parity:re2j:camp -Pcamp.mode=jur -Pcamp.pristineJur=true   # vs STOCK java.util.regex
 //   ./gradlew :tests:parity:re2j:camp -Pcamp.mode=budget -Pcamp.one=<caseSeed>   # replay one case
 // Exits nonzero on hard findings; artifacts land in build/fuzz-camp/<mode>/.
 tasks.register('camp', JavaExec) {
@@ -227,6 +277,7 @@ tasks.register('camp', JavaExec) {
     systemProperty 'camp.seed', project.findProperty('camp.seed') ?: '0'
     systemProperty 'camp.one', project.findProperty('camp.one') ?: '0'
     systemProperty 'camp.cases', project.findProperty('camp.cases') ?: '0'
+    usePatchedJurOracle(delegate, 'camp', patchedJurDir)
     def campOut = project.findProperty('camp.out')
             ?: rootProject.layout.buildDirectory.dir('fuzz-camp').get().asFile.absolutePath
     systemProperty 'camp.out', campOut

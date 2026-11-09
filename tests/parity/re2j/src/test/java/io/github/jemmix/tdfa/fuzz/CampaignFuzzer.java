@@ -617,7 +617,10 @@ public final class CampaignFuzzer {
         // committed at GroupTail/GroupCurly points a determinized walk
         // cannot mirror without emulating the backtracking itself. Pinned
         // both ways in RestartTagLeakParityTest.
-        if (sameSkeleton(jur, jurLaneVm) && leakedRestartSpan(jur, jurLaneVm)) {
+        // JUR_LEAKS-gated (DifferentialFuzzer.JUR_LEAKS): under the vendored
+        // exact-restore oracle — the fuzz default — the leak cannot occur and
+        // any such divergence falls through to the hard mismatch below.
+        if (DifferentialFuzzer.JUR_LEAKS && sameSkeleton(jur, jurLaneVm) && leakedRestartSpan(jur, jurLaneVm)) {
             counts.soft("SKIP_RESTART_TAG_LEAK");
             camp.rec(caseSeed, "JURLANE_SKIP (restart-tag-leak)", "pattern", c.pattern(), "input", c.input(), "flags",
                 c.tdfaFlags(), "jur", jur, "jurLaneVm", jurLaneVm);
@@ -645,8 +648,9 @@ public final class CampaignFuzzer {
         // body restores nested writes through GroupTail's save/restore and
         // never diverges (control in GroupCurlyStaleWriteParityTest).
         // Pinned both ways there.
-        if (sameSkeleton(jur, jurLaneVm) && STALE_ITERATION_SHAPE.matcher(c.pattern()).find()
-            && staleIterationSpan(jur, jurLaneVm)) {
+        // Same JUR_LEAKS gate as the restart-leak skip above.
+        if (DifferentialFuzzer.JUR_LEAKS && sameSkeleton(jur, jurLaneVm)
+            && STALE_ITERATION_SHAPE.matcher(c.pattern()).find() && staleIterationSpan(jur, jurLaneVm)) {
             counts.soft("SKIP_GROUPCURLY_STALE_WRITE");
             camp.rec(caseSeed, "JURLANE_SKIP (groupcurly-stale-write)", "pattern", c.pattern(), "input", c.input(),
                 "flags", c.tdfaFlags(), "jur", jur, "jurLaneVm", jurLaneVm);
@@ -1978,6 +1982,8 @@ public final class CampaignFuzzer {
             try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(dir.resolve("summary.txt")))) {
                 w.println("cases clean: " + counts.cases);
                 w.println("hard findings: " + counts.hard);
+                w.println("jur oracle: " + (DifferentialFuzzer.JUR_LEAKS ? "stock java.util.regex (leak skips on)"
+                    : "exact-restore java.util.regex (JDK-8381696 fixed; leak skips demoted)"));
                 w.println();
                 w.println("soft/kind counts:");
                 w.print(counts.summaryLines());

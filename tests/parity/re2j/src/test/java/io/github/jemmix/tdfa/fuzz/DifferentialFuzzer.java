@@ -229,6 +229,21 @@ public final class DifferentialFuzzer {
      *  finding, so the known-divergence classifier runs only when released. */
     static final boolean RELEASED_ORACLE = releasedOracle();
 
+    /** Does the live java.util.regex oracle still leak capture groups from
+     *  undone attempts (JDK-8381696, unfixed upstream as of 2026-10-24)?
+     *  Probed, not declared: the canonical restart-leak case is the
+     *  discriminator — stock JDKs leak g1, the vendored exact-restore oracle
+     *  (vendor/jdk-regex-jemmix/, the fuzz default via --patch-module) and
+     *  any future fixed JDK report it unset. Under a fixed oracle the
+     *  leak-family soft classes (SKIP_RESTART_TAG_LEAK,
+     *  SKIP_GROUPCURLY_STALE_WRITE) are demoted to hard findings: the oracle
+     *  can no longer produce the leaked spans those classifiers attribute to
+     *  it, so a matching divergence is ours. Pinned in
+     *  {@code JurOracleLeakProbeTest}; fails on purpose the day a stock JDK
+     *  carries the fix (the retirement signal, same contract as the parity
+     *  pins). */
+    static final boolean JUR_LEAKS = jurLeaks();
+
     /** Iteration cap: bounds a broken empty-match advance (an engine that
      *  never advances yields one span per call forever); 64 ≫ any match
      *  count a ≤30-char input can produce, so a healthy case never clips. */
@@ -498,6 +513,19 @@ public final class DifferentialFuzzer {
     static boolean releasedOracle() {
         try {
             return com.google.re2j.Pattern.compile("\uDC21").matcher("a\uD801\uDC21zz").find();
+        } catch (RuntimeException e) {
+            return true; // cannot happen for this constant; fail loud in the soak instead of silently
+        }
+    }
+
+    /** {@link #JUR_LEAKS}'s probe: g1 set on {@code "(?:(\A))*(\n)"} over
+     *  {@code "a\n"} is the leak — a legitimate write is always within the
+     *  accepted match (the same fact {@code RestartTagLeakParityTest} pins
+     *  on the live oracle). */
+    static boolean jurLeaks() {
+        try {
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?:(\\A))*(\\n)").matcher("a\n");
+            return m.find() && m.group(1) != null;
         } catch (RuntimeException e) {
             return true; // cannot happen for this constant; fail loud in the soak instead of silently
         }
@@ -3055,10 +3083,18 @@ public final class DifferentialFuzzer {
             if (o.oracle.startsWith("<exception")) {
                 return "oracle-threw";
             }
-            if (CampaignFuzzer.sameSkeleton(o.oracle, o.vm) && CampaignFuzzer.leakedRestartSpan(o.oracle, o.vm)) {
+            // The two leak families are JUR_LEAKS-gated: their predicates
+            // attribute a leaked/stale span to the ORACLE, which a fixed
+            // oracle (DifferentialFuzzer.JUR_LEAKS == false — the vendored
+            // patched default, or a future fixed JDK) cannot produce; the
+            // gate keeps a future symmetric-predicate refactor from
+            // swallowing such divergences as oracle bugs when they are ours.
+            if (JUR_LEAKS && CampaignFuzzer.sameSkeleton(o.oracle, o.vm)
+                && CampaignFuzzer.leakedRestartSpan(o.oracle, o.vm)) {
                 return "restart-tag-leak";
             }
-            if (CampaignFuzzer.sameSkeleton(o.oracle, o.vm) && CampaignFuzzer.STALE_ITERATION_SHAPE.matcher(p).find()
+            if (JUR_LEAKS && CampaignFuzzer.sameSkeleton(o.oracle, o.vm)
+                && CampaignFuzzer.STALE_ITERATION_SHAPE.matcher(p).find()
                 && CampaignFuzzer.staleIterationSpan(o.oracle, o.vm)) {
                 return "groupcurly-stale-write";
             }
@@ -3332,7 +3368,9 @@ public final class DifferentialFuzzer {
                 w.println("oracle: "
                     + (RELEASED_ORACLE ? "re2j 1.8 released"
                         : "re2j 1.8 patched fork (known-divergence classifier off)")
-                    + " + live java.util.regex (jur" + " lane)");
+                    + " + " + (JUR_LEAKS ? "stock java.util.regex (leak skips on)"
+                        : "exact-restore java.util.regex (JDK-8381696 fixed; leak skips demoted)")
+                    + " (jur lane)");
                 w.println("cases: " + r.cases + "  failures: " + r.failures + "  bothReject: " + r.bothReject
                     + "  flagged: " + r.flagged + "  knownDivergence: " + r.knownDivergence + "  hangsEngine: "
                     + r.hangsOurs + "  hangsOracle: " + r.hangsOracle + "  crossRung: " + r.crossRung

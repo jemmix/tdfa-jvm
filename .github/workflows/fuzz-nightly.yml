@@ -75,7 +75,10 @@ jobs:
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
-          java-version: '25'
+          # 26, not the newest LTS: the jur lane's default oracle is the
+          # vendored exact-restore java.util.regex (vendor/jdk-regex-jemmix/)
+          # — its class files and 26-only APIs need JDK >= 26.
+          java-version: '26'
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         with:
           validate-wrappers: true
