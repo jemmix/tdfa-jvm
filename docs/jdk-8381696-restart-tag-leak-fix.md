@@ -251,21 +251,33 @@ the reviewable moment either way. TODO tracks it.
 
 ## Reproducing
 
-The patch applies to an `openjdk/jdk` checkout (base `d39a62afc66`) with
-`patch -p1` / `git apply`. It is a derivative of OpenJDK
-`java.util.regex` (Oracle, GPLv2+CE), kept as an upstream prototype — not
-vendored code, never on any tdfa classpath. To build and run it without a
-full JDK build, compile the two touched files against a matching JDK and
-use `--patch-module`:
+The prototype patch applies to an `openjdk/jdk` checkout (base `d39a62afc66`)
+with `patch -p1` / `git apply`. It is a derivative of OpenJDK
+`java.util.regex` (Oracle, GPLv2+CE), kept as an upstream prototype. The same
+change rebased onto vendored vanilla sources (openjdk/jdk26u tag
+`jdk-26.0.2-ga`) lives in `vendor/jdk-regex-jemmix/` — same layout as the
+patched re2j oracle: sha256-pinned pristine archive + per-fix patches +
+`build-patched.sh`, built on demand, never on any tdfa classpath. The module
+dir is consumed per fork via `--patch-module`, and the fuzzers use it as the
+DEFAULT jur-lane oracle — only the fuzz JVM runs the patched base; the Gradle
+daemon, workers and the parity tests (which keep asserting the stock leak
+until a real JDK carries a fix) stay on the unpatched JDK:
 
 ```sh
-javac --patch-module java.base=src -d mod \
-      src/java.base/share/classes/java/util/regex/*.java
-java --patch-module java.base=$PWD/mod …   # patched engine
-java …                                     # stock; diff the outputs
+./gradlew :tests:parity:re2j:fuzz                       # jur lane = patched oracle
+./gradlew :tests:parity:re2j:fuzz -Pfuzz.pristineJur=true   # vs stock (leaking) jur
+./gradlew :tests:parity:re2j:camp  -Pcamp.mode=jur
 ```
+
+The fuzzer PROBES whether the live oracle leaks
+(`DifferentialFuzzer.JUR_LEAKS`, pinned in `JurOracleLeakProbeTest`) and
+gates its leak-family soft classes on it: under the patched (or any fixed)
+oracle `SKIP_RESTART_TAG_LEAK` / `SKIP_GROUPCURLY_STALE_WRITE` cannot fire
+and every jur-lane divergence is a hard finding. The same probe is the
+retirement signal — when a stock JDK ships a fix of this shape, the pin
+tests and the probe test fail on purpose and the exclusions retire (see
+"What lands for us").
 
 The differential harnesses used for the numbers above are not part of this
 repository; the battery that matters here is the two parity tests — point
-`JurOracle` at a patched JDK and the pins above become the acceptance
-criteria.
+them at a patched JDK and the pins above become the acceptance criteria.

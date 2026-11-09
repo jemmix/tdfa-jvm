@@ -33,6 +33,11 @@
 # + FoldCase fixes, vendor/re2j-jemmix/, built on demand). To soak against
 # released (pristine) re2j 1.8 instead: append -Pfuzz.pristineOracle=true
 #   scripts/fuzz-soak.sh 480 1 build/fuzz '' -Pfuzz.pristineOracle=true
+# The jur lane's live java.util.regex oracle is patched the same way by
+# default — the vendored exact-restore build (vendor/jdk-regex-jemmix/,
+# JDK-8381696 dress rehearsal; the fuzzer's leak-family soft classes are
+# probe-gated and stay off under it). Stock (leaking) jur oracle:
+# append -Pfuzz.pristineJur=true. The patched module needs JDK >= 26.
 #
 # Diagnostics land in $OUT automatically: gc-<pid>.log per chunk
 # (-PfuzzGcLog, passed below), ts/upMs on every failure record, and a

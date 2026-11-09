@@ -32,3 +32,5 @@ replay_pid*
 # archive via build-patched.sh — never committed)
 vendor/re2j-jemmix/.build/
 vendor/re2j-jemmix/*.jar
+vendor/jdk-regex-jemmix/.build/
+vendor/jdk-regex-jemmix/openjdk-regex-exact-restore/

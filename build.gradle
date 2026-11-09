@@ -60,7 +60,16 @@ tasks.register('prepareVendor', Exec) {
     description = 'Extract vendor archives into build/generated/ and apply patches.'
     group = 'build'
     commandLine './scripts/vendor.sh', 'prepare'
-    inputs.files fileTree('vendor')
+    // Inputs are the vendored SOURCES (archives, patches, scripts) — not the
+    // gitignored build outputs some of them produce inside vendor/ (the
+    // patched oracle jar / module dir); those are other tasks' outputs and
+    // must neither dirty nor depend on this one.
+    inputs.files fileTree('vendor') {
+        exclude 're2j-jemmix/*.jar'
+        exclude 're2j-jemmix/.build/**'
+        exclude 'jdk-regex-jemmix/.build/**'
+        exclude 'jdk-regex-jemmix/openjdk-regex-exact-restore/**'
+    }
     outputs.dir layout.buildDirectory.dir('generated')
 }
 
