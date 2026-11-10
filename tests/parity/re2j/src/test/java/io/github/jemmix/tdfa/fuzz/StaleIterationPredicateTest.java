@@ -16,8 +16,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * campaign seeds' records (2026-10-24 finding 3, all six — including the
  * triage record whose overall-span half no longer reproduces) must trip
  * predicate + shape; the leak family, the displaced twin (our side
- * carries the live participating span) and the #87 sticky shapes must
- * not — they stay hard evidence.
+ * carries the live participating span) and the nested-loop sticky shapes
+ * must not — they stay hard evidence.
  */
 class StaleIterationPredicateTest {
 
@@ -74,8 +74,10 @@ class StaleIterationPredicateTest {
 
     @Test
     void stickyShapesStayHard() {
-        // the #87 sticky family (inner capture itself quantified) compares
-        // hard since the sticky split — the shape gate must not match
+        // the sticky family (inner capture itself quantified) agrees with
+        // the patched oracle and classifies under the JUR_LEAKS-gated
+        // nested-loop skip on the stock JDK alone — the stale-write shape
+        // gate must not match either way
         assertThat(CampaignFuzzer.STALE_ITERATION_SHAPE.matcher("((a)*b)*").find()).isFalse();
         assertThat(CampaignFuzzer.STALE_ITERATION_SHAPE.matcher("(?:(a)*b)*").find()).isFalse();
         assertThat(CampaignFuzzer.STALE_ITERATION_SHAPE.matcher("((a)?b)*").find()).isFalse();

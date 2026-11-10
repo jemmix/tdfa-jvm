@@ -242,12 +242,19 @@ The parity pins were built as the retirement signal, and this fix shape
 retires all of them: the fixed JDK's spans equal the pinned engine spans
 on every case of `RestartTagLeakParityTest` and both tiers of
 `GroupCurlyStaleWriteParityTest` — verified case for case against the
-prototype. The day a JDK carries such a fix, the *"live oracle must still
-leak"* assertions fail on purpose and `SKIP_RESTART_TAG_LEAK` and
-`SKIP_GROUPCURLY_STALE_WRITE` retire the way earlier exclusions did. A JDK
-fix shaped differently (say, normalization to RE2-style sticky captures)
-would instead surface as new hard mismatches; the classifier retirement is
-the reviewable moment either way. TODO tracks it.
+prototype. The same GroupCurly rewrite carries the nested-loop
+inner-capture quirk (`((a)*b)*` first-writing spans): #179 retired the
+engine-side sticky emulation, so the engine already holds the
+exact-restore discipline there and `SKIP_NESTED_LOOP_CAPTURE` rides the
+same `JUR_LEAKS` probe (pinned both ways in
+`NestedQuantifierParityTest`, whose oracle-side pins also fail on
+purpose the day a stock JDK carries the fix). The day a JDK carries such
+a fix, the *"live oracle must still leak"* assertions fail on purpose
+and `SKIP_RESTART_TAG_LEAK` and `SKIP_GROUPCURLY_STALE_WRITE` retire the
+way earlier exclusions did. A JDK fix shaped differently (say,
+normalization to RE2-style sticky captures) would instead surface as new
+hard mismatches; the classifier retirement is the reviewable moment
+either way. TODO tracks it.
 
 ## Reproducing
 

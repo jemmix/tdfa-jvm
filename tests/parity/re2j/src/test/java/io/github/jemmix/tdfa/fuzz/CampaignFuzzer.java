@@ -174,11 +174,12 @@ public final class CampaignFuzzer {
      *  innermost-close lookahead). That is the body java.util.regex
      *  compiles as {@code GroupCurly} with the inner capture's
      *  {@code GroupTail} inside the atom, where its write survives the
-     *  backoff unwound. The #87 sticky shapes (the inner capture itself
-     *  quantified, {@code ((a)*b)*}) deliberately do NOT match: the
-     *  sticky split made those hard evidence. Deeper nestings
-     *  ({@code (((x)))*x}, {@code (?:(?:ab)(9))*x}) also miss — the skip
-     *  stays conservative, they compare hard. */
+     *  backoff unwound. The #87/#179 sticky shapes (the inner capture
+     *  itself quantified, {@code ((a)*b)*}) deliberately do NOT match:
+     *  those agree with the patched oracle and classify under the
+     *  JUR_LEAKS-gated nested-loop skip on the stock JDK alone. Deeper
+     *  nestings ({@code (((x)))*x}, {@code (?:(?:ab)(9))*x}) also miss —
+     *  the skip stays conservative, they compare hard. */
     static final java.util.regex.Pattern STALE_ITERATION_SHAPE =
         java.util.regex.Pattern.compile("\\((?:\\?:|\\?<\\w+>)?[^()]*\\([^()]*\\)(?![*+?{])[^()]*\\)[*+{]");
 
@@ -656,12 +657,26 @@ public final class CampaignFuzzer {
                 "flags", c.tdfaFlags(), "jur", jur, "jurLaneVm", jurLaneVm);
             return;
         }
-        // (1b, retired) The nested-loop inner-capture quirk — java's
-        // GroupCurly backoff rewrites the pair's span on every unwind,
-        // outermost frame last, so the FIRST enclosing-loop iteration that
-        // matches the capture wins (`((a)*b)*` on "abab" -> g2 0..1).
-        // CLOSED by the sticky split (Tnfa.Builder#stickySplit): those
-        // shapes compare hard, pinned in NestedQuantifierParityTest.
+        // (1b) The nested-loop inner-capture quirk — the STOCK JDK's
+        // GroupCurly backoff rewrites a directly-quantified capture's span
+        // on every unwind, outermost frame last, so the FIRST enclosing-
+        // loop iteration that matches the capture wins (`((a)*b)*` on
+        // "abab" -> g2 0..1) where the engine reports the last-completed
+        // write (2..3 — the exact-restore discipline the MVT tier and the
+        // patched oracle both hold; #179 retired the engine-side sticky
+        // emulation). The quirk is one of the GroupCurly-rewrite behaviors
+        // the exact-restore patch removes, so the skip rides the same
+        // JUR_LEAKS gate as the two leak families above: under the vendored
+        // patched oracle (the fuzz/camp default) it never fires and the
+        // shapes compare HARD; pinned both ways in
+        // NestedQuantifierParityTest.
+        if (DifferentialFuzzer.JUR_LEAKS && sameSkeleton(jur, jurLaneVm)
+            && c.pattern().matches(".*\\(.*\\(.*\\)[*+{].*\\)[*+{].*")) {
+            counts.soft("SKIP_NESTED_LOOP_CAPTURE");
+            camp.rec(caseSeed, "JURLANE_SKIP (nested-loop-capture)", "pattern", c.pattern(), "input", c.input(),
+                "flags", c.tdfaFlags(), "jur", jur, "jurLaneVm", jurLaneVm);
+            return;
+        }
         // (2, retired) The lone-surrogate family — the JUR lane's unit-level
         // candidate scans vs java's StartS/plain-Start discipline — closed
         // by the pair-aware scan pivot (Parser#hasSupplementaryStarts frozen

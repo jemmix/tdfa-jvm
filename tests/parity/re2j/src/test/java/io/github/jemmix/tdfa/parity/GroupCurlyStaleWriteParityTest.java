@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * function of the greedy SATURATION FRONTIER — of a previous find()
  * attempt, for the restart variant — not of the accepted path: the
  * accepting path never visits the stale span, so no tagged-NFA edit can
- * express it (#87's sticky split clones write disciplines along TAKEN
+ * express it (a write-discipline clone reproduces writes along TAKEN
  * paths; this value lives on an untaken one). Faithful reproduction would
  * need determinizer-level cross-config register transfers plus
  * matcher-global carry across find() restarts — emulating the backtracking
@@ -164,9 +164,11 @@ class GroupCurlyStaleWriteParityTest {
             // a TRUE Prolog/Loop shape — the alternation makes the body
             // non-deterministic, so java restores the nested write on the
             // unwind; no divergence to exclude
-            new Case("(?:(?:|b)(9))*9", "x9y", new int[]{1, 2, -1, -1}, new int[]{1, 2, -1, -1}),
-            // the #87 sticky shape: the inner capture is itself quantified
-            // — the sticky split made these compare HARD (they agree)
-            new Case("((a)*b)*", "abab", new int[]{0, 4, 0, 4, 0, 1}, new int[]{0, 4, 0, 4, 0, 1}));
+            new Case("(?:(?:|b)(9))*9", "x9y", new int[]{1, 2, -1, -1}, new int[]{1, 2, -1, -1}));
+        // the #87/#179 sticky shapes (the inner capture itself quantified,
+        // ((a)*b)*-family) are NOT a control anymore: the engine holds the
+        // exact-restore discipline there while the stock JDK keeps its
+        // first-writing GroupCurly quirk — pinned both ways in
+        // NestedQuantifierParityTest's dedicated battery.
     }
 }

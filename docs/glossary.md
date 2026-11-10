@@ -202,10 +202,12 @@ defining file(s), not every occurrence.
   the accept position (determinizer **cut surfacing**). Recorded in
   `family6-battery.tsv`.
 - **sticky split / first writing iteration / invocation frontier /
-  W-current / W-later** — the clone construction reproducing java's
-  nested-loop inner-capture quirk: the *first* writing iteration's span
-  sticks; writes are cloned into one world, the frontier's nil-clears into
-  another.
+  W-current / W-later** — RETIRED: the clone construction that once
+  reproduced java's nested-loop inner-capture quirk (the *first* writing
+  iteration's span sticking). #179 deleted it — the quirk is a stock-JDK
+  GroupCurly rewrite the exact-restore fix removes, the engine keeps the
+  last-completed write everywhere, and the stock divergence is
+  JUR_LEAKS-gated + pinned both ways.
 - **zero-width exit / REST position / consuming tail** — the rule that a
   bounded quantifier exits after a zero-width iteration (java's `Loop`
   guard); the unbounded **mirror** re-routes pure-ε completions onto a
