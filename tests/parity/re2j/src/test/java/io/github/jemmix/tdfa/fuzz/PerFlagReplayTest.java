@@ -39,11 +39,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   <li><b>compile parity</b>: the facade accepts iff the oracle accepts,
  *       the v1 {@code (?U} limit excepted;</li>
  *   <li><b>the asserted domain boundary</b>: a divergence is allowed only
- *       when one of the reclassified evidence-re-base exclusions explains
- *       it (family-6 tail: skeleton-equal + quantified capture;
- *       surrogate-unit semantics: lone surrogates or the pair-predicates).
- *       Anything else fails — the classifiers are assertions here, not
- *       soft passes.</li>
+ *       when one of the enumerated domain exclusions explains it
+ *       (budget-reject, oracle-threw, java's restart-tag leak, the stock
+ *       JDK's nested-loop-capture quirk — both JUR_LEAKS-probed oracle
+ *       behaviors). Anything else fails — the classifiers are assertions
+ *       here, not soft passes.</li>
  * </ul>
  */
 class PerFlagReplayTest {
@@ -155,7 +155,17 @@ class PerFlagReplayTest {
         if (CampaignFuzzer.sameSkeleton(oracle, vm) && CampaignFuzzer.leakedRestartSpan(oracle, vm)) {
             return "restart-tag-leak";
         }
-        // the nested-loop-capture family retired (the sticky split) and
+        // The stock JDK's nested-loop inner-capture quirk (the GroupCurly
+        // rewrite-on-unwind the exact-restore patch removes; this test's
+        // oracle is the test JVM's live java.util.regex). Gated on the
+        // JUR_LEAKS probe like the fuzz lane's nested-loop-capture skip:
+        // on a fixed JDK the quirk cannot occur, the divergence would be
+        // ours, and this classification must not swallow it. Pinned both
+        // ways in NestedQuantifierParityTest.
+        if (DifferentialFuzzer.JUR_LEAKS && CampaignFuzzer.sameSkeleton(oracle, vm)
+            && pattern.matches(".*\\(.*\\(.*\\)[*+{].*\\)[*+{].*")) {
+            return "nested-loop-capture (stock JDK GroupCurly quirk)";
+        }
         // the surrogate-unit family retired (pair-aware scans)
         return null;
     }

@@ -52,13 +52,16 @@ class CampaignSmokeTest {
         // candidate-scan pivot — lone surrogates and pair cases compare
         // hard); the v1 (?U) limit retired with the v2 scoped fold
         // (scoped spellings compile and compare through the u/U swap);
-        // the nested-loop inner-capture quirk (`((a)*b)*`: java
-        // restores the FIRST iteration's inner group), java's restart-tag
-        // leak (a group span from a FAILED restart attempt, outside the
-        // match), and the GroupCurly stale-iteration write (a DISCARDED
-        // greedy iteration's nested-capture span reporting through the
-        // accepted match, inside it — campaign 2026-10-24 finding 3) are
-        // the remaining group-family skips, skeleton-gated + exact
+        // the nested-loop inner-capture quirk (`((a)*b)*`: the STOCK JDK
+        // restores the FIRST iteration's inner group — #179 retired the
+        // engine-side sticky emulation, so the skip is JUR_LEAKS-gated to
+        // the leaking oracle exactly like the two below), java's
+        // restart-tag leak (a group span from a FAILED restart attempt,
+        // outside the match), and the GroupCurly stale-iteration write (a
+        // DISCARDED greedy iteration's nested-capture span reporting
+        // through the accepted match, inside it — campaign 2026-10-24
+        // finding 3) are the remaining group-family skips, skeleton-gated
+        // + exact
         "SKIP_NESTED_LOOP_CAPTURE", "SKIP_RESTART_TAG_LEAK", "SKIP_GROUPCURLY_STALE_WRITE", "JURLANE_BUDGET");
 
     private static final Map<String, Set<String>> MODE_SOFT =

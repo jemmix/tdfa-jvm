@@ -3058,12 +3058,21 @@ public final class DifferentialFuzzer {
          *       skeleton-gated, checked on the F first match, every I
          *       entry and the R clause ({@link
          *       CampaignFuzzer#leakedRestartSpan}).</li>
-         *   <li><b>nested-loop-capture</b> — java's backtracker restores
-         *       the FIRST iteration's inner group for a quantified capture
-         *       nested inside another quantified group ({@code ((a)*b)*}
-         *       on {@code "abab"} &rarr; g2 0..1; the loop lineage reports
-         *       the last). Skeleton-equal + the nested-quantified shape;
-         *       the engine fix is the open TODO.</li>
+         *   <li><b>nested-loop-capture</b> — the stock JDK's
+         *       {@code GroupCurly} backoff quirk: for a capture quantified
+         *       directly by a greedy GroupCurly-shape quantifier nested
+         *       inside another quantified construct, the rewrite-on-unwind
+         *       leaves the FIRST writing iteration's span ({@code
+         *       ((a)*b)*} on {@code "abab"} &rarr; g2 0..1) where the
+         *       engine reports the last-completed write (2..3, the
+         *       exact-restore discipline both MVT tier and patched oracle
+         *       agree on). JUR_LEAKS-gated like the two leak families: the
+         *       same GroupCurly rewrite the exact-restore patch removes —
+         *       under a fixed oracle the quirk cannot occur and the skip
+         *       demotes to hard comparison (#179 retired the engine-side
+         *       sticky emulation; the quirk is pinned both ways in
+         *       {@code NestedQuantifierParityTest}). Skeleton-equal + the
+         *       nested-quantified shape.</li>
          *   <li><b>groupcurly-stale-write</b> — java's
          *       {@code GroupCurly} backoff ({@code match0}) rewrites only
          *       the directly-quantified group's registers; a nested
@@ -3083,12 +3092,13 @@ public final class DifferentialFuzzer {
             if (o.oracle.startsWith("<exception")) {
                 return "oracle-threw";
             }
-            // The two leak families are JUR_LEAKS-gated: their predicates
-            // attribute a leaked/stale span to the ORACLE, which a fixed
-            // oracle (DifferentialFuzzer.JUR_LEAKS == false — the vendored
-            // patched default, or a future fixed JDK) cannot produce; the
-            // gate keeps a future symmetric-predicate refactor from
-            // swallowing such divergences as oracle bugs when they are ours.
+            // The three GroupCurly-rewrite families are JUR_LEAKS-gated:
+            // their predicates attribute a first-writing/stale/leaked span
+            // to the ORACLE, which a fixed oracle
+            // (DifferentialFuzzer.JUR_LEAKS == false — the vendored patched
+            // default, or a future fixed JDK) cannot produce; the gate keeps
+            // a future symmetric-predicate refactor from swallowing such
+            // divergences as oracle bugs when they are ours.
             if (JUR_LEAKS && CampaignFuzzer.sameSkeleton(o.oracle, o.vm)
                 && CampaignFuzzer.leakedRestartSpan(o.oracle, o.vm)) {
                 return "restart-tag-leak";
@@ -3098,7 +3108,13 @@ public final class DifferentialFuzzer {
                 && CampaignFuzzer.staleIterationSpan(o.oracle, o.vm)) {
                 return "groupcurly-stale-write";
             }
-            if (CampaignFuzzer.sameSkeleton(o.oracle, o.vm) && p.matches(".*\\(.*\\(.*\\)[*+{].*\\)[*+{].*")) {
+            // the stock-only nested-loop quirk: exact-bounded {n} inners
+            // and single-writing invocations never diverge (the shape
+            // predicate stays coarse — under a fixed oracle this never
+            // fires at all, and the engine-side tier equality the MVT
+            // probe asserts covers the family independently)
+            if (JUR_LEAKS && CampaignFuzzer.sameSkeleton(o.oracle, o.vm)
+                && p.matches(".*\\(.*\\(.*\\)[*+{].*\\)[*+{].*")) {
                 return "nested-loop-capture";
             }
             // the surrogate-unit family retired (pair-aware scans; see

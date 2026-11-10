@@ -159,7 +159,11 @@ error: things the owner left deliberately. Found and fixed:
   as a deliberate revert, not an accident. Deletion proposal withdrawn
   pending the owner's word; the rest of C33's dead-code deletions
   (zero-caller helpers, dead counter, stale allowlist entry) stand
-  unaffected.
+  unaffected. **Resolved by #179**: the sticky emulation the skip
+  shadowed is deleted; the skip itself survives JUR_LEAKS-gated (it
+  cannot fire under the patched fuzz default, and
+  `CampaignSmokeTest`'s allowlist entry has its producer back on the
+  stock JDK).
 - **C21 — the TODO is not ours to close.** "Decide Semantics scope"
   stays open; this review's answer (axes are representation, not knobs)
   is recorded as a *recommendation* feeding it.
@@ -1006,12 +1010,14 @@ table footnote)*
   `DifferentialFuzzer.JUR_UCASE` (own copy in CampaignFuzzer), the
   `ciSuppAvoided` counter (no increment site since 12d9921 — reports a
   permanent 0), `CampaignSmokeTest`'s `SKIP_NESTED_LOOP_CAPTURE` allowlist
-  entry (no producer since #87), and stale class-doc prose
+  entry (no producer since #87 — #179 gave it its producer back, the
+  JUR_LEAKS-gated campaign skip), and stale class-doc prose
   naming retired families as live residuals. One PR plus a prose-truth
   pass; `FORCED_RUNGS`' TRIGGER entry rides C3. **Withdrawn from the
   deletion list (second pass): the soak's `nested-loop-capture` skip** —
   #86 re-added it 25 minutes after #87's deletion, a timeline that reads
-  as a deliberate revert; owner-confirm before touching.)
+  as a deliberate revert; owner-confirm before touching. Resolved by
+  #179: the skip rides the JUR_LEAKS gate with the two leak families.)
 - **C34 — `lib:pikesim` placement** (S/M, simplify). The reference
   simulator ships as a first-class module (Java 25 bytecode, in
   BytecodeFloorTest's shippedPaths) but its consumers are tests only
@@ -1134,7 +1140,8 @@ table footnote)*
   C58 public observer, C59 stack-regs re-priced against the headline.
   Intent sweep walked back the overreach: **C35 Qodana referred** to its
   TODO's owner (evidence stands, decision doesn't), C33's nested-loop
-  skip withdrawn (possible deliberate #86 revert), C21's TODO left open,
+  skip withdrawn (possible deliberate #86 revert; resolved by #179's
+  JUR_LEAKS gate), C21's TODO left open,
   C34 gated on the publish TODO; C1/C2/C3 confirmed as answering
   questions the tradeoffs doc explicitly left "for the review". Board:
   59 items — 9 remove, 20 simplify, 6 measure-first, 18 keep,

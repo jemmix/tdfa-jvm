@@ -17,8 +17,7 @@ to the loop bodies (JUR lane only; see the
 2026-10-16 campaign follow-ups); the same redirect
 closed the family-6 TAIL residual (the 4d ε-write is a normal tagged
 ε-edge at the loop's REST position — `SKIP_GROUP_PARTICIPATION_TAIL`
-retired). The open engine families: the nested-loop inner-capture quirk
-(`((a)*b)*`-shaped, `SKIP_NESTED_LOOP_CAPTURE`) and the surrogate-unit
+retired). The open engine families: the surrogate-unit
 reading (TODO). Landing the rest is only cheap
 before the first Maven publish / 1.0 API lock (both still open in
 [TODO](../TODO.md)) — after that the same flip is a major version. This
@@ -132,10 +131,12 @@ zero-width-exit split (finding 2's mirror landing) re-routes the pure-ε
 loop completions to the quantifier exit as a NORMAL tagged ε-edge, which
 IS the position-carrying ε-write — the span records at the edge's own
 (rest) position. The tail slice compares HARD (the parity twin pins it);
-the successor residual is java's nested-loop inner-capture quirk
-(`((a)*b)*`: the first iteration's inner group,
-`SKIP_NESTED_LOOP_CAPTURE`), everything else about family 6 compares HARD against the
-live oracle.
+the successor residual — java's nested-loop inner-capture quirk
+(`((a)*b)*`: the first iteration's inner group) — closed with #179's
+retirement of the sticky emulation: the engine keeps the exact-restore
+last-completed write everywhere, the stock JDK's quirk divergence is
+JUR_LEAKS-gated and pinned both ways. Everything else about family 6
+compares HARD against the live oracle.
 
 **Decided interactions**:
 

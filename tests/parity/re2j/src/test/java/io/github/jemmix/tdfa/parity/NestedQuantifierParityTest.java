@@ -4,7 +4,10 @@ import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.util.stream.Stream;
+
 import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Nested-quantifier parity: quantifiers over quantified bodies — the shapes
@@ -26,11 +29,16 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
  * consuming-tail shapes {@code (a*)*b} and friends COMPARE HARD since the
  * unbounded zero-width-exit split (finding 2's mirror: the exiting ε
  * iteration's writes ride a normal ε-edge at the loop's REST position) —
- * the retired group-participation-TAIL exclusion. The one cell that
- * stays out is java's nested-loop inner-capture quirk
- * {@code ((a)*b)*} on {@code "abab"} (the JDK restores the FIRST
- * iteration's inner group, g2 0..1; the loop lineage reports the last) —
- * a third residual family, documented at the twin below.</p>
+ * the retired group-participation-TAIL exclusion. The cells that stay
+ * out of the hard twin are the stock JDK's nested-loop inner-capture
+ * quirk ({@code ((a)*b)*} on {@code "abab"}: the GroupCurly
+ * rewrite-on-unwind leaves the FIRST writing iteration's g2 0..1) — the
+ * dedicated battery below pins that quirk BOTH WAYS: the live oracle
+ * keeps its first-writing span, the engine holds the last-completed
+ * write, the exact-restore discipline the MVT tier and the patched jur
+ * oracle (JDK-8381696 dress rehearsal) both report. #179 retired the
+ * engine-side sticky emulation that used to reproduce the stock
+ * quirk.</p>
  */
 class NestedQuantifierParityTest {
 
@@ -157,11 +165,10 @@ class NestedQuantifierParityTest {
         JurOracle.assertSameFind("(a*)*", "aaa", factory); // g1 = "aaa", no empty re-iteration
         JurOracle.assertSameFind("(a*)*", "", factory); // g1 = "" via the single empty iteration
         JurOracle.assertSameFind("(a*)+", "aaa", factory);
-        // the consuming-TAIL residual family stays out of the hard twin —
-        // see class javadoc: (a*)*b, ((a*)*)*b, (a*?)*b and (a?){2,}b on
-        // "aab" (JDK reports the empty final iteration's g1 2..2; ours
-        // reports the last consuming one); the doubly-nested stars
-        // ((a+)*)* / ((a)*)* carry the same residual in g2
+        // (the consuming-TAIL family retired its exclusion with the
+        // unbounded zero-width-exit split — pinned HARD further down; the
+        // doubly-nested stars ((a+)*)* / ((a)*)* carry the same retired
+        // residual in g2)
         JurOracle.assertSameFind("(a+)*", "aaa", factory); // g1 = "aaa" (one iteration)
         JurOracle.assertSameFind("(a+)*b", "aaab", factory); // plus bodies always consume: agrees
         JurOracle.assertSameFind("(a?)*", "aa", factory); // g1 = "a" (last iteration)
@@ -191,55 +198,125 @@ class NestedQuantifierParityTest {
         JurOracle.assertSameFind("(a?){2,}b", "aab", factory); // bounded prefix + plus tail: g1 2..2
         JurOracle.assertSameFind("(a?){2,3}b", "aab", factory); // bounded suffix edition
         JurOracle.assertSameFind("((a)?b)*", "abab", factory); // g2 = 2..3 (live JDK 26: the last iteration)
-        // the nested-loop inner-capture quirk — HARD since the sticky
-        // split (the dedicated battery below)
-        JurOracle.assertSameFind("((a)*b)*", "abab", factory); // g2 = 0..1 (first writing iteration)
+        // the nested-loop inner-capture quirk shapes stay OUT of the hard
+        // twin — the stock JDK's first-writing spans diverge from the
+        // engine's exact-restore discipline; the dedicated battery below
+        // pins them both ways
     }
 
-    /** java's nested-loop inner-capture quirk, pinned hard: the sticky
-     *  split. java compiles a greedy quantifier directly on a capture with
-     *  a deterministic body (its {@code GroupCurly}) and rewrites the
-     *  pair's span on EVERY unwind — outermost rewriting frame last — so
-     *  when that construct sits inside another quantified construct, the
-     *  FIRST enclosing-loop iteration that matches the capture is the one
-     *  whose span survives ({@code ((a)*b)*} on {@code "abab"}: g2
-     *  {@code 0..1}, not the last iteration's {@code 2..3}); the span is
-     *  that invocation's LAST inner iteration ({@code ((a)+b)*} on
-     *  {@code "aab"}: g2 {@code 1..2}). Last-write-wins cannot express a
-     *  first-WRITING iteration (data-dependent: on {@code "babab"} the
-     *  first iteration matches nothing, java reports g2 {@code 1..2}),
-     *  so the discipline rides the automaton: the builder clones the
-     *  post-write continuation (writes kept within the invocation) and
-     *  the invocation frontier's world (writes stripped — later
-     *  invocations never rewrite the pair), crossing at the capture's
-     *  write edges. Controls that never marked: the {@code Ques} inner
-     *  ({@code ((a)?b)*} keeps the loop lineage), the lazy inner, and
-     *  the single-invocation top-level shapes. */
+    /** java's nested-loop inner-capture quirk, pinned BOTH WAYS. java
+     *  compiles a greedy quantifier directly on a capture with a
+     *  deterministic body (its {@code GroupCurly}) and its {@code match0}
+     *  backoff rewrites the pair's span on every unwind — outermost
+     *  rewriting frame last — so when that construct sits inside another
+     *  quantified construct, the STOCK JDK reports the span the FIRST
+     *  enclosing-loop iteration that matched the capture wrote (its last
+     *  inner iteration): {@code ((a)*b)*} on {@code "abab"} &rarr; g2
+     *  {@code 0..1}. That rewrite is one of the GroupCurly behaviors the
+     *  JDK-8381696 exact-restore fix removes (the vendored patched jur
+     *  oracle — the fuzz default — reports 2..3), and it is the behavior
+     *  the engine's own MVT tier has always reported. #179 retired the
+     *  engine-side sticky emulation (Tnfa's sticky split) that reproduced
+     *  the stock quirk: last-write-wins cannot express a first-WRITING
+     *  iteration (data-dependent: on {@code "babab"} the first iteration
+     *  matches nothing), and holding both disciplines in one engine split
+     *  the plain and multi tiers apart on every such shape. The engine
+     *  now keeps ONE discipline — the last-completed write, within the
+     *  invocation last inner iteration ({@code ((a)+b)*} on
+     *  {@code "aab"}: g2 {@code 1..2}) — and the stock JDK's quirk value
+     *  is pinned beside it so the divergence can never go silent. Spellings
+     *  covered: {@code *}, {@code {0,}}, {@code {1,}}, {@code {1,2}},
+     *  bounded enclosing {@code {n,}}/{@code {n}}/{@code {n,m}}, the
+     *  three-deep {@code (?:(X){0,}\S)+} (#179's seed family), and the
+     *  {@code (\b(.){1,2})*} anchor-body edition. */
+    private record QuirkCase(String pattern, String input, int[] jurSpans, int[] tdfaSpans) {
+    }
+
+    private static Stream<QuirkCase> nestedLoopQuirks() {
+        return Stream.of(
+            // the #87 canonical shapes: the stock oracle keeps the first
+            // writing invocation's span, the engine the last's
+            new QuirkCase("((a)*b)*", "abab", new int[]{0, 4, 2, 4, 0, 1}, new int[]{0, 4, 2, 4, 2, 3}),
+            new QuirkCase("((a)*b)*", "babab", new int[]{0, 5, 3, 5, 1, 2}, new int[]{0, 5, 3, 5, 3, 4}),
+            new QuirkCase("((ab)*c)*", "abcabc", new int[]{0, 6, 3, 6, 0, 2}, new int[]{0, 6, 3, 6, 3, 5}),
+            new QuirkCase("((a)*cb*)*", "acbacbb", new int[]{0, 7, 3, 7, 0, 1}, new int[]{0, 7, 3, 7, 3, 4}),
+            // the stock quirk is per-PAIR: stock keeps g2's first writing
+            // and g3's last in the same match; the engine reports the
+            // last write for both
+            new QuirkCase("((a)*[cd](b)*)*", "adacb", new int[]{0, 5, 2, 5, 0, 1, 4, 5},
+                new int[]{0, 5, 2, 5, 2, 3, 4, 5}),
+            new QuirkCase("(x((a)*b)*y)*", "xababyababy", new int[]{0, 6, 0, 6, 3, 5, 1, 2},
+                new int[]{0, 6, 0, 6, 3, 5, 3, 4}),
+            new QuirkCase("(b(a)*)*", "baba", new int[]{0, 4, 2, 4, 1, 2}, new int[]{0, 4, 2, 4, 3, 4}),
+            // bounded enclosing shapes: {n,}, {n}, {n,m} are all
+            // invocation boundaries in both disciplines
+            new QuirkCase("((a)*b){2,}", "ababab", new int[]{0, 6, 4, 6, 0, 1}, new int[]{0, 6, 4, 6, 4, 5}),
+            new QuirkCase("((a)*b){2}", "abab", new int[]{0, 4, 2, 4, 0, 1}, new int[]{0, 4, 2, 4, 2, 3}),
+            new QuirkCase("((a)*b){2,3}", "ababab", new int[]{0, 6, 4, 6, 0, 1}, new int[]{0, 6, 4, 6, 4, 5}),
+            new QuirkCase("((a){1,2}b)*", "aabab", new int[]{0, 5, 3, 5, 1, 2}, new int[]{0, 5, 3, 5, 3, 4}),
+            // the #179 seed family — the three-deep quantified-group
+            // shapes, every spelling (the {0,} twin below is the same
+            // construct as ((a)*b)* above with the outer group plain)
+            new QuirkCase("(?:(a){0,}b)+", "abab", new int[]{0, 4, 0, 1}, new int[]{0, 4, 2, 3}),
+            new QuirkCase("((a){0,}b)*", "abab", new int[]{0, 4, 2, 4, 0, 1}, new int[]{0, 4, 2, 4, 2, 3}),
+            new QuirkCase("(?:(a){0,}\\S)+", "babab", new int[]{0, 5, 1, 2}, new int[]{0, 5, 3, 4}),
+            new QuirkCase("(?:((a){0,})b)+", "aabab", new int[]{0, 5, 3, 4, 1, 2}, new int[]{0, 5, 3, 4, 3, 4}),
+            new QuirkCase("(?:(a){1,}b)+", "aabab", new int[]{0, 5, 1, 2}, new int[]{0, 5, 3, 4}),
+            new QuirkCase("(?:(a){0,2}b)+", "aabab", new int[]{0, 5, 1, 2}, new int[]{0, 5, 3, 4}),
+            new QuirkCase("(?:(a){0,}b)*c", "ababc", new int[]{0, 5, 0, 1}, new int[]{0, 5, 2, 3}),
+            // the #179 zero-width-anchor family's range spelling: {1,2}
+            // has a backoff range (cmin < cmax), so the stock quirk
+            // fires where the exact {2} (the agreeing battery below) does
+            // not — java never backs off below cmin
+            new QuirkCase("(\\b(.){1,2})*", "ab!cd", new int[]{0, 4, 2, 4, 1, 2}, new int[]{0, 4, 2, 4, 3, 4}));
+    }
+
+    /** The oracle keeps the stock quirk AND the engine keeps the
+     *  exact-restore reading — one divergence, two pinned truths. */
+    @ParameterizedTest
+    @MethodSource("nestedLoopQuirks")
+    void nestedLoopInnerCaptureQuirkPinnedBothWays(QuirkCase c) {
+        assertThat(JurOracle.jurFind(c.pattern(), c.input()))
+            .as("live oracle keeps the first-writing quirk: %s on %s", c.pattern(), c.input()).isEqualTo(c.jurSpans());
+        for (var factory : JurOracle.engineFactories().toList()) {
+            assertThat(JurOracle.tdfaFind(c.pattern(), c.input(), factory))
+                .as("engine keeps the last-completed write: %s on %s [%s]", c.pattern(), c.input(), factory)
+                .isEqualTo(c.tdfaSpans());
+        }
+    }
+
+    /** The nested-loop shapes where the stock JDK has NO quirk to
+     *  reproduce — exact-bounded {@code {n}} inners (java's GroupCurly
+     *  never backs off below cmin), single-writing invocations, and the
+     *  anchor-body {@code (\b(.){2})*} family (#179's second seed
+     *  signature) — compare HARD against the live oracle in full. */
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
-    void nestedLoopInnerCaptureSticky(RegexEngineFactory factory) {
-        JurOracle.assertSameFind("((a)*b)*", "abab", factory); // g2 = 0..1
-        JurOracle.assertSameFind("((a)*b)*", "babab", factory); // first WRITING iteration: g2 = 1..2
-        JurOracle.assertSameFind("((a)*b)*", "ab", factory); // one iteration: g2 = 0..1
-        JurOracle.assertSameFind("((a)*b)*", "b", factory); // zero inner matches: g2 = -1
+    void nestedLoopInnerCaptureAgrees(RegexEngineFactory factory) {
+        // single writing invocation: first-writing and last-writing
+        // disciplines coincide
+        JurOracle.assertSameFind("((a)*b)*", "ab", factory); // g2 = 0..1
+        JurOracle.assertSameFind("((a)*b)*", "b", factory); // g2 = -1 (zero inner matches)
         JurOracle.assertSameFind("((a)+b)*", "aab", factory); // within-invocation last: g2 = 1..2
-        JurOracle.assertSameFind("((ab)*c)*", "abcabc", factory); // multi-unit inner: g2 = 0..2
-        JurOracle.assertSameFind("((a)*cb*)*", "acbacbb", factory); // two invocations: g2 = 0..1
-        JurOracle.assertSameFind("((a)*[cd](b)*)*", "adacb", factory); // INDEPENDENT stickiness: g2 = 0..1, g3 = 4..5
-        JurOracle.assertSameFind("(x((a)*b)*y)*", "xababyababy", factory); // deep: g3 = 1..2
-        JurOracle.assertSameFind("(b(a)*)*", "baba", factory); // g2 = 1..2
-        JurOracle.assertSameFind("((x(a)*y)*)*", "xayxaxy", factory); // two enclosing loops: g3 = 1..2
-        JurOracle.assertSameFind("((a)*)*", "a a", factory); // sticky across outer re-iterations: g2 = 0..1
+        JurOracle.assertSameFind("((x(a)*y)*)*", "xayxaxy", factory); // g3 = 1..2
+        JurOracle.assertSameFind("((a)*)*", "a a", factory); // one writing invocation: g2 = 0..1
         JurOracle.assertSameFind("((a)*)*", "aa", factory); // degenerate: family-6 spans intact
         JurOracle.assertSameFind("(((a)*)*)*", "a", factory); // triple nesting agrees (one invocation)
-        JurOracle.assertSameAllMatches("((a)*b|x)*", "abxb", factory); // sticky through alternation: g2 = 0..1
-        // bounded enclosing shapes: the {n,} plus tail, the {n,m} optional
-        // copies, and exact {n} are all invocation boundaries
-        JurOracle.assertSameFind("((a)*b){2,}", "ababab", factory); // g2 = 0..1
-        JurOracle.assertSameFind("((a)*b){2}", "abab", factory); // g2 = 0..1
-        JurOracle.assertSameFind("((a)*b){2,3}", "ababab", factory); // g2 = 0..1
-        JurOracle.assertSameFind("((a){1,2}b)*", "aabab", factory); // bounded inner: g2 = 1..2
-        JurOracle.assertSameFind("((a){2,}b)*", "aab", factory); // {2,} inner: g2 = 1..2
+        JurOracle.assertSameAllMatches("((a)*b|x)*", "abxb", factory); // through alternation: g2 = 0..1
+        JurOracle.assertSameFind("((a){2,}b)*", "aab", factory); // {2,} inner, one invocation: g2 = 1..2
+        // the exact-bounded {2} spellings: java's GroupCurly never
+        // descends below cmin, so no rewrite fires — #179's second seed
+        // family, both spellings of the anchor body plus the {2,2} twin
+        JurOracle.assertSameFind("(\\b(.){2})*", "ab!cd", factory); // two writing iterations: g2 = 3..4 (last)
+        JurOracle.assertSameFind("(\\b(.){2})*", "a!bc!de", factory); // g2 = 5..6
+        JurOracle.assertSameFind("(\\b(.){2,2})*", "ab!cd", factory); // the {2,2} spelling: g2 = 3..4
+        JurOracle.assertSameFind("((\\b)(.){2})*", "ab!cd", factory); // captured anchor: g2 = 2..2, g3 = 3..4
+        JurOracle.assertSameFind("(\\b(.){2})*x", "ab!cdx", factory); // consuming tail: 3..6 (3..5 4..5)
+        JurOracle.assertSameFind("(\\b(.){2,})*", "abcde", factory); // one unbounded invocation: g2 = 4..5
+        JurOracle.assertSameFind("((\\b)(.){2})*x", "abx", factory); // g2 = 0..0, g3 = 1..2
+        JurOracle.assertSameFind("((a){2}b)*", "aabaab", factory); // exact-bounded inner: g2 = 4..5 (last)
+        JurOracle.assertSameFind("((a){2}b){2}", "aabaab", factory); // bounded enclosing twin
+        JurOracle.assertSameFind("((ab){2}c)*", "ababcababc", factory); // multi-unit inner: g2 = 7..9
         // controls: shapes java never marks — the Ques inner keeps the
         // loop lineage (last iteration), the lazy inner never rewrites,
         // and a top-level single-invocation GroupCurly is plain last-write
