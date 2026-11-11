@@ -31,7 +31,7 @@ final class Lane {
 
     /** The RE2-lineage lane: every JUR-compat axis set. */
     static final Semantics DEFAULT_SEMANTICS = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
-        .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU().spaceRe2().shorthandFold();
+        .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU().spaceRe2().shorthandFold().escapesRe2();
 
     static final int VALID_FLAGS = PatternCompiler.CASE_INSENSITIVE | PatternCompiler.DOTALL | PatternCompiler.MULTILINE
         | PatternCompiler.DISABLE_UNICODE_GROUPS | PatternCompiler.LONGEST_MATCH | PatternCompiler.FIND_ONLY

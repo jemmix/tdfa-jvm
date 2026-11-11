@@ -130,7 +130,13 @@ floor). Prefer zero code generation? Run with `-Dtdfa.engine=VM`.
 PCRE-ish subset: literals, classes (`[a-z]`, `\d \w \s`, `[:alpha:]`,
 `\p{L}`), `.`, quantifiers (`* + ? {n,m}`, greedy + lazy), alternation,
 groups (capturing, non-capturing, named), anchors, multiline, Unicode-aware
-word boundaries, inline flags.
+word boundaries, inline flags. The jur facade additionally spells
+java.util.regex's own escapes (`\v`/`\h` whitespace classes, `\e`, `\R`,
+`\cX`, `\N{...}`, `\Z`) and its `UNIX_LINES`/`UNICODE_CASE`/`LITERAL`/
+`COMMENTS` compile flags — and its matcher carries the region/bounds family
+(`region`, `useTransparentBounds`/`useAnchoringBounds`, `hitEnd`/
+`requireEnd`, `toMatchResult`, function replace) with JDK-exact semantics
+([docs/jur-api-parity.md](docs/jur-api-parity.md)).
 
 Backtracking-dependent features — backreferences, lookaround, atomic groups,
 possessive quantifiers — are rejected at compile time. We never silently fall
@@ -164,6 +170,12 @@ back to a slower engine.
   Fowler's testregex corpus, OpenJDK's `java.util.regex` regression corpus,
   and a layered oracle (re2j / reference Pike VM / VM / ASM) that pins any
   divergence to a single layer.
+- API-compat, member by member — reflection checks against the LIVE JDK
+  classes (jur facade, matcher and MatchResult snapshot) and the re2j
+  oracle's own classes (re2j facade), beside the jur matcher family's
+  behavioral battery (region/bounds, hitEnd/requireEnd, escapes, flags)
+  compared cell-for-cell with `java.util.regex` on both engine tiers
+  ([docs/jur-api-parity.md](docs/jur-api-parity.md)).
 - Fact-gated rung families (generator v4): 1-in-8 soak batches generate a
   literal-needle / prefix+tail / cand-scan / anchored-fast shape and run the
   full differential protocol on it, so the fast rungs of the search ladder

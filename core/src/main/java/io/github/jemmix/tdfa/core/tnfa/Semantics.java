@@ -73,9 +73,11 @@ public final class Semantics implements Serializable {
 
     private static final int SHORTHAND_FOLD_BIT = 256;
 
+    private static final int ESCAPES_RE2_BIT = 512;
+
     private static final int ALL_AXES =
         UNIX_LINES_BIT | UNICODE_CASE_BIT | CODEPOINT_BOUNDARIES_BIT | EMPTY_LAST_LINE_BIT | END_OF_TEXT_ONLY_BIT
-            | EMPTY_ITERATION_SPANS_BIT | UNGREEDY_U_BIT | SPACE_RE2_BIT | SHORTHAND_FOLD_BIT;
+            | EMPTY_ITERATION_SPANS_BIT | UNGREEDY_U_BIT | SPACE_RE2_BIT | SHORTHAND_FOLD_BIT | ESCAPES_RE2_BIT;
 
     private static final long serialVersionUID = 1L;
 
@@ -211,6 +213,23 @@ public final class Semantics implements Serializable {
         return with(SHORTHAND_FOLD_BIT);
     }
 
+    /**
+     * Axis: the java-only backslash escapes keep the RE2-lineage readings
+     * — {@code \e \R \N{name} \cX \h \H \V \Z} reject at the parse (re2j's
+     * alphabet) and {@code \v} is the single unit U+000B; unset is the
+     * {@code java.util.regex} reading — {@code \v}/{@code \V} the vertical
+     * and {@code \h}/{@code \H} the horizontal whitespace class tables,
+     * {@code \e} ESC, {@code \R} any Unicode linebreak sequence,
+     * {@code \cX} a control char, {@code \N{NAME}} the named codepoint,
+     * {@code \Z} the before-final-terminator end anchor. (The octal family
+     * is lineage-shared: both re2j and this engine read {@code \NNN};
+     * java's digits-1-9 backreferences are the rejected backtracking
+     * family, not an axis.)
+     */
+    public Semantics escapesRe2() {
+        return with(ESCAPES_RE2_BIT);
+    }
+
     private Semantics with(int bit) {
         return (bits & bit) != 0 ? this : new Semantics(bits | bit);
     }
@@ -260,6 +279,11 @@ public final class Semantics implements Serializable {
         return (bits & SHORTHAND_FOLD_BIT) != 0;
     }
 
+    /** Axis set? (The java-only escapes reject; {@code \v} is U+000B — re2j's reading.) */
+    public boolean isEscapesRe2() {
+        return (bits & ESCAPES_RE2_BIT) != 0;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -280,9 +304,10 @@ public final class Semantics implements Serializable {
     public String toString() {
         StringBuilder sb = new StringBuilder("Semantics[");
         String[] names = {"UNIX_LINES", "UNICODE_CASE", "CODEPOINT_BOUNDARIES", "EMPTY_LAST_LINE", "END_OF_TEXT_ONLY",
-            "EMPTY_ITERATION_SPANS", "UNGREEDY_U", "SPACE_RE2", "SHORTHAND_FOLD"};
-        int[] axisBits = {UNIX_LINES_BIT, UNICODE_CASE_BIT, CODEPOINT_BOUNDARIES_BIT, EMPTY_LAST_LINE_BIT,
-            END_OF_TEXT_ONLY_BIT, EMPTY_ITERATION_SPANS_BIT, UNGREEDY_U_BIT, SPACE_RE2_BIT, SHORTHAND_FOLD_BIT};
+            "EMPTY_ITERATION_SPANS", "UNGREEDY_U", "SPACE_RE2", "SHORTHAND_FOLD", "ESCAPES_RE2"};
+        int[] axisBits =
+            {UNIX_LINES_BIT, UNICODE_CASE_BIT, CODEPOINT_BOUNDARIES_BIT, EMPTY_LAST_LINE_BIT, END_OF_TEXT_ONLY_BIT,
+                EMPTY_ITERATION_SPANS_BIT, UNGREEDY_U_BIT, SPACE_RE2_BIT, SHORTHAND_FOLD_BIT, ESCAPES_RE2_BIT};
         boolean first = true;
         for (int i = 0; i < names.length; i++) {
             if ((bits & axisBits[i]) != 0) {

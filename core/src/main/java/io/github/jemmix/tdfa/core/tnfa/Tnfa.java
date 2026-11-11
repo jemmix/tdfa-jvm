@@ -156,7 +156,7 @@ public final class Tnfa {
      *  of the lane in core (Tdfa's drifted seven-axis twin died with its
      *  legacy constructors). */
     private static final Semantics ALL_AXES = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
-        .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU().spaceRe2().shorthandFold();
+        .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU().spaceRe2().shorthandFold().escapesRe2();
 
     /** Fullest entry: the StartS-selection fact (see
      *  {@link #hasSupplementaryStarts}) rides beside the policy. */
@@ -286,7 +286,7 @@ public final class Tnfa {
                 .flagBindings(flagBindings != null ? flagBindings
                     : semantics.isUngreedyU() ? FlagBindings.RE2_LANE : FlagBindings.JUR_LANE)
                 .emptyIterationSpans(semantics.isEmptyIterationSpans()).spaceRe2(semantics.isSpaceRe2())
-                .shorthandFold(semantics.isShorthandFold()),
+                .shorthandFold(semantics.isShorthandFold()).escapesRe2(semantics.isEscapesRe2()),
             provider, meter);
         obs.stage(CompileObserver.Stage.PARSE, System.nanoTime() - t0, parsed.tagCount());
         long t1 = System.nanoTime();

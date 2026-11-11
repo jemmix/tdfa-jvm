@@ -159,6 +159,7 @@ public final class TdfaAsmBackend {
             genFind(cw, owner);
             genDelegateMatch(cw, owner);
             genMatchWhole(cw, owner);
+            genRegionDelegates(cw, owner, tdfa);
             genStreaming(cw, owner);
             genMetadataMethods(cw, owner);
         } else {
@@ -173,6 +174,7 @@ public final class TdfaAsmBackend {
                 genMatchWholeInlined(cw, owner);
                 genWholeOne(cw, tdfa, owner);
             }
+            genRegionDelegates(cw, owner, tdfa);
             genExtractOne(cw, tdfa, owner);
             genToResult(cw, tdfa, owner);
             if (tdfa.stateFinalOpsByMask() != null) {
@@ -378,6 +380,55 @@ public final class TdfaAsmBackend {
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "find", "(" + CS_D + ")Z", false);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    /**
+     * The cold region/bounds family — full delegates to the embedded
+     * runner (same posture as {@link #genMatches}: the runner owns the
+     * strategy, the generated class adds nothing inlining these could
+     * buy), plus the one compile-time fact the matcher's view routing
+     * consults: whether the artifact uses any position predicate.
+     */
+    private static void genRegionDelegates(ClassWriter cw, String owner, Tdfa tdfa) {
+        String regionDesc = "(" + CS_D + "IIZZ" + SCRATCH_D + ")L" + RESULT + ";";
+        for (String name : new String[]{"matchRegion", "matchRegionLookingAt"}) {
+            MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, name, regionDesc, null, null);
+            mv.visitCode();
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitVarInsn(Opcodes.ILOAD, 2);
+            mv.visitVarInsn(Opcodes.ILOAD, 3);
+            mv.visitVarInsn(Opcodes.ILOAD, 4);
+            mv.visitVarInsn(Opcodes.ILOAD, 5);
+            mv.visitVarInsn(Opcodes.ALOAD, 6);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, name, regionDesc, false);
+            mv.visitInsn(Opcodes.ARETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+        }
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "probeEndFlags", "(" + CS_D + "IIZZIIZ)I", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
+        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitVarInsn(Opcodes.ILOAD, 7);
+        mv.visitVarInsn(Opcodes.ILOAD, 8);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "probeEndFlags", "(" + CS_D + "IIZZIIZ)I", false);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "usesPositionPredicates", "()Z", null, null);
+        mv.visitCode();
+        mv.visitInsn(tdfa.posFlagDeps() == 0 ? Opcodes.ICONST_0 : Opcodes.ICONST_1);
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();

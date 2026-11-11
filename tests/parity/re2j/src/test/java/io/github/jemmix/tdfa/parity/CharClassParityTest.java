@@ -823,7 +823,9 @@ class CharClassParityTest {
         JurOracle.assertSameCompileSuccess("\\x{D800}", factory); // lone surrogate in pattern: both OK
         JurOracle.assertSameFind("\\x{D800}", "\uD800", factory);
         JurOracle.assertSameCompileReject("[\\b]", factory); // backspace-in-class: both reject
-        JurOracle.assertDivergentReject("\\N{LATIN SMALL LETTER A}", factory); // JDK \N{} named char; us reject
+        // \N{...} landed with the ESCAPES_RE2 axis: JDK parity
+        JurOracle.assertSameFind("\\N{LATIN SMALL LETTER A}", "a", factory);
+        JurOracle.assertSameFind("[\\N{LATIN SMALL LETTER A}]", "a", factory);
         // RE2-lineage spellings the JDK rejects (kept by the shared parser)
         JurOracle.assertDivergentAccept("\\p{Any}", factory);
         JurOracle.assertDivergentAccept("\\p{^Nd}", factory);

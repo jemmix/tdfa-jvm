@@ -10,7 +10,12 @@ import io.github.jemmix.tdfa.core.engine.ChunkSource;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
+import java.util.stream.Stream;
 
 /**
  * A compiled regular expression — the user-facing facade mirroring the
@@ -19,7 +24,19 @@ import java.util.Map;
  *
  * <p>Compile with {@link #compile(String)} or {@link #compile(String, int)};
  * obtain a {@link PatternMatcher} via {@link #matcher(CharSequence)}.
- * Default semantics are leftmost-first (Perl/PCRE/re2j-compatible);
+ * The matcher surface carries the {@code java.util.regex.Matcher}
+ * region/bounds family — {@code region}/{@code regionStart}/
+ * {@code regionEnd}, {@code useTransparentBounds}/
+ * {@code useAnchoringBounds}, {@code hitEnd}/{@code requireEnd} (the
+ * JDK's flags re-derived by a cold probe over the artifact, live-oracle
+ * battery-pinned), {@code toMatchResult} (a
+ * {@code java.util.regex.MatchResult}-implementing snapshot),
+ * {@code usePattern} and the function-based
+ * {@code replaceAll}/{@code replaceFirst} — beside the re2j-shaped
+ * roster both facades share; see the matcher classes' javadoc for the
+ * one tier constraint ({@code usePattern}) and the docs page
+ * {@code docs/jur-api-parity.md} for the full accounting. Default
+ * semantics are leftmost-first (Perl/PCRE/re2j-compatible);
  * {@link #LONGEST_MATCH} selects leftmost-longest. The default
  * interpretation matches {@code java.util.regex} on every axis it
  * diverges from the RE2 lineage on (line terminators, bare-CI fold
@@ -166,6 +183,49 @@ public interface Pattern extends Serializable {
      * with this flag.
      */
     int MULTI_VALUED_TAGS = PatternCompiler.MULTI_VALUED_TAGS;
+
+    /**
+     * Flag: {@code .}/{@code ^}/{@code $} recognize only {@code \n} as a
+     * line terminator — JDK-exact name and semantics
+     * ({@code java.util.regex.Pattern.UNIX_LINES}). The facade default is
+     * the full java.util.regex terminator set
+     * ({@code \n}, {@code \r}, {@code \r\n}, U+0085, U+2028, U+2029);
+     * setting this bit restores the {@code \n}-only reading (the same
+     * axis the {@code :re2j} facade bakes in).
+     */
+    int UNIX_LINES = PatternCompiler.UNIX_LINES;
+
+    /**
+     * Flag: {@code CASE_INSENSITIVE} folds the full Unicode simple-fold
+     * universe — JDK-exact name and semantics
+     * ({@code java.util.regex.Pattern.UNICODE_CASE}). The facade default
+     * is java.util.regex's bare-CI reading (ASCII pairs only); setting
+     * this bit widens the fold (the same axis the {@code :re2j} facade
+     * bakes in, and what {@code (?U)} selects scoped).
+     */
+    int UNICODE_CASE = PatternCompiler.UNICODE_CASE;
+
+    /**
+     * Flag: the pattern is a literal string — every metacharacter
+     * matches itself (JDK-exact name and semantics,
+     * {@code java.util.regex.Pattern.LITERAL}). Composes with
+     * {@link #CASE_INSENSITIVE} (the folded literals still fold,
+     * JDK-verified); {@link #pattern()}, {@link #flags()} and
+     * serialization round-trip the ORIGINAL pattern text and flag.
+     */
+    int LITERAL = PatternCompiler.LITERAL;
+
+    /**
+     * Flag: free-spacing mode — whitespace between tokens and
+     * {@code #}-to-end-of-line comments are skipped at the parse
+     * (JDK-exact name and semantics,
+     * {@code java.util.regex.Pattern.COMMENTS}). Escaped whitespace
+     * ({@code "\ "}) survives and {@code \Q...\E} bodies are immune;
+     * the inline {@code (?x)} spelling selects the same behavior scoped
+     * (this facade binds the {@code x} letter; the re2j alphabet has
+     * none).
+     */
+    int COMMENTS = PatternCompiler.COMMENTS;
 
     /**
      * Compile {@code regex} with default flags (leftmost-first, generated engine).
@@ -341,6 +401,113 @@ public interface Pattern extends Serializable {
      * Split {@code input} with a limit on the number of result strings.
      */
     String[] split(String input, int limit);
+
+    /**
+     * Split {@code input} around matches of this pattern — the
+     * {@code java.util.regex.Pattern.split(CharSequence)} spelling: any
+     * {@link CharSequence} input, answered identically to the
+     * {@link #split(String)} twin over {@code input.toString()}.
+     */
+    default String[] split(CharSequence input) {
+        return split(input.toString());
+    }
+
+    /**
+     * Split {@code input} with a limit — the
+     * {@code java.util.regex.Pattern.split(CharSequence, int)} spelling
+     * (see {@link #split(CharSequence)}).
+     */
+    default String[] split(CharSequence input, int limit) {
+        return split(input.toString(), limit);
+    }
+
+    /**
+     * Creates a predicate which tests if this pattern is found in a
+     * given input string — the
+     * {@code java.util.regex.Pattern.asPredicate()} spelling
+     * ({@code s -> matcher(s).find()}).
+     */
+    default Predicate<String> asPredicate() {
+        return s -> matcher(s).find();
+    }
+
+    /**
+     * Creates a lazy-ish stream over the substrings of {@code input}
+     * split around this pattern — the
+     * {@code java.util.regex.Pattern.splitAsStream(CharSequence)}
+     * spelling. Trailing empty strings are discarded like
+     * {@link #split(CharSequence)}, with the JDK's one observable
+     * difference pinned live: an EMPTY input yields the one-element
+     * stream {@code [""]} (where {@code split("")} is the empty array).
+     */
+    default Stream<String> splitAsStream(CharSequence input) {
+        if (input.length() == 0) {
+            return Stream.of("");
+        }
+        return Arrays.stream(split(input.toString()));
+    }
+
+    /**
+     * Creates a predicate which tests if this pattern matches the whole
+     * input — the {@code java.util.regex.Pattern.asMatchPredicate()}
+     * spelling ({@code cs -> matcher(cs).matches()}, the JDK 21+ twin of
+     * {@link #asPredicate()}).
+     */
+    default Predicate<CharSequence> asMatchPredicate() {
+        return cs -> matcher(cs.toString()).matches();
+    }
+
+    /**
+     * Splits around matches, keeping the delimiters — the
+     * {@code java.util.regex.Pattern.splitWithDelimiters(CharSequence, int)}
+     * spelling (JDK 21+): alternating text and delimiter pieces
+     * {@code [text, delim, ..., text]}, the {@code limit} semantics of
+     * {@link #split(CharSequence, int)} ({@code 0} trims the trailing
+     * empty pieces, a positive bound applies the pattern at most
+     * {@code limit - 1} times with the last text holding the remainder),
+     * no-match inputs answer the whole input, empty inputs the empty
+     * array. Live-oracle pinned.
+     */
+    default String[] splitWithDelimiters(CharSequence input, int limit) {
+        if (input.length() == 0) {
+            return new String[0];
+        }
+        int matchCount = 0;
+        int index = 0;
+        boolean matchLimited = limit > 0;
+        List<String> matchList = new ArrayList<>();
+        PatternMatcher m = matcher(input.toString());
+        while (m.find()) {
+            if (!matchLimited || matchCount < limit - 1) {
+                if (index == 0 && m.start() == 0 && m.end() == 0) {
+                    // no empty leading substring for a zero-width match at
+                    // the very beginning (the JDK's own split rule)
+                    continue;
+                }
+                matchList.add(input.subSequence(index, m.start()).toString());
+                index = m.end();
+                matchList.add(input.subSequence(m.start(), index).toString());
+                matchCount++;
+            } else if (matchCount == limit - 1) {
+                matchList.add(input.subSequence(index, input.length()).toString());
+                index = m.end();
+                matchCount++;
+            }
+        }
+        if (index == 0) {
+            return new String[]{input.toString()};
+        }
+        if (!matchLimited || matchCount < limit) {
+            matchList.add(input.subSequence(index, input.length()).toString());
+        }
+        int resultSize = matchList.size();
+        if (limit == 0) {
+            while (resultSize > 0 && matchList.get(resultSize - 1).isEmpty()) {
+                resultSize--;
+            }
+        }
+        return matchList.subList(0, resultSize).toArray(new String[0]);
+    }
 
     /**
      * Releases internal caches (no-op for this engine).

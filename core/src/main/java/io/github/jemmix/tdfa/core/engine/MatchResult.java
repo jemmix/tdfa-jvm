@@ -209,6 +209,24 @@ public final class MatchResult {
             && matchEnd == m.matchEnd && Arrays.equals(regs, m.regs) && Objects.equals(tree, m.tree);
     }
 
+    /**
+     * The same match rebased by {@code delta}: every capture position
+     * (whole-match bounds, the final-register block and the multi-valued
+     * tree alike) shifted — the region machinery's view-route twin,
+     * turning a match found over {@code input.subSequence(from, to)}
+     * back into absolute positions.
+     */
+    public static MatchResult shifted(MatchResult m, int delta) {
+        int[] r = m.regs.clone();
+        for (int i = m.finalRegBase; i < r.length; i++) {
+            if (r[i] >= 0) {
+                r[i] += delta;
+            }
+        }
+        return new MatchResult(r, m.finalRegBase, m.groupCount, m.matchStart + delta, m.matchEnd + delta,
+            m.tree == null ? null : m.tree.shifted(delta));
+    }
+
     @Override
     public int hashCode() {
         int h = 31 * (31 * (31 * matchStart + matchEnd) + groupCount) + finalRegBase;

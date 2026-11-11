@@ -88,6 +88,31 @@ public final class PatternCompiler {
     /** Multi-valued tags (BT22 &sect;3.1) — per-iteration group spans. */
     public static final int MULTI_VALUED_TAGS = 128;
 
+    /** {@code .}/{@code ^}/{@code $} recognize only {@code \n} as a line
+     * terminator (JDK {@code UNIX_LINES}); the facade's default is the
+     * full java.util.regex terminator set. Selects the compile's
+     * UNIX_LINES semantics axis — the facade composes it onto the lane. */
+    public static final int UNIX_LINES = 256;
+
+    /** {@code CASE_INSENSITIVE} folds the full Unicode simple-fold
+     * universe (JDK {@code UNICODE_CASE}); the facade's default folds
+     * ASCII only (java.util.regex's bare CI). Selects the compile's
+     * UNICODE_CASE semantics axis. */
+    public static final int UNICODE_CASE = 512;
+
+    /** The pattern is a literal string: every metacharacter matches
+     * itself (JDK {@code LITERAL}). Implemented as a compile-source
+     * rewrite — the whole pattern quoted before parsing — so it composes
+     * with {@code CASE_INSENSITIVE} (folded literals, JDK-verified) and
+     * round-trips serialization as the ORIGINAL pattern text. */
+    public static final int LITERAL = 1024;
+
+    /** Free-spacing mode (JDK {@code COMMENTS}): whitespace between
+     * tokens and {@code #}-to-end-of-line comments are skipped at the
+     * parse; the {@code (?x)} inline spelling is the same behavior,
+     * scoped. */
+    public static final int COMMENTS = 2048;
+
     private PatternCompiler() {
     }
 
@@ -116,6 +141,18 @@ public final class PatternCompiler {
             throw new NullPointerException("pattern is null");
         }
         String fl = regex;
+        // LITERAL quotes the whole parse source FIRST, so the inline-flag
+        // prefixes below stay live prefixes (they must not be quoted) and
+        // fold/axis composition keeps working on the quoted atoms. Under
+        // LITERAL the (?x) prefix is suppressed — java's literal path
+        // never consults COMMENTS (live-JDK verified).
+        if ((flags & LITERAL) != 0) {
+            fl = quoteLiteral(fl);
+        } else {
+            if ((flags & COMMENTS) != 0) {
+                fl = "(?x)" + fl;
+            }
+        }
         if ((flags & CASE_INSENSITIVE) != 0) {
             fl = "(?i)" + fl;
         }
@@ -266,5 +303,28 @@ public final class PatternCompiler {
      */
     private static boolean vmSwitched() {
         return "VM".equalsIgnoreCase(System.getProperty("tdfa.engine"));
+    }
+
+    /**
+     * Quote a pattern source for {@link #LITERAL}: escape every
+     * metacharacter so the parser reads the string as pure literals —
+     * the same alphabet the facades' {@code Pattern.quote} escapes (every
+     * character outside that set is a plain literal atom in both
+     * engines' grammars).
+     */
+    static String quoteLiteral(String s) {
+        if (s.isEmpty()) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder(s.length() << 1);
+        for (int i = 0; i < s.length();) {
+            int c = s.codePointAt(i);
+            i += Character.charCount(c);
+            if ("\\.+*?()|[]{}^$".indexOf(c) >= 0) {
+                out.append('\\');
+            }
+            out.appendCodePoint(c);
+        }
+        return out.toString();
     }
 }

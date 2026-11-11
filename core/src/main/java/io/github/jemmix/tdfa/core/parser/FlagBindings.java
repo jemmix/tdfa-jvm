@@ -24,7 +24,8 @@ import java.util.Objects;
  * ({@link FlagAction#UNICODE_CHARACTER_CLASS}), and engine
  * {@code (?U)} is JDK {@code (?u)} — {@link FlagAction#UNICODE_CASE}
  * under the JUR reading, {@link FlagAction#UNGREEDY} under the RE2
- * reading (the only letter the two stock lanes disagree on).
+ * reading. The two stock lanes also disagree on {@code x}
+ * (free-spacing — JUR only; re2j's alphabet has no {@code x} letter).
  *
  * <p>Immutable value class — field equality over the binding map (a
  * lane's identity for the campaign harness and the parity tables);
@@ -32,11 +33,11 @@ import java.util.Objects;
  */
 public final class FlagBindings {
 
-    /** The java.util.regex alphabet: {@code i s m u} plus
+    /** The java.util.regex alphabet: {@code i s m u x} plus
      *  {@code U} = scoped Unicode case (the jur facade's reading). */
-    public static final FlagBindings JUR_LANE =
-        builder().bind('i', FlagAction.CASE_INSENSITIVE).bind('s', FlagAction.DOTALL).bind('m', FlagAction.MULTILINE)
-            .bind('u', FlagAction.UNICODE_CHARACTER_CLASS).bind('U', FlagAction.UNICODE_CASE).build();
+    public static final FlagBindings JUR_LANE = builder().bind('i', FlagAction.CASE_INSENSITIVE)
+        .bind('s', FlagAction.DOTALL).bind('m', FlagAction.MULTILINE).bind('u', FlagAction.UNICODE_CHARACTER_CLASS)
+        .bind('U', FlagAction.UNICODE_CASE).bind('x', FlagAction.COMMENTS).build();
 
     /** The RE2/re2j alphabet: {@code i s m u} plus
      *  {@code U} = ungreedy (the re2j facade's reading). */

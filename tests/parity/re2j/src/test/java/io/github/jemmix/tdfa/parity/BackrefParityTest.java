@@ -20,7 +20,9 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
  * as the documented accept/reject divergence (DFA discipline,
  * {@link JurOracle#assertDivergentReject}), while the octal fallback
  * translates except where the JDK's parser prefers the backref reading
- * ({@code (a)\10} reads as backref-1 + literal {@code 0} there).
+ * ({@code (a)\10} reads as backref-1 + literal {@code 0} there); bare
+ * {@code \0} rejects on the jur lane exactly like the JDK 26+ parser
+ * (the ESCAPES_RE2 axis; re2j's NUL reading stays on the :re2j facade).
  */
 class BackrefParityTest {
 
@@ -128,7 +130,8 @@ class BackrefParityTest {
         JurOracle.assertDivergentReject("\\8", factory); // JDK: literal-ish escape; us: reject
         JurOracle.assertDivergentReject("\\9", factory);
         // bare \0: the JDK (26+) rejects it as an illegal octal escape —
-        // the facade keeps the re2j reading (NUL); a documented divergence
-        JurOracle.assertDivergentAccept("\\0", factory);
+        // and so does the jur lane since the ESCAPES_RE2 axis landed
+        // (re2j's NUL reading stays on the :re2j facade)
+        JurOracle.assertSameCompileReject("\\0", factory);
     }
 }

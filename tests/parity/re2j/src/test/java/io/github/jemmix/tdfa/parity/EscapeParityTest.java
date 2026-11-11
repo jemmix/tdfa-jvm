@@ -15,7 +15,8 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
  * broader vertical-whitespace class (a semantic divergence outside this
  * cell); the escape-rejection roster splits three ways: shared malformed
  * spellings ({@code \E}, {@code \K}, {@code \C}, hex errors), JDK-only
- * syntax we reject ({@code \R}, {@code \e}, bare backrefs), and our
+ * syntax we reject (bare backrefs; {@code \R}/{@code \e} landed with
+ * the ESCAPES_RE2 axis), and our
  * re2j-lineage octal reading the JDK (26+) rejects ({@code \0}).
  */
 class EscapeParityTest {
@@ -299,11 +300,14 @@ class EscapeParityTest {
         JurOracle.assertSameCompileReject("\\x{}", factory);
         JurOracle.assertSameCompileReject("\\x", factory);
         JurOracle.assertSameCompileReject("\\x{FFFFFFFF}", factory);
-        // JDK-only syntax we reject (DFA discipline / no such escape)
-        JurOracle.assertDivergentReject("\\R", factory); // JDK: any linebreak
-        JurOracle.assertDivergentReject("\\e", factory); // JDK: escape char
+        // JDK-only syntax we still reject (DFA discipline): bare backrefs
         JurOracle.assertDivergentReject("\\1", factory); // bare backref, no groups
-        // our octal reading the JDK (26+) rejects
-        JurOracle.assertDivergentAccept("\\0", factory);
+        // \R / \e landed with the ESCAPES_RE2 axis: full parity with the
+        // JDK's readings (any-linebreak / ESC), and bare \0 rejects on the
+        // jur lane exactly like the JDK 26+ parser
+        JurOracle.assertSameFind("\\R", "a\r\nb", factory);
+        JurOracle.assertSameFind("\\R", "\u0085", factory);
+        JurOracle.assertSameFind("\\e", "\u001B", factory);
+        JurOracle.assertSameCompileReject("\\0", factory);
     }
 }

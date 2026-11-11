@@ -52,5 +52,13 @@ public enum FlagAction {
     /** Swap the quantifier preference — {@code x*} behaves like
      *  {@code x*?} and vice versa (PCRE/RE2's {@code (?U)}; the
      *  engine letter under the RE2 reading is {@code (?U)}). */
-    UNGREEDY
+    UNGREEDY,
+
+    /** Free-spacing mode — whitespace between tokens and
+     *  {@code #}-to-end-of-line comments are skipped at the parse
+     *  (JDK {@code COMMENTS}; engine spelling {@code (?x)}, bound on
+     *  the jur lane only — re2j's alphabet has no {@code x} letter).
+     *  Escaped whitespace ({@code "\ "} and in-class twins) survives;
+     *  {@code \Q...\E} bodies are immune. */
+    COMMENTS
 }
