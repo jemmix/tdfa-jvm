@@ -12,6 +12,8 @@ import io.github.jemmix.tdfa.core.unicode.CaseFoldTable;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -25,6 +27,12 @@ import java.util.Map;
 /**
  * Hand-rolled iterative-descent parser for a PCRE-ish subset:
  * - literals, escape sequences (\n \t \r \f \a \v \d \D \w \W \s \S)
+ * - java.util.regex-only escapes, accepted when the ESCAPES_RE2 axis is
+ *   unset (the JUR reading; re2j's alphabet rejects them): \e (ESC),
+ *   \R (any Unicode linebreak), \cX (control char), \N{NAME} (named
+ *   codepoint), \Z (end, before final terminator), and the \v/\V
+ *   vertical- and \h/\H horizontal-whitespace class tables (under the
+ *   axis \v is the single unit U+000B and the rest reject)
  * - hex escapes (\xNN, \x{N+}), octal escapes (\NNN, 1–3 digits capped at 0xFF),
  *   Unicode escapes (backslash-u-XXXX — BMP values incl. lone surrogates,
  *   java's adjacent high+low escape pairs combining to one supplementary
@@ -78,6 +86,20 @@ public final class Parser {
     private static final int[] R_NOT_SPACE = {0, '\t' - 1, 0x0B, 0x0B, '\r' + 1, ' ' - 1, ' ' + 1, 0x10FFFF};
     private static final int[] R_SPACE_JDK = {'\t', '\r', ' ', ' '}; // \t\n\x0B\f\r and space
     private static final int[] R_NOT_SPACE_JDK = {0, '\t' - 1, '\r' + 1, ' ' - 1, ' ' + 1, 0x10FFFF};
+
+    // java.util.regex's \v/\V (VertWS) and \h/\H (HorizWS) — the JDK's
+    // CharPredicates tables, live-JDK verified: \v is the CLASS
+    // [\n\x0B\f\r\x85\u2028\u2029] (not U+000B — that reading is re2j's,
+    // the ESCAPES_RE2 axis), \h is
+    // [ \t\xA0\u1680\u180E\u2000-\u200A\u202F\u205F\u2060\u3000]. All-BMP
+    // sets — no hasSupplementaryStarts flip for the positives; the
+    // complements flip unconditionally (java's negate() drops the Bmp
+    // marker, the uppercase-shorthand rule).
+    private static final int[] R_VERT_WS_JDK =
+        {'\n', '\n', 0x0B, 0x0B, 0x0C, 0x0C, '\r', '\r', 0x85, 0x85, 0x2028, 0x2028, 0x2029, 0x2029};
+
+    private static final int[] R_HORIZ_WS = {' ', ' ', '\t', '\t', 0xA0, 0xA0, 0x1680, 0x1680, 0x180E, 0x180E, 0x2000,
+        0x200A, 0x202F, 0x202F, 0x205F, 0x205F, 0x2060, 0x2060, 0x3000, 0x3000};
 
     // Unicode IsWhite_Space property (java.util.regex \s with UNICODE_CHARACTER_CLASS).
     private static final int[] R_UNICODE_SPACE = {'\t', '\r', // U+0009-U+000D (HT, LF, VT, FF, CR)
@@ -195,6 +217,15 @@ public final class Parser {
     /** re2j's U flag: quantifiers default to lazy, a trailing ? makes them greedy. */
     boolean ungreedy = false;
 
+    /** Free-spacing mode (the COMMENTS flag / {@code (?x)} letter, JUR
+     *  lane): whitespace between tokens and {@code #}-to-end-of-line
+     *  comments are skipped — java.util.regex's {@code ASCII.isSpace}
+     *  set ({@code ' ' \t \n \x0B \f \r}), comments ending at any of
+     *  {@code \n \r \u2028 \u2029} (java's {@code parsePastLine}).
+     *  Scoped like every inline flag; escaped whitespace and
+     *  {@code \Q...\E} bodies are immune (their readers never skip). */
+    boolean comments = false;
+
     /** The active fold universe at the {@link #foldUniverse} seam (the
      *  UNICODE_CASE axis): true folds the full Unicode simple-fold
      *  universe — the RE2-lineage reading, re2j folds full under plain
@@ -222,6 +253,10 @@ public final class Parser {
     /** Front-end work meter shared with the TNFA builder (see
      *  {@code Tnfa.compile}); meters the O(universe) fold-range scan. */
     final WorkMeter meter;
+    /** {@link Character#codePointOf(String)} (@since 9), or {@code null}
+     *  on a Java 8 runtime — see {@link #readNamedCodepoint()}. */
+    private static final Method CODE_POINT_OF = lookupCodePointOf();
+
     // Lazily-merged Unicode class caches (see unicodeWordRanges()/unicodeDigitRanges()).
     private int[] cachedUnicodeWord;
     private int[] cachedUnicodeDigit;
@@ -302,6 +337,7 @@ public final class Parser {
         stack.push(new GroupFrame());
         while (true) {
             GroupFrame f = stack.peek();
+            skipComments();
             char c = peek();
             if (pos < src.length() && c != '|' && c != ')') {
                 if (c == '(') {
@@ -434,6 +470,7 @@ public final class Parser {
      *  frame's flags, so a lazy '?' suffix reads the enclosing group's
      *  ungreedy state, not the body's. */
     private Ast applyQuantifier(Ast atom) {
+        skipComments();
         if (pos >= src.length()) {
             return atom;
         }
@@ -829,7 +866,7 @@ public final class Parser {
         List<Ast> alts = new ArrayList<>();
         boolean capturing;
         int open = -1, close = -1;
-        boolean savedCi, savedDs, savedMl, savedUs, savedUc, savedUg;
+        boolean savedCi, savedDs, savedMl, savedUs, savedUc, savedUg, savedCx;
     }
 
     /** group := '(' ('?:')? alt ')' | '(' '?flags' ')' | '(' '?flags:' alt ')' | '(' '?<' name '>' alt ')' | '(' '?P<' name '>' alt ')'
@@ -857,7 +894,7 @@ public final class Parser {
         // never one two-char Slice (which never flips).
         flushLiteralRun();
         boolean savedCi = caseInsensitive, savedDs = dotall, savedMl = multiline;
-        boolean savedUs = unicodeShorthand, savedUc = unicodeCase, savedUg = ungreedy;
+        boolean savedUs = unicodeShorthand, savedUc = unicodeCase, savedUg = ungreedy, savedCx = comments;
         boolean capturing = true;
         String groupName = null;
         if (pos + 1 < src.length() && src.charAt(pos) == '?' && src.charAt(pos + 1) == ':') {
@@ -960,6 +997,7 @@ public final class Parser {
         f.savedUs = savedUs;
         f.savedUc = savedUc;
         f.savedUg = savedUg;
+        f.savedCx = savedCx;
         frames.push();
         stack.push(f);
         return null;
@@ -998,6 +1036,9 @@ public final class Parser {
             case UNGREEDY :
                 this.ungreedy = on;
                 break;
+            case COMMENTS :
+                this.comments = on;
+                break;
             default :
                 throw new IllegalStateException("unhandled flag action: " + action);
         }
@@ -1023,6 +1064,7 @@ public final class Parser {
         unicodeShorthand = f.savedUs;
         unicodeCase = f.savedUc;
         ungreedy = f.savedUg;
+        comments = f.savedCx;
         Ast group =
             f.capturing
                 ? new Ast.Concat(
@@ -1036,6 +1078,7 @@ public final class Parser {
 
     /** class := '^'? class-item+ ']' */
     private Ast parseClass() {
+        skipComments();
         boolean negated = false;
         if (peek() == '^') {
             pos++;
@@ -1067,7 +1110,11 @@ public final class Parser {
             memberFlip(']');
             pos++;
         }
-        while (pos < src.length() && peek() != ']') {
+        while (true) {
+            skipComments();
+            if (pos >= src.length() || peek() == ']') {
+                break;
+            }
             // Check for POSIX class [:name:]
             if (peek() == '[' && peekAhead() == ':') {
                 int[] posix = parsePosixClass();
@@ -1083,7 +1130,16 @@ public final class Parser {
             // Check for shorthand escapes (\s \S \d \D \w \W)
             if (peek() == '\\' && pos + 1 < src.length()) {
                 char next = src.charAt(pos + 1);
-                int[] sr = shorthandRanges(next);
+                // java's range() look-ahead: an escape directly followed
+                // by '-' is read as the range START, and \v's range reading
+                // is the single unit U+000B (isrange) — skip the table
+                // pre-check for it so parseClassChar + the dash below form
+                // [\v-z] = [U+000B-'z'] (live-JDK verified; the other
+                // class-table escapes have no isrange reading and never
+                // form ranges, like java's predicate returns).
+                boolean vRangeStart =
+                    next == 'v' && !options.isEscapesRe2() && pos + 2 < src.length() && src.charAt(pos + 2) == '-';
+                int[] sr = vRangeStart ? null : shorthandRanges(next);
                 if (sr != null) {
                     // In-class shorthand flip: complements always, the
                     // positive families only under (?u) (see shorthandFlip).
@@ -1113,12 +1169,19 @@ public final class Parser {
             int lo = parseClassChar();
             int hi = lo;
             boolean dashed = false;
-            if (peek() == '-' && pos + 1 < src.length() && src.charAt(pos + 1) != ']') {
-                pos++;
-                hi = parseClassChar();
-                dashed = true;
-                if (hi < lo) {
-                    throw fail(this, "inverted range in class");
+            skipComments();
+            if (peek() == '-' && pos + 1 < src.length()) {
+                int save = pos;
+                pos++; // past '-'
+                skipComments(); // (?x): [a - z] is [a-z] (java reads endpoints via its skipping read())
+                if (pos < src.length() && peek() != ']') {
+                    hi = parseClassChar();
+                    dashed = true;
+                    if (hi < lo) {
+                        throw fail(this, "inverted range in class");
+                    }
+                } else {
+                    pos = save; // a trailing dash is a literal member ([a-])
                 }
             }
             if (dashed) {
@@ -1287,6 +1350,24 @@ public final class Parser {
         // SHORTHAND_FOLD axis). The positive lowercase forms fold later via
         // the class-level foldExpandRanges on the folding lane.
         boolean ci = caseInsensitive && options.isShorthandFold();
+        // The JUR escape reading adds the \v/\V/\h/\H tables (the
+        // ESCAPES_RE2 axis keeps them rejected in class context —
+        // re2j's alphabet; a range ENDPOINT still reads \v as U+000B
+        // via parseClassChar, java's isrange rule).
+        if (!options.isEscapesRe2()) {
+            switch (c) {
+                case 'v' :
+                    return R_VERT_WS_JDK;
+                case 'V' :
+                    return complementRanges(R_VERT_WS_JDK);
+                case 'h' :
+                    return R_HORIZ_WS;
+                case 'H' :
+                    return complementRanges(R_HORIZ_WS);
+                default :
+                    // fall through to the lineage-shared shorthands below
+            }
+        }
         if (!unicodeShorthand) {
             switch (c) {
                 case 'd' :
@@ -1522,7 +1603,31 @@ public final class Parser {
                 case 'a' :
                     return (char) 7;
                 case 'v' :
+                    // Range endpoint under the JUR reading too (java's
+                    // isrange rule: [\v-z] reads \v as U+000B); a
+                    // standalone [\v] never reaches here on that lane —
+                    // the class loop's table pre-check takes it.
                     return (char) 11;
+                case 'e' :
+                    if (options.isEscapesRe2()) {
+                        throw fail(this, "invalid escape sequence: \\e");
+                    }
+                    return 0x1B;
+                case 'c' :
+                    if (options.isEscapesRe2()) {
+                        throw fail(this, "invalid escape sequence: \\c");
+                    }
+                    if (pos >= src.length()) {
+                        throw fail(this, "illegal control escape sequence");
+                    }
+                    int ctrl = src.charAt(pos) ^ 0x40;
+                    pos++;
+                    return ctrl;
+                case 'N' :
+                    if (options.isEscapesRe2()) {
+                        throw fail(this, "invalid escape sequence: \\N");
+                    }
+                    return readNamedCodepoint();
                 case '\\' :
                     return '\\';
                 case 'x' :
@@ -1578,10 +1683,10 @@ public final class Parser {
     private Ast parseEscape() {
         char c = cur();
         pos++;
-        // Octal escape \NNN (1-3 octal digits, value capped at 0xFF = 0377).
-        // \0 is the null character; \1-\9 single-digit is rejected (reserved
-        // for backreference syntax, which is DFA-incompatible). Multi-digit
-        // octal like \12, \101 is accepted.
+        // The JUR escape reading (ESCAPES_RE2 unset): java's octal needs a
+        // digit AFTER the leading \0 ("Illegal octal escape sequence" on a
+        // bare \0 or \08, live-JDK verified); the RE2 lineage keeps re2j's
+        // bare-\0-is-nul reading.
         if (c >= '0' && c <= '7') {
             int val = c - '0';
             if (pos < src.length() && src.charAt(pos) >= '0' && src.charAt(pos) <= '7') {
@@ -1591,12 +1696,18 @@ public final class Parser {
                     val = val * 8 + (src.charAt(pos) - '0');
                     pos++;
                 }
-            } else if (c != '0') {
+            } else if (c != '0' || !options.isEscapesRe2()) {
+                // \1-\7 always (backreference family); \0 requires a
+                // following octal digit under the JUR reading only.
                 throw fail(this, "invalid escape sequence: \\" + c);
             }
             literalKind = 1; // <= 0xFF: never supplementary, never folds
             return new Ast.Symbol((char) val);
         }
+        // The java.util.regex-only escapes (ESCAPES_RE2 unset); under the
+        // axis the letters fall to the default reject below — re2j's
+        // alphabet ("invalid escape sequence", verified against re2j 1.8).
+        boolean jur = !options.isEscapesRe2();
         switch (c) {
             case 'n' :
                 literalKind = 1;
@@ -1614,8 +1725,62 @@ public final class Parser {
                 literalKind = 1;
                 return new Ast.Symbol((char) 7); // alarm/bell, like re2j
             case 'v' :
+                // The \v axis: re2j's single unit U+000B (ESCAPES_RE2) vs
+                // java.util.regex's VertWS class (the JDK's javadoc table,
+                // live-JDK verified: \v matches \n, \r, \x85, U+2028/9).
+                if (!jur) {
+                    literalKind = 1;
+                    return new Ast.Symbol((char) 11); // vertical tab, like re2j
+                }
+                return vertWsAtom(false);
+            case 'V' :
+                if (!jur) {
+                    throw fail(this, "invalid escape sequence: \\V");
+                }
+                return vertWsAtom(true);
+            case 'h' :
+                if (!jur) {
+                    throw fail(this, "invalid escape sequence: \\h");
+                }
+                return horizWsAtom(false);
+            case 'H' :
+                if (!jur) {
+                    throw fail(this, "invalid escape sequence: \\H");
+                }
+                return horizWsAtom(true);
+            case 'e' :
+                if (!jur) {
+                    throw fail(this, "invalid escape sequence: \\e");
+                }
                 literalKind = 1;
-                return new Ast.Symbol((char) 11); // vertical tab, like re2j
+                return new Ast.Symbol((char) 0x1B); // ESC, java.util.regex's \e
+            case 'R' :
+                if (!jur) {
+                    throw fail(this, "invalid escape sequence: \\R");
+                }
+                // java's LineEnding: CR LF | the VertWS single units, the
+                // CRLF pair at leftmost-first priority.
+                return new Ast.Alt(Collections.unmodifiableList(Arrays.asList(
+                    new Ast.Concat(
+                        Collections.unmodifiableList(Arrays.asList(new Ast.Symbol('\r'), new Ast.Symbol('\n')))),
+                    new CharClass(R_VERT_WS_JDK, false))));
+            case 'c' :
+                if (!jur) {
+                    throw fail(this, "invalid escape sequence: \\c");
+                }
+                return controlEscapeAtom();
+            case 'N' :
+                if (!jur) {
+                    throw fail(this, "invalid escape sequence: \\N");
+                }
+                return namedCharAtom();
+            case 'Z' :
+                if (!jur) {
+                    throw fail(this, "invalid escape sequence: \\Z");
+                }
+                // java's Dollar(false): end of input, or before the final
+                // terminator — the plain-$ rule, immune to (?m) like \z.
+                return new Ast.EndAnchor(false, false);
             case '\\' :
                 literalKind = 1;
                 return new Ast.Symbol('\\');
@@ -1687,6 +1852,77 @@ public final class Parser {
     private void shorthandFlip(char c) {
         if (Character.isUpperCase(c) || unicodeShorthand) {
             hasSupplementaryStarts = true;
+        }
+    }
+
+    /** The {@code \v}/{@code \V} atom (the JUR escape reading): the
+     *  VertWS table, complemented for the uppercase form. */
+    private Ast vertWsAtom(boolean negate) {
+        if (negate) {
+            hasSupplementaryStarts = true; // complements flip (java's negate())
+        }
+        return new CharClass(negate ? complementRanges(R_VERT_WS_JDK) : R_VERT_WS_JDK, false);
+    }
+
+    /** The {@code \h}/{@code \H} atom (the JUR escape reading): the
+     *  HorizWS table, complemented for the uppercase form. */
+    private Ast horizWsAtom(boolean negate) {
+        if (negate) {
+            hasSupplementaryStarts = true;
+        }
+        return new CharClass(negate ? complementRanges(R_HORIZ_WS) : R_HORIZ_WS, false);
+    }
+
+    /** The {@code \cX} control escape (the JUR reading): java's
+     *  {@code c()} — the next char XOR 0x40, any char, a parse failure
+     *  at end of pattern. */
+    private Ast controlEscapeAtom() {
+        if (pos >= src.length()) {
+            throw fail(this, "illegal control escape sequence");
+        }
+        int cp = src.charAt(pos) ^ 0x40;
+        pos++;
+        literalKind = literalKindOf(cp);
+        return literalAtom(cp);
+    }
+
+    /** The {@code \N{NAME}} named-character atom (the JUR reading):
+     *  {@link Character#codePointOf(String)} — names only (java rejects
+     *  the {@code U+XXXX} spelling, live-JDK verified). */
+    private Ast namedCharAtom() {
+        int cp = readNamedCodepoint();
+        literalKind = literalKindOf(cp);
+        return literalAtom(cp);
+    }
+
+    /** Read a {@code \N{NAME}} body (caller consumed {@code \N}):
+     *  the braced Unicode character name, resolved to its codepoint. */
+    private int readNamedCodepoint() {
+        if (pos >= src.length() || src.charAt(pos) != '{') {
+            throw fail(this, "illegal character name escape sequence");
+        }
+        pos++;
+        int start = pos;
+        while (pos < src.length() && src.charAt(pos) != '}') {
+            pos++;
+        }
+        if (pos >= src.length()) {
+            throw fail(this, "unclosed character name escape sequence");
+        }
+        String name = src.substring(start, pos);
+        pos++; // consume '}'
+        // Character.codePointOf is @since 9 — the Java 8 floor reaches it
+        // reflectively, and a Java 8 runtime (no such method) rejects
+        // \N{...} loudly rather than silently mis-reading it.
+        if (CODE_POINT_OF == null) {
+            throw fail(this, "unknown character name [" + name + "] (no Character.codePointOf on this JVM)");
+        }
+        try {
+            return (Integer) CODE_POINT_OF.invoke(null, name);
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException("codePointOf unavailable", e);
+        } catch (InvocationTargetException e) {
+            throw fail(this, "unknown character name [" + name + "]");
         }
     }
 
@@ -2067,6 +2303,41 @@ public final class Parser {
         return pos < src.length() ? src.charAt(pos) : '\0';
     }
 
+    /**
+     * COMMENTS-mode token skip (java's {@code peekPastWhitespace}): past
+     * ASCII whitespace ({@code ' ' \t \n \x0B \f \r}) and
+     * {@code #}-to-line-end comments ({@code \n \r \u2028 \u2029} end a
+     * comment — java's {@code parsePastLine}). Called at token
+     * boundaries only (the atom/class loops, before quantifiers) — the
+     * escape-body readers never skip, so escaped whitespace survives and
+     * {@code \Q...\E} bodies stay immune, java's {@code readEscaped()}
+     * discipline.
+     */
+    private void skipComments() {
+        if (!comments) {
+            return;
+        }
+        while (pos < src.length()) {
+            char c = src.charAt(pos);
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\u000B' || c == '\f' || c == '\r') {
+                pos++;
+                continue;
+            }
+            if (c == '#') {
+                pos++;
+                while (pos < src.length()) {
+                    char t = src.charAt(pos);
+                    if (t == '\n' || t == '\r' || t == '\u2028' || t == '\u2029') {
+                        break;
+                    }
+                    pos++;
+                }
+                continue;
+            }
+            return;
+        }
+    }
+
     private char peekAhead() {
         return pos + 1 < src.length() ? src.charAt(pos + 1) : '\0';
     }
@@ -2137,6 +2408,14 @@ public final class Parser {
             }
         }
         return name;
+    }
+
+    private static Method lookupCodePointOf() {
+        try {
+            return Character.class.getMethod("codePointOf", String.class);
+        } catch (NoSuchMethodException e) {
+            return null;
+        }
     }
 
     private static PatternSyntaxException fail(Parser p, String msg) {

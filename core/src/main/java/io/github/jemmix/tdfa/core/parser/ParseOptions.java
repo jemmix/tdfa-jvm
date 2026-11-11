@@ -21,6 +21,9 @@ package io.github.jemmix.tdfa.core.parser;
  * <li>the shorthand fold (the SHORTHAND_FOLD axis — re2j folds the
  *     {@code \w}/{@code \W} class tables under CI, java.util.regex
  *     never folds a shorthand);</li>
+ * <li>the java-only backslash escapes (the ESCAPES_RE2 axis — re2j's
+ *     alphabet rejects {@code \e \R \N{name} \cX \h \H \V \Z} and reads
+ *     {@code \v} as U+000B, java.util.regex spells them all).</li>
  * </ul>
  * plus the inline-flag letter {@link FlagBindings} — which
  * {@link FlagAction} each letter activates. The stock lanes pin the
@@ -29,7 +32,8 @@ package io.github.jemmix.tdfa.core.parser;
  */
 public final class ParseOptions {
 
-    private static final ParseOptions RE2_LANE = new ParseOptions(true, true, FlagBindings.RE2_LANE, true, true, true);
+    private static final ParseOptions RE2_LANE =
+        new ParseOptions(true, true, FlagBindings.RE2_LANE, true, true, true, true);
 
     private final boolean dotNlOnly;
 
@@ -43,14 +47,17 @@ public final class ParseOptions {
 
     private final boolean shorthandFold;
 
+    private final boolean escapesRe2;
+
     private ParseOptions(boolean dotNlOnly, boolean unicodeCase, FlagBindings flagBindings, boolean emptyIterationSpans,
-        boolean spaceRe2, boolean shorthandFold) {
+        boolean spaceRe2, boolean shorthandFold, boolean escapesRe2) {
         this.dotNlOnly = dotNlOnly;
         this.unicodeCase = unicodeCase;
         this.flagBindings = flagBindings;
         this.emptyIterationSpans = emptyIterationSpans;
         this.spaceRe2 = spaceRe2;
         this.shorthandFold = shorthandFold;
+        this.escapesRe2 = escapesRe2;
     }
 
     /**
@@ -70,7 +77,7 @@ public final class ParseOptions {
      * The other axes default to the RE2-side reading.
      */
     public static ParseOptions dotNlOnly(boolean dotNlOnly) {
-        return new ParseOptions(dotNlOnly, true, FlagBindings.RE2_LANE, true, true, true);
+        return new ParseOptions(dotNlOnly, true, FlagBindings.RE2_LANE, true, true, true, true);
     }
 
     /**
@@ -84,7 +91,8 @@ public final class ParseOptions {
      * per scope, since v2).
      */
     public ParseOptions unicodeCase(boolean unicodeCase) {
-        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold);
+        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold,
+            escapesRe2);
     }
 
     /**
@@ -96,7 +104,7 @@ public final class ParseOptions {
      */
     public ParseOptions ungreedyU(boolean ungreedyU) {
         return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU ? FlagBindings.RE2_LANE : FlagBindings.JUR_LANE,
-            emptyIterationSpans, spaceRe2, shorthandFold);
+            emptyIterationSpans, spaceRe2, shorthandFold, escapesRe2);
     }
 
     /**
@@ -108,7 +116,8 @@ public final class ParseOptions {
      * rejects at the parse.
      */
     public ParseOptions flagBindings(FlagBindings flagBindings) {
-        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold);
+        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold,
+            escapesRe2);
     }
 
     /**
@@ -122,7 +131,8 @@ public final class ParseOptions {
      * pair; the determinizer's φ overrides the finals).
      */
     public ParseOptions emptyIterationSpans(boolean emptyIterationSpans) {
-        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold);
+        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold,
+            escapesRe2);
     }
 
     /**
@@ -132,7 +142,8 @@ public final class ParseOptions {
      * {@code [ \t\n\x0B\f\r]} (U+000B IS whitespace).
      */
     public ParseOptions spaceRe2(boolean spaceRe2) {
-        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold);
+        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold,
+            escapesRe2);
     }
 
     /**
@@ -145,7 +156,22 @@ public final class ParseOptions {
      * shapes included).
      */
     public ParseOptions shorthandFold(boolean shorthandFold) {
-        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold);
+        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold,
+            escapesRe2);
+    }
+
+    /**
+     * Select the java-only escape readings: {@code true} = the
+     * RE2-lineage alphabet ({@code \e \R \N{name} \cX \h \H \V \Z} reject
+     * at the parse, {@code \v} is the single unit U+000B — re2j's
+     * readings); {@code false} = {@code java.util.regex}'s escapes (the
+     * {@code \v}/{@code \V}/{@code \h}/{@code \H} class tables and the
+     * {@code \e}/{@code \R}/{@code \cX}/{@code \N{...}}/{@code \Z}
+     * spellings).
+     */
+    public ParseOptions escapesRe2(boolean escapesRe2) {
+        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold,
+            escapesRe2);
     }
 
     /** Does the ASCII {@code \s} exclude U+000B (re2j's table, vs the JDK's)? */
@@ -156,6 +182,11 @@ public final class ParseOptions {
     /** Do the shorthands fold under CI (re2j's reading, vs the JDK's never)? */
     public boolean isShorthandFold() {
         return shorthandFold;
+    }
+
+    /** Do the java-only escapes reject, and {@code \v} read as U+000B (re2j's reading)? */
+    public boolean isEscapesRe2() {
+        return escapesRe2;
     }
 
     /** Does the dot skip {@code \n} only (vs the full terminator set)? */

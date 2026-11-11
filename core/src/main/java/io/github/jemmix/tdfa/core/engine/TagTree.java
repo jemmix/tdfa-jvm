@@ -111,6 +111,19 @@ public final class TagTree {
         return new TagTree(Arrays.copyOf(pred, top + 1), Arrays.copyOf(val, top + 1), top);
     }
 
+    /**
+     * A copy with every recorded position shifted by {@code delta} — the
+     * region-view rebasing twin (see {@code Matcher}'s region routing):
+     * node ids and links are position-free, so only {@code val} moves.
+     */
+    public TagTree shifted(int delta) {
+        int[] v = Arrays.copyOf(val, top + 1);
+        for (int i = 1; i <= top; i++) {
+            v[i] += delta;
+        }
+        return new TagTree(Arrays.copyOf(pred, top + 1), v, top);
+    }
+
     /** Value equality over the live nodes (snapshot comparison in tests). */
     @Override
     public boolean equals(Object o) {

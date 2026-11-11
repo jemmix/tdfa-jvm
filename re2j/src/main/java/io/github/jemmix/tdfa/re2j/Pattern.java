@@ -19,10 +19,17 @@ import java.util.Map;
  * in</b>: every axis on which the RE2 lineage and {@code java.util.regex}
  * diverge (line terminators, fold universe, UTF-16 vs codepoint
  * boundaries, anchor end-of-line rules, zero-width iteration spans,
- * {@code (?U)}) is simply this facade's default — there is no migration
+ * {@code (?U)}, the java-only backslash escapes) is simply this facade's
+ * default — there is no migration
  * OR, no per-axis opt-out ceremony; the lane is un-gettable-wrong. The
  * jur-parity reading of the same shape lives in the root facade's
- * {@code io.github.jemmix.tdfa.Pattern}.
+ * {@code io.github.jemmix.tdfa.Pattern}. The shared matcher surface
+ * carries the {@code java.util.regex} region/bounds family
+ * ({@code region}, {@code hitEnd}/{@code requireEnd},
+ * {@code toMatchResult}, function replace, {@code usePattern}) as
+ * ADDITIVE machinery — re2j's own matcher has no spellings for them and
+ * this facade claims nothing about them; see the matcher classes'
+ * javadoc.
  *
  * <p>Compile with {@link #compile(String)} or {@link #compile(String, int)};
  * obtain a {@link PatternMatcher} via {@link #matcher(CharSequence)}.

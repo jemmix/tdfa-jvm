@@ -26,7 +26,8 @@ import io.github.jemmix.tdfa.core.engine.Matcher;
  */
 public class PatternMatcher extends Matcher {
 
-    private final TDFAPattern pattern;
+    /** Mutable ONLY through {@link #usePattern} (machinery-tier matchers). */
+    private TDFAPattern pattern;
 
     @EmittedSurface // emitted shells super-ctor call
     public PatternMatcher(TDFAPattern pattern, CharSequence input) {
@@ -41,5 +42,46 @@ public class PatternMatcher extends Matcher {
      */
     public TDFAPattern pattern() {
         return pattern;
+    }
+
+    /**
+     * Re-target this matcher at {@code newPattern} — the
+     * {@code java.util.regex.Matcher.usePattern} contract: the input,
+     * the search position and the append position are kept; the group
+     * information of the last match is lost (group access fails until
+     * the next match; the JDK behaves identically).
+     *
+     * <p><b>Tier constraint.</b> Only the machinery matcher tier can
+     * re-target — the ASM tier's generated matchers bake their engine's
+     * concrete type into the class, and those refuse with
+     * {@link UnsupportedOperationException} (build a fresh matcher via
+     * {@code newPattern.matcher(...)} — or run {@code -Dtdfa.engine=VM}
+     * — when re-targeting is the workflow). Every facade
+     * {@code Pattern} IS a {@link TDFAPattern} at runtime (the minted
+     * shells extend it), so the shared machinery's one spelling takes
+     * the machinery type.
+     */
+    public PatternMatcher usePattern(TDFAPattern newPattern) {
+        if (newPattern == null) {
+            throw new IllegalArgumentException("pattern cannot be null");
+        }
+        if (getClass() != PatternMatcher.class) {
+            throw new UnsupportedOperationException("usePattern on a generated per-pattern matcher: the engine tier "
+                + "is baked into this matcher's class — build a fresh matcher (newPattern.matcher(...)) instead, or "
+                + "run -Dtdfa.engine=VM");
+        }
+        this.pattern = newPattern;
+        rebindEngines(newPattern.engine(), newPattern.wholeEngine());
+        match = null;
+        hasMatch = false;
+        // Position continuation: java's next find() starts at the last
+        // match's end (bumped past an empty match) — the un-regioned find()
+        // resumes from appendPos once the match state is cleared, so the
+        // continuation position lands there (bake the bump now; find()'s
+        // own bump only fires while a match is live).
+        if (lastMatchStart >= 0) {
+            appendPos = lastMatchStart == lastMatchEnd ? lastMatchEnd + 1 : lastMatchEnd;
+        }
+        return this;
     }
 }

@@ -34,6 +34,14 @@ import java.util.NoSuchElementException;
  */
 public interface RegexEngine {
 
+    /** {@link #probeEndFlags} bit: the search engine hit the end of the
+     *  region (more input could change the result). */
+    int PROBE_HIT_END = 1;
+
+    /** {@link #probeEndFlags} bit: more input could UNDO the reported
+     *  result (an end-anchor or past-end word boundary carried it). */
+    int PROBE_REQUIRE_END = 2;
+
     /**
      * Match the entire input (anchored both ends).
      *
@@ -94,6 +102,66 @@ public interface RegexEngine {
      * the carrier is never semantic either way.
      */
     default boolean wantsScratch() {
+        return true;
+    }
+
+    /**
+     * Region-confined search — the {@code java.util.regex.Matcher} bounds
+     * family: the leftmost match with its start in {@code [from, to)},
+     * position predicates evaluated under the bounds flags (anchoring:
+     * {@code ^}/{@code $}/{@code \A}/{@code \Z}/{@code \z} anchor at the
+     * region edges vs the true text edges; transparent: {@code \b}/{@code \B}
+     * read their neighbors beyond the region edges vs treating it as the
+     * whole text). Result positions are ABSOLUTE input positions.
+     *
+     * <p>Cold-path machinery (matcher regions are a cold API): the built-in
+     * tiers implement it natively ({@code TdfaRunner}); a third-party engine
+     * that does not override rejects loudly rather than answering a region
+     * query over the wrong bounds. The default-bounds region combo
+     * (anchoring on, transparent off) needs no special support — the
+     * matcher serves it through {@link #match} over a subSequence view.
+     */
+    default MatchResult matchRegion(CharSequence input, int from, int to, boolean anchoringBounds,
+        boolean transparentBounds, MatchScratch scratch) {
+        throw new UnsupportedOperationException("region bounds are not supported by engine " + getClass().getName()
+            + " — override RegexEngine.matchRegion to serve them");
+    }
+
+    /**
+     * Region-confined lookingAt — the anchored-at-{@code from} twin of
+     * {@link #matchRegion} (see there; same bounds-flag contract).
+     */
+    default MatchResult matchRegionLookingAt(CharSequence input, int from, int to, boolean anchoringBounds,
+        boolean transparentBounds, MatchScratch scratch) {
+        throw new UnsupportedOperationException("region bounds are not supported by engine " + getClass().getName()
+            + " — override RegexEngine.matchRegionLookingAt to serve them");
+    }
+
+    /**
+     * The end-state probe behind the matcher's {@code hitEnd()}/
+     * {@code requireEnd()} — a cold, tagless re-derivation over the
+     * engine's artifact (the flags java's nodes record during the walk;
+     * {@code TdfaRunner} documents the exact correspondence). Returns
+     * {@code 0} or {@code PROBE_HIT_END | PROBE_REQUIRE_END}-composed
+     * bits.
+     *
+     * <p>Contract mirrors {@link #matchRegion} for the bounds flags;
+     * third-party engines that do not override reject loudly.
+     */
+    default int probeEndFlags(CharSequence input, int from, int to, boolean anchoringBounds, boolean transparentBounds,
+        int matchStart, int matchEnd, boolean matched) {
+        throw new UnsupportedOperationException("hitEnd/requireEnd probing is not supported by engine "
+            + getClass().getName() + " — override RegexEngine.probeEndFlags to serve it");
+    }
+
+    /**
+     * Whether the artifact consults ANY position predicate ({@code ^},
+     * {@code \A}, {@code $}, {@code \z}, {@code \b} …): the matcher's
+     * region routing needs it — a predicate-free artifact answers a
+     * subSequence view identically under every bounds-flag combo, a
+     * predicate-carrying one only under the default combo.
+     */
+    default boolean usesPositionPredicates() {
         return true;
     }
 

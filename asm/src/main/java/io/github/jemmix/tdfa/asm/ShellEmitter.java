@@ -129,6 +129,17 @@ public final class ShellEmitter {
         // public boolean find()
         mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "find", "()Z", null, null);
         mv.visitCode();
+        // Region routing: an active region leaves the inlined fast path —
+        // the machinery find() owns the bounds family (one predictable
+        // never-taken branch on the hot path).
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "regionTo", "I");
+        Label noRegion = new Label();
+        mv.visitJumpInsn(Opcodes.IFLT, noRegion); // -1 = no region
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "find", "()Z", false);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitLabel(noRegion);
         // locals: 1 = start, 2 = m
         Label elseStart = new Label(), startDone = new Label();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -183,6 +194,14 @@ public final class ShellEmitter {
         // public boolean matches()
         mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matches", "()Z", null, null);
         mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "regionTo", "I");
+        Label mNoRegion = new Label();
+        mv.visitJumpInsn(Opcodes.IFLT, mNoRegion);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "matches", "()Z", false);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitLabel(mNoRegion);
         // locals: 1 = m
         // RegexEngine w = p.wholeEngine(); m = w.matchWhole(input, this.scratch)
         mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -232,6 +251,14 @@ public final class ShellEmitter {
         // public boolean lookingAt()
         mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "lookingAt", "()Z", null, null);
         mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "regionTo", "I");
+        Label lNoRegion = new Label();
+        mv.visitJumpInsn(Opcodes.IFLT, lNoRegion);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "lookingAt", "()Z", false);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitLabel(lNoRegion);
         // m = p.eng.match(input, 0, this.scratch); if (m != null && m.start(0) == 0) accept else false
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, matOwner, "p", patDesc);

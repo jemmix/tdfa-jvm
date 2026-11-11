@@ -48,8 +48,13 @@
 
     <!-- ParseResult hands out its unmodifiable views of the named-group map
          (part of the frozen parser API); flagged only by the 4.9.8+ detector
-         wave. -->
+         wave. MatchSnapshot is the same posture: the JDK-MatchResult-shaped
+         snapshot wraps the engine's named-group map unmodifiable at
+         construction (docs/jur-api-parity.md). -->
     <Match classregex="^io\.github\.jemmix\.tdfa\.core\.parser\.Parser$">
+        <Bug pattern="EI_EXPOSE_REP"/>
+    </Match>
+    <Match classregex="^io\.github\.jemmix\.tdfa\.core\.engine\.MatchSnapshot$">
         <Bug pattern="EI_EXPOSE_REP"/>
     </Match>
 

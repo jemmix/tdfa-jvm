@@ -30,12 +30,15 @@ final class Lane {
 
     static final int VALID_FLAGS = PatternCompiler.CASE_INSENSITIVE | PatternCompiler.DOTALL | PatternCompiler.MULTILINE
         | PatternCompiler.DISABLE_UNICODE_GROUPS | PatternCompiler.LONGEST_MATCH
-        | PatternCompiler.UNICODE_CHARACTER_CLASS | PatternCompiler.FIND_ONLY | PatternCompiler.MULTI_VALUED_TAGS;
+        | PatternCompiler.UNICODE_CHARACTER_CLASS | PatternCompiler.FIND_ONLY | PatternCompiler.MULTI_VALUED_TAGS
+        | PatternCompiler.UNIX_LINES | PatternCompiler.UNICODE_CASE | PatternCompiler.LITERAL
+        | PatternCompiler.COMMENTS;
 
     static final String FLAGS_MESSAGE = "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE,"
-        + " DISABLE_UNICODE_GROUPS, LONGEST_MATCH, UNICODE_CHARACTER_CLASS, FIND_ONLY, MULTI_VALUED_TAGS (the jur"
-        + " facade; the RE2 reading ships as the :re2j module's Pattern, and per-axis probes ride"
-        + " CompileOptions.semantics)";
+        + " DISABLE_UNICODE_GROUPS, LONGEST_MATCH, UNICODE_CHARACTER_CLASS, FIND_ONLY, MULTI_VALUED_TAGS, UNIX_LINES,"
+        + " UNICODE_CASE, LITERAL, COMMENTS (the jur facade; CANON_EQ is not supported — canonical-equivalence"
+        + " matching needs normalization-aware compilation, outside the TDFA mission; the RE2 reading ships as the"
+        + " :re2j module's Pattern, and per-axis probes ride CompileOptions.semantics)";
 
     private Lane() {
     }
@@ -48,8 +51,18 @@ final class Lane {
         if ((flags & ~VALID_FLAGS) != 0) {
             throw new IllegalArgumentException(FLAGS_MESSAGE);
         }
+        // The JDK axis-mirroring bits compose onto the lane (an explicit
+        // Semantics still wins as the base — the bits select that lane's
+        // sides of the UNIX_LINES / UNICODE_CASE axes).
+        Semantics lane = explicitSemantics != null ? explicitSemantics : DEFAULT_SEMANTICS;
+        if ((flags & PatternCompiler.UNIX_LINES) != 0) {
+            lane = lane.unixLines();
+        }
+        if ((flags & PatternCompiler.UNICODE_CASE) != 0) {
+            lane = lane.unicodeCase();
+        }
         TDFAPattern p = PatternCompiler.compile(regex, flags, factory, AsmEngineBackend.INSTANCE, provider,
-            UnicodeProviders::get, observer, explicitSemantics != null ? explicitSemantics : DEFAULT_SEMANTICS);
+            UnicodeProviders::get, observer, lane);
         // The one facade-owned step: mint this facade's API-typed subclass
         // of the machinery shell (this module's own codegen).
         return Shells.mint(p);
