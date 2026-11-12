@@ -13,6 +13,8 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 ## Correctness
 
+- [ ] Dialect-agnostic core: sets as data ([design](docs/dialect-agnostic-core.md), [WBS](docs/wbs-dialect-agnostic-core.md))
+
 - [ ] JUR-compat re-base tail: local soak, README numbers
 - [ ] Watch JDK-8381696; leak skips auto-retire via probe ([analysis](docs/jdk-8381696-restart-tag-leak-fix.md))
 - [ ] Local overnight cross-rung soak; refresh README numbers
