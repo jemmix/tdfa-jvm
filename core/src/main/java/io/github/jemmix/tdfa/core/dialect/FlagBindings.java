@@ -37,14 +37,16 @@ public final class FlagBindings implements Serializable {
     private static final long serialVersionUID = 1L;
 
     /** The java.util.regex alphabet: {@code i s m u x} plus
-     *  {@code U} = scoped Unicode case (the jur facade's reading). */
-    public static final FlagBindings JUR_LANE = builder().bind('i', FlagAction.CASE_INSENSITIVE)
+     *  {@code U} = scoped Unicode case — the JDK {@code (?U)} reading
+     *  (the stock lane the jur facade compiles in). */
+    public static final FlagBindings JDK = builder().bind('i', FlagAction.CASE_INSENSITIVE)
         .bind('s', FlagAction.DOTALL).bind('m', FlagAction.MULTILINE).bind('u', FlagAction.UNICODE_CHARACTER_CLASS)
         .bind('U', FlagAction.UNICODE_CASE).bind('x', FlagAction.COMMENTS).build();
 
     /** The RE2/re2j alphabet: {@code i s m u} plus
-     *  {@code U} = ungreedy (the re2j facade's reading). */
-    public static final FlagBindings RE2_LANE =
+     *  {@code U} = ungreedy — the PCRE/RE2 {@code (?U)} reading (the
+     *  stock lane the :re2j facade compiles in; no {@code x} letter). */
+    public static final FlagBindings RE2 =
         builder().bind('i', FlagAction.CASE_INSENSITIVE).bind('s', FlagAction.DOTALL).bind('m', FlagAction.MULTILINE)
             .bind('u', FlagAction.UNICODE_CHARACTER_CLASS).bind('U', FlagAction.UNGREEDY).build();
 

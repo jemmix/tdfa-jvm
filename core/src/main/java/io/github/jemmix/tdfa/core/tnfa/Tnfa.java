@@ -8,7 +8,10 @@ import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.FrameBudget;
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
+import io.github.jemmix.tdfa.core.dialect.ClassTable;
+import io.github.jemmix.tdfa.core.dialect.EscapeAlphabet;
 import io.github.jemmix.tdfa.core.dialect.FlagBindings;
+import io.github.jemmix.tdfa.core.dialect.Terminators;
 import io.github.jemmix.tdfa.core.parser.ParseOptions;
 import io.github.jemmix.tdfa.core.parser.ParseResult;
 import io.github.jemmix.tdfa.core.parser.Parser;
@@ -151,12 +154,14 @@ public final class Tnfa {
     public static final int ABS_END = 32;
     public static final int FINAL_END = 64;
 
-    /** Every axis set (the RE2-lineage reading): the compile-entry default
-     *  when a caller passes no explicit {@code Semantics} — the one spelling
-     *  of the lane in core (Tdfa's drifted seven-axis twin died with its
-     *  legacy constructors). */
+    /** The RE2-lineage preset (every axis at its RE2-side value): the
+     *  compile-entry default when a caller passes no explicit
+     *  {@code Semantics} — the one named bundle in core (Tdfa's drifted
+     *  seven-axis twin died with its legacy constructors); a preset is
+     *  data, nothing branches on its identity. */
     private static final Semantics ALL_AXES = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
-        .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU().spaceRe2().shorthandFold().escapesRe2();
+        .emptyLastLine().endOfTextOnly().emptyIterationSpans().shorthandFold().terminators(Terminators.NL_ONLY)
+        .spaceTable(ClassTable.SPACE_RE2).escapes(EscapeAlphabet.RE2_MINIMAL).flagBindings(FlagBindings.RE2);
 
     /** Fullest entry: the StartS-selection fact (see
      *  {@link #hasSupplementaryStarts}) rides beside the policy. */
@@ -238,29 +243,15 @@ public final class Tnfa {
 
     /**
      * Fullest entry: every pipeline knob, the compile's
-     * {@link Semantics} included (see {@link #semantics}); the
-     * legacy overloads above pass every axis set (the RE2-lineage
-     * reading).
+     * {@link Semantics} included (see {@link #semantics}) — the policy
+     * carries the inline-flag letter alphabet as a component (the
+     * custom-surface seam: {@code Semantics.flagBindings(...)}; every
+     * letter the alphabet does not bind rejects at the parse). The
+     * legacy overloads above pass the RE2-lineage preset.
      */
     public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
         boolean multiValuedTags, Semantics semantics, UnicodeDataProvider provider, CompileObserver observer,
         WorkMeter meter) {
-        return compile(pattern, disableUnicodeGroups, anchorBoth, multiValuedTags, semantics, null, provider, observer,
-            meter);
-    }
-
-    /**
-     * The compile entry with the inline-flag letter bindings override —
-     * the custom-surface seam. {@code flagBindings == null} selects the
-     * stock lane spelling of the {@code (?U)} axis ({@code U} = ungreedy
-     * when the axis is set, scoped Unicode case when unset); an explicit
-     * {@link FlagBindings} replaces the letter alphabet outright (every
-     * letter it does not bind rejects at the parse — a subset surface
-     * shrinks the accepted syntax exactly as much as it intends).
-     */
-    public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
-        boolean multiValuedTags, Semantics semantics, FlagBindings flagBindings, UnicodeDataProvider provider,
-        CompileObserver observer, WorkMeter meter) {
         // The overloads above accept a null observer ("no hook"); resolve
         // it to NONE once here so the stage callbacks below fire
         // unconditionally (the no-op pays a handful of virtual calls —
@@ -277,16 +268,14 @@ public final class Tnfa {
         // Determinization constructs its own meter per attempt (TdfaCompiler).
         // Parser-side projection of the compile's Semantics (the carrier
         // stays here; the parser package sits below tnfa in the layer DAG):
-        // the DOT terminator set (UNIX_LINES), the fold universe
-        // (UNICODE_CASE) and the inline-flag letter bindings (the (?U)
-        // meaning rides them — the override when present, else the stock
-        // lane spelling of the axis).
+        // every axis — the terminator set, the fold universe, the letter
+        // alphabet, the span protocol, the \s table, the shorthand fold
+        // and the escape readings — applied onto the all-defaults options.
         ParseResult parsed = Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth,
-            ParseOptions.dotNlOnly(semantics.isUnixLines()).unicodeCase(semantics.isUnicodeCase())
-                .flagBindings(flagBindings != null ? flagBindings
-                    : semantics.isUngreedyU() ? FlagBindings.RE2_LANE : FlagBindings.JUR_LANE)
-                .emptyIterationSpans(semantics.isEmptyIterationSpans()).spaceRe2(semantics.isSpaceRe2())
-                .shorthandFold(semantics.isShorthandFold()).escapesRe2(semantics.isEscapesRe2()),
+            ParseOptions.of().terminators(semantics.terminators()).unicodeCase(semantics.isUnicodeCase())
+                .flagBindings(semantics.flagBindings()).emptyIterationSpans(semantics.isEmptyIterationSpans())
+                .spaceTable(semantics.spaceTable()).shorthandFold(semantics.isShorthandFold())
+                .escapes(semantics.escapes()),
             provider, meter);
         obs.stage(CompileObserver.Stage.PARSE, System.nanoTime() - t0, parsed.tagCount());
         long t1 = System.nanoTime();

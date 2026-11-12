@@ -4,6 +4,10 @@ import io.github.jemmix.tdfa.asm.AsmEngineBackend;
 import io.github.jemmix.tdfa.core.compile.PatternCompiler;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
+import io.github.jemmix.tdfa.core.dialect.ClassTable;
+import io.github.jemmix.tdfa.core.dialect.EscapeAlphabet;
+import io.github.jemmix.tdfa.core.dialect.FlagBindings;
+import io.github.jemmix.tdfa.core.dialect.Terminators;
 import io.github.jemmix.tdfa.core.report.CompileObserver;
 import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.unicode.Re2jUniverseProvider;
@@ -29,9 +33,10 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
  */
 final class Lane {
 
-    /** The RE2-lineage lane: every JUR-compat axis set. */
+    /** The RE2-lineage lane: every axis at its RE2-side value. */
     static final Semantics DEFAULT_SEMANTICS = Semantics.of().unixLines().unicodeCase().codepointBoundaries()
-        .emptyLastLine().endOfTextOnly().emptyIterationSpans().ungreedyU().spaceRe2().shorthandFold().escapesRe2();
+        .emptyLastLine().endOfTextOnly().emptyIterationSpans().shorthandFold().terminators(Terminators.NL_ONLY)
+        .spaceTable(ClassTable.SPACE_RE2).escapes(EscapeAlphabet.RE2_MINIMAL).flagBindings(FlagBindings.RE2);
 
     static final int VALID_FLAGS = PatternCompiler.CASE_INSENSITIVE | PatternCompiler.DOTALL | PatternCompiler.MULTILINE
         | PatternCompiler.DISABLE_UNICODE_GROUPS | PatternCompiler.LONGEST_MATCH | PatternCompiler.FIND_ONLY

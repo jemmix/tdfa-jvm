@@ -4,6 +4,7 @@ import io.github.jemmix.tdfa.asm.AsmEngineBackend;
 import io.github.jemmix.tdfa.core.compile.PatternCompiler;
 import io.github.jemmix.tdfa.core.compile.RegexEngineFactory;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
+import io.github.jemmix.tdfa.core.dialect.Terminators;
 import io.github.jemmix.tdfa.core.report.CompileObserver;
 import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
@@ -25,7 +26,9 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
  */
 final class Lane {
 
-    /** The jur lane: every JUR-compat axis unset (java.util.regex parity). */
+    /** The jur lane: the all-defaults policy — every JDK-stock component
+     *  ({@code Terminators.JDK}, {@code ClassTable.SPACE_JDK}, {@code
+     *  EscapeAlphabet.JDK}, {@code FlagBindings.JDK}) and no policy bit. */
     static final Semantics DEFAULT_SEMANTICS = Semantics.of();
 
     static final int VALID_FLAGS = PatternCompiler.CASE_INSENSITIVE | PatternCompiler.DOTALL | PatternCompiler.MULTILINE
@@ -56,7 +59,7 @@ final class Lane {
         // sides of the UNIX_LINES / UNICODE_CASE axes).
         Semantics lane = explicitSemantics != null ? explicitSemantics : DEFAULT_SEMANTICS;
         if ((flags & PatternCompiler.UNIX_LINES) != 0) {
-            lane = lane.unixLines();
+            lane = lane.terminators(Terminators.NL_ONLY);
         }
         if ((flags & PatternCompiler.UNICODE_CASE) != 0) {
             lane = lane.unicodeCase();

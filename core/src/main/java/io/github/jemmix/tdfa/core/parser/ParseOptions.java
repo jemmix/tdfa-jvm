@@ -1,7 +1,9 @@
 package io.github.jemmix.tdfa.core.parser;
 
-import io.github.jemmix.tdfa.core.dialect.FlagAction;
+import io.github.jemmix.tdfa.core.dialect.ClassTable;
+import io.github.jemmix.tdfa.core.dialect.EscapeAlphabet;
 import io.github.jemmix.tdfa.core.dialect.FlagBindings;
+import io.github.jemmix.tdfa.core.dialect.Terminators;
 
 /**
  * The parser-side pivot knobs — the projection of a compile's
@@ -11,34 +13,38 @@ import io.github.jemmix.tdfa.core.dialect.FlagBindings;
  * {@code tnfa} in the core layer DAG while the parser's behavior stays
  * selectable per compile.
  *
- * <p>Immutable value class. The axes (each names the behavior
- * {@code true} selects):
+ * <p>Immutable value class. The axes:
  * <ul>
- * <li>the {@code DOT} terminator set (the UNIX_LINES axis — {@code \n}
- *     only, or the full java.util.regex terminator set);</li>
- * <li>the fold universe (the UNICODE_CASE axis — full Unicode simple
+ * <li>the {@code DOT} / line-predicate terminator set ({@link
+ *     Terminators} — the full JDK set with the {@code \r\n} pair, or
+ *     {@code \n}-only, or a custom set);</li>
+ * <li>the fold universe (the UNICODE_CASE policy — full Unicode simple
  *     folding, or ASCII-only, the java.util.regex bare-CI reading);</li>
- * <li>the ASCII {@code \s} table (the SPACE_RE2 axis — re2j's
- *     {@code [\t\n\f\r ]} without U+000B, or java.util.regex's with it);</li>
- * <li>the zero-width-iteration span protocol (the family-6 axis).</li>
- * <li>the shorthand fold (the SHORTHAND_FOLD axis — re2j folds the
- *     {@code \w}/{@code \W} class tables under CI, java.util.regex
- *     never folds a shorthand);</li>
- * <li>the java-only backslash escapes (the ESCAPES_RE2 axis — re2j's
- *     alphabet rejects {@code \e \R \N{name} \cX \h \H \V \Z} and reads
- *     {@code \v} as U+000B, java.util.regex spells them all).</li>
+ * <li>the ASCII {@code \s} table ({@link ClassTable} — with or without
+ *     U+000B, or a custom table);</li>
+ * <li>the zero-width-iteration span protocol (the family-6 policy);</li>
+ * <li>the shorthand fold (the SHORTHAND_FOLD policy — fold the
+ *     {@code \w}/{@code \W} class tables under CI, or never);</li>
+ * <li>the escape readings ({@link EscapeAlphabet} — the full
+ *     java.util.regex alphabet, or the RE2 family's minimal one);</li>
+ * <li>the inline-flag letter {@link FlagBindings} — which behavior
+ *     each letter activates ({@code U} = ungreedy / scoped Unicode
+ *     case are the two stock spellings; a custom alphabet is the
+ *     custom-surface seam).</li>
  * </ul>
- * plus the inline-flag letter {@link FlagBindings} — which
- * {@link FlagAction} each letter activates. The stock lanes pin the
- * two shipped readings ({@code U} = ungreedy / scoped Unicode case);
- * {@link #flagBindings(FlagBindings)} is the custom-surface seam.
+ * There is no lane sugar here: a bundle is named where it is selected
+ * ({@link #re2Lineage()} is the one stock preset — the pre-flip
+ * default the legacy parse entries answer in), and every axis is set
+ * individually.
  */
 public final class ParseOptions {
 
-    private static final ParseOptions RE2_LANE =
-        new ParseOptions(true, true, FlagBindings.RE2_LANE, true, true, true, true);
+    /** The RE2-lineage preset: every axis at its RE2-side value (the
+     *  pre-flip default the legacy parse entries answer in). */
+    private static final ParseOptions RE2_LINEAGE = new ParseOptions(Terminators.NL_ONLY, true, FlagBindings.RE2,
+        true, ClassTable.SPACE_RE2, true, EscapeAlphabet.RE2_MINIMAL);
 
-    private final boolean dotNlOnly;
+    private final Terminators terminators;
 
     private final boolean unicodeCase;
 
@@ -46,41 +52,56 @@ public final class ParseOptions {
 
     private final boolean emptyIterationSpans;
 
-    private final boolean spaceRe2;
+    private final ClassTable spaceTable;
 
     private final boolean shorthandFold;
 
-    private final boolean escapesRe2;
+    private final EscapeAlphabet escapes;
 
-    private ParseOptions(boolean dotNlOnly, boolean unicodeCase, FlagBindings flagBindings, boolean emptyIterationSpans,
-        boolean spaceRe2, boolean shorthandFold, boolean escapesRe2) {
-        this.dotNlOnly = dotNlOnly;
+    private ParseOptions(Terminators terminators, boolean unicodeCase, FlagBindings flagBindings,
+        boolean emptyIterationSpans, ClassTable spaceTable, boolean shorthandFold, EscapeAlphabet escapes) {
+        this.terminators = terminators;
         this.unicodeCase = unicodeCase;
         this.flagBindings = flagBindings;
         this.emptyIterationSpans = emptyIterationSpans;
-        this.spaceRe2 = spaceRe2;
+        this.spaceTable = spaceTable;
         this.shorthandFold = shorthandFold;
-        this.escapesRe2 = escapesRe2;
+        this.escapes = escapes;
     }
 
     /**
-     * The pre-flip default: {@code .} skips {@code \n} only, CI folds the
-     * full Unicode universe and {@code (?U)} means ungreedy (the
-     * RE2-lineage reading — every legacy parse entry uses this).
+     * The all-defaults options: every stock component at its JDK value
+     * and every policy unset — the projection target {@code
+     * Tnfa.compile} applies a {@code Semantics} onto.
      */
-    public static ParseOptions re2Lane() {
-        return RE2_LANE;
+    public static ParseOptions of() {
+        return new ParseOptions(Terminators.JDK, false, FlagBindings.JDK, false, ClassTable.SPACE_JDK, false,
+            EscapeAlphabet.JDK);
     }
 
     /**
-     * Select the {@code DOT} set: {@code dotNlOnly} = the dot skips
-     * {@code \n} only (JDK {@code UNIX_LINES} and the RE2 lineage agree);
-     * {@code false} = the full java.util.regex terminator set
-     * ({@code \n}, {@code \r}, {@code \r\n}, U+0085, U+2028, U+2029).
-     * The other axes default to the RE2-side reading.
+     * The RE2-lineage preset — {@code \n}-only terminators, the full
+     * Unicode bare fold, the RE2 letter alphabet with ungreedy
+     * {@code (?U)}, maximal-iteration spans, the RE2 {@code \s} table
+     * without U+000B, shorthand folding and the minimal escape
+     * alphabet. The pre-flip default the legacy parse entries answer
+     * in; named here because it is selected, not because the parser
+     * branches on it.
      */
-    public static ParseOptions dotNlOnly(boolean dotNlOnly) {
-        return new ParseOptions(dotNlOnly, true, FlagBindings.RE2_LANE, true, true, true, true);
+    public static ParseOptions re2Lineage() {
+        return RE2_LINEAGE;
+    }
+
+    /**
+     * Select the {@code DOT} / line-predicate terminator set. The
+     * stock values are {@link Terminators#NL_ONLY} ({@code \n} only —
+     * JDK {@code UNIX_LINES} and the RE2 lineage agree) and {@link
+     * Terminators#JDK} (the full java.util.regex set: {@code \n},
+     * {@code \r}, {@code \r\n}, U+0085, U+2028, U+2029).
+     */
+    public ParseOptions terminators(Terminators terminators) {
+        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable,
+            shorthandFold, escapes);
     }
 
     /**
@@ -94,107 +115,79 @@ public final class ParseOptions {
      * per scope, since v2).
      */
     public ParseOptions unicodeCase(boolean unicodeCase) {
-        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold,
-            escapesRe2);
-    }
-
-    /**
-     * Select the {@code (?U)} meaning by lane: {@code true} = ungreedy
-     * (quantifiers default to lazy — the PCRE/RE2 reading, the re2j
-     * surface); {@code false} = scoped {@code UNICODE_CASE} (the
-     * java.util.regex reading — every spelling scoped since v2). Sugar
-     * for the two stock {@link FlagBindings} lanes.
-     */
-    public ParseOptions ungreedyU(boolean ungreedyU) {
-        return new ParseOptions(dotNlOnly, unicodeCase, ungreedyU ? FlagBindings.RE2_LANE : FlagBindings.JUR_LANE,
-            emptyIterationSpans, spaceRe2, shorthandFold, escapesRe2);
+        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable,
+            shorthandFold, escapes);
     }
 
     /**
      * Replace the inline-flag letter bindings outright — the
-     * custom-surface seam. The stock lanes are {@code U} = ungreedy
-     * (RE2) and {@code U} = scoped Unicode case (JUR); a custom
-     * surface binds any subset or renaming of the closed
-     * {@link FlagAction} vocabulary, and every letter it does not bind
-     * rejects at the parse.
+     * custom-surface seam. The stock alphabets are {@code U} = ungreedy
+     * ({@link FlagBindings#RE2}) and {@code U} = scoped Unicode case
+     * ({@link FlagBindings#JDK}); a custom surface binds any subset or
+     * renaming of the closed {@link FlagAction} vocabulary, and every
+     * letter it does not bind rejects at the parse.
      */
     public ParseOptions flagBindings(FlagBindings flagBindings) {
-        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold,
-            escapesRe2);
+        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable,
+            shorthandFold, escapes);
     }
 
     /**
      * Select the zero-width-iteration span protocol: {@code true} = the
      * maximal-iteration reading (a sole zero-width iteration reports
-     * {@code 0..0} — the RE2 lineage); {@code false} = java.util.regex's
-     * (family 6): a greedy min-0 loop ({@code cmax >= 2} or unbounded —
-     * {@code {0,1}}/{@code ?} keep the span, JDK-verified) directly on a
-     * capture whose body is all-zero-width and deterministic dissolves
-     * the group — it reports NIL at every accept (the parser marks the
-     * pair; the determinizer's φ overrides the finals).
+     * {@code 0..0} — the RE2 lineage); {@code false} =
+     * java.util.regex's (family 6): a greedy min-0 loop ({@code cmax
+     * >= 2} or unbounded — {@code {0,1}}/{@code ?} keep the span,
+     * JDK-verified) directly on a capture whose body is all-zero-width
+     * and deterministic dissolves the group — it reports NIL at every
+     * accept (the parser marks the pair; the determinizer's φ
+     * overrides the finals).
      */
     public ParseOptions emptyIterationSpans(boolean emptyIterationSpans) {
-        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold,
-            escapesRe2);
+        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable,
+            shorthandFold, escapes);
     }
 
     /**
-     * Select the ASCII {@code \s}/{@code \S} table: {@code true} =
-     * re2j's {@code [\t\n\f\r ]} (U+000B is NOT whitespace — the
-     * RE2-lineage reading); {@code false} = java.util.regex's
-     * {@code [ \t\n\x0B\f\r]} (U+000B IS whitespace).
+     * Select the ASCII {@code \s}/{@code \S} table. The stock values
+     * are {@link ClassTable#SPACE_JDK} ({@code [ \t\n\x0B\f\r]} —
+     * U+000B IS whitespace) and {@link ClassTable#SPACE_RE2}
+     * ({@code [\t\n\f\r ]} — U+000B is NOT whitespace).
      */
-    public ParseOptions spaceRe2(boolean spaceRe2) {
-        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold,
-            escapesRe2);
+    public ParseOptions spaceTable(ClassTable spaceTable) {
+        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable,
+            shorthandFold, escapes);
     }
 
     /**
      * Select the shorthand fold: {@code true} = the predefined
      * shorthands ({@code \w \W \d \D \s \S} and their in-class twins)
-     * case-fold under {@code CASE_INSENSITIVE} (re2j's reading — it
-     * folds the class tables); {@code false} = never fold a shorthand
-     * ({@code java.util.regex}: the predefined classes keep their plain
-     * tables under every fold universe — the scoped {@code (?U:...)}
-     * shapes included).
+     * case-fold under {@code CASE_INSENSITIVE}; {@code false} = never
+     * fold a shorthand ({@code java.util.regex}: the predefined
+     * classes keep their plain tables under every fold universe — the
+     * scoped {@code (?U:...)} shapes included).
      */
     public ParseOptions shorthandFold(boolean shorthandFold) {
-        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold,
-            escapesRe2);
+        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable,
+            shorthandFold, escapes);
     }
 
     /**
-     * Select the java-only escape readings: {@code true} = the
-     * RE2-lineage alphabet ({@code \e \R \N{name} \cX \h \H \V \Z} reject
-     * at the parse, {@code \v} is the single unit U+000B — re2j's
-     * readings); {@code false} = {@code java.util.regex}'s escapes (the
-     * {@code \v}/{@code \V}/{@code \h}/{@code \H} class tables and the
-     * {@code \e}/{@code \R}/{@code \cX}/{@code \N{...}}/{@code \Z}
-     * spellings).
+     * Select the escape readings: {@link EscapeAlphabet#JDK} spells
+     * the full java.util.regex alphabet ({@code \v}/{@code \V}/{@code
+     * \h}/{@code \H} class tables, {@code \e}/{@code \R}/{@code
+     * \cX}/{@code \N{...}}/{@code \Z}); {@link
+     * EscapeAlphabet#RE2_MINIMAL} rejects the java-only escapes at the
+     * parse and reads {@code \v} as the single unit U+000B.
      */
-    public ParseOptions escapesRe2(boolean escapesRe2) {
-        return new ParseOptions(dotNlOnly, unicodeCase, flagBindings, emptyIterationSpans, spaceRe2, shorthandFold,
-            escapesRe2);
+    public ParseOptions escapes(EscapeAlphabet escapes) {
+        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable,
+            shorthandFold, escapes);
     }
 
-    /** Does the ASCII {@code \s} exclude U+000B (re2j's table, vs the JDK's)? */
-    public boolean isSpaceRe2() {
-        return spaceRe2;
-    }
-
-    /** Do the shorthands fold under CI (re2j's reading, vs the JDK's never)? */
-    public boolean isShorthandFold() {
-        return shorthandFold;
-    }
-
-    /** Do the java-only escapes reject, and {@code \v} read as U+000B (re2j's reading)? */
-    public boolean isEscapesRe2() {
-        return escapesRe2;
-    }
-
-    /** Does the dot skip {@code \n} only (vs the full terminator set)? */
-    public boolean isDotNlOnly() {
-        return dotNlOnly;
+    /** The terminator set (see {@link #terminators(Terminators)}). */
+    public Terminators terminators() {
+        return terminators;
     }
 
     /** Does CI fold the full Unicode universe (vs ASCII only)? */
@@ -210,5 +203,20 @@ public final class ParseOptions {
     /** Do zero-width loop iterations report their spans (vs sub-family-A dissolution)? */
     public boolean isEmptyIterationSpans() {
         return emptyIterationSpans;
+    }
+
+    /** The ASCII {@code \s} table (see {@link #spaceTable(ClassTable)}). */
+    public ClassTable spaceTable() {
+        return spaceTable;
+    }
+
+    /** Do the shorthands fold under CI? */
+    public boolean isShorthandFold() {
+        return shorthandFold;
+    }
+
+    /** The escape readings (see {@link #escapes(EscapeAlphabet)}). */
+    public EscapeAlphabet escapes() {
+        return escapes;
     }
 }

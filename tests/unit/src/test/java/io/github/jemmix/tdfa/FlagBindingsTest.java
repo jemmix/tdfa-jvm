@@ -51,7 +51,7 @@ class FlagBindingsTest {
 
     private static Tdfa compile(String pattern, FlagBindings bindings) {
         WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
-        Tnfa nfa = Tnfa.compile(pattern, false, false, false, Semantics.of(), bindings, UnicodeProviders.get(),
+        Tnfa nfa = Tnfa.compile(pattern, false, false, false, Semantics.of().flagBindings(bindings), UnicodeProviders.get(),
             CompileObserver.NONE, ledger);
         return Determinizer.compileWithWholeSide(nfa, false, CompileObserver.NONE, ledger.fork(0));
     }
@@ -64,7 +64,7 @@ class FlagBindingsTest {
 
     @Test
     void unboundLetterStaysAnError() {
-        assertThatThrownBy(() -> compile("(?v)a", FlagBindings.JUR_LANE)).isInstanceOf(PatternSyntaxException.class);
+        assertThatThrownBy(() -> compile("(?v)a", FlagBindings.JDK)).isInstanceOf(PatternSyntaxException.class);
         // the empty alphabet binds nothing at all
         assertThatThrownBy(() -> compile("(?y)a", FlagBindings.builder().build()))
             .isInstanceOf(PatternSyntaxException.class);
@@ -113,16 +113,16 @@ class FlagBindingsTest {
     @Test
     void stockLanesDisagreeOnExactlyTheULetter() {
         // U = UNGREEDY: (?U)a+ is lazy, (?U)a+? is greedy (double swap)
-        assertThat(first(new TdfaRunner(compile("(?U)a+", FlagBindings.RE2_LANE)), "aaa"))
+        assertThat(first(new TdfaRunner(compile("(?U)a+", FlagBindings.RE2)), "aaa"))
             .as("RE2 lane: U swaps the quantifier preference").isEqualTo("0..1");
-        assertThat(first(new TdfaRunner(compile("(?U)a+?", FlagBindings.RE2_LANE)), "aaa"))
+        assertThat(first(new TdfaRunner(compile("(?U)a+?", FlagBindings.RE2)), "aaa"))
             .as("RE2 lane: a+? under U is greedy").isEqualTo("0..3");
         // U = UNICODE_CASE: the quantifier is untouched
-        assertThat(first(new TdfaRunner(compile("(?U)a+", FlagBindings.JUR_LANE)), "aaa"))
+        assertThat(first(new TdfaRunner(compile("(?U)a+", FlagBindings.JDK)), "aaa"))
             .as("JUR lane: U does not touch greed").isEqualTo("0..3");
         // the two lanes agree on every other letter
-        assertThat(FlagBindings.JUR_LANE.asMap().get('u')).isEqualTo(FlagBindings.RE2_LANE.asMap().get('u'));
-        assertThat(FlagBindings.JUR_LANE.asMap().get('i')).isEqualTo(FlagBindings.RE2_LANE.asMap().get('i'));
+        assertThat(FlagBindings.JDK.asMap().get('u')).isEqualTo(FlagBindings.RE2.asMap().get('u'));
+        assertThat(FlagBindings.JDK.asMap().get('i')).isEqualTo(FlagBindings.RE2.asMap().get('i'));
     }
 
     @Test
@@ -131,8 +131,8 @@ class FlagBindingsTest {
         assertThat(FlagBindings.builder().bind('U', FlagAction.UNGREEDY).bind('i', FlagAction.CASE_INSENSITIVE).build())
             .isEqualTo(
                 FlagBindings.builder().bind('i', FlagAction.CASE_INSENSITIVE).bind('U', FlagAction.UNGREEDY).build());
-        assertThat(FlagBindings.JUR_LANE).isNotEqualTo(FlagBindings.RE2_LANE);
-        assertThat(FlagBindings.JUR_LANE.toString()).contains("U=UNICODE_CASE").contains("u=UNICODE_CHARACTER_CLASS");
+        assertThat(FlagBindings.JDK).isNotEqualTo(FlagBindings.RE2);
+        assertThat(FlagBindings.JDK.toString()).contains("U=UNICODE_CASE").contains("u=UNICODE_CHARACTER_CLASS");
         // construction is honest: rebinding and non-letters reject
         assertThatThrownBy(() -> FlagBindings.builder().bind('v', FlagAction.UNGREEDY).bind('v', FlagAction.MULTILINE))
             .isInstanceOf(IllegalArgumentException.class);

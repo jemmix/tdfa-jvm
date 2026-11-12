@@ -9,6 +9,8 @@ import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.dialect.ClassTable;
+import io.github.jemmix.tdfa.core.dialect.FlagBindings;
 import io.github.jemmix.tdfa.core.engine.MatchResult;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
 import io.github.jemmix.tdfa.core.engine.WholeEngine;
@@ -69,7 +71,7 @@ class Family6BatteryTest {
     }
 
     private static final Semantics RE2 = Semantics.of().unixLines().unicodeCase().codepointBoundaries().emptyLastLine()
-        .endOfTextOnly().emptyIterationSpans().ungreedyU().spaceRe2().shorthandFold();
+        .endOfTextOnly().emptyIterationSpans().shorthandFold().spaceTable(ClassTable.SPACE_RE2).flagBindings(FlagBindings.RE2);
 
     private static final Semantics JUR = Semantics.of();
 

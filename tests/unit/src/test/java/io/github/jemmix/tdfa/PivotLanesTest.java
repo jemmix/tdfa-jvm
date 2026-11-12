@@ -8,6 +8,9 @@ import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.dialect.ClassTable;
+import io.github.jemmix.tdfa.core.dialect.EscapeAlphabet;
+import io.github.jemmix.tdfa.core.dialect.FlagBindings;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
 import io.github.jemmix.tdfa.core.engine.WholeEngine;
 import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
@@ -69,7 +72,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 class PivotLanesTest {
 
     private static final Semantics RE2 = Semantics.of().unixLines().unicodeCase().codepointBoundaries().emptyLastLine()
-        .endOfTextOnly().emptyIterationSpans().ungreedyU().spaceRe2().shorthandFold().escapesRe2();
+        .endOfTextOnly().emptyIterationSpans().shorthandFold().spaceTable(ClassTable.SPACE_RE2).escapes(EscapeAlphabet.RE2_MINIMAL).flagBindings(FlagBindings.RE2);
     private static final Semantics JUR = Semantics.of();
 
     private static final String[] TERM_INPUTS = {"", "\n", "a\n", "a\r", "a\r\n", "a\u0085", "a\u2028", "a\u2029",
@@ -662,8 +665,11 @@ class PivotLanesTest {
         assertThat(Semantics.of()).isNotEqualTo(RE2);
         Semantics once = Semantics.of().unixLines();
         assertThat(once.unixLines()).isSameAs(once);
-        assertThat(RE2.toString()).contains("UNIX_LINES").contains("UNGREEDY_U");
-        assertThat(Semantics.of().toString()).isEqualTo("Semantics[]");
+        // Honest printing: policy bits by name, components as their values
+        // (the RE2 preset's \n-only set and U=UNGREEDY alphabet included).
+        assertThat(RE2.toString()).contains("UNICODE_CASE").contains("Terminators[U+000A]").contains("U=UNGREEDY")
+            .contains("RE2_MINIMAL");
+        assertThat(Semantics.of().toString()).contains("Terminators[").contains("ClassTable[").contains("JDK");
     }
 
     // ===== the facade options route: the core-tier lane spelling =====
@@ -683,7 +689,7 @@ class PivotLanesTest {
         assertThat(deft.matcher("\u212A").find()).as("default options are the JUR lane (ASCII fold)").isFalse();
         io.github.jemmix.tdfa.Pattern re2 = io.github.jemmix.tdfa.Pattern.compile("(?i)k",
             CompileOptions.of().semantics(Semantics.of().unixLines().unicodeCase().codepointBoundaries().emptyLastLine()
-                .endOfTextOnly().emptyIterationSpans().ungreedyU().spaceRe2().shorthandFold().escapesRe2()));
+                .endOfTextOnly().emptyIterationSpans().shorthandFold().spaceTable(ClassTable.SPACE_RE2).escapes(EscapeAlphabet.RE2_MINIMAL).flagBindings(FlagBindings.RE2)));
         assertThat(re2.matcher("\u212A").find()).as("all-axes options fold full").isTrue();
         // UNIX_LINES through the same route activates the item-2
         // terminator-set pivot — the bit's flags spelling composes the
