@@ -51,11 +51,12 @@ class PackageLayeringTest {
     private static Map<String, SortedSet<String>> allowed() {
         Map<String, SortedSet<String>> m = new HashMap<>();
         String[][] edges = {{"emit"}, {"unicode"}, {"budget"}, {"report"}, // leaves
-            {"ast", "budget"}, {"parser", "ast", "budget", "unicode"},
-            {"tnfa", "parser", "ast", "budget", "unicode", "report"}, {"engine", "emit"},
-            {"dfa", "engine", "emit", "ast", "tnfa", "budget"}, {"regopt", "dfa", "budget"},
+            {"dialect"}, // the vocabulary leaf: data every tier may reference
+            {"ast", "budget"}, {"parser", "dialect", "ast", "budget", "unicode"},
+            {"tnfa", "dialect", "parser", "ast", "budget", "unicode", "report"}, {"engine", "emit"},
+            {"dfa", "dialect", "engine", "emit", "ast", "tnfa", "budget"}, {"regopt", "dfa", "budget"},
             {"determinize", "tnfa", "ast", "regopt", "dfa", "budget", "report"},
-            {"compile", "engine", "dfa", "determinize", "tnfa", "budget", "unicode", "report", "emit"},};
+            {"compile", "dialect", "engine", "dfa", "determinize", "tnfa", "budget", "unicode", "report", "emit"},};
         for (String[] e : edges) {
             SortedSet<String> deps = new TreeSet<>();
             for (int i = 1; i < e.length; i++) {

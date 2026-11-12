@@ -1,5 +1,8 @@
 package io.github.jemmix.tdfa.core.parser;
 
+import io.github.jemmix.tdfa.core.dialect.FlagAction;
+import io.github.jemmix.tdfa.core.dialect.FlagBindings;
+
 import io.github.jemmix.tdfa.core.ast.Alphabet;
 import io.github.jemmix.tdfa.core.ast.Ast;
 import io.github.jemmix.tdfa.core.ast.CharClass;

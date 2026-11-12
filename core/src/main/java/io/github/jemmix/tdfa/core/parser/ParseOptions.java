@@ -1,5 +1,8 @@
 package io.github.jemmix.tdfa.core.parser;
 
+import io.github.jemmix.tdfa.core.dialect.FlagAction;
+import io.github.jemmix.tdfa.core.dialect.FlagBindings;
+
 /**
  * The parser-side pivot knobs — the projection of a compile's
  * interpretation policy onto the parser's axes. The projection itself

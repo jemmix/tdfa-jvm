@@ -1,5 +1,6 @@
-package io.github.jemmix.tdfa.core.parser;
+package io.github.jemmix.tdfa.core.dialect;
 
+import java.io.Serializable;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -31,7 +32,9 @@ import java.util.Objects;
  * lane's identity for the campaign harness and the parity tables);
  * lookups are array-indexed and allocation-free on the parse path.
  */
-public final class FlagBindings {
+public final class FlagBindings implements Serializable {
+
+    private static final long serialVersionUID = 1L;
 
     /** The java.util.regex alphabet: {@code i s m u x} plus
      *  {@code U} = scoped Unicode case (the jur facade's reading). */
