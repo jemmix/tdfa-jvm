@@ -42,7 +42,7 @@ step-specific suites named below. Final step runs the full `check`.
       ASM golden if the emitted-class tests allow it.
       Gate: unit tests (anchor batteries, `PositionFlagMaskTest`,
       `EmittedSurfaceConformanceTest`); `:tests:parity:re2j:test`.
-- [ ] **C5 — wire**: proxy payload fields + `serialVersionUID` bumps
+- [x] **C5 — wire**: proxy payload fields + `serialVersionUID` bumps
       (core `SerialProxy` 5&rarr;6, facade proxies 1&rarr;2), v1-bits
       translation on read, loud rejection tests, custom-table/alphabet
       round-trips; `Semantics`/`FlagBindings` serialization support.

@@ -2,7 +2,6 @@ package io.github.jemmix.tdfa;
 
 import io.github.jemmix.tdfa.core.compile.SerialProxy;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
-import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 import java.io.ObjectStreamException;
@@ -17,7 +16,8 @@ import java.io.Serializable;
  * the roster validation, the default lane and the provider default all
  * apply from one place. The lane travels as data ({@link Semantics}
  * bits): a pattern compiled through a per-axis probe keeps its probe
- * lane across the wire.
+ * policy across the wire — the v1 bits plus the component payloads, so a
+custom table or alphabet survives too.
  *
  * <p>Provider pinning round-trips: a pattern compiled against a pinned
  * {@link UnicodeDataProvider} keeps that provider (resolved per the
@@ -34,7 +34,7 @@ import java.io.Serializable;
  */
 public final class SerializationProxy implements Serializable {
 
-    private static final long serialVersionUID = 1L;
+    private static final long serialVersionUID = 2L;
 
     private final String pattern;
 
@@ -47,22 +47,29 @@ public final class SerializationProxy implements Serializable {
      */
     private final String providerClass;
 
-    private SerializationProxy(String pattern, int flags, int semanticsBits, String providerClass) {
+    /** The policy's component payloads ({@link SerialProxy.Components}),
+     *  or {@code null} = a v1 stream (stock components derived from the
+     *  bits). */
+    private final SerialProxy.Components components;
+
+    private SerializationProxy(String pattern, int flags, int semanticsBits, String providerClass,
+        SerialProxy.Components components) {
         this.pattern = pattern;
         this.flags = flags;
         this.semanticsBits = semanticsBits;
         this.providerClass = providerClass;
+        this.components = components;
     }
 
     /** The wrapper-emitter hook: the proxy for a wrapped machinery pattern. */
     public static Object serialProxy(TDFAPattern p) {
         UnicodeDataProvider provider = p.unicodeProvider();
         return new SerializationProxy(p.pattern(), p.flags(), p.semantics().bits(),
-            provider == null ? null : provider.getClass().getName());
+            provider == null ? null : provider.getClass().getName(), SerialProxy.componentsOf(p.semantics()));
     }
 
     private Object readResolve() throws ObjectStreamException {
         UnicodeDataProvider provider = providerClass == null ? null : SerialProxy.resolveProvider(providerClass);
-        return Lane.compile(pattern, flags, null, provider, null, Semantics.ofBits(semanticsBits));
+        return Lane.compile(pattern, flags, null, provider, null, SerialProxy.semantics(semanticsBits, components));
     }
 }
