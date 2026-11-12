@@ -113,9 +113,8 @@ public final class SerialProxy implements Serializable {
         try {
             if (components.terminatorUnits != null) {
                 Terminators terms = components.terminatorPairLo == 0 && components.terminatorPairHi == 0
-                    ? Terminators.of(components.terminatorUnits)
-                    : Terminators.ofPair(components.terminatorPairLo, components.terminatorPairHi,
-                        components.terminatorUnits);
+                    ? Terminators.of(components.terminatorUnits) : Terminators.ofPair(components.terminatorPairLo,
+                        components.terminatorPairHi, components.terminatorUnits);
                 s = s.terminators(terms);
             }
             if (components.spaceRanges != null) {
@@ -132,7 +131,7 @@ public final class SerialProxy implements Serializable {
                 s = s.flagBindings(b.build());
             }
             return s;
-        } catch (IllegalArgumentException | NullPointerException | IndexOutOfBoundsException e) {
+        } catch (RuntimeException e) {
             throw new InvalidObjectException("cannot restore the serialized dialect policy: " + e);
         }
     }

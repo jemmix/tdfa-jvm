@@ -79,7 +79,10 @@ public final class PatternCompiler {
     /** Leftmost-longest (POSIX) matching. */
     public static final int LONGEST_MATCH = 16;
 
-    /** Unicode-aware predefined classes (the jur reading; jur facade only). */
+    /** Unicode-aware predefined classes (both stock alphabets bind the
+     *  {@code (?u)} letter to this behavior; the jur facade's flag ROSTER
+     *  carries the int bit, the re2j facade's does not — the inline
+     *  spelling works on both). */
     public static final int UNICODE_CHARACTER_CLASS = 32;
 
     /** Compile for find-shaped matching only (whole-input methods refuse). */

@@ -57,8 +57,7 @@ final class Lane {
             throw new IllegalArgumentException(FLAGS_MESSAGE);
         }
         TDFAPattern p = PatternCompiler.compile(regex, flags, factory, AsmEngineBackend.INSTANCE, provider,
-            Re2FoldUniverse::instance, observer,
-            explicitSemantics != null ? explicitSemantics : DEFAULT_SEMANTICS);
+            Re2FoldUniverse::instance, observer, explicitSemantics != null ? explicitSemantics : DEFAULT_SEMANTICS);
         // The one facade-owned step: mint this facade's API-typed subclass
         // of the machinery shell (this module's own codegen).
         return Shells.mint(p);

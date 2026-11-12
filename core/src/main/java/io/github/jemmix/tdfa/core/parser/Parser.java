@@ -1,11 +1,5 @@
 package io.github.jemmix.tdfa.core.parser;
 
-import io.github.jemmix.tdfa.core.dialect.ClassTable;
-import io.github.jemmix.tdfa.core.dialect.EscapeAlphabet;
-import io.github.jemmix.tdfa.core.dialect.FlagAction;
-import io.github.jemmix.tdfa.core.dialect.FlagBindings;
-import io.github.jemmix.tdfa.core.dialect.Terminators;
-
 import io.github.jemmix.tdfa.core.ast.Alphabet;
 import io.github.jemmix.tdfa.core.ast.Ast;
 import io.github.jemmix.tdfa.core.ast.CharClass;
@@ -13,6 +7,11 @@ import io.github.jemmix.tdfa.core.budget.BudgetWeights;
 import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.FrameBudget;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
+import io.github.jemmix.tdfa.core.dialect.ClassTable;
+import io.github.jemmix.tdfa.core.dialect.EscapeAlphabet;
+import io.github.jemmix.tdfa.core.dialect.FlagAction;
+import io.github.jemmix.tdfa.core.dialect.FlagBindings;
+import io.github.jemmix.tdfa.core.dialect.Terminators;
 import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
 import io.github.jemmix.tdfa.core.unicode.CaseFoldTable;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
@@ -246,7 +245,7 @@ public final class Parser {
      *  the DOT terminator set (UNIX_LINES), the fold universe
      *  (UNICODE_CASE) and the inline-flag letter bindings (the
      *  {@code (?U)} meaning rides them). Legacy overloads
-     *  parse the RE2-lane selection. */
+     *  parse the axis-set selection. */
     final ParseOptions options;
     /** Front-end work meter shared with the TNFA builder (see
      *  {@code Tnfa.compile}); meters the O(universe) fold-range scan. */
@@ -530,7 +529,7 @@ public final class Parser {
         // zero-width-exit split; the unbounded {0,}/{1,} plus/star bodies
         // need it against the loop hub (the ε re-entry must exit, not die
         // at the closure dedup). {0,1} builds no iteration and stays
-        // unmarked. No-op on the RE2 lane: the re2j surface's structural
+        // unmarked. No-op when the axis is set: the re2j surface's structural
         // reading keeps the permissive paths, so its artifacts stay
         // bit-identical.
         boolean loopCopies = max == Integer.MAX_VALUE || max >= 2;
@@ -568,7 +567,7 @@ public final class Parser {
      * Lazy quantifiers never mark (java's lazy loops prefer exiting —
      * both engines agree).
      *
-     * <p>No-op on the RE2-lane reading
+     * <p>No-op on the axis-set reading
      * ({@code ParseOptions.isEmptyIterationSpans()}), so those parses —
      * and their NFA/TDFA artifacts — stay bit-identical.
      */
@@ -1144,8 +1143,8 @@ public final class Parser {
                 // [\v-z] = [U+000B-'z'] (live-JDK verified; the other
                 // class-table escapes have no isrange reading and never
                 // form ranges, like java's predicate returns).
-                boolean vRangeStart =
-                    next == 'v' && options.escapes() == EscapeAlphabet.JDK && pos + 2 < src.length() && src.charAt(pos + 2) == '-';
+                boolean vRangeStart = next == 'v' && options.escapes() == EscapeAlphabet.JDK && pos + 2 < src.length()
+                    && src.charAt(pos + 2) == '-';
                 int[] sr = vRangeStart ? null : shorthandRanges(next);
                 if (sr != null) {
                     // In-class shorthand flip: complements always, the

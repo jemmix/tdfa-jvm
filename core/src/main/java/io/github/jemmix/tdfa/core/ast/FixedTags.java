@@ -215,7 +215,7 @@ public final class FixedTags {
                 Ast.Tag t = (Ast.Tag) e;
                 if (t.dissolved || t.surfaceFinal) {
                     // Family 6: this tag's FINAL value is a protocol
-                    // discipline on the JUR lane (sub-family A: NIL — the
+                    // discipline when the axis is unset (sub-family A: NIL — the
                     // dissolved pair reports nothing; sub-family B: the
                     // surfaced final iteration's position), not a
                     // reconstructable distance — it must keep its own

@@ -3,9 +3,9 @@ package io.github.jemmix.tdfa.determinism;
 import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
+import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.dialect.ClassTable;
 import io.github.jemmix.tdfa.core.dialect.Terminators;
-import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.report.CompileObserver;
 import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
@@ -35,8 +35,8 @@ class TerminatorAxisInvariantTest {
 
     private static Tdfa compile(String pattern, Semantics semantics) {
         WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
-        Tnfa nfa = Tnfa.compile(pattern, false, false, false, semantics, UnicodeProviders.get(),
-            CompileObserver.NONE, ledger);
+        Tnfa nfa =
+            Tnfa.compile(pattern, false, false, false, semantics, UnicodeProviders.get(), CompileObserver.NONE, ledger);
         return Determinizer.compileWithWholeSide(nfa, false, CompileObserver.NONE, ledger.fork(0));
     }
 

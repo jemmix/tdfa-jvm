@@ -41,8 +41,8 @@ public final class ParseOptions {
 
     /** The RE2-lineage preset: every axis at its RE2-side value (the
      *  pre-flip default the legacy parse entries answer in). */
-    private static final ParseOptions RE2_LINEAGE = new ParseOptions(Terminators.NL_ONLY, true, FlagBindings.RE2,
-        true, ClassTable.SPACE_RE2, true, EscapeAlphabet.RE2_MINIMAL);
+    private static final ParseOptions RE2_LINEAGE = new ParseOptions(Terminators.NL_ONLY, true, FlagBindings.RE2, true,
+        ClassTable.SPACE_RE2, true, EscapeAlphabet.RE2_MINIMAL);
 
     private final Terminators terminators;
 
@@ -100,8 +100,8 @@ public final class ParseOptions {
      * {@code \r}, {@code \r\n}, U+0085, U+2028, U+2029).
      */
     public ParseOptions terminators(Terminators terminators) {
-        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable,
-            shorthandFold, escapes);
+        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable, shorthandFold,
+            escapes);
     }
 
     /**
@@ -115,8 +115,8 @@ public final class ParseOptions {
      * per scope, since v2).
      */
     public ParseOptions unicodeCase(boolean unicodeCase) {
-        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable,
-            shorthandFold, escapes);
+        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable, shorthandFold,
+            escapes);
     }
 
     /**
@@ -124,12 +124,12 @@ public final class ParseOptions {
      * custom-surface seam. The stock alphabets are {@code U} = ungreedy
      * ({@link FlagBindings#RE2}) and {@code U} = scoped Unicode case
      * ({@link FlagBindings#JDK}); a custom surface binds any subset or
-     * renaming of the closed {@link FlagAction} vocabulary, and every
+     * renaming of the closed {@code FlagAction} vocabulary, and every
      * letter it does not bind rejects at the parse.
      */
     public ParseOptions flagBindings(FlagBindings flagBindings) {
-        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable,
-            shorthandFold, escapes);
+        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable, shorthandFold,
+            escapes);
     }
 
     /**
@@ -144,8 +144,8 @@ public final class ParseOptions {
      * overrides the finals).
      */
     public ParseOptions emptyIterationSpans(boolean emptyIterationSpans) {
-        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable,
-            shorthandFold, escapes);
+        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable, shorthandFold,
+            escapes);
     }
 
     /**
@@ -155,8 +155,8 @@ public final class ParseOptions {
      * ({@code [\t\n\f\r ]} — U+000B is NOT whitespace).
      */
     public ParseOptions spaceTable(ClassTable spaceTable) {
-        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable,
-            shorthandFold, escapes);
+        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable, shorthandFold,
+            escapes);
     }
 
     /**
@@ -168,8 +168,8 @@ public final class ParseOptions {
      * scoped {@code (?U:...)} shapes included).
      */
     public ParseOptions shorthandFold(boolean shorthandFold) {
-        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable,
-            shorthandFold, escapes);
+        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable, shorthandFold,
+            escapes);
     }
 
     /**
@@ -181,8 +181,8 @@ public final class ParseOptions {
      * parse and reads {@code \v} as the single unit U+000B.
      */
     public ParseOptions escapes(EscapeAlphabet escapes) {
-        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable,
-            shorthandFold, escapes);
+        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable, shorthandFold,
+            escapes);
     }
 
     /** The terminator set (see {@link #terminators(Terminators)}). */

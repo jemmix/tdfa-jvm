@@ -75,8 +75,7 @@ class DialectWireTest {
         // the stock JDK table: U+000B IS whitespace
         assertThat(jur.matcher("\u000B").find()).isFalse(); // "\sa" needs the a
 
-        io.github.jemmix.tdfa.re2j.Pattern re2 =
-            roundTrip(io.github.jemmix.tdfa.re2j.Pattern.compile("\\s"));
+        io.github.jemmix.tdfa.re2j.Pattern re2 = roundTrip(io.github.jemmix.tdfa.re2j.Pattern.compile("\\s"));
         Semantics re2Sem = ((TDFAPattern) re2).semantics();
         assertThat(re2Sem.spaceTable()).isEqualTo(ClassTable.SPACE_RE2);
         assertThat(re2Sem.terminators()).isEqualTo(Terminators.NL_ONLY);
@@ -87,17 +86,21 @@ class DialectWireTest {
     @Test
     void garbagePayloadsFailLoudly() {
         // Unknown escape alphabet name
-        assertThatThrownBy(() -> SerialProxy.semantics(0, new SerialProxy.Components(null, 0, 0, null, "NOPE", null,
-            null))).isInstanceOf(InvalidObjectException.class).hasMessageContaining("dialect policy");
+        assertThatThrownBy(
+            () -> SerialProxy.semantics(0, new SerialProxy.Components(null, 0, 0, null, "NOPE", null, null)))
+            .isInstanceOf(InvalidObjectException.class).hasMessageContaining("dialect policy");
         // Malformed terminator set (duplicate unit)
-        assertThatThrownBy(() -> SerialProxy.semantics(0, new SerialProxy.Components(new int[] {'\n', '\n'}, 0, 0,
-            null, null, null, null))).isInstanceOf(InvalidObjectException.class);
+        assertThatThrownBy(() -> SerialProxy.semantics(0,
+            new SerialProxy.Components(new int[]{'\n', '\n'}, 0, 0, null, null, null, null)))
+            .isInstanceOf(InvalidObjectException.class);
         // Malformed space table (overlapping ranges)
-        assertThatThrownBy(() -> SerialProxy.semantics(0, new SerialProxy.Components(null, 0, 0,
-            new int[] {'a', 'z', 'b', 'c'}, null, null, null))).isInstanceOf(InvalidObjectException.class);
+        assertThatThrownBy(() -> SerialProxy.semantics(0,
+            new SerialProxy.Components(null, 0, 0, new int[]{'a', 'z', 'b', 'c'}, null, null, null)))
+            .isInstanceOf(InvalidObjectException.class);
         // Unknown action name
-        assertThatThrownBy(() -> SerialProxy.semantics(0, new SerialProxy.Components(null, 0, 0, null, null,
-            new char[] {'i'}, new String[] {"NOT_AN_ACTION"}))).isInstanceOf(InvalidObjectException.class);
+        assertThatThrownBy(() -> SerialProxy.semantics(0,
+            new SerialProxy.Components(null, 0, 0, null, null, new char[]{'i'}, new String[]{"NOT_AN_ACTION"})))
+            .isInstanceOf(InvalidObjectException.class);
         // Unknown bits still reject before any payload is consulted
         assertThatThrownBy(() -> SerialProxy.semantics(1 << 25, null)).isInstanceOf(IllegalArgumentException.class);
     }

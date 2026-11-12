@@ -57,10 +57,11 @@ defining file(s), not every occurrence.
   generated API wrapper around the facade-blind machinery result.
 - **thin surface / two-surface split** — the architectural event/shape of the
   API split: minimal API-only modules over one blind machinery.
-- **lane** — a fixed bundle of semantics decisions a compile runs in (jur
-  lane = every axis unset; RE2 lane = every axis set; also codepoint/unit
-  lane, multi-valued lane, fold lane, default lane, stock lanes). A facade
-  *bakes in* its lane (`Lane.DEFAULT_SEMANTICS`).
+- **lane** — a fixed bundle of semantics decisions a compile runs in
+  (the JDK-default lane = every component stock, no bit set; the RE2
+  lane = every axis flipped — both spelled as one `Semantics` value).
+  A facade *bakes in* its lane (`Lane.DEFAULT_SEMANTICS`); a lane is
+  data, never a branch ([design](dialect-agnostic-core.md)).
 - **the flip / pre-flip / post-flip** — the switch of the shipped default
   from the RE2 reading to jur parity (`docs/jur-compat-default.md`).
 - **reading** — one coherent interpretation of the syntax ("the jur reading
@@ -68,11 +69,15 @@ defining file(s), not every occurrence.
   negated).
 - **lineage** — which engine family a behavior descends from
   (RE2-lineage/re2j lineage vs jur parity).
-- **axis / axes** — one independent semantic dial of the `Semantics`
-  bitset. Shipped axes: `UNIX_LINES`, `UNICODE_CASE`, `CODEPOINT_BOUNDARIES`,
+- **axis / axes** — one independent semantic dial of `Semantics`. Two
+  shapes: **policy bits** (`UNICODE_CASE`, `CODEPOINT_BOUNDARIES`,
   `EMPTY_LAST_LINE`, `END_OF_TEXT_ONLY`, `EMPTY_ITERATION_SPANS`,
-  `UNGREEDY_U`, `SPACE_RE2`, `SHORTHAND_FOLD`. Set = RE2 side, unset = jur
-  side (the *polarity*).
+  `SHORTHAND_FOLD` — set = RE2 side, unset = jur side, the *polarity*)
+  and **components** — set/alphabet readings carried as `core.dialect`
+  values (`Terminators`, `ClassTable` space table, `EscapeAlphabet`,
+  `FlagBindings`). The v1 bit names (`UNIX_LINES`, `UNGREEDY_U`,
+  `SPACE_RE2`, `ESCAPES_RE2`) survive as the wire spellings of the
+  stock component values.
 - **pivot** — a code point where two readings diverge, parameterized so both
   lanes can select ("candidate-scan pivot", "parser-side pivot",
   "parameterize the pivots" in the WBS). `PivotLanesTest` audits them.
@@ -84,7 +89,8 @@ defining file(s), not every occurrence.
   (out-of-roster bits reject, validated in its `Lane`); the set of inline
   flag *letters* it binds.
   `FlagAction` is the closed behavior vocabulary; `FlagBindings` the
-  letter→behavior map (`JUR_LANE` / `RE2_LANE` are the stock bindings).
+  letter→behavior map (`FlagBindings.JDK` / `FlagBindings.RE2` are the
+  stock alphabets, in `core.dialect`).
 - **crossed u/U** — the engine's `(?u)`/`(?U)` letters are swapped vs the
   JDK: our `(?U)` is java's `(?u)`.
 - **fold universe** — the set of case-fold equivalences in force (ASCII-only,

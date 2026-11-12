@@ -1,8 +1,8 @@
 package io.github.jemmix.tdfa.asm;
 
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
-import io.github.jemmix.tdfa.core.dialect.Terminators;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
+import io.github.jemmix.tdfa.core.dialect.Terminators;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
 import org.objectweb.asm.ClassWriter;

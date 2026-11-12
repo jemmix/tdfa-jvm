@@ -5,9 +5,9 @@ import io.github.jemmix.tdfa.core.budget.WorkMeter;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
-import io.github.jemmix.tdfa.core.engine.RegexEngine;
 import io.github.jemmix.tdfa.core.dialect.FlagAction;
 import io.github.jemmix.tdfa.core.dialect.FlagBindings;
+import io.github.jemmix.tdfa.core.engine.RegexEngine;
 import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
 import io.github.jemmix.tdfa.core.report.CompileObserver;
 import io.github.jemmix.tdfa.core.tnfa.Semantics;
@@ -51,8 +51,8 @@ class FlagBindingsTest {
 
     private static Tdfa compile(String pattern, FlagBindings bindings) {
         WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
-        Tnfa nfa = Tnfa.compile(pattern, false, false, false, Semantics.of().flagBindings(bindings), UnicodeProviders.get(),
-            CompileObserver.NONE, ledger);
+        Tnfa nfa = Tnfa.compile(pattern, false, false, false, Semantics.of().flagBindings(bindings),
+            UnicodeProviders.get(), CompileObserver.NONE, ledger);
         return Determinizer.compileWithWholeSide(nfa, false, CompileObserver.NONE, ledger.fork(0));
     }
 

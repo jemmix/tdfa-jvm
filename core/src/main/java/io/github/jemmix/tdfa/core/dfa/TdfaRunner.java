@@ -1,7 +1,7 @@
 package io.github.jemmix.tdfa.core.dfa;
 
-import io.github.jemmix.tdfa.core.dialect.Terminators;
 import io.github.jemmix.tdfa.core.ast.Alphabet;
+import io.github.jemmix.tdfa.core.dialect.Terminators;
 import io.github.jemmix.tdfa.core.emit.EmittedSurface;
 import io.github.jemmix.tdfa.core.engine.ChunkSource;
 import io.github.jemmix.tdfa.core.engine.MatchResult;
@@ -3945,7 +3945,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         }
         return pos + 1 == len; // every other unit
     }
-
 
     /**
      * Fast-path eligibility of an artifact — the ONE predicate both engine

@@ -111,8 +111,8 @@ public final class Semantics implements Serializable {
      *  {@link #escapes(EscapeAlphabet)} with {@link EscapeAlphabet#RE2_MINIMAL}. */
     static final int ESCAPES_RE2_BIT = 512;
 
-    private static final int ALL_V1_BITS = POLICY_BITS | UNIX_LINES_BIT | UNGREEDY_U_BIT | SPACE_RE2_BIT
-        | ESCAPES_RE2_BIT;
+    private static final int ALL_V1_BITS =
+        POLICY_BITS | UNIX_LINES_BIT | UNGREEDY_U_BIT | SPACE_RE2_BIT | ESCAPES_RE2_BIT;
 
     private final int bits;
 
@@ -317,8 +317,8 @@ public final class Semantics implements Serializable {
         if (spaceTable == null) {
             throw new NullPointerException("spaceTable");
         }
-        return this.spaceTable.equals(spaceTable) ? this : new Semantics(bits, terminators, spaceTable, escapes,
-            flagBindings);
+        return this.spaceTable.equals(spaceTable) ? this
+            : new Semantics(bits, terminators, spaceTable, escapes, flagBindings);
     }
 
     /**
@@ -448,8 +448,7 @@ public final class Semantics implements Serializable {
                 first = false;
             }
         }
-        String[] comps = {terminators.toString(), spaceTable.toString(), escapes.toString(),
-            flagBindings.toString()};
+        String[] comps = {terminators.toString(), spaceTable.toString(), escapes.toString(), flagBindings.toString()};
         for (String comp : comps) {
             if (!first) {
                 sb.append('|');

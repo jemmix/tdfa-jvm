@@ -14,10 +14,11 @@ import java.io.Serializable;
  * proxy: pattern + flags + lane + provider identity. Read back through
  * this facade's own compile funnel — a direct call, no reflection — so
  * the roster validation, the RE2-lane default and the provider default
- * all apply from one place. The lane travels as data ({@link Semantics}
- * bits): a pattern compiled through a per-axis probe keeps its probe
- * lane across the wire, and a serialized re2j-facade pattern stays re2j
- * on read.
+ * all apply from one place. The policy travels as data (the v1 bit
+ * encoding plus the component payloads — see {@code SerialProxy.Components}):
+ * a pattern compiled through a per-axis probe keeps its probe policy
+ * across the wire, and a serialized re2j-facade pattern stays re2j on
+ * read.
  *
  * <p>Provider pinning round-trips: a pattern compiled against a pinned
  * {@link UnicodeDataProvider} keeps that provider (resolved per the

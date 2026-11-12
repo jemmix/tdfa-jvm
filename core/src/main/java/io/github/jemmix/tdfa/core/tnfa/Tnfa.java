@@ -104,13 +104,14 @@ public final class Tnfa {
      * is all-zero-width and deterministic — java.util.regex's
      * {@code GroupCurly} rolls the zero-width iteration back to the
      * pre-curly bounds, so the pair reports NIL at every accept on the
-     * JUR lane (the determinizer's final-φ override). Parser-marked
+     * java.util.regex reading, EMPTY_ITERATION_SPANS unset (the determinizer's
+     * final-φ override). Parser-marked
      * (1-indexed, like {@link #fixedBase}); the fixed-tags pass keeps
      * these tags un-fixed and base-free (their final value is
      * protocol-NIL, not a reconstructable distance). {@code null} when
-     * no group dissolved — every RE2-lane compile, where the axis keeps
-     * the maximal-iteration spans and the artifacts are bit-identical to
-     * pre-family-6 builds.
+     * no group dissolved — every maximal-iteration compile (the axis
+     * set), where the artifacts are bit-identical to pre-family-6
+     * builds.
      */
     public final boolean[] dissolvedTags;
     /**
@@ -122,7 +123,7 @@ public final class Tnfa {
      * closure subsumption cuts. The accepting kernels where the cut
      * fired surface the pair's writes as a final-φ SET_POS at the accept
      * position (mask-gated by the cut path's assertions). Parser-marked
-     * (1-indexed); {@code null} on the RE2 lane (no cut recording, no
+     * (1-indexed); {@code null} when the axis is set (no cut recording, no
      * overrides — bit-identical artifacts).
      */
     public final boolean[] surfaceFinalTags;
@@ -132,8 +133,9 @@ public final class Tnfa {
      * selection — see {@code Parser#hasSupplementaryStarts} for the exact
      * flip rules), carried from the parse and frozen onto the
      * {@code Tdfa}: the runner ORs it into its candidate-scan pivot beside
-     * the CODEPOINT_BOUNDARIES axis (a JUR-lane pattern with supplementary
-     * content scans codepoint-aligned starts exactly like java's StartS).
+     * the CODEPOINT_BOUNDARIES axis (an axis-unset compile whose pattern
+     * flipped the fact scans codepoint-aligned starts exactly like
+     * java's StartS).
      */
     public final boolean hasSupplementaryStarts;
 
@@ -349,7 +351,8 @@ public final class Tnfa {
      *  ({@link Ast.Tag#dissolved}) or B ({@link Ast.Tag#surfaceFinal})
      *  per the flag — into a 1-indexed array for the determinizer's
      *  final-φ overrides; {@code null} when nothing marked (every
-     *  RE2-lane compile — the field stays absent, not empty, so identity
+     *  maximal-iteration compile (the axis set) — the field stays absent,
+     *  not empty, so identity
      *  checks are one reference test). Iterative worklist like
      *  {@link #collectFixedAnnotations}: pre-desugar AST, each Tag
      *  visited exactly once, no stack recursion.

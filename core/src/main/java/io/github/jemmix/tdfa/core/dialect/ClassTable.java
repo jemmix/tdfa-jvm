@@ -60,8 +60,8 @@ public final class ClassTable implements Serializable {
                 throw new IllegalArgumentException("class-table range out of order or range: " + lo + ".." + hi);
             }
             if (i > 0 && lo <= ranges[i - 1]) {
-                throw new IllegalArgumentException("class-table ranges overlap at " + lo + " (after "
-                    + ranges[i - 1] + ")");
+                throw new IllegalArgumentException(
+                    "class-table ranges overlap at " + lo + " (after " + ranges[i - 1] + ")");
             }
         }
         return new ClassTable(ranges);

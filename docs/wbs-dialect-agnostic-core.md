@@ -52,7 +52,7 @@ step-specific suites named below. Final step runs the full `check`.
       module renamed after what it supplies (the RE2/Go fold universe);
       core unicode javadocs updated to name readings, not surfaces.
       Gate: `:re2j` compiles; unit tests; parity-re2j leg.
-- [ ] **C7 — docs pass + full gate**: `Semantics`/`ParseOptions`/
+- [x] **C7 — docs pass + full gate**: `Semantics`/`ParseOptions`/
       `CompileOptions`/`PatternCompiler` javadoc rewrites (polarity by
       behavior, axis list complete), glossary entries, README touch if
       needed; WBS completion sweep; full `./gradlew check` (+ the

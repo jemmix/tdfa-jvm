@@ -79,7 +79,7 @@ public abstract class Ast {
      *  capture dissolved by a greedy min-0 loop quantifier over an
      *  all-zero-width deterministic body — java.util.regex's {@code GroupCurly}
      *  rolls the zero-width iteration back to the pre-curly bounds, so on the
-     *  JUR lane the pair reports NIL at every accept (the determinizer's φ
+     *  java.util.regex reading the pair reports NIL at every accept (the determinizer's φ
      *  override; see {@code Tnfa#dissolvedTags}). The fixed-tags pass keeps a
      *  dissolved tag un-fixed and base-free: its final value is protocol-NIL,
      *  not a reconstructable distance.

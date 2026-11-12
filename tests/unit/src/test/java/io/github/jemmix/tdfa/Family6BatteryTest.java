@@ -70,8 +70,9 @@ class Family6BatteryTest {
     record Row(String id, boolean subA, String pattern, String input, String jur, String re2) {
     }
 
-    private static final Semantics RE2 = Semantics.of().unixLines().unicodeCase().codepointBoundaries().emptyLastLine()
-        .endOfTextOnly().emptyIterationSpans().shorthandFold().spaceTable(ClassTable.SPACE_RE2).flagBindings(FlagBindings.RE2);
+    private static final Semantics RE2 =
+        Semantics.of().unixLines().unicodeCase().codepointBoundaries().emptyLastLine().endOfTextOnly()
+            .emptyIterationSpans().shorthandFold().spaceTable(ClassTable.SPACE_RE2).flagBindings(FlagBindings.RE2);
 
     private static final Semantics JUR = Semantics.of();
 
