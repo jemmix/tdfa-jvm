@@ -81,8 +81,9 @@ public final class Tdfa {
     /**
      * Cells per state in the posFlags-indexed tables ({@link #stopOnAcceptMask},
      * {@link #stateFinalOpsByMask}): 64, or 128 when the compile's NFA gates
-     * any edge on {@link Tnfa#FINAL_END} (the JUR-lane plain-{@code $} bit).
-     * RE2-lane artifacts are always 64 — the bit never appears there.
+     * any edge on {@link Tnfa#FINAL_END} (the plain-{@code $} bit, the
+     * END_OF_TEXT_ONLY-unset reading). Artifacts of the set side are
+     * always 64 — the bit never appears there.
      */
     final int posFlagCells;
     /**
@@ -167,7 +168,7 @@ public final class Tdfa {
      * StartS/Start selection (see {@code Parser#hasSupplementaryStarts}
      * for the exact flip rules), frozen from the {@link Tnfa}. The
      * runner ORs it into its candidate-scan pivot beside the
-     * CODEPOINT_BOUNDARIES axis: a JUR-lane compile whose pattern flipped
+     * CODEPOINT_BOUNDARIES axis: an axis-unset compile whose pattern flipped
      * the fact scans codepoint-aligned starts exactly like java's
      * StartS (pair interiors are never candidates after the first try);
      * an unflipped JUR pattern keeps unit-wise candidate enumeration
@@ -853,7 +854,7 @@ public final class Tdfa {
 
     /**
      * Cells per state in the posFlags-indexed tables: 64, or 128 when the
-     * compile gates any edge on FINAL_END (the JUR-lane plain-{@code $}
+     * compile gates any edge on FINAL_END (the axis-unset plain-{@code $}
      * predicate). Runners and emitters size their cell indexing with this;
      * runtime posFlags values are always below it.
      */

@@ -10,7 +10,7 @@ Gates (per step, at minimum): `./gradlew :tests:unit:test` plus the
 step-specific suites named below. Final step runs the full `check`.
 
 - [x] **C1 — docs**: this WBS + the design doc + TODO.md pointer.
-- [ ] **C2 — `core.dialect` value types**: new leaf package
+- [x] **C2 — `core.dialect` value types**: new leaf package
       `Terminators` (units + pair, `JDK`/`NL_ONLY` presets, `isUnit`,
       `dotRanges`, validation), `ClassTable` (ranges, `SPACE_JDK`/
       `SPACE_RE2` presets, `ofRanges`), `EscapeAlphabet` (`JDK`,
@@ -18,7 +18,7 @@ step-specific suites named below. Final step runs the full `check`.
       `core.parser`; extend `PackageLayeringTest`'s DAG and the
       `package-info`s. Additive; no pipeline wiring.
       Gate: unit tests incl. new `DialectValuesTest`; layering green.
-- [ ] **C3 — `Semantics` carries components**: four component fields
+- [x] **C3 — `Semantics` carries components**: four component fields
       with withers; retired bits (1, 64, 128, 512) reserved;
       `ofBits` translates retired bits to stock components; equality/
       toString over bits + components; `ParseOptions` carries the
@@ -33,7 +33,7 @@ step-specific suites named below. Final step runs the full `check`.
       Gate: unit tests incl. `PivotLanesTest`, `Family6BatteryTest`,
       `FlagBindingsTest` updates; parity legs not yet touched (behavior
       unchanged — stock constants preserved).
-- [ ] **C4 — runner/ASM over the value**: `TdfaRunner` predicates
+- [x] **C4 — runner/ASM over the value**: `TdfaRunner` predicates
       generalized over `Terminators`; `nlOnlyTerminators`/
       `isJurTerminator` deleted; `PfAxes` carries the value;
       `emitTerminatorCheck` emits from the units (stock order
@@ -42,17 +42,17 @@ step-specific suites named below. Final step runs the full `check`.
       ASM golden if the emitted-class tests allow it.
       Gate: unit tests (anchor batteries, `PositionFlagMaskTest`,
       `EmittedSurfaceConformanceTest`); `:tests:parity:re2j:test`.
-- [ ] **C5 — wire**: proxy payload fields + `serialVersionUID` bumps
+- [x] **C5 — wire**: proxy payload fields + `serialVersionUID` bumps
       (core `SerialProxy` 5&rarr;6, facade proxies 1&rarr;2), v1-bits
       translation on read, loud rejection tests, custom-table/alphabet
       round-trips; `Semantics`/`FlagBindings` serialization support.
       Gate: unit tests incl. `PatternSerializationTest`; facade
       serialization suites.
-- [ ] **C6 — provider move**: `Re2jUniverseProvider` &rarr; `:re2j`
+- [x] **C6 — provider move**: `Re2jUniverseProvider` &rarr; `:re2j`
       module renamed after what it supplies (the RE2/Go fold universe);
       core unicode javadocs updated to name readings, not surfaces.
       Gate: `:re2j` compiles; unit tests; parity-re2j leg.
-- [ ] **C7 — docs pass + full gate**: `Semantics`/`ParseOptions`/
+- [x] **C7 — docs pass + full gate**: `Semantics`/`ParseOptions`/
       `CompileOptions`/`PatternCompiler` javadoc rewrites (polarity by
       behavior, axis list complete), glossary entries, README touch if
       needed; WBS completion sweep; full `./gradlew check` (+ the

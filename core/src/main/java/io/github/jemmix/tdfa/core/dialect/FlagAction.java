@@ -1,4 +1,4 @@
-package io.github.jemmix.tdfa.core.parser;
+package io.github.jemmix.tdfa.core.dialect;
 
 /**
  * The closed vocabulary of behaviors an inline-flag letter can

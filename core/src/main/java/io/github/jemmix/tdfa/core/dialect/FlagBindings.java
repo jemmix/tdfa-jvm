@@ -1,5 +1,6 @@
-package io.github.jemmix.tdfa.core.parser;
+package io.github.jemmix.tdfa.core.dialect;
 
+import java.io.Serializable;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -12,9 +13,11 @@ import java.util.Objects;
  * closed ({@link FlagAction}, the parser's named behaviors); only the
  * binding is data, so a surface is a value: printable, comparable,
  * and honest about its alphabet. The two shipped readings are the
- * stock lanes below; a custom surface composes a subset or a renamed
- * alphabet without core changes (bound through the {@code Tnfa}
- * compile seam), and a letter it does <b>not</b> bind is an error —
+ * stock alphabets below; a custom surface composes a subset or a
+ * renamed alphabet without core changes (it rides the compile's
+ * {@code Semantics} as the flag-bindings component — see
+ * {@code docs/dialect-agnostic-core.md}), and a letter it does
+ * <b>not</b> bind is an error —
  * the parser rejects it with the dialect's own {@code "invalid or
  * unsupported Perl syntax"} message, so a subset surface shrinks the
  * accepted syntax exactly as much as it intends.
@@ -31,17 +34,21 @@ import java.util.Objects;
  * lane's identity for the campaign harness and the parity tables);
  * lookups are array-indexed and allocation-free on the parse path.
  */
-public final class FlagBindings {
+public final class FlagBindings implements Serializable {
+
+    private static final long serialVersionUID = 1L;
 
     /** The java.util.regex alphabet: {@code i s m u x} plus
-     *  {@code U} = scoped Unicode case (the jur facade's reading). */
-    public static final FlagBindings JUR_LANE = builder().bind('i', FlagAction.CASE_INSENSITIVE)
-        .bind('s', FlagAction.DOTALL).bind('m', FlagAction.MULTILINE).bind('u', FlagAction.UNICODE_CHARACTER_CLASS)
+     *  {@code U} = scoped Unicode case — the JDK {@code (?U)} reading
+     *  (the stock lane the jur facade compiles in). */
+    public static final FlagBindings JDK = builder().bind('i', FlagAction.CASE_INSENSITIVE).bind('s', FlagAction.DOTALL)
+        .bind('m', FlagAction.MULTILINE).bind('u', FlagAction.UNICODE_CHARACTER_CLASS)
         .bind('U', FlagAction.UNICODE_CASE).bind('x', FlagAction.COMMENTS).build();
 
     /** The RE2/re2j alphabet: {@code i s m u} plus
-     *  {@code U} = ungreedy (the re2j facade's reading). */
-    public static final FlagBindings RE2_LANE =
+     *  {@code U} = ungreedy — the PCRE/RE2 {@code (?U)} reading (the
+     *  stock lane the :re2j facade compiles in; no {@code x} letter). */
+    public static final FlagBindings RE2 =
         builder().bind('i', FlagAction.CASE_INSENSITIVE).bind('s', FlagAction.DOTALL).bind('m', FlagAction.MULTILINE)
             .bind('u', FlagAction.UNICODE_CHARACTER_CLASS).bind('U', FlagAction.UNGREEDY).build();
 

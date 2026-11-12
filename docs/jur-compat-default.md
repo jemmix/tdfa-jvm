@@ -1,4 +1,9 @@
 # JUR-compat default — flip the divergence families, invert the flags
+> Record of the flip decision and its v1 axis scheme. The set-shaped
+> axes (`UNIX_LINES`, `UNGREEDY_U`, `SPACE_RE2`, `ESCAPES_RE2`) now ride
+> as `core.dialect` value components — the v1 bits remain as the wire
+> spellings of the stock values; see
+> [dialect-agnostic-core.md](dialect-agnostic-core.md).
 
 Status: **flipped** — the JUR-parity default landed (the `PatternCompiler`
 user-bit mapping; `RE2_COMPAT` is the pre-flip default in one constant),
