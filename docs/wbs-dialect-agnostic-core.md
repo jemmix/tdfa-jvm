@@ -10,7 +10,7 @@ Gates (per step, at minimum): `./gradlew :tests:unit:test` plus the
 step-specific suites named below. Final step runs the full `check`.
 
 - [x] **C1 — docs**: this WBS + the design doc + TODO.md pointer.
-- [ ] **C2 — `core.dialect` value types**: new leaf package
+- [x] **C2 — `core.dialect` value types**: new leaf package
       `Terminators` (units + pair, `JDK`/`NL_ONLY` presets, `isUnit`,
       `dotRanges`, validation), `ClassTable` (ranges, `SPACE_JDK`/
       `SPACE_RE2` presets, `ofRanges`), `EscapeAlphabet` (`JDK`,
@@ -18,7 +18,7 @@ step-specific suites named below. Final step runs the full `check`.
       `core.parser`; extend `PackageLayeringTest`'s DAG and the
       `package-info`s. Additive; no pipeline wiring.
       Gate: unit tests incl. new `DialectValuesTest`; layering green.
-- [ ] **C3 — `Semantics` carries components**: four component fields
+- [x] **C3 — `Semantics` carries components**: four component fields
       with withers; retired bits (1, 64, 128, 512) reserved;
       `ofBits` translates retired bits to stock components; equality/
       toString over bits + components; `ParseOptions` carries the
@@ -33,7 +33,7 @@ step-specific suites named below. Final step runs the full `check`.
       Gate: unit tests incl. `PivotLanesTest`, `Family6BatteryTest`,
       `FlagBindingsTest` updates; parity legs not yet touched (behavior
       unchanged — stock constants preserved).
-- [ ] **C4 — runner/ASM over the value**: `TdfaRunner` predicates
+- [x] **C4 — runner/ASM over the value**: `TdfaRunner` predicates
       generalized over `Terminators`; `nlOnlyTerminators`/
       `isJurTerminator` deleted; `PfAxes` carries the value;
       `emitTerminatorCheck` emits from the units (stock order

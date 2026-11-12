@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.asm;
 
 import io.github.jemmix.tdfa.core.dfa.Tdfa;
+import io.github.jemmix.tdfa.core.dialect.Terminators;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.engine.RegexEngine;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
@@ -1673,50 +1674,67 @@ public final class TdfaAsmBackend {
      * {@link Tdfa#semantics()}): the emitted BEGIN_TEXT/END_TEXT/FINAL_END
      * predicates transcribe the interpreter's {@code lineBegin}/{@code
      * lineEnd}/{@code finalEnd} exactly, per axis — no runtime axis check,
-     * the selection is bytecode.
+     * the selection is bytecode. The terminator set is data: the unit
+     * chain, the pair guards and the constants are all emitted from the
+     * value, so a custom set specializes exactly like a stock one (for
+     * the stock values the emitted compare sequences are the ones the
+     * hand-written predicates used to emit).
      */
     private static final class PfAxes {
-        /** UNIX_LINES set: {@code \n}-only terminator set (RE2 side). */
-        final boolean nlOnly;
+        /** The terminator set ({@code \n}-only or the full JDK set, or a
+         *  custom value — all bytecode-identical in shape to the old
+         *  hand-written specializations of their value). */
+        final Terminators terms;
         /** EMPTY_LAST_LINE set: {@code ^}(?m) may match the empty last line. */
         final boolean emptyLastLine;
-        /** The artifact consults FINAL_END (JUR plain-{@code $} compiles). */
+        /** The artifact consults FINAL_END (plain-{@code $} compiles). */
         final boolean finalEnd;
 
-        PfAxes(boolean nlOnly, boolean emptyLastLine, boolean finalEnd) {
-            this.nlOnly = nlOnly;
+        PfAxes(Terminators terms, boolean emptyLastLine, boolean finalEnd) {
+            this.terms = terms;
             this.emptyLastLine = emptyLastLine;
             this.finalEnd = finalEnd;
+        }
+
+        /** The one-unit-no-pair shape: the membership chain is a single
+         *  compare (the stock {@code \n}-only set). */
+        boolean single() {
+            return !terms.hasPair() && terms.unitCount() == 1;
         }
     }
 
     private static PfAxes pfAxes(Tdfa tdfa) {
-        return new PfAxes(tdfa.semantics().isUnixLines(), tdfa.semantics().isEmptyLastLine(),
+        return new PfAxes(tdfa.semantics().terminators(), tdfa.semantics().isEmptyLastLine(),
             (tdfa.posFlagDeps() & Tnfa.FINAL_END) != 0);
     }
 
     /**
-     * Branch to {@code notTerm} unless the char in {@code c} is a member of
-     * the full java.util.regex terminator set ({@code \n}, {@code \r},
-     * U+0085, U+2028, U+2029 — {@code \r\n} is two units of one terminator).
+     * Push a codepoint constant with the narrowest instruction
+     * (BIPUSH/SIPUSH/LDC) — the emitter's only primitive loader.
      */
-    private static void emitJurTerminatorCheck(MethodVisitor mv, int c, Label notTerm) {
+    private static void constInsn(MethodVisitor mv, int v) {
+        if (v >= Byte.MIN_VALUE && v <= Byte.MAX_VALUE) {
+            mv.visitIntInsn(Opcodes.BIPUSH, v);
+        } else if (v <= Short.MAX_VALUE) {
+            mv.visitIntInsn(Opcodes.SIPUSH, v);
+        } else {
+            mv.visitLdcInsn(v);
+        }
+    }
+
+    /**
+     * Branch to {@code notTerm} unless the char in {@code c} is a member
+     * of the terminator set — one compare per unit, emitted from the
+     * value's sorted units (a two-unit pair is two units of one
+     * terminator; the pair guards are the callers', position-aware).
+     */
+    private static void emitTerminatorCheck(MethodVisitor mv, int c, Label notTerm, Terminators terms) {
         Label isTerm = new Label();
-        mv.visitVarInsn(Opcodes.ILOAD, c);
-        mv.visitIntInsn(Opcodes.BIPUSH, '\n');
-        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, isTerm);
-        mv.visitVarInsn(Opcodes.ILOAD, c);
-        mv.visitIntInsn(Opcodes.BIPUSH, '\r');
-        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, isTerm);
-        mv.visitVarInsn(Opcodes.ILOAD, c);
-        mv.visitIntInsn(Opcodes.SIPUSH, 0x85);
-        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, isTerm);
-        mv.visitVarInsn(Opcodes.ILOAD, c);
-        mv.visitIntInsn(Opcodes.SIPUSH, 0x2028);
-        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, isTerm);
-        mv.visitVarInsn(Opcodes.ILOAD, c);
-        mv.visitIntInsn(Opcodes.SIPUSH, 0x2029);
-        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, isTerm);
+        for (int u : terms.units()) {
+            mv.visitVarInsn(Opcodes.ILOAD, c);
+            constInsn(mv, u);
+            mv.visitJumpInsn(Opcodes.IF_ICMPEQ, isTerm);
+        }
         mv.visitJumpInsn(Opcodes.GOTO, notTerm);
         mv.visitLabel(isTerm);
     }
@@ -1737,7 +1755,8 @@ public final class TdfaAsmBackend {
         // pos == 0 (and, unless EMPTY_LAST_LINE, pos != len — java's (?m)^
         // never matches at end of input, not even at position 0 of an empty
         // input: "Perl does not match ^ at end of input even after newline")
-        // → set; the RE2 side (axis set) keeps the unconditional begin.
+        // → set; the no-final-terminator-exclusion side keeps the
+        // unconditional begin.
         mv.visitVarInsn(Opcodes.ILOAD, POS);
         mv.visitJumpInsn(Opcodes.IFNE, afterTerm);
         if (!ax.emptyLastLine) {
@@ -1746,52 +1765,51 @@ public final class TdfaAsmBackend {
             mv.visitJumpInsn(Opcodes.IF_ICMPEQ, done);
         }
         mv.visitJumpInsn(Opcodes.GOTO, set);
-        // pos > 0: after-terminator, axis-selected
+        // pos > 0: after-terminator, from the set's units (a one-unit
+        // no-pair set is the single-compare shape the \n-only stock
+        // always emitted)
         mv.visitLabel(afterTerm);
         mv.visitVarInsn(Opcodes.ILOAD, POS);
         mv.visitJumpInsn(Opcodes.IFLE, done);
-        if (ax.nlOnly) {
-            // if (charAt(pos-1) == '\n' [&& pos < len]) set
+        if (ax.single()) {
+            // if (charAt(pos-1) == unit [&& pos < len]) set
             mv.visitVarInsn(Opcodes.ALOAD, IN);
             mv.visitVarInsn(Opcodes.ILOAD, POS);
             mv.visitInsn(Opcodes.ICONST_1);
             mv.visitInsn(Opcodes.ISUB);
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
-            mv.visitIntInsn(Opcodes.BIPUSH, '\n');
+            constInsn(mv, ax.terms.units()[0]);
             mv.visitJumpInsn(Opcodes.IF_ICMPNE, done);
-            if (!ax.emptyLastLine) {
-                mv.visitVarInsn(Opcodes.ILOAD, POS);
-                mv.visitVarInsn(Opcodes.ILOAD, LEN);
-                mv.visitJumpInsn(Opcodes.IF_ICMPGE, done);
-            }
         } else {
-            // prev = charAt(pos-1); if (!jurTerm(prev)) done
+            // prev = charAt(pos-1) → T1; if (!term(prev)) done
             mv.visitVarInsn(Opcodes.ALOAD, IN);
             mv.visitVarInsn(Opcodes.ILOAD, POS);
             mv.visitInsn(Opcodes.ICONST_1);
             mv.visitInsn(Opcodes.ISUB);
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
             mv.visitVarInsn(Opcodes.ISTORE, T1);
-            emitJurTerminatorCheck(mv, T1, done);
-            // \r\n interior: prev == '\r' && pos < len && charAt(pos) == '\n' → done
-            Label noRn = new Label();
-            mv.visitVarInsn(Opcodes.ILOAD, T1);
-            mv.visitIntInsn(Opcodes.BIPUSH, '\r');
-            mv.visitJumpInsn(Opcodes.IF_ICMPNE, noRn);
-            mv.visitVarInsn(Opcodes.ILOAD, POS);
-            mv.visitVarInsn(Opcodes.ILOAD, LEN);
-            mv.visitJumpInsn(Opcodes.IF_ICMPGE, noRn);
-            mv.visitVarInsn(Opcodes.ALOAD, IN);
-            mv.visitVarInsn(Opcodes.ILOAD, POS);
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
-            mv.visitIntInsn(Opcodes.BIPUSH, '\n');
-            mv.visitJumpInsn(Opcodes.IF_ICMPEQ, done);
-            mv.visitLabel(noRn);
-            if (!ax.emptyLastLine) {
+            emitTerminatorCheck(mv, T1, done, ax.terms);
+            if (ax.terms.hasPair()) {
+                // pair interior: prev == pairLo && pos < len && charAt(pos) == pairHi → done
+                Label noRn = new Label();
+                mv.visitVarInsn(Opcodes.ILOAD, T1);
+                constInsn(mv, ax.terms.pairLo());
+                mv.visitJumpInsn(Opcodes.IF_ICMPNE, noRn);
                 mv.visitVarInsn(Opcodes.ILOAD, POS);
                 mv.visitVarInsn(Opcodes.ILOAD, LEN);
-                mv.visitJumpInsn(Opcodes.IF_ICMPGE, done);
+                mv.visitJumpInsn(Opcodes.IF_ICMPGE, noRn);
+                mv.visitVarInsn(Opcodes.ALOAD, IN);
+                mv.visitVarInsn(Opcodes.ILOAD, POS);
+                mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
+                constInsn(mv, ax.terms.pairHi());
+                mv.visitJumpInsn(Opcodes.IF_ICMPEQ, done);
+                mv.visitLabel(noRn);
             }
+        }
+        if (!ax.emptyLastLine) {
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitVarInsn(Opcodes.ILOAD, LEN);
+            mv.visitJumpInsn(Opcodes.IF_ICMPGE, done);
         }
         mv.visitLabel(set);
         mv.visitInsn(Opcodes.ICONST_1);
@@ -1811,34 +1829,37 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, POS);
         mv.visitVarInsn(Opcodes.ILOAD, LEN);
         mv.visitJumpInsn(Opcodes.IF_ICMPGE, done);
-        if (ax.nlOnly) {
+        if (ax.single()) {
+            // if (charAt(pos) == unit) set
             mv.visitVarInsn(Opcodes.ALOAD, IN);
             mv.visitVarInsn(Opcodes.ILOAD, POS);
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
-            mv.visitIntInsn(Opcodes.BIPUSH, '\n');
+            constInsn(mv, ax.terms.units()[0]);
             mv.visitJumpInsn(Opcodes.IF_ICMPNE, done);
         } else {
-            // c = charAt(pos); if (!jurTerm(c)) done
+            // c = charAt(pos) → T2; if (!term(c)) done
             mv.visitVarInsn(Opcodes.ALOAD, IN);
             mv.visitVarInsn(Opcodes.ILOAD, POS);
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
             mv.visitVarInsn(Opcodes.ISTORE, T2);
-            emitJurTerminatorCheck(mv, T2, done);
-            // interior: c == '\n' && pos > 0 && charAt(pos-1) == '\r' → done
-            Label ok = new Label();
-            mv.visitVarInsn(Opcodes.ILOAD, T2);
-            mv.visitIntInsn(Opcodes.BIPUSH, '\n');
-            mv.visitJumpInsn(Opcodes.IF_ICMPNE, ok);
-            mv.visitVarInsn(Opcodes.ILOAD, POS);
-            mv.visitJumpInsn(Opcodes.IFLE, ok);
-            mv.visitVarInsn(Opcodes.ALOAD, IN);
-            mv.visitVarInsn(Opcodes.ILOAD, POS);
-            mv.visitInsn(Opcodes.ICONST_1);
-            mv.visitInsn(Opcodes.ISUB);
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
-            mv.visitIntInsn(Opcodes.BIPUSH, '\r');
-            mv.visitJumpInsn(Opcodes.IF_ICMPEQ, done);
-            mv.visitLabel(ok);
+            emitTerminatorCheck(mv, T2, done, ax.terms);
+            if (ax.terms.hasPair()) {
+                // pair interior: c == pairHi && pos > 0 && charAt(pos-1) == pairLo → done
+                Label ok = new Label();
+                mv.visitVarInsn(Opcodes.ILOAD, T2);
+                constInsn(mv, ax.terms.pairHi());
+                mv.visitJumpInsn(Opcodes.IF_ICMPNE, ok);
+                mv.visitVarInsn(Opcodes.ILOAD, POS);
+                mv.visitJumpInsn(Opcodes.IFLE, ok);
+                mv.visitVarInsn(Opcodes.ALOAD, IN);
+                mv.visitVarInsn(Opcodes.ILOAD, POS);
+                mv.visitInsn(Opcodes.ICONST_1);
+                mv.visitInsn(Opcodes.ISUB);
+                mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
+                constInsn(mv, ax.terms.pairLo());
+                mv.visitJumpInsn(Opcodes.IF_ICMPEQ, done);
+                mv.visitLabel(ok);
+            }
         }
         mv.visitInsn(Opcodes.ICONST_2);
         mv.visitVarInsn(Opcodes.ILOAD, RESULT);
@@ -1871,10 +1892,10 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, POS);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
         mv.visitVarInsn(Opcodes.ISTORE, T1);
-        if (ax.nlOnly) {
-            // c == '\n' && pos + 1 == len → set
+        if (ax.single()) {
+            // c == unit && pos + 1 == len → set
             mv.visitVarInsn(Opcodes.ILOAD, T1);
-            mv.visitIntInsn(Opcodes.BIPUSH, '\n');
+            constInsn(mv, ax.terms.units()[0]);
             mv.visitJumpInsn(Opcodes.IF_ICMPNE, notSet);
             mv.visitVarInsn(Opcodes.ILOAD, POS);
             mv.visitInsn(Opcodes.ICONST_1);
@@ -1883,53 +1904,63 @@ public final class TdfaAsmBackend {
             mv.visitJumpInsn(Opcodes.IF_ICMPEQ, set);
             mv.visitJumpInsn(Opcodes.GOTO, notSet);
         }
-        // full set: if (!jurTerm(c)) notSet
-        emitJurTerminatorCheck(mv, T1, notSet);
-        // interior of a final \r\n: c == '\n' && pos > 0 && charAt(pos-1) == '\r' → notSet
-        Label noInt = new Label();
-        mv.visitVarInsn(Opcodes.ILOAD, T1);
-        mv.visitIntInsn(Opcodes.BIPUSH, '\n');
-        mv.visitJumpInsn(Opcodes.IF_ICMPNE, noInt);
-        mv.visitVarInsn(Opcodes.ILOAD, POS);
-        mv.visitJumpInsn(Opcodes.IFLE, noInt);
-        mv.visitVarInsn(Opcodes.ALOAD, IN);
-        mv.visitVarInsn(Opcodes.ILOAD, POS);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitInsn(Opcodes.ISUB);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
-        mv.visitIntInsn(Opcodes.BIPUSH, '\r');
-        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, notSet);
-        mv.visitLabel(noInt);
-        // reach-the-end: c == '\r' ? (pos+1==len || (charAt(pos+1)=='\n' && pos+2==len))
-        //                  : pos+1==len
-        Label cr = new Label();
-        mv.visitVarInsn(Opcodes.ILOAD, T1);
-        mv.visitIntInsn(Opcodes.BIPUSH, '\r');
-        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, cr);
-        mv.visitVarInsn(Opcodes.ILOAD, POS);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitInsn(Opcodes.IADD);
-        mv.visitVarInsn(Opcodes.ILOAD, LEN);
-        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, set);
-        mv.visitJumpInsn(Opcodes.GOTO, notSet);
-        mv.visitLabel(cr);
-        mv.visitVarInsn(Opcodes.ILOAD, POS);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitInsn(Opcodes.IADD);
-        mv.visitVarInsn(Opcodes.ILOAD, LEN);
-        mv.visitJumpInsn(Opcodes.IF_ICMPEQ, set);
-        mv.visitVarInsn(Opcodes.ALOAD, IN);
-        mv.visitVarInsn(Opcodes.ILOAD, POS);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitInsn(Opcodes.IADD);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
-        mv.visitIntInsn(Opcodes.BIPUSH, '\n');
-        mv.visitJumpInsn(Opcodes.IF_ICMPNE, notSet);
-        mv.visitVarInsn(Opcodes.ILOAD, POS);
-        mv.visitInsn(Opcodes.ICONST_2);
-        mv.visitInsn(Opcodes.IADD);
-        mv.visitVarInsn(Opcodes.ILOAD, LEN);
-        mv.visitJumpInsn(Opcodes.IF_ICMPNE, notSet);
+        // full set: if (!term(c)) notSet
+        emitTerminatorCheck(mv, T1, notSet, ax.terms);
+        if (ax.terms.hasPair()) {
+            // interior of a final pair: c == pairHi && pos > 0 && charAt(pos-1) == pairLo → notSet
+            Label noInt = new Label();
+            mv.visitVarInsn(Opcodes.ILOAD, T1);
+            constInsn(mv, ax.terms.pairHi());
+            mv.visitJumpInsn(Opcodes.IF_ICMPNE, noInt);
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitJumpInsn(Opcodes.IFLE, noInt);
+            mv.visitVarInsn(Opcodes.ALOAD, IN);
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitInsn(Opcodes.ISUB);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
+            constInsn(mv, ax.terms.pairLo());
+            mv.visitJumpInsn(Opcodes.IF_ICMPEQ, notSet);
+            mv.visitLabel(noInt);
+            // reach-the-end: c == pairLo ? (pos+1==len || (charAt(pos+1)==pairHi && pos+2==len))
+            //                  : pos+1==len
+            Label cr = new Label();
+            mv.visitVarInsn(Opcodes.ILOAD, T1);
+            constInsn(mv, ax.terms.pairLo());
+            mv.visitJumpInsn(Opcodes.IF_ICMPEQ, cr);
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitInsn(Opcodes.IADD);
+            mv.visitVarInsn(Opcodes.ILOAD, LEN);
+            mv.visitJumpInsn(Opcodes.IF_ICMPEQ, set);
+            mv.visitJumpInsn(Opcodes.GOTO, notSet);
+            mv.visitLabel(cr);
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitInsn(Opcodes.IADD);
+            mv.visitVarInsn(Opcodes.ILOAD, LEN);
+            mv.visitJumpInsn(Opcodes.IF_ICMPEQ, set);
+            mv.visitVarInsn(Opcodes.ALOAD, IN);
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitInsn(Opcodes.IADD);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, STR, "charAt", "(I)C", false);
+            constInsn(mv, ax.terms.pairHi());
+            mv.visitJumpInsn(Opcodes.IF_ICMPNE, notSet);
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitInsn(Opcodes.ICONST_2);
+            mv.visitInsn(Opcodes.IADD);
+            mv.visitVarInsn(Opcodes.ILOAD, LEN);
+            mv.visitJumpInsn(Opcodes.IF_ICMPNE, notSet);
+        } else {
+            // no pair: every unit reaches the end as a single unit
+            mv.visitVarInsn(Opcodes.ILOAD, POS);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitInsn(Opcodes.IADD);
+            mv.visitVarInsn(Opcodes.ILOAD, LEN);
+            mv.visitJumpInsn(Opcodes.IF_ICMPEQ, set);
+            mv.visitJumpInsn(Opcodes.GOTO, notSet);
+        }
         mv.visitLabel(set);
         mv.visitLdcInsn(64);
         mv.visitVarInsn(Opcodes.ILOAD, RESULT);

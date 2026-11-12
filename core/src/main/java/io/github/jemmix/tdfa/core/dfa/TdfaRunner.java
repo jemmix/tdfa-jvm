@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa.core.dfa;
 
+import io.github.jemmix.tdfa.core.dialect.Terminators;
 import io.github.jemmix.tdfa.core.ast.Alphabet;
 import io.github.jemmix.tdfa.core.emit.EmittedSurface;
 import io.github.jemmix.tdfa.core.engine.ChunkSource;
@@ -207,12 +208,13 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      */
     private final Semantics semantics;
     /**
-     * Terminator set of the UNIX_LINES axis: true = {@code \n} only (the
-     * RE2-lineage side); false = the full java.util.regex set
-     * ({@code \n}, {@code \r}, {@code \r\n}, U+0085, U+2028, U+2029).
-     * Selects the BEGIN_TEXT/END_TEXT/FINAL_END computations.
+     * The compile's line-terminator set (the policy's terminators
+     * component — the stock values are the full java.util.regex set
+     * with the {@code \r\n} pair and {@code \n}-only; a custom set is
+     * data like any other). Selects the BEGIN_TEXT/END_TEXT/FINAL_END
+     * computations.
      */
-    private final boolean nlOnlyTerminators;
+    private final Terminators terminators;
     /**
      * EMPTY_LAST_LINE axis (set = RE2 side): a multiline {@code ^} may
      * match the empty last line after a trailing terminator; unset
@@ -234,8 +236,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      */
     private final boolean scanSkipsPairs;
     /**
-     * Whether any mask / stop-table cell consults FINAL_END (the JUR
-     * plain-{@code $} predicate) — when true, positionFlags computes it.
+     * Whether any mask / stop-table cell consults FINAL_END (the
+     * plain-{@code $} predicate, the END_OF_TEXT_ONLY-unset reading) —
+     * when true, positionFlags computes it.
      */
     private final boolean needsFinalEnd;
     /**
@@ -388,7 +391,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         this.semantics = tdfa.semantics();
         // Frozen pivot selections (see fields): one read per axis here, none
         // in the walks.
-        this.nlOnlyTerminators = semantics.isUnixLines();
+        this.terminators = semantics.terminators();
         this.emptyLastLine = semantics.isEmptyLastLine();
         this.scanSkipsPairs = semantics.isCodepointBoundaries() || tdfa.hasSupplementaryStarts;
         this.posCells = tdfa.posFlagCells();
@@ -3836,14 +3839,12 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      */
     private boolean lineBegin(String s, int pos, int len) {
         char prev = s.charAt(pos - 1);
-        if (nlOnlyTerminators) {
-            return prev == '\n' && (emptyLastLine || pos < len);
-        }
-        if (!isJurTerminator(prev)) {
+        if (!terminators.isUnit(prev)) {
             return false;
         }
-        if (prev == '\r' && pos < len && s.charAt(pos) == '\n') {
-            return false; // interior of a \r\n
+        if (terminators.hasPair() && prev == terminators.pairLo() && pos < len
+            && s.charAt(pos) == terminators.pairHi()) {
+            return false; // interior of the two-unit terminator
         }
         return emptyLastLine || pos < len;
     }
@@ -3851,14 +3852,12 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
     /** CharSequence twin of {@link #lineBegin(String, int, int)}. */
     private boolean lineBegin(CharSequence s, int pos, int len) {
         char prev = s.charAt(pos - 1);
-        if (nlOnlyTerminators) {
-            return prev == '\n' && (emptyLastLine || pos < len);
-        }
-        if (!isJurTerminator(prev)) {
+        if (!terminators.isUnit(prev)) {
             return false;
         }
-        if (prev == '\r' && pos < len && s.charAt(pos) == '\n') {
-            return false; // interior of a \r\n
+        if (terminators.hasPair() && prev == terminators.pairLo() && pos < len
+            && s.charAt(pos) == terminators.pairHi()) {
+            return false; // interior of the two-unit terminator
         }
         return emptyLastLine || pos < len;
     }
@@ -3872,25 +3871,21 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      */
     private boolean lineEnd(String s, int pos, int len) {
         char c = s.charAt(pos);
-        if (nlOnlyTerminators) {
-            return c == '\n';
-        }
-        if (!isJurTerminator(c)) {
+        if (!terminators.isUnit(c)) {
             return false;
         }
-        return !(c == '\n' && pos > 0 && s.charAt(pos - 1) == '\r');
+        return !(terminators.hasPair() && c == terminators.pairHi() && pos > 0
+            && s.charAt(pos - 1) == terminators.pairLo());
     }
 
     /** CharSequence twin of {@link #lineEnd(String, int, int)}. */
     private boolean lineEnd(CharSequence s, int pos, int len) {
         char c = s.charAt(pos);
-        if (nlOnlyTerminators) {
-            return c == '\n';
-        }
-        if (!isJurTerminator(c)) {
+        if (!terminators.isUnit(c)) {
             return false;
         }
-        return !(c == '\n' && pos > 0 && s.charAt(pos - 1) == '\r');
+        return !(terminators.hasPair() && c == terminators.pairHi() && pos > 0
+            && s.charAt(pos - 1) == terminators.pairLo());
     }
 
     /**
@@ -3910,22 +3905,20 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             return false;
         }
         char c = s.charAt(pos);
-        if (nlOnlyTerminators) {
-            return c == '\n' && pos + 1 == len;
-        }
-        if (!isJurTerminator(c)) {
+        if (!terminators.isUnit(c)) {
             return false;
         }
-        if (c == '\n' && pos > 0 && s.charAt(pos - 1) == '\r') {
-            return false; // interior of the final \r\n — the \r position owns it
+        if (terminators.hasPair() && c == terminators.pairHi() && pos > 0
+            && s.charAt(pos - 1) == terminators.pairLo()) {
+            return false; // interior of the final pair — the pairLo position owns it
         }
-        if (c == '\r') {
+        if (terminators.hasPair() && c == terminators.pairLo()) {
             if (pos + 1 == len) {
                 return true;
             }
-            return s.charAt(pos + 1) == '\n' && pos + 2 == len;
+            return s.charAt(pos + 1) == terminators.pairHi() && pos + 2 == len;
         }
-        return pos + 1 == len; // \n, U+0085, U+2028, U+2029
+        return pos + 1 == len; // every other unit
     }
 
     /** CharSequence twin of {@link #finalEnd(String, int, int)}. */
@@ -3937,29 +3930,22 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             return false;
         }
         char c = s.charAt(pos);
-        if (nlOnlyTerminators) {
-            return c == '\n' && pos + 1 == len;
-        }
-        if (!isJurTerminator(c)) {
+        if (!terminators.isUnit(c)) {
             return false;
         }
-        if (c == '\n' && pos > 0 && s.charAt(pos - 1) == '\r') {
-            return false; // interior of the final \r\n — the \r position owns it
+        if (terminators.hasPair() && c == terminators.pairHi() && pos > 0
+            && s.charAt(pos - 1) == terminators.pairLo()) {
+            return false; // interior of the final pair — the pairLo position owns it
         }
-        if (c == '\r') {
+        if (terminators.hasPair() && c == terminators.pairLo()) {
             if (pos + 1 == len) {
                 return true;
             }
-            return s.charAt(pos + 1) == '\n' && pos + 2 == len;
+            return s.charAt(pos + 1) == terminators.pairHi() && pos + 2 == len;
         }
-        return pos + 1 == len; // \n, U+0085, U+2028, U+2029
+        return pos + 1 == len; // every other unit
     }
 
-    /** Membership in the full java.util.regex line-terminator set
-     *  (character view — {@code \r\n} is two units of one terminator). */
-    private static boolean isJurTerminator(char c) {
-        return c == '\n' || c == '\r' || c == '\u0085' || c == '\u2028' || c == '\u2029';
-    }
 
     /**
      * Fast-path eligibility of an artifact — the ONE predicate both engine
