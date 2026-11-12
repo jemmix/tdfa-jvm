@@ -10,7 +10,6 @@ import io.github.jemmix.tdfa.core.dialect.FlagBindings;
 import io.github.jemmix.tdfa.core.dialect.Terminators;
 import io.github.jemmix.tdfa.core.report.CompileObserver;
 import io.github.jemmix.tdfa.core.tnfa.Semantics;
-import io.github.jemmix.tdfa.core.unicode.Re2jUniverseProvider;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 /**
@@ -58,7 +57,7 @@ final class Lane {
             throw new IllegalArgumentException(FLAGS_MESSAGE);
         }
         TDFAPattern p = PatternCompiler.compile(regex, flags, factory, AsmEngineBackend.INSTANCE, provider,
-            Re2jUniverseProvider::instance, observer,
+            Re2FoldUniverse::instance, observer,
             explicitSemantics != null ? explicitSemantics : DEFAULT_SEMANTICS);
         // The one facade-owned step: mint this facade's API-typed subclass
         // of the machinery shell (this module's own codegen).

@@ -48,7 +48,7 @@ step-specific suites named below. Final step runs the full `check`.
       round-trips; `Semantics`/`FlagBindings` serialization support.
       Gate: unit tests incl. `PatternSerializationTest`; facade
       serialization suites.
-- [ ] **C6 — provider move**: `Re2jUniverseProvider` &rarr; `:re2j`
+- [x] **C6 — provider move**: `Re2jUniverseProvider` &rarr; `:re2j`
       module renamed after what it supplies (the RE2/Go fold universe);
       core unicode javadocs updated to name readings, not surfaces.
       Gate: `:re2j` compiles; unit tests; parity-re2j leg.
