@@ -52,8 +52,8 @@ class PackageLayeringTest {
         Map<String, SortedSet<String>> m = new HashMap<>();
         String[][] edges = {{"emit"}, {"unicode"}, {"budget"}, {"report"}, // leaves
             {"dialect"}, // the vocabulary leaf: data every tier may reference
-            {"ast", "budget"}, {"parser", "dialect", "ast", "budget", "unicode"},
-            {"tnfa", "dialect", "parser", "ast", "budget", "unicode", "report"}, {"engine", "emit"},
+            {"ast", "budget"}, {"parser", "dialect", "ast", "budget", "unicode"}, {"semantic", "dialect", "ast"}, // meaning resolution: below tnfa, above parser
+            {"tnfa", "dialect", "parser", "semantic", "ast", "budget", "unicode", "report"}, {"engine", "emit"},
             {"dfa", "dialect", "engine", "emit", "ast", "tnfa", "budget"}, {"regopt", "dfa", "budget"},
             {"determinize", "tnfa", "ast", "regopt", "dfa", "budget", "report"},
             {"compile", "dialect", "engine", "dfa", "determinize", "tnfa", "budget", "unicode", "report", "emit"},};
@@ -133,7 +133,7 @@ class PackageLayeringTest {
                 try (DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
                     for (Path p : ds) {
                         // resources() returns one URL per package directory; the
-                        // tree has 12 package dirs directly under core/
+                        // tree has 13 package dirs directly under core/
                         walk(p, dir, names);
                     }
                 }

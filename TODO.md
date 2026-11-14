@@ -54,6 +54,7 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 - [ ] JavaDoc all public API
 - [ ] Glossary: prune mannered/unnecessary terms, keep load-bearing ones
 - [ ] Decide Semantics scope (parity axes vs knobs) before lock
+- [ ] Compat surface rungs 2–4 ([design](docs/engine-compat-surface.md))
 - [ ] Lock 1.0 API stability guarantees
 - [ ] JaCoCo coverage targets
 - [ ] Reproducible jar builds

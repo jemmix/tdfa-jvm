@@ -68,14 +68,36 @@ public abstract class Ast {
         }
     }
 
+    /** The bare-dot atom as parsed: the engine's one syntax whose MEANING is
+     *  a compile policy — everything under the scoped {@code (?s)} state the
+     *  node carries, the compile's terminator-set complement otherwise.
+     *  Symbolic by design: the meaning-resolution pass
+     *  ({@code io.github.jemmix.tdfa.core.semantic.Resolve}) expands it into a
+     *  {@link CharClass} against the compile's {@code Terminators} value, so
+     *  the parser needs no table axes and the TNFA builder (and every
+     *  post-resolution consumer) never sees one. */
+    public static final class Dot extends Ast {
+        /** The scoped {@code (?s)} state captured at the atom. */
+        public final boolean dotall;
+
+        public Dot(boolean dotall) {
+            this.dotall = dotall;
+        }
+
+        @Override
+        public String toString() {
+            return dotall ? "(?s)." : ".";
+        }
+    }
+
     /** Tag (capture-group boundary). Numbered 1..n.
      *  <p>{@code fixedOn} / {@code fixedOffset} are mutable annotations set by
      *  the BT22 §6.4 fixed-tags pass (see {@code io.github.jemmix.tdfa.core.ast.FixedTags}).
      *  When {@code fixedOn != 0}, this tag's position can be reconstructed at match
      *  time as {@code tag[fixedOn] - fixedOffset} (or NIL if the base is NIL), so
      *  the tag is omitted from NFA construction and register allocation.
-     *  <p>{@code dissolved} is a mutable annotation set by the parser (family 6
-     *  sub-family A, the EMPTY_ITERATION_SPANS axis): the tag pair belongs to a
+     *  <p>{@code dissolved} is a mutable annotation set by the meaning-resolution pass
+     *  (family 6 sub-family A, the EMPTY_ITERATION_SPANS axis): the tag pair belongs to a
      *  capture dissolved by a greedy min-0 loop quantifier over an
      *  all-zero-width deterministic body — java.util.regex's {@code GroupCurly}
      *  rolls the zero-width iteration back to the pre-curly bounds, so on the
@@ -151,11 +173,26 @@ public abstract class Ast {
          * {@code cmin} (the count check sits inside the guard). The NFA
          * builder splits every desugared copy's zero-width paths to the
          * quantifier exit (see {@code Tnfa.Builder}'s BOUNDED_ZWE frame).
-         * Parser-set on the JUR reading only; all-zero-width deterministic
-         * bodies stay unmarked — java's GroupCurly COMMITS those (no
-         * guard), and the plain structural desugar already agrees.
+         * Set by the meaning-resolution pass on the JUR reading only;
+         * all-zero-width deterministic bodies stay unmarked — java's
+         * GroupCurly COMMITS those (no guard), and the plain structural
+         * desugar already agrees.
          */
         public boolean zeroWidthExit;
+
+        /**
+         * Parse-time structural fact, set at the capturing group's
+         * {@code ')'}: the directly quantified atom was that CAPTURE's
+         * tag-pair product — {@code (x)*} yes, {@code (?:(x))*} no (the
+         * same resolved tree shape, a different quantified atom). The
+         * meaning-resolution pass reads it with the
+         * EMPTY_ITERATION_SPANS policy to place the family-6 marks
+         * ({@link Tag#dissolved}/{@link Tag#surfaceFinal}): the mark
+         * belongs to the capture the quantifier rides, never to a
+         * transparent wrapper around one ({@code (\b)*} dissolves,
+         * {@code (?:(\b))*} keeps the span).
+         */
+        public boolean quantifiedCapture;
 
         public Repeat(Ast body, int min, int max, boolean greedy) {
             this.body = body;

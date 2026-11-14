@@ -3,26 +3,21 @@ package io.github.jemmix.tdfa.core.parser;
 import io.github.jemmix.tdfa.core.dialect.ClassTable;
 import io.github.jemmix.tdfa.core.dialect.EscapeAlphabet;
 import io.github.jemmix.tdfa.core.dialect.FlagBindings;
-import io.github.jemmix.tdfa.core.dialect.Terminators;
 
 /**
- * The parser-side pivot knobs — the projection of a compile's
- * interpretation policy onto the parser's axes. The projection itself
- * lives with the policy carrier ({@code Tnfa.compile} maps its
+ * The parser-side knobs — the projection of a compile's interpretation
+ * policy onto the parser's <b>grammar-shaped</b> axes only. The projection
+ * itself lives with the policy carrier ({@code Tnfa.compile} maps its
  * {@code Semantics} onto this type), keeping the parser package below
  * {@code tnfa} in the core layer DAG while the parser's behavior stays
  * selectable per compile.
  *
  * <p>Immutable value class. The axes:
  * <ul>
- * <li>the {@code DOT} / line-predicate terminator set ({@link
- *     Terminators} — the full JDK set with the {@code \r\n} pair, or
- *     {@code \n}-only, or a custom set);</li>
  * <li>the fold universe (the UNICODE_CASE policy — full Unicode simple
  *     folding, or ASCII-only, the java.util.regex bare-CI reading);</li>
  * <li>the ASCII {@code \s} table ({@link ClassTable} — with or without
  *     U+000B, or a custom table);</li>
- * <li>the zero-width-iteration span protocol (the family-6 policy);</li>
  * <li>the shorthand fold (the SHORTHAND_FOLD policy — fold the
  *     {@code \w}/{@code \W} class tables under CI, or never);</li>
  * <li>the escape readings ({@link EscapeAlphabet} — the full
@@ -32,25 +27,29 @@ import io.github.jemmix.tdfa.core.dialect.Terminators;
  *     case are the two stock spellings; a custom alphabet is the
  *     custom-surface seam).</li>
  * </ul>
- * There is no lane sugar here: a bundle is named where it is selected
- * ({@link #re2Lineage()} is the one stock preset — the pre-flip
- * default the legacy parse entries answer in), and every axis is set
+ * The meaning-shaped axes the parser once mirrored — the
+ * {@code DOT}/line-predicate terminator set (the dot is a symbolic
+ * {@code Ast.Dot} node now) and the zero-width-iteration span protocol
+ * (the family-6 marks are placed downstream) — are applied by the
+ * meaning-resolution pass ({@code core.semantic.Resolve}) from the
+ * compile's {@code Semantics} directly; see
+ * {@code docs/engine-compat-surface.md}.
+ *
+ * <p>There is no lane sugar here: a bundle is named where it is selected
+ * ({@link #re2Lineage()} is the one stock preset — the pre-flip default
+ * the legacy parse entries answer in), and every axis is set
  * individually.
  */
 public final class ParseOptions {
 
-    /** The RE2-lineage preset: every axis at its RE2-side value (the
-     *  pre-flip default the legacy parse entries answer in). */
-    private static final ParseOptions RE2_LINEAGE = new ParseOptions(Terminators.NL_ONLY, true, FlagBindings.RE2, true,
-        ClassTable.SPACE_RE2, true, EscapeAlphabet.RE2_MINIMAL);
-
-    private final Terminators terminators;
+    /** The RE2-lineage preset: every grammar axis at its RE2-side value
+     *  (the pre-flip default the legacy parse entries answer in). */
+    private static final ParseOptions RE2_LINEAGE =
+        new ParseOptions(true, FlagBindings.RE2, ClassTable.SPACE_RE2, true, EscapeAlphabet.RE2_MINIMAL);
 
     private final boolean unicodeCase;
 
     private final FlagBindings flagBindings;
-
-    private final boolean emptyIterationSpans;
 
     private final ClassTable spaceTable;
 
@@ -58,12 +57,10 @@ public final class ParseOptions {
 
     private final EscapeAlphabet escapes;
 
-    private ParseOptions(Terminators terminators, boolean unicodeCase, FlagBindings flagBindings,
-        boolean emptyIterationSpans, ClassTable spaceTable, boolean shorthandFold, EscapeAlphabet escapes) {
-        this.terminators = terminators;
+    private ParseOptions(boolean unicodeCase, FlagBindings flagBindings, ClassTable spaceTable, boolean shorthandFold,
+        EscapeAlphabet escapes) {
         this.unicodeCase = unicodeCase;
         this.flagBindings = flagBindings;
-        this.emptyIterationSpans = emptyIterationSpans;
         this.spaceTable = spaceTable;
         this.shorthandFold = shorthandFold;
         this.escapes = escapes;
@@ -75,33 +72,19 @@ public final class ParseOptions {
      * Tnfa.compile} applies a {@code Semantics} onto.
      */
     public static ParseOptions of() {
-        return new ParseOptions(Terminators.JDK, false, FlagBindings.JDK, false, ClassTable.SPACE_JDK, false,
-            EscapeAlphabet.JDK);
+        return new ParseOptions(false, FlagBindings.JDK, ClassTable.SPACE_JDK, false, EscapeAlphabet.JDK);
     }
 
     /**
-     * The RE2-lineage preset — {@code \n}-only terminators, the full
-     * Unicode bare fold, the RE2 letter alphabet with ungreedy
-     * {@code (?U)}, maximal-iteration spans, the RE2 {@code \s} table
-     * without U+000B, shorthand folding and the minimal escape
+     * The RE2-lineage preset — the full Unicode bare fold, the RE2
+     * letter alphabet with ungreedy {@code (?U)}, the RE2 {@code \s}
+     * table without U+000B, shorthand folding and the minimal escape
      * alphabet. The pre-flip default the legacy parse entries answer
      * in; named here because it is selected, not because the parser
      * branches on it.
      */
     public static ParseOptions re2Lineage() {
         return RE2_LINEAGE;
-    }
-
-    /**
-     * Select the {@code DOT} / line-predicate terminator set. The
-     * stock values are {@link Terminators#NL_ONLY} ({@code \n} only —
-     * JDK {@code UNIX_LINES} and the RE2 lineage agree) and {@link
-     * Terminators#JDK} (the full java.util.regex set: {@code \n},
-     * {@code \r}, {@code \r\n}, U+0085, U+2028, U+2029).
-     */
-    public ParseOptions terminators(Terminators terminators) {
-        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable, shorthandFold,
-            escapes);
     }
 
     /**
@@ -115,8 +98,7 @@ public final class ParseOptions {
      * per scope, since v2).
      */
     public ParseOptions unicodeCase(boolean unicodeCase) {
-        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable, shorthandFold,
-            escapes);
+        return new ParseOptions(unicodeCase, flagBindings, spaceTable, shorthandFold, escapes);
     }
 
     /**
@@ -128,24 +110,7 @@ public final class ParseOptions {
      * letter it does not bind rejects at the parse.
      */
     public ParseOptions flagBindings(FlagBindings flagBindings) {
-        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable, shorthandFold,
-            escapes);
-    }
-
-    /**
-     * Select the zero-width-iteration span protocol: {@code true} = the
-     * maximal-iteration reading (a sole zero-width iteration reports
-     * {@code 0..0} — the RE2 lineage); {@code false} =
-     * java.util.regex's (family 6): a greedy min-0 loop ({@code cmax
-     * >= 2} or unbounded — {@code {0,1}}/{@code ?} keep the span,
-     * JDK-verified) directly on a capture whose body is all-zero-width
-     * and deterministic dissolves the group — it reports NIL at every
-     * accept (the parser marks the pair; the determinizer's φ
-     * overrides the finals).
-     */
-    public ParseOptions emptyIterationSpans(boolean emptyIterationSpans) {
-        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable, shorthandFold,
-            escapes);
+        return new ParseOptions(unicodeCase, flagBindings, spaceTable, shorthandFold, escapes);
     }
 
     /**
@@ -155,8 +120,7 @@ public final class ParseOptions {
      * ({@code [\t\n\f\r ]} — U+000B is NOT whitespace).
      */
     public ParseOptions spaceTable(ClassTable spaceTable) {
-        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable, shorthandFold,
-            escapes);
+        return new ParseOptions(unicodeCase, flagBindings, spaceTable, shorthandFold, escapes);
     }
 
     /**
@@ -168,8 +132,7 @@ public final class ParseOptions {
      * scoped {@code (?U:...)} shapes included).
      */
     public ParseOptions shorthandFold(boolean shorthandFold) {
-        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable, shorthandFold,
-            escapes);
+        return new ParseOptions(unicodeCase, flagBindings, spaceTable, shorthandFold, escapes);
     }
 
     /**
@@ -181,13 +144,7 @@ public final class ParseOptions {
      * parse and reads {@code \v} as the single unit U+000B.
      */
     public ParseOptions escapes(EscapeAlphabet escapes) {
-        return new ParseOptions(terminators, unicodeCase, flagBindings, emptyIterationSpans, spaceTable, shorthandFold,
-            escapes);
-    }
-
-    /** The terminator set (see {@link #terminators(Terminators)}). */
-    public Terminators terminators() {
-        return terminators;
+        return new ParseOptions(unicodeCase, flagBindings, spaceTable, shorthandFold, escapes);
     }
 
     /** Does CI fold the full Unicode universe (vs ASCII only)? */
@@ -198,11 +155,6 @@ public final class ParseOptions {
     /** The inline-flag letter bindings (which letter activates which behavior). */
     public FlagBindings flagBindings() {
         return flagBindings;
-    }
-
-    /** Do zero-width loop iterations report their spans (vs sub-family-A dissolution)? */
-    public boolean isEmptyIterationSpans() {
-        return emptyIterationSpans;
     }
 
     /** The ASCII {@code \s} table (see {@link #spaceTable(ClassTable)}). */
