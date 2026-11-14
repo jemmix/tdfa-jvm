@@ -131,12 +131,17 @@ After 2b the parser's knobs are grammar-shaped only (the fold-universe
 seed, the escape alphabet, the flag bindings); the `Grammar` value —
 escape readings as data, {@code REJECT(message)} included — is the
 remaining syntax-facing step.
-- **Rung 3 — the assertion family** (queued): `StartAnchor`/`EndAnchor`/
+- **Rung 3 — the assertion family** (landed): `StartAnchor`/`EndAnchor`/
   `WordBoundary`/`NoWordBoundary` unify into
-  `Assertion{kind, negative}` over a closed kind vocabulary, with kinds
-  landing alongside their support (`\G` as a matcher-state predicate,
-  grapheme/segment boundaries on the provider's break-property data).
-  Anchors migrate in under artifact-identity gates.
+  `Assertion{kind}` over a closed named vocabulary (`TEXT_START`,
+  `LINE_START`, `TEXT_END`, `LINE_END`, `FINAL_END`, `DOLLAR`,
+  `WORD_BOUNDARY`, `NON_WORD_BOUNDARY`). The kinds the parse names are
+  resolved meanings; the one policy-pending kind — a bare `$` outside
+  multiline — is rewritten by the pass against END_OF_TEXT_ONLY, so the
+  TNFA builder consults no policy: kinds map one-to-one onto its anchor
+  bits (and an unresolved `DOLLAR` fails loudly). Future kinds
+  (`\G` as a matcher-state predicate, grapheme/segment boundaries on
+  provider break-property data) land here with their support.
 - **Rung 4 — the facade kit** (queued): the reject catalog (a documented
   unsupported-families list pinned by a test to the grammar's reject
   readings — the capability manifest), the facade-author guide (the

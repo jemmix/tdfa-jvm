@@ -245,6 +245,41 @@ class MeaningResolutionTest {
         }
     }
 
+    // ---- the assertion family: kinds are resolved meanings ----
+
+    @Test
+    void dollarResolvesAgainstTheEndOfTextOnlyPolicy() {
+        // The jur reading: plain $ is \Z — end of input, or immediately
+        // before the final terminator run.
+        assertThat(finds(tdfa("a$", Semantics.of()), "a\n")).as("jur $ matches before the final terminator").isTrue();
+        assertThat(finds(tdfa("a$", Semantics.of()), "a")).isTrue();
+        assertThat(finds(tdfa("a$", Semantics.of()), "a\n\n")).as("jur $ is BEFORE THE FINAL terminator run only")
+            .isFalse();
+        // The RE2-lineage reading: plain $ is \z — end of input only.
+        assertThat(finds(tdfa("a$", RE2), "a\n")).as("re2 $ is end-of-text only").isFalse();
+        assertThat(finds(tdfa("a$", RE2), "a")).isTrue();
+        // The explicit spellings are policy-immune.
+        assertThat(finds(tdfa("a\\z", RE2), "a")).isTrue();
+        assertThat(finds(tdfa("a\\z", Semantics.of()), "a\n")).as("\\z never matches before a terminator").isFalse();
+        assertThat(finds(tdfa("a\\Z", Semantics.of()), "a\n")).as("\\Z is the before-final reading").isTrue();
+        // Multiline $ is a LINE-end predicate in both lanes.
+        assertThat(finds(tdfa("(?m)a$", RE2), "a\nb")).isTrue();
+        assertThat(finds(tdfa("(?m)a$", Semantics.of()), "a\nb")).isTrue();
+    }
+
+    @Test
+    void caretsAreAbsoluteOrLinePerScopedMultiline() {
+        // \A is text-start under (?m) too; a bare ^ outside multiline is
+        // text-start; under (?m) it is line-start.
+        assertThat(finds(tdfa("(?m)\\Ab", RE2), "a\nb")).as("\\A ignores (?m)").isFalse();
+        assertThat(finds(tdfa("^b", Semantics.of()), "a\nb")).as("bare ^ is text-start without (?m)").isFalse();
+        assertThat(finds(tdfa("(?m)^b", Semantics.of()), "a\nb")).isTrue();
+        assertThat(finds(tdfa("(?m:^b)?c|(?m:^b)", RE2), "a\nb")).isTrue();
+        // The word boundaries ride the family unchanged.
+        assertThat(finds(tdfa("\\bword\\b", Semantics.of()), "a word")).isTrue();
+        assertThat(finds(tdfa("\\Bword", Semantics.of()), "a word")).isFalse();
+    }
+
     @Test
     void irEntryRejectsInconsistentProducerMetadata() {
         // Tag outside the declared counters.

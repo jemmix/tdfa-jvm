@@ -243,8 +243,7 @@ public final class FixedTags {
                 rl = levelDist;
                 return;
             }
-            if (e instanceof Ast.Empty || e instanceof Ast.StartAnchor || e instanceof Ast.EndAnchor
-                || e instanceof Ast.WordBoundary || e instanceof Ast.NoWordBoundary) {
+            if (e instanceof Ast.Empty || e instanceof Ast.Assertion) {
                 rb = baseTag;
                 rd = dist;
                 rl = levelDist;

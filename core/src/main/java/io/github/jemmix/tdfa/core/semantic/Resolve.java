@@ -115,23 +115,16 @@ public final class Resolve {
         0x3000, 0x3000 // Ideographic Space
     };
 
-    private final Terminators terminators;
-    private final ClassTable spaceTable;
-    private final boolean shorthandFold;
-    private final boolean emptyIterationSpans;
+    private final Policy policy;
     private final UnicodeDataProvider provider;
     private final WorkMeter meter;
     // this pass's shorthand caches (the parser keeps its own for the \b
-    // runtime fact and the in-class twins until the class rung lands)
+    // runtime fact)
     private int[] cachedUnicodeWord;
     private int[] cachedUnicodeDigit;
 
-    private Resolve(Terminators terminators, ClassTable spaceTable, boolean shorthandFold, boolean emptyIterationSpans,
-        UnicodeDataProvider provider, WorkMeter meter) {
-        this.terminators = terminators;
-        this.spaceTable = spaceTable;
-        this.shorthandFold = shorthandFold;
-        this.emptyIterationSpans = emptyIterationSpans;
+    private Resolve(Policy policy, UnicodeDataProvider provider, WorkMeter meter) {
+        this.policy = policy;
         this.provider = provider;
         this.meter = meter;
     }
@@ -143,28 +136,23 @@ public final class Resolve {
      * @param root the parse output (may contain symbolic {@link Ast.Dot},
      *            {@link Ast.FoldLiteral} and {@link Ast.Shorthand} leaves;
      *            every other node passes through)
-     * @param terminators the compile's terminator set (the dot complement)
-     * @param spaceTable the compile's ASCII {@code \s} table
-     * @param shorthandFold the SHORTHAND_FOLD policy: fold the word
-     *            shorthands under an active {@code (?i)}
-     * @param emptyIterationSpans the EMPTY_ITERATION_SPANS policy: set =
-     *            the maximal-iteration protocol — no family-6 marks, no
-     *            zero-width-exit splits; unset = java.util.regex's reading
+     * @param root the parse output (may contain symbolic {@link Ast.Dot},
+     *            {@link Ast.FoldLiteral}, {@link Ast.Shorthand} and
+     *            {@link Ast.ClassExpr} leaves, and policy-pending
+     *            {@link Ast.AssertionKind#DOLLAR} assertions; every other
+     *            node passes through)
+     * @param policy the compile's meaning policy (see {@link Policy})
      * @param provider the compile's Unicode source (the {@code \w}/{@code \d}
      *            tables, the fold universe when it supplies one)
      * @param meter the compile's front-end work meter (the orbit scans tick
      *            it, exactly as the parse-time expansion they replaced)
      */
-    public static Ast apply(Ast root, Terminators terminators, ClassTable spaceTable, boolean shorthandFold,
-        boolean emptyIterationSpans, UnicodeDataProvider provider, WorkMeter meter) {
+    public static Ast apply(Ast root, Policy policy, UnicodeDataProvider provider, WorkMeter meter) {
         if (root == null) {
             throw new NullPointerException("root");
         }
-        if (terminators == null) {
-            throw new NullPointerException("terminators");
-        }
-        if (spaceTable == null) {
-            throw new NullPointerException("spaceTable");
+        if (policy == null) {
+            throw new NullPointerException("policy");
         }
         if (meter == null) {
             throw new NullPointerException("meter");
@@ -173,7 +161,7 @@ public final class Resolve {
         // always had: null serves the built-in fold table, and a pattern
         // whose expansion needs the property tables fails on first consult
         // (the legacy entries' contract for a null provider).
-        return new Resolve(terminators, spaceTable, shorthandFold, emptyIterationSpans, provider, meter).run(root);
+        return new Resolve(policy, provider, meter).run(root);
     }
 
     private Ast run(Ast root) {
@@ -223,10 +211,11 @@ public final class Resolve {
         if (dotall) {
             return DOTALL;
         }
-        if (terminators.equals(Terminators.NL_ONLY)) {
+        if (policy.terminators.equals(Terminators.NL_ONLY)) {
             return DOT;
         }
-        return terminators.equals(Terminators.JDK) ? DOT_JUR : new CharClass(terminators.dotRanges(), false);
+        return policy.terminators.equals(Terminators.JDK) ? DOT_JUR
+            : new CharClass(policy.terminators.dotRanges(), false);
     }
 
     /**
@@ -250,6 +239,18 @@ public final class Resolve {
         }
         if (e instanceof Ast.ClassExpr) {
             return classCharClass((Ast.ClassExpr) e);
+        }
+        if (e instanceof Ast.Assertion) {
+            Ast.Assertion a = (Ast.Assertion) e;
+            if (a.kind == Ast.AssertionKind.DOLLAR) {
+                // The one policy-pending kind: a bare $ outside multiline.
+                // The RE2-lineage reading (END_OF_TEXT_ONLY) is \z; the
+                // java.util.regex reading is \Z — end of input OR
+                // immediately before the final terminator run.
+                return new Ast.Assertion(
+                    policy.endOfTextOnly ? Ast.AssertionKind.TEXT_END : Ast.AssertionKind.FINAL_END);
+            }
+            return e;
         }
         return e;
     }
@@ -314,7 +315,7 @@ public final class Resolve {
      * ClassTable}, the Unicode twins from the provider.
      */
     private int[] inClassShorthandRanges(Ast.ClassExpr.Shorthand s) {
-        boolean ci = s.ci && shorthandFold;
+        boolean ci = s.ci && policy.shorthandFold;
         if (!s.unicode) {
             switch (s.kind) {
                 case 'd' :
@@ -327,7 +328,7 @@ public final class Resolve {
                     }
                     return ci ? RangeMath.complement(foldExpandRanges(R_WORD, s.uni)) : RangeMath.complement(R_WORD);
                 case 's' :
-                    return s.negated ? RangeMath.complement(spaceTable.ranges()) : spaceTable.ranges();
+                    return s.negated ? RangeMath.complement(policy.spaceTable.ranges()) : policy.spaceTable.ranges();
                 default :
                     throw new IllegalStateException("not a shorthand: [\\" + s.kind + "]");
             }
@@ -360,7 +361,7 @@ public final class Resolve {
         List<int[]> ivs = new ArrayList<>(itemRanges.size() * 2);
         for (int i = 0; i < itemRanges.size(); i++) {
             int[] r = itemRanges.get(i);
-            if (shorthandItem[i] && !shorthandFold) {
+            if (shorthandItem[i] && !policy.shorthandFold) {
                 for (int k = 0; k < r.length; k += 2) {
                     ivs.add(new int[]{r[k], r[k + 1]});
                 }
@@ -422,7 +423,7 @@ public final class Resolve {
      * {@code \W} folds the POSITIVE set first, then complements.
      */
     private Ast shorthandClass(Ast.Shorthand s) {
-        if (shorthandFold && s.ci && s.kind == 'w') {
+        if (policy.shorthandFold && s.ci && s.kind == 'w') {
             int[] positive = s.unicode ? foldExpandRanges(unicodeWordRanges(), s.uni) : foldExpandRanges(R_WORD, s.uni);
             return new CharClass(s.negated ? RangeMath.complement(positive) : positive, false);
         }
@@ -433,7 +434,7 @@ public final class Resolve {
                 case 'w' :
                     return s.negated ? NOT_WORD : WORD;
                 case 's' :
-                    return new CharClass(spaceTable.ranges(), s.negated);
+                    return new CharClass(policy.spaceTable.ranges(), s.negated);
                 default :
                     throw new IllegalStateException("not a shorthand: \\" + s.kind);
             }
@@ -557,7 +558,7 @@ public final class Resolve {
         // at the closure dedup). {0,1} builds no iteration and stays
         // unmarked.
         boolean loopCopies = r.max == Integer.MAX_VALUE || r.max >= 2;
-        r.zeroWidthExit = loopCopies && !emptyIterationSpans && nullableBody(r.body) && !dissolvableBody(r.body);
+        r.zeroWidthExit = loopCopies && !policy.emptyIterationSpans && nullableBody(r.body) && !dissolvableBody(r.body);
         if (!r.quantifiedCapture) {
             return;
         }
@@ -598,7 +599,7 @@ public final class Resolve {
      * NFA/TDFA artifacts — stay bit-identical.
      */
     private void markFamily6Groups(Ast.Repeat r) {
-        if (emptyIterationSpans || !r.greedy || !(r.body instanceof Ast.Concat)) {
+        if (policy.emptyIterationSpans || !r.greedy || !(r.body instanceof Ast.Concat)) {
             return;
         }
         List<Ast> ch = ((Ast.Concat) r.body).children;
@@ -661,8 +662,7 @@ public final class Resolve {
             Ast a = work.pop();
             if (a instanceof Ast.Concat) {
                 work.addAll(((Ast.Concat) a).children);
-            } else if (!(a instanceof Ast.Tag || a instanceof Ast.Empty || a instanceof Ast.StartAnchor
-                || a instanceof Ast.EndAnchor || a instanceof Ast.WordBoundary || a instanceof Ast.NoWordBoundary)) {
+            } else if (!(a instanceof Ast.Tag || a instanceof Ast.Empty || a instanceof Ast.Assertion)) {
                 return false; // Symbol/CharClass consume; Alt/Repeat choose
             }
         }
@@ -698,8 +698,7 @@ public final class Resolve {
                     } else {
                         f.children = Collections.singletonList(((Ast.Repeat) n).body);
                     }
-                } else if (n instanceof Ast.Tag || n instanceof Ast.Empty || n instanceof Ast.StartAnchor
-                    || n instanceof Ast.EndAnchor || n instanceof Ast.WordBoundary || n instanceof Ast.NoWordBoundary) {
+                } else if (n instanceof Ast.Tag || n instanceof Ast.Empty || n instanceof Ast.Assertion) {
                     f.finish(true); // zero-width
                 } else {
                     f.finish(false); // Symbol/CharClass consume
@@ -749,4 +748,42 @@ public final class Resolve {
             }
         }
     }
+
+    /**
+     * A compile's meaning policy — the axes the meaning-resolution pass
+     * applies, carried as one value the policy carrier ({@code Tnfa.compile})
+     * constructs from its {@code Semantics}. The pass sits below
+     * {@code tnfa} in the layer DAG, so it speaks the leaf vocabulary
+     * ({@link Terminators}, {@link ClassTable}) and plain policy bits, not
+     * the carrier type.
+     *
+     * <p>Immutable value class.
+     */
+    public static final class Policy {
+        /** The {@code .}/{@code ^}/{@code $} line-terminator set. */
+        public final Terminators terminators;
+        /** The END_OF_TEXT_ONLY policy: {@code true} = a bare {@code $}
+         *  outside multiline reads as {@code \z}; unset = java.util.regex's
+         *  before-final-terminator reading. */
+        public final boolean endOfTextOnly;
+        /** The ASCII {@code \s} table. */
+        public final ClassTable spaceTable;
+        /** The SHORTHAND_FOLD policy: fold the word shorthands under an
+         *  active {@code (?i)}. */
+        public final boolean shorthandFold;
+        /** The EMPTY_ITERATION_SPANS policy: set = the maximal-iteration
+         *  protocol — no family-6 marks, no zero-width-exit splits. */
+        public final boolean emptyIterationSpans;
+
+        /** One policy value; every axis named (there is no lane sugar). */
+        public Policy(Terminators terminators, boolean endOfTextOnly, ClassTable spaceTable, boolean shorthandFold,
+            boolean emptyIterationSpans) {
+            this.terminators = terminators;
+            this.endOfTextOnly = endOfTextOnly;
+            this.spaceTable = spaceTable;
+            this.shorthandFold = shorthandFold;
+            this.emptyIterationSpans = emptyIterationSpans;
+        }
+    }
+
 }
