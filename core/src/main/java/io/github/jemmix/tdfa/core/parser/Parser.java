@@ -1203,6 +1203,13 @@ public final class Parser {
             pos++;
             // Octal escape \NNN (1-3 octal digits, value capped at 0xFF).
             // \1-\9 single-digit rejected (reserved for backreference syntax).
+            // The JUR class reading (live-JDK probed): java rejects every
+            // digit escape in a class except the \0-led octal forms —
+            // [\1], [\10], [\8] and bare [\0] are all illegal there; the
+            // RE2 lineage keeps re2j's octal readings and bare-[\0]-is-NUL.
+            if (e >= '1' && e <= '9' && options.escapes() == EscapeAlphabet.JDK) {
+                throw fail(this, "invalid escape sequence: \\" + e);
+            }
             if (e >= '0' && e <= '7') {
                 int val = e - '0';
                 if (pos < src.length() && src.charAt(pos) >= '0' && src.charAt(pos) <= '7') {
@@ -1214,6 +1221,10 @@ public final class Parser {
                     }
                 } else if (e != '0') {
                     throw fail(this, "invalid escape sequence: \\" + e);
+                } else if (options.escapes() == EscapeAlphabet.JDK) {
+                    // bare [\0]: java's "illegal octal escape" (the octal
+                    // spelling needs a digit); re2j keeps its NUL reading.
+                    throw fail(this, "illegal octal escape: \\0");
                 }
                 return val;
             }
@@ -1313,6 +1324,18 @@ public final class Parser {
         // digit AFTER the leading \0 ("Illegal octal escape sequence" on a
         // bare \0 or \08, live-JDK verified); the RE2 lineage keeps re2j's
         // bare-\0-is-nul reading.
+        // The JUR digit precedence (live-JDK probed): java reads EVERY
+        // \1-\9-led escape as a BACKREFERENCE first — greedy digits while
+        // the value stays <= the group count, a dangling first digit is
+        // still the backref (\1(a), (a)\2, \8, (a)\10 all compile there;
+        // (a)\10 MATCHES as backref-1 + literal '0'), never octal — octal
+        // needs the leading \0. Backreferences are unsupported here (no
+        // backtracking engine): reject loudly at exactly that precedence.
+        // The RE2 lineage keeps re2j's readings (single digits reject,
+        // multi-digit reads octal — the BackrefParityTest pins).
+        if (c >= '1' && c <= '9' && options.escapes() == EscapeAlphabet.JDK) {
+            throw fail(this, "backreferences are not supported: \\" + c);
+        }
         if (c >= '0' && c <= '7') {
             int val = c - '0';
             if (pos < src.length() && src.charAt(pos) >= '0' && src.charAt(pos) <= '7') {

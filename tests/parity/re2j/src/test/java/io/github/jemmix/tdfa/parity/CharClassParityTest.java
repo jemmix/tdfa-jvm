@@ -819,7 +819,12 @@ class CharClassParityTest {
         JurOracle.assertSameFind("[|]", "|", factory);
         JurOracle.assertSameFind("[(]", "(", factory);
         JurOracle.assertSameFind("\\p{So}", new String(Character.toChars(0x1F600)), factory); // supplementary
-        JurOracle.assertSameFind("\\777", "\u00FF", factory); // both read 0o777 past the wrap cell
+        // \777: the JDK's digit precedence reads it as backref-7 + "77"
+        // (never matching with no groups — the old both-false pin misread
+        // that as a shared octal reading); the jur lane now applies that
+        // precedence and rejects loudly, the octal reading stays on the
+        // :re2j facade (the re2j-lane cell above).
+        JurOracle.assertDivergentReject("\\777", factory);
         JurOracle.assertSameCompileSuccess("\\x{D800}", factory); // lone surrogate in pattern: both OK
         JurOracle.assertSameFind("\\x{D800}", "\uD800", factory);
         JurOracle.assertSameCompileReject("[\\b]", factory); // backspace-in-class: both reject

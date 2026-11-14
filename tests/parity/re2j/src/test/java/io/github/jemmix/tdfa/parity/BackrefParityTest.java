@@ -18,11 +18,15 @@ import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameFind;
  *
  * <p>Jur twins: the JDK oracle ACCEPTS backreferences — the rejections pin
  * as the documented accept/reject divergence (DFA discipline,
- * {@link JurOracle#assertDivergentReject}), while the octal fallback
- * translates except where the JDK's parser prefers the backref reading
- * ({@code (a)\10} reads as backref-1 + literal {@code 0} there); bare
- * {@code \0} rejects on the jur lane exactly like the JDK 26+ parser
- * (the ESCAPES_RE2 axis; re2j's NUL reading stays on the :re2j facade).
+ * {@link JurOracle#assertDivergentReject}), and the jur lane now applies
+ * java's own digit-escape PRECEDENCE (live-JDK probed): every
+ * {@code \1}-{\@code \9}-led escape is the backreference reading there
+ * ({@code (a)\10} = backref-1 + literal {@code 0}; even dangling
+ * {@code (a)\2}, {@code \8} compile), so all of them reject loudly as
+ * unsupported — the octal fallback for the multi-digit spellings stays on
+ * the :re2j facade only, and in a class the JDK rejects every digit
+ * escape except the {@code \0}-led octal forms (bare {@code [\0]} is an
+ * octal error there — mirrored).
  */
 class BackrefParityTest {
 
@@ -125,13 +129,34 @@ class BackrefParityTest {
         JurOracle.assertDivergentReject("(a)\\1?", factory);
         JurOracle.assertDivergentReject("(?<n>a)\\k<n>", factory); // \k<n>: JDK rejects too — but as a
         JurOracle.assertSameCompileReject("\\k<n>", factory); // shared malformed spelling
-        // ((a)\10 / (a)(b)\12 stay RE2-lane-pinned: the JDK parser prefers
-        // the backref reading there (backref-1 + literal digit), not octal)
-        JurOracle.assertDivergentReject("\\8", factory); // JDK: literal-ish escape; us: reject
+        // ((a)\10 / (a)(b)\12: the JDK reads them as backrefs (backref-1 +
+        // literal digit) — the jur lane now applies that precedence and
+        // rejects loudly; the octal readings stay on the :re2j facade)
+        JurOracle.assertDivergentReject("(a)\\10", factory); // JDK: backref-1 + '0'
+        JurOracle.assertDivergentReject("(a)(b)\\12", factory); // JDK: backref-1 + '2'
+        JurOracle.assertDivergentReject("\\101", factory); // JDK: backref-1 + "01"
+        JurOracle.assertDivergentReject("\\8", factory); // JDK: backref-8; us: reject
         JurOracle.assertDivergentReject("\\9", factory);
         // bare \0: the JDK (26+) rejects it as an illegal octal escape —
         // and so does the jur lane since the ESCAPES_RE2 axis landed
         // (re2j's NUL reading stays on the :re2j facade)
         JurOracle.assertSameCompileReject("\\0", factory);
+    }
+
+    /** Jur class twins (live-JDK probed): java rejects every digit escape
+     *  in a class except the {@code \0}-led octal forms — {@code [\1]},
+     *  {@code [\10]}, {@code [\8]} and bare {@code [\0]} are all illegal
+     *  there. The re2j facade keeps its octal/NUL readings (pinned above
+     *  via the re2j oracle). */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurClassDigitEscapesMirrorTheJdk(RegexEngineFactory factory) {
+        JurOracle.assertSameCompileReject("[\\1]", factory);
+        JurOracle.assertSameCompileReject("[\\10]", factory);
+        JurOracle.assertSameCompileReject("[\\77]", factory);
+        JurOracle.assertSameCompileReject("[\\8]", factory);
+        JurOracle.assertSameCompileReject("[\\0]", factory); // java: illegal octal escape
+        JurOracle.assertSameFind("[\\05]", "\u0005", factory); // \0-led octal agrees
+        JurOracle.assertSameFind("[\\012]", "\n", factory);
     }
 }
