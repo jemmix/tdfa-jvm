@@ -169,9 +169,14 @@ and backreferences (backtracking-dependent, always rejected), `\G`
 entries — a feature of its own), `\X`/`\b{g}` (graphemes — rejected
 loudly, see below), `CANON_EQ` (normalization-aware compilation), scoped
 inline `(?d)` (the terminator-set axis is compile-global; the
-UNIX_LINES FLAG is the JDK-exact spelling), and java's `\1`-`\9`
-backreference readings of digit escapes (the octal fallback stays
-lineage-shared — the BackrefParityTest twins pin the divergence class).
+UNIX_LINES FLAG is the JDK-exact spelling), and backreferences
+(always rejected, never silently degraded — the jur lane now applies
+java's own digit-escape precedence: every `\1`-`\9`-led escape is the
+backreference reading on the JDK (live-JDK probed — even dangling
+`(a)\2` and `\8` compile, `(a)\10` matches as backref-1 + literal `0`;
+in a class only `\0`-led octal is legal, bare `[\0]` an octal error),
+so the lane rejects those spellings loudly instead of reading octal;
+re2j's octal/NUL readings stay on the :re2j facade — the BackrefParityTest twins pin both sides).
 
 **Graphemes (JDK-8394894) — rejected loudly, never silently degraded.**
 `\X` rejects at the parse (re2j's alphabet — both facades, oracle-parity

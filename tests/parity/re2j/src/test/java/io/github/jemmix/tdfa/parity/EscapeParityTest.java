@@ -273,9 +273,13 @@ class EscapeParityTest {
         JurOracle.assertSameFind("\\x41", "A", factory);
         JurOracle.assertSameFind("\\x{41}", "A", factory);
         JurOracle.assertSameFind("\\x{3B1}", "\u03B1", factory);
-        // \12 / \101 stay RE2-lane-pinned: the JDK reads digit escapes
-        // without a leading zero as BACKREFS (octal needs \0 there), so
-        // they never match there; the leading-zero spelling agrees:
+        // \12 / \101: the JDK reads digit escapes without a leading zero
+        // as BACKREFS (octal needs \0 there) — the jur lane applies that
+        // precedence and rejects them loudly (backrefs unsupported); the
+        // octal readings stay on the :re2j facade, the leading-zero
+        // spelling agrees everywhere:
+        JurOracle.assertDivergentReject("\\12", factory);
+        JurOracle.assertDivergentReject("\\101", factory);
         JurOracle.assertSameFind("\\.", ".", factory);
         JurOracle.assertSameFind("\\*", "*", factory);
         JurOracle.assertSameFind("\\+", "+", factory);
