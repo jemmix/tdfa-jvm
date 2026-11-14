@@ -1464,7 +1464,7 @@ public final class Parser {
      * pinned by the RE2J fuzz lane.
      */
     private void rejectBoundaryClause() {
-        if (options.isEscapesRe2() || peek() != '{') {
+        if (options.escapes() == EscapeAlphabet.RE2_MINIMAL || peek() != '{') {
             return;
         }
         int save = pos;
