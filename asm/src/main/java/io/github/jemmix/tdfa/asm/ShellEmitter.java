@@ -145,6 +145,16 @@ public final class ShellEmitter {
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "find", "()Z", false);
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitLabel(noRegion);
+        // Retarget routing: usePattern rebound the machinery engines — a
+        // retargeted shell serves through them (same never-taken branch).
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, PATMAT, "retargeted", "Z");
+        Label fastFind = new Label();
+        mv.visitJumpInsn(Opcodes.IFEQ, fastFind);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "find", "()Z", false);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitLabel(fastFind);
         // locals: 1 = start, 2 = m
         Label elseStart = new Label(), startDone = new Label();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -229,6 +239,15 @@ public final class ShellEmitter {
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "matches", "()Z", false);
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitLabel(mNoRegion);
+        // Retarget routing (see find()).
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, PATMAT, "retargeted", "Z");
+        Label mFast = new Label();
+        mv.visitJumpInsn(Opcodes.IFEQ, mFast);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "matches", "()Z", false);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitLabel(mFast);
         // locals: 1 = m
         // RegexEngine w = p.wholeEngine(); m = w.matchWhole(input, this.scratch)
         mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -293,6 +312,15 @@ public final class ShellEmitter {
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "lookingAt", "()Z", false);
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitLabel(lNoRegion);
+        // Retarget routing (see find()).
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, PATMAT, "retargeted", "Z");
+        Label lFast = new Label();
+        mv.visitJumpInsn(Opcodes.IFEQ, lFast);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "lookingAt", "()Z", false);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitLabel(lFast);
         // m = p.eng.match(input, 0, this.scratch); if (m != null && m.start(0) == 0) accept else false
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, matOwner, "p", patDesc);

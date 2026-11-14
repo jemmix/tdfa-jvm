@@ -48,9 +48,11 @@ matchers extend it; the JUR facade is the one that claims the family):
   the engine's `namedGroups()` map; the tdfa `groupSpans` readout is
   additive); a failed find yields the JDK's empty shape, not a throw.
 - `usePattern(TDFAPattern)` — position and append state kept, group
-  info lost, JDK-exact — **machinery tier only**: the ASM tier's
-  generated matchers bake their engine's concrete type and refuse
-  loudly (`-Dtdfa.engine=VM` serves the full contract). Every facade
+  info lost, JDK-exact, **both tiers**: the ASM tier's generated
+  matchers bake their engine's concrete type, so a retarget rebinds the
+  machinery engines and the shell serves through the machinery
+  implementations from then on — one predictable never-taken branch on
+  the hot paths (the region's posture; the emitted bail). Every facade
   pattern IS a `TDFAPattern` at runtime (the minted shells extend it),
   which is the one spelling the shared machinery can offer.
 - `replaceAll`/`replaceFirst` (`Function<java.util.regex.MatchResult,

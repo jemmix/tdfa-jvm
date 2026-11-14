@@ -19,7 +19,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 - [ ] `CANON_EQ`: compile-time canonical-equivalence pattern rewrite
 - [ ] Scoped inline `(?d)`: per-scope terminator tables
 - [ ] Jur lane `\1`–`\9`: java backref precedence, loud reject
-- [ ] ASM `usePattern`: delegate to machinery matcher
 - [ ] Possessive quantifiers: prune directive, greedy-coincident tags
 - [ ] Atomic groups: decision record, VM prototype first
 
