@@ -170,6 +170,67 @@ public abstract class Ast {
         }
     }
 
+    /** The zero-width position assertions, unified — one node over a
+     *  closed named vocabulary ({@link AssertionKind}). The kinds the
+     *  parse can name are resolved MEANINGS already ({@code \A} is
+     *  text-start, {@code ^} under {@code (?m)} is line-start); the one
+     *  policy-dependent reading — a bare {@code $} outside multiline —
+     *  parses as {@link AssertionKind#DOLLAR} and the meaning-resolution
+     *  pass rewrites it against the compile's END_OF_TEXT_ONLY policy
+     *  ({@code \z} vs java.util.regex's before-final-terminator reading),
+     *  so the TNFA builder never consults a policy: kinds map one-to-one
+     *  onto its anchor bits. New assertion kinds land with their support
+     *  (the vocabulary tracks capability — see
+     *  docs/engine-compat-surface.md). */
+    public static final class Assertion extends Ast {
+        /** The named reading. */
+        public final AssertionKind kind;
+
+        public Assertion(AssertionKind kind) {
+            this.kind = kind;
+        }
+
+        @Override
+        public String toString() {
+            return kind.toString();
+        }
+    }
+
+    /** The closed assertion vocabulary. */
+    public enum AssertionKind {
+        /** {@code \A}, or a bare {@code ^} parsed outside multiline: position 0 only. */
+        TEXT_START("\\A"),
+        /** {@code ^} under {@code (?m)}: line begin, terminator-set-aware at match time. */
+        LINE_START("^m"),
+        /** {@code \z}: end of input only. */
+        TEXT_END("\\z"),
+        /** {@code $} under {@code (?m)}: line end, terminator-set-aware at match time. */
+        LINE_END("$m"),
+        /** java.util.regex's {@code \Z} (and the plain-{@code $} reading): end of
+         *  input, or immediately before the final terminator run. */
+        FINAL_END("\\Z"),
+        /** A bare {@code $} outside multiline — the POLICY-pending kind: the
+         *  meaning-resolution pass rewrites it to {@link #TEXT_END} or
+         *  {@link #FINAL_END} against END_OF_TEXT_ONLY; it never reaches the
+         *  TNFA builder. */
+        DOLLAR("$"),
+        /** {@code \b}: a word/non-word boundary. */
+        WORD_BOUNDARY("\\b"),
+        /** {@code \B}: the complement of {@link #WORD_BOUNDARY}. */
+        NON_WORD_BOUNDARY("\\B");
+
+        private final String symbol;
+
+        AssertionKind(String symbol) {
+            this.symbol = symbol;
+        }
+
+        @Override
+        public String toString() {
+            return symbol;
+        }
+    }
+
     /** The bare-dot atom as parsed: the engine's one syntax whose MEANING is
      *  a compile policy — everything under the scoped {@code (?s)} state the
      *  node carries, the compile's terminator-set complement otherwise.
@@ -366,79 +427,6 @@ public abstract class Ast {
             StringBuilder sb = new StringBuilder();
             render(this, sb);
             return sb.toString();
-        }
-    }
-
-    /**
-     * Start-of-text/line anchor: {@code ^} (line, multiline-sensitive) or {@code \A}
-     * (absolute, always position 0) when {@link #absolute} is set.
-     */
-    public static final class StartAnchor extends Ast {
-        public final boolean absolute;
-        /** Parse-time (?m) flavor: line-begin (^ under m) vs text-begin. */
-        public final boolean multiline;
-
-        public StartAnchor() {
-            this(false, false);
-        }
-
-        public StartAnchor(boolean absolute) {
-            this(absolute, false);
-        }
-
-        public StartAnchor(boolean absolute, boolean multiline) {
-            this.absolute = absolute;
-            this.multiline = multiline;
-        }
-
-        @Override
-        public String toString() {
-            return absolute ? "\\A" : "^";
-        }
-    }
-
-    /**
-     * End-of-text/line anchor: {@code $} (line, multiline-sensitive) or {@code \z}
-     * (absolute, always end-of-input) when {@link #absolute} is set.
-     */
-    public static final class EndAnchor extends Ast {
-        public final boolean absolute;
-        /** Parse-time (?m) flavor: line-end ($ under m) vs text-end. */
-        public final boolean multiline;
-
-        public EndAnchor() {
-            this(false, false);
-        }
-
-        public EndAnchor(boolean absolute) {
-            this(absolute, false);
-        }
-
-        public EndAnchor(boolean absolute, boolean multiline) {
-            this.absolute = absolute;
-            this.multiline = multiline;
-        }
-
-        @Override
-        public String toString() {
-            return absolute ? "\\z" : "$";
-        }
-    }
-
-    /** Word boundary assertion `\b`. Zero-width: true at any position where
-     *  {@code isWord(prev) != isWord(curr)}. */
-    public static final class WordBoundary extends Ast {
-        @Override
-        public String toString() {
-            return "\\b";
-        }
-    }
-
-    /** Non-word-boundary assertion `\B`. Zero-width: complement of {@link WordBoundary}. */
-    public static final class NoWordBoundary extends Ast {
-        @Override
-        public String toString() {
-            return "\\B";
         }
     }
 }

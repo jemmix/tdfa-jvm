@@ -324,8 +324,8 @@ public final class Parser {
      *  and the trailing anchor supplies context that prevents the Perl leftmost-first
      *  DFA from pruning a longer alternative's continuation. */
     private static Ast anchorBoth(Ast e) {
-        return new Ast.Concat(
-            Collections.unmodifiableList(Arrays.asList(new Ast.StartAnchor(true), e, new Ast.EndAnchor(true))));
+        return new Ast.Concat(Collections.unmodifiableList(Arrays.asList(
+            new Ast.Assertion(Ast.AssertionKind.TEXT_START), e, new Ast.Assertion(Ast.AssertionKind.TEXT_END))));
     }
 
     /** alt := concat ('|' concat)* — the outer parse loop. The stack holds
@@ -354,8 +354,11 @@ public final class Parser {
                     f.parts.add(part);
                     partArrived(literalKind, part instanceof Ast.Repeat);
                     if (stack.size() == 1 && rootBeginState == 0) {
-                        rootBeginState = part instanceof Ast.StartAnchor
-                            && (((Ast.StartAnchor) part).absolute || !((Ast.StartAnchor) part).multiline) ? 1 : 2;
+                        // The bare root begin anchor: \A, or a ^ parsed outside
+                        // multiline — exactly the TEXT_START reading.
+                        rootBeginState =
+                            part instanceof Ast.Assertion && ((Ast.Assertion) part).kind == Ast.AssertionKind.TEXT_START
+                                ? 1 : 2;
                     }
                 }
                 continue;
@@ -604,11 +607,11 @@ public final class Parser {
         }
         if (c == '^') {
             pos++;
-            return new Ast.StartAnchor(false, this.multiline);
+            return new Ast.Assertion(this.multiline ? Ast.AssertionKind.LINE_START : Ast.AssertionKind.TEXT_START);
         }
         if (c == '$') {
             pos++;
-            return new Ast.EndAnchor(false, this.multiline);
+            return new Ast.Assertion(this.multiline ? Ast.AssertionKind.LINE_END : Ast.AssertionKind.DOLLAR);
         }
         if (c == '\\') {
             pos++;
@@ -1403,7 +1406,7 @@ public final class Parser {
                 }
                 // java's Dollar(false): end of input, or before the final
                 // terminator — the plain-$ rule, immune to (?m) like \z.
-                return new Ast.EndAnchor(false, false);
+                return new Ast.Assertion(Ast.AssertionKind.FINAL_END);
             case '\\' :
                 literalKind = 1;
                 return new Ast.Symbol('\\');
@@ -1436,15 +1439,19 @@ public final class Parser {
                 throw new PatternSyntaxException("invalid escape sequence", "\\C");
             // Zero-width assertions — RE2/re2j implement these fully.
             case 'A' :
-                return new Ast.StartAnchor(true); // \A = absolute start of text (immune to (?m))
+                // \A = absolute start of text (immune to (?m))
+                return new Ast.Assertion(Ast.AssertionKind.TEXT_START);
             case 'z' :
-                return new Ast.EndAnchor(true); // \z = absolute end of text (immune to (?m))
+                // \z = absolute end of text (immune to (?m))
+                return new Ast.Assertion(Ast.AssertionKind.TEXT_END);
             case 'b' :
                 rejectBoundaryClause();
-                return new Ast.WordBoundary(); // \b = word boundary
+                // \b = word boundary
+                return new Ast.Assertion(Ast.AssertionKind.WORD_BOUNDARY);
             case 'B' :
                 rejectBoundaryClause();
-                return new Ast.NoWordBoundary(); // \B = not a word boundary
+                // \B = not a word boundary
+                return new Ast.Assertion(Ast.AssertionKind.NON_WORD_BOUNDARY);
             // Unicode property classes \p{X} \pX \P{X} \PX \p{^X}.
             // Outside a char class, build a CharClass directly (the table's
             // own negation flag carries the \P sign; no complement materialisation).

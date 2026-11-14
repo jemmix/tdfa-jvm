@@ -380,8 +380,10 @@ public final class Tnfa {
         // compile's policy. Runs BEFORE the fixed-tags pass: FixedTags
         // keeps a dissolved tag un-fixed (it reads the mark), and the marks
         // must be on the tree that pass annotates.
-        Ast ast = Resolve.apply(parsed.ast(), semantics.terminators(), semantics.spaceTable(),
-            semantics.isShorthandFold(), semantics.isEmptyIterationSpans(), provider, meter);
+        Ast ast = Resolve.apply(
+            parsed.ast(), new Resolve.Policy(semantics.terminators(), semantics.isEndOfTextOnly(),
+                semantics.spaceTable(), semantics.isShorthandFold(), semantics.isEmptyIterationSpans()),
+            provider, meter);
         // Multi-valued compiles keep the fixed-tag pass OFF: §6.4 drops the
         // fixed tags from the NFA and reconstructs ONE offset per tag at
         // match time — meaningless for a tag whose whole point is its
@@ -412,7 +414,7 @@ public final class Tnfa {
                 System.err.println("[tdfa] fixed-tags: dropped " + n + "/" + tagCount);
             }
         }
-        Builder b = new Builder(meter, semantics);
+        Builder b = new Builder(meter);
         int accept = b.fresh();
         int start = b.build(ast, accept);
         Tnfa nfa = b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(), parsed.unicodeShorthand(),
@@ -489,18 +491,14 @@ public final class Tnfa {
         /** Shared with the parser (see Tnfa.compile): one CPU budget for
          *  the whole front-end; every builder action ticks it. */
         final WorkMeter meter;
-        /** The compile's {@link Semantics}: the plain-$ lowering pivots on
-         *  END_OF_TEXT_ONLY here (ABS_END vs FINAL_END, see buildLeaf). */
-        final Semantics semantics;
         /** Weighted bytes of everything minted so far (states + edges,
          *  through BudgetWeights) against the compile RAM budget. */
         long weightedBytes = 0;
 
         final long memBudget;
 
-        Builder(WorkMeter meter, Semantics semantics) {
+        Builder(WorkMeter meter) {
             this.meter = meter;
-            this.semantics = semantics;
             this.memBudget = Budgets.compileMemoryBytes();
         }
 
@@ -996,43 +994,49 @@ public final class Tnfa {
                 }
                 return s;
             }
-            Ast.StartAnchor sa; // ^ or \A
-            if (e instanceof Ast.StartAnchor && (sa = (Ast.StartAnchor) e) != null) {
+            if (e instanceof Ast.Assertion) {
                 int s = fresh();
-                // Anchor flavor is per-edge (parse-time (?m), group-scoped flags
-                // included): m-^ needs BEGIN_TEXT (line begin, terminator-set-
-                // aware at match time); plain ^ and \A are position-0 only
-                // (ABS_BEGIN).
-                anchorEps(s, entryTo, 1, sa.absolute || !sa.multiline ? ABS_BEGIN : BEGIN_TEXT);
-                return s;
-            }
-            Ast.EndAnchor ea; // $ or \z
-            if (e instanceof Ast.EndAnchor && (ea = (Ast.EndAnchor) e) != null) {
-                int s = fresh();
-                // Anchor flavor is per-edge (parse-time (?m), group-scoped flags
-                // included): m-$ needs END_TEXT (line end, terminator-set-aware);
-                // \z is end-of-input only (ABS_END). Plain $ is the pivot: the
-                // RE2-lineage side (END_OF_TEXT_ONLY set) reads it as \z
-                // (ABS_END, end-of-input only); the java.util.regex side reads
-                // it as \Z — end of input OR immediately before the final
-                // terminator run — which is its own predicate (FINAL_END), not
-                // expressible over the other bits.
-                int bit =
-                    ea.absolute ? ABS_END : ea.multiline ? END_TEXT : semantics.isEndOfTextOnly() ? ABS_END : FINAL_END;
-                anchorEps(s, entryTo, 1, bit);
-                return s;
-            }
-            if (e instanceof Ast.WordBoundary) { // \b
-                int s = fresh();
-                anchorEps(s, entryTo, 1, WORD_BOUNDARY);
-                return s;
-            }
-            if (e instanceof Ast.NoWordBoundary) { // \B
-                int s = fresh();
-                anchorEps(s, entryTo, 1, NO_WORD_BOUNDARY);
+                // The unified assertion family: kinds are resolved meanings
+                // (the one policy-pending kind, a bare $ outside multiline,
+                // was rewritten by the meaning-resolution pass against
+                // END_OF_TEXT_ONLY — \z on the RE2-lineage side, java's
+                // before-final-terminator reading otherwise), so the kind
+                // maps one-to-one onto the anchor bit and the builder
+                // consults no policy: m-^ is BEGIN_TEXT (line begin,
+                // terminator-set-aware at match time), plain ^ and \A are
+                // position-0 only (ABS_BEGIN), m-$ is END_TEXT, \z is
+                // ABS_END, java's \Z is its own predicate (FINAL_END) —
+                // not expressible over the other bits.
+                anchorEps(s, entryTo, 1, anchorBit(((Ast.Assertion) e).kind));
                 return s;
             }
             return -1;
+        }
+
+        /** The assertion kind's anchor bit — the one-to-one mapping (see
+         *  the buildLeaf assertion case). A DOLLAR here is a bug: the
+         *  meaning-resolution pass rewrites it before the builder runs,
+         *  so an unresolved one fails loudly rather than silently taking
+         *  a wrong reading. */
+        private static int anchorBit(Ast.AssertionKind kind) {
+            switch (kind) {
+                case TEXT_START :
+                    return ABS_BEGIN;
+                case LINE_START :
+                    return BEGIN_TEXT;
+                case TEXT_END :
+                    return ABS_END;
+                case LINE_END :
+                    return END_TEXT;
+                case FINAL_END :
+                    return FINAL_END;
+                case WORD_BOUNDARY :
+                    return WORD_BOUNDARY;
+                case NON_WORD_BOUNDARY :
+                    return NO_WORD_BOUNDARY;
+                default :
+                    throw new IllegalStateException("unresolved policy assertion reached the builder: " + kind);
+            }
         }
 
         /** Push a node to enter (leaf or container — decided at dispatch). */
