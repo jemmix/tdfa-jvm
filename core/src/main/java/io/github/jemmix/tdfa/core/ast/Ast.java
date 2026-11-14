@@ -68,6 +68,108 @@ public abstract class Ast {
         }
     }
 
+    /** A character class as parsed — {@code [â¦]}, the items in source
+     *  order: symbolic at the parse tier (the scoped {@code (?i)} and the
+     *  fold-universe selection ride the node; every item carries what its
+     *  expansion needs) — and the meaning-resolution pass flattens it to a
+     *  {@link CharClass}: the {@code \s} table from the compile's {@code
+     *  ClassTable} component, the Unicode twins from the provider, the
+     *  class fold (the written-range/provider reading vs the orbit
+     *  closure) under the SHORTHAND_FOLD policy. The item markers
+     *  reproduce the parse-time accumulation exactly: a WRITTEN range
+     *  ({@code a-z}, dashed in the source) folds by the provider's
+     *  range semantics where pinned, everything else by the per-member
+     *  orbit closure, and shorthand-derived items skip the fold on the
+     *  non-folding lane (java.util.regex keeps the predefined classes at
+     *  their plain tables under every fold universe). Post-resolution
+     *  consumers never see one. */
+    public static final class ClassExpr extends Ast {
+        /** The class items in source order (never empty — {@code []} is a
+         *  syntax error and {@code []]} makes the bracket a member). */
+        public final List<Item> items;
+        /** The {@code [^...]} caret. */
+        public final boolean negated;
+        /** The scoped {@code (?i)} state captured at the closing bracket. */
+        public final boolean ci;
+        /** The full-universe selection captured at the closing bracket (the
+         *  class fold's universe). */
+        public final boolean uni;
+
+        public ClassExpr(List<Item> items, boolean negated, boolean ci, boolean uni) {
+            this.items = items;
+            this.negated = negated;
+            this.ci = ci;
+            this.uni = uni;
+        }
+
+        @Override
+        public String toString() {
+            return negated ? "[^...]" : "[...]";
+        }
+
+        /** One class item — a marker hierarchy, deliberately NOT an
+         *  {@link Ast}: the class is a leaf from every walker's
+         *  perspective until resolution flattens it. */
+        public static abstract class Item {
+            Item() {
+            }
+        }
+
+        /** A literal member or written range: {@code lo-hi} ({@code hi ==
+         *  lo} for a single member); {@code written} marks a DASHED range
+         *  (degenerate {@code [x-x]} included) — java.util.regex folds
+         *  written ranges by the two-sided image test while single members
+         *  take the orbit closure. */
+        public static final class Member extends Item {
+            public final int lo;
+            public final int hi;
+            public final boolean written;
+
+            public Member(int lo, int hi, boolean written) {
+                this.lo = lo;
+                this.hi = hi;
+                this.written = written;
+            }
+        }
+
+        /** A materialized range set the GRAMMAR owns or the parse already
+         *  resolved: POSIX classes, the JDK {@code \v}/{@code \h} tables,
+         *  property classes ({@code \p{...}} — a provider lookup is a
+         *  compile input, not a policy application). {@code shorthand}
+         *  marks the shorthand-derived sets ({@code \v}/{@code \h}) so the
+         *  class fold skips them on the non-folding lane like every other
+         *  shorthand item. */
+        public static final class Table extends Item {
+            public final int[] ranges;
+            public final boolean shorthand;
+
+            public Table(int[] ranges, boolean shorthand) {
+                this.ranges = ranges;
+                this.shorthand = shorthand;
+            }
+        }
+
+        /** An in-class shorthand twin ({@code [\d] [\w] [\s]} and the
+         *  uppercase complements): symbolic — the scoped state rides the
+         *  item, the pass materializes it (the {@code \s} table, the
+         *  Unicode twins, the folded complement on the folding lane). */
+        public static final class Shorthand extends Item {
+            public final char kind;
+            public final boolean negated;
+            public final boolean unicode;
+            public final boolean ci;
+            public final boolean uni;
+
+            public Shorthand(char kind, boolean negated, boolean unicode, boolean ci, boolean uni) {
+                this.kind = kind;
+                this.negated = negated;
+                this.unicode = unicode;
+                this.ci = ci;
+                this.uni = uni;
+            }
+        }
+    }
+
     /** The bare-dot atom as parsed: the engine's one syntax whose MEANING is
      *  a compile policy — everything under the scoped {@code (?s)} state the
      *  node carries, the compile's terminator-set complement otherwise.

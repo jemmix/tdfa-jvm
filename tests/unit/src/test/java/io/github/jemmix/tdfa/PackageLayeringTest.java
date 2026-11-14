@@ -50,7 +50,7 @@ class PackageLayeringTest {
     /** The DAG: package -> packages it may reference. */
     private static Map<String, SortedSet<String>> allowed() {
         Map<String, SortedSet<String>> m = new HashMap<>();
-        String[][] edges = {{"emit"}, {"unicode"}, {"budget"}, {"report"}, // leaves
+        String[][] edges = {{"emit"}, {"unicode", "dialect"}, {"budget"}, {"report"}, // leaves
             {"dialect"}, // the vocabulary leaf: data every tier may reference
             {"ast", "budget"}, {"parser", "dialect", "ast", "budget", "unicode"},
             {"semantic", "dialect", "ast", "budget", "unicode"}, // meaning resolution: below tnfa, above parser

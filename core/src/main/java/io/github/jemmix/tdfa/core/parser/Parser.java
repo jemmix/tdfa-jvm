@@ -11,6 +11,7 @@ import io.github.jemmix.tdfa.core.dialect.ClassTable;
 import io.github.jemmix.tdfa.core.dialect.EscapeAlphabet;
 import io.github.jemmix.tdfa.core.dialect.FlagAction;
 import io.github.jemmix.tdfa.core.dialect.FlagBindings;
+import io.github.jemmix.tdfa.core.dialect.RangeMath;
 import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
 import io.github.jemmix.tdfa.core.unicode.CaseFoldTable;
 import io.github.jemmix.tdfa.core.unicode.ShorthandTables;
@@ -80,9 +81,7 @@ public final class Parser {
     // ---- predefined classes ----
 
     private static final int[] R_DIGIT = {'0', '9'};
-    private static final int[] R_NOT_DIGIT = {0, '/', ':', 0x10FFFF};
     private static final int[] R_WORD = {'a', 'z', 'A', 'Z', '0', '9', '_', '_'};
-    private static final int[] R_NOT_WORD = {0, '/', ':', '@', '[', '^', '`', '`', '{', 0x10FFFF};
     // re2j's \s = [\t\n\f\r ] — note: no \v (U+000B), unlike POSIX [:space:]
     // and unlike java.util.regex's ASCII \s = [ \t\n\x0B\f\r] (the JDK
     // includes VT). Table-selected (the compile's space-table component:
@@ -102,20 +101,6 @@ public final class Parser {
     private static final int[] R_HORIZ_WS = {' ', ' ', '\t', '\t', 0xA0, 0xA0, 0x1680, 0x1680, 0x180E, 0x180E, 0x2000,
         0x200A, 0x202F, 0x202F, 0x205F, 0x205F, 0x2060, 0x2060, 0x3000, 0x3000};
 
-    // Unicode IsWhite_Space property (java.util.regex \s with UNICODE_CHARACTER_CLASS).
-    private static final int[] R_UNICODE_SPACE = {'\t', '\r', // U+0009-U+000D (HT, LF, VT, FF, CR)
-        0x1C, 0x1F, // FS, GS, RS, US
-        ' ', ' ', // Space
-        0x85, 0x85, // NEL
-        0xA0, 0xA0, // NBSP
-        0x1680, 0x1680, // Ogham Space
-        0x2000, 0x200A, // En–Hair Space
-        0x2028, 0x2029, // LS, PS
-        0x202F, 0x202F, // Narrow NBSP
-        0x205F, 0x205F, // Medium Math Space
-        0x3000, 0x3000 // Ideographic Space
-    };
-
     // POSIX character classes — ASCII-only, matching re2j's CharGroup tables.
     // Note: [:space:] INCLUDES \v (U+000B) per POSIX, unlike Perl's \s.
     private static final int[] R_POSIX_ALNUM = {'0', '9', 'A', 'Z', 'a', 'z'};
@@ -133,11 +118,11 @@ public final class Parser {
     private static final int[] R_POSIX_WORD = {'0', '9', 'A', 'Z', '_', '_', 'a', 'z'};
     private static final int[] R_POSIX_XDIGIT = {'0', '9', 'A', 'F', 'a', 'f'};
 
-    // The shorthand ATOM constants (DIGIT/WORD/…) and the dot's stock
-    // classes moved to the meaning-resolution pass (core.semantic.Resolve)
-    // with their expansions; the parser keeps the raw ASCII tables the
-    // in-class shorthand twins still consume (R_DIGIT/R_WORD — see
-    // shorthandRanges) until the class rung lands.
+    // The shorthand/dot constants moved to the meaning-resolution pass
+    // (core.semantic.Resolve) with their expansions; the parser keeps the
+    // raw ASCII tables its grammar-owned materializations consume
+    // (R_DIGIT/R_WORD for the \p fallbacks, R_VERT_WS_JDK/R_HORIZ_WS for
+    // the JDK escape alphabet's class tables).
 
     /**
      * java.util.regex's {@code hasSupplementary(pattern)}: whether an
@@ -589,28 +574,6 @@ public final class Parser {
         return CaseFoldTable.universeFold(cp, unicodeCase || unicodeShorthand, provider);
     }
 
-    /** The RANGE twin of {@link #foldUniverse}: extra codepoints a CI range
-     *  {@code [lo-hi]} matches under the active universe's reading.
-     *  {@code null} = the reading does not apply here (bare-CI ASCII lane,
-     *  or a provider without pinned range semantics — the per-member orbit
-     *  closure serves); a non-null result — POSSIBLY EMPTY — is the whole
-     *  reading and replaces the orbit closure entirely (empty must NOT
-     *  fall back: an orbit member outside the image test is exactly the
-     *  İ-in-[H-K] class of divergence the reading exists to prevent).
-     *  Metered: the transpose scans the range's members and the
-     *  cased-codepoint table, the same work the orbit fallback would
-     *  spend walking members. */
-    private int[] foldRangeExtras(int lo, int hi) {
-        if (!(unicodeCase || unicodeShorthand)) {
-            return null; // bare CI: ASCII pairs only, handled by the orbit path
-        }
-        if (provider == null || !provider.suppliesRangeFoldSemantics()) {
-            return null;
-        }
-        meter.tick((hi - lo + 1) * (long) BudgetWeights.FOLD_SCAN_CODEPOINT_TICKS);
-        return provider.rangeFoldCounterparts(lo, hi);
-    }
-
     /** Atom for one literal codepoint. BMP stays {@link Ast.Symbol}; a
      *  supplementary codepoint becomes a single-codepoint {@link CharClass},
      *  the same shape {@code \x{...}} produces, because the engine's alphabet
@@ -908,7 +871,13 @@ public final class Parser {
         }
     }
 
-    /** class := '^'? class-item+ ']' */
+    /** class := '^'? class-item+ ']' — the structured-item accumulation:
+     *  the items carry their markers and scoped state, and the
+     *  meaning-resolution pass flattens + folds the class against the
+     *  compile's policy (the \s table, the provider twins, the
+     *  SHORTHAND_FOLD-gated class fold). The scan-fact flips (the caret,
+     *  written ranges, members, shorthand twins) stay here — they are
+     *  source-shape facts, read where the source is. */
     private Ast parseClass() {
         skipComments();
         boolean negated = false;
@@ -919,26 +888,12 @@ public final class Parser {
             // negate() drops the Bmp marker ("too expensive to detect").
             hasSupplementaryStarts = true;
         }
-        List<Integer> ranges = new ArrayList<>();
-        // Syntactic-range markers, parallel to `ranges`' pairs: item i was
-        // WRITTEN as a range (a dash between endpoints) — degenerate
-        // [x-x] included. java.util.regex folds written ranges by the
-        // two-sided image test while single members take the orbit closure
-        // (see foldRangeExtras), so the distinction is semantic, not cosmetic.
-        List<Boolean> writtenRange = new ArrayList<>();
-        // Shorthand markers, also parallel: item i came from a \w/\d/\s-family
-        // escape. java.util.regex never folds those (any universe — the
-        // SHORTHAND_FOLD axis), so on the non-folding lane their fold
-        // expansion is skipped (see foldExpandClass).
-        List<Boolean> shorthandItem = new ArrayList<>();
+        List<Ast.ClassExpr.Item> items = new ArrayList<>();
         // POSIX/RE2: a `]` as the FIRST char in the class (after an optional `^`)
         // is a literal class member, not the terminator. So `[]]` matches a single `]`,
         // `[]a]` matches `]` or `a`, etc.
         if (peek() == ']') {
-            ranges.add((int) ']');
-            ranges.add((int) ']');
-            writtenRange.add(false);
-            shorthandItem.add(false);
+            items.add(new Ast.ClassExpr.Member(']', ']', false));
             memberFlip(']');
             pos++;
         }
@@ -947,19 +902,13 @@ public final class Parser {
             if (pos >= src.length() || peek() == ']') {
                 break;
             }
-            // Check for POSIX class [:name:]
+            // Check for POSIX class [:name:] — a grammar table, materialized.
             if (peek() == '[' && peekAhead() == ':') {
-                int[] posix = parsePosixClass();
-                for (int v : posix) {
-                    ranges.add(v);
-                }
-                for (int v = 0; v < posix.length; v += 2) {
-                    writtenRange.add(false);
-                    shorthandItem.add(false);
-                }
+                items.add(new Ast.ClassExpr.Table(parsePosixClass(), false));
                 continue;
             }
-            // Check for shorthand escapes (\s \S \d \D \w \W)
+            // Check for shorthand escapes (\s \S \d \D \w \W) and the JDK
+            // \v/\h tables.
             if (peek() == '\\' && pos + 1 < src.length()) {
                 char next = src.charAt(pos + 1);
                 // java's range() look-ahead: an escape directly followed
@@ -971,30 +920,36 @@ public final class Parser {
                 // form ranges, like java's predicate returns).
                 boolean vRangeStart = next == 'v' && options.escapes() == EscapeAlphabet.JDK && pos + 2 < src.length()
                     && src.charAt(pos + 2) == '-';
-                int[] sr = vRangeStart ? null : shorthandRanges(next);
-                if (sr != null) {
-                    // In-class shorthand flip: complements always, the
-                    // positive families only under (?u) (see shorthandFlip).
-                    shorthandFlip(next);
-                    pos += 2;
-                    for (int v : sr) {
-                        ranges.add(v);
+                if (!vRangeStart) {
+                    // The JDK escape alphabet's class tables (\v/\V/\h/\H)
+                    // are GRAMMAR data — materialized here, marked
+                    // shorthand so the class fold skips them on the
+                    // non-folding lane like every shorthand twin.
+                    int[] grammar = grammarClassTable(next);
+                    if (grammar != null) {
+                        // In-class shorthand flip: complements always, the
+                        // positive families only under (?u) (see shorthandFlip).
+                        shorthandFlip(next);
+                        pos += 2;
+                        items.add(new Ast.ClassExpr.Table(grammar, true));
+                        continue;
                     }
-                    for (int v = 0; v < sr.length; v += 2) {
-                        writtenRange.add(false);
-                        shorthandItem.add(true);
+                    if (isShorthandLetter(next)) {
+                        // In-class shorthand flip: complements always, the
+                        // positive families only under (?u) (see shorthandFlip).
+                        shorthandFlip(next);
+                        pos += 2;
+                        items.add(new Ast.ClassExpr.Shorthand(Character.toLowerCase(next), Character.isUpperCase(next),
+                            unicodeShorthand, caseInsensitive, unicodeCase || unicodeShorthand));
+                        continue;
                     }
-                    continue;
                 }
-                // Unicode property classes \p{X} \pX \P{X} \PX \p{^X}
+                // Unicode property classes \p{X} \pX \P{X} \PX \p{^X} — a
+                // provider lookup is a compile input, not a policy
+                // application: materialized at the parse.
                 if (next == 'p' || next == 'P') {
                     pos += 2; // consume '\' and 'p'/'P'
-                    int before = ranges.size();
-                    appendUnicodeToRanges(ranges, next == 'p');
-                    for (int i = before; i < ranges.size(); i += 2) {
-                        writtenRange.add(false);
-                        shorthandItem.add(false);
-                    }
+                    items.add(new Ast.ClassExpr.Table(parseUnicodeTable(next == 'p'), false));
                     continue;
                 }
             }
@@ -1021,25 +976,38 @@ public final class Parser {
             } else {
                 memberFlip(lo);
             }
-            ranges.add(lo);
-            ranges.add(hi);
-            writtenRange.add(dashed);
-            shorthandItem.add(false);
+            items.add(new Ast.ClassExpr.Member(lo, hi, dashed));
         }
         expect(']');
-        int[] arr = ranges.stream().mapToInt(Integer::intValue).toArray();
-        if (caseInsensitive) {
-            // Add the case-folded counterparts of every member of every range:
-            // full Unicode simple folding under plain (?i) — re2j semantics
-            // (verified: (?i)[a-z] matches ſ and K; (?i)[^s] does NOT match ſ).
-            // Fold members join the POSITIVE set before CharClass negation, so
-            // negated classes exclude fold equivalents automatically. In-class
-            // shorthands (\w inside [...]) are ordinary ranges here and fold
-            // through the same path — on the folding lane only; java.util.regex
-            // keeps them at their plain tables (the SHORTHAND_FOLD axis).
-            arr = foldExpandClass(arr, toBooleanArray(writtenRange), toBooleanArray(shorthandItem));
+        return new Ast.ClassExpr(items, negated, caseInsensitive, unicodeCase || unicodeShorthand);
+    }
+
+    /** The JDK escape alphabet's in-class tables ({@code \v/\V} the
+     *  vertical, {@code \h/\H} the horizontal whitespace ranges — null on
+     *  the minimal alphabet, which rejects them in class context like
+     *  re2j's). Grammar data, materialized at the parse. */
+    private int[] grammarClassTable(char c) {
+        if (options.escapes() != EscapeAlphabet.JDK) {
+            return null;
         }
-        return new CharClass(arr, negated);
+        switch (c) {
+            case 'v' :
+                return R_VERT_WS_JDK;
+            case 'V' :
+                return RangeMath.complement(R_VERT_WS_JDK);
+            case 'h' :
+                return R_HORIZ_WS;
+            case 'H' :
+                return RangeMath.complement(R_HORIZ_WS);
+            default :
+                return null;
+        }
+    }
+
+    /** The in-class shorthand letters both alphabets share. */
+    private static boolean isShorthandLetter(char c) {
+        char base = Character.toLowerCase(c);
+        return (base == 'd' || base == 'w' || base == 's') && (Character.isLowerCase(c) || Character.isUpperCase(c));
     }
 
     /**
@@ -1075,164 +1043,6 @@ public final class Parser {
         boolean reachesSingle = cp >= 0x100 || "\u00FF\u00B5IiSsKk\u00C5\u00E5\u00DF".indexOf(cp) >= 0;
         if (reachesSingle && foldUniverse(cp) != null) {
             hasSupplementaryStarts = true;
-        }
-    }
-
-    private static boolean[] toBooleanArray(List<Boolean> list) {
-        boolean[] out = new boolean[list.size()];
-        for (int i = 0; i < list.size(); i++) {
-            out[i] = list.get(i);
-        }
-        return out;
-    }
-
-    /** The class-item fold expansion: WRITTEN ranges under a provider that
-     *  pins the range semantics take that reading (java.util.regex's
-     *  two-sided image test, see {@link #foldRangeExtras}); everything
-     *  else — single members, programmatic shorthand/POSIX sets — takes
-     *  the per-member orbit closure of the active fold universe, EXCEPT
-     *  shorthand-derived items on the non-folding lane (java.util.regex
-     *  keeps the predefined classes at their plain tables under CI —
-     *  the SHORTHAND_FOLD axis). */
-    private int[] foldExpandClass(int[] arr, boolean[] writtenRange, boolean[] shorthandItem) {
-        boolean foldShorthand = options.isShorthandFold();
-        List<int[]> ivs = new ArrayList<>(arr.length);
-        for (int i = 0; i < arr.length; i += 2) {
-            int lo = arr[i], hi = arr[i + 1];
-            ivs.add(new int[]{lo, hi});
-            if (shorthandItem[i / 2] && !foldShorthand) {
-                continue; // the JDK reading: a shorthand never folds
-            }
-            int[] extras = writtenRange[i / 2] ? foldRangeExtras(lo, hi) : null;
-            if (extras != null) {
-                for (int v : extras) {
-                    ivs.add(new int[]{v, v});
-                }
-                continue; // the provider's reading replaces the orbit closure
-            }
-            for (int cp = lo; cp <= hi; cp++) {
-                meter.tick(BudgetWeights.FOLD_SCAN_CODEPOINT_TICKS);
-                int[] fr = foldUniverse(cp);
-                if (fr != null) {
-                    for (int v : fr) {
-                        ivs.add(new int[]{v, v});
-                    }
-                }
-            }
-        }
-        return mergeIntervals(ivs);
-    }
-
-    /** Union of {@code ranges} with every member's fold orbit under the
-     *  active fold universe (re2j's foldCase under the full lane; the 26
-     *  ASCII letter pairs under the ASCII lane). Output is sorted by lo
-     *  with overlapping ranges merged — complementRanges and downstream
-     *  range walkers rely on that. The per-codepoint scan is metered: it
-     *  is O(universe) per wide class under {@code (?i)}, so it must be
-     *  budget-visible CPU work. */
-    private int[] foldExpandRanges(int[] arr) {
-        List<int[]> ivs = new ArrayList<>(arr.length);
-        for (int i = 0; i < arr.length; i += 2) {
-            int lo = arr[i], hi = arr[i + 1];
-            ivs.add(new int[]{lo, hi});
-            for (int cp = lo; cp <= hi; cp++) {
-                meter.tick(BudgetWeights.FOLD_SCAN_CODEPOINT_TICKS);
-                int[] fr = foldUniverse(cp);
-                if (fr != null) {
-                    for (int v : fr) {
-                        ivs.add(new int[]{v, v});
-                    }
-                }
-            }
-        }
-        return mergeIntervals(ivs);
-    }
-
-    /** Sort by lo, merge overlapping/adjacent intervals, flatten. */
-    private static int[] mergeIntervals(List<int[]> ivs) {
-        ivs.sort((a, b) -> Integer.compare(a[0], b[0]));
-        List<Integer> merged = new ArrayList<>(ivs.size() * 2);
-        int lo = ivs.get(0)[0], hi = ivs.get(0)[1];
-        for (int[] iv : ivs.subList(1, ivs.size())) {
-            if (iv[0] <= hi + 1) {
-                hi = Math.max(hi, iv[1]);
-            } else {
-                merged.add(lo);
-                merged.add(hi);
-                lo = iv[0];
-                hi = iv[1];
-            }
-        }
-        merged.add(lo);
-        merged.add(hi);
-        return merged.stream().mapToInt(Integer::intValue).toArray();
-    }
-
-    /**
-     * Returns ranges for shorthand escapes inside char classes, or null if not a shorthand.
-     * Returns explicit complement ranges for uppercase variants ({@code \D}, {@code \W}, {@code \S})
-     * since they are merged into the class's own range list.
-     * When {@link #unicodeShorthand} is true, returns Unicode-aware ranges (matching
-     * {@code java.util.regex} with {@code UNICODE_CHARACTER_CLASS}).
-     */
-    private int[] shorthandRanges(char c) {
-        // Under (?i), uppercase shorthands complement the FOLDED positive set
-        // (re2j folds before negation: (?i)[\W] does not match ſ) — the RE2
-        // reading only; java.util.regex never folds a shorthand (the
-        // SHORTHAND_FOLD axis). The positive lowercase forms fold later via
-        // the class-level foldExpandRanges on the folding lane.
-        boolean ci = caseInsensitive && options.isShorthandFold();
-        // The JUR escape reading adds the \v/\V/\h/\H tables (the
-        // ESCAPES_RE2 axis keeps them rejected in class context —
-        // re2j's alphabet; a range ENDPOINT still reads \v as U+000B
-        // via parseClassChar, java's isrange rule).
-        if (options.escapes() == EscapeAlphabet.JDK) {
-            switch (c) {
-                case 'v' :
-                    return R_VERT_WS_JDK;
-                case 'V' :
-                    return complementRanges(R_VERT_WS_JDK);
-                case 'h' :
-                    return R_HORIZ_WS;
-                case 'H' :
-                    return complementRanges(R_HORIZ_WS);
-                default :
-                    // fall through to the lineage-shared shorthands below
-            }
-        }
-        if (!unicodeShorthand) {
-            switch (c) {
-                case 'd' :
-                    return R_DIGIT;
-                case 'D' :
-                    return R_NOT_DIGIT;
-                case 'w' :
-                    return R_WORD;
-                case 'W' :
-                    return ci ? complementRanges(foldExpandRanges(R_WORD)) : R_NOT_WORD;
-                case 's' :
-                    return options.spaceTable().ranges();
-                case 'S' :
-                    return complementRanges(options.spaceTable().ranges());
-                default :
-                    return null;
-            }
-        }
-        switch (c) {
-            case 'd' :
-                return unicodeDigitRanges();
-            case 'D' :
-                return complementRanges(unicodeDigitRanges());
-            case 'w' :
-                return computeUnicodeWordRanges();
-            case 'W' :
-                return complementRanges(ci ? foldExpandRanges(computeUnicodeWordRanges()) : computeUnicodeWordRanges());
-            case 's' :
-                return R_UNICODE_SPACE;
-            case 'S' :
-                return complementRanges(R_UNICODE_SPACE);
-            default :
-                return null;
         }
     }
 
@@ -1336,7 +1146,7 @@ public final class Parser {
             // the house extension mirrors java's negate() discipline for the
             // spelled complement.
             hasSupplementaryStarts = true;
-            return complementRanges(r);
+            return RangeMath.complement(r);
         }
         return r;
     }
@@ -1676,7 +1486,7 @@ public final class Parser {
         if (negate) {
             hasSupplementaryStarts = true; // complements flip (java's negate())
         }
-        return new CharClass(negate ? complementRanges(R_VERT_WS_JDK) : R_VERT_WS_JDK, false);
+        return new CharClass(negate ? RangeMath.complement(R_VERT_WS_JDK) : R_VERT_WS_JDK, false);
     }
 
     /** The {@code \h}/{@code \H} atom (the JUR escape reading): the
@@ -1685,7 +1495,7 @@ public final class Parser {
         if (negate) {
             hasSupplementaryStarts = true;
         }
-        return new CharClass(negate ? complementRanges(R_HORIZ_WS) : R_HORIZ_WS, false);
+        return new CharClass(negate ? RangeMath.complement(R_HORIZ_WS) : R_HORIZ_WS, false);
     }
 
     /** The {@code \cX} control escape (the JUR reading): java's
@@ -1835,9 +1645,9 @@ public final class Parser {
         propertyFlip(name, positive == innerNeg);
         int[] fold = caseInsensitive ? provider.foldTableFor(name) : null;
         if (fold != null && fold.length > 0) {
-            t = mergeRanges(t, fold);
+            t = RangeMath.merge(t, fold);
         }
-        return (positive == innerNeg) ? complementRanges(t) : t;
+        return (positive == innerNeg) ? RangeMath.complement(t) : t;
     }
 
     /**
@@ -1867,18 +1677,6 @@ public final class Parser {
         }
     }
 
-    /** Append Unicode property ranges into a class's accumulator. The caller
-     *  has already consumed {@code \p} / {@code \P}; we read the name and
-     *  materialise the ranges (with complement if {@code \P}) into {@code out}.
-     *  The class's own {@code [^...]} negation is applied at the end via the
-     *  existing CharClass path; here we only handle the escape's own sign. */
-    private void appendUnicodeToRanges(List<Integer> out, boolean positive) {
-        int[] t = parseUnicodeTable(positive);
-        for (int v : t) {
-            out.add(v);
-        }
-    }
-
     /** Read a Unicode property name after {@code \p}/{@code \P}: either
      *  braced {@code {name}} or a single letter {@code L}, {@code N}, etc. */
     private String parseUnicodeName() {
@@ -1904,54 +1702,6 @@ public final class Parser {
         String name = String.valueOf(src.charAt(pos));
         pos++;
         return name;
-    }
-
-    /** Compute the complement of {@code ranges} within [0, 0x10FFFF]. */
-    private static int[] complementRanges(int[] ranges) {
-        List<Integer> out = new ArrayList<>();
-        int prev = 0;
-        for (int i = 0; i < ranges.length; i += 2) {
-            int lo = ranges[i], hi = ranges[i + 1];
-            if (lo > prev) {
-                out.add(prev);
-                out.add(lo - 1);
-            }
-            prev = Math.max(prev, hi + 1);
-            if (prev > 0x10FFFF) {
-                break;
-            }
-        }
-        if (prev <= 0x10FFFF) {
-            out.add(prev);
-            out.add(0x10FFFF);
-        }
-        return out.stream().mapToInt(Integer::intValue).toArray();
-    }
-
-    /** Merge two sorted range arrays into a sorted, merged result. */
-    private static int[] mergeRanges(int[] a, int[] b) {
-        List<int[]> all = new ArrayList<>();
-        for (int i = 0; i < a.length; i += 2) {
-            all.add(new int[]{a[i], a[i + 1]});
-        }
-        for (int i = 0; i < b.length; i += 2) {
-            all.add(new int[]{b[i], b[i + 1]});
-        }
-        all.sort((x, y) -> Integer.compare(x[0], y[0]));
-        List<int[]> merged = new ArrayList<>();
-        for (int[] r : all) {
-            if (!merged.isEmpty() && r[0] <= merged.get(merged.size() - 1)[1] + 1) {
-                merged.get(merged.size() - 1)[1] = Math.max(merged.get(merged.size() - 1)[1], r[1]);
-            } else {
-                merged.add(new int[]{r[0], r[1]});
-            }
-        }
-        int[] out = new int[merged.size() * 2];
-        for (int i = 0; i < merged.size(); i++) {
-            out[2 * i] = merged.get(i)[0];
-            out[2 * i + 1] = merged.get(i)[1];
-        }
-        return out;
     }
 
     /**

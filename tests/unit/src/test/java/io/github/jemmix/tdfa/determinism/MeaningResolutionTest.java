@@ -128,17 +128,17 @@ class MeaningResolutionTest {
     @Test
     void irEntryIsFingerprintIdenticalToTheStringPath() {
         String[] corpus = {"a.b", "(?s)a.b", "(\\b)*", "((a*))*", "(?:(\\b))*", "(a+)+b", "(\\w+)@(\\w+)",
-            "(?i)[a-z]+\\s\\d", "(?m)^a$b\\b.*", "(?i)k\\x{10400}ſ", "(?u)(?i)\\w\\W", "(?i)\\QkK\\E"};
+            "(?i)[a-z]+\\s\\d", "(?m)^a$b\\b.*", "(?i)k\\x{10400}ſ", "(?u)(?i)\\w\\W", "(?i)\\QkK\\E",
+            "(?i)[a-z\\s\\w]", "[\\x{10400}-\\x{10428}]", "(?i)[^s\\W]", "[]]", "[a-]", "(?i)[:upper:]"};
         for (Semantics lane : new Semantics[]{Semantics.of(), RE2}) {
             for (String pattern : corpus) {
                 WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
                 // The producer side: the stock parse under the same grammar
                 // the string path projects for this lane (the meaning axes
                 // stay in the Semantics — the whole point of the rung).
-                ParseResult parsed = Parser.parseResult(pattern, false, false,
-                    ParseOptions.of().unicodeCase(lane.isUnicodeCase()).flagBindings(lane.flagBindings())
-                        .spaceTable(lane.spaceTable()).shorthandFold(lane.isShorthandFold()).escapes(lane.escapes()),
-                    UnicodeProviders.get(), ledger);
+                ParseResult parsed =
+                    Parser.parseResult(pattern, false, false, ParseOptions.of().unicodeCase(lane.isUnicodeCase())
+                        .flagBindings(lane.flagBindings()).escapes(lane.escapes()), UnicodeProviders.get(), ledger);
                 Tnfa viaIr = Tnfa.compile(parsed, false, lane, null, CompileObserver.NONE, ledger);
                 Tdfa ir = Determinizer.compile(viaIr, false, CompileObserver.NONE, ledger.fork(0));
                 String fromIr = ArtifactFingerprint.of(ir);
@@ -191,6 +191,58 @@ class MeaningResolutionTest {
         assertThat(finds(tdfa("(?u)\\w", Semantics.of()), "\u017F")).as("(?u)\\w is the Unicode word table").isTrue();
         assertThat(finds(tdfa("(?u)\\d", Semantics.of()), "\u0660")).as("(?u)\\d is \\p{Nd}").isTrue();
         assertThat(finds(tdfa("(?u)\\s", Semantics.of()), "\u00A0")).as("(?u)\\s is White_Space").isTrue();
+    }
+
+    @Test
+    void classItemsFlattenPerThePolicy() {
+        // The \s twin: the table axis, in class context.
+        assertThat(finds(tdfa("[\\s]", Semantics.of()), "\u000B")).as("jur [\\s] includes VT").isTrue();
+        assertThat(finds(tdfa("[\\s]", RE2), "\u000B")).as("re2 [\\s] excludes VT").isFalse();
+        assertThat(finds(tdfa("[^\\s]", RE2), "\u000B")).as("re2 [^\\s] inverts the same table").isTrue();
+        // The class fold: members join the positive set before negation.
+        assertThat(finds(tdfa("(?i)[a-z]", RE2), "\u017F")).as("re2 (?i)[a-z] folds \u017F in").isTrue();
+        assertThat(finds(tdfa("(?i)[a-z]", Semantics.of()), "\u017F")).as("jur (?i)[a-z] stays ASCII").isFalse();
+        assertThat(finds(tdfa("(?i)[^s]", RE2), "\u017F")).as("re2 (?i)[^s] excludes the fold member").isFalse();
+        // The shorthand twin skips the fold on the non-folding lane, and
+        // the complement folds the positive set first on the folding lane.
+        assertThat(finds(tdfa("(?i)[\\w]", RE2), "\u017F")).as("re2 (?i)[\\w] folds").isTrue();
+        assertThat(finds(tdfa("(?i)[\\w]", Semantics.of()), "\u017F")).as("jur (?i)[\\w] stays at its table").isFalse();
+        assertThat(finds(tdfa("(?i)[\\W]", RE2), "\u017F")).as("re2 (?i)[\\W] folds the positive set first").isFalse();
+        // The grammar-owned JDK tables ride the escape alphabet.
+        assertThat(finds(tdfa("[\\v]", Semantics.of()), "\r")).as("jur [\\v] is the VertWS table").isTrue();
+        assertThat(finds(tdfa("[\\v]", RE2), "\r")).as("re2 \\v in class reads U+000B only").isFalse();
+        assertThat(finds(tdfa("[\\v]", RE2), "\u000B")).isTrue();
+        assertThat(finds(tdfa("[\\v-z]", Semantics.of()), "\u000B")).as("[\\v-z] reads \\v as U+000B (isrange)")
+            .isTrue();
+        assertThat(finds(tdfa("[\\v-z]", Semantics.of()), "\u2028"))
+            .as("[\\v-z] is a RANGE, not the VertWS table (LS is outside it)").isFalse();
+        // POSIX classes fold as plain members on the folding lane.
+        assertThat(finds(tdfa("(?i)[[:alpha:]]", RE2), "\u017F")).isTrue();
+        assertThat(finds(tdfa("(?i)[[:alpha:]]", Semantics.of()), "\u017F")).isFalse();
+        // Property classes in class context keep their parse-time reading.
+        assertThat(finds(tdfa("[\\p{Lu}]", Semantics.of()), "K")).isTrue();
+        assertThat(finds(tdfa("[\\p{Lu}]", Semantics.of()), "k")).isFalse();
+        // The empty members and first-] rule survive the structured item.
+        assertThat(finds(tdfa("[]]", Semantics.of()), "]")).isTrue();
+        assertThat(finds(tdfa("[a-]", Semantics.of()), "-")).as("a trailing dash is a literal member").isTrue();
+    }
+
+    @Test
+    void inClassComplementsAreOrderIndependent() {
+        // The word table spells its pairs alphabetically (a-z, A-Z, 0-9, _),
+        // not by codepoint — the complements must still punch every hole
+        // (regression: [\W] once silently dropped the A-Z/0-9/_ pairs and
+        // matched letters; found by ShorthandFoldParityTest's scoped (?U)
+        // leg, pinned here at the unit tier).
+        Semantics[] lanes = {Semantics.of(), RE2};
+        for (Semantics lane : lanes) {
+            assertThat(finds(tdfa("[\\W]", lane), "S")).as("[\\W] excludes word letters in %s", lane).isFalse();
+            assertThat(finds(tdfa("[\\W]", lane), "5")).isFalse();
+            assertThat(finds(tdfa("[\\W]", lane), "_")).isFalse();
+            assertThat(finds(tdfa("[\\W]", lane), "\u017F")).as("ſ is non-word without (?u)").isTrue();
+            assertThat(finds(tdfa("(?i)(?U:[\\W])", lane), "S")).as("the scoped (?U) never folds a jur shorthand")
+                .isFalse();
+        }
     }
 
     @Test
