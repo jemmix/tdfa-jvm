@@ -90,6 +90,64 @@ public abstract class Ast {
         }
     }
 
+    /** A literal under an active {@code (?i)} at a site whose reading
+     *  folds: symbolic at the parse tier — the scoped fold-universe
+     *  selection ({@code unicodeCase || unicodeShorthand} at the atom,
+     *  upgraded by the scoped {@code (?u)}/{@code (?U)} letters) rides the
+     *  node — and the meaning-resolution pass expands the orbit (or demotes
+     *  to the plain literal when the universe has no counterpart for the
+     *  codepoint). Post-resolution consumers never see one. */
+    public static final class FoldLiteral extends Ast {
+        /** The literal codepoint (supplementary included). */
+        public final int cp;
+        /** The full-universe selection captured at the atom. */
+        public final boolean uni;
+
+        public FoldLiteral(int cp, boolean uni) {
+            this.cp = cp;
+            this.uni = uni;
+        }
+
+        @Override
+        public String toString() {
+            return "\\i<" + Integer.toHexString(cp) + ">";
+        }
+    }
+
+    /** A predefined-class escape atom ({@code \d \D \w \W \s \S} outside a
+     *  character class): symbolic at the parse tier — the scoped state the
+     *  expansion needs (Unicode shorthand under {@code (?u)}, the active
+     *  {@code (?i)}, the fold-universe selection) rides the node — and the
+     *  meaning-resolution pass materializes it: the {@code \s} table from
+     *  the compile's {@code ClassTable} component, the Unicode twins from
+     *  the provider, the word orbit under the SHORTHAND_FOLD policy.
+     *  Post-resolution consumers never see one. */
+    public static final class Shorthand extends Ast {
+        /** The lowercase base letter: {@code 'd'}, {@code 'w'} or {@code 's'}. */
+        public final char kind;
+        /** The uppercase form ({@code \D \W \S}). */
+        public final boolean negated;
+        /** The scoped {@code (?u)} state captured at the atom. */
+        public final boolean unicode;
+        /** The scoped {@code (?i)} state captured at the atom. */
+        public final boolean ci;
+        /** The full-universe selection captured at the atom (the word fold). */
+        public final boolean uni;
+
+        public Shorthand(char kind, boolean negated, boolean unicode, boolean ci, boolean uni) {
+            this.kind = kind;
+            this.negated = negated;
+            this.unicode = unicode;
+            this.ci = ci;
+            this.uni = uni;
+        }
+
+        @Override
+        public String toString() {
+            return "\\" + (negated ? Character.toUpperCase(kind) : kind);
+        }
+    }
+
     /** Tag (capture-group boundary). Numbered 1..n.
      *  <p>{@code fixedOn} / {@code fixedOffset} are mutable annotations set by
      *  the BT22 §6.4 fixed-tags pass (see {@code io.github.jemmix.tdfa.core.ast.FixedTags}).

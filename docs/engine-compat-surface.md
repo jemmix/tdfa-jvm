@@ -98,22 +98,41 @@ lane's artifacts never move):
   stack) — the front-end's standing rule that AST depth costs heap,
   never JVM stack.
 
-## Rungs 2–4 (queued)
+## Rung 2 (fold/class axes out of the parser)
 
-- **Rung 2 — the fold/class axes move**: class items become structured
-  (written-range/shorthand markers survive into the tree), literal and
-  class folding + the `\s`/`\d`/`\w` tables resolve in the pass, and the
-  remaining three meaning axes leave `ParseOptions`. What remains is the
-  `Grammar` value: `EscapeAlphabet` widens from a two-value enum into
-  escape-readings-as-data (letter → reading, `REJECT(message)` included),
-  plus group-form admission and error-message templates.
-- **Rung 3 — the assertion family**: `StartAnchor`/`EndAnchor`/
+Landed as two steps:
+
+- **2a — symbolic out-of-class atoms**: literals under an active
+  {@code (?i)} are symbolic {@code Ast.FoldLiteral} nodes (the scoped
+  fold-universe selection rides the node) and the shorthand atoms are
+  symbolic {@code Ast.Shorthand} nodes (scoped {@code (?u)}/{@code (?i)}
+  state); the pass expands the orbit (or demotes to the plain literal),
+  materializes the {@code \s} table from the policy's `ClassTable`, the
+  Unicode twins from the provider, and the word orbit under the
+  SHORTHAND_FOLD policy. The fold-universe dispatch lives once in
+  `CaseFoldTable.universeFold` (the parser's scan-fact candidacy queries
+  and the pass's expansion share it), and the Unicode word/digit tables
+  once in `unicode.ShorthandTables`. The property classes stay
+  materialized at the parse — a provider table lookup is a compile
+  input, not a policy application, and their fold twin is
+  universe-full in both lanes. The hex/backslash-u escapes stay
+  fold-inert (a pinned pre-existing reading, now regression-tested).
+- **2b — structured class items**: the class becomes a structured node
+  whose items carry the written-range/shorthand markers, the class fold
+  and the in-class shorthand twins resolve in the pass, and the last
+  table axes (`\s` table, shorthand fold) leave `ParseOptions`.
+
+After 2b the parser's knobs are grammar-shaped only (the fold-universe
+seed, the escape alphabet, the flag bindings); the `Grammar` value —
+escape readings as data, {@code REJECT(message)} included — is the
+remaining syntax-facing step.
+- **Rung 3 — the assertion family** (queued): `StartAnchor`/`EndAnchor`/
   `WordBoundary`/`NoWordBoundary` unify into
   `Assertion{kind, negative}` over a closed kind vocabulary, with kinds
   landing alongside their support (`\G` as a matcher-state predicate,
   grapheme/segment boundaries on the provider's break-property data).
   Anchors migrate in under artifact-identity gates.
-- **Rung 4 — the facade kit**: the reject catalog (a documented
+- **Rung 4 — the facade kit** (queued): the reject catalog (a documented
   unsupported-families list pinned by a test to the grammar's reject
   readings — the capability manifest), the facade-author guide (the
   Lane/Shells/proxy triple as a template), and a reusable conformance

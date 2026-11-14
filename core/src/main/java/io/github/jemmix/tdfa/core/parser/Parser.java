@@ -13,6 +13,7 @@ import io.github.jemmix.tdfa.core.dialect.FlagAction;
 import io.github.jemmix.tdfa.core.dialect.FlagBindings;
 import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
 import io.github.jemmix.tdfa.core.unicode.CaseFoldTable;
+import io.github.jemmix.tdfa.core.unicode.ShorthandTables;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
 
@@ -132,14 +133,11 @@ public final class Parser {
     private static final int[] R_POSIX_WORD = {'0', '9', 'A', 'Z', '_', '_', 'a', 'z'};
     private static final int[] R_POSIX_XDIGIT = {'0', '9', 'A', 'F', 'a', 'f'};
 
-    static final CharClass DIGIT = new CharClass(R_DIGIT, false);
-    static final CharClass NOT_DIGIT = new CharClass(R_DIGIT, true);
-    static final CharClass WORD = new CharClass(R_WORD, false);
-    static final CharClass NOT_WORD = new CharClass(R_WORD, true);
-    // \s/\S build from the compile's space-table component at the sites
-    // (ClassTable.SPACE_RE2 / SPACE_JDK — the dialect package).
-    // The dot's stock classes (DOT/DOT_JUR/DOTALL) moved to the
-    // meaning-resolution pass (core.semantic.Resolve) with the expansion.
+    // The shorthand ATOM constants (DIGIT/WORD/…) and the dot's stock
+    // classes moved to the meaning-resolution pass (core.semantic.Resolve)
+    // with their expansions; the parser keeps the raw ASCII tables the
+    // in-class shorthand twins still consume (R_DIGIT/R_WORD — see
+    // shorthandRanges) until the class rung lands.
 
     /**
      * java.util.regex's {@code hasSupplementary(pattern)}: whether an
@@ -294,6 +292,12 @@ public final class Parser {
         }
     }
 
+    /** Parse to the SYNTAX tree — symbolic atoms ({@code Ast.Dot},
+     *  {@code Ast.FoldLiteral}, {@code Ast.Shorthand}) appear as nodes and
+     *  expand only at meaning resolution (the compile pipeline applies it;
+     *  see {@code core.semantic.Resolve}). Consumers wanting resolved
+     *  classes walk the compile's output, not this entry.
+     */
     public static Ast parse(String src) {
         return parseResult(src, false, false, UnicodeProviders.get()).ast();
     }
@@ -559,13 +563,12 @@ public final class Parser {
      * (see {@link #foldUniverse(int)}), supplementary codepoints included;
      * under the full universe the Turkic İ/ı pair is fold-inert by
      * simple-fold semantics (see {@link CaseFoldTable}).
+     *
+     * <p>Since the compat-surface rung-2 split this lives in the
+     * meaning-resolution pass ({@code core.semantic.Resolve}, the
+     * {@code Ast.FoldLiteral} expansion); the parse emits the symbolic node
+     * whenever the scoped {@code (?i)} is active at a folding site.
      */
-    private Ast caseFoldChar(int cp) {
-        // re2j folds FULL Unicode simple folding under plain (?i) — no (?u)
-        // needed (verified against re2j 1.8: (?i)s matches ſ, (?i)k matches K).
-        int[] ranges = foldUniverse(cp);
-        return ranges != null ? new CharClass(ranges, false) : null;
-    }
 
     /** Fold ranges for {@code cp} under the active fold universe — the
      *  UNICODE_CASE seam. ASCII-only when neither the axis nor
@@ -583,13 +586,7 @@ public final class Parser {
      *  java.util.regex: {@code (?i)\p{Lu}} matches {@code é} without
      *  UNICODE_CASE). */
     private int[] foldUniverse(int cp) {
-        if (!(unicodeCase || unicodeShorthand)) {
-            return CaseFoldTable.asciiFoldRanges(cp);
-        }
-        if (provider != null && provider.suppliesFoldUniverse()) {
-            return provider.foldCounterparts(cp);
-        }
-        return CaseFoldTable.foldRanges(cp);
+        return CaseFoldTable.universeFold(cp, unicodeCase || unicodeShorthand, provider);
     }
 
     /** The RANGE twin of {@link #foldUniverse}: extra codepoints a CI range
@@ -673,10 +670,10 @@ public final class Parser {
         pos += Alphabet.width(cp);
         literalKind = literalKindOf(cp);
         if (caseInsensitive) {
-            Ast folded = caseFoldChar(cp);
-            if (folded != null) {
-                return folded;
-            }
+            // Symbolic under (?i): the meaning-resolution pass expands the
+            // orbit (or demotes to the plain literal when the scoped fold
+            // universe has no counterpart for the codepoint).
+            return new Ast.FoldLiteral(cp, unicodeCase || unicodeShorthand);
         }
         return literalAtom(cp);
     }
@@ -1266,56 +1263,24 @@ public final class Parser {
         pos = save; // a legal quantifier — the repeat tail consumes it
     }
 
-    /** Build a shorthand escape atom (called from {@link #parseEscape}). */
+    /** Build a shorthand escape atom (called from {@link #parseEscape}).
+     *  Symbolic since the compat-surface rung-2 split: the scoped state
+     *  the expansion needs rides the node, and the meaning-resolution pass
+     *  materializes it — the {@code \s} table from the compile's space-table
+     *  component, the Unicode twins from the provider, the word orbit under
+     *  the SHORTHAND_FOLD policy (see core.semantic.Resolve). */
     private Ast shorthandEscape(char c) {
         boolean negated = Character.isUpperCase(c);
         char base = Character.toLowerCase(c);
-        // Under (?i) the word shorthands fold on the RE2-lineage lane only
-        // (re2j: (?i)\w matches ſ via the s-orbit of a-z); java.util.regex
-        // never folds a shorthand — the SHORTHAND_FOLD axis. Digits/spaces
-        // have no fold orbits and stay as-is in both readings.
-        // \W folds the POSITIVE set first, then complements.
-        if (options.isShorthandFold() && caseInsensitive && base == 'w') {
-            int[] pos = unicodeShorthand ? foldExpandRanges(computeUnicodeWordRanges()) : foldExpandRanges(R_WORD);
-            return new CharClass(negated ? complementRanges(pos) : pos, false);
-        }
-        if (!unicodeShorthand) {
-            switch (c) {
-                case 'd' :
-                    return DIGIT;
-                case 'D' :
-                    return NOT_DIGIT;
-                case 'w' :
-                    return WORD;
-                case 'W' :
-                    return NOT_WORD;
-                case 's' :
-                    return new CharClass(options.spaceTable().ranges(), false);
-                case 'S' :
-                    return new CharClass(options.spaceTable().ranges(), true);
-                default :
-                    throw new IllegalStateException("not a shorthand: \\" + c);
-            }
-        }
-        int[] ranges;
-        if (base == 'w') {
-            ranges = computeUnicodeWordRanges();
-        } else if (base == 'd') {
-            ranges = unicodeDigitRanges();
-        } else {
-            ranges = R_UNICODE_SPACE;
-        }
-        return new CharClass(ranges, negated);
+        return new Ast.Shorthand(base, negated, unicodeShorthand, caseInsensitive, unicodeCase || unicodeShorthand);
     }
 
-    /** Unicode {@code \d} ranges = {@code \p{Nd}} (decimal digit number). */
+    /** Unicode {@code \d} ranges = {@code \p{Nd}} (decimal digit number).
+     *  Delegates to the single copy (core.unicode.ShorthandTables); the
+     *  parser-side cache serves this parse's repeated queries. */
     private int[] unicodeDigitRanges() {
         if (cachedUnicodeDigit == null) {
-            int[] t = provider.tableFor("Nd");
-            if (t == null) {
-                t = R_DIGIT;
-            } // fallback
-            cachedUnicodeDigit = t;
+            cachedUnicodeDigit = ShorthandTables.digitRanges(provider, R_DIGIT);
         }
         return cachedUnicodeDigit;
     }
@@ -1324,26 +1289,12 @@ public final class Parser {
      * Unicode {@code \w} ranges = {@code \p{Alpha} + \p{M} + \p{Nd} + \p{Pc}
      * + \p{IsJoin_Control}} — matching {@code java.util.regex} with
      * {@code UNICODE_CHARACTER_CLASS} exactly on the default (JDK-derived)
-     * universe. Providers without the Alphabetic derived table (e.g. the
-     * re2j-tables bridge) approximate it by its category-expressible subset
-     * {@code L + Nl}; a missing Join_Control table is omitted (U+200C/200D).
-     * Cached for reuse by {@code \b} runtime.
+     * universe; see {@link ShorthandTables} (the single copy). Cached for
+     * reuse by {@code \b} runtime.
      */
     private int[] computeUnicodeWordRanges() {
         if (cachedUnicodeWord == null) {
-            int[] merged = null;
-            for (String prop : new String[]{"Alpha", "M", "Nd", "Pc", "Join_Control"}) {
-                int[] t = provider.tableFor(prop);
-                if (t == null && "Alpha".equals(prop)) {
-                    int[] l = provider.tableFor("L");
-                    int[] nl = provider.tableFor("Nl");
-                    t = (l == null) ? nl : (nl == null) ? l : mergeRanges(l, nl);
-                }
-                if (t != null) {
-                    merged = (merged == null) ? t : mergeRanges(merged, t);
-                }
-            }
-            cachedUnicodeWord = merged != null ? merged : R_WORD; // fallback
+            cachedUnicodeWord = ShorthandTables.wordRanges(provider, R_WORD);
         }
         return cachedUnicodeWord;
     }
@@ -1824,10 +1775,7 @@ public final class Parser {
         if (literal.length() == Alphabet.width(firstCp)) {
             literalKind = literalKindOf(firstCp);
             if (caseInsensitive) {
-                Ast folded = caseFoldChar(firstCp);
-                if (folded != null) {
-                    return folded;
-                }
+                return new Ast.FoldLiteral(firstCp, unicodeCase || unicodeShorthand);
             }
             return literalAtom(firstCp);
         }
@@ -1836,11 +1784,8 @@ public final class Parser {
             int cp = Alphabet.decode(literal, i, literal.length());
             i += Alphabet.width(cp);
             if (caseInsensitive) {
-                Ast folded = caseFoldChar(cp);
-                if (folded != null) {
-                    parts.add(folded);
-                    continue;
-                }
+                parts.add(new Ast.FoldLiteral(cp, unicodeCase || unicodeShorthand));
+                continue;
             }
             parts.add(literalAtom(cp));
         }

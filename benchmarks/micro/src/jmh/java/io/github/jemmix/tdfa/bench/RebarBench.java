@@ -489,6 +489,18 @@ public final class RebarBench {
             // the widest class there is (everything but the terminators).
             return true;
         }
+        if (ast instanceof Ast.Shorthand sh) {
+            // Symbolic shorthand atom: the complements are ~the whole
+            // alphabet, and the unicode word table spans most letters —
+            // wide by construction (conservative for the ASCII positives,
+            // which are small; this is a skip-list heuristic).
+            return sh.negated || sh.unicode;
+        }
+        if (ast instanceof Ast.FoldLiteral fl) {
+            // A folded literal expands to its orbit (a CharClass), but no
+            // orbit approaches the width threshold.
+            return false;
+        }
         if (ast instanceof CharClass cc) {
             return classWidth(cc) > 10_000;
         }

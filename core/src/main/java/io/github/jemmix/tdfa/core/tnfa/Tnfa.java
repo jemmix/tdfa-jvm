@@ -282,15 +282,16 @@ public final class Tnfa {
         // sits below tnfa in the layer DAG): the fold universe, the letter
         // alphabet, the \s table, the shorthand fold and the escape
         // readings. The meaning-shaped axes — the terminator set (the
-        // symbolic dot) and the span protocol (the family-6 marks) — are
-        // applied by the meaning-resolution pass below, not mirrored here.
+        // symbolic dot), the span protocol (the family-6 marks), the
+        // shorthand tables and the fold expansion — are applied by the
+        // meaning-resolution pass below, not mirrored here.
         ParseResult parsed = Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth,
             ParseOptions.of().unicodeCase(semantics.isUnicodeCase()).flagBindings(semantics.flagBindings())
                 .spaceTable(semantics.spaceTable()).shorthandFold(semantics.isShorthandFold())
                 .escapes(semantics.escapes()),
             provider, meter);
         obs.stage(CompileObserver.Stage.PARSE, System.nanoTime() - t0, parsed.tagCount());
-        return fromParsed(parsed, multiValuedTags, semantics, meter, obs);
+        return fromParsed(parsed, multiValuedTags, semantics, provider, meter, obs);
     }
 
     /**
@@ -315,7 +316,7 @@ public final class Tnfa {
      * scan-pivot facts gets its own reading.
      */
     public static Tnfa compile(ParseResult parsed, boolean multiValuedTags, Semantics semantics,
-        CompileObserver observer, WorkMeter meter) {
+        UnicodeDataProvider provider, CompileObserver observer, WorkMeter meter) {
         if (parsed == null) {
             throw new NullPointerException("parsed");
         }
@@ -326,7 +327,8 @@ public final class Tnfa {
             throw new NullPointerException("meter");
         }
         validate(parsed);
-        return fromParsed(parsed, multiValuedTags, semantics, meter, CompileObserver.effective(observer));
+        return fromParsed(parsed, multiValuedTags, semantics, provider != null ? provider : UnicodeProviders.get(),
+            meter, CompileObserver.effective(observer));
     }
 
     /** Structural validation of a producer-supplied parse result: the
@@ -371,15 +373,17 @@ public final class Tnfa {
 
     /** The shared tail of both entries: meaning resolution, the
      *  fixed-tags pass, and the TNFA build over the resolved tree. */
-    private static Tnfa fromParsed(ParseResult parsed, boolean multiValuedTags, Semantics semantics, WorkMeter meter,
-        CompileObserver obs) {
+    private static Tnfa fromParsed(ParseResult parsed, boolean multiValuedTags, Semantics semantics,
+        UnicodeDataProvider provider, WorkMeter meter, CompileObserver obs) {
         long t1 = System.nanoTime();
         // Meaning resolution — the one place the parse output's symbolic
-        // parts (the dot) and protocol marks (family 6, the zero-width-exit
-        // split) meet the compile's policy. Runs BEFORE the fixed-tags
-        // pass: FixedTags keeps a dissolved tag un-fixed (it reads the
-        // mark), and the marks must be on the tree that pass annotates.
-        Ast ast = Resolve.apply(parsed.ast(), semantics.terminators(), semantics.isEmptyIterationSpans());
+        // parts (the dot, the foldable literal, the shorthand atoms) and
+        // protocol marks (family 6, the zero-width-exit split) meet the
+        // compile's policy. Runs BEFORE the fixed-tags pass: FixedTags
+        // keeps a dissolved tag un-fixed (it reads the mark), and the marks
+        // must be on the tree that pass annotates.
+        Ast ast = Resolve.apply(parsed.ast(), semantics.terminators(), semantics.spaceTable(),
+            semantics.isShorthandFold(), semantics.isEmptyIterationSpans(), provider, meter);
         // Multi-valued compiles keep the fixed-tag pass OFF: §6.4 drops the
         // fixed tags from the NFA and reconstructs ONE offset per tag at
         // match time — meaningless for a tag whose whole point is its
