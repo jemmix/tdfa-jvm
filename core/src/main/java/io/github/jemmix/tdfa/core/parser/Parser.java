@@ -223,6 +223,28 @@ public final class Parser {
      *  {@code \Q...\E} bodies are immune (their readers never skip). */
     boolean comments = false;
 
+    /** java's {@code matchRoot instanceof Begin} fact: whether the pattern
+     *  opens with a BARE root begin anchor ({@code \A}, or {@code ^} parsed
+     *  non-multiline) with nothing group-shaped before it and no root
+     *  alternation — the exact shape java compiles WITHOUT its Start
+     *  wrapper (a failed search then never reports the Start rule's
+     *  hitEnd). Live-JDK pinned: {@code (?i)\Aa} keeps it (flag-only
+     *  groups dissolve), while {@code (?:\A)a}/{@code (\A)a}/
+     *  {@code \Aa|\Ab} lose it (any body-bearing group or a root Alt
+     *  heads the sequence). Tri-state while parsing: 0 nothing seen at
+     *  the root yet, 1 the root's first part was the bare anchor, 2
+     *  something else; {@link #rootBeginAnchor} freezes the verdict. */
+    private int rootBeginState;
+
+    /** The frozen {@link #rootBeginState} verdict (see there): the root's
+     *  first part was the bare begin anchor, no body-bearing group before
+     *  it, no root alternation. */
+    private boolean rootBeginAnchor;
+
+    /** A '|' arrived at the root level — the root alternation heads the
+     *  sequence (java wraps in Start whatever the branches pin). */
+    private boolean rootBeginAlternated;
+
     /** The active fold universe at the {@link #foldUniverse} seam (the
      *  UNICODE_CASE axis): true folds the full Unicode simple-fold
      *  universe — the RE2-lineage reading, re2j folds full under plain
@@ -312,7 +334,7 @@ public final class Parser {
         }
         e = anchorBoth ? anchorBoth(e) : e;
         return new ParseResult(e, p.tagCount(), p.groupCount(), p.multiline(), p.unicodeShorthand(),
-            p.unicodeWordRanges(), p.namedGroups(), p.hasSupplementaryStarts);
+            p.unicodeWordRanges(), p.namedGroups(), p.hasSupplementaryStarts, p.rootBeginAnchor);
     }
 
     /** Wrap a parsed body in start/end-text anchors (matches() = anchored both ends).
@@ -342,16 +364,25 @@ public final class Parser {
                     if (flagOnly != null) {
                         f.parts.add(applyQuantifier(flagOnly));
                         partArrived(0, false); // a flag-only group is never a literal
+                        // flag-only groups dissolve in java's AST: (?i)\Aa
+                        // keeps the root-Begin shape — no rootBeginState move.
                     }
                 } else {
                     Ast part = parseRepeat();
                     f.parts.add(part);
                     partArrived(literalKind, part instanceof Ast.Repeat);
+                    if (stack.size() == 1 && rootBeginState == 0) {
+                        rootBeginState = part instanceof Ast.StartAnchor
+                            && (((Ast.StartAnchor) part).absolute || !((Ast.StartAnchor) part).multiline) ? 1 : 2;
+                    }
                 }
                 continue;
             }
             if (c == '|') {
                 pos++;
+                if (stack.size() == 1) {
+                    rootBeginAlternated = true; // a root Alt heads the sequence — java Start-wraps
+                }
                 flushLiteralRun();
                 f.alts.add(finishConcat(f.parts));
                 f.parts = new ArrayList<>();
@@ -375,6 +406,7 @@ public final class Parser {
         flushLiteralRun();
         GroupFrame root = stack.pop();
         root.alts.add(finishConcat(root.parts));
+        rootBeginAnchor = rootBeginState == 1 && !rootBeginAlternated;
         return root.alts.size() == 1 ? root.alts.get(0) : new Ast.Alt(root.alts);
     }
 
@@ -1078,8 +1110,14 @@ public final class Parser {
                 : body;
         Ast quantified = applyQuantifier(group);
         markFamily6Groups(quantified, f.capturing);
+        boolean intoRoot = stack.size() == 1;
         stack.peek().parts.add(quantified);
         partArrived(0, false); // a group is never a literal part
+        if (intoRoot && rootBeginState == 0) {
+            // Any body-bearing group part heads the sequence in java's
+            // AST — (?:\A)a Start-wraps exactly like (\A)a does.
+            rootBeginState = 2;
+        }
     }
 
     /** class := '^'? class-item+ ']' */
@@ -1408,6 +1446,33 @@ public final class Parser {
             default :
                 return null;
         }
+    }
+
+    /**
+     * The grapheme/property boundary-clause gate (the ESCAPES_RE2 axis,
+     * unset side): java reads a {@code {'} directly after
+     * {@code \b}/{@code \B} as its boundary-type clause —
+     * {@code \b{g}}, {@code \b{gc=…}} (JDK 21+ grapheme and property
+     * boundaries) — or, for any other body, an "Illegal repetition"
+     * error; it is NEVER a literal brace (the literal spelling is
+     * {@code \b\{}). This engine has no grapheme support (the mission
+     * bound — docs/jur-api-parity.md), so the jur reading rejects every
+     * non-quantifier brace there loudly instead of silently reading the
+     * RE2-lineage literal. A digit quantifier ({@code \b{5}}) is legal
+     * java in both readings and passes through untouched. The RE2
+     * reading (axis set) keeps the literal brace — re2j's alphabet,
+     * pinned by the RE2J fuzz lane.
+     */
+    private void rejectBoundaryClause() {
+        if (options.escapes() == EscapeAlphabet.RE2_MINIMAL || peek() != '{') {
+            return;
+        }
+        int save = pos;
+        if (parseBraces() == null) {
+            throw fail(this, "grapheme/property boundary clauses (\\b{g}, \\b{gc=...}) are not supported"
+                + " — grapheme clusters are outside this engine's mission; the literal brace needs escaping (\\b\\{)");
+        }
+        pos = save; // a legal quantifier — the repeat tail consumes it
     }
 
     /** Build a shorthand escape atom (called from {@link #parseEscape}). */
@@ -1823,8 +1888,10 @@ public final class Parser {
             case 'z' :
                 return new Ast.EndAnchor(true); // \z = absolute end of text (immune to (?m))
             case 'b' :
+                rejectBoundaryClause();
                 return new Ast.WordBoundary(); // \b = word boundary
             case 'B' :
+                rejectBoundaryClause();
                 return new Ast.NoWordBoundary(); // \B = not a word boundary
             // Unicode property classes \p{X} \pX \P{X} \PX \p{^X}.
             // Outside a char class, build a CharClass directly (the table's

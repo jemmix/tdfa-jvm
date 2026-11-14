@@ -34,6 +34,50 @@ public final class Alphabet {
     }
 
     /**
+     * True when the unit at {@code pos} is a supplementary pair whose LOW
+     * half sits at {@code end} — a pair CUT by a region end
+     * ({@code end < s.length()} required: at the true text end the high is
+     * genuinely lone and matches as a single unit). java's
+     * {@code CharProperty.match} reads the full codepoint and requires the
+     * consumption to fit within {@code matcher.to}: a cut pair never
+     * matches and the node sets {@code hitEnd} (more input — the low half —
+     * would complete it).
+     */
+    /**
+     * True when the unit at {@code pos} is a supplementary pair whose LOW
+     * half sits at {@code end} — a pair CUT by a region end
+     * ({@code end < s.length()} required: at the true text end the high is
+     * genuinely lone and matches as a single unit). java's
+     * {@code CharProperty.match} reads the full codepoint and requires the
+     * consumption to fit within {@code matcher.to}: a cut pair never
+     * matches and the node sets {@code hitEnd} (more input — the low half —
+     * would complete it).
+     */
+    public static boolean cutPairAt(CharSequence s, int pos, int end) {
+        if (pos < 0 || end >= s.length() || pos + 1 != end) {
+            return false;
+        }
+        char c0 = s.charAt(pos);
+        return c0 >= 0xD800 && c0 <= 0xDBFF && s.charAt(end) >= 0xDC00 && s.charAt(end) <= 0xDFFF;
+    }
+
+    /**
+     * True when a region START at {@code from} splits a surrogate pair (a
+     * LOW half at {@code from} whose HIGH sits at {@code from-1}). java's
+     * codepoint reads (the word pair's {@code codePointBefore}, a
+     * consuming node at the region head) form the pair ACROSS the region
+     * edge — a subSequence view of the region would hand the engine a
+     * genuinely-lone low surrogate and every edge-adjacent read diverges.
+     */
+    public static boolean splitPairStart(CharSequence s, int from) {
+        if (from <= 0 || from >= s.length()) {
+            return false;
+        }
+        char c0 = s.charAt(from);
+        return c0 >= 0xDC00 && c0 <= 0xDFFF && s.charAt(from - 1) >= 0xD800 && s.charAt(from - 1) <= 0xDBFF;
+    }
+
+    /**
      * True when {@code pos} is the low half of a well-formed pair — never a
      * valid codepoint boundary. No match may start, restart, or re-seed at
      * such a position: the pair is one codepoint and its second unit belongs

@@ -29,6 +29,9 @@ class FuzzSmokeTest {
             .as("failures (inspect %s/failures.ndjson; reproduce any line with -Dfuzz.one=<caseSeed>)", tmp).isZero();
         assertThat(r.mvtCases).as("multi-valued lane cases (wiring guard)").isPositive();
         assertThat(r.mvtSimCases).as("multi-valued sim-oracle cases (wiring guard)").isPositive();
+        assertThat(r.regionCases).as("region/bounds axis cases (wiring guard)").isPositive();
+        assertThat(r.regionOracleCases).as("region/bounds jur-oracle cases (wiring guard)").isPositive();
+        assertThat(r.famBatches).as("fact-gated family batches (wiring guard)").containsKey("grapheme");
     }
 
     /**

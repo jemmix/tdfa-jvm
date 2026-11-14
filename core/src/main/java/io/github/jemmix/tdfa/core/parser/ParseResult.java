@@ -25,7 +25,9 @@ import java.util.Map;
  * {@code namedGroups} is the unmodifiable name&rarr;group-index map;
  * {@code hasSupplementaryStarts} is java.util.regex's
  * {@code hasSupplementary(pattern)} — the StartS/Start selection (see
- * {@code Parser#hasSupplementaryStarts}).
+ * {@code Parser#hasSupplementaryStarts}); {@code rootBeginAnchor} is
+ * java's {@code matchRoot instanceof Begin} shape (see
+ * {@code Parser#rootBeginState}).
  */
 // Not a record: the Java 8 bytecode floor forbids them; the defensive-copy
 // semantics are preserved by hand.
@@ -38,9 +40,11 @@ public final class ParseResult {
     private final int[] unicodeWordRanges;
     private final Map<String, Integer> namedGroups;
     private final boolean hasSupplementaryStarts;
+    private final boolean rootBeginAnchor;
 
     public ParseResult(Ast ast, int tagCount, int groupCount, boolean multiline, boolean unicodeShorthand,
-        int[] unicodeWordRanges, Map<String, Integer> namedGroups, boolean hasSupplementaryStarts) {
+        int[] unicodeWordRanges, Map<String, Integer> namedGroups, boolean hasSupplementaryStarts,
+        boolean rootBeginAnchor) {
         this.ast = ast;
         this.tagCount = tagCount;
         this.groupCount = groupCount;
@@ -53,6 +57,7 @@ public final class ParseResult {
         // the caller's discipline.
         this.unicodeWordRanges = unicodeWordRanges != null ? unicodeWordRanges.clone() : null;
         this.hasSupplementaryStarts = hasSupplementaryStarts;
+        this.rootBeginAnchor = rootBeginAnchor;
     }
 
     public Ast ast() {
@@ -91,5 +96,17 @@ public final class ParseResult {
      */
     public boolean hasSupplementaryStarts() {
         return hasSupplementaryStarts;
+    }
+
+    /**
+     * java's {@code matchRoot instanceof Begin} shape — the pattern opens
+     * with a bare root begin anchor ({@code \A}, or {@code ^} parsed
+     * non-multiline), nothing group-shaped before it, no root alternation
+     * (see {@code Parser#rootBeginState}): java compiles it WITHOUT the
+     * {@code Start} wrapper, so a failed search never reports the Start
+     * rule's {@code hitEnd}.
+     */
+    public boolean rootBeginAnchor() {
+        return rootBeginAnchor;
     }
 }

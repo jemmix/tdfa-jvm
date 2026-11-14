@@ -96,6 +96,32 @@ public class Matcher implements java.util.regex.MatchResult {
     @EmittedSurface
     protected boolean transparentBounds;
 
+    /** Whether the LAST match operation was an anchored one
+     * ({@code matches()}/{@code lookingAt()}) vs an unanchored
+     * {@code find()} — the one fact the cold {@code hitEnd}/
+     * {@code requireEnd} derivation needs to mirror java's
+     * per-operation flag reset (a failed anchored op reports the
+     * anchored walk's flags only, never the failed-search scan rule).
+     * Emitted shells maintain it in their inlined fast paths. */
+    @EmittedSurface // emitted find()/matches()/lookingAt() store their op mode
+    protected boolean lastOpAnchored;
+
+    /** The start position of the LAST find()'s search (the failed-search
+     *  probe's scan origin — java's {@code Start} scan began there, not
+     *  at the region head). Maintained by {@link #find()} only; the
+     *  anchored ops always start at the region head. */
+    @EmittedSurface // emitted find() stores its search start
+    protected int lastSearchFrom;
+
+    /** The last {@code find()} returned WITHOUT executing a search (the
+     *  continuation start passed the region end — java's
+     *  {@code nextSearchIndex > to} early return): hitEnd/requireEnd
+     *  still belong to the LAST EXECUTED search, so the cold probe
+     *  derives from the previous match instead of a failed scan. Emitted
+     *  shells maintain it in their inlined fast paths. */
+    @EmittedSurface // emitted find()/matches()/lookingAt() maintain it
+    protected boolean searchSkipped;
+
     public Matcher(RegexEngine engine, WholeEngine wholeEngine, CharSequence input) {
         this.engine = engine;
         this.wholeEngine = wholeEngine;
@@ -123,6 +149,9 @@ public class Matcher implements java.util.regex.MatchResult {
         hasMatch = false;
         match = null;
         appendPos = 0;
+        lastOpAnchored = false;
+        lastSearchFrom = 0;
+        searchSkipped = false;
         // java.util.regex: reset() returns the matcher to the DEFAULT
         // region (the whole input); the bounds flags are NOT reset.
         regionFrom = 0;
@@ -158,6 +187,8 @@ public class Matcher implements java.util.regex.MatchResult {
     // ---- match operations ----
 
     public boolean matches() {
+        lastOpAnchored = true;
+        searchSkipped = false; // this op executes — the flags become its own
         if (regionTo >= 0) {
             return matchesInRegion();
         }
@@ -172,6 +203,8 @@ public class Matcher implements java.util.regex.MatchResult {
     }
 
     public boolean lookingAt() {
+        lastOpAnchored = true;
+        searchSkipped = false; // this op executes — the flags become its own
         if (regionTo >= 0) {
             return lookingAtInRegion();
         }
@@ -188,6 +221,7 @@ public class Matcher implements java.util.regex.MatchResult {
     }
 
     public boolean find() {
+        lastOpAnchored = false;
         if (regionTo >= 0) {
             return findInRegion();
         }
@@ -200,10 +234,15 @@ public class Matcher implements java.util.regex.MatchResult {
         } else {
             start = appendPos;
         }
+        // Clamped to the input (see findInRegion): an empty match at the
+        // end bumps start past the last valid scan origin.
+        lastSearchFrom = Math.min(start, inputLength);
         if (start > inputLength) {
             hasMatch = false;
+            searchSkipped = true; // flags stay the last search's (java's early return)
             return false;
         }
+        searchSkipped = false;
         MatchResult m = engine.match(input, start, scratch);
         if (m == null) {
             hasMatch = false;
@@ -416,11 +455,17 @@ public class Matcher implements java.util.regex.MatchResult {
         if (next < from) {
             next = from;
         }
+        // Clamped to the region: an empty match at the region end bumps
+        // past `to` (the probe's scan origin must stay inside [from, to]
+        // — java's Start loop starts there and dies immediately).
+        lastSearchFrom = Math.min(next, to);
         if (next > to) {
             hasMatch = false;
             match = null;
+            searchSkipped = true; // flags stay the last search's (java's early return)
             return false;
         }
+        searchSkipped = false;
         MatchResult m = searchRegion(from, next, to);
         if (m == null) {
             hasMatch = false;
@@ -437,7 +482,7 @@ public class Matcher implements java.util.regex.MatchResult {
         int from = regionFrom;
         int to = regionTo;
         MatchResult m;
-        if (anchoringBounds && !transparentBounds) {
+        if (anchoringBounds && !transparentBounds && !viewUnsound(from, to)) {
             m = engine.match(input.subSequence(from, to), 0, scratch);
             if (m != null && m.start(0) == 0) {
                 m = MatchResult.shifted(m, from);
@@ -461,8 +506,16 @@ public class Matcher implements java.util.regex.MatchResult {
     private boolean matchesInRegion() {
         int from = regionFrom;
         int to = regionTo;
+        // A region end that CUTS a surrogate pair cannot ride the
+        // subSequence view (the view's trailing high surrogate is
+        // genuinely lone — matchable as one unit — where java's nodes
+        // read the full codepoint and require both units inside the
+        // region): those regions take the seam's bounded whole walk
+        // whenever the artifact can bound the flags.
+        boolean cut = viewUnsound(from, to);
+        boolean defaultBounds = anchoringBounds && !transparentBounds;
         MatchResult m;
-        if ((anchoringBounds && !transparentBounds) || !engine.usesPositionPredicates()) {
+        if (!cut && (defaultBounds || !engine.usesPositionPredicates())) {
             // The whole-region walk over a view: exact under the default
             // bounds combo (the region IS the text for every predicate),
             // and exact for predicate-free artifacts under any combo.
@@ -470,6 +523,8 @@ public class Matcher implements java.util.regex.MatchResult {
             if (m != null) {
                 m = MatchResult.shifted(m, from);
             }
+        } else if (cut && (defaultBounds || !engine.usesPositionPredicates())) {
+            m = engine.matchRegionWhole(input, from, to, anchoringBounds, transparentBounds, scratch);
         } else {
             throw new UnsupportedOperationException("matches() over a region with non-default bounds needs "
                 + "position predicates the whole engine cannot bound — use the default bounds, a predicate-free "
@@ -487,28 +542,80 @@ public class Matcher implements java.util.regex.MatchResult {
     }
 
     /**
+     * True when the unit at {@code pos} is a supplementary pair whose LOW
+     * half sits at {@code end} — a pair CUT by a region end (inlined from
+     * {@code ast.Alphabet.cutPairAt}: the engine package does not depend
+     * on ast — the layering gate). At the true text end the high is
+     * genuinely lone and matches as a single unit.
+     */
+    private static boolean cutPairAt(CharSequence s, int pos, int end) {
+        if (pos < 0 || end >= s.length() || pos + 1 != end) {
+            return false;
+        }
+        char c0 = s.charAt(pos);
+        return c0 >= 0xD800 && c0 <= 0xDBFF && s.charAt(end) >= 0xDC00 && s.charAt(end) <= 0xDFFF;
+    }
+
+    /**
+     * True when a region START at {@code from} splits a surrogate pair (a
+     * LOW half at {@code from} whose HIGH sits at {@code from-1}) —
+     * inlined from {@code ast.Alphabet.splitPairStart} (see
+     * {@link #cutPairAt}).
+     */
+    private static boolean splitPairStart(CharSequence s, int from) {
+        if (from <= 0 || from >= s.length()) {
+            return false;
+        }
+        char c0 = s.charAt(from);
+        return c0 >= 0xDC00 && c0 <= 0xDFFF && s.charAt(from - 1) >= 0xD800 && s.charAt(from - 1) <= 0xDBFF;
+    }
+
+    /**
+     * Whether a subSequence view of {@code [from, to)} would LIE about the
+     * edge units: a surrogate pair CUT by the region end (the view's
+     * trailing high is genuinely lone — matchable as one unit — where
+     * java's nodes read the full codepoint and need both units inside),
+     * or a pair SPLIT by the region start (the view's leading low loses
+     * its high, and java's codepoint reads across the edge — the word
+     * pair's {@code codePointBefore} — diverge). Both regions take the
+     * seam's bounded walk, which decodes against the full input.
+     */
+    private boolean viewUnsound(int from, int to) {
+        return cutPairAt(input, to - 1, to) || splitPairStart(input, from);
+    }
+
+    /**
      * One region search from {@code next}: under the DEFAULT bounds combo
      * (anchoring, opaque) a subSequence view is exact for every engine —
      * the region behaves as the whole text for every position predicate —
      * and the result rebases to absolute positions; the opt-out combos
      * route through the engine's region seam (full input, bounded walk,
      * predicate bases per the flags — absolute positions natively).
+     * EXCEPT a region end that CUTS a surrogate pair: the view would
+     * hand the engine a genuinely-lone high surrogate (matchable as a
+     * single unit), where java's nodes read the full codepoint and
+     * require both units inside the region — those regions route through
+     * the seam too (the bounded walk encodes the cut-pair rule).
      */
     private MatchResult searchRegion(int from, int next, int to) {
-        if (anchoringBounds && !transparentBounds) {
+        if (anchoringBounds && !transparentBounds && !viewUnsound(from, to)) {
             MatchResult m = engine.match(input.subSequence(from, to), next - from, scratch);
             return m == null ? null : MatchResult.shifted(m, from);
         }
-        return engine.matchRegion(input, next, to, anchoringBounds, transparentBounds, scratch);
+        return engine.matchRegion(input, from, next, to, anchoringBounds, transparentBounds, scratch);
     }
 
     /** The cold hitEnd/requireEnd derivation (see {@link #hitEnd()}). */
     private int probeEndFlags() {
         int from = regionTo >= 0 ? regionFrom : 0;
         int to = regionTo >= 0 ? regionTo : inputLength;
+        // A skipped search keeps the LAST EXECUTED search's flags (java's
+        // nextSearchIndex > to early return) — derive from the previous
+        // match, whose spans the matcher still carries.
+        boolean matched = hasMatch || searchSkipped;
         return engine.probeEndFlags(input, from, to, regionTo >= 0 ? anchoringBounds : true,
-            regionTo >= 0 ? transparentBounds : false, hasMatch ? lastMatchStart : 0, hasMatch ? lastMatchEnd : -1,
-            hasMatch);
+            regionTo >= 0 ? transparentBounds : false, matched ? lastMatchStart : lastSearchFrom,
+            matched ? lastMatchEnd : -1, matched, lastOpAnchored);
     }
 
     // ---- match results ----

@@ -395,7 +395,7 @@ public final class TdfaAsmBackend {
      */
     private static void genRegionDelegates(ClassWriter cw, String owner, Tdfa tdfa) {
         String regionDesc = "(" + CS_D + "IIZZ" + SCRATCH_D + ")L" + RESULT + ";";
-        for (String name : new String[]{"matchRegion", "matchRegionLookingAt"}) {
+        for (String name : new String[]{"matchRegionLookingAt", "matchRegionWhole"}) {
             MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, name, regionDesc, null, null);
             mv.visitCode();
             mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -411,7 +411,24 @@ public final class TdfaAsmBackend {
             mv.visitMaxs(0, 0);
             mv.visitEnd();
         }
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "probeEndFlags", "(" + CS_D + "IIZZIIZ)I", null, null);
+        // matchRegion carries the decoupled scan start (three ints)
+        String searchDesc = "(" + CS_D + "IIIZZ" + SCRATCH_D + ")L" + RESULT + ";";
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matchRegion", searchDesc, null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitVarInsn(Opcodes.ILOAD, 4);
+        mv.visitVarInsn(Opcodes.ILOAD, 5);
+        mv.visitVarInsn(Opcodes.ILOAD, 6);
+        mv.visitVarInsn(Opcodes.ALOAD, 7);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "matchRegion", searchDesc, false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "probeEndFlags", "(" + CS_D + "IIZZIIZZ)I", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
@@ -423,7 +440,8 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, 6);
         mv.visitVarInsn(Opcodes.ILOAD, 7);
         mv.visitVarInsn(Opcodes.ILOAD, 8);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "probeEndFlags", "(" + CS_D + "IIZZIIZ)I", false);
+        mv.visitVarInsn(Opcodes.ILOAD, 9);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "probeEndFlags", "(" + CS_D + "IIZZIIZZ)I", false);
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();

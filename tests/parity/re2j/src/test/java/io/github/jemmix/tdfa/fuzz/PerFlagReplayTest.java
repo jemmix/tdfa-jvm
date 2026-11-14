@@ -146,6 +146,12 @@ class PerFlagReplayTest {
      *  {@code DifferentialFuzzer.jurLaneDomain} own the same predicates).
      *  Null = the divergence is unexplained (a failure). */
     private static String classifiedDomain(String pattern, String input, String oracle, String vm) {
+        if (DifferentialFuzzer.graphemeConstruct(pattern)
+            && (vm.startsWith("<reject") || vm.startsWith("<exception:PatternSyntaxException"))) {
+            // the JDK-8394894 family: the syntax this engine consciously
+            // rejects while the live oracle accepts it
+            return "graphemes-unsupported";
+        }
         if (vm.startsWith("<reject")) {
             return "budget-reject (fuzz-scoped compile budget)";
         }

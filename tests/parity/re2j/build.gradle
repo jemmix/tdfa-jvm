@@ -194,6 +194,12 @@ tasks.register('fuzz', JavaExec) {
     // -Pfuzz.seqEvery=N resamples.
     systemProperty 'fuzz.seq', project.findProperty('fuzz.seq') ?: '1'
     systemProperty 'fuzz.seqEvery', project.findProperty('fuzz.seqEvery') ?: '4'
+    // Region/bounds axis (JDK-8394894: region()/useTransparentBounds()/
+    // useAnchoringBounds() over the five-probe family + hitEnd/requireEnd,
+    // both tiers + the live jur oracle): on by default; -Pfuzz.region=0
+    // opts out, -Pfuzz.regionEvery=N resamples.
+    systemProperty 'fuzz.region', project.findProperty('fuzz.region') ?: '1'
+    systemProperty 'fuzz.regionEvery', project.findProperty('fuzz.regionEvery') ?: '4'
     // Determinism double-run (runner-immutability tripwire 2): on by default;
     // -Pfuzz.double=0 opts out. Warm replay for fuzz.one (tripwire 3) is
     // opt-in: -Pfuzz.one=<caseSeed> -Pfuzz.warm=1 runs the case's batch

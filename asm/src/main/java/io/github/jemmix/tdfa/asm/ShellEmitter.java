@@ -129,6 +129,11 @@ public final class ShellEmitter {
         // public boolean find()
         mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "find", "()Z", null, null);
         mv.visitCode();
+        // Op-mode bookkeeping for the cold hitEnd/requireEnd probe: an
+        // unanchored find, and the search start it scans from.
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastOpAnchored", "Z");
         // Region routing: an active region leaves the inlined fast path —
         // the machinery find() owns the bounds family (one predictable
         // never-taken branch on the hot path).
@@ -162,6 +167,10 @@ public final class ShellEmitter {
         mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "appendPos", "I");
         mv.visitVarInsn(Opcodes.ISTORE, 1);
         mv.visitLabel(startDone);
+        // lastSearchFrom = start (the failed-search probe's scan origin)
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastSearchFrom", "I");
         // if (start > inputLength) { hasMatch = false; return false; }
         mv.visitVarInsn(Opcodes.ILOAD, 1);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -171,9 +180,17 @@ public final class ShellEmitter {
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "hasMatch", "Z");
+        // searchSkipped = true — the early return keeps the last search's flags
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "searchSkipped", "Z");
         mv.visitInsn(Opcodes.ICONST_0);
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitLabel(notPast);
+        // searchSkipped = false (this find executes a search)
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "searchSkipped", "Z");
         // m = p.eng.match(input, start, this.scratch)  — carrier-aware entry:
         // the matcher's buffers pool across find() iterations.
         mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -194,6 +211,16 @@ public final class ShellEmitter {
         // public boolean matches()
         mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matches", "()Z", null, null);
         mv.visitCode();
+        // Op-mode bookkeeping for the cold hitEnd/requireEnd probe: an
+        // anchored op (the machinery path on the region route stores it
+        // again — harmless, same value), and this op executes — the
+        // flags become its own.
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastOpAnchored", "Z");
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "searchSkipped", "Z");
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "regionTo", "I");
         Label mNoRegion = new Label();
@@ -251,6 +278,13 @@ public final class ShellEmitter {
         // public boolean lookingAt()
         mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "lookingAt", "()Z", null, null);
         mv.visitCode();
+        // Op-mode bookkeeping (see matches()).
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastOpAnchored", "Z");
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "searchSkipped", "Z");
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "regionTo", "I");
         Label lNoRegion = new Label();

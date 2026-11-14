@@ -17,7 +17,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 - [ ] JUR-compat re-base tail: local soak, README numbers
 - [ ] Watch JDK-8381696; leak skips auto-retire via probe ([analysis](docs/jdk-8381696-restart-tag-leak-fix.md))
 - [ ] Local overnight cross-rung soak; refresh README numbers
-- [ ] Fuzz region ops, transparent bounds, graphemes ([JDK-8394894](https://bugs.openjdk.org/browse/JDK-8394894), [API](docs/jur-api-parity.md))
 - [ ] Verify TDFA(1) conformance vs paper wording (lookahead delay)
 - [ ] Upstream re2j PRs #208/#212/#213: maintainer review
 

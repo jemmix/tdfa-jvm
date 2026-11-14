@@ -250,6 +250,11 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      * start-state-gated collapse).
      */
     private final boolean absBeginBound;
+    /** java's {@code matchRoot instanceof Begin} shape (frozen from the
+     * parse — see {@link Tdfa#rootBeginAnchor()}): java compiles these
+     * without the {@code Start} wrapper, so the failed-search probe never
+     * applies the Start rule. */
+    private final boolean rootBeginAnchor;
     /**
      * Cells per state in the posFlags-indexed tables (see
      * {@link Tdfa#posFlagCells()}); runtime posFlags values stay below it.
@@ -413,6 +418,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         // Derived (see Tdfa.absBeginBound): every accepting path crosses an
         // \A gate — restart enumeration past the origin is provably fruitless.
         this.absBeginBound = tdfa.absBeginBound();
+        this.rootBeginAnchor = tdfa.rootBeginAnchor();
         this.wordBits = RunnerTables.buildWordBits(tdfa.unicodeWordBoundary ? tdfa.wordRanges : null);
         this.startBits =
             (literalNeedle == null && (tdfa.stateMeta[tdfa.startState] & 1) == 0) ? buildStartBits() : null;
@@ -3020,7 +3026,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
     }
 
     private MatchHolder runGeneric(CharSequence input, int from, int to, boolean anchored, MatchScratch sc) {
-        return runGeneric(input, from, to, anchored, sc, 0, to, 0, to);
+        return runGeneric(input, from, to, anchored, anchored, sc, 0, to, 0, to);
     }
 
     /**
@@ -3031,10 +3037,16 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      * {@code wTo} the word-predicate read window (opaque bounds: the
      * region; transparent: the whole input). The identity region
      * {@code (0, to, 0, to)} is exactly the plain walk — every legacy
-     * caller routes through it that way.
+     * caller routes through it that way. {@code anchored} is the START
+     * discipline (one attempt at {@code from}, no restart scan);
+     * {@code whole} the TAIL discipline (the accept must land at
+     * {@code to}; the stop-table never fires early). Three stable
+     * shapes: a scan {@code (f, f)}, a lookingAt PREFIX {@code (t, f)}
+     * — one attempt, stop-table leftmost-first, accept anywhere in
+     * {@code [from, to]} — and a whole match {@code (t, t)}.
      */
-    private MatchHolder runGeneric(CharSequence input, int from, int to, boolean anchored, MatchScratch sc, int bBase,
-        int eBase, int wFrom, int wTo) {
+    private MatchHolder runGeneric(CharSequence input, int from, int to, boolean anchored, boolean whole,
+        MatchScratch sc, int bBase, int eBase, int wFrom, int wTo) {
         // Carrier-regs reuse across restarts (the wholeWalk idiom): failed
         // restarts pay only the -1 refill, not a fresh allocation per start;
         // successful escapes clone into the MatchHolder, so reuse is safe.
@@ -3090,7 +3102,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                             if (regs != null && cell != 0) {
                                 applyOps(ops, cell, regs, pos, tree);
                             }
-                            if (!anchored && !longestMatch && stopNow(state, posFlags)) {
+                            if (!whole && !longestMatch && stopNow(state, posFlags)) {
                                 break;
                             }
                         }
@@ -3102,7 +3114,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                             if (regs != null) {
                                 applyFinalOps(state, regs, pos, tree);
                             }
-                            if (!anchored && !longestMatch) {
+                            if (!whole && !longestMatch) {
                                 if (posFlags < 0) {
                                     posFlags = positionFlagsRgn(input, pos, to, bBase, eBase, wFrom, wTo);
                                 }
@@ -3120,7 +3132,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                                 if (regs != null) {
                                     applyFinalOps(state, regs, pos, tree);
                                 }
-                                if (!anchored && !longestMatch && stopNow(state, posFlags)) {
+                                if (!whole && !longestMatch && stopNow(state, posFlags)) {
                                     break;
                                 }
                             }
@@ -3131,6 +3143,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                     break;
                 }
                 int c = Alphabet.decode(input, pos, to);
+                if (c <= 0xFFFF && Alphabet.cutPairAt(input, pos, to)) {
+                    break; // a pair cut by the region end: java's node needs both units — dead
+                }
                 int base = stateBase[state];
                 int count = (meta >>> 1) & 0xFFFF;
                 int chosen = -1, chosenTarget = 0;
@@ -3213,7 +3228,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 posFlags = -1;
             }
             if (haveAccept) {
-                if (anchored && lastAcceptPos != to) {
+                if (whole && lastAcceptPos != to) {
                     return null;
                 }
                 // Eager finals at accept-record time (see extractFrom).
@@ -3451,7 +3466,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         }
         if (needsWordFlags) {
             boolean prevWord = pos > wFrom && isWordBefore(s, pos);
-            boolean currWord = pos < wTo && isWordAt(s, pos, wTo);
+            // The right-side read decodes against the FULL input (java's
+            // codePointAt is unbounded — a pair whose low sits past the
+            // window end still forms); only the position gate uses wTo.
+            boolean currWord = pos < wTo && isWordAt(s, pos, s.length());
             if (prevWord != currWord) {
                 flags |= Tnfa.WORD_BOUNDARY;
             } else {
@@ -3471,30 +3489,36 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
 
     /**
      * Region-confined search (the {@code java.util.regex.Matcher} bounds
-     * family): the leftmost match with its start in {@code [from, to)},
+     * family): the leftmost match with its start in {@code [scanFrom, to)},
      * every position predicate evaluated under the region's bases — see
-     * {@link #positionFlagsRgn}. Serves the whole combinatorics of the
-     * bounds flags (the matcher routes the default combo through the
-     * plain entry over a subSequence view, where the identity bases and
-     * the view's coordinates coincide; this entry carries the opt-out
-     * combos the view cannot express). Absolute positions throughout —
-     * unlike the view route, nothing needs rebasing.
+     * {@link #positionFlagsRgn}. {@code regionFrom} is the REGION head
+     * (the bases anchor there — java's {@code matcher.from}); {@code
+     * scanFrom} the SEARCH start (a continuation find's resume point —
+     * java's search index; always within {@code [regionFrom, to]}).
+     * Serves the whole combinatorics of the bounds flags (the matcher
+     * routes the default combo through the plain entry over a
+     * subSequence view, where the identity bases and the view's
+     * coordinates coincide; this entry carries the opt-out combos the
+     * view cannot express — and the pair-split regions where the view
+     * would lie). Absolute positions throughout — unlike the view
+     * route, nothing needs rebasing.
      */
     @EmittedSurface // generated engines delegate here (TdfaAsmBackend)
-    public MatchResult matchRegion(CharSequence input, int from, int to, boolean anchoringBounds,
+    public MatchResult matchRegion(CharSequence input, int regionFrom, int scanFrom, int to, boolean anchoringBounds,
         boolean transparentBounds, MatchScratch sc) {
-        if (from < 0 || to > input.length() || from > to) {
-            throw new IndexOutOfBoundsException("region: " + from + "," + to + " (length " + input.length() + ")");
+        if (regionFrom < 0 || scanFrom < regionFrom || scanFrom > to || to > input.length()) {
+            throw new IndexOutOfBoundsException(
+                "region: " + regionFrom + "," + scanFrom + "," + to + " (length " + input.length() + ")");
         }
         if (sc == null) {
             sc = new MatchScratch();
         }
-        int bBase = anchoringBounds ? from : 0;
+        int bBase = anchoringBounds ? regionFrom : 0;
         int eBase = anchoringBounds ? to : input.length();
-        int wFrom = transparentBounds ? 0 : from;
+        int wFrom = transparentBounds ? 0 : regionFrom;
         int wTo = transparentBounds ? input.length() : to;
         trace(Strategy.GENERIC);
-        MatchHolder h = runGeneric(input, from, to, false, sc, bBase, eBase, wFrom, wTo);
+        MatchHolder h = runGeneric(input, scanFrom, to, false, false, sc, bBase, eBase, wFrom, wTo);
         if (h == null) {
             return null;
         }
@@ -3504,7 +3528,11 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         return new MatchResult(h.regs, tdfa.finalRegBase, tdfa.groupCount, h.matchStart, h.matchEnd, h.tree);
     }
 
-    /** Region-confined lookingAt (anchored at {@code from}; see {@link #matchRegion}). */
+    /** Region-confined lookingAt (anchored at {@code from}; see {@link #matchRegion}): the
+     *  PREFIX discipline — one attempt at {@code from}, the stop-table's
+     *  leftmost-first winner, the accept anywhere in {@code [from, to]}
+     *  (java's {@code lookingAt} = {@code match(from, NOANCHOR)}, whose
+     *  LastNode accepts at any position — never the whole-tail rule). */
     @EmittedSurface // generated engines delegate here (TdfaAsmBackend)
     public MatchResult matchRegionLookingAt(CharSequence input, int from, int to, boolean anchoringBounds,
         boolean transparentBounds, MatchScratch sc) {
@@ -3519,7 +3547,42 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         int wFrom = transparentBounds ? 0 : from;
         int wTo = transparentBounds ? input.length() : to;
         trace(Strategy.GENERIC);
-        MatchHolder h = runGeneric(input, from, to, true, sc, bBase, eBase, wFrom, wTo);
+        MatchHolder h = runGeneric(input, from, to, true, false, sc, bBase, eBase, wFrom, wTo);
+        if (h == null) {
+            return null;
+        }
+        if (tdfa.fixedBase != null) {
+            MatchResult.reconstructFixed(h.regs, tdfa.finalRegBase, tdfa.fixedBase, tdfa.fixedOffset);
+        }
+        return new MatchResult(h.regs, tdfa.finalRegBase, tdfa.groupCount, h.matchStart, h.matchEnd, h.tree);
+    }
+
+    /**
+     * Region-confined whole match ({@code Matcher.matches()}'s discipline;
+     * the bases contract of {@link #matchRegion}): ONE attempt at
+     * {@code from} under the whole-tail rule — the accept must land at
+     * {@code to}. The subSequence view serves the default-bounds combo
+     * except when the region end CUTS a surrogate pair (the view would
+     * hand the walk a genuinely-lone high surrogate; java's nodes read
+     * the full codepoint and require both units inside the region) —
+     * this seam serves exactly those regions (the bounded walk encodes
+     * the cut-pair rule), under any bounds combo the artifact can bound.
+     */
+    @EmittedSurface // generated engines delegate here (TdfaAsmBackend)
+    public MatchResult matchRegionWhole(CharSequence input, int from, int to, boolean anchoringBounds,
+        boolean transparentBounds, MatchScratch sc) {
+        if (from < 0 || to > input.length() || from > to) {
+            throw new IndexOutOfBoundsException("region: " + from + "," + to + " (length " + input.length() + ")");
+        }
+        if (sc == null) {
+            sc = new MatchScratch();
+        }
+        int bBase = anchoringBounds ? from : 0;
+        int eBase = anchoringBounds ? to : input.length();
+        int wFrom = transparentBounds ? 0 : from;
+        int wTo = transparentBounds ? input.length() : to;
+        trace(Strategy.GENERIC);
+        MatchHolder h = runGeneric(input, from, to, true, true, sc, bBase, eBase, wFrom, wTo);
         if (h == null) {
             return null;
         }
@@ -3551,12 +3614,18 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      * winning quietly, e.g. {@code a|ab} completing at the end — sets
      * neither, exactly like a quiet literal completion.
      * <li><b>On failure</b> ({@code matched == false}, the last search
-     * started at {@code lastSearchFrom}): {@code hitEnd} fires when some
-     * start's walk survived to the region end (java's probe past
-     * {@code to}) or the pattern is not begin-rooted (java's
-     * {@code Start}-node behavior: an unanchored search that scanned to
-     * the end always reports {@code hitEnd}); end-anchor gates that HELD
-     * during the scan set their flags like the success case.
+     * started at {@code matchStart}): an UNANCHORED failure
+     * ({@code anchoredOp == false}, java's {@code find()}/{@code Start}
+     * scan from {@code matchStart}) fires {@code hitEnd} when some
+     * start's walk survived to the region end or the pattern is not
+     * begin-rooted (java's {@code Start}-node rule: an unanchored search
+     * that scanned to the end always reports {@code hitEnd}); an
+     * ANCHORED failure ({@code anchoredOp == true}, java's
+     * {@code matches()}/{@code lookingAt()} entry — the anchored walk
+     * from {@code from}, no {@code Start} node, no scan) fires
+     * {@code hitEnd} only when that one walk survived to the region end
+     * wanting input. End-anchor gates that HELD during the walk set
+     * their flags in either mode.
      * </ul>
      *
      * Region-aware throughout ({@code from}/{@code to}/bounds flags as
@@ -3565,13 +3634,14 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      */
     @EmittedSurface // generated engines delegate here (TdfaAsmBackend)
     public int probeEndFlags(CharSequence input, int from, int to, boolean anchoringBounds, boolean transparentBounds,
-        int matchStart, int matchEnd, boolean matched) {
+        int matchStart, int matchEnd, boolean matched, boolean anchoredOp) {
         int bBase = anchoringBounds ? from : 0;
         int eBase = anchoringBounds ? to : input.length();
         int wFrom = transparentBounds ? 0 : from;
         int wTo = transparentBounds ? input.length() : to;
         return matched ? probeSuccessEndFlags(input, to, bBase, eBase, wFrom, wTo, matchStart, matchEnd)
-            : probeFailureEndFlags(input, from, to, bBase, eBase, wFrom, wTo);
+            : anchoredOp ? probeAnchoredFailureEndFlags(input, from, to, bBase, eBase, wFrom, wTo)
+                : probeFailureEndFlags(input, matchStart, to, bBase, eBase, wFrom, wTo);
     }
 
     /** The success half of {@link #probeEndFlags}: a tagless replay of the
@@ -3619,37 +3689,70 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         return flags;
     }
 
-    /** The failure half of {@link #probeEndFlags}: a live-set scan over
-     *  the region — held end-gates, any surviving start, and whether a
-     *  start AT the region end would itself probe past it — plus java's
-     *  Start-node rule (an unanchored search always scanned to the end,
-     *  so hitEnd holds regardless of what the scan saw). */
+    /** The failure half of {@link #probeEndFlags} for an UNANCHORED op
+     *  (java's {@code find()}: the {@code Start}-node scan): a live-set
+     *  scan over the region from the last search's start — held
+     *  end-gates, any surviving start, and whether a start AT the region
+     *  end would itself probe past it — plus java's Start-node rule (an
+     *  unanchored search always scanned to the end, so hitEnd holds
+     *  regardless of what the scan saw). */
     private int probeFailureEndFlags(CharSequence input, int from, int to, int bBase, int eBase, int wFrom, int wTo) {
         int flags = 0;
         boolean beginRooted = absBeginBound;
+        // java's Start wrapper wraps everything except the bare root
+        // begin anchor (matchRoot instanceof Begin — the parse-frozen
+        // rootBeginAnchor): only there does a failed search skip the
+        // Start scan rule, and only the Start node carries the
+        // minLength guard.
+        boolean startWrapped = !rootBeginAnchor;
         long[] live = new long[stateWords];
         int seedMask = stateEntryMask[startState];
-        for (int p = beginRooted ? bBase : from;; p++) {
+        // java's Start-node minLength guard: the scan attempts a start at
+        // p only when a minimum-length match fits (p <= to - minLength,
+        // codepoints — java's study counts one per codepoint); positions
+        // past the guard contribute nothing beyond the Start rule below.
+        // A Begin-rooted artifact has no Start node — java runs its one
+        // attempt regardless of length.
+        int guard = startWrapped ? to - minMatchCodepoints() : to;
+        // The scan seeds at every position from the SEARCH's start (java's
+        // Start loop); a Begin-rooted artifact seeds the same range — its
+        // entry gate (position == begin base) admits only the base itself,
+        // and a continuation search past the base seeds nothing, exactly
+        // like java's root=matchRoot Begin rejecting i != fromIndex.
+        for (int p = from;; p++) {
             // Seed a fresh start at p when its entry gate holds (the
             // codepoint lane never starts mid-pair). A start AT the
             // region end is a hitEnd only when it would probe past it —
             // an accepting state or a consumable edge whose gate holds
             // there (java's attempt at `to` probing vs failing a
-            // zero-width gate quietly).
-            boolean gateHeld = !(scanSkipsPairs && Alphabet.pairInterior(input, p))
-                && maskSatisfiedRgn(input, p, to, seedMask, bBase, eBase, wFrom, wTo);
-            if (gateHeld) {
-                flags |= evaluatedEndProbeBits(seedMask, p, eBase);
+            // zero-width gate quietly). The seed's word pair was
+            // EVALUATED whenever the attempt ran (p <= guard) — a read
+            // past the window end sets both flags whether the boundary
+            // answered held or failed (java's Bound.check).
+            boolean attemptRan = p <= guard && !(scanSkipsPairs && Alphabet.pairInterior(input, p));
+            boolean gateHeld = attemptRan && maskSatisfiedRgn(input, p, to, seedMask, bBase, eBase, wFrom, wTo);
+            if (attemptRan) {
+                flags |= evaluatedEndProbeBits(seedMask, input, p, to, bBase, eBase, wFrom, wTo);
             }
             if (p >= to) {
-                if (gateHeld && startProbesAtEnd(input, to, bBase, eBase, wFrom, wTo)) {
-                    flags |= PROBE_HIT_END;
+                if (attemptRan) {
+                    flags |= startAtEndEvalBits(input, to, bBase, eBase, wFrom, wTo);
+                }
+                if (gateHeld) {
+                    flags |= startAtEndHeldBits(input, to, bBase, eBase, wFrom, wTo);
                 }
                 break;
             }
             if (gateHeld) {
                 live[startState >>> 5] |= 1L << (startState & 31);
                 flags |= heldEndGateBits(seedMask, input, p, to, bBase, eBase, wFrom, wTo);
+            } else if (attemptRan && seedMask != 0) {
+                // java's zero-width nodes run IN SEQUENCE: the gates that
+                // already held before a failing one set their flags (a $
+                // holding one-before-end sets both, then a later \A kills
+                // the branch — java's nodes already ran).
+                flags |= heldEndGateBits(seedMask & positionFlagsRgn(input, p, to, bBase, eBase, wFrom, wTo), input, p,
+                    to, bBase, eBase, wFrom, wTo);
             }
             int c = Alphabet.decode(input, p, to);
             long[] next = new long[stateWords];
@@ -3674,7 +3777,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 // on "xa" is the pinned shape).
                 for (int s = 0; s < stateCount; s++) {
                     if ((live[s >>> 5] & (1L << (s & 31))) != 0) {
-                        flags |= evaluatedEndProbeBits(stateAcceptMask[s], to, eBase);
+                        flags |= evaluatedEndProbeBits(stateAcceptMask[s], input, to, to, bBase, eBase, wFrom, wTo);
                     }
                 }
                 break;
@@ -3682,20 +3785,167 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         }
         // java's Start/StartS/BnM roots: "always searches to the end if it
         // doesn't find what it's looking for, so hitEnd is true" — the
-        // Begin-rooted exception is exactly absBeginBound (every accepting
-        // path crosses the position-base gate; only the base can start).
-        if (!beginRooted) {
+        // one exception is the BARE root begin anchor (rootBeginAnchor:
+        // java compiles it with root=matchRoot, no Start node at all);
+        // a group-wrapped or alternated \A keeps the Start wrapper
+        // however semantically pinned the artifact is.
+        if (startWrapped) {
             flags |= PROBE_HIT_END;
         }
         return flags;
     }
 
-    /** Whether a start AT the region end would probe past it: the start
-     *  state accepts there under its gates, or carries a consumable edge
-     *  whose required mask holds there. */
-    private boolean startProbesAtEnd(CharSequence input, int to, int bBase, int eBase, int wFrom, int wTo) {
+    /** The failure half of {@link #probeEndFlags} for an ANCHORED op
+     *  (java's {@code matches()}/{@code lookingAt()} — the
+     *  {@code match(from, anchor)} entry: the anchored walk from the
+     *  region head, no {@code Start} node, no position scan): ONE walk
+     *  seeded at {@code from}; hitEnd fires only when that walk
+     *  survived to the region end wanting input (java's node needing a
+     *  char at {@code to}), and gates that held along it set their
+     *  flags. A quiet mid-input death sets nothing — the failed-search
+     *  scan rule never runs here. */
+    private int probeAnchoredFailureEndFlags(CharSequence input, int from, int to, int bBase, int eBase, int wFrom,
+        int wTo) {
+        int flags = 0;
+        long[] live = new long[stateWords];
+        int seedMask = stateEntryMask[startState];
+        // The seed gate is EVALUATED at from whatever it answers — a word
+        // pair reading past the read window's end (from == wTo) sets both
+        // flags exactly like java's Bound.check, held or failed.
+        flags |= evaluatedEndProbeBits(seedMask, input, from, to, bBase, eBase, wFrom, wTo);
+        // No pair-interior skip on the anchored seed: java's matchRoot
+        // attempt runs AT `from` whatever it is (the interior skip is the
+        // StartS scan's restart discipline, not the anchored entry's).
+        boolean gateHeld = maskSatisfiedRgn(input, from, to, seedMask, bBase, eBase, wFrom, wTo);
+        if (from >= to) {
+            // Degenerate: the one attempt sat AT the region end — its
+            // zero-width gates were evaluated (held or failed), and it
+            // probes past the end iff its entry gates let the walk reach
+            // consuming nodes.
+            flags |= startAtEndEvalBits(input, to, bBase, eBase, wFrom, wTo);
+            if (gateHeld) {
+                flags |= startAtEndHeldBits(input, to, bBase, eBase, wFrom, wTo);
+            }
+            return flags;
+        }
+        if (gateHeld) {
+            live[startState >>> 5] |= 1L << (startState & 31);
+            flags |= heldEndGateBits(seedMask, input, from, to, bBase, eBase, wFrom, wTo);
+        } else if (seedMask != 0) {
+            // the held-before-failing subset (see the scan probe's twin)
+            flags |= heldEndGateBits(seedMask & positionFlagsRgn(input, from, to, bBase, eBase, wFrom, wTo), input,
+                from, to, bBase, eBase, wFrom, wTo);
+        }
+        for (int p = from; p < to;) {
+            int c = Alphabet.decode(input, p, to);
+            long[] next = new long[stateWords];
+            for (int s = 0; s < stateCount; s++) {
+                if ((live[s >>> 5] & (1L << (s & 31))) == 0) {
+                    continue;
+                }
+                int[] step = probeStep(s, c, input, p, to, bBase, eBase, wFrom, wTo);
+                flags |= step[1];
+                if (step[0] >= 0) {
+                    next[step[0] >>> 5] |= 1L << (step[0] & 31);
+                }
+            }
+            live = next;
+            p += c > 0xFFFF ? 2 : 1;
+            if (!hasBits(live)) {
+                break; // quiet mid-input death — java's walk ending without an end-read
+            }
+            if (p >= to) {
+                // Survived to the region end wanting input — java's node
+                // reading a char at `to`; its accepting gates there were
+                // evaluated by that same attempt (the word-pair rule).
+                flags |= PROBE_HIT_END;
+                for (int s = 0; s < stateCount; s++) {
+                    if ((live[s >>> 5] & (1L << (s & 31))) != 0) {
+                        flags |= evaluatedEndProbeBits(stateAcceptMask[s], input, to, to, bBase, eBase, wFrom, wTo);
+                    }
+                }
+                break;
+            }
+        }
+        return flags;
+    }
+
+    /** Whether any state is live in the state bit-set. */
+    private static boolean hasBits(long[] words) {
+        for (long w : words) {
+            if (w != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** java's Start-node {@code minLength} fact: the minimum number of
+     *  consumed CODEPOINTS along any accepting path (java's study counts
+     *  one per codepoint — a supplementary single is 1, not 2). A BFS
+     *  over the transition graph, every consumable edge one codepoint —
+     *  recomputed per probe call (the end-flag probe is cold; the
+     *  runner's body stays frozen, no memo cache);
+     *  {@code Integer.MAX_VALUE} when nothing accepts (a can-never-match
+     *  artifact — the guard then refuses every start, exactly like
+     *  java's). */
+    private int minMatchCodepoints() {
+        int[] dist = new int[stateCount];
+        Arrays.fill(dist, Integer.MAX_VALUE);
+        int[] queue = new int[stateCount];
+        int head = 0, tail = 0;
+        dist[startState] = 0;
+        queue[tail++] = startState;
+        int best = Integer.MAX_VALUE;
+        while (head < tail) {
+            int s = queue[head++];
+            if ((stateMeta[s] & 1) != 0) {
+                best = dist[s]; // BFS: the first accepting state reached is minimal
+                break;
+            }
+            int base = stateBase[s];
+            int count = (stateMeta[s] >>> 1) & 0xFFFF;
+            for (int i = 0; i < count; i++) {
+                int t = ranges[(base + i) * 5 + 2];
+                if (t >= 0 && dist[t] == Integer.MAX_VALUE) {
+                    dist[t] = dist[s] + 1;
+                    queue[tail++] = t;
+                }
+            }
+        }
+        return best;
+    }
+
+    /** The end-flag bits of a start attempt sitting AT the region end that
+     *  depend only on the attempt having RUN: java's zero-width nodes
+     *  executed before the first consumption — a word pair whose read
+     *  passed the window end sets both flags whether it answered held or
+     *  failed (the accept gate and the edges' required masks are those
+     *  nodes; a gate whose OTHER predicates failed was never reached and
+     *  contributes nothing — see {@link #evaluatedEndProbeBits}). */
+    private int startAtEndEvalBits(CharSequence input, int to, int bBase, int eBase, int wFrom, int wTo) {
+        int bits = evaluatedEndProbeBits(stateAcceptMask[startState], input, to, to, bBase, eBase, wFrom, wTo);
+        int meta = stateMeta[startState];
+        int base = stateBase[startState];
+        int count = (meta >>> 1) & 0xFFFF;
+        for (int i = 0; i < count; i++) {
+            int o = (base + i) * 5;
+            if (ranges[o + 2] >= 0) {
+                bits |= evaluatedEndProbeBits(ranges[o + 4], input, to, to, bBase, eBase, wFrom, wTo);
+            }
+        }
+        return bits;
+    }
+
+    /** The end-flag bits of a start attempt sitting AT the region end that
+     *  need the walk to have REACHED its consuming nodes (the entry gates
+     *  held): whether it would probe past the end (hitEnd — an accept
+     *  there, or a consumable edge whose gate holds), plus the HELD end
+     *  gates' flags (java's Dollar at the end: both flags; \z: hitEnd). */
+    private int startAtEndHeldBits(CharSequence input, int to, int bBase, int eBase, int wFrom, int wTo) {
+        int bits = 0;
         if (acceptGate(startState, input, to, to, bBase, eBase, wFrom, wTo) >= 0) {
-            return true;
+            bits |= PROBE_HIT_END;
         }
         int meta = stateMeta[startState];
         int base = stateBase[startState];
@@ -3707,10 +3957,11 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             }
             int requiredMask = ranges[o + 4];
             if (requiredMask == 0 || maskSatisfiedRgn(input, to, to, requiredMask, bBase, eBase, wFrom, wTo)) {
-                return true;
+                bits |= PROBE_HIT_END;
+                bits |= heldEndGateBits(requiredMask, input, to, to, bBase, eBase, wFrom, wTo);
             }
         }
-        return false;
+        return bits;
     }
 
     /** One tagless transition of {@code state} over {@code c} under the
@@ -3724,6 +3975,28 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         int meta = stateMeta[state];
         int base = stateBase[state];
         int count = (meta >>> 1) & 0xFFFF;
+        if (c <= 0xFFFF && Alphabet.cutPairAt(input, pos, to)) {
+            // A pair CUT by the region end: java's single-codepoint nodes
+            // read the FULL codepoint (across `to`), and their
+            // consumption-fits check fires hitEnd whatever the predicate
+            // said — but only when such a node exists on the path (an
+            // edge covering the pair). Unit-wise nodes (a slice literal)
+            // compare within `to` and die quietly — the lone-high decode
+            // matches no pair-covering edge below.
+            char h = input.charAt(pos);
+            int pair = ((h - 0xD800) << 10) + (input.charAt(to) - 0xDC00) + 0x10000;
+            for (int i = 0; i < count; i++) {
+                int o = (base + i) * 5;
+                if (ranges[o + 2] < 0 || pair < ranges[o] || pair > ranges[o + 1]) {
+                    continue;
+                }
+                int reqMask = ranges[o + 4];
+                if (reqMask == 0 || maskSatisfiedRgn(input, pos, to, reqMask, bBase, eBase, wFrom, wTo)) {
+                    return new int[]{-1, PROBE_HIT_END};
+                }
+            }
+            return new int[]{-1, 0};
+        }
         int[] rg = this.ranges;
         int best = -1, bestMask = 0, bestSpec = -1;
         for (int i = 0; i < count; i++) {
@@ -3743,18 +4016,18 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             }
         }
         if (best < 0) {
-            return new int[]{-1, evaluatedEndProbeBits(0, pos, eBase)};
+            return new int[]{-1, evaluatedEndProbeBits(0, input, pos, to, bBase, eBase, wFrom, wTo)};
         }
         int width = c > 0xFFFF ? 2 : 1;
         int entryReqNext = stateEntryMask[rg[best + 2]];
-        int heldBits = evaluatedEndProbeBits(bestMask, pos, eBase)
+        int heldBits = evaluatedEndProbeBits(bestMask, input, pos, to, bBase, eBase, wFrom, wTo)
             | heldEndGateBits(bestMask, input, pos, to, bBase, eBase, wFrom, wTo);
         if (rg[best + 2] < 0) {
             return new int[]{-1, heldBits}; // the owning context's dead marker
         }
         int target = rg[best + 2];
         if (entryReqNext != 0) {
-            heldBits |= evaluatedEndProbeBits(entryReqNext, pos + width, eBase);
+            heldBits |= evaluatedEndProbeBits(entryReqNext, input, pos + width, to, bBase, eBase, wFrom, wTo);
             if (!maskSatisfiedRgn(input, pos + width, to, entryReqNext, bBase, eBase, wFrom, wTo)) {
                 return new int[]{-1, heldBits};
             }
@@ -3807,22 +4080,35 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         if (pos == eBase && (mask & Tnfa.END_TEXT) != 0) {
             bits |= PROBE_HIT_END | PROBE_REQUIRE_END;
         }
-        if (pos == eBase && (mask & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY)) != 0) {
+        if (pos == wTo && (mask & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY)) != 0) {
             bits |= PROBE_HIT_END | PROBE_REQUIRE_END;
         }
         return bits;
     }
 
-    /** The contributions of a word gate merely EVALUATED at the region
-     *  end — java's {@code Bound.check} sets both flags when its right
-     *  side reads past {@code to} whether or not the boundary holds
-     *  (the failed {@code a\B} probe on {@code "xa"} is the pinned
-     *  shape). */
-    private static int evaluatedEndProbeBits(int mask, int pos, int eBase) {
-        if (pos == eBase && (mask & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY)) != 0) {
-            return PROBE_HIT_END | PROBE_REQUIRE_END;
+    /**
+     * The contributions of a word gate merely EVALUATED at the read
+     * window's end — java's {@code Bound.check} sets both flags when
+     * its right side reads past {@code endIndex} (the region end under
+     * opaque bounds, the true text end under transparent) whether or
+     *  not the boundary holds (the failed {@code a\B} probe on
+     * {@code "xa"} is the pinned shape). The gate must have been
+     * REACHED: java evaluates the word pair only after the mask's OTHER
+     * predicates passed on the path (a {@code \A}-and-\b accept at
+     * the wrong position never runs its {@code \b} — java's backtracker
+     * pruned the branch at the {@code \A}).
+     */
+    private int evaluatedEndProbeBits(int mask, CharSequence input, int pos, int to, int bBase, int eBase, int wFrom,
+        int wTo) {
+        int wordPart = mask & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY);
+        if (wordPart == 0 || pos != wTo) {
+            return 0;
         }
-        return 0;
+        int other = mask & ~(Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY);
+        if (other != 0 && !maskSatisfiedRgn(input, pos, to, other, bBase, eBase, wFrom, wTo)) {
+            return 0; // the branch was pruned before its word gate — java never read the pair
+        }
+        return PROBE_HIT_END | PROBE_REQUIRE_END;
     }
 
     /**

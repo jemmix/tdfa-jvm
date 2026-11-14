@@ -312,6 +312,50 @@ class JurApiParityTest {
         }
     }
 
+    /**
+     * The JDK-8394894 grapheme boundary clauses (the ESCAPES_RE2 axis's
+     * unset side): java reads a {@code {'} directly after
+     * {@code \b}/{@code \B} as its boundary-type clause
+     * ({@code \b{g}}, {@code \b{gc}=…}) or an illegal repetition — never
+     * a literal brace — and this engine has no grapheme support, so the
+     * jur reading rejects every non-quantifier brace there loudly
+     * (before this landing the parser silently read the RE2-lineage
+     * literal there). A digit quantifier ({@code \b{5}}) is legal java
+     * in both readings and passes through.
+     */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void graphemeBoundaryClausesRejectLoudlyOnTheJurFacade(RegexEngineFactory f) {
+        // \X: re2j's invalid-escape reject (java's grapheme atom — the
+        // documented unsupported family)
+        for (String p : new String[]{"\\X", "a\\Xb", "(?:\\X)+"}) {
+            assertThatThrownBy(() -> io.github.jemmix.tdfa.Pattern.compile(p, 0, f)).as("jur rejects %s", p)
+                .isInstanceOf(io.github.jemmix.tdfa.core.parser.PatternSyntaxException.class);
+        }
+        // the \b{...}/\B{...} boundary clauses: the named grapheme
+        // rejection (java's clause spellings) and the illegal-repetition
+        // spellings alike
+        for (String p : new String[]{"\\b{g}", "\\b{gc=L}", "\\b{w}", "\\B{g}", "\\b{}"}) {
+            assertThatThrownBy(() -> io.github.jemmix.tdfa.Pattern.compile(p, 0, f)).as("jur rejects %s", p)
+                .isInstanceOf(io.github.jemmix.tdfa.core.parser.PatternSyntaxException.class)
+                .hasMessageContaining("grapheme");
+        }
+        // the quantifier spelling is legal java in both readings
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("\\b{2,3}", 0, f).matcher("xx").find()).isTrue();
+    }
+
+    /** The re2j facade keeps its literal-brace reading (re2j's alphabet —
+     *  pinned by the RE2J fuzz lane), and rejects {@code \X} like re2j. */
+    @Test
+    void re2jFacadeKeepsTheLiteralBraceReading() {
+        // \b{g} reads as \b followed by the literal "{g}": on "{g}" the
+        // \b fails (both sides non-word) but on "x{g}" it matches.
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("\\b{g}").matcher("x{g}").find()).isTrue();
+        assertThat(io.github.jemmix.tdfa.re2j.Pattern.compile("\\b{g}").matcher("{g}").find()).isFalse();
+        assertThatThrownBy(() -> io.github.jemmix.tdfa.re2j.Pattern.compile("\\X"))
+            .isInstanceOf(io.github.jemmix.tdfa.core.parser.PatternSyntaxException.class);
+    }
+
     @Test
     void re2jFacadeKeepsRejectingTheJavaOnlyEscapes() {
         for (String p : new String[]{"\\e", "\\R", "\\N{LATIN SMALL LETTER A}", "\\cI", "\\h", "\\H", "\\V", "\\Z"}) {
@@ -377,6 +421,81 @@ class JurApiParityTest {
     }
 
     // ---- usePattern / snapshot / function replace ----
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void hitEndAfterFailedAnchoredOpsMirrorsTheOracle(RegexEngineFactory f) {
+        // java resets hitEnd/requireEnd per OPERATION: a failed
+        // matches()/lookingAt() reports the anchored walk's own flags
+        // (the matchRoot entry — no Start scan), never the failed-search
+        // rule. The pre-region-fix probe reported the scan rule here.
+        String[][] cells = {{"x\\b", "xa"}, {"abc", "xxab"}, {"a+", "b"}, {"a\\d", "xxab"}, {"a$", "xab"},
+            {"\\bx", "ab"}, {"a*", "b"}, {"(a)|(b)", "cd"}, {"a|ab", "x"}, {"ab9", "ab\u0301c"}};
+        for (String[] cell : cells) {
+            for (String op : new String[]{"matches", "lookingAt"}) {
+                Matcher jm = jur(cell[0], cell[1], 0);
+                PatternMatcher om = ours(cell[0], cell[1], f, 0);
+                boolean jf = "matches".equals(op) ? jm.matches() : jm.lookingAt();
+                boolean of = "matches".equals(op) ? om.matches() : om.lookingAt();
+                assertThat(of).as("%s %s on %s", op, cell[0], vis(cell[1])).isEqualTo(jf);
+                assertThat(om.hitEnd()).as("%s hitEnd %s on %s", op, cell[0], vis(cell[1])).isEqualTo(jm.hitEnd());
+                assertThat(om.requireEnd()).as("%s requireEnd %s on %s", op, cell[0], vis(cell[1]))
+                    .isEqualTo(jm.requireEnd());
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void regionsCuttingSurrogatePairsMirrorTheOracle(RegexEngineFactory f) {
+        // A region end that CUTS a pair, and a region start that SPLITS
+        // one: java's nodes read full codepoints across the edges (the
+        // consumption must fit within `to`), so the subSequence view —
+        // which hands the engine genuinely-lone surrogates — would lie;
+        // both regions serve through the seam's bounded walk.
+        String in = "ab\uD835\uDD04cd";
+        Matcher jm = jur(".", in, 0);
+        PatternMatcher om = ours(".", in, f, 0);
+        jm.region(2, 3);
+        om.region(2, 3);
+        assertThat(om.find()).as("cut pair: the high half alone never matches").isEqualTo(jm.find()).isFalse();
+        assertThat(om.hitEnd()).isEqualTo(jm.hitEnd());
+        Matcher jl = jur("[^x]+", in, 0);
+        PatternMatcher ol = ours("[^x]+", in, f, 0);
+        jl.region(2, 3);
+        ol.region(2, 3);
+        // java's Curly quirk: the quantifier's atom reads the LONE high
+        // half as one unit (matcher.last bookkeeping) where the same atom
+        // unquantified reads the full codepoint and dies — a backtracker
+        // artifact the DFA's edges cannot see (the region fuzz axis
+        // counts these cells as backtracker-internals skips).
+        assertThat(jl.find()).as("java's Curly unit-read quirk").isTrue();
+        assertThat(ol.find()).as("our bounded walk stays codepoint-exact").isFalse();
+        Matcher jw = jur("\\b", in, 0);
+        PatternMatcher ow = ours("\\b", in, f, 0);
+        jw.region(3, 6); // splits the pair: position 3 is the low half
+        ow.region(3, 6);
+        assertThat(ow.find()).as("split start: the word pair reads across the edge").isEqualTo(jw.find());
+        assertThat(ow.start()).isEqualTo(jw.start());
+    }
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void regionContinuationFindsKeepTheRegionHeadBases(RegexEngineFactory f) {
+        // A continuation find's search starts past the region head, but
+        // every position predicate still anchors at the HEAD (java's
+        // matcher.from/to) — the pre-fix seam shifted the bases with the
+        // search start, so the second (?m)a$ (anchored at the region END,
+        // found from the continuation position 3) never matched.
+        Matcher jm = jur("(?m)a$", "za\na", 0);
+        PatternMatcher om = ours("(?m)a$", "za\na", f, 0);
+        jm.region(1, 4);
+        om.region(1, 4);
+        assertThat(om.find()).as("first find").isEqualTo(jm.find());
+        assertThat(om.group()).isEqualTo(jm.group());
+        assertThat(om.find()).as("continuation find (bases at the region head)").isEqualTo(jm.find());
+        assertThat(om.group()).as("continuation span").isEqualTo(jm.group());
+    }
 
     @Test
     void usePatternKeepsPositionAndLosesGroupsOnTheVmTier() {

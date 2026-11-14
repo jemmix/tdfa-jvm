@@ -36,7 +36,7 @@ class TdfaValidateHardeningTest {
         // inert to the validation under test), the 64-cell flag table.
         return new Tdfa(0, 0, null, 0, 0, 0, (Integer) a[0], (int[]) a[1], (int[]) a[2], (int[]) a[3], (int[]) a[4],
             (int[]) a[5], (int[]) a[6], (int[]) a[7], (int[]) a[8], (int[]) a[9], false, null, null, false, false, null,
-            null, null, false, null, null, null, null, false, false, Semantics.of(), 64, false);
+            null, null, false, null, null, null, null, false, false, Semantics.of(), 64, false, false);
     }
 
     private static Tdfa buildValid() {

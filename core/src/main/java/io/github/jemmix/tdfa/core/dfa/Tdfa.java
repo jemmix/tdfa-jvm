@@ -175,6 +175,11 @@ public final class Tdfa {
      * (java's plain Start).
      */
     final boolean hasSupplementaryStarts;
+
+    /** java's {@code matchRoot instanceof Begin} shape (see
+     * {@code ParseResult#rootBeginAnchor()}) — the runner's end-flag
+     * probe consults it for the Start-rule suppression. */
+    final boolean rootBeginAnchor;
     /**
      * True iff every tag of this artifact is multi-valued (BT22 §3.1):
      * transition/final ops may then be {@link #OP_APPEND_POS} and final
@@ -322,7 +327,8 @@ public final class Tdfa {
         int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
         boolean unicodeWordBoundary, int[] wordRanges, int[] fixedBase, int[] fixedOffset, boolean pikeCutMatters,
         int[] wholeRanges, int[] wholeBase, int[] wholeCount, int[] wholeHiPrefix, boolean wholeSideComplete,
-        boolean multiValued, Semantics semantics, int posFlagCells, boolean hasSupplementaryStarts) {
+        boolean multiValued, Semantics semantics, int posFlagCells, boolean hasSupplementaryStarts,
+        boolean rootBeginAnchor) {
         this.tagCount = tagCount;
         this.groupCount = groupCount;
         this.namedGroups = namedGroups != null ? Collections.unmodifiableMap(namedGroups) : Collections.emptyMap();
@@ -351,6 +357,7 @@ public final class Tdfa {
         this.multiline = multiline;
         this.semantics = semantics;
         this.hasSupplementaryStarts = hasSupplementaryStarts;
+        this.rootBeginAnchor = rootBeginAnchor;
         this.multiValued = multiValued;
         this.unicodeWordBoundary = unicodeWordBoundary;
         this.wordRanges = wordRanges;
@@ -1004,6 +1011,12 @@ public final class Tdfa {
      */
     public boolean hasSupplementaryStarts() {
         return hasSupplementaryStarts;
+    }
+
+    /** java's {@code matchRoot instanceof Begin} shape (see
+     * {@code ParseResult#rootBeginAnchor()}). */
+    public boolean rootBeginAnchor() {
+        return rootBeginAnchor;
     }
 
     /**
