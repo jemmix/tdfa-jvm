@@ -496,6 +496,26 @@ public final class RebarBench {
             // which are small; this is a skip-list heuristic).
             return sh.negated || sh.unicode;
         }
+        if (ast instanceof Ast.ClassExpr ce) {
+            // The structured class: approximate the width over the
+            // materialized items (members + tables), and treat a shorthand
+            // twin by the atom rule above (conservative for the skip list).
+            long width = 0;
+            for (Object it : ce.items) {
+                if (it instanceof Ast.ClassExpr.Shorthand sh) {
+                    if (sh.negated || sh.unicode) {
+                        return true;
+                    }
+                } else if (it instanceof Ast.ClassExpr.Member m) {
+                    width += m.hi - m.lo + 1;
+                } else if (it instanceof Ast.ClassExpr.Table t) {
+                    for (int k = 0; k < t.ranges.length; k += 2) {
+                        width += t.ranges[k + 1] - t.ranges[k] + 1;
+                    }
+                }
+            }
+            return width > 10_000;
+        }
         if (ast instanceof Ast.FoldLiteral fl) {
             // A folded literal expands to its orbit (a CharClass), but no
             // orbit approaches the width threshold.

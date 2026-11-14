@@ -279,16 +279,14 @@ public final class Tnfa {
         // Determinization constructs its own meter per attempt (TdfaCompiler).
         // Parser-side projection of the compile's Semantics onto the
         // GRAMMAR-shaped axes (the carrier stays here; the parser package
-        // sits below tnfa in the layer DAG): the fold universe, the letter
-        // alphabet, the \s table, the shorthand fold and the escape
-        // readings. The meaning-shaped axes — the terminator set (the
-        // symbolic dot), the span protocol (the family-6 marks), the
-        // shorthand tables and the fold expansion — are applied by the
-        // meaning-resolution pass below, not mirrored here.
-        ParseResult parsed = Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth,
-            ParseOptions.of().unicodeCase(semantics.isUnicodeCase()).flagBindings(semantics.flagBindings())
-                .spaceTable(semantics.spaceTable()).shorthandFold(semantics.isShorthandFold())
-                .escapes(semantics.escapes()),
+        // sits below tnfa in the layer DAG): the fold-universe seed, the
+        // letter alphabet and the escape readings. Every meaning-shaped
+        // axis — the terminator set (the symbolic dot), the span protocol
+        // (the family-6 marks), the \s table, the shorthand fold, the
+        // shorthand/property tables and the fold expansion — is applied by
+        // the meaning-resolution pass below, not mirrored here.
+        ParseResult parsed = Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth, ParseOptions.of()
+            .unicodeCase(semantics.isUnicodeCase()).flagBindings(semantics.flagBindings()).escapes(semantics.escapes()),
             provider, meter);
         obs.stage(CompileObserver.Stage.PARSE, System.nanoTime() - t0, parsed.tagCount());
         return fromParsed(parsed, multiValuedTags, semantics, provider, meter, obs);

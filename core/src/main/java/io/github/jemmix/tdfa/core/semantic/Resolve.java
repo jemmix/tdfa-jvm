@@ -5,6 +5,7 @@ import io.github.jemmix.tdfa.core.ast.CharClass;
 import io.github.jemmix.tdfa.core.budget.BudgetWeights;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
 import io.github.jemmix.tdfa.core.dialect.ClassTable;
+import io.github.jemmix.tdfa.core.dialect.RangeMath;
 import io.github.jemmix.tdfa.core.dialect.Terminators;
 import io.github.jemmix.tdfa.core.unicode.CaseFoldTable;
 import io.github.jemmix.tdfa.core.unicode.ShorthandTables;
@@ -247,7 +248,168 @@ public final class Resolve {
         if (e instanceof Ast.Shorthand) {
             return shorthandClass((Ast.Shorthand) e);
         }
+        if (e instanceof Ast.ClassExpr) {
+            return classCharClass((Ast.ClassExpr) e);
+        }
         return e;
+    }
+
+    /**
+     * The character class's flattening — the parse-time accumulation
+     * reproduced item-for-item, then the class fold under the compile's
+     * policy: the case-folded counterparts of every member of every range
+     * join the POSITIVE set before the {@link CharClass} negation (so
+     * negated classes exclude fold equivalents automatically), written
+     * ranges fold by the provider's range semantics where pinned and
+     * everything else by the per-member orbit closure, and
+     * shorthand-derived items skip the fold on the non-folding lane
+     * (java.util.regex keeps the predefined classes at their plain tables
+     * under every fold universe — the SHORTHAND_FOLD policy).
+     */
+    private Ast classCharClass(Ast.ClassExpr ce) {
+        int n = ce.items.size();
+        List<int[]> itemRanges = new ArrayList<>(n);
+        boolean[] writtenRange = new boolean[n];
+        boolean[] shorthandItem = new boolean[n];
+        for (int i = 0; i < n; i++) {
+            Ast.ClassExpr.Item it = ce.items.get(i);
+            if (it instanceof Ast.ClassExpr.Member) {
+                Ast.ClassExpr.Member m = (Ast.ClassExpr.Member) it;
+                itemRanges.add(new int[]{m.lo, m.hi});
+                writtenRange[i] = m.written;
+            } else if (it instanceof Ast.ClassExpr.Table) {
+                Ast.ClassExpr.Table t = (Ast.ClassExpr.Table) it;
+                itemRanges.add(t.ranges);
+                shorthandItem[i] = t.shorthand;
+            } else {
+                Ast.ClassExpr.Shorthand s = (Ast.ClassExpr.Shorthand) it;
+                itemRanges.add(inClassShorthandRanges(s));
+                shorthandItem[i] = true;
+            }
+        }
+        int[] arr;
+        if (ce.ci) {
+            arr = foldExpandClass(itemRanges, writtenRange, shorthandItem, ce.uni);
+        } else {
+            int total = 0;
+            for (int[] r : itemRanges) {
+                total += r.length;
+            }
+            arr = new int[total];
+            int w = 0;
+            for (int[] r : itemRanges) {
+                System.arraycopy(r, 0, arr, w, r.length);
+                w += r.length;
+            }
+        }
+        return new CharClass(arr, ce.negated);
+    }
+
+    /**
+     * The in-class shorthand twin's ranges — the readings the parse-time
+     * {@code shorthandRanges} applied, keyed on the item's scoped state and
+     * the compile's policy: under {@code (?i)} the word twins fold on the
+     * folding lane only (re2j folds before negation: {@code (?i)[\W]} does
+     * not match ſ), the {@code \s} table comes from the policy's {@code
+     * ClassTable}, the Unicode twins from the provider.
+     */
+    private int[] inClassShorthandRanges(Ast.ClassExpr.Shorthand s) {
+        boolean ci = s.ci && shorthandFold;
+        if (!s.unicode) {
+            switch (s.kind) {
+                case 'd' :
+                    return s.negated ? RangeMath.complement(R_DIGIT) : R_DIGIT;
+                case 'w' :
+                    // \W folds the POSITIVE set first, then complements (the
+                    // folding lane); the plain table otherwise.
+                    if (!s.negated) {
+                        return R_WORD;
+                    }
+                    return ci ? RangeMath.complement(foldExpandRanges(R_WORD, s.uni)) : RangeMath.complement(R_WORD);
+                case 's' :
+                    return s.negated ? RangeMath.complement(spaceTable.ranges()) : spaceTable.ranges();
+                default :
+                    throw new IllegalStateException("not a shorthand: [\\" + s.kind + "]");
+            }
+        }
+        int[] positive;
+        if (s.kind == 'w') {
+            positive = unicodeWordRanges();
+        } else if (s.kind == 'd') {
+            positive = unicodeDigitRanges();
+        } else {
+            positive = R_UNICODE_SPACE;
+        }
+        if (s.negated && ci && s.kind == 'w') {
+            // \W folds the POSITIVE set first, then complements.
+            return RangeMath.complement(foldExpandRanges(positive, s.uni));
+        }
+        return s.negated ? RangeMath.complement(positive) : positive;
+    }
+
+    /** The class-item fold expansion: WRITTEN ranges under a provider that
+     *  pins the range semantics take that reading (java.util.regex's
+     *  two-sided image test, see {@link #foldRangeExtras}); everything
+     *  else — single members, programmatic shorthand/POSIX sets — takes
+     *  the per-member orbit closure of the class's fold universe, EXCEPT
+     *  shorthand-derived items on the non-folding lane (java.util.regex
+     *  keeps the predefined classes at their plain tables under CI —
+     *  the SHORTHAND_FOLD policy). */
+    private int[] foldExpandClass(List<int[]> itemRanges, boolean[] writtenRange, boolean[] shorthandItem,
+        boolean uni) {
+        List<int[]> ivs = new ArrayList<>(itemRanges.size() * 2);
+        for (int i = 0; i < itemRanges.size(); i++) {
+            int[] r = itemRanges.get(i);
+            if (shorthandItem[i] && !shorthandFold) {
+                for (int k = 0; k < r.length; k += 2) {
+                    ivs.add(new int[]{r[k], r[k + 1]});
+                }
+                continue; // the JDK reading: a shorthand never folds
+            }
+            for (int k = 0; k < r.length; k += 2) {
+                int lo = r[k], hi = r[k + 1];
+                ivs.add(new int[]{lo, hi});
+                int[] extras = writtenRange[i] ? foldRangeExtras(lo, hi, uni) : null;
+                if (extras != null) {
+                    for (int v : extras) {
+                        ivs.add(new int[]{v, v});
+                    }
+                    continue; // the provider's reading replaces the orbit closure
+                }
+                for (int cp = lo; cp <= hi; cp++) {
+                    meter.tick(BudgetWeights.FOLD_SCAN_CODEPOINT_TICKS);
+                    int[] fr = CaseFoldTable.universeFold(cp, uni, provider);
+                    if (fr != null) {
+                        for (int v : fr) {
+                            ivs.add(new int[]{v, v});
+                        }
+                    }
+                }
+            }
+        }
+        return RangeMath.mergeIntervals(ivs);
+    }
+
+    /** The RANGE twin of the orbit closure: extra codepoints a CI range
+     *  {@code [lo-hi]} matches under the universe's reading.
+     *  {@code null} = the reading does not apply here (bare-CI ASCII lane,
+     *  or a provider without pinned range semantics — the per-member orbit
+     *  closure serves); a non-null result — POSSIBLY EMPTY — is the whole
+     *  reading and replaces the orbit closure entirely (empty must NOT
+     *  fall back: an orbit member outside the image test is exactly the
+     *  İ-in-[H-K] class of divergence the reading exists to prevent).
+     *  Metered: the transpose scans the range's members and the
+     *  cased-codepoint table, the same work the orbit fallback would
+     *  spend walking members. */
+    private int[] foldRangeExtras(int lo, int hi, boolean uni) {
+        if (!uni) {
+            return null; // bare CI: ASCII pairs only, handled by the orbit path
+        }
+        if (provider == null || !provider.suppliesRangeFoldSemantics()) {
+            return null;
+        }
+        meter.tick((hi - lo + 1) * (long) BudgetWeights.FOLD_SCAN_CODEPOINT_TICKS);
+        return provider.rangeFoldCounterparts(lo, hi);
     }
 
     /**
@@ -262,7 +424,7 @@ public final class Resolve {
     private Ast shorthandClass(Ast.Shorthand s) {
         if (shorthandFold && s.ci && s.kind == 'w') {
             int[] positive = s.unicode ? foldExpandRanges(unicodeWordRanges(), s.uni) : foldExpandRanges(R_WORD, s.uni);
-            return new CharClass(s.negated ? complementRanges(positive) : positive, false);
+            return new CharClass(s.negated ? RangeMath.complement(positive) : positive, false);
         }
         if (!s.unicode) {
             switch (s.kind) {
@@ -331,65 +493,9 @@ public final class Resolve {
                 }
             }
         }
-        return mergeIntervals(ivs);
+        return RangeMath.mergeIntervals(ivs);
     }
 
-    /** Sort by lo, merge overlapping/adjacent intervals, flatten. */
-    private static int[] mergeIntervals(List<int[]> ivs) {
-        ivs.sort((a, b) -> Integer.compare(a[0], b[0]));
-        List<Integer> merged = new ArrayList<>(ivs.size() * 2);
-        int lo = ivs.get(0)[0], hi = ivs.get(0)[1];
-        for (int[] iv : ivs.subList(1, ivs.size())) {
-            if (iv[0] <= hi + 1) {
-                hi = Math.max(hi, iv[1]);
-            } else {
-                merged.add(lo);
-                merged.add(hi);
-                lo = iv[0];
-                hi = iv[1];
-            }
-        }
-        merged.add(lo);
-        merged.add(hi);
-        int[] out = new int[merged.size()];
-        for (int i = 0; i < merged.size(); i++) {
-            out[i] = merged.get(i);
-        }
-        return out;
-    }
-
-    /** Compute the complement of {@code ranges} within [0, 0x10FFFF]. */
-    private static int[] complementRanges(int[] ranges) {
-        List<Integer> out = new ArrayList<>();
-        int prev = 0;
-        for (int i = 0; i < ranges.length; i += 2) {
-            int lo = ranges[i], hi = ranges[i + 1];
-            if (lo > prev) {
-                out.add(prev);
-                out.add(lo - 1);
-            }
-            prev = Math.max(prev, hi + 1);
-            if (prev > 0x10FFFF) {
-                break;
-            }
-        }
-        if (prev <= 0x10FFFF) {
-            out.add(prev);
-            out.add(0x10FFFF);
-        }
-        int[] arr = new int[out.size()];
-        for (int i = 0; i < out.size(); i++) {
-            arr[i] = out.get(i);
-        }
-        return arr;
-    }
-
-    /** One container in progress: the original node and its children.
-     *  When the last child lands, the frame re-assembles (reusing the
-     *  original node when nothing changed) and, for a Repeat, places the
-     *  policy marks — the resolved body is what the shape tests must read.
-     *  Children resolve in source order (pushed in reverse below), so the
-     *  frame's own pop is the resume point. */
     private static final class Frame {
         final Ast node;
         final List<Ast> children;

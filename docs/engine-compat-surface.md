@@ -102,7 +102,7 @@ lane's artifacts never move):
 
 Landed as two steps:
 
-- **2a — symbolic out-of-class atoms**: literals under an active
+- **2a — symbolic out-of-class atoms** (landed): literals under an active
   {@code (?i)} are symbolic {@code Ast.FoldLiteral} nodes (the scoped
   fold-universe selection rides the node) and the shorthand atoms are
   symbolic {@code Ast.Shorthand} nodes (scoped {@code (?u)}/{@code (?i)}
@@ -117,10 +117,15 @@ Landed as two steps:
   input, not a policy application, and their fold twin is
   universe-full in both lanes. The hex/backslash-u escapes stay
   fold-inert (a pinned pre-existing reading, now regression-tested).
-- **2b — structured class items**: the class becomes a structured node
-  whose items carry the written-range/shorthand markers, the class fold
-  and the in-class shorthand twins resolve in the pass, and the last
-  table axes (`\s` table, shorthand fold) leave `ParseOptions`.
+- **2b — structured class items** (landed): the class is an
+  {@code Ast.ClassExpr} whose items carry the written-range/shorthand
+  markers and their scoped state (members, the grammar-owned tables —
+  POSIX, the JDK {@code \v}/{@code \h} class tables, the property
+  classes — and the symbolic shorthand twins); the pass flattens it to
+  the {@code CharClass} the parse once built, class fold and in-class
+  twins included, and the last table axes (`\s` table, shorthand fold)
+  left `ParseOptions`. The pure range arithmetic lives once in the
+  dialect leaf (`dialect.RangeMath`).
 
 After 2b the parser's knobs are grammar-shaped only (the fold-universe
 seed, the escape alphabet, the flag bindings); the `Grammar` value —

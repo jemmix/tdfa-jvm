@@ -1,5 +1,7 @@
 package io.github.jemmix.tdfa.core.unicode;
 
+import io.github.jemmix.tdfa.core.dialect.RangeMath;
+
 import java.util.Arrays;
 
 /**
@@ -53,37 +55,10 @@ public final class ShorthandTables {
         return t != null ? t : digitFallback;
     }
 
-    /** Merge two sorted range arrays into a sorted, merged result. */
+    /** Merge two sorted range arrays into a sorted, merged result
+     *  (delegates to the dialect leaf's single copy). */
     public static int[] mergeRanges(int[] a, int[] b) {
-        int[] all = new int[a.length + b.length];
-        System.arraycopy(a, 0, all, 0, a.length);
-        System.arraycopy(b, 0, all, a.length, b.length);
-        int n = all.length / 2;
-        long[] pairs = new long[n];
-        for (int i = 0; i < n; i++) {
-            pairs[i] = ((long) all[2 * i] << 32) | (all[2 * i + 1] & 0xFFFFFFFFL);
-        }
-        Arrays.sort(pairs);
-        int[] out = new int[all.length];
-        int w = 0;
-        int lo = (int) (pairs[0] >>> 32);
-        int hi = (int) pairs[0];
-        for (int i = 1; i < n; i++) {
-            int nlo = (int) (pairs[i] >>> 32);
-            int nhi = (int) pairs[i];
-            if (nlo <= hi + 1) {
-                if (nhi > hi) {
-                    hi = nhi;
-                }
-            } else {
-                out[w++] = lo;
-                out[w++] = hi;
-                lo = nlo;
-                hi = nhi;
-            }
-        }
-        out[w++] = lo;
-        out[w++] = hi;
-        return w == all.length ? out : Arrays.copyOf(out, w);
+        return RangeMath.merge(a, b);
     }
+
 }
