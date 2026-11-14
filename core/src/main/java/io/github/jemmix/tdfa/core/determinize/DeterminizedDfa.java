@@ -44,7 +44,7 @@ final class DeterminizedDfa {
     final int[] stopOnAcceptMask;
     /**
      * Cells per state in the posFlags-indexed tables (64, or 128 when the
-     * compile's NFA gates any edge on {@link Tnfa#FINAL_END} — the JUR-lane
+     * compile's NFA gates any edge on {@link Tnfa#FINAL_END} — the axis-unset
      * plain-{@code $} bit). Derived once here; every downstream builder and
      * reader (materializer, minimizer, artifact, runner, ASM emitter) takes
      * it from the value chain so the stride is one decision, not many.

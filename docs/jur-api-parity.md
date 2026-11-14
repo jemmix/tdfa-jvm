@@ -1,4 +1,7 @@
 # JUR API parity — the matcher family, the flags, the escapes
+> Parity record. `ESCAPES_RE2` and the other set-shaped axes are now
+> `core.dialect` components (the bits are the wire spellings); see
+> [dialect-agnostic-core.md](dialect-agnostic-core.md).
 
 Status: **landed** (2026-11-11; the vs-jur region/grapheme fuzz
 expansion — JDK-8394894 — landed 2026-11-13, see the region/bounds

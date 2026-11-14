@@ -222,16 +222,16 @@ public class TDFAPattern implements Serializable {
     }
 
     /**
-     * Serialize as the {@link SerialProxy} — pattern + flags + lane +
-     * provider identity, recompiled on read (the proxy recompiles
-     * through the machinery in exactly this lane; no facade identity
-     * travels). Generated subclasses' classes live in child
-     * loaders that won't exist in the reading process, so the state
-     * proxy is the only stable form. The pinned provider (if any)
-     * round-trips as its class name, resolved per the
-     * UnicodeDataProvider serialization convention; a pattern compiled
-     * against the process default serializes without a provider and
-     * recompiles against the READER's default.
+     * Serialize as the {@link SerialProxy} — pattern + flags + policy
+     * (v1 bits plus the component payloads) + provider identity,
+     * recompiled on read (the proxy recompiles through the machinery in
+     * exactly this policy; no facade identity travels). Generated
+     * subclasses' classes live in child loaders that won't exist in the
+     * reading process, so the state proxy is the only stable form. The
+     * pinned provider (if any) round-trips as its class name, resolved
+     * per the UnicodeDataProvider serialization convention; a pattern
+     * compiled against the process default serializes without a
+     * provider and recompiles against the READER's default.
      */
     // PUBLIC, not private: Java serialization only inherits writeReplace
     // across package boundaries when it is non-private — generated shells
@@ -241,7 +241,7 @@ public class TDFAPattern implements Serializable {
     // serialization throws NotSerializableException.
     public Object writeReplace() {
         return new SerialProxy(pattern, flags, semantics.bits(),
-            provider == null ? null : provider.getClass().getName());
+            provider == null ? null : provider.getClass().getName(), SerialProxy.componentsOf(semantics));
     }
 
     /**

@@ -330,7 +330,7 @@ final class TdfaFinalVariants {
      * recomputes the same sequence instead of growing it (eager φ
      * idempotence).
      *
-     * <p>Family 6 (the EMPTY_ITERATION_SPANS axis, the JUR lane), two
+     * <p>Family 6 (the EMPTY_ITERATION_SPANS axis, unset side), two
      * override families:
      * <ul>
      * <li><b>A — dissolve</b> ({@code owner.nfa.dissolvedTags}): a
@@ -351,7 +351,7 @@ final class TdfaFinalVariants {
      * path).</li>
      * </ul>
      *
-     * <p>RE2 lane: both sets null/absent, byte-for-byte the old ops.
+     * <p>Axis set: both sets null/absent, byte-for-byte the old ops.
      */
     int[] finalRegopsOf(Config c, int[] cutPairs, int m) {
         if (owner.tags == 0) {

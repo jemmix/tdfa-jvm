@@ -191,10 +191,10 @@ final class TdfaCompiler {
     /**
      * Cells per state in the posFlags-indexed tables (stop rows, final-φ
      * variants): 64, or 128 when the NFA gates any ε-edge on
-     * {@link Tnfa#FINAL_END} (the JUR-lane plain-{@code $} bit — never
-     * present in an RE2-lane build, whose artifacts keep the 64-cell
+     * {@link Tnfa#FINAL_END} (the plain-{@code $} bit — never present
+     * when END_OF_TEXT_ONLY is set, whose artifacts keep the 64-cell
      * stride bit-for-bit). Derived from the NFA's actual masks, not from
-     * the semantics axis alone, so a JUR-lane pattern without plain
+     * the semantics axis alone, so an axis-unset pattern without plain
      * {@code $} stays 64-wide.
      */
     final int posFlagCells;
@@ -229,9 +229,9 @@ final class TdfaCompiler {
     int[] firstPopL;
     int[] firstPopLEpoch;
     /**
-     * Family 6 sub-family B (EMPTY_ITERATION_SPANS, the JUR lane): the
+     * Family 6 sub-family B (EMPTY_ITERATION_SPANS, unset side): the
      * surfaced-final tags ({@link Tnfa#surfaceFinalTags}), or null on
-     * the RE2 lane / B-mark-free compiles — gates every cut-recording
+     * the axis-set / B-mark-free compiles — gates every cut-recording
      * branch below to a single null test.
      */
     final boolean[] surfaceTags;
@@ -1402,7 +1402,7 @@ final class TdfaCompiler {
         int[] stateAcceptMask = new int[n];
         // int[state * posFlagCells + posFlags] encodes 0 (stop) or NEVER_STOP
         // (don't stop); posFlagCells = 2^position-flag bits (BEGIN/END_TEXT,
-        // WORD/NO_WORD, ABS_BEGIN/ABS_END, and FINAL_END for JUR-lane plain-$
+        // WORD/NO_WORD, ABS_BEGIN/ABS_END, and FINAL_END for axis-unset plain-$
         // compiles). POSIX (longest) mode never reads this table —
         // the artifact stores neither stop tier and every reader gates on
         // Perl mode — so the n*cells alloc/fill is pure churn there (~25 MB

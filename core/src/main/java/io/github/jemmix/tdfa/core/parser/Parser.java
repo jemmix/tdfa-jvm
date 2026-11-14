@@ -7,6 +7,11 @@ import io.github.jemmix.tdfa.core.budget.BudgetWeights;
 import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.FrameBudget;
 import io.github.jemmix.tdfa.core.budget.WorkMeter;
+import io.github.jemmix.tdfa.core.dialect.ClassTable;
+import io.github.jemmix.tdfa.core.dialect.EscapeAlphabet;
+import io.github.jemmix.tdfa.core.dialect.FlagAction;
+import io.github.jemmix.tdfa.core.dialect.FlagBindings;
+import io.github.jemmix.tdfa.core.dialect.Terminators;
 import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
 import io.github.jemmix.tdfa.core.unicode.CaseFoldTable;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
@@ -80,12 +85,8 @@ public final class Parser {
     private static final int[] R_NOT_WORD = {0, '/', ':', '@', '[', '^', '`', '`', '{', 0x10FFFF};
     // re2j's \s = [\t\n\f\r ] — note: no \v (U+000B), unlike POSIX [:space:]
     // and unlike java.util.regex's ASCII \s = [ \t\n\x0B\f\r] (the JDK
-    // includes VT). Lane-selected (the SPACE_RE2 axis): the RE2 lineage
-    // keeps re2j's table, the JUR default mirrors the JDK's.
-    private static final int[] R_SPACE = {'\t', '\n', '\f', '\r', ' ', ' '};
-    private static final int[] R_NOT_SPACE = {0, '\t' - 1, 0x0B, 0x0B, '\r' + 1, ' ' - 1, ' ' + 1, 0x10FFFF};
-    private static final int[] R_SPACE_JDK = {'\t', '\r', ' ', ' '}; // \t\n\x0B\f\r and space
-    private static final int[] R_NOT_SPACE_JDK = {0, '\t' - 1, '\r' + 1, ' ' - 1, ' ' + 1, 0x10FFFF};
+    // includes VT). Table-selected (the compile's space-table component:
+    // ClassTable.SPACE_RE2 vs SPACE_JDK — the dialect package).
 
     // java.util.regex's \v/\V (VertWS) and \h/\H (HorizWS) — the JDK's
     // CharPredicates tables, live-JDK verified: \v is the CLASS
@@ -144,12 +145,8 @@ public final class Parser {
     static final CharClass NOT_DIGIT = new CharClass(R_DIGIT, true);
     static final CharClass WORD = new CharClass(R_WORD, false);
     static final CharClass NOT_WORD = new CharClass(R_WORD, true);
-    // The \s table is lane-selected (the SPACE_RE2 axis): re2j's without
-    // U+000B, or the JDK's with it (see R_SPACE / R_SPACE_JDK).
-    static final CharClass WHITESPACE = new CharClass(R_SPACE, false);
-    static final CharClass NOT_WHITESPACE = new CharClass(R_SPACE, true);
-    static final CharClass WHITESPACE_JDK = new CharClass(R_SPACE_JDK, false);
-    static final CharClass NOT_WHITESPACE_JDK = new CharClass(R_SPACE_JDK, true);
+    // \s/\S build from the compile's space-table component at the sites
+    // (ClassTable.SPACE_RE2 / SPACE_JDK — the dialect package).
 
     /**
      * java.util.regex's {@code hasSupplementary(pattern)}: whether an
@@ -270,7 +267,7 @@ public final class Parser {
      *  the DOT terminator set (UNIX_LINES), the fold universe
      *  (UNICODE_CASE) and the inline-flag letter bindings (the
      *  {@code (?U)} meaning rides them). Legacy overloads
-     *  parse the RE2-lane selection. */
+     *  parse the axis-set selection. */
     final ParseOptions options;
     /** Front-end work meter shared with the TNFA builder (see
      *  {@code Tnfa.compile}); meters the O(universe) fold-range scan. */
@@ -322,7 +319,7 @@ public final class Parser {
      *  (the RE2-lineage reading). */
     public static ParseResult parseResult(String src, boolean disableUnicodeGroups, boolean anchorBoth,
         UnicodeDataProvider provider, WorkMeter meter) {
-        return parseResult(src, disableUnicodeGroups, anchorBoth, ParseOptions.re2Lane(), provider, meter);
+        return parseResult(src, disableUnicodeGroups, anchorBoth, ParseOptions.re2Lineage(), provider, meter);
     }
 
     /** Fullest entry: the parser-side pivot knobs included (see
@@ -564,7 +561,7 @@ public final class Parser {
         // zero-width-exit split; the unbounded {0,}/{1,} plus/star bodies
         // need it against the loop hub (the ε re-entry must exit, not die
         // at the closure dedup). {0,1} builds no iteration and stays
-        // unmarked. No-op on the RE2 lane: the re2j surface's structural
+        // unmarked. No-op when the axis is set: the re2j surface's structural
         // reading keeps the permissive paths, so its artifacts stay
         // bit-identical.
         boolean loopCopies = max == Integer.MAX_VALUE || max >= 2;
@@ -602,7 +599,7 @@ public final class Parser {
      * Lazy quantifiers never mark (java's lazy loops prefer exiting —
      * both engines agree).
      *
-     * <p>No-op on the RE2-lane reading
+     * <p>No-op on the axis-set reading
      * ({@code ParseOptions.isEmptyIterationSpans()}), so those parses —
      * and their NFA/TDFA artifacts — stay bit-identical.
      */
@@ -849,7 +846,16 @@ public final class Parser {
             // java.util.regex terminator set (DOT_JUR). Either way the bare
             // dot never flips hasSupplementaryStarts (java's direct
             // CharProperty construction bypasses the flip).
-            return dotall ? DOTALL : options.isDotNlOnly() ? DOT : DOT_JUR;
+            if (dotall) {
+                return DOTALL;
+            }
+            // The stock sets keep their precomputed constants (bit-identical
+            // artifacts); a custom set builds its complement on the fly.
+            Terminators terms = options.terminators();
+            if (terms.equals(Terminators.NL_ONLY)) {
+                return DOT;
+            }
+            return terms.equals(Terminators.JDK) ? DOT_JUR : new CharClass(terms.dotRanges(), false);
         }
         if (c == '^') {
             pos++;
@@ -1175,8 +1181,8 @@ public final class Parser {
                 // [\v-z] = [U+000B-'z'] (live-JDK verified; the other
                 // class-table escapes have no isrange reading and never
                 // form ranges, like java's predicate returns).
-                boolean vRangeStart =
-                    next == 'v' && !options.isEscapesRe2() && pos + 2 < src.length() && src.charAt(pos + 2) == '-';
+                boolean vRangeStart = next == 'v' && options.escapes() == EscapeAlphabet.JDK && pos + 2 < src.length()
+                    && src.charAt(pos + 2) == '-';
                 int[] sr = vRangeStart ? null : shorthandRanges(next);
                 if (sr != null) {
                     // In-class shorthand flip: complements always, the
@@ -1392,7 +1398,7 @@ public final class Parser {
         // ESCAPES_RE2 axis keeps them rejected in class context —
         // re2j's alphabet; a range ENDPOINT still reads \v as U+000B
         // via parseClassChar, java's isrange rule).
-        if (!options.isEscapesRe2()) {
+        if (options.escapes() == EscapeAlphabet.JDK) {
             switch (c) {
                 case 'v' :
                     return R_VERT_WS_JDK;
@@ -1417,9 +1423,9 @@ public final class Parser {
                 case 'W' :
                     return ci ? complementRanges(foldExpandRanges(R_WORD)) : R_NOT_WORD;
                 case 's' :
-                    return options.isSpaceRe2() ? R_SPACE : R_SPACE_JDK;
+                    return options.spaceTable().ranges();
                 case 'S' :
-                    return options.isSpaceRe2() ? R_NOT_SPACE : R_NOT_SPACE_JDK;
+                    return complementRanges(options.spaceTable().ranges());
                 default :
                     return null;
             }
@@ -1493,9 +1499,9 @@ public final class Parser {
                 case 'W' :
                     return NOT_WORD;
                 case 's' :
-                    return options.isSpaceRe2() ? WHITESPACE : WHITESPACE_JDK;
+                    return new CharClass(options.spaceTable().ranges(), false);
                 case 'S' :
-                    return options.isSpaceRe2() ? NOT_WHITESPACE : NOT_WHITESPACE_JDK;
+                    return new CharClass(options.spaceTable().ranges(), true);
                 default :
                     throw new IllegalStateException("not a shorthand: \\" + c);
             }
@@ -1674,12 +1680,12 @@ public final class Parser {
                     // the class loop's table pre-check takes it.
                     return (char) 11;
                 case 'e' :
-                    if (options.isEscapesRe2()) {
+                    if (options.escapes() == EscapeAlphabet.RE2_MINIMAL) {
                         throw fail(this, "invalid escape sequence: \\e");
                     }
                     return 0x1B;
                 case 'c' :
-                    if (options.isEscapesRe2()) {
+                    if (options.escapes() == EscapeAlphabet.RE2_MINIMAL) {
                         throw fail(this, "invalid escape sequence: \\c");
                     }
                     if (pos >= src.length()) {
@@ -1689,7 +1695,7 @@ public final class Parser {
                     pos++;
                     return ctrl;
                 case 'N' :
-                    if (options.isEscapesRe2()) {
+                    if (options.escapes() == EscapeAlphabet.RE2_MINIMAL) {
                         throw fail(this, "invalid escape sequence: \\N");
                     }
                     return readNamedCodepoint();
@@ -1761,7 +1767,7 @@ public final class Parser {
                     val = val * 8 + (src.charAt(pos) - '0');
                     pos++;
                 }
-            } else if (c != '0' || !options.isEscapesRe2()) {
+            } else if (c != '0' || options.escapes() == EscapeAlphabet.JDK) {
                 // \1-\7 always (backreference family); \0 requires a
                 // following octal digit under the JUR reading only.
                 throw fail(this, "invalid escape sequence: \\" + c);
@@ -1772,7 +1778,7 @@ public final class Parser {
         // The java.util.regex-only escapes (ESCAPES_RE2 unset); under the
         // axis the letters fall to the default reject below — re2j's
         // alphabet ("invalid escape sequence", verified against re2j 1.8).
-        boolean jur = !options.isEscapesRe2();
+        boolean jur = options.escapes() == EscapeAlphabet.JDK;
         switch (c) {
             case 'n' :
                 literalKind = 1;

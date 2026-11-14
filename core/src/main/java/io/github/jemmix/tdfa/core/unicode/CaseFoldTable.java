@@ -3,7 +3,9 @@ package io.github.jemmix.tdfa.core.unicode;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.function.IntFunction;
 
 /**
  * Reverse Unicode case-fold table: maps each canonical fold key to the
@@ -32,7 +34,7 @@ import java.util.Map;
  * JDK way (İ/ı merged into the i-orbit — live-JDK verified), which is the
  * {@link #foldRangesJava} reading the jur surface's default provider
  * supplies; the two surfaces pick their oracle's orbit (see
- * {@code Re2jUniverseProvider}).
+ * the RE2/Go reading the :re2j facade's default provider supplies).
  *
  * <p>Both indexes are built lazily on first use (one pass over 0..0x10FFFF
  * each) and cached for the JVM lifetime.
@@ -331,5 +333,92 @@ public final class CaseFoldTable {
             out.put(e.getKey(), flat);
         }
         return out;
+    }
+
+    /**
+     * Expand a property table by a fold universe: the ranges of BMP
+     * codepoints NOT in the table but fold-equivalent (under
+     * {@code foldFn}) to one that is — the mechanism behind a
+     * {@code UnicodeDataProvider}'s fold-annotated tables. Returns the
+     * merged ranges, or {@code null} when the universe adds nothing.
+     * Public static on the fold tables: the expansion is fold
+     * machinery, not JDK-bridge machinery (the :re2j facade's default
+     * provider builds on it — see {@code docs/dialect-agnostic-core.md}).
+     */
+    public static int[] expandByFold(int[] table, IntFunction<int[]> foldFn) {
+        ArrayList<int[]> ranges = new ArrayList<>();
+        int rangeStart = -1;
+        for (int cp = 0; cp <= 0xFFFF; cp++) {
+            if (!inRange(table, cp) && foldEquivalentInRange(cp, table, foldFn)) {
+                if (rangeStart < 0) {
+                    rangeStart = cp;
+                }
+                continue;
+            }
+            if (rangeStart >= 0) {
+                ranges.add(new int[]{rangeStart, cp - 1});
+                rangeStart = -1;
+            }
+        }
+        if (rangeStart >= 0) {
+            ranges.add(new int[]{rangeStart, 0xFFFF});
+        }
+        if (ranges.isEmpty()) {
+            return null;
+        }
+        return flatten(ranges);
+    }
+
+    /** True iff any fold-group member of {@code cp} (other than itself) is in the table. */
+    private static boolean foldEquivalentInRange(int cp, int[] table, IntFunction<int[]> foldFn) {
+        int[] fr = foldFn.apply(cp);
+        if (fr == null) {
+            return false;
+        }
+        for (int m : fr) {
+            if (m != cp && inRange(table, m)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean inRange(int[] table, int cp) {
+        if (cp > 0xFFFF) {
+            return false;
+        }
+        int lo = 0, hi = table.length / 2 - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            if (cp < table[2 * mid]) {
+                hi = mid - 1;
+            } else if (cp > table[2 * mid + 1]) {
+                lo = mid + 1;
+            } else {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int[] flatten(List<int[]> ranges) {
+        ranges.sort((a, b) -> Integer.compare(a[0], b[0]));
+        ArrayList<int[]> merged = new ArrayList<>();
+        for (int[] r : ranges) {
+            if (!merged.isEmpty()) {
+                int[] last = merged.get(merged.size() - 1);
+                if (r[0] <= last[1] + 1) {
+                    last[1] = Math.max(last[1], r[1]);
+                    continue;
+                }
+            }
+            merged.add(new int[]{r[0], r[1]});
+        }
+        int[] flat = new int[merged.size() * 2];
+        for (int i = 0; i < merged.size(); i++) {
+            flat[2 * i] = merged.get(i)[0];
+            flat[2 * i + 1] = merged.get(i)[1];
+        }
+        return flat;
     }
 }

@@ -5,7 +5,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.IntFunction;
 import java.util.regex.Pattern;
 
 /**
@@ -26,8 +25,10 @@ import java.util.regex.Pattern;
  * the Turkic İ/ı pair merged into the i-orbit, what a same-JVM
  * {@code java.util.regex} answers under CASE_INSENSITIVE|UNICODE_CASE),
  * for literal/class folds and the {@code \p{...}} fold twin alike. The
- * jur surface's default lane resolves here; the re2j surface pins the
- * RE2-lineage reading instead (see {@link Re2jUniverseProvider}).
+ * jur facade's default resolves here; the :re2j facade's default pins
+ * the RE2/Go fold universe instead (the Turkic-inert reading,
+ * {@link CaseFoldTable#foldRanges} — facade-owned as
+ * {@code io.github.jemmix.tdfa.re2j.Re2FoldUniverse}).
  */
 final class JdkUnicodeDataProvider implements UnicodeDataProvider {
     static final JdkUnicodeDataProvider INSTANCE = new JdkUnicodeDataProvider();
@@ -254,7 +255,7 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
             if (cached != null) {
                 return cached.length == 0 ? null : cached;
             }
-            int[] result = buildFoldTable(table, CaseFoldTable::foldRangesJava);
+            int[] result = CaseFoldTable.expandByFold(table, CaseFoldTable::foldRangesJava);
             ft.put(name, result == null ? new int[0] : result);
             return result;
         }
@@ -271,63 +272,6 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
      *
      * <p>BMP only, matching the other tables' fold scope.
      */
-    static int[] buildFoldTable(int[] table, IntFunction<int[]> foldFn) {
-        ArrayList<int[]> ranges = new ArrayList<>();
-        int rangeStart = -1;
-        for (int cp = 0; cp <= 0xFFFF; cp++) {
-            if (!inRange(table, cp) && foldEquivalentInRange(cp, table, foldFn)) {
-                if (rangeStart < 0) {
-                    rangeStart = cp;
-                }
-                continue;
-            }
-            if (rangeStart >= 0) {
-                ranges.add(new int[]{rangeStart, cp - 1});
-                rangeStart = -1;
-            }
-        }
-        if (rangeStart >= 0) {
-            ranges.add(new int[]{rangeStart, 0xFFFF});
-        }
-        if (ranges.isEmpty()) {
-            return null;
-        }
-        return flatten(ranges);
-    }
-
-    /** True iff any fold-group member of {@code cp} (other than itself) is in the table. */
-    private static boolean foldEquivalentInRange(int cp, int[] table, IntFunction<int[]> foldFn) {
-        int[] fr = foldFn.apply(cp);
-        if (fr == null) {
-            return false;
-        }
-        for (int i = 0; i + 1 < fr.length; i += 2) {
-            for (int m = fr[i]; m <= fr[i + 1]; m++) {
-                if (m != cp && inRange(table, m)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private static boolean inRange(int[] table, int cp) {
-        if (cp > 0xFFFF) {
-            return false;
-        }
-        int lo = 0, hi = table.length / 2 - 1;
-        while (lo <= hi) {
-            int mid = (lo + hi) >>> 1;
-            if (cp < table[2 * mid]) {
-                hi = mid - 1;
-            } else if (cp > table[2 * mid + 1]) {
-                lo = mid + 1;
-            } else {
-                return true;
-            }
-        }
-        return false;
-    }
 
     // ---- category tables ----
 
