@@ -347,6 +347,16 @@ public final class CampaignFuzzer {
             counts.soft("SKIP_UNGREEDY");
             return;
         }
+        if (DifferentialFuzzer.graphemeConstruct(c.pattern())) {
+            // The JDK-8394894 grapheme family (generator v5): this probe
+            // compiles the tdfa side through the re2j surface, whose
+            // deliberate literal-brace reading of \b{g} cannot be compared
+            // against the oracle's grapheme semantics (\X both-rejects,
+            // \b{g} both-accept with different meanings) — the JUR lane
+            // and the soak's graphemes-unsupported skip own the family.
+            counts.soft("SKIP_GRAPHEME_UNSUPPORTED");
+            return;
+        }
         String jur = "<reject>";
         java.util.regex.Pattern jp;
         try {
@@ -1417,6 +1427,13 @@ public final class CampaignFuzzer {
             counts.ok();
             return;
         }
+        // The grapheme family is a SYNTAX family, not a fact-gated rung
+        // family — no ladder rung to pin (its shapes both-reject or read
+        // literally on this lane's re2j surface).
+        if ("grapheme".equals(c.family())) {
+            counts.ok();
+            return;
+        }
         // Routing: did the family's target rung actually serve the call?
         // NOTE anchored-fast is probed at the ENGINE tier: the facade's
         // matches() routes through matchWhole, which always serves/traces
@@ -1534,6 +1551,14 @@ public final class CampaignFuzzer {
         DifferentialFuzzer.Case c = DifferentialFuzzer.generate(caseSeed);
         if (c.lane() == DifferentialFuzzer.Lane.JUR && DifferentialFuzzer.jurOracleBomb(c.pattern())) {
             counts.soft("BUDGET_GUARD");
+            return;
+        }
+        if (DifferentialFuzzer.graphemeConstruct(c.pattern())) {
+            // generator v5's grapheme family: a syntax-rejecting shape
+            // (the jur lane) or a literal-brace re2j read — never a
+            // budget question, and the shrunk knobs must not be asked to
+            // explain its compiles.
+            counts.ok();
             return;
         }
         Scenario sc = genScenario(caseSeed);

@@ -121,7 +121,7 @@ public interface RegexEngine {
      * (anchoring on, transparent off) needs no special support — the
      * matcher serves it through {@link #match} over a subSequence view.
      */
-    default MatchResult matchRegion(CharSequence input, int from, int to, boolean anchoringBounds,
+    default MatchResult matchRegion(CharSequence input, int regionFrom, int scanFrom, int to, boolean anchoringBounds,
         boolean transparentBounds, MatchScratch scratch) {
         throw new UnsupportedOperationException("region bounds are not supported by engine " + getClass().getName()
             + " — override RegexEngine.matchRegion to serve them");
@@ -138,6 +138,20 @@ public interface RegexEngine {
     }
 
     /**
+     * Region-confined WHOLE match — {@code Matcher.matches()}'s discipline
+     * under the bases contract of {@link #matchRegion} (the accept must
+     * land at {@code to}). Served by the machinery only for regions the
+     * subSequence view cannot express faithfully (the cut-pair region —
+     * see {@code TdfaRunner.matchRegionWhole}); third-party engines that
+     * do not override reject loudly.
+     */
+    default MatchResult matchRegionWhole(CharSequence input, int from, int to, boolean anchoringBounds,
+        boolean transparentBounds, MatchScratch scratch) {
+        throw new UnsupportedOperationException("region bounds are not supported by engine " + getClass().getName()
+            + " — override RegexEngine.matchRegionWhole to serve them");
+    }
+
+    /**
      * The end-state probe behind the matcher's {@code hitEnd()}/
      * {@code requireEnd()} — a cold, tagless re-derivation over the
      * engine's artifact (the flags java's nodes record during the walk;
@@ -147,9 +161,18 @@ public interface RegexEngine {
      *
      * <p>Contract mirrors {@link #matchRegion} for the bounds flags;
      * third-party engines that do not override reject loudly.
+     *
+     * <p>{@code anchoredOp} names the operation the flags are derived
+     * for, mirroring java's per-operation reset: {@code false} is
+     * {@code find()} (an unanchored search — java's {@code Start}-node
+     * scan rule applies on failure), {@code true} is
+     * {@code matches()}/{@code lookingAt()} (java's {@code match()}
+     * entry — the anchored walk's own flags only; a failed anchored op
+     * never reports the scan rule). Consulted on the failure path only;
+     * the success replay is the winning walk either way.
      */
     default int probeEndFlags(CharSequence input, int from, int to, boolean anchoringBounds, boolean transparentBounds,
-        int matchStart, int matchEnd, boolean matched) {
+        int matchStart, int matchEnd, boolean matched, boolean anchoredOp) {
         throw new UnsupportedOperationException("hitEnd/requireEnd probing is not supported by engine "
             + getClass().getName() + " — override RegexEngine.probeEndFlags to serve it");
     }

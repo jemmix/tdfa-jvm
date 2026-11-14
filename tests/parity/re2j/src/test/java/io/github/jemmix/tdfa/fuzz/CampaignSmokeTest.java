@@ -62,7 +62,12 @@ class CampaignSmokeTest {
         // through the accepted match, inside it — campaign 2026-10-24
         // finding 3) are the remaining group-family skips, skeleton-gated
         // + exact
-        "SKIP_NESTED_LOOP_CAPTURE", "SKIP_RESTART_TAG_LEAK", "SKIP_GROUPCURLY_STALE_WRITE", "JURLANE_BUDGET");
+        "SKIP_NESTED_LOOP_CAPTURE", "SKIP_RESTART_TAG_LEAK", "SKIP_GROUPCURLY_STALE_WRITE", "JURLANE_BUDGET",
+        // the JDK-8394894 grapheme family (generator v5): the re2j
+        // surface's literal-brace reading of \b{g} is untranslatable
+        // against the oracle's grapheme semantics — the JUR-lane probe
+        // and the soak's graphemes-unsupported skip own the family
+        "SKIP_GRAPHEME_UNSUPPORTED");
 
     private static final Map<String, Set<String>> MODE_SOFT =
         Map.of("jur", JUR_SOFT, "stretch", Set.of("SKIP_EMPTY", "THREW", "SLOW", "STRETCH_BUDGET"), "seq",

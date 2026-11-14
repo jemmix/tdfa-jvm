@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.fuzz;
 
 import com.google.re2j.Re2jUnicodeProvider;
+import io.github.jemmix.tdfa.core.ast.Alphabet;
 import io.github.jemmix.tdfa.core.budget.PatternTooLargeException;
 import io.github.jemmix.tdfa.core.compile.TDFAPattern;
 import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
@@ -184,6 +185,52 @@ import java.util.function.Predicate;
  * zoo (position-carrying buffers) live in the campaign's seq mode — the
  * deep-dive twin of this axis. {@code -Pfuzz.seq=0} turns the axis off.
  *
+ * <p><b>Region/bounds axis (JDK-8394894).</b> A deterministic 1-in-N
+ * sample of cases (pattern+input hash, replay-stable) draws a region
+ * {@code [from,to)} (edge/empty-biased) and a bounds combo
+ * (default-weighted over the four) and re-runs a region'd protocol —
+ * first find() with spans, find() iteration to exhaustion, lookingAt(),
+ * matches() — over BOTH engine tiers (REGION_TIER byte-equality, the
+ * ASM tier's region bail and the generated matchRegion delegates
+ * included) and, on the jur lane, against the live
+ * {@code java.util.regex} oracle under the identical region/bounds
+ * operations (REGION_MISMATCH). The one documented machinery rejection
+ * — matches() under NON-default bounds over a position-predicate
+ * artifact (the whole engine cannot bound predicates) — asserts as
+ * exactly that rejection and skips the probe on both sides
+ * ({@code M=~}); a region whose edge SPLITS a surrogate pair skips the
+ * M probe the same way ({@code M=-}: the find artifact's
+ * leftmost-first determinization prunes paths java's ENDANCHOR
+ * backtracker explores, and the whole artifact has no region walk);
+ * anything else a tier throws is a REGION_THREW
+ * finding. The protocol compares SPANS only: the region'd
+ * hitEnd/requireEnd derivation proved to be java-backtracker
+ * bookkeeping (per-path zero-width-gate pruning, sequential gate
+ * order, Curly unit reads — residual families at overnight-slice
+ * scale even after the landing's eight fixed-and-pinned derivations),
+ * so the flags stay battery-pinned (JurApiParityTest: the no-region
+ * END_FLAG_CELLS plus the region'd/failed-anchored cells) and this
+ * axis's domain is the match-semantics surface. Two java-backtracker
+ * SPAN shapes the DFA cannot see are counted skips
+ * (regionBacktrackerSkips): the Curly cut-pair unit-read quirk and
+ * stacked zero-width heads. {@code -Pfuzz.region=0} turns the axis
+ * off.
+ *
+ * <p><b>Grapheme family (generator v5).</b> The fifth fact-gated family
+ * draws {@code \X} and {@code \b{g}} constructs over cluster-carrying
+ * inputs (combining marks, ZWJ, supplementary) — the JDK-8394894
+ * grapheme syntax this engine consciously rejects
+ * (docs/jur-api-parity.md): on the jur lane those shapes reject at BOTH
+ * tdfa compiles while the oracle accepts them, classified as the
+ * {@code graphemes-unsupported} domain exclusion (a JURLANE_SKIP,
+ * counted like the lane's other exclusions); on the RE2J lane the
+ * boundary-clause spellings keep re2j's literal-brace reading and
+ * compare HARD (both sides accept; the identical literal walk), and
+ * {@code \X} both-rejects. The non-quantifier brace right after
+ * {@code \b}/{@code \B} rejects loudly under the jur reading since
+ * that landing — before it the parser silently read the RE2 literal
+ * there, a divergence this family exists to keep impossible.
+ *
  * <p>The multi-valued lane (BT22 §3.1, on by default, {@code
  * -Pfuzz.mvt=0} off; 1-in-N sampling via {@code fuzz.mvtEvery} — the lane
  * is compile-bound): every batch additionally compiles as ASM and VM with
@@ -257,6 +304,14 @@ public final class DifferentialFuzzer {
     static final boolean SEQ_WRAP = Long.getLong("fuzz.seq", 1) != 0;
 
     static final int SEQ_EVERY = (int) (long) Long.getLong("fuzz.seqEvery", 4);
+
+    /** Region/bounds axis (the JDK-8394894 family: region(),
+     *  useTransparentBounds(), useAnchoringBounds() over the five-probe
+     *  family + hitEnd/requireEnd) on/off; sampled 1-in-regionEvery
+     *  cases (Gradle: -Pfuzz.region=0, -Pfuzz.regionEvery=N). */
+    static final boolean REGION = Long.getLong("fuzz.region", 1) != 0;
+
+    static final int REGION_EVERY = (int) (long) Long.getLong("fuzz.regionEvery", 4);
 
     /**
      * Determinism double-run (runner-immutability tripwire 2): re-run
@@ -363,6 +418,13 @@ public final class DifferentialFuzzer {
     static final String FAM_ANCHOR_PRESENT = "zq09Y._";
 
     static final String FAM_ANCHOR_ABSENT = "xjkcfghmnpr";
+
+    /** Cluster embeds for the grapheme family's inputs: combining-mark
+     *  sequences, a ZWJ join, supplementary emoji — the shapes the ORACLE
+     *  side actually walks as grapheme clusters; on the RE2J lane they are
+     *  ordinary non-ASCII input text beside the literal-brace reading. */
+    static final String[] FAM_CLUSTERS =
+        {"a\u0301", "e\u0301\u0327", "\u0F0B", "a\u200Db", "\uD83D\uDC68\uD83C\uDFFB", "\u0BA8\u0BBF"};
 
     static final int MAX_DEPTH = 4;
     private static int ciRangeAvoided; // informational; generation-side counter
@@ -479,6 +541,7 @@ public final class DifferentialFuzzer {
                 }
                 o.memo.forEach(m -> System.out.println("memo:    " + m));
                 o.cross.forEach(x -> System.out.println("cross:   " + x));
+                o.region.forEach(x -> System.out.println("region:  " + x));
                 o.mvt.forEach(x -> System.out.println("mvt:     " + x));
                 if (!o.exceptions.isEmpty()) {
                     o.exceptions.forEach(System.out::println);
@@ -889,6 +952,55 @@ public final class DifferentialFuzzer {
         return jf;
     }
 
+    /** Whether the pattern carries a JDK-8394894 grapheme construct:
+     *  the {@code \X} atom, or a {@code \b{...}}/{@code \B{...}} boundary
+     *  clause (any brace body a DIGIT quantifier cannot explain —
+     *  {@code \b{5}} is java-legal in both readings and never a grapheme
+     *  cell). Escape-, class- and {@code \Q..\E}-aware, so literal text
+     *  never trips it; the generator's grapheme family emits exactly
+     *  these constructs. */
+    static boolean graphemeConstruct(String p) {
+        boolean inClass = false;
+        boolean quoted = false;
+        for (int i = 0; i < p.length(); i++) {
+            char c = p.charAt(i);
+            if (quoted) {
+                if (c == '\\' && i + 1 < p.length()) {
+                    quoted = p.charAt(i + 1) != 'E';
+                    i++;
+                }
+                continue;
+            }
+            if (c == '\\' && i + 1 < p.length()) {
+                char n = p.charAt(i + 1);
+                if (n == 'Q') {
+                    quoted = true;
+                    i++;
+                    continue;
+                }
+                if (n == 'X') {
+                    return true;
+                }
+                if ((n == 'b' || n == 'B') && i + 2 < p.length() && p.charAt(i + 2) == '{'
+                    && (i + 3 >= p.length() || p.charAt(i + 3) < '0' || p.charAt(i + 3) > '9')) {
+                    return true;
+                }
+                i++;
+                continue;
+            }
+            if (inClass) {
+                if (c == ']') {
+                    inClass = false;
+                }
+                continue;
+            }
+            if (c == '[') {
+                inClass = true;
+            }
+        }
+        return false;
+    }
+
     static Prepared prepare(String pattern, int flags) {
         return prepare(pattern, flags, Lane.RE2J);
     }
@@ -1020,6 +1132,9 @@ public final class DifferentialFuzzer {
         if (SEQ_WRAP && pr.vm != null && seqSampled(c)) {
             seqProbes(pr, c, o);
         }
+        if (REGION && pr.vm != null && regionSampled(c)) {
+            regionProbes(pr, c, o);
+        }
         if (pr.mvt) {
             multiValued(pr, c, o);
         }
@@ -1083,6 +1198,374 @@ public final class DifferentialFuzzer {
             o.cross.add("SEQ_ORACLE_WRAPPER " + w.getClass().getSimpleName() + " wrapper[" + ow + "] string["
                 + oracleStr + "]");
         }
+    }
+
+    // ---- region/bounds axis (JDK-8394894; the jur facade's family) ----
+    //
+    // A deterministic 1-in-N sample of cases re-runs the five-probe family
+    // under a drawn region and bounds combo: BOTH tiers byte-equal
+    // (REGION_TIER — the ASM tier's region bail and generated delegates
+    // included), and on the jur lane the live java.util.regex oracle under
+    // the identical operations (REGION_MISMATCH). The one documented
+    // machinery rejection — matches() under non-default bounds over a
+    // position-predicate artifact — asserts as exactly that rejection
+    // (M=~, skipped on both sides); hitEnd/requireEnd ride after every
+    // probe (java resets the pair per operation; the engine derives from
+    // the failed op's own shape — the parity battery's generalization).
+
+    /** The drawn region/bounds combo — a pure function of pattern+input,
+     *  so {@code fuzz.one} replays the identical draw. */
+    record RegionDraw(int from, int to, boolean anchoring, boolean transparent) {
+
+        @Override
+        public String toString() {
+            return from + "," + to + (anchoring ? "a" : "A") + (transparent ? "t" : "T");
+        }
+    }
+
+    static RegionDraw drawRegion(String pattern, String input) {
+        SplittableRandom r = new SplittableRandom(pattern.hashCode() * 1000003L ^ input.hashCode() * 31L ^ 0x5245474EL); // "REGN"
+        int len = input.length();
+        int from = switch (r.nextInt(4)) {
+            case 0 -> 0;
+            case 1 -> len;
+            default -> r.nextInt(len + 1);
+        };
+        int to = switch (r.nextInt(4)) {
+            case 0 -> from; // empty region (from == to)
+            case 1 -> len;
+            default -> from + r.nextInt(len - from + 1);
+        };
+        boolean anchoring = r.nextInt(4) != 0; // default-weighted: the anchoring combo ~75%
+        boolean transparent = r.nextInt(4) == 0; // the transparent opt-in ~25%
+        return new RegionDraw(from, to, anchoring, transparent);
+    }
+
+    /** The region-axis sample draw (1-in-REGION_EVERY cases; pattern+input
+     *  hash, replay-stable — the seq probe's keying twin). */
+    static boolean regionSampled(Case c) {
+        long h = c.pattern().hashCode() * 1000003L ^ c.input().hashCode() * 1_000_000_007L;
+        return Math.floorMod(h, REGION_EVERY) == 0;
+    }
+
+    static void regionProbes(Prepared pr, Case c, Outcome o) {
+        if (o.asm == null || o.vm == null || o.asm.startsWith("<") || o.vm.startsWith("<")) {
+            return; // compile-rejected: no region surface to compare
+        }
+        o.regionRan = true;
+        RegionDraw d = drawRegion(c.pattern(), c.input());
+        boolean[] vmDoc = new boolean[1];
+        boolean[] asmDoc = new boolean[1];
+        String vm = computeRegion(pr.vm, c.input(), d, o.region, "vm", vmDoc);
+        String asm = computeRegion(pr.asm, c.input(), d, o.region, "asm", asmDoc);
+        if (!vm.equals(asm)) {
+            o.region.add("REGION_TIER draw=" + d + " vm[" + vm + "] asm[" + asm + "]");
+        }
+        if (vmDoc[0]) {
+            o.regionDocRejects++;
+        }
+        if (pr.lane == Lane.JUR && pr.jurOracle != null) {
+            o.regionOracleRan = true;
+            String jur;
+            try {
+                jur = computeRegionJur(pr.jurOracle, c.input(), d, vmDoc[0] && asmDoc[0]);
+            } catch (RuntimeException | StackOverflowError e) {
+                o.regionOracleThrew = true; // oracle limit — the lane's JUR_ORACLE_THREW family
+                return;
+            }
+            if (!vm.equals(jur)) {
+                if (backtrackerInternalsCell(c.pattern(), c.input(), d)) {
+                    // Two java-backtracker shapes the DFA cannot see (its
+                    // edges carry no quantifier shapes and no zero-width
+                    // node ORDER — pinned in JurApiParityTest, counted,
+                    // never a finding):
+                    //  - the Curly quirk at a pair CUT by the region end:
+                    //    the quantifier's atom reads the LONE high half as
+                    //    one unit (matcher.last bookkeeping) where the
+                    //    same atom unquantified reads the full codepoint
+                    //    and dies on the consumption-fits check;
+                    //  - a STACKED zero-width head ($\A9: two anchors
+                    //    before the first consuming atom): java evaluates
+                    //    the gates in sequence and the ones that held
+                    //    before a failing one set their flags — the mask
+                    //    bit-set has no order.
+                    o.regionBacktrackerSkip = true;
+                    return;
+                }
+                o.region.add("REGION_MISMATCH draw=" + d + " vm[" + vm + "] jur[" + jur + "]");
+            }
+        }
+    }
+
+    /** Whether the case's shape is one of the two backtracker-internals
+     * cells (see {@link #regionProbes}): java's Curly cut-pair quirk, or
+     * a stacked zero-width head. Pure-function structural scans in the
+     * jurOracleBomb idiom (escapes, classes and
+     * {@code \Q..\E} skipped). */
+    static boolean backtrackerInternalsCell(String pattern, String input, RegionDraw d) {
+        return stackedZeroWidthHead(pattern) || curlyCutPairShape(pattern, input, d);
+    }
+
+    /** A stacked zero-width head: two or more adjacent anchors
+     * ({@code $}, {@code ^}, {@code \A}, {@code \z}, {@code \Z},
+     * {@code \b}, {@code \B}) before the first consuming atom —
+     * java's sequential gate evaluation (the held-before-failing ones set
+     * their flags) has an order the mask bit-set cannot carry. */
+    static boolean stackedZeroWidthHead(String p) {
+        int anchors = 0;
+        int i = 0;
+        while (i < p.length()) {
+            char c = p.charAt(i);
+            if (c == '^' || c == '$') {
+                anchors++;
+                i++;
+            } else if (c == '\\' && i + 1 < p.length() && "AbBzZ".indexOf(p.charAt(i + 1)) >= 0) {
+                anchors++;
+                i += 2;
+            } else {
+                return anchors >= 2;
+            }
+            if (anchors >= 2) {
+                return true;
+            }
+        }
+        return anchors >= 2;
+    }
+
+    /** java's Curly cut-pair quirk shape: the draw's region end CUTS a
+     * surrogate pair and the pattern textually carries a WIDE atom under
+     * a variable-width or unbounded quantifier (java's Curly family —
+     * dot, complemented shorthands, bracket classes). */
+    static boolean curlyCutPairShape(String pattern, String input, RegionDraw d) {
+        if (!Alphabet.cutPairAt(input, d.to() - 1, d.to())) {
+            return false;
+        }
+        int i = 0;
+        while (i < pattern.length()) {
+            char c = pattern.charAt(i);
+            if (c == '\\') {
+                if (i + 1 >= pattern.length()) {
+                    return false;
+                }
+                char n = pattern.charAt(i + 1);
+                if (n == 'Q') {
+                    int e = pattern.indexOf("\\E", i + 2);
+                    i = e < 0 ? pattern.length() : e + 2;
+                    continue;
+                }
+                if ((n == 'D' || n == 'W' || n == 'S') && quantifierFollows(pattern, i + 2)) {
+                    return true;
+                }
+                i += 2;
+                continue;
+            }
+            if (c == '[') {
+                int j = i + 1;
+                if (j < pattern.length() && pattern.charAt(j) == '^') {
+                    j++;
+                }
+                if (j < pattern.length() && pattern.charAt(j) == ']') {
+                    j++;
+                }
+                while (j < pattern.length() && pattern.charAt(j) != ']') {
+                    j += pattern.charAt(j) == '\\' && j + 1 < pattern.length() ? 2 : 1;
+                }
+                if (quantifierFollows(pattern, j + 1)) {
+                    return true;
+                }
+                i = j + 1;
+                continue;
+            }
+            if (c == '.' && quantifierFollows(pattern, i + 1)) {
+                return true;
+            }
+            i++;
+        }
+        return false;
+    }
+
+    /** Whether a Curly-family quantifier (variable-width or unbounded)
+     * starts at {@code pos}: {@code *}, {@code +}, {@code {n,}},
+     * {@code {n,m}} with {@code m >= 2}. */
+    private static boolean quantifierFollows(String p, int pos) {
+        if (pos >= p.length()) {
+            return false;
+        }
+        char c = p.charAt(pos);
+        if (c == '*' || c == '+') {
+            return true;
+        }
+        if (c != '{') {
+            return false;
+        }
+        int j = pos + 1;
+        int comma = -1;
+        while (j < p.length() && "0123456789,".indexOf(p.charAt(j)) >= 0) {
+            if (p.charAt(j) == ',') {
+                comma = j;
+            }
+            j++;
+        }
+        if (j >= p.length() || p.charAt(j) != '}' || j == pos + 1) {
+            return false;
+        }
+        if (comma == j - 1) {
+            return true; // {n,} unbounded
+        }
+        if (comma < 0) {
+            return false; // {n} fixed — Ques/GroupCurly of fixed width, not the quirk family
+        }
+        int max = 0;
+        for (int k = comma + 1; k < j; k++) {
+            max = Math.min(2, max * 10 + (p.charAt(k) - '0'));
+        }
+        return max >= 2; // variable width — java's Curly
+    }
+
+    /** The region'd protocol over one tdfa tier: F (+end flags), I to
+     *  exhaustion (+end flags), L, M — spans in the five-probe format
+     *  beside each. {@code docReject} carries the documented
+     *  matches()-rejection out (REGION_DOC_REJECT, counted). */
+    static String computeRegion(TDFAPattern p, CharSequence in, RegionDraw d, List<String> findings, String tier,
+        boolean[] docReject) {
+        StringBuilder sb = new StringBuilder(112);
+        sb.append("r").append(d).append(' ');
+        io.github.jemmix.tdfa.core.engine.Matcher m = p.matcher(in);
+        regionize(m, d);
+        // NOTE: no hitEnd/requireEnd reads in the region protocol. The
+        // region'd end-flag derivation proved to be java-backtracker
+        // bookkeeping (per-path zero-width gate pruning, sequential gate
+        // order, Curly unit reads — three residual families at
+        // overnight-slice scale after EIGHT real derivations were fixed
+        // and pinned) that a deterministic artifact cannot fully mirror;
+        // the flags stay battery-pinned (JurApiParityTest: the no-region
+        // END_FLAG_CELLS + the region'd/failed-anchored cells). This
+        // axis's domain is the SPAN family: region/bounds semantics over
+        // find/iterate/lookingAt/matches, both tiers + the live oracle.
+        boolean found = m.find();
+        if (found) {
+            spanTdfa(sb.append("F=true "), m);
+        } else {
+            sb.append("F=false");
+        }
+        sb.append(" I=[");
+        int n = 0;
+        if (found) {
+            spanTdfa(sb, m);
+            while (++n < MAX_MATCHES && m.find()) {
+                spanTdfa(sb, m);
+            }
+        }
+        sb.append(n == MAX_MATCHES ? "]+$" : "]");
+        io.github.jemmix.tdfa.core.engine.Matcher ml = p.matcher(in);
+        regionize(ml, d);
+        if (ml.lookingAt()) {
+            spanTdfa(sb.append(" L=true "), ml);
+        } else {
+            sb.append(" L=false");
+        }
+        if (regionSplitsUnits(in, d)) {
+            // The whole-match probe over a pair-splitting region: the
+            // find artifact cannot answer it (leftmost-first pruning vs
+            // java's ENDANCHOR exploration) and the whole artifact has
+            // no region walk — battery-pinned, skipped on both sides.
+            sb.append(" M=-");
+            return sb.toString();
+        }
+        io.github.jemmix.tdfa.core.engine.Matcher mm = p.matcher(in);
+        regionize(mm, d);
+        sb.append(" M=");
+        try {
+            if (mm.matches()) {
+                spanTdfa(sb.append("true "), mm);
+            } else {
+                sb.append("false");
+            }
+        } catch (UnsupportedOperationException e) {
+            if (isDocumentedRegionReject(e)) {
+                docReject[0] = true;
+                sb.append('~'); // the documented machinery rejection — skipped on both sides
+            } else {
+                findings.add(
+                    "REGION_THREW " + tier + " M " + e.getClass().getSimpleName() + ": " + firstLine(e.getMessage()));
+                sb.append('!');
+            }
+        }
+        return sb.toString();
+    }
+
+    /** The oracle twin of {@link #computeRegion} — the identical
+     *  region/bounds operations on the live java.util.regex matcher; the
+     *  M probe skips when our side hit the documented rejection. */
+    static String computeRegionJur(java.util.regex.Pattern p, CharSequence in, RegionDraw d, boolean skipM) {
+        StringBuilder sb = new StringBuilder(112);
+        sb.append("r").append(d).append(' ');
+        java.util.regex.Matcher m = p.matcher(in);
+        regionizeJur(m, d);
+        boolean found = m.find();
+        if (found) {
+            CampaignFuzzer.spanJur(sb.append("F=true "), m);
+        } else {
+            sb.append("F=false");
+        }
+        sb.append(" I=[");
+        int n = 0;
+        if (found) {
+            CampaignFuzzer.spanJur(sb, m);
+            while (++n < MAX_MATCHES && m.find()) {
+                CampaignFuzzer.spanJur(sb, m);
+            }
+        }
+        sb.append(n == MAX_MATCHES ? "]+$" : "]");
+        java.util.regex.Matcher ml = p.matcher(in);
+        regionizeJur(ml, d);
+        if (ml.lookingAt()) {
+            CampaignFuzzer.spanJur(sb.append(" L=true "), ml);
+        } else {
+            sb.append(" L=false");
+        }
+        if (skipM || regionSplitsUnits(in, d)) {
+            sb.append(skipM ? " M=~" : " M=-"); // the documented reject / the pair-splitting-region skip
+            return sb.toString();
+        }
+        java.util.regex.Matcher mm = p.matcher(in);
+        regionizeJur(mm, d);
+        if (mm.matches()) {
+            CampaignFuzzer.spanJur(sb.append(" M=true "), mm);
+        } else {
+            sb.append(" M=false");
+        }
+        return sb.toString();
+    }
+
+    /** Whether the region's edges split a surrogate pair — the
+     *  subSequence-view-unsoound shapes (see Matcher.searchRegion): the
+     *  whole-match probe cannot serve them (the find artifact's
+     *  leftmost-first determinization prunes paths java's ENDANCHOR
+     *  backtracker explores; the whole artifact has no region walk), so
+     *  the M probe skips on both sides there. */
+    static boolean regionSplitsUnits(CharSequence input, RegionDraw d) {
+        return Alphabet.cutPairAt(input, d.to() - 1, d.to()) || Alphabet.splitPairStart(input, d.from());
+    }
+
+    static void regionize(io.github.jemmix.tdfa.core.engine.Matcher m, RegionDraw d) {
+        m.region(d.from(), d.to());
+        m.useAnchoringBounds(d.anchoring());
+        m.useTransparentBounds(d.transparent());
+    }
+
+    static void regionizeJur(java.util.regex.Matcher m, RegionDraw d) {
+        m.region(d.from(), d.to());
+        m.useAnchoringBounds(d.anchoring());
+        m.useTransparentBounds(d.transparent());
+    }
+
+    /** The one documented machinery rejection in the region family:
+     *  matches() over non-default bounds needs position predicates the
+     *  whole engine cannot bound (Matcher.matchesInRegion's contract). */
+    static boolean isDocumentedRegionReject(UnsupportedOperationException e) {
+        String msg = e.getMessage();
+        return msg != null && msg.startsWith("matches() over a region with non-default bounds");
     }
 
     // ---- the multi-valued lane (BT22 §3.1; docs/fuzz-multi-valued-tags.md) ----
@@ -1678,6 +2161,9 @@ public final class DifferentialFuzzer {
     static String findingKind(Outcome o) {
         if (!o.cross.isEmpty()) {
             return o.cross.get(0).startsWith("ROUTED") ? "CROSS_ROUTING" : "CROSS_RUNG";
+        }
+        if (!o.region.isEmpty()) {
+            return firstWord(o.region.get(0));
         }
         if (!o.failed()) {
             return null;
@@ -2559,7 +3045,7 @@ public final class DifferentialFuzzer {
      *  family roll, then the family's own shape draws — harnesses seed the
      *  stream with their own key and keep replay stable). */
     static FamPattern genFam(SplittableRandom r) {
-        switch (r.nextInt(4)) {
+        switch (r.nextInt(5)) {
             case 0 : {
                 // LITERAL: a pure quoted needle, 1-8 chars — short needles
                 // exercise the detector's below-threshold family, long ones
@@ -2583,13 +3069,36 @@ public final class DifferentialFuzzer {
                 // half complement chars (the positive and the scan-only
                 // path). Inputs stay <= 64 chars (see famInput).
                 return FamPattern.of("cand-scan", famSetAtom(r) + famBody(r, 0, 2) + famAnchor(r), null);
-            default :
+            case 3 :
                 // ANCHORED_FAST: a mask-free disjoint-range shape (no anchors,
                 // no multiline flag in the harness's draws) for the
                 // engine-tier flat-table matches() rung. 1-3 atoms, each
                 // carrying its own quantifier — no trailing quantifier (a
                 // second one on an already-quantified atom is invalid syntax).
                 return FamPattern.of("anchored-fast", famBody(r, 1, 3), null);
+            default :
+                // GRAPHEME (generator v5, the JDK-8394894 family): \X and
+                // \b{g} constructs — the grapheme syntax the jur reading
+                // rejects loudly (both facades' \X; the boundary clauses on
+                // the jur lane) and the RE2J lane reads literally. Shapes
+                // stay group-free and quantifier-carrying atoms are never
+                // nested inside quantified groups (the jur oracle-bomb
+                // guard's family), and \b{g} rides bare (a quantifier on a
+                // boundary clause is not valid java). The needle is the
+                // cluster embed the input transform plants.
+                StringBuilder b = new StringBuilder();
+                int atoms = 1 + r.nextInt(3);
+                for (int i = 0; i < atoms; i++) {
+                    if (r.nextInt(3) == 0) {
+                        b.append("\\b{g}");
+                    } else {
+                        b.append("\\X").append(r.nextInt(3) == 0 ? famQuant(r, 2) : "");
+                    }
+                    if (r.nextInt(4) == 0) {
+                        b.append(famLiteral(r));
+                    }
+                }
+                return FamPattern.of("grapheme", b.toString(), FAM_CLUSTERS[r.nextInt(FAM_CLUSTERS.length)]);
         }
     }
 
@@ -2705,6 +3214,15 @@ public final class DifferentialFuzzer {
                 in.append(FAM_INPUT_ALPHABET.charAt(r.nextInt(FAM_INPUT_ALPHABET.length())));
             }
         }
+        // The grapheme family's RE2J-lane positive path: the literal-brace
+        // reading of \b{g} only matches when the input carries the literal
+        // text, so plant it (and the bare X of \X's escape letter) beside
+        // the cluster embeds below.
+        if ("grapheme".equals(fam.family())) {
+            if (r.nextInt(2) == 0) {
+                in.insert(r.nextInt(in.length() + 1), r.nextInt(2) == 0 ? "{g}" : "X");
+            }
+        }
         String needle = fam.needle();
         if (needle == null) {
             return in.toString(); // set family: the plain body already carries candidates
@@ -2754,6 +3272,23 @@ public final class DifferentialFuzzer {
         /** Cross-rung findings (MISMATCH/ROUTED/THREW) — non-empty fails the
          *  case regardless of the oracle outcome. */
         final List<String> cross = new ArrayList<>();
+        /** Region/bounds findings (REGION_MISMATCH/TIER/THREW) — non-empty
+         *  fails the case regardless of the oracle outcome. */
+        final List<String> region = new ArrayList<>();
+        /** The region axis executed on this case (wiring guard for the
+         *  smoke test: a silently-dead axis must fail the gate). */
+        boolean regionRan;
+        /** The region axis's oracle comparison executed (jur lane). */
+        boolean regionOracleRan;
+        /** The documented matches()-rejection fired (counted per tier,
+         *  never a finding). */
+        int regionDocRejects;
+        /** The region'd oracle blew up (backtracker StackOverflowError —
+         *  the lane's oracle-limit family, counted not failed). */
+        boolean regionOracleThrew;
+        /** java's Curly cut-pair quirk cell (counted, never a finding —
+         *  see regionProbes). */
+        boolean regionBacktrackerSkip;
         /** Determinism double-run findings (warm artifact vs itself,
          *  runner-immutability tripwire 2) — non-empty fails the case. */
         final List<String> memo = new ArrayList<>();
@@ -2770,6 +3305,9 @@ public final class DifferentialFuzzer {
                 return true;
             }
             if (!cross.isEmpty()) {
+                return true;
+            }
+            if (!region.isEmpty()) {
                 return true;
             }
             if (!mvt.isEmpty()) {
@@ -2807,6 +3345,13 @@ public final class DifferentialFuzzer {
         final Map<String, Integer> jurSkipRecorded = new LinkedHashMap<>();
         final Map<Layer, Integer> layerCounts = new EnumMap<>(Layer.class);
         long hangs, hangsOurs, hangsOracle;
+        /** Region/bounds axis: cases the probes ran, cases the jur-oracle
+         *  comparison served, the documented matches()-rejections
+         *  (counted per tier, never findings), the oracle-threw family,
+         *  java-backtracker-internals cells (skipped), and findings
+         *  (REGION_MISMATCH/TIER/THREW). */
+        long regionCases, regionOracleCases, regionDocRejects, regionOracleThrew, regionBacktrackerSkips,
+            regionFailures;
         /** Failure records pre-shrunk into shrunkPattern/shrunkInput
          *  (soak opt-in -Pfuzz.shrink=1; see shrinkInto). */
         long shrunkRecords;
@@ -2865,6 +3410,19 @@ public final class DifferentialFuzzer {
             if (o.mvtSimRan) {
                 mvtSimCases++;
             }
+            if (o.regionRan) {
+                regionCases++;
+                regionDocRejects += o.regionDocRejects;
+            }
+            if (o.regionOracleRan) {
+                regionOracleCases++;
+            }
+            if (o.regionOracleThrew) {
+                regionOracleThrew++;
+            }
+            if (o.regionBacktrackerSkip) {
+                regionBacktrackerSkips++;
+            }
             if (o.mvtBudget) {
                 // The classified expected class (multi-valued-tags.md): the
                 // multi lane permanently skips fixed-tag and regopt, so a
@@ -2904,6 +3462,29 @@ public final class DifferentialFuzzer {
                     s.recorded++;
                     shrinkInto(o, kind);
                     logs.failure(caseSeed, o, kind + " (" + firstWord(o.cross.get(0)) + ")", "CROSS");
+                }
+                return;
+            }
+            if (!o.region.isEmpty()) {
+                // Region-axis findings are oracle-independent on the tier
+                // leg (VM vs itself through the region machinery); the
+                // mismatch leg names the live oracle. No
+                // known-divergence classification — the axis's domain
+                // exclusions (the documented M rejection) never reach a
+                // finding.
+                failures++;
+                regionFailures++;
+                if (o.c.lane() == Lane.JUR) {
+                    jurFailures++;
+                }
+                String kind = firstWord(o.region.get(0));
+                String sig = kind + " | shape~" + shape(o.c.pattern());
+                Sig s = signatures.computeIfAbsent(sig, k -> new Sig(kind));
+                s.total++;
+                if (s.recorded < 8) {
+                    s.recorded++;
+                    shrinkInto(o, kind);
+                    logs.failure(caseSeed, o, kind, "REGION");
                 }
                 return;
             }
@@ -3091,6 +3672,16 @@ public final class DifferentialFuzzer {
             String p = o.c.pattern();
             if (o.oracle.startsWith("<exception")) {
                 return "oracle-threw";
+            }
+            // The JDK-8394894 grapheme family: the syntax this engine
+            // consciously rejects (docs/jur-api-parity.md) while the live
+            // oracle accepts it (\X, the \b{g}/\b{gc=...} boundary
+            // clauses) — a compile-divergence domain exclusion, never a
+            // finding. Shape-gated on BOTH tdfa compiles rejecting the
+            // grapheme construct; a pattern that rejects for any OTHER
+            // reason on the jur lane stays a hard COMPILE_PARITY finding.
+            if (graphemeConstruct(p) && o.asm.startsWith("<reject") && o.vm.startsWith("<reject")) {
+                return "graphemes-unsupported";
             }
             // The three GroupCurly-rewrite families are JUR_LEAKS-gated:
             // their predicates attribute a first-writing/stale/leaked span
@@ -3310,6 +3901,8 @@ public final class DifferentialFuzzer {
                 + (o.exceptions.isEmpty() ? ""
                     : ",\"ex\":" + o.exceptions.stream().map(e -> "\"" + escape(e) + "\"").toList())
                 + (o.cross.isEmpty() ? "" : ",\"cross\":" + o.cross.stream().map(e -> "\"" + escape(e) + "\"").toList())
+                + (o.region.isEmpty() ? ""
+                    : ",\"region\":" + o.region.stream().map(e -> "\"" + escape(e) + "\"").toList())
                 + (o.mvt.isEmpty() ? "" : ",\"mvt\":" + o.mvt.stream().map(e -> "\"" + escape(e) + "\"").toList())
                 + "}");
             failures.flush();
@@ -3400,6 +3993,9 @@ public final class DifferentialFuzzer {
                 }
                 w.println("mvt lane: cases=" + r.mvtCases + "  simCases=" + r.mvtSimCases + "  failures="
                     + r.mvtFailures + "  budgetSkips=" + r.mvtBudgetSkips + " (plain fits, multi too large)");
+                w.println("region axis: cases=" + r.regionCases + "  oracleCases=" + r.regionOracleCases
+                    + "  docRejects=" + r.regionDocRejects + "  oracleThrew=" + r.regionOracleThrew
+                    + "  backtrackerSkips=" + r.regionBacktrackerSkips + "  failures=" + r.regionFailures);
                 w.printf("rate: %.1f cases/min%n", r.casesPerMinute);
                 w.println("shrunk records: " + r.shrunkRecords
                     + (SHRINK_RECORD ? "" : "  (off — -Pfuzz.shrink=1 pre-shrinks recorded failures)"));

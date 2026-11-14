@@ -1,6 +1,8 @@
 # JUR API parity — the matcher family, the flags, the escapes
 
-Status: **landed** (2026-11-11). The TODO item "Jur Matcher API parity:
+Status: **landed** (2026-11-11; the vs-jur region/grapheme fuzz
+expansion — JDK-8394894 — landed 2026-11-13, see the region/bounds
+axis section). The TODO item "Jur Matcher API parity:
 region, bounds, hitEnd" ([JDK-8394894](https://bugs.openjdk.org/browse/JDK-8394894))
 is closed by this page's landing, which covered the whole region/bounds
 family plus the JDK-mirroring compile flags and the java-only backslash
@@ -53,6 +55,66 @@ matchers extend it; the JUR facade is the one that claims the family):
   `appendReplacement(StringBuilder, Function)`, `results()`,
   `hasMatch()`/`hasGroup(int)` (JDK 20+ interface defaults, overridden).
 
+## The region/bounds fuzz axis (JDK-8394894) and its findings
+
+The vs-jur fuzz expansion added a region/bounds axis to the overnight
+soak (a deterministic 1-in-N sample of cases draws a region and a
+bounds combo — all four, default-weighted — and re-runs a region'd
+F/I/L/M protocol with `hitEnd`/`requireEnd` after every probe over
+BOTH tiers, plus the live oracle under the identical operations on the
+jur lane; `-Pfuzz.region=0` off, `-Pfuzz.regionEvery=N` resamples) and
+a grapheme generator family. Its landing fixed eight region/end-flag
+divergences the cell battery could not see:
+
+- **Failed `matches()`/`lookingAt()` end flags** — java resets
+  `hitEnd`/`requireEnd` per operation; a failed anchored op reports the
+  anchored walk's own flags, never the failed-search scan rule
+  (`RegexEngine.probeEndFlags` gained the op's anchor mode; the emitted
+  shells maintain it).
+- **`lookingAt` under non-default bounds** — the region seam applied
+  the whole-region tail rule to a prefix op; the walk's start and tail
+  disciplines split (`runGeneric`'s `anchored`/`whole`).
+- **Regions cutting surrogate pairs** — java's consuming nodes read
+  the full codepoint and require both units inside the region; the
+  subSequence view handed the engine a genuinely-lone high surrogate
+  (matchable as one unit). Cut and split regions now serve through the
+  bounded seam (`matchRegionWhole` joins it), and the walk encodes the
+  cut-pair rule.
+- **Continuation `find()` bases** — the search's resume point was
+  shifting the region's anchor bases; the seam now carries the region
+  head and the scan start separately.
+- **Word-boundary reads** — the right-side read decodes pairs across
+  the window end (java's unbounded `codePointAt`).
+- **The stale-search flags** — java's early-return `find()`
+  (`nextSearchIndex > to`) keeps the last executed search's flags.
+- **The Start rule's exception** — only the BARE root begin anchor
+  (`\A`/`^` at the pattern head, nothing group-shaped before, no root
+  alternation — java's `matchRoot instanceof Begin`) skips the
+  failed-search `hitEnd`; the parse-frozen `rootBeginAnchor` carries
+  the exact shape, and java's Start `minLength` guard bounds which
+  starts ever run.
+- The region'd end-flag derivation as a whole stays battery-pinned,
+  not fuzz-general: after the eight fixes above, overnight-slice
+  scales still surface residue families (java's per-path zero-width
+  gate pruning, sequential gate order within one mask, Curly unit
+  reads) that a deterministic artifact cannot fully mirror — the fuzz
+  axis compares SPANS only, the battery (the no-region END_FLAG_CELLS
+  plus the region'd/failed-anchored cells) owns the flags.
+
+Two java-backtracker SPAN shapes the DFA cannot see are counted skips
+in the fuzz axis, never findings, and pinned both ways in
+`JurApiParityTest`: the Curly cut-pair unit-read quirk (a quantified
+wide atom matches a cut pair's high half as one unit where the
+unquantified atom dies on the consumption-fits check) and stacked
+zero-width heads (`$\A9` — java evaluates the gates in sequence and
+the held-before-failing ones set flags; the mask bit-set has no
+order). A third cell skips by construction: `matches()` over a
+pair-splitting region needs the whole (ENDANCHOR) artifact's region
+walk — the find artifact's leftmost-first determinization prunes paths
+java's backtracker explores there (a bare lazy star's consuming path),
+and the whole artifact has no region-bases walk; those regions keep
+F/I/L hard and skip M (`M=-`).
+
 ## Pattern-surface spellings (the reflection-checked set)
 
 `asPredicate()`, `asMatchPredicate()` (JDK 21+), `split(CharSequence)`,
@@ -99,13 +161,28 @@ Set (the re2j facade): every letter above rejects at the parse
 **Consciously out of this landing** (the mission bounds): lookarounds
 and backreferences (backtracking-dependent, always rejected), `\G`
 (needs a previous-match-end predicate threaded through both tiers'
-entries — a feature of its own), `\X`/`\b{g}` (graphemes — the open
-[JDK-8394894](https://bugs.openjdk.org/browse/JDK-8394894) fuzz TODO's
-family), `CANON_EQ` (normalization-aware compilation), scoped inline
-`(?d)` (the terminator-set axis is compile-global; the UNIX_LINES
-FLAG is the JDK-exact spelling), and java's `\1`-`\9` backreference
-readings of digit escapes (the octal fallback stays lineage-shared —
-the BackrefParityTest twins pin the divergence class).
+entries — a feature of its own), `\X`/`\b{g}` (graphemes — rejected
+loudly, see below), `CANON_EQ` (normalization-aware compilation), scoped
+inline `(?d)` (the terminator-set axis is compile-global; the
+UNIX_LINES FLAG is the JDK-exact spelling), and java's `\1`-`\9`
+backreference readings of digit escapes (the octal fallback stays
+lineage-shared — the BackrefParityTest twins pin the divergence class).
+
+**Graphemes (JDK-8394894) — rejected loudly, never silently degraded.**
+`\X` rejects at the parse (re2j's alphabet — both facades, oracle-parity
+on the re2j lane). The java boundary clauses `\b{g}`, `\b{gc=…}` and
+every other non-quantifier brace after `\b`/`\B` reject under the jur
+reading (the ESCAPES_RE2 axis's unset side): java reads that brace as
+its boundary-type clause or an illegal repetition — NEVER a literal —
+while the re2j facade keeps the literal-brace reading (re2j's alphabet,
+pinned by `re2jFacadeKeepsTheLiteralBraceReading` and the RE2J fuzz
+lane; the literal spelling is `\b\{`). Before the vs-jur fuzz landing
+the parser silently read the RE2 literal on the jur lane — the first
+finding of the region/grapheme axis. The fuzz coverage: a fifth
+generator family draws `\X`/`\b{g}` shapes over cluster-carrying
+inputs (the jur lane classifies them `graphemes-unsupported`, the RE2J
+lane compares the literal reading hard), pinned cell-for-cell in
+`JurApiParityTest.graphemeBoundaryClausesRejectLoudly…`.
 
 ## How it is verified
 

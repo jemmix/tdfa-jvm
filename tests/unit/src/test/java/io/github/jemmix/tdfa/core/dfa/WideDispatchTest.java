@@ -176,7 +176,7 @@ class WideDispatchTest {
         // java.util.regex-parity lane, the 64-cell flag table.
         return new Tdfa(0, 0, Map.of(), 0, 0, 0, stateCount, stateMeta, stateBase, new int[stateCount], null, ranges,
             new int[]{0}, entryHiPrefix, new int[stateCount], new int[stateCount], false, null, null, false, false,
-            null, null, null, false, null, null, null, null, false, false, Semantics.of(), 64, false);
+            null, null, null, false, null, null, null, null, false, false, Semantics.of(), 64, false, false);
     }
 
     /** Boundary blocks: entries starting/stopping mid-block, one-codepoint

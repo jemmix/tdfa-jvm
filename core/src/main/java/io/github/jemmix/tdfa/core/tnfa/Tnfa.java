@@ -134,6 +134,13 @@ public final class Tnfa {
      */
     public final boolean hasSupplementaryStarts;
 
+    /** java's {@code matchRoot instanceof Begin} shape (see
+     * {@code ParseResult#rootBeginAnchor()}): the pattern opens with a
+     * bare root begin anchor — java compiles it without its {@code Start}
+     * wrapper. Frozen onto the {@code Tdfa} beside
+     * {@link #hasSupplementaryStarts}. */
+    public final boolean rootBeginAnchor;
+
     // Zero-width assertion bits. BEGIN_TEXT/END_TEXT are LINE boundaries
     // (position 0 / end-of-input, plus after/before a terminator of the
     // compile's set — the (?m) flavor lives in which bit each ^/$ edge
@@ -164,7 +171,7 @@ public final class Tnfa {
         int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
         boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
         int[] fixedBase, int[] fixedOffset, boolean[] dissolvedTags, boolean[] surfaceFinalTags,
-        boolean multiValuedTags, Semantics semantics, boolean hasSupplementaryStarts) {
+        boolean multiValuedTags, Semantics semantics, boolean hasSupplementaryStarts, boolean rootBeginAnchor) {
         this.stateCount = stateCount;
         this.epsFrom = epsFrom;
         this.epsTo = epsTo;
@@ -189,6 +196,7 @@ public final class Tnfa {
         this.dissolvedTags = dissolvedTags;
         this.surfaceFinalTags = surfaceFinalTags;
         this.hasSupplementaryStarts = hasSupplementaryStarts;
+        this.rootBeginAnchor = rootBeginAnchor;
     }
 
     // ====== Builder / construction ======
@@ -326,7 +334,7 @@ public final class Tnfa {
         int start = b.build(ast, accept);
         Tnfa nfa = b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(), parsed.unicodeShorthand(),
             parsed.unicodeWordRanges(), parsed.namedGroups(), fixedBase, fixedOffset, dissolved, surfaced,
-            multiValuedTags, semantics, parsed.hasSupplementaryStarts());
+            multiValuedTags, semantics, parsed.hasSupplementaryStarts(), parsed.rootBeginAnchor());
         obs.stage(CompileObserver.Stage.TNFA, System.nanoTime() - t1, nfa.stateCount);
         return nfa;
     }
@@ -1239,7 +1247,7 @@ public final class Tnfa {
         Tnfa build(int start, int accept, int tagCount, int groupCount, boolean multiline, boolean unicodeWordBoundary,
             int[] wordRanges, Map<String, Integer> namedGroups, int[] fixedBase, int[] fixedOffset,
             boolean[] dissolvedTags, boolean[] surfaceFinalTags, boolean multiValuedTags, Semantics semantics,
-            boolean hasSupplementaryStarts) {
+            boolean hasSupplementaryStarts, boolean rootBeginAnchor) {
             int n = eps.size();
             int[] eFrom = new int[n], eTo = new int[n], ePri = new int[n], eTag = new int[n], eEmpty = new int[n];
             for (int i = 0; i < n; i++) {
@@ -1255,7 +1263,7 @@ public final class Tnfa {
             CharClass[] sClass = symClasses.toArray(new CharClass[0]);
             return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, sFrom, sTo, sClass, start, accept, tagCount,
                 groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
-                dissolvedTags, surfaceFinalTags, multiValuedTags, semantics, hasSupplementaryStarts);
+                dissolvedTags, surfaceFinalTags, multiValuedTags, semantics, hasSupplementaryStarts, rootBeginAnchor);
         }
     }
 }

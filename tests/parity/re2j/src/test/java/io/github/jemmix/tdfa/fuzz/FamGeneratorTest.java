@@ -44,6 +44,16 @@ class FamGeneratorTest {
                     assertThat(p).as("cand-scan shape is short (<= 64-char window family)").hasSizeLessThan(33);
                     assertThat(fam.needle()).as("set family carries no needle").isNull();
                 }
+                case "grapheme" -> {
+                    // the JDK-8394894 family: \X (optionally quantified,
+                    // ASCII quantifier text) and bare \b{g} constructs only
+                    // (a quantifier on the boundary clause is not valid
+                    // java), literals from the family alphabet
+                    assertThat(p.chars().allMatch(c -> c < 0x80)).as("grapheme pattern ASCII-only").isTrue();
+                    assertThat(p.contains("\\X") || p.contains("\\b{g}")).as("grapheme shape carries \\X or \\b{g}")
+                        .isTrue();
+                    assertThat(fam.needle()).as("grapheme needle is the cluster embed").isNotNull();
+                }
                 default -> {
                     assertThat(fam.family()).isEqualTo("anchored-fast");
                     assertThat(p).as("anchored-fast has no anchors (masks kill the fast path)").doesNotContain("\\b",
@@ -53,12 +63,14 @@ class FamGeneratorTest {
             }
             if (fam.needle() != null) {
                 // the family's jur-lane safety contract: no wide atom inside a
-                // quantified group (the oracle-bomb guard passes the shape)
+                // quantified group (the oracle-bomb guard passes the shape);
+                // the grapheme family's needle is a cluster embed (non-ASCII
+                // by design), exempt from the ASCII-shape check above.
                 assertThat(DifferentialFuzzer.jurOracleBomb(p)).as("%s shape is not an oracle bomb", fam.family())
                     .isFalse();
             }
         }
-        // all four families draw (statistically deterministic given the fixed seed)
+        // all five families draw (statistically deterministic given the fixed seed)
         seen.forEach((f, n) -> assertThat(n).as("family %s drew cases", f).isGreaterThan(500));
     }
 
