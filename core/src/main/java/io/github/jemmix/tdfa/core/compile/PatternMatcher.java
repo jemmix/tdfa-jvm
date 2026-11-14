@@ -1,7 +1,10 @@
 package io.github.jemmix.tdfa.core.compile;
 
 import io.github.jemmix.tdfa.core.emit.EmittedSurface;
+import io.github.jemmix.tdfa.core.engine.MatchResult;
 import io.github.jemmix.tdfa.core.engine.Matcher;
+
+import java.util.Arrays;
 
 /**
  * The stateful matcher every surface's {@code Pattern} produces:
@@ -29,6 +32,15 @@ public class PatternMatcher extends Matcher {
     /** Mutable ONLY through {@link #usePattern} (machinery-tier matchers). */
     private TDFAPattern pattern;
 
+    /**
+     * Set when a GENERATED shell retargets: its inlined fast paths bake
+     * the compile-time artifact, so every operation routes through the
+     * machinery implementations from then on (the emitted retarget
+     * bail — the region's never-taken-branch posture).
+     */
+    @EmittedSurface // emitted shells read the field (the retarget bail)
+    protected boolean retargeted;
+
     @EmittedSurface // emitted shells super-ctor call
     public PatternMatcher(TDFAPattern pattern, CharSequence input) {
         super(pattern.engine(), pattern.wholeEngine(), input);
@@ -48,39 +60,43 @@ public class PatternMatcher extends Matcher {
      * Re-target this matcher at {@code newPattern} — the
      * {@code java.util.regex.Matcher.usePattern} contract: the input,
      * the search position and the append position are kept; the group
-     * information of the last match is lost (group access fails until
-     * the next match; the JDK behaves identically).
+     * information of the last match is lost (the JDK's empty match view
+     * until the next match; the JDK behaves identically).
      *
-     * <p><b>Tier constraint.</b> Only the machinery matcher tier can
-     * re-target — the ASM tier's generated matchers bake their engine's
-     * concrete type into the class, and those refuse with
-     * {@link UnsupportedOperationException} (build a fresh matcher via
-     * {@code newPattern.matcher(...)} — or run {@code -Dtdfa.engine=VM}
-     * — when re-targeting is the workflow). Every facade
-     * {@code Pattern} IS a {@link TDFAPattern} at runtime (the minted
-     * shells extend it), so the shared machinery's one spelling takes
-     * the machinery type.
+     * <p>Both tiers serve the full contract. A generated (ASM-tier)
+     * matcher's inlined fast paths bake the artifact it was minted
+     * with, so a retarget rebinds the machinery engines and the shell
+     * serves through the machinery implementations from then on — one
+     * predictable never-taken branch on the hot paths, the region's
+     * posture. Every facade {@code Pattern} IS a {@link TDFAPattern}
+     * at runtime (the minted shells extend it), so the shared
+     * machinery's one spelling takes the machinery type.
      */
     public PatternMatcher usePattern(TDFAPattern newPattern) {
         if (newPattern == null) {
             throw new IllegalArgumentException("pattern cannot be null");
         }
         if (getClass() != PatternMatcher.class) {
-            throw new UnsupportedOperationException("usePattern on a generated per-pattern matcher: the engine tier "
-                + "is baked into this matcher's class — build a fresh matcher (newPattern.matcher(...)) instead, or "
-                + "run -Dtdfa.engine=VM");
+            // Generated shell: its baked fast paths would keep serving
+            // the old artifact — route everything through the machinery
+            // implementations (the emitted retarget bail).
+            retargeted = true;
         }
         this.pattern = newPattern;
         rebindEngines(newPattern.engine(), newPattern.wholeEngine());
-        match = null;
-        hasMatch = false;
-        // Position continuation: java's next find() starts at the last
-        // match's end (bumped past an empty match) — the un-regioned find()
-        // resumes from appendPos once the match state is cleared, so the
-        // continuation position lands there (bake the bump now; find()'s
-        // own bump only fires while a match is live).
-        if (lastMatchStart >= 0) {
-            appendPos = lastMatchStart == lastMatchEnd ? lastMatchEnd + 1 : lastMatchEnd;
+        // The JDK's exact protocol. Java clears groups[] to -1 but keeps
+        // `first` when a match had succeeded: group access serves the
+        // EMPTY match view (start()/end() -1, group() null, hasMatch()
+        // true) until the next match, and the next find() continues from
+        // the last match's end exactly like the live-match continuation
+        // (the empty-match bump included). With no prior success (java's
+        // `first < 0`) group access keeps throwing — the never-attempted
+        // state, which a failed search also restores.
+        if (hasMatch) {
+            int gc = newPattern.engine().groupCount();
+            int[] regs = new int[2 * (gc + 1)];
+            Arrays.fill(regs, -1);
+            match = new MatchResult(regs, 0, gc, -1, -1);
         }
         return this;
     }

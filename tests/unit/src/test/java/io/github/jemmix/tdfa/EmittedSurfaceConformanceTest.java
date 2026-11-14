@@ -140,6 +140,9 @@ class EmittedSurfaceConformanceTest {
         hookC(TDFAPattern.class, String.class, int.class, int.class, RegexEngine.class, WholeEngine.class,
             UnicodeDataProvider.class, Semantics.class);
         hookC(PatternMatcher.class, TDFAPattern.class, CharSequence.class);
+        // The retarget bail: emitted fast paths read this flag after the
+        // region check (usePattern's machinery re-route).
+        hookF(PatternMatcher.class, "retargeted");
         hookM(TDFAPattern.class, "decodeUtf8", byte[].class);
         // The facades' mints (their own Shells emitters) link the machinery
         // getters by name for the copy-constructor, and the SerializationProxy

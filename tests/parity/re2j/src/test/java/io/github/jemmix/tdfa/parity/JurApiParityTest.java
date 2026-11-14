@@ -497,45 +497,51 @@ class JurApiParityTest {
         assertThat(om.group()).as("continuation span").isEqualTo(jm.group());
     }
 
-    @Test
-    void usePatternKeepsPositionAndLosesGroupsOnTheVmTier() {
-        // The machinery matcher tier: -Dtdfa.engine=VM hands out plain
-        // PatternMatchers (any factory route — even the interpreter —
-        // rides the emitted shell and refuses usePattern by design).
-        String prev = System.getProperty("tdfa.engine");
-        try {
-            System.setProperty("tdfa.engine", "VM");
-            Matcher jm = jur("ab", "xabqb", 0);
-            PatternMatcher om = io.github.jemmix.tdfa.Pattern.compile("ab").matcher("xabqb");
-            assertThat(om.getClass()).isEqualTo(PatternMatcher.class);
-            assertThat(om.find()).isTrue();
-            assertThat(jm.find()).isTrue();
-            assertThat(om.group()).isEqualTo("ab");
-            om.usePattern((TDFAPattern) io.github.jemmix.tdfa.Pattern.compile("b"));
-            jm.usePattern(java.util.regex.Pattern.compile("b"));
-            // Position kept: the next find continues after the last match —
-            // the b INSIDE it (index 2) is skipped, the one at 4 is found.
-            assertThat(om.find()).isTrue();
-            assertThat(jm.find()).isTrue();
-            assertThat(om.start()).isEqualTo(jm.start()).isEqualTo(4);
-        } finally {
-            if (prev == null) {
-                System.clearProperty("tdfa.engine");
-            } else {
-                System.setProperty("tdfa.engine", prev);
-            }
-        }
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void usePatternKeepsPositionAndLosesGroups(RegexEngineFactory f) {
+        // Full JDK contract on EVERY tier: position and append state kept,
+        // group info lost. Generated shells rebind the machinery engines
+        // and route through the machinery implementations (the retarget
+        // bail); plain machinery matchers just rebind.
+        Matcher jm = jur("ab", "xabqb", 0);
+        PatternMatcher om = io.github.jemmix.tdfa.Pattern.compile("ab", 0, f).matcher("xabqb");
+        assertThat(om.find()).isTrue();
+        assertThat(jm.find()).isTrue();
+        assertThat(om.group()).isEqualTo("ab");
+        om.usePattern((TDFAPattern) io.github.jemmix.tdfa.Pattern.compile("(b)", 0, f));
+        jm.usePattern(java.util.regex.Pattern.compile("(b)"));
+        // Group info lost until the next match — the JDK's null group
+        // shape (a previous match leaves `first` set: no throw).
+        assertThat(om.group()).isNull();
+        assertThat(jm.group()).isNull();
+        // Position kept: the next find continues after the last match —
+        // the b INSIDE it (index 2) is skipped, the one at 4 is found —
+        // by the NEW pattern.
+        assertThat(om.find()).isTrue();
+        assertThat(jm.find()).isTrue();
+        assertThat(om.group()).isEqualTo(jm.group()).isEqualTo("b");
+        assertThat(om.start()).isEqualTo(jm.start()).isEqualTo(4);
+        assertThat(om.group(1)).isEqualTo("b");
     }
 
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
-    void generatedTierMatchersRefuseUsePatternLoudly(RegexEngineFactory f) {
-        PatternMatcher m = io.github.jemmix.tdfa.Pattern.compile("a", 0, f).matcher("a");
-        if (m.getClass() != PatternMatcher.class) {
-            assertThatThrownBy(() -> m.usePattern((TDFAPattern) io.github.jemmix.tdfa.Pattern.compile("b")))
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("generated per-pattern matcher");
+    void generatedTierShellsRetargetToTheMachineryRoute(RegexEngineFactory f) {
+        // The generated shell's fast paths bake the compile-time artifact:
+        // before the retarget they serve it; after usePattern the shell
+        // serves the NEW pattern through the machinery implementations.
+        PatternMatcher m = io.github.jemmix.tdfa.Pattern.compile("a+", 0, f).matcher("xaaxa");
+        if (m.getClass() == PatternMatcher.class) {
+            return; // plain machinery matcher — nothing shell-specific to pin
         }
+        assertThat(m.find()).isTrue();
+        assertThat(m.group()).isEqualTo("aa");
+        m.usePattern((TDFAPattern) io.github.jemmix.tdfa.Pattern.compile("x", 0, f));
+        assertThat(m.find()).isTrue();
+        assertThat(m.group()).isEqualTo("x");
+        assertThat(m.start()).isEqualTo(3); // continuation from the old match's end
+        assertThat(m.matches()).isFalse(); // "xaaxa" does not wholly match "x"
     }
 
     @ParameterizedTest

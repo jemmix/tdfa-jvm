@@ -33,8 +33,8 @@ import java.util.stream.Stream;
  * {@code java.util.regex.MatchResult}-implementing snapshot),
  * {@code usePattern} and the function-based
  * {@code replaceAll}/{@code replaceFirst} — beside the re2j-shaped
- * roster both facades share; see the matcher classes' javadoc for the
- * one tier constraint ({@code usePattern}) and the docs page
+ * roster both facades share (both engine tiers serve the whole family;
+ * see the matcher classes' javadoc) and the docs page
  * {@code docs/jur-api-parity.md} for the full accounting. Default
  * semantics are leftmost-first (Perl/PCRE/re2j-compatible);
  * {@link #LONGEST_MATCH} selects leftmost-longest. The default
