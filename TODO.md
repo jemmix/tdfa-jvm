@@ -11,6 +11,15 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 - no completed items — delete on landing; history lives in git
   (TODO.md before 2026-09-30).
 
+## Features
+
+- [ ] `\G` previous-match-end anchor, both tiers
+- [ ] `\X` grapheme clusters via UAX #29 break properties
+- [ ] `CANON_EQ`: compile-time canonical-equivalence pattern rewrite
+- [ ] Scoped inline `(?d)`: per-scope terminator tables
+- [ ] Jur lane `\1`–`\9`: java backref precedence, loud reject
+- [ ] ASM `usePattern`: delegate to machinery matcher
+
 ## Correctness
 
 
