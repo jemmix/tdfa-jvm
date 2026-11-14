@@ -11,7 +11,6 @@ import io.github.jemmix.tdfa.core.dialect.ClassTable;
 import io.github.jemmix.tdfa.core.dialect.EscapeAlphabet;
 import io.github.jemmix.tdfa.core.dialect.FlagAction;
 import io.github.jemmix.tdfa.core.dialect.FlagBindings;
-import io.github.jemmix.tdfa.core.dialect.Terminators;
 import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
 import io.github.jemmix.tdfa.core.unicode.CaseFoldTable;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
@@ -133,20 +132,14 @@ public final class Parser {
     private static final int[] R_POSIX_WORD = {'0', '9', 'A', 'Z', '_', '_', 'a', 'z'};
     private static final int[] R_POSIX_XDIGIT = {'0', '9', 'A', 'F', 'a', 'f'};
 
-    static final CharClass DOT = new CharClass(new int[]{0, '\n' - 1, '\n' + 1, 0x10FFFF}, false);
-
-    /** Dot under the full java.util.regex terminator set: excludes
-     *  {@code \n}, {@code \r}, U+0085, U+2028 and U+2029 ({@code \r\n} needs
-     *  no extra case — both halves are excluded as units). */
-    static final CharClass DOT_JUR =
-        new CharClass(new int[]{0, '\n' - 1, 0x0B, '\r' - 1, '\r' + 1, 0x84, 0x86, 0x2027, 0x202A, 0x10FFFF}, false);
-    static final CharClass DOTALL = new CharClass(new int[]{0, 0x10FFFF}, false);
     static final CharClass DIGIT = new CharClass(R_DIGIT, false);
     static final CharClass NOT_DIGIT = new CharClass(R_DIGIT, true);
     static final CharClass WORD = new CharClass(R_WORD, false);
     static final CharClass NOT_WORD = new CharClass(R_WORD, true);
     // \s/\S build from the compile's space-table component at the sites
     // (ClassTable.SPACE_RE2 / SPACE_JDK — the dialect package).
+    // The dot's stock classes (DOT/DOT_JUR/DOTALL) moved to the
+    // meaning-resolution pass (core.semantic.Resolve) with the expansion.
 
     /**
      * java.util.regex's {@code hasSupplementary(pattern)}: whether an
@@ -551,213 +544,12 @@ public final class Parser {
                 throw fail(this, "invalid nested repetition operator");
             }
         }
-        Ast.Repeat rep = new Ast.Repeat(atom, min, max, greedy);
-        // Finding 2 (campaign 2026-10-16) + its unbounded mirror: JUR
-        // reading only — mark the shapes whose body can match empty through
-        // a choice point (java's Prolog+Loop compile; the Loop guard exits
-        // after any zero-width iteration, carrying the exiting iteration's
-        // spans at the branch's own priority). Bounded {n,m} max >= 2 and
-        // {n,} min >= 2 desugar structural copies that need the
-        // zero-width-exit split; the unbounded {0,}/{1,} plus/star bodies
-        // need it against the loop hub (the ε re-entry must exit, not die
-        // at the closure dedup). {0,1} builds no iteration and stays
-        // unmarked. No-op when the axis is set: the re2j surface's structural
-        // reading keeps the permissive paths, so its artifacts stay
-        // bit-identical.
-        boolean loopCopies = max == Integer.MAX_VALUE || max >= 2;
-        rep.zeroWidthExit =
-            loopCopies && !options.isEmptyIterationSpans() && nullableBody(atom) && !dissolvableBody(atom);
-        return rep;
-    }
-
-    /**
-     * Family 6 (the EMPTY_ITERATION_SPANS axis, unset = the
-     * java.util.regex reading) — both sub-families, marked where the
-     * quantifier text is known to belong to a CAPTURING group's
-     * {@code )} and not to a transparent {@code (?:...)} wrapper
-     * ({@code (?:(\b))*} keeps the span: the capture is not the
-     * quantified atom). Called from {@link #closeGroup} only.
-     *
-     * <p><b>A — dissolve</b>: a greedy min-0 LOOP quantifier
-     * ({@code cmax >= 2} or unbounded — {@code ?}/{@code {0,1}} keep the
-     * span, and {@code min >= 1} keeps the forced iteration; both
-     * JDK-verified) directly on a capture whose body is all-zero-width
-     * with no choice points: java's {@code GroupCurly} rolls the
-     * zero-width iteration back to the pre-curly bounds, so the pair
-     * reports NIL at every accept (the determinizer's φ override). The
-     * capture inside a dissolved pair ({@code ((\b))*} — inner keeps its
-     * span) fails the body test and stays unmarked.
-     *
-     * <p><b>B — surface</b>: an UNBOUNDED greedy quantifier
-     * ({@code *}, {@code +}, {@code {n,}} — the bounded desugars are
-     * structural and agree with the JDK already) directly on a capture
-     * whose body can match empty through a choice point (nullable and
-     * NOT dissolvable): java's {@code Prolog}+{@code Loop} reports the
-     * final zero-width iteration, which the determinizer's closure
-     * subsumption cuts — the accepting kernels where the cut fires
-     * surface the pair's writes as a φ SET_POS at the accept position.
-     * Lazy quantifiers never mark (java's lazy loops prefer exiting —
-     * both engines agree).
-     *
-     * <p>No-op on the axis-set reading
-     * ({@code ParseOptions.isEmptyIterationSpans()}), so those parses —
-     * and their NFA/TDFA artifacts — stay bit-identical.
-     */
-    private void markFamily6Groups(Ast quantified, boolean capturing) {
-        if (options.isEmptyIterationSpans() || !capturing || !(quantified instanceof Ast.Repeat)) {
-            return;
-        }
-        Ast.Repeat r = (Ast.Repeat) quantified;
-        if (!r.greedy || !(r.body instanceof Ast.Concat)) {
-            return;
-        }
-        List<Ast> ch = ((Ast.Concat) r.body).children;
-        if (ch.size() != 3 || !(ch.get(0) instanceof Ast.Tag) || !(ch.get(2) instanceof Ast.Tag)) {
-            return;
-        }
-        Ast body = ch.get(1);
-        boolean aShape = r.min == 0 && r.max >= 2 && dissolvableBody(body);
-        boolean bShape = r.max == Integer.MAX_VALUE && nullableBody(body) && !dissolvableBody(body);
-        if (!aShape && !bShape) {
-            return;
-        }
-        ((Ast.Tag) ch.get(0)).dissolved = aShape;
-        ((Ast.Tag) ch.get(0)).surfaceFinal = bShape;
-        ((Ast.Tag) ch.get(2)).dissolved = aShape;
-        ((Ast.Tag) ch.get(2)).surfaceFinal = bShape;
-        if (bShape) {
-            // Containment: every capture INSIDE the B-group's body
-            // participates in the surfaced final zero-width iteration
-            // (((a*))* on "aa": outer AND inner report 2..2 — the whole
-            // traversal is zero-width, so the dying re-entry's writes
-            // cover the inner pair too). JDK-verified; the determinizer
-            // surfaces any marked tag the cut path mentions.
-            markSubtreeSurface(body);
-        }
-    }
-
-    /** Set {@link Ast.Tag#surfaceFinal} on every Tag under {@code e} (see the B-mark). */
-    private static void markSubtreeSurface(Ast e) {
-        Deque<Ast> work = new ArrayDeque<>();
-        work.push(e);
-        while (!work.isEmpty()) {
-            Ast a = work.pop();
-            if (a instanceof Ast.Tag) {
-                ((Ast.Tag) a).surfaceFinal = true;
-            } else if (a instanceof Ast.Concat) {
-                work.addAll(((Ast.Concat) a).children);
-            } else if (a instanceof Ast.Alt) {
-                work.addAll(((Ast.Alt) a).children);
-            } else if (a instanceof Ast.Repeat) {
-                work.push(((Ast.Repeat) a).body);
-            }
-        }
-    }
-
-    /**
-     * Whether {@code e} can ONLY match zero-width WITHOUT choice points:
-     * assertion chains, {@code ()}, and nested groups of those (the
-     * {@code study()}-deterministic zero-width bodies java compiles as
-     * {@code GroupCurly}). Consuming atoms, alternation and any repeat
-     * fail — the latter two make the body non-deterministic (sub-family
-     * B even when empty-capable). Iterative worklist: nesting depth must
-     * cost heap, never JVM stack (the parser itself is iterative for the
-     * same reason).
-     */
-    private static boolean dissolvableBody(Ast e) {
-        Deque<Ast> work = new ArrayDeque<>();
-        work.push(e);
-        while (!work.isEmpty()) {
-            Ast a = work.pop();
-            if (a instanceof Ast.Concat) {
-                work.addAll(((Ast.Concat) a).children);
-            } else if (!(a instanceof Ast.Tag || a instanceof Ast.Empty || a instanceof Ast.StartAnchor
-                || a instanceof Ast.EndAnchor || a instanceof Ast.WordBoundary || a instanceof Ast.NoWordBoundary)) {
-                return false; // Symbol/CharClass consume; Alt/Repeat choose
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Whether {@code e} can match the empty string (nullable) — the
-     * sub-family B body test (with {@link #dissolvableBody} false:
-     * emptiness reachable only THROUGH a choice point). The syntactic
-     * twin of the Builder's {@code isNullable}: Concat needs every child,
-     * Alt any branch, a Repeat with {@code min == 0} skips, and one with
-     * {@code min >= 1} inherits the body's nullability. Iterative
-     * post-order AND/OR evaluation — one frame per container, leaf
-     * verdicts inline — so nesting depth costs heap, never JVM stack
-     * (the parser itself is iterative for the same reason).
-     */
-    private static boolean nullableBody(Ast e) {
-        Deque<NFrame> stack = new ArrayDeque<>();
-        NFrame root = new NFrame(e);
-        stack.push(root);
-        while (!stack.isEmpty()) {
-            NFrame f = stack.peek();
-            if (f.children == null) {
-                Ast n = f.node;
-                if (n instanceof Ast.Concat) {
-                    f.children = ((Ast.Concat) n).children;
-                } else if (n instanceof Ast.Alt) {
-                    f.children = ((Ast.Alt) n).children;
-                } else if (n instanceof Ast.Repeat) {
-                    if (((Ast.Repeat) n).min == 0) {
-                        f.finish(true); // can skip the body entirely
-                    } else {
-                        f.children = Collections.singletonList(((Ast.Repeat) n).body);
-                    }
-                } else if (n instanceof Ast.Tag || n instanceof Ast.Empty || n instanceof Ast.StartAnchor
-                    || n instanceof Ast.EndAnchor || n instanceof Ast.WordBoundary || n instanceof Ast.NoWordBoundary) {
-                    f.finish(true); // zero-width
-                } else {
-                    f.finish(false); // Symbol/CharClass consume
-                }
-            }
-            if (f.children != null && f.idx < f.children.size()) {
-                stack.push(new NFrame(f.children.get(f.idx++)));
-                continue;
-            }
-            if (f.children != null && !f.leaf) {
-                // container fold: Concat/Repeat{min>0} need every child, Alt any
-                f.result = f.node instanceof Ast.Alt ? f.trues > 0 : f.falses == 0;
-            }
-            stack.pop();
-            if (!stack.isEmpty()) {
-                stack.peek().tally(f.result);
-            }
-        }
-        return root.result;
-    }
-
-    /** One nullableBody evaluation frame (see there). */
-    private static final class NFrame {
-        final Ast node;
-        List<Ast> children;
-        int idx;
-        int trues;
-        int falses;
-        boolean result;
-        boolean leaf;
-
-        NFrame(Ast node) {
-            this.node = node;
-        }
-
-        void finish(boolean verdict) {
-            children = Collections.emptyList();
-            leaf = true;
-            result = verdict;
-        }
-
-        void tally(boolean childResult) {
-            if (childResult) {
-                trues++;
-            } else {
-                falses++;
-            }
-        }
+        // The zeroWidthExit mark (finding 2 + its unbounded mirror) moved to
+        // the meaning-resolution pass (core.semantic.Resolve): the shape
+        // tests (nullableBody/dissolvableBody) live beside it there, keyed on
+        // the compile's EMPTY_ITERATION_SPANS policy instead of a parse-side
+        // axis.
+        return new Ast.Repeat(atom, min, max, greedy);
     }
 
     /**
@@ -841,21 +633,14 @@ public final class Parser {
         }
         if (c == '.') {
             pos++;
-            // UNIX_LINES axis: the dot skips \n only (the RE2-lineage and the
-            // JDK-flag reading agree); unset recognizes the full
-            // java.util.regex terminator set (DOT_JUR). Either way the bare
-            // dot never flips hasSupplementaryStarts (java's direct
+            // The dot stays SYMBOLIC at this tier — the scoped (?s) state
+            // rides the node — and the meaning-resolution pass
+            // (core.semantic.Resolve) expands it against the compile's
+            // terminator set: everything under dotall, the set's
+            // complement otherwise (the UNIX_LINES axis). Either way the
+            // bare dot never flips hasSupplementaryStarts (java's direct
             // CharProperty construction bypasses the flip).
-            if (dotall) {
-                return DOTALL;
-            }
-            // The stock sets keep their precomputed constants (bit-identical
-            // artifacts); a custom set builds its complement on the fly.
-            Terminators terms = options.terminators();
-            if (terms.equals(Terminators.NL_ONLY)) {
-                return DOT;
-            }
-            return terms.equals(Terminators.JDK) ? DOT_JUR : new CharClass(terms.dotRanges(), false);
+            return new Ast.Dot(dotall);
         }
         if (c == '^') {
             pos++;
@@ -1109,7 +894,13 @@ public final class Parser {
                     Collections.unmodifiableList(Arrays.asList(new Ast.Tag(f.open), body, new Ast.Tag(f.close))))
                 : body;
         Ast quantified = applyQuantifier(group);
-        markFamily6Groups(quantified, f.capturing);
+        if (quantified instanceof Ast.Repeat) {
+            // Structural fact for the meaning-resolution pass: the directly
+            // quantified atom was this CAPTURE's tag-pair product — the
+            // family-6 marks key on it ((\b)* dissolves; (?:(\b))* keeps
+            // the span: the same tree shape, a different quantified atom).
+            ((Ast.Repeat) quantified).quantifiedCapture = f.capturing;
+        }
         boolean intoRoot = stack.size() == 1;
         stack.peek().parts.add(quantified);
         partArrived(0, false); // a group is never a literal part

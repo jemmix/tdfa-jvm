@@ -16,6 +16,7 @@ import io.github.jemmix.tdfa.core.parser.ParseOptions;
 import io.github.jemmix.tdfa.core.parser.ParseResult;
 import io.github.jemmix.tdfa.core.parser.Parser;
 import io.github.jemmix.tdfa.core.report.CompileObserver;
+import io.github.jemmix.tdfa.core.semantic.Resolve;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
 
@@ -276,20 +277,109 @@ public final class Tnfa {
         // the JVM here before any determinization cap fires — e.g.
         // ((a{300}){300}){300} is rejected as a clean "pattern too large").
         // Determinization constructs its own meter per attempt (TdfaCompiler).
-        // Parser-side projection of the compile's Semantics (the carrier
-        // stays here; the parser package sits below tnfa in the layer DAG):
-        // every axis — the terminator set, the fold universe, the letter
-        // alphabet, the span protocol, the \s table, the shorthand fold
-        // and the escape readings — applied onto the all-defaults options.
+        // Parser-side projection of the compile's Semantics onto the
+        // GRAMMAR-shaped axes (the carrier stays here; the parser package
+        // sits below tnfa in the layer DAG): the fold universe, the letter
+        // alphabet, the \s table, the shorthand fold and the escape
+        // readings. The meaning-shaped axes — the terminator set (the
+        // symbolic dot) and the span protocol (the family-6 marks) — are
+        // applied by the meaning-resolution pass below, not mirrored here.
         ParseResult parsed = Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth,
-            ParseOptions.of().terminators(semantics.terminators()).unicodeCase(semantics.isUnicodeCase())
-                .flagBindings(semantics.flagBindings()).emptyIterationSpans(semantics.isEmptyIterationSpans())
+            ParseOptions.of().unicodeCase(semantics.isUnicodeCase()).flagBindings(semantics.flagBindings())
                 .spaceTable(semantics.spaceTable()).shorthandFold(semantics.isShorthandFold())
                 .escapes(semantics.escapes()),
             provider, meter);
         obs.stage(CompileObserver.Stage.PARSE, System.nanoTime() - t0, parsed.tagCount());
+        return fromParsed(parsed, multiValuedTags, semantics, meter, obs);
+    }
+
+    /**
+     * The IR entry — compile from a parse result instead of a pattern
+     * string: the same meaning resolution, fixed-tags pass, TNFA build
+     * and budget doctrine the string path runs, minus the parse. The
+     * first rung of the engine-compat surface
+     * ({@code docs/engine-compat-surface.md}): a producer that owns its
+     * own syntax (a foreign grammar, a rewriter over the stock parse)
+     * builds a {@link ParseResult} from the public AST vocabulary and
+     * hands it here — the result carries the producer's facts (group
+     * numbering, scan pivots) as given.
+     *
+     * <p>The IR can express exactly what the pipeline can compile:
+     * symbolic {@code Ast.Dot} leaves are resolved against {@code
+     * semantics.terminators()} here; there is no vocabulary for a
+     * meaning the engine cannot run (backreferences, lookaround), so
+     * producers reject those in their own grammar, with their own
+     * wording. Bounds are validated — tag/group/named-group metadata
+     * must be consistent with the tree — but the tier is machinery, not
+     * a hostile-input boundary: a producer that lies about its
+     * scan-pivot facts gets its own reading.
+     */
+    public static Tnfa compile(ParseResult parsed, boolean multiValuedTags, Semantics semantics,
+        CompileObserver observer, WorkMeter meter) {
+        if (parsed == null) {
+            throw new NullPointerException("parsed");
+        }
+        if (semantics == null) {
+            throw new NullPointerException("semantics");
+        }
+        if (meter == null) {
+            throw new NullPointerException("meter");
+        }
+        validate(parsed);
+        return fromParsed(parsed, multiValuedTags, semantics, meter, CompileObserver.effective(observer));
+    }
+
+    /** Structural validation of a producer-supplied parse result: the
+     *  tree's tag numbers and the named-group metadata must be inside
+     *  the result's own counters (the Builder and the determinizer size
+     *  their arrays by those counters — an out-of-bounds tag would
+     *  surface as an ArrayIndexOutOfBoundsException mid-compile, not a
+     *  diagnosable rejection). Iterative walk: no stage of the
+     *  front-end consumes JVM stack proportional to AST depth. */
+    private static void validate(ParseResult parsed) {
+        int tagCount = parsed.tagCount();
+        int groupCount = parsed.groupCount();
+        if (tagCount < 0 || groupCount < 0 || groupCount * 2 > tagCount) {
+            throw new IllegalArgumentException("inconsistent parse result: " + groupCount + " groups need "
+                + (groupCount * 2) + " tags, counted " + tagCount);
+        }
+        for (Map.Entry<String, Integer> e : parsed.namedGroups().entrySet()) {
+            int g = e.getValue();
+            if (g < 1 || g > groupCount) {
+                throw new IllegalArgumentException(
+                    "named group '" + e.getKey() + "' names group " + g + " outside 1.." + groupCount);
+            }
+        }
+        ArrayDeque<Ast> work = new ArrayDeque<>();
+        work.push(parsed.ast());
+        while (!work.isEmpty()) {
+            Ast e = work.pop();
+            if (e instanceof Ast.Tag) {
+                int t = ((Ast.Tag) e).tag;
+                if (t < 1 || t > tagCount) {
+                    throw new IllegalArgumentException("tag " + t + " outside 1.." + tagCount);
+                }
+            } else if (e instanceof Ast.Concat) {
+                work.addAll(((Ast.Concat) e).children);
+            } else if (e instanceof Ast.Alt) {
+                work.addAll(((Ast.Alt) e).children);
+            } else if (e instanceof Ast.Repeat) {
+                work.push(((Ast.Repeat) e).body);
+            }
+        }
+    }
+
+    /** The shared tail of both entries: meaning resolution, the
+     *  fixed-tags pass, and the TNFA build over the resolved tree. */
+    private static Tnfa fromParsed(ParseResult parsed, boolean multiValuedTags, Semantics semantics, WorkMeter meter,
+        CompileObserver obs) {
         long t1 = System.nanoTime();
-        Ast ast = parsed.ast();
+        // Meaning resolution — the one place the parse output's symbolic
+        // parts (the dot) and protocol marks (family 6, the zero-width-exit
+        // split) meet the compile's policy. Runs BEFORE the fixed-tags
+        // pass: FixedTags keeps a dissolved tag un-fixed (it reads the
+        // mark), and the marks must be on the tree that pass annotates.
+        Ast ast = Resolve.apply(parsed.ast(), semantics.terminators(), semantics.isEmptyIterationSpans());
         // Multi-valued compiles keep the fixed-tag pass OFF: §6.4 drops the
         // fixed tags from the NFA and reconstructs ONE offset per tag at
         // match time — meaningless for a tag whose whole point is its
@@ -355,7 +445,7 @@ public final class Tnfa {
         }
     }
 
-    /** Collect the parser's family-6 marks — sub-family A
+    /** Collect the meaning-resolution pass's family-6 marks — sub-family A
      *  ({@link Ast.Tag#dissolved}) or B ({@link Ast.Tag#surfaceFinal})
      *  per the flag — into a 1-indexed array for the determinizer's
      *  final-φ overrides; {@code null} when nothing marked (every

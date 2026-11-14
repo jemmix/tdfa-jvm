@@ -484,6 +484,11 @@ public final class RebarBench {
     }
 
     private static boolean containsWideClass(Ast ast) {
+        if (ast instanceof Ast.Dot) {
+            // Symbolic since the meaning-resolution split: the bare dot is
+            // the widest class there is (everything but the terminators).
+            return true;
+        }
         if (ast instanceof CharClass cc) {
             return classWidth(cc) > 10_000;
         }
