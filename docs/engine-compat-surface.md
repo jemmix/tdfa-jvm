@@ -142,12 +142,31 @@ remaining syntax-facing step.
   bits (and an unresolved `DOLLAR` fails loudly). Future kinds
   (`\G` as a matcher-state predicate, grapheme/segment boundaries on
   provider break-property data) land here with their support.
-- **Rung 4 — the facade kit** (queued): the reject catalog (a documented
-  unsupported-families list pinned by a test to the grammar's reject
-  readings — the capability manifest), the facade-author guide (the
-  Lane/Shells/proxy triple as a template), and a reusable conformance
-  harness (differential vs the target engine's live oracle) so a
-  third-party facade runs the same discipline the stock lanes do.
+- **Rung 4 — the facade kit** (landed): the facade-author guide
+  ([facade-kit.md](facade-kit.md)) — the Lane/Shells/proxy triple as a
+  template, the IR-entry producer path, and the conformance discipline —
+  plus the reject catalog: the executable capability manifest
+  (`RejectCatalogTest`), pinned to the STABLE families so the open
+  feature items extend it as their readings land rather than fight it.
+  The escape-readings-as-data `Grammar` value is deliberately deferred:
+  the vocabulary is closed by doctrine, no shipped consumer exists, and
+  the IR entry is the sanctioned third-syntax seam — a third surface
+  that needs custom grammar data is the trigger, exactly as the
+  dialect-agnostic record prescribed for the `Dialect` bundle.
+
+## Semantics scope — decided
+
+The standing pre-lock question ("parity axes vs knobs") resolves as the
+architecture above now embodies it: **`Semantics` is the meaning
+carrier** — every reading the pipeline applies rides it, consumed by the
+meaning-resolution pass (as `Resolve.Policy`) and the match-time tiers;
+**`ParseOptions` is grammar-shaped only** (the fold-universe seed, the
+escape alphabet, the flag bindings). Growth is governed by the doctrine:
+a new axis must be a named, default-off, engine-neutral behavior any
+facade can select without knowing its provenance — presets are data,
+never branches; the IR stays inexpressible about what core cannot run;
+and vocabulary tracks capability, landing with its implementation in the
+same commit.
 
 ## Non-goals
 
