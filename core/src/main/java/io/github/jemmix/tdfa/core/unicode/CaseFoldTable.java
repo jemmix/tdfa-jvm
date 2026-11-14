@@ -127,6 +127,26 @@ public final class CaseFoldTable {
     }
 
     /**
+     * The fold universe dispatch — the one copy both fold consumers use (the
+     * parser's scan-fact candidacy queries and the meaning-resolution
+     * pass's orbit expansion). ASCII-only unless {@code uni} selects the
+     * full universe ({@code unicodeCase || unicodeShorthand} at the atom):
+     * the java.util.regex bare-CI reading (the 26 letter pairs, nothing
+     * else) vs the full simple-fold universe — the provider's own when it
+     * supplies one (parity tiers pin folding to their snapshot, the oracle
+     * bridge to the live oracle), else the built-in RE2-lineage table.
+     */
+    public static int[] universeFold(int cp, boolean uni, UnicodeDataProvider provider) {
+        if (!uni) {
+            return asciiFoldRanges(cp);
+        }
+        if (provider != null && provider.suppliesFoldUniverse()) {
+            return provider.foldCounterparts(cp);
+        }
+        return foldRanges(cp);
+    }
+
+    /**
      * The {@code java.util.regex} reading of the same universe: what a live
      * JDK answers under CASE_INSENSITIVE|UNICODE_CASE, where the Turkic
      * İ/ı pair merges into the i-orbit (the JDK's locale-independent case

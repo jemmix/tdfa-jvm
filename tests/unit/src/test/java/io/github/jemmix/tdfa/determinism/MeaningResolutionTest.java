@@ -128,7 +128,7 @@ class MeaningResolutionTest {
     @Test
     void irEntryIsFingerprintIdenticalToTheStringPath() {
         String[] corpus = {"a.b", "(?s)a.b", "(\\b)*", "((a*))*", "(?:(\\b))*", "(a+)+b", "(\\w+)@(\\w+)",
-            "(?i)[a-z]+\\s\\d", "(?m)^a$b\\b.*"};
+            "(?i)[a-z]+\\s\\d", "(?m)^a$b\\b.*", "(?i)k\\x{10400}ſ", "(?u)(?i)\\w\\W", "(?i)\\QkK\\E"};
         for (Semantics lane : new Semantics[]{Semantics.of(), RE2}) {
             for (String pattern : corpus) {
                 WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
@@ -139,7 +139,7 @@ class MeaningResolutionTest {
                     ParseOptions.of().unicodeCase(lane.isUnicodeCase()).flagBindings(lane.flagBindings())
                         .spaceTable(lane.spaceTable()).shorthandFold(lane.isShorthandFold()).escapes(lane.escapes()),
                     UnicodeProviders.get(), ledger);
-                Tnfa viaIr = Tnfa.compile(parsed, false, lane, CompileObserver.NONE, ledger);
+                Tnfa viaIr = Tnfa.compile(parsed, false, lane, null, CompileObserver.NONE, ledger);
                 Tdfa ir = Determinizer.compile(viaIr, false, CompileObserver.NONE, ledger.fork(0));
                 String fromIr = ArtifactFingerprint.of(ir);
                 String fromString = ArtifactFingerprint.of(tdfa(pattern, lane));
@@ -148,24 +148,69 @@ class MeaningResolutionTest {
         }
     }
 
+    // ---- the fold/shorthand atoms: one syntax, the policy's expansion ----
+
+    @Test
+    void foldLiteralExpandsPerTheLanesUniverse() {
+        // The ASCII universe (jur bare CI): the 26 letter pairs, nothing else.
+        assertThat(finds(tdfa("(?i)k", Semantics.of()), "K")).as("jur (?i)k folds K").isTrue();
+        assertThat(finds(tdfa("(?i)s", Semantics.of()), "\u017F")).as("jur (?i)s does NOT fold \u017F").isFalse();
+        // The full universe (RE2 lane): the s-orbit reaches \u017F (long s),
+        // the k-orbit reaches the Kelvin sign.
+        assertThat(finds(tdfa("(?i)s", RE2), "\u017F")).as("re2 (?i)s folds \u017F").isTrue();
+        assertThat(finds(tdfa("(?i)k", RE2), "\u212A")).as("re2 (?i)k folds the Kelvin sign").isTrue();
+        assertThat(finds(tdfa("(?i)k", Semantics.of()), "\u212A")).as("jur bare CI stays at the ASCII pairs").isFalse();
+        // A supplementary orbit (Deseret): full universe only — via the RAW
+        // literal path (the hex/backslash-u escapes stay fold-inert, a
+        // pinned pre-existing reading the resolver preserves).
+        assertThat(finds(tdfa("(?i)\uD801\uDC00", RE2), "\uD801\uDC28")).as("re2 folds the raw supplementary pair")
+            .isTrue();
+        assertThat(finds(tdfa("(?i)\uD801\uDC00", Semantics.of()), "\uD801\uDC28"))
+            .as("jur bare CI never folds a supplementary").isFalse();
+        assertThat(finds(tdfa("(?i)\\x{10400}", RE2), "\uD801\uDC28"))
+            .as("\\x{} escapes stay fold-inert (pre-existing reading)").isFalse();
+        // A literal with no counterparts demotes to the plain literal.
+        assertThat(finds(tdfa("(?i)5", Semantics.of()), "5")).isTrue();
+        // The quoted-literal fold path takes the same reading.
+        assertThat(finds(tdfa("(?i)\\Qs\\E", RE2), "\u017F")).isTrue();
+    }
+
+    @Test
+    void shorthandAtomsExpandPerThePolicy() {
+        // The \s table: U+000B is whitespace on the JDK table, not on RE2's.
+        assertThat(finds(tdfa("\\s", Semantics.of()), "\u000B")).as("jur \\s includes VT").isTrue();
+        assertThat(finds(tdfa("\\s", RE2), "\u000B")).as("re2 \\s excludes VT").isFalse();
+        assertThat(finds(tdfa("\\S", RE2), "\u000B")).isTrue();
+        // The word fold: re2j folds (?i)\w through the s-orbit; java never
+        // folds a shorthand (the SHORTHAND_FOLD policy).
+        assertThat(finds(tdfa("(?i)\\w", RE2), "\u017F")).as("re2 (?i)\\w folds \u017F in").isTrue();
+        assertThat(finds(tdfa("(?i)\\w", Semantics.of()), "\u017F")).as("jur (?i)\\w stays at its table").isFalse();
+        assertThat(finds(tdfa("(?i)\\W", RE2), "\u017F")).as("re2 (?i)\\W folds the POSITIVE set first").isFalse();
+        assertThat(finds(tdfa("(?i)\\W", Semantics.of()), "\u017F")).isTrue();
+        // The unicode twins come from the provider tables.
+        assertThat(finds(tdfa("(?u)\\w", Semantics.of()), "\u017F")).as("(?u)\\w is the Unicode word table").isTrue();
+        assertThat(finds(tdfa("(?u)\\d", Semantics.of()), "\u0660")).as("(?u)\\d is \\p{Nd}").isTrue();
+        assertThat(finds(tdfa("(?u)\\s", Semantics.of()), "\u00A0")).as("(?u)\\s is White_Space").isTrue();
+    }
+
     @Test
     void irEntryRejectsInconsistentProducerMetadata() {
         // Tag outside the declared counters.
         ParseResult badTag =
             new ParseResult(new Ast.Tag(99), 2, 1, false, false, null, Collections.emptyMap(), false, false);
-        assertThatThrownBy(() -> Tnfa.compile(badTag, false, Semantics.of(), CompileObserver.NONE,
+        assertThatThrownBy(() -> Tnfa.compile(badTag, false, Semantics.of(), null, CompileObserver.NONE,
             new WorkMeter(Budgets.compileComputeTicks()))).isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("tag 99");
         // Named group outside the declared group count.
         ParseResult badName = new ParseResult(new Ast.Symbol('a'), 2, 1, false, false, null,
             Collections.singletonMap("x", 5), false, false);
-        assertThatThrownBy(() -> Tnfa.compile(badName, false, Semantics.of(), CompileObserver.NONE,
+        assertThatThrownBy(() -> Tnfa.compile(badName, false, Semantics.of(), null, CompileObserver.NONE,
             new WorkMeter(Budgets.compileComputeTicks()))).isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("named group 'x'");
         // Counters that cannot describe any tree (2 tags cannot hold 5 groups).
         ParseResult badCounts =
             new ParseResult(new Ast.Symbol('a'), 2, 5, false, false, null, Collections.emptyMap(), false, false);
-        assertThatThrownBy(() -> Tnfa.compile(badCounts, false, Semantics.of(), CompileObserver.NONE,
+        assertThatThrownBy(() -> Tnfa.compile(badCounts, false, Semantics.of(), null, CompileObserver.NONE,
             new WorkMeter(Budgets.compileComputeTicks()))).isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("inconsistent parse result");
     }
@@ -178,7 +223,7 @@ class MeaningResolutionTest {
             new ParseResult(new Ast.Concat(Arrays.asList(new Ast.Symbol('a'), new Ast.Dot(false), new Ast.Symbol('b'))),
                 0, 0, false, false, null, Collections.emptyMap(), false, false);
         WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
-        Tnfa viaIr = Tnfa.compile(parsed, false, RE2, CompileObserver.NONE, ledger);
+        Tnfa viaIr = Tnfa.compile(parsed, false, RE2, null, CompileObserver.NONE, ledger);
         Tdfa ir = Determinizer.compile(viaIr, false, CompileObserver.NONE, ledger.fork(0));
         assertThat(finds(ir, "a\rb")).as("producer dot resolves against the RE2 lane").isTrue();
         assertThat(finds(ir, "a\nb")).as("re2 dot still excludes \\n").isFalse();
