@@ -93,6 +93,11 @@ public final class ShellEmitter {
         String engOwner = concrete ? engName : ENGINE_ITF;
         String engDesc = "L" + engOwner + ";";
         RegexEngine engInstance = spec.engine();
+        // \G artifacts: the machinery matcher owns the ops (it arms the
+        // previous-match base into the carrier; the engine — always the
+        // delegate posture for these — reads it). Emission-time selection:
+        // non-\G shells are byte-identical to before.
+        boolean machineryOps = engInstance.usesPrevMatchEnd();
 
         // Per-instance naming: derive from the engine's class when concrete,
         // else from the monotonic shell sequence.
@@ -127,248 +132,264 @@ public final class ShellEmitter {
         mv.visitEnd();
 
         // public boolean find()
-        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "find", "()Z", null, null);
-        mv.visitCode();
-        // Op-mode bookkeeping for the cold hitEnd/requireEnd probe: an
-        // unanchored find, and the search start it scans from.
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastOpAnchored", "Z");
-        // Region routing: an active region leaves the inlined fast path —
-        // the machinery find() owns the bounds family (one predictable
-        // never-taken branch on the hot path).
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "regionTo", "I");
-        Label noRegion = new Label();
-        mv.visitJumpInsn(Opcodes.IFLT, noRegion); // -1 = no region
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "find", "()Z", false);
-        mv.visitInsn(Opcodes.IRETURN);
-        mv.visitLabel(noRegion);
-        // Retarget routing: usePattern rebound the machinery engines — a
-        // retargeted shell serves through them (same never-taken branch).
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, PATMAT, "retargeted", "Z");
-        Label fastFind = new Label();
-        mv.visitJumpInsn(Opcodes.IFEQ, fastFind);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "find", "()Z", false);
-        mv.visitInsn(Opcodes.IRETURN);
-        mv.visitLabel(fastFind);
-        // locals: 1 = start, 2 = m
-        Label elseStart = new Label(), startDone = new Label();
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "hasMatch", "Z");
-        mv.visitJumpInsn(Opcodes.IFEQ, elseStart);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "lastMatchEnd", "I");
-        mv.visitVarInsn(Opcodes.ISTORE, 1);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "lastMatchStart", "I");
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "lastMatchEnd", "I");
-        Label noBump = new Label();
-        mv.visitJumpInsn(Opcodes.IF_ICMPNE, noBump);
-        mv.visitIincInsn(1, 1);
-        mv.visitLabel(noBump);
-        mv.visitJumpInsn(Opcodes.GOTO, startDone);
-        mv.visitLabel(elseStart);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "appendPos", "I");
-        mv.visitVarInsn(Opcodes.ISTORE, 1);
-        mv.visitLabel(startDone);
-        // lastSearchFrom = start (the failed-search probe's scan origin)
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ILOAD, 1);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastSearchFrom", "I");
-        // if (start > inputLength) { hasMatch = false; return false; }
-        mv.visitVarInsn(Opcodes.ILOAD, 1);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "inputLength", "I");
-        Label notPast = new Label();
-        mv.visitJumpInsn(Opcodes.IF_ICMPLE, notPast);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "hasMatch", "Z");
-        // searchSkipped = true — the early return keeps the last search's flags
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "searchSkipped", "Z");
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitInsn(Opcodes.IRETURN);
-        mv.visitLabel(notPast);
-        // searchSkipped = false (this find executes a search)
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "searchSkipped", "Z");
-        // m = p.eng.match(input, start, this.scratch)  — carrier-aware entry:
-        // the matcher's buffers pool across find() iterations.
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, matOwner, "p", patDesc);
-        mv.visitFieldInsn(Opcodes.GETFIELD, patOwner, "eng", engDesc);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "input", CS);
-        mv.visitVarInsn(Opcodes.ILOAD, 1);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "scratch", SCRATCH_D);
-        mv.visitMethodInsn(concrete ? Opcodes.INVOKEVIRTUAL : Opcodes.INVOKEINTERFACE, engOwner, "match",
-            "(" + CS + "I" + SCRATCH_D + ")L" + RESULT + ";", !concrete);
-        mv.visitVarInsn(Opcodes.ASTORE, 2);
-        emitAcceptTail(mv);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
+        if (!machineryOps) {
+            mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "find", "()Z", null, null);
+            mv.visitCode();
+            // Op-mode bookkeeping for the cold hitEnd/requireEnd probe: an
+            // unanchored find, and the search start it scans from.
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastOpAnchored", "Z");
+            // Region routing: an active region leaves the inlined fast path —
+            // the machinery find() owns the bounds family (one predictable
+            // never-taken branch on the hot path).
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "regionTo", "I");
+            Label noRegion = new Label();
+            mv.visitJumpInsn(Opcodes.IFLT, noRegion); // -1 = no region
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "find", "()Z", false);
+            mv.visitInsn(Opcodes.IRETURN);
+            mv.visitLabel(noRegion);
+            // Retarget routing: usePattern rebound the machinery engines — a
+            // retargeted shell serves through them (same never-taken branch).
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, PATMAT, "retargeted", "Z");
+            Label fastFind = new Label();
+            mv.visitJumpInsn(Opcodes.IFEQ, fastFind);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "find", "()Z", false);
+            mv.visitInsn(Opcodes.IRETURN);
+            mv.visitLabel(fastFind);
+            // locals: 1 = start, 2 = m
+            Label elseStart = new Label(), startDone = new Label();
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "hasMatch", "Z");
+            mv.visitJumpInsn(Opcodes.IFEQ, elseStart);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "lastMatchEnd", "I");
+            mv.visitVarInsn(Opcodes.ISTORE, 1);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "lastMatchStart", "I");
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "lastMatchEnd", "I");
+            Label noBump = new Label();
+            mv.visitJumpInsn(Opcodes.IF_ICMPNE, noBump);
+            mv.visitIincInsn(1, 1);
+            mv.visitLabel(noBump);
+            mv.visitJumpInsn(Opcodes.GOTO, startDone);
+            mv.visitLabel(elseStart);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "appendPos", "I");
+            mv.visitVarInsn(Opcodes.ISTORE, 1);
+            mv.visitLabel(startDone);
+            // lastSearchFrom = start (the failed-search probe's scan origin)
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitVarInsn(Opcodes.ILOAD, 1);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastSearchFrom", "I");
+            // if (start > inputLength) { hasMatch = false; return false; }
+            mv.visitVarInsn(Opcodes.ILOAD, 1);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "inputLength", "I");
+            Label notPast = new Label();
+            mv.visitJumpInsn(Opcodes.IF_ICMPLE, notPast);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "hasMatch", "Z");
+            // searchSkipped = true — the early return keeps the last search's flags
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "searchSkipped", "Z");
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitInsn(Opcodes.IRETURN);
+            mv.visitLabel(notPast);
+            // searchSkipped = false (this find executes a search)
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "searchSkipped", "Z");
+            // m = p.eng.match(input, start, this.scratch)  — carrier-aware entry:
+            // the matcher's buffers pool across find() iterations.
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, matOwner, "p", patDesc);
+            mv.visitFieldInsn(Opcodes.GETFIELD, patOwner, "eng", engDesc);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "input", CS);
+            mv.visitVarInsn(Opcodes.ILOAD, 1);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "scratch", SCRATCH_D);
+            mv.visitMethodInsn(concrete ? Opcodes.INVOKEVIRTUAL : Opcodes.INVOKEINTERFACE, engOwner, "match",
+                "(" + CS + "I" + SCRATCH_D + ")L" + RESULT + ";", !concrete);
+            mv.visitVarInsn(Opcodes.ASTORE, 2);
+            emitAcceptTail(mv);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
 
-        // public boolean matches()
-        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matches", "()Z", null, null);
-        mv.visitCode();
-        // Op-mode bookkeeping for the cold hitEnd/requireEnd probe: an
-        // anchored op (the machinery path on the region route stores it
-        // again — harmless, same value), and this op executes — the
-        // flags become its own.
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastOpAnchored", "Z");
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "searchSkipped", "Z");
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "regionTo", "I");
-        Label mNoRegion = new Label();
-        mv.visitJumpInsn(Opcodes.IFLT, mNoRegion);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "matches", "()Z", false);
-        mv.visitInsn(Opcodes.IRETURN);
-        mv.visitLabel(mNoRegion);
-        // Retarget routing (see find()).
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, PATMAT, "retargeted", "Z");
-        Label mFast = new Label();
-        mv.visitJumpInsn(Opcodes.IFEQ, mFast);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "matches", "()Z", false);
-        mv.visitInsn(Opcodes.IRETURN);
-        mv.visitLabel(mFast);
-        // locals: 1 = m
-        // RegexEngine w = p.wholeEngine(); m = w.matchWhole(input, this.scratch)
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, matOwner, "p", patDesc);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFAPATTERN, "wholeEngine", "()L" + WHOLE_ITF + ";", false);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "input", CS);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "scratch", SCRATCH_D);
-        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, WHOLE_ITF, "matchWhole", "(" + CS + SCRATCH_D + ")L" + RESULT + ";",
-            true);
-        mv.visitVarInsn(Opcodes.ASTORE, 1);
-        // hasMatch = m != null; if (m != null) { match=m; lms=m.start(0); lme=m.end(0); } return hasMatch;
-        Label mNull = new Label(), hasMatchSet = new Label();
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitJumpInsn(Opcodes.IFNULL, mNull);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitJumpInsn(Opcodes.GOTO, hasMatchSet);
-        mv.visitLabel(mNull);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitLabel(hasMatchSet);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "hasMatch", "Z");
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        Label mNull2 = new Label();
-        mv.visitJumpInsn(Opcodes.IFNULL, mNull2);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "match", "L" + RESULT + ";");
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RESULT, "start", "(I)I", false);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastMatchStart", "I");
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RESULT, "end", "(I)I", false);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastMatchEnd", "I");
-        mv.visitLabel(mNull2);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "hasMatch", "Z");
-        mv.visitInsn(Opcodes.IRETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
+            // public boolean matches()
+            mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "matches", "()Z", null, null);
+            mv.visitCode();
+            // Op-mode bookkeeping for the cold hitEnd/requireEnd probe: an
+            // anchored op (the machinery path on the region route stores it
+            // again — harmless, same value), and this op executes — the
+            // flags become its own.
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastOpAnchored", "Z");
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "searchSkipped", "Z");
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "regionTo", "I");
+            Label mNoRegion = new Label();
+            mv.visitJumpInsn(Opcodes.IFLT, mNoRegion);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "matches", "()Z", false);
+            mv.visitInsn(Opcodes.IRETURN);
+            mv.visitLabel(mNoRegion);
+            // Retarget routing (see find()).
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, PATMAT, "retargeted", "Z");
+            Label mFast = new Label();
+            mv.visitJumpInsn(Opcodes.IFEQ, mFast);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "matches", "()Z", false);
+            mv.visitInsn(Opcodes.IRETURN);
+            mv.visitLabel(mFast);
+            // locals: 1 = m
+            // RegexEngine w = p.wholeEngine(); m = w.matchWhole(input, this.scratch)
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, matOwner, "p", patDesc);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TDFAPATTERN, "wholeEngine", "()L" + WHOLE_ITF + ";", false);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "input", CS);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "scratch", SCRATCH_D);
+            mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, WHOLE_ITF, "matchWhole",
+                "(" + CS + SCRATCH_D + ")L" + RESULT + ";", true);
+            mv.visitVarInsn(Opcodes.ASTORE, 1);
+            // hasMatch = m != null; if (m != null) { match=m; lms=m.start(0); lme=m.end(0); } return hasMatch;
+            Label mNull = new Label(), hasMatchSet = new Label();
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitJumpInsn(Opcodes.IFNULL, mNull);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitJumpInsn(Opcodes.GOTO, hasMatchSet);
+            mv.visitLabel(mNull);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitLabel(hasMatchSet);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "hasMatch", "Z");
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            Label mNull2 = new Label();
+            mv.visitJumpInsn(Opcodes.IFNULL, mNull2);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "match", "L" + RESULT + ";");
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RESULT, "start", "(I)I", false);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastMatchStart", "I");
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RESULT, "end", "(I)I", false);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastMatchEnd", "I");
+            mv.visitLabel(mNull2);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "hasMatch", "Z");
+            mv.visitInsn(Opcodes.IRETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
 
-        // public boolean lookingAt()
-        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "lookingAt", "()Z", null, null);
-        mv.visitCode();
-        // Op-mode bookkeeping (see matches()).
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastOpAnchored", "Z");
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "searchSkipped", "Z");
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "regionTo", "I");
-        Label lNoRegion = new Label();
-        mv.visitJumpInsn(Opcodes.IFLT, lNoRegion);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "lookingAt", "()Z", false);
-        mv.visitInsn(Opcodes.IRETURN);
-        mv.visitLabel(lNoRegion);
-        // Retarget routing (see find()).
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, PATMAT, "retargeted", "Z");
-        Label lFast = new Label();
-        mv.visitJumpInsn(Opcodes.IFEQ, lFast);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "lookingAt", "()Z", false);
-        mv.visitInsn(Opcodes.IRETURN);
-        mv.visitLabel(lFast);
-        // m = p.eng.match(input, 0, this.scratch); if (m != null && m.start(0) == 0) accept else false
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, matOwner, "p", patDesc);
-        mv.visitFieldInsn(Opcodes.GETFIELD, patOwner, "eng", engDesc);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "input", CS);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "scratch", SCRATCH_D);
-        mv.visitMethodInsn(concrete ? Opcodes.INVOKEVIRTUAL : Opcodes.INVOKEINTERFACE, engOwner, "match",
-            "(" + CS + "I" + SCRATCH_D + ")L" + RESULT + ";", !concrete);
-        mv.visitVarInsn(Opcodes.ASTORE, 1);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        Label laNull = new Label();
-        mv.visitJumpInsn(Opcodes.IFNULL, laNull);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RESULT, "start", "(I)I", false);
-        Label laFail = new Label();
-        mv.visitJumpInsn(Opcodes.IFNE, laFail); // start != 0 → fail
-        // accept
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "match", "L" + RESULT + ";");
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "hasMatch", "Z");
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RESULT, "start", "(I)I", false);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastMatchStart", "I");
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RESULT, "end", "(I)I", false);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastMatchEnd", "I");
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitInsn(Opcodes.IRETURN);
-        mv.visitLabel(laNull);
-        mv.visitLabel(laFail);
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "hasMatch", "Z");
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitInsn(Opcodes.IRETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
+            // public boolean lookingAt()
+            mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "lookingAt", "()Z", null, null);
+            mv.visitCode();
+            // Op-mode bookkeeping (see matches()).
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastOpAnchored", "Z");
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "searchSkipped", "Z");
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "regionTo", "I");
+            Label lNoRegion = new Label();
+            mv.visitJumpInsn(Opcodes.IFLT, lNoRegion);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "lookingAt", "()Z", false);
+            mv.visitInsn(Opcodes.IRETURN);
+            mv.visitLabel(lNoRegion);
+            // Retarget routing (see find()).
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, PATMAT, "retargeted", "Z");
+            Label lFast = new Label();
+            mv.visitJumpInsn(Opcodes.IFEQ, lFast);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, "lookingAt", "()Z", false);
+            mv.visitInsn(Opcodes.IRETURN);
+            mv.visitLabel(lFast);
+            // m = p.eng.match(input, 0, this.scratch); if (m != null && m.start(0) == 0) accept else false
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, matOwner, "p", patDesc);
+            mv.visitFieldInsn(Opcodes.GETFIELD, patOwner, "eng", engDesc);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "input", CS);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, CORE_MATCHER, "scratch", SCRATCH_D);
+            mv.visitMethodInsn(concrete ? Opcodes.INVOKEVIRTUAL : Opcodes.INVOKEINTERFACE, engOwner, "match",
+                "(" + CS + "I" + SCRATCH_D + ")L" + RESULT + ";", !concrete);
+            mv.visitVarInsn(Opcodes.ASTORE, 1);
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            Label laNull = new Label();
+            mv.visitJumpInsn(Opcodes.IFNULL, laNull);
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RESULT, "start", "(I)I", false);
+            Label laFail = new Label();
+            mv.visitJumpInsn(Opcodes.IFNE, laFail); // start != 0 → fail
+            // accept
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "match", "L" + RESULT + ";");
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "hasMatch", "Z");
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RESULT, "start", "(I)I", false);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastMatchStart", "I");
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RESULT, "end", "(I)I", false);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "lastMatchEnd", "I");
+            mv.visitInsn(Opcodes.ICONST_1);
+            mv.visitInsn(Opcodes.IRETURN);
+            mv.visitLabel(laNull);
+            mv.visitLabel(laFail);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitFieldInsn(Opcodes.PUTFIELD, CORE_MATCHER, "hasMatch", "Z");
+            mv.visitInsn(Opcodes.ICONST_0);
+            mv.visitInsn(Opcodes.IRETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+        } else {
+            // \G artifact: pure machinery delegation for the whole op
+            // family (the machinery arms the previous-match base, routes
+            // regions, maintains the op-mode bookkeeping — everything the
+            // inlined lanes would have to learn).
+            for (String op : new String[]{"find", "matches", "lookingAt"}) {
+                mv = cw.visitMethod(Opcodes.ACC_PUBLIC, op, "()Z", null, null);
+                mv.visitCode();
+                mv.visitVarInsn(Opcodes.ALOAD, 0);
+                mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CORE_MATCHER, op, "()Z", false);
+                mv.visitInsn(Opcodes.IRETURN);
+                mv.visitMaxs(0, 0);
+                mv.visitEnd();
+            }
+        }
         cw.visitEnd();
         byte[] matBytes = cw.toByteArray();
 

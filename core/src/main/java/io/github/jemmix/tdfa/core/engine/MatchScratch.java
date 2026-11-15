@@ -46,6 +46,17 @@ public final class MatchScratch {
     private TagTree tree;
 
     /**
+     * The {@code \G} base (java's {@code oldLast} protocol): the effective
+     * previous-match-end the current operation anchors {@code \G} against —
+     * the op's start when no previous match, the last match's end otherwise,
+     * unchanged by failed searches. Set by the machinery matcher before
+     * each engine call; read by walks whose masks consult
+     * {@code Tnfa.PREV_MATCH_END} (those artifacts always run with a
+     * carrier — the base is the one carrier field that is SEMANTIC).
+     */
+    public int prevMatchEnd;
+
+    /**
      * Grow-only register file: returns an array of at least {@code n} ints,
      * cached in this carrier. Contents undefined; refill {@code [0, n)}
      * before reading.

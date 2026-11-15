@@ -217,7 +217,13 @@ public abstract class Ast {
         /** {@code \b}: a word/non-word boundary. */
         WORD_BOUNDARY("\\b"),
         /** {@code \B}: the complement of {@link #WORD_BOUNDARY}. */
-        NON_WORD_BOUNDARY("\\B");
+        NON_WORD_BOUNDARY("\\B"),
+        /** {@code \G}: the end of the previous match (java's {@code oldLast}
+         *  protocol — the op's start when no previous match, the last match's
+         *  end otherwise, unchanged by failed searches). An op-constant BASE,
+         *  like the region's anchoring bounds: the bit rides the generic
+         *  walk's threaded bases, never the position-flag tables. */
+        PREV_MATCH_END("\\G");
 
         private final String symbol;
 

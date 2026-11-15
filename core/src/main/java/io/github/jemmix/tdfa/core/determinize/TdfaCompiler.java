@@ -359,7 +359,7 @@ final class TdfaCompiler {
         this.maxStates = Budgets.maxDfaStates(longestMatch ? 0 : BudgetWeights.STOP_TABLE_STATE_BYTES);
         this.epsOut = sortedOutgoing(nfa.epsFrom, nfa.epsPri);
         this.symOut = plainOutgoing(nfa.symFrom);
-        this.maskBitset = new long[nfa.stateCount * 2];
+        this.maskBitset = new long[nfa.stateCount * 3];
         this.firstPopL = new int[nfa.stateCount];
         this.firstPopLEpoch = new int[nfa.stateCount];
         this.surfaceTags = nfa.surfaceFinalTags;
@@ -382,7 +382,12 @@ final class TdfaCompiler {
         this.maxClosureBytes = Budgets.maxClosureSpikeBytes();
         this.cellCount = breakpoints.length - 1;
         this.activeSetCount = precomputeActiveSets(cellCount);
-        this.posFlagCells = usesFinalEnd(nfa) ? 128 : 64;
+        // 2^(position bits): 6 shared bits, +FINAL_END (bit 64) on plain-$
+        // compiles, +PREV_MATCH_END (bit 128) on \G compiles — the cell
+        // index is the posFlags VALUE, so the dimension's bit must be
+        // addressable: \G always means 256 cells (with or without
+        // FINAL_END — 2^8 covers both).
+        this.posFlagCells = usesPrevEnd(nfa) ? 256 : usesFinalEnd(nfa) ? 128 : 64;
     }
 
     /** Whether any ε-edge of {@code nfa} is gated on {@link Tnfa#FINAL_END}
@@ -390,6 +395,20 @@ final class TdfaCompiler {
     private static boolean usesFinalEnd(Tnfa nfa) {
         for (int mask : nfa.epsEmptyMask) {
             if ((mask & Tnfa.FINAL_END) != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether any ε-edge of {@code nfa} is gated on {@link Tnfa#PREV_MATCH_END}
+     *  ({@code \G} — the previous-match base; see {@link #posFlagCells}). The
+     *  bit's formula is {@code pos == base}, computable wherever the walk's
+     *  threaded bases are — so it rides the SAME cell machinery FINAL_END
+     *  does, one more dimension. */
+    private static boolean usesPrevEnd(Tnfa nfa) {
+        for (int mask : nfa.epsEmptyMask) {
+            if ((mask & Tnfa.PREV_MATCH_END) != 0) {
                 return true;
             }
         }
@@ -455,18 +474,19 @@ final class TdfaCompiler {
     }
 
     /**
-     * True iff the popped-mask bitset (bit m = mask value m, two words:
-     * masks reach 7 bits — FINAL_END compiles — so word {@code sub >>> 6}
-     * holds bit {@code sub & 63}) has any submask of {@code m} set.
+     * True iff the popped-mask bitset (bit m = mask value m, three words:
+     * masks reach 8 bits — FINAL_END and PREV_MATCH_END (\G) compile — so
+     * word {@code sub >>> 6} holds bit {@code sub & 63}) has any submask
+     * of {@code m} set.
      */
-    private static boolean submaskPopped(long poppedLo, long poppedHi, int m) {
+    private static boolean submaskPopped(long w0, long w1, long w2, int m) {
         for (int sub = m; sub != 0; sub = (sub - 1) & m) {
-            long w = sub < 64 ? poppedLo : poppedHi;
+            long w = sub < 64 ? w0 : sub < 128 ? w1 : w2;
             if ((w & (1L << (sub & 63))) != 0) {
                 return true;
             }
         }
-        return (poppedLo & 1L) != 0; // the empty submask (mask 0) closes the loop
+        return (w0 & 1L) != 0; // the empty submask (mask 0) closes the loop
     }
 
     /**
@@ -1417,13 +1437,13 @@ final class TdfaCompiler {
             Kernel k = kernels.get(s);
             int cnt = k.size();
             int entryIntersect = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY
-                | Tnfa.ABS_BEGIN | Tnfa.ABS_END | Tnfa.FINAL_END;
+                | Tnfa.ABS_BEGIN | Tnfa.ABS_END | Tnfa.FINAL_END | Tnfa.PREV_MATCH_END;
             for (int i = 0; i < cnt; i++) {
                 entryIntersect &= k.maskAt(i);
             }
             stateEntryMask[s] = entryIntersect;
             int acceptIntersect = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY
-                | Tnfa.ABS_BEGIN | Tnfa.ABS_END | Tnfa.FINAL_END;
+                | Tnfa.ABS_BEGIN | Tnfa.ABS_END | Tnfa.FINAL_END | Tnfa.PREV_MATCH_END;
             boolean anyAccept = false;
             for (int i = 0; i < cnt; i++) {
                 if (k.stateAt(i) == nfa.accept) {
@@ -1672,14 +1692,15 @@ final class TdfaCompiler {
             }
             if (maskEpoch[c.state] != epoch) {
                 maskEpoch[c.state] = epoch;
-                maskBitset[c.state * 2] = 0L;
-                maskBitset[c.state * 2 + 1] = 0L;
+                maskBitset[c.state * 3] = 0L;
+                maskBitset[c.state * 3 + 1] = 0L;
+                maskBitset[c.state * 3 + 2] = 0L;
                 if (surfaceTags != null) {
                     firstPopLEpoch[c.state] = epoch;
                     firstPopL[c.state] = c.l;
                 }
             }
-            maskBitset[c.state * 2 + (c.emptyMask >>> 6)] |= 1L << (c.emptyMask & 63);
+            maskBitset[c.state * 3 + (c.emptyMask >>> 6)] |= 1L << (c.emptyMask & 63);
             out.add(c);
             // Per-kernel spike bound (weighted bytes): kernelsTotal only
             // counts after addState, so a single closure of a
@@ -1715,10 +1736,11 @@ final class TdfaCompiler {
                 // junction variants); that is the difference from a blanket
                 // state-only dedup, and it is what the position-aware tables
                 // downstream rely on. Masks are at most 7 bits: exact submask check
-                // over a per-state popped-mask bitset (two words, see submaskPopped).
+                // over a per-state popped-mask bitset (three words, see submaskPopped).
                 int edgeEmpty = nfa.epsEmptyMask[idx];
                 int newMask = c.emptyMask | edgeEmpty;
-                if (maskEpoch[to] == epoch && submaskPopped(maskBitset[to * 2], maskBitset[to * 2 + 1], newMask)) {
+                if (maskEpoch[to] == epoch
+                    && submaskPopped(maskBitset[to * 3], maskBitset[to * 3 + 1], maskBitset[to * 3 + 2], newMask)) {
                     if (surfaceTags != null) {
                         recordCut(idx, to, newMask, c);
                     }

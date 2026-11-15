@@ -1407,6 +1407,14 @@ public final class Parser {
                 // java's Dollar(false): end of input, or before the final
                 // terminator — the plain-$ rule, immune to (?m) like \z.
                 return new Ast.Assertion(Ast.AssertionKind.FINAL_END);
+            case 'G' :
+                if (!jur) {
+                    throw fail(this, "invalid escape sequence: \\G");
+                }
+                // java's LastMatch: the previous match's end (the op's
+                // start when none) — the matcher threads the base through
+                // the scratch carrier; see AssertionKind.PREV_MATCH_END.
+                return new Ast.Assertion(Ast.AssertionKind.PREV_MATCH_END);
             case '\\' :
                 literalKind = 1;
                 return new Ast.Symbol('\\');

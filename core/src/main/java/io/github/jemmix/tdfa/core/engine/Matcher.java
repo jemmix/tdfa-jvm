@@ -122,6 +122,25 @@ public class Matcher implements java.util.regex.MatchResult {
     @EmittedSurface // emitted find()/matches()/lookingAt() maintain it
     protected boolean searchSkipped;
 
+    /** The {@code \G} base — java's {@code oldLast} protocol, source-pinned
+     *  (vendored Matcher.search/match): a match operation has executed
+     *  since the last reset ({@code reset()}, and {@code region()}/
+     *  {@code find(int)} through it) or not. When one has, the base is
+     *  {@link #lastMatchEnd} — java's end-of-op {@code oldLast = last},
+     *  success and failure alike ({@code last} only moves on success);
+     *  read lazily at the NEXT op's arming so it is the post-op value.
+     *  When none has, the base is the op's own start (java's
+     *  {@code oldLast < 0} sentinel). Skipped searches (the early
+     *  return) never arm, exactly like java's. Machinery-only: emitted
+     *  fast paths never serve {@code \G} artifacts (the shell routes
+     *  those ops here — the base is matcher state the inlined lanes
+     *  cannot arm). */
+    private boolean gBaseSet;
+
+    /** The base the LAST EXECUTED operation armed — the cold end-flag
+     *  probe's replay input. */
+    private int lastOpGBase;
+
     public Matcher(RegexEngine engine, WholeEngine wholeEngine, CharSequence input) {
         this.engine = engine;
         this.wholeEngine = wholeEngine;
@@ -154,6 +173,12 @@ public class Matcher implements java.util.regex.MatchResult {
         searchSkipped = false;
         // java.util.regex: reset() returns the matcher to the DEFAULT
         // region (the whole input); the bounds flags are NOT reset.
+        // first/last mirror the JDK's reset values — lastMatchEnd's 0 is
+        // what a subsequent failed op writes into the \G base (java's
+        // `oldLast = last` end-of-op rule).
+        lastMatchStart = -1;
+        lastMatchEnd = 0;
+        gBaseSet = false;
         regionFrom = 0;
         regionTo = -1;
         return this;
@@ -186,12 +211,36 @@ public class Matcher implements java.util.regex.MatchResult {
 
     // ---- match operations ----
 
+    /** Arm the carrier's {@code \G} base for an operation starting at
+     *  {@code opFrom}: the effective java-oldLast reading (the sentinel
+     *  takes the op's own start), recorded for the end-flag probe and the
+     *  walk's carrier. The "an op executed" fact flips here — arming is
+     *  the op's first act, and the skipped-search early return never
+     *  reaches it. */
+    private void armGBase(int opFrom) {
+        lastOpGBase = gBaseSet ? lastMatchEnd : opFrom;
+        if (scratch != null) {
+            scratch.prevMatchEnd = lastOpGBase;
+        }
+        gBaseSet = true;
+    }
+
+    /** Rebase the armed base for a subSequence view's coordinates: the
+     *  view's walk sees view-relative positions, {@code \G} compares
+     *  against the base — the default-bounds region IS the text there. */
+    private void rebaseGBaseForView(int origin) {
+        if (scratch != null) {
+            scratch.prevMatchEnd = lastOpGBase - origin;
+        }
+    }
+
     public boolean matches() {
         lastOpAnchored = true;
         searchSkipped = false; // this op executes — the flags become its own
         if (regionTo >= 0) {
             return matchesInRegion();
         }
+        armGBase(0);
         MatchResult m = wholeEngine.matchWhole(input, scratch);
         hasMatch = m != null;
         if (hasMatch) {
@@ -208,6 +257,7 @@ public class Matcher implements java.util.regex.MatchResult {
         if (regionTo >= 0) {
             return lookingAtInRegion();
         }
+        armGBase(0);
         MatchResult m = engine.match(input, 0, scratch);
         if (m != null && m.start(0) == 0) {
             match = m;
@@ -243,6 +293,7 @@ public class Matcher implements java.util.regex.MatchResult {
             return false;
         }
         searchSkipped = false;
+        armGBase(start);
         MatchResult m = engine.match(input, start, scratch);
         if (m == null) {
             hasMatch = false;
@@ -466,6 +517,7 @@ public class Matcher implements java.util.regex.MatchResult {
             return false;
         }
         searchSkipped = false;
+        armGBase(next);
         MatchResult m = searchRegion(from, next, to);
         if (m == null) {
             hasMatch = false;
@@ -482,7 +534,9 @@ public class Matcher implements java.util.regex.MatchResult {
         int from = regionFrom;
         int to = regionTo;
         MatchResult m;
+        armGBase(from);
         if (anchoringBounds && !transparentBounds && !viewUnsound(from, to)) {
+            rebaseGBaseForView(from);
             m = engine.match(input.subSequence(from, to), 0, scratch);
             if (m != null && m.start(0) == 0) {
                 m = MatchResult.shifted(m, from);
@@ -506,6 +560,7 @@ public class Matcher implements java.util.regex.MatchResult {
     private boolean matchesInRegion() {
         int from = regionFrom;
         int to = regionTo;
+        armGBase(from);
         // A region end that CUTS a surrogate pair cannot ride the
         // subSequence view (the view's trailing high surrogate is
         // genuinely lone — matchable as one unit — where java's nodes
@@ -519,6 +574,7 @@ public class Matcher implements java.util.regex.MatchResult {
             // The whole-region walk over a view: exact under the default
             // bounds combo (the region IS the text for every predicate),
             // and exact for predicate-free artifacts under any combo.
+            rebaseGBaseForView(from);
             m = wholeEngine.matchWhole(input.subSequence(from, to), scratch);
             if (m != null) {
                 m = MatchResult.shifted(m, from);
@@ -599,6 +655,7 @@ public class Matcher implements java.util.regex.MatchResult {
      */
     private MatchResult searchRegion(int from, int next, int to) {
         if (anchoringBounds && !transparentBounds && !viewUnsound(from, to)) {
+            rebaseGBaseForView(from);
             MatchResult m = engine.match(input.subSequence(from, to), next - from, scratch);
             return m == null ? null : MatchResult.shifted(m, from);
         }
@@ -615,7 +672,7 @@ public class Matcher implements java.util.regex.MatchResult {
         boolean matched = hasMatch || searchSkipped;
         return engine.probeEndFlags(input, from, to, regionTo >= 0 ? anchoringBounds : true,
             regionTo >= 0 ? transparentBounds : false, matched ? lastMatchStart : lastSearchFrom,
-            matched ? lastMatchEnd : -1, matched, lastOpAnchored);
+            matched ? lastMatchEnd : -1, matched, lastOpAnchored, lastOpGBase);
     }
 
     // ---- match results ----
