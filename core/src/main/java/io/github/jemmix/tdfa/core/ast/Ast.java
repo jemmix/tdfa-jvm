@@ -421,6 +421,19 @@ public abstract class Ast {
          */
         public boolean quantifiedCapture;
 
+        /**
+         * Possessive ({@code x*+}, {@code x++}, {@code x?+},
+         * {@code x{n,m}+}): maximal munch, never give back. On every
+         * accepted string the match IS greedy's first-preference path
+         * (tags identical — oracle-pinned); the LANGUAGE shrinks wherever
+         * backtracking would have returned consumed input. Lowered to the
+         * fork rule at determinization (per (kernel, range), the first
+         * fork config with a live edge steps and every lower-priority
+         * same-fork config's step on that range is dropped —
+         * docs/possessive-quantifiers.md); no runtime representation.
+         */
+        public boolean possessive;
+
         public Repeat(Ast body, int min, int max, boolean greedy) {
             this.body = body;
             this.min = min;

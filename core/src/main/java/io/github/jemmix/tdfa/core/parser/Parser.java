@@ -520,6 +520,15 @@ public final class Parser {
             pos++;
             greedy = ungreedy;
         }
+        // Possessive suffix (the JUR reading only — re2j's alphabet has no
+        // possessive quantifiers): maximal munch, never give back. Parsed
+        // BEFORE the nested-repetition guard so a++ is the possessive plus
+        // and a+++ / a++? still reject as nested (java's own shape).
+        boolean possessive = false;
+        if (pos < src.length() && peek() == '+' && options.escapes() == EscapeAlphabet.JDK) {
+            pos++;
+            possessive = true;
+        }
 
         // A quantifier directly after a completed quantifier (greedy, lazy,
         // possessive, or a second {n,m}) is "invalid nested repetition
@@ -541,7 +550,9 @@ public final class Parser {
         // tests (nullableBody/dissolvableBody) live beside it there, keyed on
         // the compile's EMPTY_ITERATION_SPANS policy instead of a parse-side
         // axis.
-        return new Ast.Repeat(atom, min, max, greedy);
+        Ast.Repeat r = new Ast.Repeat(atom, min, max, greedy);
+        r.possessive = possessive;
+        return r;
     }
 
     /**
