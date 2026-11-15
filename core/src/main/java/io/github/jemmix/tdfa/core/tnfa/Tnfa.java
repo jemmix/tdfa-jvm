@@ -163,6 +163,12 @@ public final class Tnfa {
     public static final int ABS_BEGIN = 16;
     public static final int ABS_END = 32;
     public static final int FINAL_END = 64;
+    /** {@code \G}: the previous match's end (an op-constant BASE, not a
+     *  position predicate — it rides the generic walk's threaded bases and
+     *  the scratch carrier's {@code prevMatchEnd}, never the position-flag
+     *  tables; the run ladder routes artifacts that consult it through the
+     *  generic walk, the region seams' posture). */
+    public static final int PREV_MATCH_END = 128;
 
     /** The RE2-lineage preset (every axis at its RE2-side value): the
      *  compile-entry default when a caller passes no explicit
@@ -1034,6 +1040,8 @@ public final class Tnfa {
                     return WORD_BOUNDARY;
                 case NON_WORD_BOUNDARY :
                     return NO_WORD_BOUNDARY;
+                case PREV_MATCH_END :
+                    return PREV_MATCH_END;
                 default :
                     throw new IllegalStateException("unresolved policy assertion reached the builder: " + kind);
             }

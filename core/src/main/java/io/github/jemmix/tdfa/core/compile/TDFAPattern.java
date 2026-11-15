@@ -143,6 +143,13 @@ public class TDFAPattern implements Serializable {
      * degraded.
      */
     public StreamMatcher streamingMatcher(ChunkSource source) {
+        if (engine.usesPrevMatchEnd()) {
+            // \G anchors at the previous match's end — matcher state the
+            // streaming driver has no continuous view of. Loud, never a
+            // silent wrong base.
+            throw new UnsupportedOperationException("\\G patterns are not supported over streaming input — the "
+                + "previous-match base is matcher state; use pattern.matcher(...)");
+        }
         if (engine instanceof StreamEngine) {
             return ((StreamEngine) engine).streamingMatcher(source);
         }

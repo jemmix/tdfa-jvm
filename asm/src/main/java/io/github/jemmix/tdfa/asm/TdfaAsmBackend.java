@@ -140,7 +140,13 @@ public final class TdfaAsmBackend {
         // genMatch is a transcription of runStringExtractFast; the
         // strategy-conformance test asserts trace equality with the VM.
         DispatchMode mode = pickMode(tdfa);
-        boolean delegate = mode == DispatchMode.DELEGATE || TdfaRunner.detectLiteralNeedle(tdfa) != null;
+        boolean delegate = mode == DispatchMode.DELEGATE || TdfaRunner.detectLiteralNeedle(tdfa) != null
+        // \G artifacts: the inlined ladders' position-flag machinery
+        // cannot express the previous-match base (an op constant) — the
+        // embedded runner's region-generalized walk carries it. The
+        // shells read usesPrevMatchEnd() and route their hot methods
+        // to the machinery implementations, which arm the base.
+            || (tdfa.posFlagDeps() & Tnfa.PREV_MATCH_END) != 0;
         boolean fastPath = mode == DispatchMode.INLINED; // pickMode only INLINES fastPath-eligible DFAs
         // Partial-whole side table: the emitted wholeOne leaf is a
         // transcription of the PRUNED walk's dispatch — it cannot consult
@@ -428,7 +434,7 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
-        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "probeEndFlags", "(" + CS_D + "IIZZIIZZ)I", null, null);
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "probeEndFlags", "(" + CS_D + "IIZZIIZZI)I", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
@@ -441,13 +447,20 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, 7);
         mv.visitVarInsn(Opcodes.ILOAD, 8);
         mv.visitVarInsn(Opcodes.ILOAD, 9);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "probeEndFlags", "(" + CS_D + "IIZZIIZZ)I", false);
+        mv.visitVarInsn(Opcodes.ILOAD, 10);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "probeEndFlags", "(" + CS_D + "IIZZIIZZI)I", false);
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
         mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "usesPositionPredicates", "()Z", null, null);
         mv.visitCode();
         mv.visitInsn(tdfa.posFlagDeps() == 0 ? Opcodes.ICONST_0 : Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "usesPrevMatchEnd", "()Z", null, null);
+        mv.visitCode();
+        mv.visitInsn((tdfa.posFlagDeps() & Tnfa.PREV_MATCH_END) != 0 ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();

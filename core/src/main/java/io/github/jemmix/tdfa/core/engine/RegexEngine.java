@@ -172,7 +172,7 @@ public interface RegexEngine {
      * the success replay is the winning walk either way.
      */
     default int probeEndFlags(CharSequence input, int from, int to, boolean anchoringBounds, boolean transparentBounds,
-        int matchStart, int matchEnd, boolean matched, boolean anchoredOp) {
+        int matchStart, int matchEnd, boolean matched, boolean anchoredOp, int gBase) {
         throw new UnsupportedOperationException("hitEnd/requireEnd probing is not supported by engine "
             + getClass().getName() + " — override RegexEngine.probeEndFlags to serve it");
     }
@@ -186,6 +186,18 @@ public interface RegexEngine {
      */
     default boolean usesPositionPredicates() {
         return true;
+    }
+
+    /**
+     * Whether this artifact consults the previous-match base ({@code \G}).
+     * Such artifacts serve through the machinery matcher — its ops ARM the
+     * carrier's base — and the run ladder routes them through the
+     * region-generalized walk; the emitted shells read this to route their
+     * hot methods to the machinery implementations (emission-time
+     * selection, no runtime check).
+     */
+    default boolean usesPrevMatchEnd() {
+        return false;
     }
 
     /**

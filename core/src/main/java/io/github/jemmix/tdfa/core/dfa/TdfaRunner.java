@@ -268,6 +268,13 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      */
     private final boolean needsWordFlags;
     /**
+     * Whether any mask / cell consults {@code \G} (the previous-match base) —
+     * such artifacts route every walk through the region-generalized generic
+     * walk (the base is threaded like the region's bounds projections; the
+     * fast lanes and their flag computations never see them).
+     */
+    private final boolean needsPrevEnd;
+    /**
      * Word-class bitset over UTF-16 units (BMP): replaces the ASCII branch
      * chain / Unicode range binary search with one array load. Supplementary
      * codepoints still use the range search.
@@ -415,6 +422,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         // they distinguish (see Tdfa.posFlagDeps) — no per-consumer model to keep in sync.
         this.needsWordFlags = (tdfa.posFlagDeps() & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY)) != 0;
         this.needsFinalEnd = (tdfa.posFlagDeps() & Tnfa.FINAL_END) != 0;
+        this.needsPrevEnd = (tdfa.posFlagDeps() & Tnfa.PREV_MATCH_END) != 0;
         // Derived (see Tdfa.absBeginBound): every accepting path crosses an
         // \A gate — restart enumeration past the origin is provably fruitless.
         this.absBeginBound = tdfa.absBeginBound();
@@ -945,6 +953,12 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      */
     @EmittedSurface
     @Override
+    public boolean usesPrevMatchEnd() {
+        return needsPrevEnd;
+    }
+
+    @EmittedSurface
+    @Override
     public MatchResult match(CharSequence input, int from, MatchScratch sc) {
         // Interface contract (see RegexEngine.match): clean bounds failure,
         // never the walk's raw StringIndexOutOfBoundsException.
@@ -952,10 +966,23 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             throw fromOutOfBounds(from, input.length());
         }
         if (sc == null) {
+            if (needsPrevEnd) {
+                // \G consults the previous-match base — semantic state only
+                // the matcher's carrier carries. Never silently debase.
+                throw new UnsupportedOperationException(
+                    "\\G patterns require the scratch carrier (the previous-match base) — pass the matcher's carrier");
+            }
             sc = new MatchScratch();
         }
         MatchHolder h;
-        if (input instanceof String) {
+        if (needsPrevEnd) {
+            // \G artifacts never ride the fast lanes: their flag tables
+            // carry the extra base dimension (posFlagCells ×2) and every
+            // predicate consults the threaded base — the region seam's
+            // posture, one walk family for the whole family of bases.
+            trace(Strategy.GENERIC);
+            h = runGeneric(input, from, input.length(), false, sc);
+        } else if (input instanceof String) {
             String s = (String) input;
             Strategy force = forcedStrategy();
             h = force != null ? forcedSearch(s, from, s.length(), sc, force)
@@ -1008,10 +1035,28 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
     @EmittedSurface
     @Override
     public MatchResult matchWhole(CharSequence input, MatchScratch sc) {
-        trace(input instanceof String ? Strategy.ANCHORED : Strategy.GENERIC);
         if (sc == null) {
+            if (needsPrevEnd) {
+                throw new UnsupportedOperationException(
+                    "\\G patterns require the scratch carrier (the previous-match base) — pass the matcher's carrier");
+            }
             sc = new MatchScratch();
         }
+        if (needsPrevEnd) {
+            // \G artifacts serve the whole discipline through the
+            // region-generalized walk (match's routing, the (t, t) shape).
+            trace(Strategy.GENERIC);
+            MatchHolder h =
+                runGeneric(input, 0, input.length(), true, true, sc, 0, input.length(), 0, input.length(), gBase(sc));
+            if (h == null) {
+                return null;
+            }
+            if (tdfa.fixedBase != null) {
+                MatchResult.reconstructFixed(h.regs, tdfa.finalRegBase, tdfa.fixedBase, tdfa.fixedOffset);
+            }
+            return new MatchResult(h.regs, tdfa.finalRegBase, tdfa.groupCount, h.matchStart, h.matchEnd, h.tree);
+        }
+        trace(input instanceof String ? Strategy.ANCHORED : Strategy.GENERIC);
         MatchHolder h = wholeWalk(input, 0, input.length(), sc);
         if (h == null) {
             return null;
@@ -3026,7 +3071,16 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
     }
 
     private MatchHolder runGeneric(CharSequence input, int from, int to, boolean anchored, MatchScratch sc) {
-        return runGeneric(input, from, to, anchored, anchored, sc, 0, to, 0, to);
+        return runGeneric(input, from, to, anchored, anchored, sc, 0, to, 0, to, gBase(sc));
+    }
+
+    /** The effective {@code \G} base of an operation from its carrier —
+     *  {@code Integer.MIN_VALUE} when there is none (no position equals
+     *  it, so every {@code \G} gate reads false; artifacts that consult
+     *  the bit never run carrier-less through the matcher, and the cold
+     *  probe entries pass what they know). */
+    private static int gBase(MatchScratch sc) {
+        return sc == null ? Integer.MIN_VALUE : sc.prevMatchEnd;
     }
 
     /**
@@ -3046,7 +3100,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      * {@code [from, to]} — and a whole match {@code (t, t)}.
      */
     private MatchHolder runGeneric(CharSequence input, int from, int to, boolean anchored, boolean whole,
-        MatchScratch sc, int bBase, int eBase, int wFrom, int wTo) {
+        MatchScratch sc, int bBase, int eBase, int wFrom, int wTo, int gBase) {
         // Carrier-regs reuse across restarts (the wholeWalk idiom): failed
         // restarts pay only the -1 refill, not a fresh allocation per start;
         // successful escapes clone into the MatchHolder, so reuse is safe.
@@ -3068,7 +3122,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             // Entry check for start state — inline
             {
                 int entryReq = stateEntryMask[state];
-                if (entryReq != 0 && !maskSatisfiedRgn(input, pos, to, entryReq, bBase, eBase, wFrom, wTo)) {
+                if (entryReq != 0 && !maskSatisfiedRgn(input, pos, to, entryReq, bBase, eBase, wFrom, wTo, gBase)) {
                     if (anchored) {
                         return null;
                     }
@@ -3093,7 +3147,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                     final int[] fm = this.finalOpsByMask;
                     if (fm != null) {
                         if (posFlags < 0) {
-                            posFlags = positionFlagsRgn(input, pos, to, bBase, eBase, wFrom, wTo);
+                            posFlags = positionFlagsRgn(input, pos, to, bBase, eBase, wFrom, wTo, gBase);
                         }
                         int cell = fm[state * posCells + posFlags];
                         if (cell >= 0) {
@@ -3116,7 +3170,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                             }
                             if (!whole && !longestMatch) {
                                 if (posFlags < 0) {
-                                    posFlags = positionFlagsRgn(input, pos, to, bBase, eBase, wFrom, wTo);
+                                    posFlags = positionFlagsRgn(input, pos, to, bBase, eBase, wFrom, wTo, gBase);
                                 }
                                 if (stopNow(state, posFlags)) {
                                     break;
@@ -3124,7 +3178,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                             }
                         } else {
                             if (posFlags < 0) {
-                                posFlags = positionFlagsRgn(input, pos, to, bBase, eBase, wFrom, wTo);
+                                posFlags = positionFlagsRgn(input, pos, to, bBase, eBase, wFrom, wTo, gBase);
                             }
                             if ((posFlags & acceptMask) == acceptMask) {
                                 lastAcceptPos = pos;
@@ -3162,7 +3216,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                         int requiredMask = ranges[o + 4];
                         if (requiredMask != 0) {
                             if (posFlags < 0) {
-                                posFlags = positionFlagsRgn(input, pos, to, bBase, eBase, wFrom, wTo);
+                                posFlags = positionFlagsRgn(input, pos, to, bBase, eBase, wFrom, wTo, gBase);
                             }
                             if ((posFlags & requiredMask) != requiredMask) {
                                 chosen = -1;
@@ -3190,7 +3244,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                             int requiredMask = ranges[o + 4];
                             if (requiredMask != 0) {
                                 if (posFlags < 0) {
-                                    posFlags = positionFlagsRgn(input, pos, to, bBase, eBase, wFrom, wTo);
+                                    posFlags = positionFlagsRgn(input, pos, to, bBase, eBase, wFrom, wTo, gBase);
                                 }
                                 if ((posFlags & requiredMask) != requiredMask) {
                                     continue;
@@ -3212,7 +3266,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 int width = c > 0xFFFF ? 2 : 1;
                 int entryReqNext = stateEntryMask[chosenTarget];
                 if (entryReqNext != 0
-                    && !maskSatisfiedRgn(input, pos + width, to, entryReqNext, bBase, eBase, wFrom, wTo)) {
+                    && !maskSatisfiedRgn(input, pos + width, to, entryReqNext, bBase, eBase, wFrom, wTo, gBase)) {
                     break;
                 }
                 if (regs != null) {
@@ -3447,7 +3501,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      * whole input under transparent bounds. The identity region
      * {@code (0, to, 0, to)} reduces to the plain computation.
      */
-    private int positionFlagsRgn(CharSequence s, int pos, int to, int bBase, int eBase, int wFrom, int wTo) {
+    private int positionFlagsRgn(CharSequence s, int pos, int to, int bBase, int eBase, int wFrom, int wTo, int gBase) {
         int flags = 0;
         if ((emptyLastLine || pos < eBase) && (pos == bBase || lineBegin(s, pos, eBase))) {
             flags |= Tnfa.BEGIN_TEXT;
@@ -3464,6 +3518,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         if (needsFinalEnd && finalEnd(s, pos, eBase)) {
             flags |= Tnfa.FINAL_END;
         }
+        if (needsPrevEnd && pos == gBase) {
+            flags |= Tnfa.PREV_MATCH_END;
+        } // \G: the previous-match base (an op constant, like the region's bases)
         if (needsWordFlags) {
             boolean prevWord = pos > wFrom && isWordBefore(s, pos);
             // The right-side read decodes against the FULL input (java's
@@ -3483,8 +3540,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      *  mask-directed {@link #maskSatisfiedCS} exists for hot-path economy;
      *  the region path is cold and takes the obviously-correct form). */
     private boolean maskSatisfiedRgn(CharSequence s, int pos, int to, int mask, int bBase, int eBase, int wFrom,
-        int wTo) {
-        return (positionFlagsRgn(s, pos, to, bBase, eBase, wFrom, wTo) & mask) == mask;
+        int wTo, int gBase) {
+        return (positionFlagsRgn(s, pos, to, bBase, eBase, wFrom, wTo, gBase) & mask) == mask;
     }
 
     /**
@@ -3518,7 +3575,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         int wFrom = transparentBounds ? 0 : regionFrom;
         int wTo = transparentBounds ? input.length() : to;
         trace(Strategy.GENERIC);
-        MatchHolder h = runGeneric(input, scanFrom, to, false, false, sc, bBase, eBase, wFrom, wTo);
+        MatchHolder h = runGeneric(input, scanFrom, to, false, false, sc, bBase, eBase, wFrom, wTo, gBase(sc));
         if (h == null) {
             return null;
         }
@@ -3547,7 +3604,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         int wFrom = transparentBounds ? 0 : from;
         int wTo = transparentBounds ? input.length() : to;
         trace(Strategy.GENERIC);
-        MatchHolder h = runGeneric(input, from, to, true, false, sc, bBase, eBase, wFrom, wTo);
+        MatchHolder h = runGeneric(input, from, to, true, false, sc, bBase, eBase, wFrom, wTo, gBase(sc));
         if (h == null) {
             return null;
         }
@@ -3582,7 +3639,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         int wFrom = transparentBounds ? 0 : from;
         int wTo = transparentBounds ? input.length() : to;
         trace(Strategy.GENERIC);
-        MatchHolder h = runGeneric(input, from, to, true, true, sc, bBase, eBase, wFrom, wTo);
+        MatchHolder h = runGeneric(input, from, to, true, true, sc, bBase, eBase, wFrom, wTo, gBase(sc));
         if (h == null) {
             return null;
         }
@@ -3634,35 +3691,35 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      */
     @EmittedSurface // generated engines delegate here (TdfaAsmBackend)
     public int probeEndFlags(CharSequence input, int from, int to, boolean anchoringBounds, boolean transparentBounds,
-        int matchStart, int matchEnd, boolean matched, boolean anchoredOp) {
+        int matchStart, int matchEnd, boolean matched, boolean anchoredOp, int gBase) {
         int bBase = anchoringBounds ? from : 0;
         int eBase = anchoringBounds ? to : input.length();
         int wFrom = transparentBounds ? 0 : from;
         int wTo = transparentBounds ? input.length() : to;
-        return matched ? probeSuccessEndFlags(input, to, bBase, eBase, wFrom, wTo, matchStart, matchEnd)
-            : anchoredOp ? probeAnchoredFailureEndFlags(input, from, to, bBase, eBase, wFrom, wTo)
-                : probeFailureEndFlags(input, matchStart, to, bBase, eBase, wFrom, wTo);
+        return matched ? probeSuccessEndFlags(input, to, bBase, eBase, wFrom, wTo, gBase, matchStart, matchEnd)
+            : anchoredOp ? probeAnchoredFailureEndFlags(input, from, to, bBase, eBase, wFrom, wTo, gBase)
+                : probeFailureEndFlags(input, matchStart, to, bBase, eBase, wFrom, wTo, gBase);
     }
 
     /** The success half of {@link #probeEndFlags}: a tagless replay of the
      *  winning walk with the gate/liveness bookkeeping. */
-    private int probeSuccessEndFlags(CharSequence input, int to, int bBase, int eBase, int wFrom, int wTo,
+    private int probeSuccessEndFlags(CharSequence input, int to, int bBase, int eBase, int wFrom, int wTo, int gBase,
         int matchStart, int matchEnd) {
         int flags = 0;
         int state = startState;
         int pos = matchStart;
         // The start-state entry gate.
-        flags |= heldEndGateBits(stateEntryMask[state], input, pos, to, bBase, eBase, wFrom, wTo);
+        flags |= heldEndGateBits(stateEntryMask[state], input, pos, to, bBase, eBase, wFrom, wTo, gBase);
         boolean stoppedAtFinalAccept = false;
         while (pos <= to) {
             int meta = stateMeta[state];
             if ((meta & 1) != 0 && pos <= matchEnd) {
                 // Which gate (if any) declared the accept here.
-                int gate = acceptGate(state, input, pos, to, bBase, eBase, wFrom, wTo);
+                int gate = acceptGate(state, input, pos, to, bBase, eBase, wFrom, wTo, gBase);
                 if (gate >= 0) {
-                    flags |= heldEndGateBits(gate, input, pos, to, bBase, eBase, wFrom, wTo);
+                    flags |= heldEndGateBits(gate, input, pos, to, bBase, eBase, wFrom, wTo, gBase);
                     if (pos == matchEnd && !longestMatch
-                        && stopNow(state, positionFlagsRgn(input, pos, to, bBase, eBase, wFrom, wTo))) {
+                        && stopNow(state, positionFlagsRgn(input, pos, to, bBase, eBase, wFrom, wTo, gBase))) {
                         stoppedAtFinalAccept = true;
                         break;
                     }
@@ -3672,7 +3729,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 break;
             }
             int c = Alphabet.decode(input, pos, to);
-            int[] step = probeStep(state, c, input, pos, to, bBase, eBase, wFrom, wTo);
+            int[] step = probeStep(state, c, input, pos, to, bBase, eBase, wFrom, wTo, gBase);
             flags |= step[1];
             if (step[0] < 0) {
                 return flags; // dead: java's quiet mid-input death
@@ -3696,7 +3753,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      *  end would itself probe past it — plus java's Start-node rule (an
      *  unanchored search always scanned to the end, so hitEnd holds
      *  regardless of what the scan saw). */
-    private int probeFailureEndFlags(CharSequence input, int from, int to, int bBase, int eBase, int wFrom, int wTo) {
+    private int probeFailureEndFlags(CharSequence input, int from, int to, int bBase, int eBase, int wFrom, int wTo,
+        int gBase) {
         int flags = 0;
         boolean beginRooted = absBeginBound;
         // java's Start wrapper wraps everything except the bare root
@@ -3730,29 +3788,29 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             // past the window end sets both flags whether the boundary
             // answered held or failed (java's Bound.check).
             boolean attemptRan = p <= guard && !(scanSkipsPairs && Alphabet.pairInterior(input, p));
-            boolean gateHeld = attemptRan && maskSatisfiedRgn(input, p, to, seedMask, bBase, eBase, wFrom, wTo);
+            boolean gateHeld = attemptRan && maskSatisfiedRgn(input, p, to, seedMask, bBase, eBase, wFrom, wTo, gBase);
             if (attemptRan) {
-                flags |= evaluatedEndProbeBits(seedMask, input, p, to, bBase, eBase, wFrom, wTo);
+                flags |= evaluatedEndProbeBits(seedMask, input, p, to, bBase, eBase, wFrom, wTo, gBase);
             }
             if (p >= to) {
                 if (attemptRan) {
-                    flags |= startAtEndEvalBits(input, to, bBase, eBase, wFrom, wTo);
+                    flags |= startAtEndEvalBits(input, to, bBase, eBase, wFrom, wTo, gBase);
                 }
                 if (gateHeld) {
-                    flags |= startAtEndHeldBits(input, to, bBase, eBase, wFrom, wTo);
+                    flags |= startAtEndHeldBits(input, to, bBase, eBase, wFrom, wTo, gBase);
                 }
                 break;
             }
             if (gateHeld) {
                 live[startState >>> 5] |= 1L << (startState & 31);
-                flags |= heldEndGateBits(seedMask, input, p, to, bBase, eBase, wFrom, wTo);
+                flags |= heldEndGateBits(seedMask, input, p, to, bBase, eBase, wFrom, wTo, gBase);
             } else if (attemptRan && seedMask != 0) {
                 // java's zero-width nodes run IN SEQUENCE: the gates that
                 // already held before a failing one set their flags (a $
                 // holding one-before-end sets both, then a later \A kills
                 // the branch — java's nodes already ran).
-                flags |= heldEndGateBits(seedMask & positionFlagsRgn(input, p, to, bBase, eBase, wFrom, wTo), input, p,
-                    to, bBase, eBase, wFrom, wTo);
+                flags |= heldEndGateBits(seedMask & positionFlagsRgn(input, p, to, bBase, eBase, wFrom, wTo, gBase),
+                    input, p, to, bBase, eBase, wFrom, wTo, gBase);
             }
             int c = Alphabet.decode(input, p, to);
             long[] next = new long[stateWords];
@@ -3760,7 +3818,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 if ((live[s >>> 5] & (1L << (s & 31))) == 0) {
                     continue;
                 }
-                int[] step = probeStep(s, c, input, p, to, bBase, eBase, wFrom, wTo);
+                int[] step = probeStep(s, c, input, p, to, bBase, eBase, wFrom, wTo, gBase);
                 flags |= step[1];
                 if (step[0] >= 0) {
                     next[step[0] >>> 5] |= 1L << (step[0] & 31);
@@ -3777,7 +3835,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 // on "xa" is the pinned shape).
                 for (int s = 0; s < stateCount; s++) {
                     if ((live[s >>> 5] & (1L << (s & 31))) != 0) {
-                        flags |= evaluatedEndProbeBits(stateAcceptMask[s], input, to, to, bBase, eBase, wFrom, wTo);
+                        flags |=
+                            evaluatedEndProbeBits(stateAcceptMask[s], input, to, to, bBase, eBase, wFrom, wTo, gBase);
                     }
                 }
                 break;
@@ -3805,36 +3864,36 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      *  flags. A quiet mid-input death sets nothing — the failed-search
      *  scan rule never runs here. */
     private int probeAnchoredFailureEndFlags(CharSequence input, int from, int to, int bBase, int eBase, int wFrom,
-        int wTo) {
+        int wTo, int gBase) {
         int flags = 0;
         long[] live = new long[stateWords];
         int seedMask = stateEntryMask[startState];
         // The seed gate is EVALUATED at from whatever it answers — a word
         // pair reading past the read window's end (from == wTo) sets both
         // flags exactly like java's Bound.check, held or failed.
-        flags |= evaluatedEndProbeBits(seedMask, input, from, to, bBase, eBase, wFrom, wTo);
+        flags |= evaluatedEndProbeBits(seedMask, input, from, to, bBase, eBase, wFrom, wTo, gBase);
         // No pair-interior skip on the anchored seed: java's matchRoot
         // attempt runs AT `from` whatever it is (the interior skip is the
         // StartS scan's restart discipline, not the anchored entry's).
-        boolean gateHeld = maskSatisfiedRgn(input, from, to, seedMask, bBase, eBase, wFrom, wTo);
+        boolean gateHeld = maskSatisfiedRgn(input, from, to, seedMask, bBase, eBase, wFrom, wTo, gBase);
         if (from >= to) {
             // Degenerate: the one attempt sat AT the region end — its
             // zero-width gates were evaluated (held or failed), and it
             // probes past the end iff its entry gates let the walk reach
             // consuming nodes.
-            flags |= startAtEndEvalBits(input, to, bBase, eBase, wFrom, wTo);
+            flags |= startAtEndEvalBits(input, to, bBase, eBase, wFrom, wTo, gBase);
             if (gateHeld) {
-                flags |= startAtEndHeldBits(input, to, bBase, eBase, wFrom, wTo);
+                flags |= startAtEndHeldBits(input, to, bBase, eBase, wFrom, wTo, gBase);
             }
             return flags;
         }
         if (gateHeld) {
             live[startState >>> 5] |= 1L << (startState & 31);
-            flags |= heldEndGateBits(seedMask, input, from, to, bBase, eBase, wFrom, wTo);
+            flags |= heldEndGateBits(seedMask, input, from, to, bBase, eBase, wFrom, wTo, gBase);
         } else if (seedMask != 0) {
             // the held-before-failing subset (see the scan probe's twin)
-            flags |= heldEndGateBits(seedMask & positionFlagsRgn(input, from, to, bBase, eBase, wFrom, wTo), input,
-                from, to, bBase, eBase, wFrom, wTo);
+            flags |= heldEndGateBits(seedMask & positionFlagsRgn(input, from, to, bBase, eBase, wFrom, wTo, gBase),
+                input, from, to, bBase, eBase, wFrom, wTo, gBase);
         }
         for (int p = from; p < to;) {
             int c = Alphabet.decode(input, p, to);
@@ -3843,7 +3902,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 if ((live[s >>> 5] & (1L << (s & 31))) == 0) {
                     continue;
                 }
-                int[] step = probeStep(s, c, input, p, to, bBase, eBase, wFrom, wTo);
+                int[] step = probeStep(s, c, input, p, to, bBase, eBase, wFrom, wTo, gBase);
                 flags |= step[1];
                 if (step[0] >= 0) {
                     next[step[0] >>> 5] |= 1L << (step[0] & 31);
@@ -3861,7 +3920,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 flags |= PROBE_HIT_END;
                 for (int s = 0; s < stateCount; s++) {
                     if ((live[s >>> 5] & (1L << (s & 31))) != 0) {
-                        flags |= evaluatedEndProbeBits(stateAcceptMask[s], input, to, to, bBase, eBase, wFrom, wTo);
+                        flags |=
+                            evaluatedEndProbeBits(stateAcceptMask[s], input, to, to, bBase, eBase, wFrom, wTo, gBase);
                     }
                 }
                 break;
@@ -3923,15 +3983,15 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      *  failed (the accept gate and the edges' required masks are those
      *  nodes; a gate whose OTHER predicates failed was never reached and
      *  contributes nothing — see {@link #evaluatedEndProbeBits}). */
-    private int startAtEndEvalBits(CharSequence input, int to, int bBase, int eBase, int wFrom, int wTo) {
-        int bits = evaluatedEndProbeBits(stateAcceptMask[startState], input, to, to, bBase, eBase, wFrom, wTo);
+    private int startAtEndEvalBits(CharSequence input, int to, int bBase, int eBase, int wFrom, int wTo, int gBase) {
+        int bits = evaluatedEndProbeBits(stateAcceptMask[startState], input, to, to, bBase, eBase, wFrom, wTo, gBase);
         int meta = stateMeta[startState];
         int base = stateBase[startState];
         int count = (meta >>> 1) & 0xFFFF;
         for (int i = 0; i < count; i++) {
             int o = (base + i) * 5;
             if (ranges[o + 2] >= 0) {
-                bits |= evaluatedEndProbeBits(ranges[o + 4], input, to, to, bBase, eBase, wFrom, wTo);
+                bits |= evaluatedEndProbeBits(ranges[o + 4], input, to, to, bBase, eBase, wFrom, wTo, gBase);
             }
         }
         return bits;
@@ -3942,9 +4002,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      *  held): whether it would probe past the end (hitEnd — an accept
      *  there, or a consumable edge whose gate holds), plus the HELD end
      *  gates' flags (java's Dollar at the end: both flags; \z: hitEnd). */
-    private int startAtEndHeldBits(CharSequence input, int to, int bBase, int eBase, int wFrom, int wTo) {
+    private int startAtEndHeldBits(CharSequence input, int to, int bBase, int eBase, int wFrom, int wTo, int gBase) {
         int bits = 0;
-        if (acceptGate(startState, input, to, to, bBase, eBase, wFrom, wTo) >= 0) {
+        if (acceptGate(startState, input, to, to, bBase, eBase, wFrom, wTo, gBase) >= 0) {
             bits |= PROBE_HIT_END;
         }
         int meta = stateMeta[startState];
@@ -3956,9 +4016,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 continue;
             }
             int requiredMask = ranges[o + 4];
-            if (requiredMask == 0 || maskSatisfiedRgn(input, to, to, requiredMask, bBase, eBase, wFrom, wTo)) {
+            if (requiredMask == 0 || maskSatisfiedRgn(input, to, to, requiredMask, bBase, eBase, wFrom, wTo, gBase)) {
                 bits |= PROBE_HIT_END;
-                bits |= heldEndGateBits(requiredMask, input, to, to, bBase, eBase, wFrom, wTo);
+                bits |= heldEndGateBits(requiredMask, input, to, to, bBase, eBase, wFrom, wTo, gBase);
             }
         }
         return bits;
@@ -3971,7 +4031,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      *  evaluated gates contribute (a word pair probed past the region
      *  end sets its flags whether or not it held). */
     private int[] probeStep(int state, int c, CharSequence input, int pos, int to, int bBase, int eBase, int wFrom,
-        int wTo) {
+        int wTo, int gBase) {
         int meta = stateMeta[state];
         int base = stateBase[state];
         int count = (meta >>> 1) & 0xFFFF;
@@ -3991,7 +4051,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                     continue;
                 }
                 int reqMask = ranges[o + 4];
-                if (reqMask == 0 || maskSatisfiedRgn(input, pos, to, reqMask, bBase, eBase, wFrom, wTo)) {
+                if (reqMask == 0 || maskSatisfiedRgn(input, pos, to, reqMask, bBase, eBase, wFrom, wTo, gBase)) {
                     return new int[]{-1, PROBE_HIT_END};
                 }
             }
@@ -4005,7 +4065,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 continue;
             }
             int requiredMask = rg[o + 4];
-            if (requiredMask != 0 && !maskSatisfiedRgn(input, pos, to, requiredMask, bBase, eBase, wFrom, wTo)) {
+            if (requiredMask != 0 && !maskSatisfiedRgn(input, pos, to, requiredMask, bBase, eBase, wFrom, wTo, gBase)) {
                 continue;
             }
             int spec = Integer.bitCount(requiredMask);
@@ -4016,22 +4076,22 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             }
         }
         if (best < 0) {
-            return new int[]{-1, evaluatedEndProbeBits(0, input, pos, to, bBase, eBase, wFrom, wTo)};
+            return new int[]{-1, evaluatedEndProbeBits(0, input, pos, to, bBase, eBase, wFrom, wTo, gBase)};
         }
         int width = c > 0xFFFF ? 2 : 1;
         int entryReqNext = stateEntryMask[rg[best + 2]];
-        int heldBits = evaluatedEndProbeBits(bestMask, input, pos, to, bBase, eBase, wFrom, wTo)
-            | heldEndGateBits(bestMask, input, pos, to, bBase, eBase, wFrom, wTo);
+        int heldBits = evaluatedEndProbeBits(bestMask, input, pos, to, bBase, eBase, wFrom, wTo, gBase)
+            | heldEndGateBits(bestMask, input, pos, to, bBase, eBase, wFrom, wTo, gBase);
         if (rg[best + 2] < 0) {
             return new int[]{-1, heldBits}; // the owning context's dead marker
         }
         int target = rg[best + 2];
         if (entryReqNext != 0) {
-            heldBits |= evaluatedEndProbeBits(entryReqNext, input, pos + width, to, bBase, eBase, wFrom, wTo);
-            if (!maskSatisfiedRgn(input, pos + width, to, entryReqNext, bBase, eBase, wFrom, wTo)) {
+            heldBits |= evaluatedEndProbeBits(entryReqNext, input, pos + width, to, bBase, eBase, wFrom, wTo, gBase);
+            if (!maskSatisfiedRgn(input, pos + width, to, entryReqNext, bBase, eBase, wFrom, wTo, gBase)) {
                 return new int[]{-1, heldBits};
             }
-            heldBits |= heldEndGateBits(entryReqNext, input, pos + width, to, bBase, eBase, wFrom, wTo);
+            heldBits |= heldEndGateBits(entryReqNext, input, pos + width, to, bBase, eBase, wFrom, wTo, gBase);
         }
         return new int[]{target, heldBits};
     }
@@ -4041,11 +4101,12 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      *  under the position's flags. On position-aware φ artifacts
      *  ({@code finalOpsByMask}) the cell decides acceptance and the sam
      *  mask is the approximation (see {@link #buildMaskedAcceptStates}). */
-    private int acceptGate(int state, CharSequence input, int pos, int to, int bBase, int eBase, int wFrom, int wTo) {
+    private int acceptGate(int state, CharSequence input, int pos, int to, int bBase, int eBase, int wFrom, int wTo,
+        int gBase) {
         if ((stateMeta[state] & 1) == 0) {
             return -1; // not an accepting state at all
         }
-        int pf = positionFlagsRgn(input, pos, to, bBase, eBase, wFrom, wTo);
+        int pf = positionFlagsRgn(input, pos, to, bBase, eBase, wFrom, wTo, gBase);
         final int[] fm = this.finalOpsByMask;
         int acceptMask = stateAcceptMask[state];
         if (fm != null) {
@@ -4065,8 +4126,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      *  both; ABS_END ({@code \z}) sets hitEnd only; END_TEXT ({@code (?m)$})
      *  and the word pair set both exactly at the region end (their
      *  past-end probe — java's {@code Dollar}/{@code Bound} tails). */
-    private int heldEndGateBits(int mask, CharSequence input, int pos, int to, int bBase, int eBase, int wFrom,
-        int wTo) {
+    private int heldEndGateBits(int mask, CharSequence input, int pos, int to, int bBase, int eBase, int wFrom, int wTo,
+        int gBase) {
         if (mask == 0) {
             return 0;
         }
@@ -4099,13 +4160,13 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      * pruned the branch at the {@code \A}).
      */
     private int evaluatedEndProbeBits(int mask, CharSequence input, int pos, int to, int bBase, int eBase, int wFrom,
-        int wTo) {
+        int wTo, int gBase) {
         int wordPart = mask & (Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY);
         if (wordPart == 0 || pos != wTo) {
             return 0;
         }
         int other = mask & ~(Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY);
-        if (other != 0 && !maskSatisfiedRgn(input, pos, to, other, bBase, eBase, wFrom, wTo)) {
+        if (other != 0 && !maskSatisfiedRgn(input, pos, to, other, bBase, eBase, wFrom, wTo, gBase)) {
             return 0; // the branch was pruned before its word gate — java never read the pair
         }
         return PROBE_HIT_END | PROBE_REQUIRE_END;

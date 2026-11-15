@@ -211,7 +211,8 @@ public final class Tdfa {
      * Indexed as {@code stopOnAcceptMask[state * posFlagCells + posFlags]} where {@code posFlags}
      * <p>
      * is the runtime position-flags bitmask ({@code BEGIN_TEXT|END_TEXT|WORD_BOUNDARY|NO_WORD_BOUNDARY|ABS_BEGIN|ABS_END},
-     * plus {@code FINAL_END} on 128-cell artifacts; {@link #posFlagCells} possible values). Each cell encodes:
+     * plus {@code FINAL_END} on 128+-cell artifacts and {@code PREV_MATCH_END}
+     * (the {@code \G} base, bit 128) on 256-cell ones; {@link #posFlagCells} possible values). Each cell encodes:
      * <ul>
      *   <li>{@code 0} — stop the match loop on accept (accept is the highest-priority
      *       live outcome under this posFlags);</li>
@@ -431,7 +432,8 @@ public final class Tdfa {
      *   <li>transition targets within the state space (dead marker is exactly
      *       {@code -1}); ops offsets within ops and blocks OP_END-terminated</li>
      *   <li>assertion masks limited to the defined bits (the six universal
-     *       ones, plus FINAL_END on 128-cell artifacts); accept ⊆ entry</li>
+     *       ones, plus FINAL_END on 128+-cell artifacts and PREV_MATCH_END
+     *       on 256-cell ones); accept ⊆ entry</li>
      *   <li>final-register block {@code [finalRegBase, finalRegBase+tagCount)}
      *       fits the register file (dedicated final slots — coalescing finals
      *       with working registers corrupts the MatchResult readout)</li>
@@ -441,12 +443,15 @@ public final class Tdfa {
         int[] stateFinalOpsOff, int[] stateFinalOpsByMask, int[] ranges, int[] entryHiPrefix, int[] ops,
         int[] stateEntryMask, int[] stateAcceptMask, int registerCount, int finalRegBase, int tagCount,
         boolean multiValued, int posFlagCells) {
-        if (posFlagCells != 64 && posFlagCells != 128) {
-            throw new IllegalStateException("tdfa: posFlagCells must be 64 or 128, got " + posFlagCells);
+        if (posFlagCells != 64 && posFlagCells != 128 && posFlagCells != 256) {
+            throw new IllegalStateException("tdfa: posFlagCells must be 64, 128 or 256, got " + posFlagCells);
         }
-        // FINAL_END (bit 64) only exists on 128-cell artifacts; the six
-        // universal bits exist on every artifact.
-        int allowedMaskBits = 0x3F | (posFlagCells == 128 ? Tnfa.FINAL_END : 0);
+        // FINAL_END (bit 64) exists on 128-cell artifacts; PREV_MATCH_END
+        // (bit 128, \G) on 256-cell ones (which also cover FINAL_END — the
+        // cell index is the posFlags value); the six universal bits exist
+        // on every artifact.
+        int allowedMaskBits =
+            0x3F | (posFlagCells >= 128 ? Tnfa.FINAL_END : 0) | (posFlagCells == 256 ? Tnfa.PREV_MATCH_END : 0);
         int entries = ranges.length / 5;
         if (startState < 0 || startState >= stateCount) {
             throw new IllegalStateException(

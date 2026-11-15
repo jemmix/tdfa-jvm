@@ -14,6 +14,7 @@ import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.stream.Collectors;
 
+import static io.github.jemmix.tdfa.parity.Re2jOracle.assertSameCompileReject;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -542,6 +543,101 @@ class JurApiParityTest {
         assertThat(m.group()).isEqualTo("x");
         assertThat(m.start()).isEqualTo(3); // continuation from the old match's end
         assertThat(m.matches()).isFalse(); // "xaaxa" does not wholly match "x"
+    }
+
+    // ---- \G: the previous-match-end anchor (java's oldLast protocol) ----
+
+    /** The full \G protocol against the live JDK oracle, both engine
+     *  tiers: the base is the op's start on a fresh matcher, the previous
+     *  match's end after one (source-pinned from the vendored Matcher —
+     *  {@code oldLast = last} at op end, success and failure alike; a
+     *  failed search moves nothing), and the protocol edges (find(int),
+     *  region, reset, usePattern, the empty-match bump) move it exactly
+     *  like java's. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void gAnchorMirrorsTheJdkProtocol(RegexEngineFactory f) {
+        // The tokenizer loop: base follows each match's end.
+        Matcher jm = jur("\\Gab", "ababxab", 0);
+        PatternMatcher om = io.github.jemmix.tdfa.Pattern.compile("\\Gab", 0, f).matcher("ababxab");
+        StringBuilder js = new StringBuilder(), os = new StringBuilder();
+        while (jm.find()) {
+            js.append(jm.group()).append('@').append(jm.start()).append(' ');
+        }
+        while (om.find()) {
+            os.append(om.group()).append('@').append(om.start()).append(' ');
+        }
+        assertThat(os.toString()).isEqualTo(js.toString()).isEqualTo("ab@0 ab@2 ");
+
+        // Fresh base is the op's start (0): \Gxx matches, \Gax cannot.
+        assertThat(oursFind("\\Gxx", "xxax", f)).isTrue();
+        assertThat(oursFind("\\Gax", "xxax", f)).isFalse();
+
+        // A failed search keeps the base (m3 stays false forever).
+        PatternMatcher m3 = io.github.jemmix.tdfa.Pattern.compile("\\Gab", 0, f).matcher("xxab");
+        assertThat(m3.find()).isFalse();
+        assertThat(m3.find()).isFalse();
+
+        // find(int) resets the base to the given start.
+        PatternMatcher m5 = io.github.jemmix.tdfa.Pattern.compile("\\Ga", 0, f).matcher("aabcaa");
+        assertThat(m5.find(1)).isTrue();
+        assertThat(m5.start()).isEqualTo(1);
+
+        // A fresh region bases \G at the region head (absolute).
+        PatternMatcher m6 = io.github.jemmix.tdfa.Pattern.compile("\\Gb+", 0, f).matcher("aaabbb");
+        m6.region(3, 6);
+        assertThat(m6.find()).isTrue();
+        assertThat(m6.start()).isEqualTo(3);
+
+        // Mid-pattern \G compares the walk position to the base.
+        assertThat(oursFind("a\\Gb", "ab", f)).isFalse();
+
+        // The anchored ops evaluate \G at 0.
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("\\Gam", 0, f).matcher("amp").lookingAt()).isTrue();
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("\\Gam.*", 0, f).matcher("amp").matches()).isTrue();
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("\\Gam", 0, f).matcher("amp").matches()).isFalse();
+
+        // reset() restores the fresh base (no \Gab at 0 here).
+        PatternMatcher m8 = io.github.jemmix.tdfa.Pattern.compile("\\Gab", 0, f).matcher("xxabxxab");
+        assertThat(m8.find()).isFalse();
+        m8.reset();
+        assertThat(m8.find()).isFalse();
+
+        // usePattern keeps the base: the ab AT the old match's end serves.
+        PatternMatcher m9 = io.github.jemmix.tdfa.Pattern.compile("ab", 0, f).matcher("xxabab");
+        assertThat(m9.find()).isTrue();
+        assertThat(m9.start()).isEqualTo(2);
+        m9.usePattern((TDFAPattern) io.github.jemmix.tdfa.Pattern.compile("\\Gab", 0, f));
+        assertThat(m9.find()).isTrue();
+        assertThat(m9.start()).isEqualTo(4);
+
+        // The empty-match bump: after aa and the empty match at 2, the
+        // base stays 2 while the scan bumps past — \G dies, exactly like
+        // the JDK's oldLast.
+        Matcher jm11 = jur("\\Ga*", "aab", 0);
+        PatternMatcher m11 = io.github.jemmix.tdfa.Pattern.compile("\\Ga*", 0, f).matcher("aab");
+        assertThat(jm11.find()).isTrue();
+        assertThat(m11.find()).isTrue();
+        assertThat(m11.group()).isEqualTo(jm11.group()).isEqualTo("aa");
+        assertThat(jm11.find()).isTrue();
+        assertThat(m11.find()).isTrue();
+        assertThat(m11.group()).isEmpty();
+        assertThat(m11.start()).isEqualTo(jm11.start()).isEqualTo(2);
+        assertThat(jm11.find()).isFalse();
+        assertThat(m11.find()).isFalse();
+    }
+
+    private static boolean oursFind(String p, String in, RegexEngineFactory f) {
+        return io.github.jemmix.tdfa.Pattern.compile(p, 0, f).matcher(in).find();
+    }
+
+    /** The RE2 lineage has no \G: the re2j facade rejects the spelling
+     *  like its oracle (the escape alphabet's closed set). */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void re2jFacadeRejectsGAnchor(RegexEngineFactory factory) {
+        assertSameCompileReject("\\Gab", factory);
+        assertSameCompileReject("a\\Gb", factory);
     }
 
     @ParameterizedTest

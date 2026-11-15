@@ -137,6 +137,23 @@ the parser's free-spacing mode, also the scoped `(?x)` inline letter
 
 ## The escapes (regex syntax, within the mission bounds)
 
+**`\G` — landed** (the one anchor with matcher state): java's `oldLast`
+protocol, source-pinned from the vendored Matcher and battery-pinned
+cell-for-cell on both tiers — the base is the op's start on a fresh
+matcher, the previous match's end after any executed op (a failed search
+moves nothing; the empty-match bump scans past a base it can no longer
+reach), and `find(int)`/`region()`/`reset()` restore the fresh reading
+while `usePattern` keeps the old one. The base is an op CONSTANT, like
+the region's anchoring bounds: it rides the scratch carrier (the one
+semantic carrier field), the artifact carries an eighth position-flag
+dimension (256-cell tables — the bit is `pos == base`, computable
+wherever the walk's threaded bases are), and the run ladder routes
+`\G`-consulting artifacts through the region-generalized walk, the
+region seam's posture. The ASM tier serves them through the delegate
+engine + machinery-routing shells (emission-time selection — non-`\G`
+shells are byte-identical); streaming input rejects `\G` loudly (the
+base is matcher state).
+
 One new `Semantics` axis, `ESCAPES_RE2` (set = re2j's readings, unset =
 the JDK's — the same shape as `SPACE_RE2`), gates the java-only
 backslash escapes. Unset (the jur facade):
@@ -164,9 +181,8 @@ Set (the re2j facade): every letter above rejects at the parse
 `\v` stays U+000B.
 
 **Consciously out of this landing** (the mission bounds): lookarounds
-and backreferences (backtracking-dependent, always rejected), `\G`
-(needs a previous-match-end predicate threaded through both tiers'
-entries — a feature of its own), `\X`/`\b{g}` (graphemes — rejected
+and backreferences (backtracking-dependent, always rejected),
+`\X`/`\b{g}` (graphemes — rejected
 loudly, see below), `CANON_EQ` (normalization-aware compilation), scoped
 inline `(?d)` (the terminator-set axis is compile-global; the
 UNIX_LINES FLAG is the JDK-exact spelling), and backreferences

@@ -13,7 +13,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 ## Features
 
-- [ ] `\G` previous-match-end anchor, both tiers
 - [ ] `\X` grapheme clusters via UAX #29 break properties
 - [ ] `\b{g}`/`\b{gc}` boundaries via tracker automaton
 - [ ] `CANON_EQ`: compile-time canonical-equivalence pattern rewrite
