@@ -61,3 +61,8 @@ ordered fields → constructors → methods, nested types last. Generated
 - Update `TODO.md` — open work lives there, or it doesn't exist. One
   terse line (≤ 10 words) per item, no completed items; `check` gates
   it (`scripts/check-todo.sh`).
+- No scratch droppings in the tree: one-off probes and output files
+  never land at the repo root — benchmark code belongs in `benchmarks/`,
+  throwaway harnesses outside the repo. Beware BSD `sed -i -E` on
+  macOS: it writes `*-E` backups (use `sed -i '' -E`). `check` gates
+  this too (`scripts/check-repo-hygiene.sh`).

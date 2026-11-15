@@ -240,3 +240,19 @@ def todoCheck = tasks.register('todoCheck', Exec) {
 tasks.named('check') {
     dependsOn todoCheck
 }
+
+// Repo-hygiene gate: no scratch/agent droppings — the repo root is an
+// allowlist (one-off probes and output dumps don't land loose at the
+// top level), and no backup droppings (*-E sed backups, *.orig/*.rej/
+// *.bak, .DS_Store) or stray *.class/crash dumps in the tree.
+// Standalone: scripts/check-repo-hygiene.sh. Rides `check` like
+// spotless/checkstyle, so the local full gate and the CI check job
+// enforce it.
+def repoHygieneCheck = tasks.register('repoHygieneCheck', Exec) {
+    description = 'Rejects scratch/agent droppings: root allowlist, backup files, compiled classes.'
+    group = 'verification'
+    commandLine './scripts/check-repo-hygiene.sh'
+}
+tasks.named('check') {
+    dependsOn repoHygieneCheck
+}
