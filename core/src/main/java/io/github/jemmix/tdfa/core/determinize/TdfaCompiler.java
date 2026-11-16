@@ -198,6 +198,10 @@ final class TdfaCompiler {
      * {@code $} stays 64-wide.
      */
     final int posFlagCells;
+    /** Possessive forks of the compiled TNFA — 0 for the overwhelming
+     *  majority of patterns, and every fork-mechanism site fast-paths on
+     *  it (docs/possessive-quantifiers.md). */
+    final int possessiveForks;
     /**
      * Number of distinct active edge sets.
      */
@@ -388,6 +392,7 @@ final class TdfaCompiler {
         // addressable: \G always means 256 cells (with or without
         // FINAL_END — 2^8 covers both).
         this.posFlagCells = usesPrevEnd(nfa) ? 256 : usesFinalEnd(nfa) ? 128 : 64;
+        this.possessiveForks = nfa.possessiveForks;
     }
 
     /** Whether any ε-edge of {@code nfa} is gated on {@link Tnfa#FINAL_END}
@@ -617,8 +622,11 @@ final class TdfaCompiler {
      * (accept, 0) could never be marked visited, and two such configs
      * pushed in the same expansion wave both survived into the kernel.
      */
-    private static long visitKey(int state, int emptyMask) {
-        return (((long) state + 1) << 32) | (emptyMask & 0xFFFFFFFFL);
+    private static long visitKey(int state, int emptyMask, int forkArr) {
+        // (state, emptyMask, forkArr): the mask's 8 bits and the fork bits
+        // (≤ 24 — 12 possessive forks) pack the low word exactly; fork-free
+        // patterns produce the identical keys they always did.
+        return (((long) state + 1) << 32) | (emptyMask & 0xFFL) | ((forkArr & 0xFFFFFFL) << 8);
     }
 
     /**
@@ -1659,7 +1667,7 @@ final class TdfaCompiler {
         // co-resident duplicates — see the child-loop comment below.
         for (int i = seed.size() - 1; i >= 0; i--) {
             Config c = seed.get(i);
-            long key = visitKey(c.state, c.emptyMask);
+            long key = visitKey(c.state, c.emptyMask, c.forkArr);
             if (containsKey(visitedSM, visitedMask, key)) {
                 continue;
             }
@@ -1673,7 +1681,7 @@ final class TdfaCompiler {
         while (!stack.isEmpty()) {
             meter.tick();
             Config c = stack.pop();
-            long key = visitKey(c.state, c.emptyMask);
+            long key = visitKey(c.state, c.emptyMask, c.forkArr);
             int slot = (int) (mix(key) & visitedMask);
             while (visitedSM[slot] != 0) {
                 if (visitedSM[slot] == key) {
@@ -1739,14 +1747,27 @@ final class TdfaCompiler {
                 // over a per-state popped-mask bitset (three words, see submaskPopped).
                 int edgeEmpty = nfa.epsEmptyMask[idx];
                 int newMask = c.emptyMask | edgeEmpty;
-                if (maskEpoch[to] == epoch
+                int edgeFork = nfa.epsForkRole[idx];
+                int newFork = c.forkArr;
+                if (edgeFork != 0) {
+                    int role = edgeFork - 1;
+                    if ((role & 1) == 0) {
+                        newFork |= 1 << role; // BODY: join/continue the fork's body side
+                    } else {
+                        // EXIT: leaving the fork is committing OUT — clear the
+                        // fork's bits (an entry-wrap context must not pollute
+                        // the exit path) and mark the exit side.
+                        newFork = (newFork & ~(3 << (role - 1))) | (1 << role);
+                    }
+                }
+                if (newFork == 0 && maskEpoch[to] == epoch
                     && submaskPopped(maskBitset[to * 3], maskBitset[to * 3 + 1], maskBitset[to * 3 + 2], newMask)) {
                     if (surfaceTags != null) {
                         recordCut(idx, to, newMask, c);
                     }
                     continue;
                 }
-                long childKey = visitKey(to, newMask);
+                long childKey = visitKey(to, newMask, newFork);
                 if (containsKey(visitedSM, visitedMask, childKey)) {
                     if (surfaceTags != null) {
                         recordCut(idx, to, newMask, c);
@@ -1763,7 +1784,7 @@ final class TdfaCompiler {
                 // In longest-match mode all NFA states of the closure survive
                 // (no priority suppression); pri stays 0 there.
                 int childPri = !longest ? Math.max(c.pri, nfa.epsPri[idx]) : 0;
-                stack.push(new Config(to, c.regs, c.h, newL, newMask, childPri));
+                stack.push(new Config(to, c.regs, c.h, newL, newMask, childPri, newFork));
             }
         }
         return out;
@@ -1897,17 +1918,47 @@ final class TdfaCompiler {
             }
         }
         List<Config> out = new ArrayList<>();
+        // The possessive fork rule (docs/possessive-quantifiers.md), applied
+        // per range in closure-priority order: the FIRST config carrying a
+        // fork's BODY bit that steps on this range marks the fork fired;
+        // every later config carrying that fork (a lower body alternative
+        // or the exit) is dropped for this range. Java's per-iteration
+        // alternation commit and the no-give-back rule in one pass.
+        int fired = possessiveForks > 0 ? 0 : -1;
         for (int ci = 0; ci < configs.size(); ci++) {
             if (suppress && ci > firstAcceptIdx) {
                 continue; // pike-cut: lower-priority paths past the first live accept
                 // can never win once that accept fires in this context
             }
             Config c = configs.get(ci);
+            if (fired != -1 && c.forkArr != 0) {
+                int fa = c.forkArr;
+                for (int f = 0; f < possessiveForks; f++) {
+                    int bodyBit = 1 << (2 * f);
+                    if ((fa & (bodyBit | (bodyBit << 1))) != 0 && (fired & bodyBit) != 0) {
+                        c = null; // a later fork member: dropped for this range
+                        break;
+                    }
+                }
+                if (c == null) {
+                    continue;
+                }
+            }
+            boolean stepped = false;
             for (int idx : symOut[c.state]) {
                 meter.tick(); // per (config, symbol): step's cost is this loop
                 if ((activeEdges[idx >> 6] & (1L << (idx & 63))) != 0) {
-                    // emptyMask resets on step — assertions are position-bound, gated via requiredMask.
+                    // emptyMask/forkArr reset on step — assertions are position-bound
+                    // (gated via requiredMask), the fork choice resolved here.
                     out.add(new Config(nfa.symTo[idx], c.regs, c.l, HistTable.EMPTY_ID, 0, c.pri));
+                    stepped = true;
+                }
+            }
+            if (stepped && fired != -1 && c.forkArr != 0) {
+                for (int f = 0; f < possessiveForks; f++) {
+                    if ((c.forkArr & (1 << (2 * f))) != 0) {
+                        fired |= 1 << (2 * f);
+                    }
                 }
             }
         }
@@ -2220,25 +2271,30 @@ final class TdfaCompiler {
          * giant determinization and has no reader left at that point.
          */
         void pack() {
-            int[] p = new int[boxed.size() * 2];
+            int[] p = new int[boxed.size() * 3];
             for (int i = 0; i < boxed.size(); i++) {
-                p[i * 2] = boxed.get(i).state;
-                p[i * 2 + 1] = boxed.get(i).emptyMask;
+                p[i * 3] = boxed.get(i).state;
+                p[i * 3 + 1] = boxed.get(i).emptyMask;
+                p[i * 3 + 2] = boxed.get(i).forkArr;
             }
             packed = p;
             boxed = null;
         }
 
         int size() {
-            return packed != null ? packed.length >> 1 : boxed.size();
+            return packed != null ? packed.length / 3 : boxed.size();
         }
 
         int stateAt(int i) {
-            return packed != null ? packed[i * 2] : boxed.get(i).state;
+            return packed != null ? packed[i * 3] : boxed.get(i).state;
         }
 
         int maskAt(int i) {
-            return packed != null ? packed[i * 2 + 1] : boxed.get(i).emptyMask;
+            return packed != null ? packed[i * 3 + 1] : boxed.get(i).emptyMask;
+        }
+
+        int forkAt(int i) {
+            return packed != null ? packed[i * 3 + 2] : boxed.get(i).forkArr;
         }
     }
 

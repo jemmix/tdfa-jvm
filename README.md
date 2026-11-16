@@ -138,9 +138,12 @@ java.util.regex's own escapes (`\v`/`\h` whitespace classes, `\e`, `\R`,
 `requireEnd`, `toMatchResult`, function replace) with JDK-exact semantics
 ([docs/jur-api-parity.md](docs/jur-api-parity.md)).
 
-Backtracking-dependent features — backreferences, lookaround, atomic groups,
-possessive quantifiers — are rejected at compile time. We never silently fall
-back to a slower engine.
+Backtracking-dependent features — backreferences, lookaround, atomic
+groups — are rejected at compile time. We never silently fall back to a
+slower engine. Possessive quantifiers (`a++`, `a*+`, `a?+`, `a{n,m}+`)
+are supported on the jur facade: they never give back, but need no
+backtracking to serve — the fork rule resolves at compile time
+([docs/possessive-quantifiers.md](docs/possessive-quantifiers.md)).
 
 ## How it's tested
 

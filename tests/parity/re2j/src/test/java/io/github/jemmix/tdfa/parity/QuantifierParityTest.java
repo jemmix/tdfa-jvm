@@ -389,9 +389,9 @@ class QuantifierParityTest {
         // RE2-lane-pinned (no jur reading): a{,3} — the JDK rejects the
         // spelling; the facade parses it as the literal "a{,3}" (divergence
         // pinned in ParserHardeningParityTest's jur twin)
-        JurOracle.assertDivergentReject("a++", factory); // JDK possessive, we reject
-        JurOracle.assertDivergentReject("a?+", factory);
-        JurOracle.assertDivergentReject("a{2,3}+", factory);
+        // Possessive quantifiers LANDED (docs/possessive-quantifiers.md):
+        // the jur facade now translates them — oracle-pinned cells moved to
+        // JurApiParityTest.possessiveQuantifiersMirrorTheJdk.
         JurOracle.assertSameCompileReject("a{3,2}", factory); // inverted range: both reject
     }
 }

@@ -237,11 +237,11 @@ final class TdfaFinalVariants {
      * needs (finalRegopsOf returns empty ops when tags==0).
      */
     void computeFinalVariantsPacked(DfaStateBuilder sb, int[] pk) {
-        int n = pk.length >> 1;
+        int n = pk.length / 3;
         int[] st = new int[n], mk = new int[n];
         for (int i = 0; i < n; i++) {
-            st[i] = pk[i * 2];
-            mk[i] = pk[i * 2 + 1];
+            st[i] = pk[i * 3];
+            mk[i] = pk[i * 3 + 1];
         }
         computeFinalVariants(sb, st, mk, i -> null, null); // tagless: no registers, no cut pairs
     }

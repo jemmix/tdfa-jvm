@@ -274,7 +274,7 @@ class GroupSyntaxParityTest {
         JurOracle.assertDivergentReject("(?<=a)b", factory);
         JurOracle.assertDivergentReject("(?<!a)b", factory);
         JurOracle.assertDivergentReject("(?>a+)", factory);
-        JurOracle.assertDivergentReject("a*+", factory);
+        // a*+ LANDED (possessive — JurApiParityTest.possessiveQuantifiersMirrorTheJdk)
         JurOracle.assertDivergentReject("(a)\\1", factory);
     }
 

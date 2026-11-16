@@ -154,6 +154,14 @@ engine + machinery-routing shells (emission-time selection — non-`\G`
 shells are byte-identical); streaming input rejects `\G` loudly (the
 base is matcher state).
 
+**Possessive quantifiers — landed** (`docs/possessive-quantifiers.md`):
+`x*+`/`x++`/`x?+`/`x{n,m}+` on the jur facade — maximal munch that
+never gives back, lowered to a compile-time fork rule (per (kernel,
+range), the first fork config with a live edge steps and every
+lower-priority same-fork config's step on that range is dropped); the
+tags stay greedy-coincident and the runner/ASM tiers see only ordinary
+transition tables. The re2j facade keeps rejecting the spellings.
+
 One new `Semantics` axis, `ESCAPES_RE2` (set = re2j's readings, unset =
 the JDK's — the same shape as `SPACE_RE2`), gates the java-only
 backslash escapes. Unset (the jur facade):
