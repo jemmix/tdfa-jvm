@@ -141,6 +141,11 @@ final class JdkUnicodeDataProvider implements UnicodeDataProvider {
         if ("Alpha".equals(name)) {
             return alphabetic();
         }
+        // The grapheme-break inputs (UAX #29): no public Character surface
+        // exists for GCB, so core carries the baked snapshot table.
+        if (name.startsWith("gcb.") || name.startsWith("incb.")) {
+            return GraphemeBreakTables.tableFor(name);
+        }
         Map<String, int[]> cats = categories();
         int[] t = cats.get(name);
         if (t != null) {
