@@ -640,6 +640,59 @@ class JurApiParityTest {
         assertSameCompileReject("a\\Gb", factory);
     }
 
+    // ---- possessive quantifiers (docs/possessive-quantifiers.md) ----
+
+    /** The possessive family against the live JDK oracle, both engine
+     *  tiers — the language shrinks wherever backtracking would give
+     *  back, the tags stay greedy-coincident (the first-preference
+     *  path), and the nested-repetition rejects keep java's shape. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void possessiveQuantifiersMirrorTheJdk(RegexEngineFactory f) {
+        // Never give back: the quantifier ate what the continuation needed.
+        JurOracle.assertSameFind("a++a", "aa", f);
+        JurOracle.assertSameFind("a*+a", "aa", f);
+        JurOracle.assertSameFind("a*+a", "b", f);
+        JurOracle.assertSameFind("a?+a", "a", f);
+        JurOracle.assertSameFind("a{1,2}+a", "aa", f);
+        // Pass-through: no give-back required, the possessive form agrees.
+        JurOracle.assertSameFind("a*+b", "aaab", f);
+        JurOracle.assertSameFind("a?+b", "b", f);
+        JurOracle.assertSameFind("a{1,2}+b", "aab", f);
+        JurOracle.assertSameFind("[ab]++c", "abc", f);
+        // The per-iteration alternation commit + the loop that never re-tries.
+        JurOracle.assertSameFind("(a|ab)++c", "abc", f);
+        JurOracle.assertSameFind("(a|ab)+c", "abc", f); // the greedy twin still translates
+        JurOracle.assertSameFind("(?:a|b)*+b", "ab", f);
+        JurOracle.assertSameFind("(?:a|b)*b", "ab", f);
+        // Tags are greedy-coincident: the first-preference path reports.
+        Matcher jt = jur("(a++)b", "aab", 0);
+        PatternMatcher ot = io.github.jemmix.tdfa.Pattern.compile("(a++)b", 0, f).matcher("aab");
+        assertThat(ot.find()).isEqualTo(jt.find()).isTrue();
+        assertThat(ot.group(1)).isEqualTo(jt.group(1)).isEqualTo("aa");
+        Matcher jt2 = jur("(a|b)++", "ab", 0);
+        PatternMatcher ot2 = io.github.jemmix.tdfa.Pattern.compile("(a|b)++", 0, f).matcher("ab");
+        assertThat(ot2.find()).isEqualTo(jt2.find()).isTrue();
+        assertThat(ot2.group()).isEqualTo(jt2.group()).isEqualTo("ab");
+        assertThat(ot2.group(1)).isEqualTo(jt2.group(1)).isEqualTo("b"); // the LAST iteration
+        // Nested-repetition rejects keep java's shape.
+        JurOracle.assertSameCompileReject("a++?", f);
+        JurOracle.assertSameCompileReject("a+++", f);
+        JurOracle.assertSameCompileReject("a*++", f);
+    }
+
+    /** The RE2 lineage has no possessive quantifiers: the re2j facade
+     *  keeps rejecting every spelling like its oracle. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void re2jFacadeRejectsPossessiveQuantifiers(RegexEngineFactory factory) {
+        assertSameCompileReject("a++", factory);
+        assertSameCompileReject("a*+", factory);
+        assertSameCompileReject("a?+", factory);
+        assertSameCompileReject("a{2,3}+", factory);
+        assertSameCompileReject("(a|ab)++c", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void toMatchResultIsAnImmutableSnapshot(RegexEngineFactory f) {

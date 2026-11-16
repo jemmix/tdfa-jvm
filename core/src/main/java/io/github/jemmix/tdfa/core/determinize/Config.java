@@ -27,6 +27,14 @@ final class Config {
      * Reset to 0 by {@link TdfaCompiler#stepOnSymbol}.
      */
     int emptyMask;
+    /**
+     * Possessive-fork arrival bits (docs/possessive-quantifiers.md): bit
+     * {@code role} set when the closure traversed a fork ε-edge with that
+     * role ((forkId << 1) | rank — BODY entry vs EXIT). Lives exactly one
+     * closure: reset to 0 by the symbol step (the fork choice resolves at
+     * the choice kernel; downstream kernels are survivors only).
+     */
+    int forkArr;
 
     Config(int state, int[] regs, int h, int l, int emptyMask) {
         this(state, regs, h, l, emptyMask, 0);
@@ -39,6 +47,11 @@ final class Config {
         this.l = l;
         this.emptyMask = emptyMask;
         this.pri = pri;
+    }
+
+    Config(int state, int[] regs, int h, int l, int emptyMask, int pri, int forkArr) {
+        this(state, regs, h, l, emptyMask, pri);
+        this.forkArr = forkArr;
     }
 }
 

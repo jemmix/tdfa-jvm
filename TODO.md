@@ -17,7 +17,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 - [ ] `\b{g}`/`\b{gc}` boundaries via tracker automaton
 - [ ] `CANON_EQ`: compile-time canonical-equivalence pattern rewrite
 - [ ] Scoped inline `(?d)`: per-scope terminator tables
-- [ ] Possessive quantifiers: prune directive, greedy-coincident tags
 - [ ] Atomic groups: decision record, VM prototype first
 
 ## Correctness

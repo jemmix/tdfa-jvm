@@ -129,17 +129,18 @@ final class TdfaStateIndex {
     private void fillKeySig(List<Config> configs) {
         int n = configs.size();
         int total = 0;
+        boolean forks = owner.possessiveForks > 0;
         if (owner.tags == 0) {
             // dense tagless sig: (state, emptyMask[, pri]) — l is always empty
             for (int i = 0; i < n; i++) {
-                total += 2 + (owner.longest ? 1 : 0);
+                total += 2 + (owner.longest ? 1 : 0) + (forks ? 1 : 0);
             }
         } else {
             // l enters the signature as its HASH-CONSED ID — one int per
             // config instead of the full history content (interning makes
             // id equality exact content equality).
             for (int i = 0; i < n; i++) {
-                total += 3 + (owner.longest ? 1 : 0);
+                total += 3 + (owner.longest ? 1 : 0) + (forks ? 1 : 0);
             }
         }
         if (probeSig.length < total) {
@@ -155,6 +156,9 @@ final class TdfaStateIndex {
             probeSig[j++] = c.emptyMask;
             if (owner.longest) {
                 probeSig[j++] = c.pri;
+            }
+            if (forks) {
+                probeSig[j++] = c.forkArr; // fork arrivals distinguish choice kernels
             }
         }
         probe.sig = probeSig;
@@ -450,7 +454,7 @@ final class TdfaStateIndex {
         List<Config> oldConfigs = old.boxed;
         int[] oldPacked = old.packed;
         int size = newConfigs.size();
-        if (oldPacked != null ? oldPacked.length != size * 2 : oldConfigs.size() != size) {
+        if (oldPacked != null ? oldPacked.length != size * 3 : oldConfigs.size() != size) {
             return null;
         }
         // Tagless patterns: no registers exist, so the (empty) bijection is
@@ -462,7 +466,7 @@ final class TdfaStateIndex {
         // silently flip priorities.
         if (owner.tags == 0) {
             for (int i = 0; i < size; i++) {
-                int oldState = oldPacked != null ? oldPacked[i * 2] : oldConfigs.get(i).state;
+                int oldState = oldPacked != null ? oldPacked[i * 3] : oldConfigs.get(i).state;
                 if (newConfigs.get(i).state != oldState) {
                     return null;
                 }

@@ -15,6 +15,7 @@ import io.github.jemmix.tdfa.core.dialect.Terminators;
 import io.github.jemmix.tdfa.core.parser.ParseOptions;
 import io.github.jemmix.tdfa.core.parser.ParseResult;
 import io.github.jemmix.tdfa.core.parser.Parser;
+import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
 import io.github.jemmix.tdfa.core.report.CompileObserver;
 import io.github.jemmix.tdfa.core.semantic.Resolve;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
@@ -62,6 +63,14 @@ public final class Tnfa {
 
     public final int stateCount;
     public final int[] epsFrom, epsTo, epsPri, epsTag, epsEmptyMask;
+    /** Possessive-fork roles per ε-edge (see docs/possessive-quantifiers.md):
+     *  0 = none, else {@code role + 1} where role = {@code (forkId << 1) | rank}
+     *  (rank 0 = the fork's BODY entry, 1 = its EXIT). Compile-time only —
+     *  the determinizer resolves the fork rule into the transition tables. */
+    public final int[] epsForkRole;
+    /** Possessive forks minted by this compile (≤ 16 — the closure's
+     *  per-config fork bitset is an int, two bits per fork). */
+    public final int possessiveForks;
     public final int[] symFrom, symTo;
     public final CharClass[] symClass;
     public final int start, accept;
@@ -182,16 +191,19 @@ public final class Tnfa {
     /** Fullest entry: the StartS-selection fact (see
      *  {@link #hasSupplementaryStarts}) rides beside the policy. */
     public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
-        int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept, int tagCount, int groupCount,
-        boolean multiline, boolean unicodeWordBoundary, int[] wordRanges, Map<String, Integer> namedGroups,
-        int[] fixedBase, int[] fixedOffset, boolean[] dissolvedTags, boolean[] surfaceFinalTags,
-        boolean multiValuedTags, Semantics semantics, boolean hasSupplementaryStarts, boolean rootBeginAnchor) {
+        int[] epsForkRole, int possessiveForks, int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept,
+        int tagCount, int groupCount, boolean multiline, boolean unicodeWordBoundary, int[] wordRanges,
+        Map<String, Integer> namedGroups, int[] fixedBase, int[] fixedOffset, boolean[] dissolvedTags,
+        boolean[] surfaceFinalTags, boolean multiValuedTags, Semantics semantics, boolean hasSupplementaryStarts,
+        boolean rootBeginAnchor) {
         this.stateCount = stateCount;
         this.epsFrom = epsFrom;
         this.epsTo = epsTo;
         this.epsPri = epsPri;
         this.epsTag = epsTag;
         this.epsEmptyMask = epsEmptyMask;
+        this.epsForkRole = epsForkRole;
+        this.possessiveForks = possessiveForks;
         this.symFrom = symFrom;
         this.symTo = symTo;
         this.symClass = symClass;
@@ -490,7 +502,11 @@ public final class Tnfa {
     }
 
     private static final class Builder {
-        final List<int[]> eps = new ArrayList<>(); // [from, to, pri, tag, emptyMask]
+        final List<int[]> eps = new ArrayList<>(); // [from, to, pri, tag, emptyMask, forkRole+1]
+        /** Possessive forks minted so far (the Repeat dispatch mints one
+         *  per possessive construct; ≤ 16 — the closure's per-config
+         *  bitset is an int). */
+        int possessiveForks;
         final List<int[]> syms = new ArrayList<>(); // [from, to]
         final List<CharClass> symClasses = new ArrayList<>();
         int counter = 0;
@@ -525,19 +541,27 @@ public final class Tnfa {
         void eps(int from, int to, int pri) {
             meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
             charge(BudgetWeights.TNFA_EPS_EDGE_BYTES);
-            eps.add(new int[]{from, to, pri, NO_TAG, 0});
+            eps.add(new int[]{from, to, pri, NO_TAG, 0, 0});
         }
 
         void taggedEps(int from, int to, int pri, int tag) {
             meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
             charge(BudgetWeights.TNFA_EPS_EDGE_BYTES);
-            eps.add(new int[]{from, to, pri, tag, 0});
+            eps.add(new int[]{from, to, pri, tag, 0, 0});
         }
 
         void anchorEps(int from, int to, int pri, int emptyMask) {
             meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
             charge(BudgetWeights.TNFA_EPS_EDGE_BYTES);
-            eps.add(new int[]{from, to, pri, NO_TAG, emptyMask});
+            eps.add(new int[]{from, to, pri, NO_TAG, emptyMask, 0});
+        }
+
+        /** A possessive fork's ε-edge: {@code role} = (forkId << 1) | rank
+         *  (rank 0 BODY, 1 EXIT); stored as role+1 (0 = none). */
+        void forkEps(int from, int to, int pri, int role) {
+            meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
+            charge(BudgetWeights.TNFA_EPS_EDGE_BYTES);
+            eps.add(new int[]{from, to, pri, NO_TAG, 0, role + 1});
         }
 
         void sym(int from, int to, CharClass cc) {
@@ -559,6 +583,7 @@ public final class Tnfa {
             static final int STAR_PLAIN = 5; // e* with non-nullable body: hub loop
             static final int PLUS = 6; // e+
             static final int BOUNDED_ZWE = 7; // marked {n,m}/{n,}: zero-width-exit split copies
+            static final int WRAP_FORK = 8; // possessive: wrap the built construct's entry in a BODY-stamped ε
 
             int kind = DISPATCH;
             Ast node; // DISPATCH/CONCAT/ALT: the node; repeat kinds: the body
@@ -581,6 +606,11 @@ public final class Tnfa {
             int zweCtl = -1; // optional unit's controller C (enter edge pending); -1 = mandatory
             int zweEntry = -1; // the quantifier's overall entry (first unit's entry)
             int zweLo; // node-range start of the current unit's body fragment
+            // possessive fork roles for this construct (0 = none — fork 0's
+            // BODY role is 0, so the frames carry the ENCODED roles and the
+            // stamping sites pass them through forkEps, whose +1 storage
+            // keeps 0 = unstamped)
+            int forkBody, forkExit;
             int zweDone; // completed units
             int zweUnits; // total units (mandatory + optional + the {n,} plus tail)
             int zweMandatory; // mandatory split units
@@ -671,6 +701,26 @@ public final class Tnfa {
                     boolean lazy = !r.greedy;
                     int bodyPri = lazy ? 2 : 1;
                     int skipPri = lazy ? 1 : 2;
+                    if (r.possessive) {
+                        if (possessiveForks >= 12) {
+                            throw new PatternSyntaxException("too many possessive quantifiers (max 12 per pattern)");
+                        }
+                        f.forkBody = possessiveForks << 1;
+                        f.forkExit = f.forkBody | 1;
+                        possessiveForks++;
+                        // The entry wrap: the construct's FIRST body iteration is
+                        // entered directly (no hub crossing), so its alternation
+                        // paths would carry no fork bits and escape the rule.
+                        // Wrapping the entry stamps BODY on everything below;
+                        // every EXIT edge RESETS the fork's bits (leaving the
+                        // fork is committing out), so exit paths stay clean.
+                        BuildFrame wf = new BuildFrame();
+                        wf.kind = BuildFrame.WRAP_FORK;
+                        wf.forkBody = f.forkBody;
+                        wf.entryTo = f.entryTo;
+                        frames.push();
+                        stack.push(wf);
+                    }
                     if (min == 0 && max == 1) {
                         // e? : newStart -(pri bodyPri)-> body -> entryTo ; newStart -(pri skipPri)-> [ntags] -> entryTo
                         f.kind = BuildFrame.QUEST;
@@ -796,6 +846,7 @@ public final class Tnfa {
                         // (g1=""), diverging from re2j.
                         // min >= 2 here ({0,} star and {1,} plus have their own cases).
                         tail = new Ast.Repeat(body, 1, Integer.MAX_VALUE, r.greedy);
+                        tail.possessive = r.possessive;
                     } else if (max > min) {
                         // {n,m} = mandatory + RIGHT-NESTED optional suffix (x(x(x)?)?)?,
                         // exactly re2j Simplify's shape ("x{2,5} = xx(x(x(x)?)?)?").
@@ -807,10 +858,12 @@ public final class Tnfa {
                         // report g2="a" — two outer iterations — a flat tail reports
                         // g2="aa").
                         tail = new Ast.Repeat(body, 0, 1, r.greedy);
+                        tail.possessive = r.possessive;
                         for (int i = min + 1; i < max; i++) {
                             tail =
                                 new Ast.Repeat(new Ast.Concat(Collections.unmodifiableList(Arrays.asList(body, tail))),
                                     0, 1, r.greedy);
+                            tail.possessive = r.possessive;
                         }
                     }
                     // Build the copies FLAT through a concat frame: {n,}
@@ -871,12 +924,27 @@ public final class Tnfa {
                     }
                     continue;
                 }
+                if (f.kind == BuildFrame.WRAP_FORK) {
+                    int w = fresh();
+                    forkEps(w, result, 1, f.forkBody);
+                    result = w;
+                    frames.pop();
+                    continue;
+                }
                 if (f.kind == BuildFrame.QUEST) {
                     int bodyStart = result;
-                    eps(f.s, bodyStart, f.bodyPri);
+                    if (f.forkBody != 0 || f.forkExit != 0) {
+                        forkEps(f.s, bodyStart, f.bodyPri, f.forkBody);
+                    } else {
+                        eps(f.s, bodyStart, f.bodyPri);
+                    }
                     // Initial skip path: prepend ntags for body groups (0 iterations ⇒ no match).
                     int skipTarget = ntagChain(f.node, f.entryTo);
-                    eps(f.s, skipTarget, f.skipPri);
+                    if (f.forkBody != 0 || f.forkExit != 0) {
+                        forkEps(f.s, skipTarget, f.skipPri, f.forkExit);
+                    } else {
+                        eps(f.s, skipTarget, f.skipPri);
+                    }
                     result = f.s;
                     frames.pop();
                     continue;
@@ -890,23 +958,51 @@ public final class Tnfa {
                         bodyStart = zweSplit(result, f.s, f.entryTo, f.zweLo);
                     }
                     int hub = f.s;
-                    eps(hub, bodyStart, f.bodyPri); // iterate (no ntag; group already matched)
-                    eps(hub, f.entryTo, f.skipPri); // or exit (no ntag)
+                    boolean pfork = f.forkBody != 0 || f.forkExit != 0;
+                    if (pfork) {
+                        forkEps(hub, bodyStart, f.bodyPri, f.forkBody); // iterate (no ntag; group already matched)
+                        forkEps(hub, f.entryTo, f.skipPri, f.forkExit); // or exit (no ntag)
+                    } else {
+                        eps(hub, bodyStart, f.bodyPri);
+                        eps(hub, f.entryTo, f.skipPri);
+                    }
                     int s0 = fresh(); // quest: skip vs enter the plus
-                    eps(s0, bodyStart, f.bodyPri);
+                    if (pfork) {
+                        forkEps(s0, bodyStart, f.bodyPri, f.forkBody);
+                    } else {
+                        eps(s0, bodyStart, f.bodyPri);
+                    }
                     int skipFromStart = ntagChain(f.node, f.entryTo);
-                    eps(s0, skipFromStart, f.skipPri);
+                    if (pfork) {
+                        forkEps(s0, skipFromStart, f.skipPri, f.forkExit);
+                    } else {
+                        eps(s0, skipFromStart, f.skipPri);
+                    }
                     result = s0;
                     frames.pop();
                     continue;
                 }
                 if (f.kind == BuildFrame.STAR_PLAIN) {
                     int bodyStart = result;
-                    eps(f.s, f.hub, f.bodyPri); // enter the loop (greedy) / skip (lazy)
+                    boolean pfork = f.forkBody != 0 || f.forkExit != 0;
+                    if (pfork) {
+                        forkEps(f.s, f.hub, f.bodyPri, f.forkBody); // enter the loop (greedy) / skip (lazy)
+                    } else {
+                        eps(f.s, f.hub, f.bodyPri);
+                    }
                     int skipFromStart = ntagChain(f.node, f.entryTo);
-                    eps(f.s, skipFromStart, f.skipPri);
-                    eps(f.hub, bodyStart, f.bodyPri); // iterate (no ntag; group already matched)
-                    eps(f.hub, f.entryTo, f.skipPri); // or exit
+                    if (pfork) {
+                        forkEps(f.s, skipFromStart, f.skipPri, f.forkExit);
+                    } else {
+                        eps(f.s, skipFromStart, f.skipPri);
+                    }
+                    if (pfork) {
+                        forkEps(f.hub, bodyStart, f.bodyPri, f.forkBody); // iterate (no ntag; group already matched)
+                        forkEps(f.hub, f.entryTo, f.skipPri, f.forkExit); // or exit
+                    } else {
+                        eps(f.hub, bodyStart, f.bodyPri);
+                        eps(f.hub, f.entryTo, f.skipPri);
+                    }
                     result = f.s;
                     frames.pop();
                     continue;
@@ -919,8 +1015,14 @@ public final class Tnfa {
                         // writes at the body's own branch priority
                         bodyStart = zweSplit(result, f.s, f.entryTo, f.zweLo);
                     }
-                    eps(f.s, bodyStart, f.bodyPri);
-                    eps(f.s, f.entryTo, f.skipPri);
+                    boolean pfork = f.forkBody != 0 || f.forkExit != 0;
+                    if (pfork) {
+                        forkEps(f.s, bodyStart, f.bodyPri, f.forkBody);
+                        forkEps(f.s, f.entryTo, f.skipPri, f.forkExit);
+                    } else {
+                        eps(f.s, bodyStart, f.bodyPri);
+                        eps(f.s, f.entryTo, f.skipPri);
+                    }
                     result = bodyStart;
                     frames.pop();
                     continue;
@@ -943,7 +1045,11 @@ public final class Tnfa {
                     // the quantifier exit, consuming paths keep the copy exit
                     int pure = zweSplit(result, f.zweExit, f.entryTo, f.zweLo);
                     if (f.zweCtl >= 0) {
-                        eps(f.zweCtl, pure, f.bodyPri);
+                        if (f.forkBody != 0 || f.forkExit != 0) {
+                            forkEps(f.zweCtl, pure, f.bodyPri, f.forkBody);
+                        } else {
+                            eps(f.zweCtl, pure, f.bodyPri);
+                        }
                         f.zweCtl = -1;
                     }
                     if (f.zweIn >= 0) {
@@ -1085,13 +1191,18 @@ public final class Tnfa {
                 boolean lazy = f.bodyPri != 1;
                 Ast.Repeat plus = new Ast.Repeat(f.node, 1, Integer.MAX_VALUE, !lazy);
                 plus.zeroWidthExit = true; // the body qualified the outer mark; the tail re-loops it
+                plus.possessive = f.forkBody != 0 || f.forkExit != 0;
                 pushNode(stack, plus, f.entryTo);
                 return;
             }
             boolean optional = f.zweDone >= f.zweMandatory;
             if (optional) {
                 int c = fresh();
-                eps(c, ntagChain(f.node, f.entryTo), f.skipPri);
+                if (f.forkBody != 0 || f.forkExit != 0) {
+                    forkEps(c, ntagChain(f.node, f.entryTo), f.skipPri, f.forkExit);
+                } else {
+                    eps(c, ntagChain(f.node, f.entryTo), f.skipPri);
+                }
                 if (f.zweIn >= 0) {
                     eps(f.zweIn, c, 1);
                     f.zweIn = -1;
@@ -1222,7 +1333,7 @@ public final class Tnfa {
         private void zwEps(int from, int to, int pri, int tag, int emptyMask) {
             meter.tick(BudgetWeights.TNFA_BUILD_ACTION_TICKS);
             charge(BudgetWeights.TNFA_EPS_EDGE_BYTES);
-            eps.add(new int[]{from, to, pri, tag, emptyMask});
+            eps.add(new int[]{from, to, pri, tag, emptyMask, 0});
         }
 
         /** Collect group numbers (1-based) used anywhere in the AST subtree.
@@ -1346,6 +1457,7 @@ public final class Tnfa {
             boolean hasSupplementaryStarts, boolean rootBeginAnchor) {
             int n = eps.size();
             int[] eFrom = new int[n], eTo = new int[n], ePri = new int[n], eTag = new int[n], eEmpty = new int[n];
+            int[] eFork = new int[n];
             for (int i = 0; i < n; i++) {
                 int[] e = eps.get(i);
                 eFrom[i] = e[0];
@@ -1353,13 +1465,15 @@ public final class Tnfa {
                 ePri[i] = e[2];
                 eTag[i] = e[3];
                 eEmpty[i] = e[4];
+                eFork[i] = e[5];
             }
             int[] sFrom = syms.stream().mapToInt(a -> a[0]).toArray();
             int[] sTo = syms.stream().mapToInt(a -> a[1]).toArray();
             CharClass[] sClass = symClasses.toArray(new CharClass[0]);
-            return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, sFrom, sTo, sClass, start, accept, tagCount,
-                groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase, fixedOffset,
-                dissolvedTags, surfaceFinalTags, multiValuedTags, semantics, hasSupplementaryStarts, rootBeginAnchor);
+            return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, eFork, possessiveForks, sFrom, sTo, sClass, start,
+                accept, tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase,
+                fixedOffset, dissolvedTags, surfaceFinalTags, multiValuedTags, semantics, hasSupplementaryStarts,
+                rootBeginAnchor);
         }
     }
 }
