@@ -3673,11 +3673,12 @@ public final class DifferentialFuzzer {
             if (o.oracle.startsWith("<exception")) {
                 return "oracle-threw";
             }
-            // The JDK-8394894 grapheme family: the syntax this engine
-            // consciously rejects (docs/jur-api-parity.md) while the live
-            // oracle accepts it (\X, the \b{g}/\b{gc=...} boundary
-            // clauses) — a compile-divergence domain exclusion, never a
-            // finding. Shape-gated on BOTH tdfa compiles rejecting the
+            // The JDK-8394894 grapheme family. \X LANDED (it translates —
+            // its shapes compare hard); the boundary clauses (\b{g}/
+            // \b{gc=...}) are still the syntax this engine consciously
+            // rejects (docs/jur-api-parity.md) while the live oracle
+            // accepts them — a compile-divergence domain exclusion, never
+            // a finding. Shape-gated on BOTH tdfa compiles rejecting the
             // grapheme construct; a pattern that rejects for any OTHER
             // reason on the jur lane stays a hard COMPILE_PARITY finding.
             if (graphemeConstruct(p) && o.asm.startsWith("<reject") && o.vm.startsWith("<reject")) {

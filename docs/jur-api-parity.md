@@ -202,21 +202,31 @@ in a class only `\0`-led octal is legal, bare `[\0]` an octal error),
 so the lane rejects those spellings loudly instead of reading octal;
 re2j's octal/NUL readings stay on the :re2j facade — the BackrefParityTest twins pin both sides).
 
-**Graphemes (JDK-8394894) — rejected loudly, never silently degraded.**
-`\X` rejects at the parse (re2j's alphabet — both facades, oracle-parity
-on the re2j lane). The java boundary clauses `\b{g}`, `\b{gc=…}` and
-every other non-quantifier brace after `\b`/`\B` reject under the jur
-reading (the ESCAPES_RE2 axis's unset side): java reads that brace as
-its boundary-type clause or an illegal repetition — NEVER a literal —
-while the re2j facade keeps the literal-brace reading (re2j's alphabet,
-pinned by `re2jFacadeKeepsTheLiteralBraceReading` and the RE2J fuzz
-lane; the literal spelling is `\b\{`). Before the vs-jur fuzz landing
-the parser silently read the RE2 literal on the jur lane — the first
-finding of the region/grapheme axis. The fuzz coverage: a fifth
-generator family draws `\X`/`\b{g}` shapes over cluster-carrying
-inputs (the jur lane classifies them `graphemes-unsupported`, the RE2J
-lane compares the literal reading hard), pinned cell-for-cell in
-`JurApiParityTest.graphemeBoundaryClausesRejectLoudly…`.
+**Graphemes (JDK-8394894) — `\X` landed; the boundary clauses reject
+loudly, never silently degraded.** `\X` (one extended grapheme cluster,
+UAX #29) translates on the jur facade as the TR29 rule alternation over
+the provider's break tables — pure syntax, no engine support: the
+gcb/ExtPict/InCB classes come from the data pipeline (the pinned
+providers carry them per snapshot; the DEFAULT provider serves them
+from core's baked `GraphemeBreakTables` — 17.0-frozen, the JDK exposes
+no public GCB surface). Battery-pinned cluster-sequence-for-cluster-
+sequence against the live JDK over the rule families (GB3/4/5/6-8/9/
+9a/9b/9c/11/12/13), both engine tiers. The java boundary clauses
+`\b{g}`, `\b{gc=…}` and every other non-quantifier brace after `\b`/
+`\B` still reject under the jur reading (the ESCAPES_RE2 axis's unset
+side): java reads that brace as its boundary-type clause or an illegal
+repetition — NEVER a literal — while the re2j facade keeps the
+literal-brace reading (re2j's alphabet, pinned by
+`re2jFacadeKeepsTheLiteralBraceReading` and the RE2J fuzz lane; the
+literal spelling is `\b\{`). Before the vs-jur fuzz landing the parser
+silently read the RE2 literal on the jur lane — the first finding of
+the region/grapheme axis. The fuzz coverage: a fifth generator family
+draws `\X`/`\b{g}` shapes over cluster-carrying inputs (the jur lane
+now ANSWERS the `\X` shapes and classifies only the boundary clauses
+`graphemes-unsupported`, the RE2J lane compares the literal reading
+hard), pinned cell-for-cell in
+`JurApiParityTest.graphemeClusterAtomMirrorsTheJdk` and
+`graphemeBoundaryClausesRejectLoudly…`.
 
 ## How it is verified
 

@@ -327,15 +327,13 @@ class JurApiParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void graphemeBoundaryClausesRejectLoudlyOnTheJurFacade(RegexEngineFactory f) {
-        // \X: re2j's invalid-escape reject (java's grapheme atom — the
-        // documented unsupported family)
-        for (String p : new String[]{"\\X", "a\\Xb", "(?:\\X)+"}) {
-            assertThatThrownBy(() -> io.github.jemmix.tdfa.Pattern.compile(p, 0, f)).as("jur rejects %s", p)
-                .isInstanceOf(io.github.jemmix.tdfa.core.parser.PatternSyntaxException.class);
-        }
+        // \X LANDED (graphemeClusterAtomMirrorsTheJdk below): the atom
+        // translates; a\\Xb and (?:\\X)+ ride it.
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("a\\Xb", 0, f).matcher("a\u0301b").find()).isTrue();
+        assertThat(io.github.jemmix.tdfa.Pattern.compile("(?:\\X)+", 0, f).matcher("x").find()).isTrue();
         // the \b{...}/\B{...} boundary clauses: the named grapheme
         // rejection (java's clause spellings) and the illegal-repetition
-        // spellings alike
+        // spellings alike — the boundary family stays unsupported
         for (String p : new String[]{"\\b{g}", "\\b{gc=L}", "\\b{w}", "\\B{g}", "\\b{}"}) {
             assertThatThrownBy(() -> io.github.jemmix.tdfa.Pattern.compile(p, 0, f)).as("jur rejects %s", p)
                 .isInstanceOf(io.github.jemmix.tdfa.core.parser.PatternSyntaxException.class)
@@ -343,6 +341,44 @@ class JurApiParityTest {
         }
         // the quantifier spelling is legal java in both readings
         assertThat(io.github.jemmix.tdfa.Pattern.compile("\\b{2,3}", 0, f).matcher("xx").find()).isTrue();
+    }
+
+    /** {@code \X} — one extended grapheme cluster — against the live JDK
+     *  oracle, both engine tiers: the full cluster-sequence comparison
+     *  (every cluster's codepoint count, find-iteration order included).
+     *  Cells span the rule families: combining marks (GB9), stacked and
+     *  orphan leads, CR×LF (GB3) and lone controls (GB4/5), RI pairs
+     *  (GB12/13 — including the odd trailing RI), skin tones and ZWJ
+     *  chains (GB11/GB9), Hangul jamo sequences and precomposed syllables
+     *  (GB6-8), Indic conjuncts (GB9c), and Prepend (GB9b). */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void graphemeClusterAtomMirrorsTheJdk(RegexEngineFactory f) {
+        String[] cells = {"abc", "cafe\u0301", "e\u0301\u0308", "\u0301", "\r\n\r", "\r", "\n\n",
+            "\uD83C\uDDFA\uD83C\uDDF8", "\uD83C\uDDFA\uD83C\uDDF8\uD83C\uDDEB\uD83C\uDDF7",
+            "\uD83C\uDDFA\uD83C\uDDF8\uD83C\uDDEB\uD83C\uDDF7\uD83C\uDDFA", "\uD83D\uDC4D\uD83C\uDFFD",
+            "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67",
+            "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67\u200D\uD83D\uDC66", "\u1100\u1161\u11A8", "\uAC01",
+            "\u1100\uAC01\u11A8", "\u1100\u1161", "a\uD83D\uDC4Db", "\u0905\u094D\u0915", "\u0C15\u0C4D\u0C15",
+            "\u0600abc", "\u0600\u0600a", "x\u200Dy", "\u200D"};
+        for (String in : cells) {
+            StringBuilder js = new StringBuilder(), os = new StringBuilder();
+            Matcher jm = jur("\\X", in, 0);
+            while (jm.find()) {
+                js.append('[').append(jm.group().codePointCount(0, jm.group().length())).append(']');
+            }
+            PatternMatcher om = io.github.jemmix.tdfa.Pattern.compile("\\X", 0, f).matcher(in);
+            while (om.find()) {
+                os.append('[').append(om.group().codePointCount(0, om.group().length())).append(']');
+            }
+            assertThat(os.toString()).as("\\X cluster sequence on \"%s\"", in).isEqualTo(js.toString());
+        }
+        // \X under a quantifier and mid-pattern, oracle-compared
+        JurOracle.assertSameFind("(?:\\X)+", "cafe\u0301", f);
+        JurOracle.assertSameFind("\\Xb", "a\u0301b", f);
+        JurOracle.assertSameFind("a\\X", "a\u0301", f);
+        // In a class \X is illegal in java too — both reject.
+        JurOracle.assertSameCompileReject("[\\X]", f);
     }
 
     /** The re2j facade keeps its literal-brace reading (re2j's alphabet —
