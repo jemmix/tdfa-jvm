@@ -885,7 +885,8 @@ final class TdfaMaterializer {
         return new Tdfa(nfa.tagCount, nfa.groupCount, nfa.namedGroups, flat.globalMaxReg, flat.finalRegBase, 0,
             stateCount, flat.meta, flat.base, flat.finalOpsOff, flat.finalOpsByMask, flat.ranges, flat.ops, hiPrefix,
             flat.entryMask, flat.acceptMask, longest, finalStop, uniformStop, nfa.multiline, nfa.unicodeWordBoundary,
-            nfa.wordRanges, fixed ? nfa.fixedBase : null, fixed ? nfa.fixedOffset : null, flat.pikeCutMatters,
+            nfa.wordRanges, nfa.graphemeTables, fixed ? nfa.fixedBase : null, fixed ? nfa.fixedOffset : null,
+            flat.pikeCutMatters,
             flat.wholeRanges, flat.wholeBase, flat.wholeCount, flat.wholeHiPrefix, flat.wholeSideComplete,
             nfa.multiValuedTags, nfa.semantics, flat.posFlagCells, nfa.hasSupplementaryStarts, nfa.rootBeginAnchor);
     }

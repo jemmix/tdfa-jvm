@@ -97,6 +97,10 @@ public final class Tnfa {
     public final Semantics semantics;
     public final boolean unicodeWordBoundary;
     public final int[] wordRanges;
+    /** The grapheme-break inputs for {@code \b{g}} (null when the pattern
+     *  does not consult the boundary — the tables resolve from the
+     *  compile's provider only then). */
+    public final io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables;
     public final Map<String, Integer> namedGroups;
     /**
      * Fixed-tag annotations per tag id (1-based; index 0 unused). {@code fixedBase[t] != 0}
@@ -178,6 +182,13 @@ public final class Tnfa {
      *  tables; the run ladder routes artifacts that consult it through the
      *  generic walk, the region seams' posture). */
     public static final int PREV_MATCH_END = 128;
+    /** {@code \b{g}}: a grapheme-cluster boundary — java's operational
+     *  reading (live-JDK probed): the predicate scans clusters FORWARD from
+     *  the previous match's end (matcher.last, 0-clamped — the \G base
+     *  family) and answers TRUE at the region start or at/after the next
+     *  boundary; the position `last` itself reads FALSE (java's own quirk,
+     *  battery-pinned). Rides the position-flag cells like \G. */
+    public static final int GRAPH_BOUNDARY = 256;
 
     /** The RE2-lineage preset (every axis at its RE2-side value): the
      *  compile-entry default when a caller passes no explicit
@@ -193,6 +204,7 @@ public final class Tnfa {
     public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
         int[] epsForkRole, int possessiveForks, int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept,
         int tagCount, int groupCount, boolean multiline, boolean unicodeWordBoundary, int[] wordRanges,
+        io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables,
         Map<String, Integer> namedGroups, int[] fixedBase, int[] fixedOffset, boolean[] dissolvedTags,
         boolean[] surfaceFinalTags, boolean multiValuedTags, Semantics semantics, boolean hasSupplementaryStarts,
         boolean rootBeginAnchor) {
@@ -216,6 +228,7 @@ public final class Tnfa {
         this.semantics = semantics;
         this.unicodeWordBoundary = unicodeWordBoundary;
         this.wordRanges = wordRanges;
+        this.graphemeTables = graphemeTables;
         this.namedGroups = namedGroups;
         this.fixedBase = fixedBase;
         this.fixedOffset = fixedOffset;
@@ -436,7 +449,8 @@ public final class Tnfa {
         int accept = b.fresh();
         int start = b.build(ast, accept);
         Tnfa nfa = b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(), parsed.unicodeShorthand(),
-            parsed.unicodeWordRanges(), parsed.namedGroups(), fixedBase, fixedOffset, dissolved, surfaced,
+            parsed.unicodeWordRanges(), parsed.graphemeTables(), parsed.namedGroups(), fixedBase, fixedOffset,
+            dissolved, surfaced,
             multiValuedTags, semantics, parsed.hasSupplementaryStarts(), parsed.rootBeginAnchor());
         obs.stage(CompileObserver.Stage.TNFA, System.nanoTime() - t1, nfa.stateCount);
         return nfa;
@@ -1148,6 +1162,8 @@ public final class Tnfa {
                     return NO_WORD_BOUNDARY;
                 case PREV_MATCH_END :
                     return PREV_MATCH_END;
+                case GRAPH_BOUNDARY :
+                    return GRAPH_BOUNDARY;
                 default :
                     throw new IllegalStateException("unresolved policy assertion reached the builder: " + kind);
             }
@@ -1452,7 +1468,8 @@ public final class Tnfa {
         }
 
         Tnfa build(int start, int accept, int tagCount, int groupCount, boolean multiline, boolean unicodeWordBoundary,
-            int[] wordRanges, Map<String, Integer> namedGroups, int[] fixedBase, int[] fixedOffset,
+            int[] wordRanges, io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables,
+            Map<String, Integer> namedGroups, int[] fixedBase, int[] fixedOffset,
             boolean[] dissolvedTags, boolean[] surfaceFinalTags, boolean multiValuedTags, Semantics semantics,
             boolean hasSupplementaryStarts, boolean rootBeginAnchor) {
             int n = eps.size();
@@ -1470,10 +1487,10 @@ public final class Tnfa {
             int[] sFrom = syms.stream().mapToInt(a -> a[0]).toArray();
             int[] sTo = syms.stream().mapToInt(a -> a[1]).toArray();
             CharClass[] sClass = symClasses.toArray(new CharClass[0]);
-            return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, eFork, possessiveForks, sFrom, sTo, sClass, start,
-                accept, tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, namedGroups, fixedBase,
-                fixedOffset, dissolvedTags, surfaceFinalTags, multiValuedTags, semantics, hasSupplementaryStarts,
-                rootBeginAnchor);
+            return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, eFork, possessiveForks, sFrom, sTo, sClass,
+                start, accept, tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, graphemeTables,
+                namedGroups, fixedBase, fixedOffset, dissolvedTags, surfaceFinalTags, multiValuedTags, semantics,
+                hasSupplementaryStarts, rootBeginAnchor);
         }
     }
 }

@@ -38,13 +38,14 @@ public final class ParseResult {
     private final boolean multiline;
     private final boolean unicodeShorthand;
     private final int[] unicodeWordRanges;
+    private final io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables;
     private final Map<String, Integer> namedGroups;
     private final boolean hasSupplementaryStarts;
     private final boolean rootBeginAnchor;
 
     public ParseResult(Ast ast, int tagCount, int groupCount, boolean multiline, boolean unicodeShorthand,
         int[] unicodeWordRanges, Map<String, Integer> namedGroups, boolean hasSupplementaryStarts,
-        boolean rootBeginAnchor) {
+        boolean rootBeginAnchor, io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables) {
         this.ast = ast;
         this.tagCount = tagCount;
         this.groupCount = groupCount;
@@ -56,6 +57,7 @@ public final class ParseResult {
         // Defensive copy: an array field is otherwise only as immutable as
         // the caller's discipline.
         this.unicodeWordRanges = unicodeWordRanges != null ? unicodeWordRanges.clone() : null;
+        this.graphemeTables = graphemeTables;
         this.hasSupplementaryStarts = hasSupplementaryStarts;
         this.rootBeginAnchor = rootBeginAnchor;
     }
@@ -83,6 +85,12 @@ public final class ParseResult {
     /** Defensive copy on read too — hands out a fresh array each call. */
     public int[] unicodeWordRanges() {
         return unicodeWordRanges != null ? unicodeWordRanges.clone() : null;
+    }
+
+    /** The grapheme-break inputs when the parse consulted {@code \b{g}}
+     *  (else null). */
+    public io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables() {
+        return graphemeTables;
     }
 
     public Map<String, Integer> namedGroups() {

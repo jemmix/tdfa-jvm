@@ -223,7 +223,14 @@ public abstract class Ast {
          *  end otherwise, unchanged by failed searches). An op-constant BASE,
          *  like the region's anchoring bounds: the bit rides the generic
          *  walk's threaded bases, never the position-flag tables. */
-        PREV_MATCH_END("\\G");
+        PREV_MATCH_END("\\G"),
+        /** {@code \b{g}}: a grapheme-cluster boundary — java's OPERATIONAL
+         *  reading (live-JDK probed): clusters scan forward from the
+         *  previous match's end (the \G base family) and the predicate
+         *  answers at the region start or at/after the next boundary; the
+         *  position {@code last} itself reads FALSE (java's own quirk,
+         *  battery-pinned). Rides the position-flag cells. */
+        GRAPH_BOUNDARY("\\b{g}");
 
         private final String symbol;
 

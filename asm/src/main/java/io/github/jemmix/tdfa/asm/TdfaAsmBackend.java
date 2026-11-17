@@ -146,7 +146,9 @@ public final class TdfaAsmBackend {
         // embedded runner's region-generalized walk carries it. The
         // shells read usesPrevMatchEnd() and route their hot methods
         // to the machinery implementations, which arm the base.
-            || (tdfa.posFlagDeps() & Tnfa.PREV_MATCH_END) != 0;
+            || (tdfa.posFlagDeps() & Tnfa.PREV_MATCH_END) != 0
+            // \b{g}: the boundary scan reads the carrier's origin — same posture
+            || (tdfa.posFlagDeps() & Tnfa.GRAPH_BOUNDARY) != 0;
         boolean fastPath = mode == DispatchMode.INLINED; // pickMode only INLINES fastPath-eligible DFAs
         // Partial-whole side table: the emitted wholeOne leaf is a
         // transcription of the PRUNED walk's dispatch — it cannot consult
@@ -434,7 +436,7 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
-        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "probeEndFlags", "(" + CS_D + "IIZZIIZZI)I", null, null);
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "probeEndFlags", "(" + CS_D + "IIZZIIZZII)I", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, owner, "runner", RUNNER_D);
@@ -448,7 +450,8 @@ public final class TdfaAsmBackend {
         mv.visitVarInsn(Opcodes.ILOAD, 8);
         mv.visitVarInsn(Opcodes.ILOAD, 9);
         mv.visitVarInsn(Opcodes.ILOAD, 10);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "probeEndFlags", "(" + CS_D + "IIZZIIZZI)I", false);
+        mv.visitVarInsn(Opcodes.ILOAD, 11);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, RUNNER, "probeEndFlags", "(" + CS_D + "IIZZIIZZII)I", false);
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();

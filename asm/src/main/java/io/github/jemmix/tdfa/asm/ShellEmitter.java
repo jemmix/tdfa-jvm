@@ -97,7 +97,7 @@ public final class ShellEmitter {
         // previous-match base into the carrier; the engine — always the
         // delegate posture for these — reads it). Emission-time selection:
         // non-\G shells are byte-identical to before.
-        boolean machineryOps = engInstance.usesPrevMatchEnd();
+        boolean machineryOps = engInstance.usesPrevMatchEnd() || engInstance.usesGraphemeBounds();
 
         // Per-instance naming: derive from the engine's class when concrete,
         // else from the monotonic shell sequence.

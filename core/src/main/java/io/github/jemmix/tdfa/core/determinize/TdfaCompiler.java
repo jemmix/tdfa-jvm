@@ -391,7 +391,7 @@ final class TdfaCompiler {
         // index is the posFlags VALUE, so the dimension's bit must be
         // addressable: \G always means 256 cells (with or without
         // FINAL_END — 2^8 covers both).
-        this.posFlagCells = usesPrevEnd(nfa) ? 256 : usesFinalEnd(nfa) ? 128 : 64;
+        this.posFlagCells = posFlagCellsOf(nfa);
         this.possessiveForks = nfa.possessiveForks;
     }
 
@@ -400,6 +400,40 @@ final class TdfaCompiler {
     private static boolean usesFinalEnd(Tnfa nfa) {
         for (int mask : nfa.epsEmptyMask) {
             if ((mask & Tnfa.FINAL_END) != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The posFlagCells for a compile: the cell index is the posFlags VALUE,
+     *  so the highest CONSULTED bit must be addressable — the bits are
+     *  assigned in order (FINAL_END 64, PREV_MATCH_END 128, GRAPH_BOUNDARY
+     *  256), and every bit below a consulted one is allocatable whether or
+     *  not it is used (a \G artifact without plain-$ still needs 256). */
+    private static int posFlagCellsOf(Tnfa nfa) {
+        boolean finalEnd = usesFinalEnd(nfa);
+        boolean prevEnd = usesPrevEnd(nfa);
+        boolean graphB = usesGraphBoundary(nfa);
+        int dims = 6;
+        if (finalEnd || prevEnd || graphB) {
+            dims++; // bit 6 (FINAL_END)
+        }
+        if (prevEnd || graphB) {
+            dims++; // bit 7 (PREV_MATCH_END)
+        }
+        if (graphB) {
+            dims++; // bit 8 (GRAPH_BOUNDARY)
+        }
+        return 1 << dims;
+    }
+
+    /** Whether any ε-edge of {@code nfa} is gated on {@link Tnfa#GRAPH_BOUNDARY}
+     *  ({@code \b{g}} — the boundary's next-cluster scan is op-constant, so
+     *  the bit rides the cells like \G's base). */
+    private static boolean usesGraphBoundary(Tnfa nfa) {
+        for (int mask : nfa.epsEmptyMask) {
+            if ((mask & Tnfa.GRAPH_BOUNDARY) != 0) {
                 return true;
             }
         }
@@ -1451,7 +1485,7 @@ final class TdfaCompiler {
             }
             stateEntryMask[s] = entryIntersect;
             int acceptIntersect = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY
-                | Tnfa.ABS_BEGIN | Tnfa.ABS_END | Tnfa.FINAL_END | Tnfa.PREV_MATCH_END;
+                | Tnfa.ABS_BEGIN | Tnfa.ABS_END | Tnfa.FINAL_END | Tnfa.PREV_MATCH_END | Tnfa.GRAPH_BOUNDARY;
             boolean anyAccept = false;
             for (int i = 0; i < cnt; i++) {
                 if (k.stateAt(i) == nfa.accept) {

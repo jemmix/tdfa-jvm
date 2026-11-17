@@ -254,6 +254,9 @@ public final class Parser {
 
     // Lazily-merged Unicode class caches (see unicodeWordRanges()/unicodeDigitRanges()).
     private int[] cachedUnicodeWord;
+    /** The grapheme-break tables, resolved lazily at the first \b{g}
+     *  (rides ParseResult → Tnfa → Tdfa — the runner's cluster scanner). */
+    private io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables;
     private int[] cachedUnicodeDigit;
 
     private Parser(String src, boolean disableUnicodeGroups, UnicodeDataProvider provider, WorkMeter meter,
@@ -316,7 +319,8 @@ public final class Parser {
         }
         e = anchorBoth ? anchorBoth(e) : e;
         return new ParseResult(e, p.tagCount(), p.groupCount(), p.multiline(), p.unicodeShorthand(),
-            p.unicodeWordRanges(), p.namedGroups(), p.hasSupplementaryStarts, p.rootBeginAnchor);
+            p.unicodeWordRanges(), p.namedGroups(), p.hasSupplementaryStarts, p.rootBeginAnchor,
+            p.graphemeTables);
     }
 
     /** Wrap a parsed body in start/end-text anchors (matches() = anchored both ends).
@@ -1067,9 +1071,10 @@ public final class Parser {
      * {@code \b{g}}, {@code \b{gc=…}} (JDK 21+ grapheme and property
      * boundaries) — or, for any other body, an "Illegal repetition"
      * error; it is NEVER a literal brace (the literal spelling is
-     * {@code \b\{}). This engine has no grapheme support (the mission
-     * bound — docs/jur-api-parity.md), so the jur reading rejects every
-     * non-quantifier brace there loudly instead of silently reading the
+     * {@code \b\{}). {@code \b{g}} LANDED (the grapheme boundary —
+     * graphemeBoundaryClause lowers it to the GRAPH_BOUNDARY assertion
+     * with the tables riding the parse); the property clauses and every
+     * other body still reject loudly instead of silently reading the
      * RE2-lineage literal. A digit quantifier ({@code \b{5}}) is legal
      * java in both readings and passes through untouched. The RE2
      * reading (axis set) keeps the literal brace — re2j's alphabet,
@@ -1081,10 +1086,29 @@ public final class Parser {
         }
         int save = pos;
         if (parseBraces() == null) {
-            throw fail(this, "grapheme/property boundary clauses (\\b{g}, \\b{gc=...}) are not supported"
-                + " — grapheme clusters are outside this engine's mission; the literal brace needs escaping (\\b\\{)");
+            throw fail(this, "grapheme/property boundary clauses (\\b{gc=...}) are not supported"
+                + " — only \\b{g} translates; the literal brace needs escaping (\\b\\{)");
         }
         pos = save; // a legal quantifier — the repeat tail consumes it
+    }
+
+    /** The {@code \b{g}} clause after a boundary escape: EXACTLY this
+     *  spelling (case-sensitive, live-JDK-verified) lowers to the
+     *  GRAPH_BOUNDARY assertion with the tables riding the parse; any
+     *  other brace body takes the clause gate. Called with the cursor on
+     *  the {@code '{}.
+     */
+    private Ast graphemeBoundaryClause(Ast plain) {
+        if (peek() != '{' || pos + 1 >= src.length() || src.charAt(pos + 1) != 'g'
+            || pos + 2 >= src.length() || src.charAt(pos + 2) != '}') {
+            rejectBoundaryClause();
+            return plain;
+        }
+        pos += 3;
+        if (graphemeTables == null) {
+            graphemeTables = io.github.jemmix.tdfa.core.unicode.GraphemeTables.from(provider);
+        }
+        return new Ast.Assertion(Ast.AssertionKind.GRAPH_BOUNDARY);
     }
 
     /** Build a shorthand escape atom (called from {@link #parseEscape}).
@@ -1495,12 +1519,11 @@ public final class Parser {
                 // \z = absolute end of text (immune to (?m))
                 return new Ast.Assertion(Ast.AssertionKind.TEXT_END);
             case 'b' :
-                rejectBoundaryClause();
-                // \b = word boundary
-                return new Ast.Assertion(Ast.AssertionKind.WORD_BOUNDARY);
+                // \b = word boundary — or the \b{g} grapheme boundary clause
+                return graphemeBoundaryClause(new Ast.Assertion(Ast.AssertionKind.WORD_BOUNDARY));
             case 'B' :
                 rejectBoundaryClause();
-                // \B = not a word boundary
+                // \B = not a word boundary (java has no \B{g} — pinned reject)
                 return new Ast.Assertion(Ast.AssertionKind.NON_WORD_BOUNDARY);
             // Unicode property classes \p{X} \pX \P{X} \PX \p{^X}.
             // Outside a char class, build a CharClass directly (the table's
