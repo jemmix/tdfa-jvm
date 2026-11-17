@@ -1449,6 +1449,14 @@ public final class Parser {
                 // start when none) — the matcher threads the base through
                 // the scratch carrier; see AssertionKind.PREV_MATCH_END.
                 return new Ast.Assertion(Ast.AssertionKind.PREV_MATCH_END);
+            case 'X' :
+                if (!jur) {
+                    throw fail(this, "invalid escape sequence: \\X");
+                }
+                // One extended grapheme cluster (UAX #29): the TR29 rule
+                // alternation over the provider's break tables — pure
+                // syntax, no engine support.
+                return graphemeClusterAtom();
             case '\\' :
                 literalKind = 1;
                 return new Ast.Symbol('\\');
@@ -1550,6 +1558,134 @@ public final class Parser {
     /** The {@code \cX} control escape (the JUR reading): java's
      *  {@code c()} — the next char XOR 0x40, any char, a parse failure
      *  at end of pattern. */
+    /**
+     * {@code \X} — one extended grapheme cluster (UAX #29), as the rule
+     * alternation over the provider's break tables (the TR29 consuming
+     * form; java's own XGrapheme is a runtime scan over the same rules —
+     * oracle-battery-pinned). Missing OPTIONAL tables degrade exactly the
+     * way their rules do (a snapshot without ExtPict simply has no GB11;
+     * 6.0 has no ZWJ class — its U+200D is Extend). The tables are read
+     * RAW: cluster identity is codepoint-exact, never case-folded.
+     */
+    private Ast graphemeClusterAtom() {
+        int[] control = tbl("gcb.Control");
+        int[] cr = tbl("gcb.CR");
+        int[] lf = tbl("gcb.LF");
+        int[] extend = tbl("gcb.Extend");
+        int[] zwj = tbl("gcb.ZWJ");
+        int[] spacingMark = tbl("gcb.SpacingMark");
+        if (control == null || cr == null || lf == null || extend == null || spacingMark == null) {
+            throw fail(this, "the active Unicode provider carries no grapheme-break tables (\\X unsupported)");
+        }
+        // GB9/9a tail: (Extend | ZWJ | SpacingMark)*
+        int[] tailClass = zwj == null ? RangeMath.merge(extend, spacingMark)
+            : RangeMath.merge(RangeMath.merge(extend, zwj), spacingMark);
+        Ast tail = star(cls(tailClass));
+
+        List<Ast> alts = new ArrayList<>(7);
+        // GB3: CR × LF is its own cluster core.
+        Ast crlf = new Ast.Concat(Arrays.<Ast>asList(new Ast.Symbol('\r'), new Ast.Symbol('\n')));
+        alts.add(crlf);
+        // GB4/GB5: Control/CR/LF never join neighbours — a lone control.
+        alts.add(new CharClass(RangeMath.merge(RangeMath.merge(control, cr), lf), false));
+
+        // GB6-8 Hangul — every alternative consumes at least one char:
+        // L+ (V+ T* | LV V* T* | LVT T*)?  |  V+ T*  |  LV V* T*  |  LVT T*
+        Ast tStar = star(cls(tbl("gcb.T")));
+        Ast afterL = new Ast.Repeat(
+            new Ast.Alt(Arrays.<Ast>asList(new Ast.Concat(Arrays.<Ast>asList(plus(cls(tbl("gcb.V"))), tStar)),
+                new Ast.Concat(Arrays.<Ast>asList(cls(tbl("gcb.LV")), star(cls(tbl("gcb.V"))), tStar)),
+                new Ast.Concat(Arrays.<Ast>asList(cls(tbl("gcb.LVT")), tStar)))),
+            0, 1, true);
+        alts.add(new Ast.Concat(Arrays.<Ast>asList(plus(cls(tbl("gcb.L"))), afterL, tail)));
+        alts.add(new Ast.Concat(Arrays.<Ast>asList(plus(cls(tbl("gcb.V"))), tStar, tail)));
+        alts.add(new Ast.Concat(Arrays.<Ast>asList(cls(tbl("gcb.LV")), star(cls(tbl("gcb.V"))), tStar, tail)));
+        alts.add(new Ast.Concat(Arrays.<Ast>asList(cls(tbl("gcb.LVT")), tStar, tail)));
+
+        // GB12/13 RI pairs: (RI RI)+ | RI — a lone trailing RI starts the
+        // NEXT cluster's pair.
+        int[] riTbl = tbl("gcb.Regional_Indicator");
+        if (riTbl != null) {
+            Ast riOne = cls(riTbl);
+            // EXACTLY one pair (GB12/13: an even count of RIs before a
+            // break point breaks — pairs never chain), or a lone RI.
+            Ast riPair = new Ast.Concat(Arrays.<Ast>asList(riOne, riOne));
+            alts.add(new Ast.Concat(Arrays.<Ast>asList(new Ast.Alt(Arrays.<Ast>asList(riPair, riOne)), tail)));
+        }
+
+        // GB11: ExtPict (Extend* ZWJ ExtPict)*
+        int[] ep = tbl("gcb.ExtPict");
+        if (ep != null) {
+            Ast epSeq = cls(ep);
+            if (zwj != null) {
+                Ast zwjJoin = new Ast.Concat(Arrays.<Ast>asList(star(cls(extend)), cls(zwj), cls(ep)));
+                epSeq = new Ast.Concat(Arrays.<Ast>asList(epSeq, new Ast.Repeat(zwjJoin, 0, Integer.MAX_VALUE, true)));
+            }
+            alts.add(new Ast.Concat(Arrays.<Ast>asList(epSeq, tail)));
+        }
+
+        // GB9c: LC ((Extend|Linker)* Linker (Extend|Linker)* LC)*
+        int[] lc = tbl("incb.LinkingConsonant");
+        int[] linker = tbl("incb.Linker");
+        int[] incbExtend = tbl("incb.Extend");
+        if (lc != null && linker != null && incbExtend != null) {
+            Ast inner = star(cls(RangeMath.merge(incbExtend, linker)));
+            Ast linkJoin = new Ast.Concat(Arrays.<Ast>asList(inner, cls(linker), inner, cls(lc)));
+            Ast linking =
+                new Ast.Concat(Arrays.<Ast>asList(cls(lc), new Ast.Repeat(linkJoin, 0, Integer.MAX_VALUE, true), tail));
+            alts.add(linking);
+        }
+
+        // The residual core: anything that is not a special lead (each has
+        // its own alternative above). Prepend and the joining classes stay
+        // residual: an orphan Prepend/Extend/SpacingMark at a boundary is
+        // its own cluster (GB999), and the tail rides it.
+        int[] residual = RangeMath.complement(
+            unionAll(control, cr, lf, tbl("gcb.L"), tbl("gcb.V"), tbl("gcb.LV"), tbl("gcb.LVT"), riTbl, ep, lc));
+        alts.add(new Ast.Concat(Arrays.<Ast>asList(new CharClass(residual, false), tail)));
+
+        // GB9b: Prepend* joins the FOLLOWING cluster (GB4/5 override it
+        // before Control — the control alternative stands unprefixed).
+        int[] prepend = tbl("gcb.Prepend");
+        List<Ast> prefixed = new ArrayList<>(alts.size());
+        for (int i = 0; i < alts.size(); i++) {
+            Ast a = alts.get(i);
+            if (prepend != null && i >= 2) { // skip \r\n and the control lone
+                a = new Ast.Concat(Arrays.<Ast>asList(star(cls(prepend)), a));
+            }
+            prefixed.add(a);
+        }
+        return new Ast.Alt(prefixed);
+    }
+
+    /** A gcb/incb table, or null when the provider does not carry the name. */
+    private int[] tbl(String name) {
+        return provider.tableFor(name);
+    }
+
+    private static Ast cls(int[] ranges) {
+        return new CharClass(ranges, false);
+    }
+
+    private static Ast star(Ast body) {
+        return new Ast.Repeat(body, 0, Integer.MAX_VALUE, true);
+    }
+
+    private static Ast plus(Ast body) {
+        return new Ast.Repeat(body, 1, Integer.MAX_VALUE, true);
+    }
+
+    /** Union of present tables (null entries skipped; empty input = empty). */
+    private static int[] unionAll(int[]... tables) {
+        int[] all = new int[0];
+        for (int[] t : tables) {
+            if (t != null && t.length > 0) {
+                all = RangeMath.merge(all, t);
+            }
+        }
+        return all;
+    }
+
     private Ast controlEscapeAtom() {
         if (pos >= src.length()) {
             throw fail(this, "illegal control escape sequence");

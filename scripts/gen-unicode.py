@@ -331,7 +331,8 @@ def main():
         tables["gcb.ExtPict"] = merge_ranges(rs)
     # GB9c's Indic inputs (Unicode 15.1+): InCB from DerivedCoreProperties
     # (three-field form: `cp ; InCB ; Linker`).
-    for value, name in (("Linker", "incb.Linker"), ("Linking_Consonant", "incb.LinkingConsonant")):
+    for value, name in (("Linker", "incb.Linker"), ("Consonant", "incb.LinkingConsonant"),
+                         ("Extend", "incb.Extend")):
         rs = []
         for line in dcp.splitlines():
             line = line.split("#", 1)[0].strip()
