@@ -1,6 +1,6 @@
 package io.github.jemmix.tdfa.core.ast;
 
-import java.util.Arrays;
+import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
 import java.util.Arrays;
 
