@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.core.parser;
 
 import io.github.jemmix.tdfa.core.ast.Ast;
+import io.github.jemmix.tdfa.core.ast.GraphemeTables;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -38,14 +39,14 @@ public final class ParseResult {
     private final boolean multiline;
     private final boolean unicodeShorthand;
     private final int[] unicodeWordRanges;
-    private final io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables;
+    private final GraphemeTables graphemeTables;
     private final Map<String, Integer> namedGroups;
     private final boolean hasSupplementaryStarts;
     private final boolean rootBeginAnchor;
 
     public ParseResult(Ast ast, int tagCount, int groupCount, boolean multiline, boolean unicodeShorthand,
         int[] unicodeWordRanges, Map<String, Integer> namedGroups, boolean hasSupplementaryStarts,
-        boolean rootBeginAnchor, io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables) {
+        boolean rootBeginAnchor, GraphemeTables graphemeTables) {
         this.ast = ast;
         this.tagCount = tagCount;
         this.groupCount = groupCount;
@@ -89,7 +90,7 @@ public final class ParseResult {
 
     /** The grapheme-break inputs when the parse consulted {@code \b{g}}
      *  (else null). */
-    public io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables() {
+    public GraphemeTables graphemeTables() {
         return graphemeTables;
     }
 

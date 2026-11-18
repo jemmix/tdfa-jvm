@@ -1,6 +1,7 @@
 package io.github.jemmix.tdfa.core.dfa;
 
 import io.github.jemmix.tdfa.core.ast.Alphabet;
+import io.github.jemmix.tdfa.core.ast.GraphemeTables;
 import io.github.jemmix.tdfa.core.dialect.Terminators;
 import io.github.jemmix.tdfa.core.emit.EmittedSurface;
 import io.github.jemmix.tdfa.core.engine.ChunkSource;
@@ -280,6 +281,11 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      * shape: forward from the previous match's end) and route through the
      * machinery like \G's (the scan reads the carrier's origin).
      */
+    /** gcb class ids for the scanner. */
+    private static final int GB_CR = 0, GB_LF = 1, GB_CONTROL = 2, GB_EXTEND = 3, GB_ZWJ = 4, GB_SPACING = 5, GB_L = 6,
+        GB_V = 7, GB_LV = 8, GB_LVT = 9, GB_T = 10, GB_RI = 11, GB_PREPEND = 12, GB_EXTPICT = 13, GB_LINKER = 14,
+        GB_INCB_EXT = 15, GB_LC = 16, GB_OTHER = 17;
+
     private final boolean needsGraphBound;
     /**
      * Word-class bitset over UTF-16 units (BMP): replaces the ASCII branch
@@ -1064,8 +1070,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             // \G / \b{g} artifacts serve the whole discipline through the
             // region-generalized walk (match's routing, the (t, t) shape).
             trace(Strategy.GENERIC);
-            MatchHolder h = runGeneric(input, 0, input.length(), true, true, sc, 0, input.length(), 0,
-                input.length(), gBase(sc), gbOrig(sc));
+            MatchHolder h = runGeneric(input, 0, input.length(), true, true, sc, 0, input.length(), 0, input.length(),
+                gBase(sc), gbOrig(sc));
             if (h == null) {
                 return null;
             }
@@ -3129,24 +3135,25 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         return nextGraphemeBoundary(s, gbO, eBase) <= pos;
     }
 
-    /** gcb class ids for the scanner. */
-    private static final int GB_CR = 0, GB_LF = 1, GB_CONTROL = 2, GB_EXTEND = 3, GB_ZWJ = 4, GB_SPACING = 5,
-        GB_L = 6, GB_V = 7, GB_LV = 8, GB_LVT = 9, GB_T = 10, GB_RI = 11, GB_PREPEND = 12, GB_EXTPICT = 13,
-        GB_LINKER = 14, GB_INCB_EXT = 15, GB_LC = 16, GB_OTHER = 17;
-
     private int gbClass(int cp) {
-        io.github.jemmix.tdfa.core.unicode.GraphemeTables g = tdfa.graphemeTables();
+        GraphemeTables g = tdfa.graphemeTables();
         if (g == null) {
             return GB_OTHER;
         }
-        if (io.github.jemmix.tdfa.core.unicode.GraphemeTables.in(g.linkingConsonant, cp)) {
+        // The GB9-governing classes FIRST: gcb.Extend covers every joining
+        // mark (InCB=Extend overlaps it heavily — classifying by InCB first
+        // made plain combining marks GB_INCB_EXT, which no join rule covers,
+        // splitting e+mark clusters). The InCB classes remain for the GB9c
+        // brackets; chars that are InCB=Extend but not gcb.Extend (rare)
+        // classify GB_INCB_EXT below.
+        if (GraphemeTables.in(g.extend, cp)) {
+            return GB_EXTEND;
+        }
+        if (GraphemeTables.in(g.linkingConsonant, cp)) {
             return GB_LC;
         }
-        if (io.github.jemmix.tdfa.core.unicode.GraphemeTables.in(g.linker, cp)) {
+        if (GraphemeTables.in(g.linker, cp)) {
             return GB_LINKER;
-        }
-        if (io.github.jemmix.tdfa.core.unicode.GraphemeTables.in(g.incbExtend, cp)) {
-            return GB_INCB_EXT;
         }
         if (cp == '\r') {
             return GB_CR;
@@ -3154,41 +3161,44 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         if (cp == '\n') {
             return GB_LF;
         }
-        if (io.github.jemmix.tdfa.core.unicode.GraphemeTables.in(g.control, cp)) {
+        if (GraphemeTables.in(g.control, cp)) {
             return GB_CONTROL;
         }
-        if (io.github.jemmix.tdfa.core.unicode.GraphemeTables.in(g.zwj, cp)) {
+        if (GraphemeTables.in(g.zwj, cp)) {
             return GB_ZWJ;
         }
-        if (io.github.jemmix.tdfa.core.unicode.GraphemeTables.in(g.extend, cp)) {
+        if (GraphemeTables.in(g.extend, cp)) {
             return GB_EXTEND;
         }
-        if (io.github.jemmix.tdfa.core.unicode.GraphemeTables.in(g.spacingMark, cp)) {
+        if (GraphemeTables.in(g.spacingMark, cp)) {
             return GB_SPACING;
         }
-        if (io.github.jemmix.tdfa.core.unicode.GraphemeTables.in(g.l, cp)) {
+        if (GraphemeTables.in(g.l, cp)) {
             return GB_L;
         }
-        if (io.github.jemmix.tdfa.core.unicode.GraphemeTables.in(g.v, cp)) {
+        if (GraphemeTables.in(g.v, cp)) {
             return GB_V;
         }
-        if (io.github.jemmix.tdfa.core.unicode.GraphemeTables.in(g.lv, cp)) {
+        if (GraphemeTables.in(g.lv, cp)) {
             return GB_LV;
         }
-        if (io.github.jemmix.tdfa.core.unicode.GraphemeTables.in(g.lvt, cp)) {
+        if (GraphemeTables.in(g.lvt, cp)) {
             return GB_LVT;
         }
-        if (io.github.jemmix.tdfa.core.unicode.GraphemeTables.in(g.t, cp)) {
+        if (GraphemeTables.in(g.t, cp)) {
             return GB_T;
         }
-        if (io.github.jemmix.tdfa.core.unicode.GraphemeTables.in(g.ri, cp)) {
+        if (GraphemeTables.in(g.ri, cp)) {
             return GB_RI;
         }
-        if (io.github.jemmix.tdfa.core.unicode.GraphemeTables.in(g.prepend, cp)) {
+        if (GraphemeTables.in(g.prepend, cp)) {
             return GB_PREPEND;
         }
-        if (io.github.jemmix.tdfa.core.unicode.GraphemeTables.in(g.extPict, cp)) {
+        if (GraphemeTables.in(g.extPict, cp)) {
             return GB_EXTPICT;
+        }
+        if (GraphemeTables.in(g.incbExtend, cp)) {
+            return GB_INCB_EXT;
         }
         return GB_OTHER;
     }
@@ -3243,7 +3253,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             }
             switch (cls) {
                 case GB_LC :
-                    gb9c = gb9c == 2 ? 1 : 1; // a consonant (re)starts the run
+                    gb9c = 1; // a consonant (re)starts the run
                     break;
                 case GB_LINKER :
                     if (gb9c >= 1) {
@@ -3251,7 +3261,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                     }
                     break;
                 case GB_INCB_EXT :
-                    break; // keeps gb9c
+                case GB_EXTEND :
+                    // keeps gb9c: the InCB bracket's Extend overlaps gcb.Extend
+                    // almost entirely (vowel signs are both)
+                    break;
                 default :
                     gb9c = 0;
             }
@@ -3264,14 +3277,14 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
     /** The GB rules between the previous class and the current one, with
      *  the accumulated context (RI parity, GB11/GB9c run states). */
     private static boolean gbBoundaryBetween(int prev, int cls, int riParity, int gb11, int gb9c) {
+        if (prev == GB_CR && cls == GB_LF) {
+            return false; // GB3 — TR29 rule ORDER: CR × LF outranks GB4/GB5
+        }
         if (cls == GB_CR || cls == GB_LF || cls == GB_CONTROL) {
             return true; // GB5
         }
         if (prev == GB_CR || prev == GB_LF || prev == GB_CONTROL) {
             return true; // GB4
-        }
-        if (prev == GB_CR && cls == GB_LF) {
-            return false; // GB3 (reached only when neither GB4 nor GB5 fired)
         }
         // GB6-8 Hangul
         if (prev == GB_L && (cls == GB_L || cls == GB_V || cls == GB_LV || cls == GB_LVT)) {
@@ -3343,7 +3356,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             // Entry check for start state — inline
             {
                 int entryReq = stateEntryMask[state];
-                if (entryReq != 0 && !maskSatisfiedRgn(input, pos, to, entryReq, bBase, eBase, wFrom, wTo, gBase, gbO)) {
+                if (entryReq != 0
+                    && !maskSatisfiedRgn(input, pos, to, entryReq, bBase, eBase, wFrom, wTo, gBase, gbO)) {
                     if (anchored) {
                         return null;
                     }
@@ -3722,7 +3736,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      * whole input under transparent bounds. The identity region
      * {@code (0, to, 0, to)} reduces to the plain computation.
      */
-    private int positionFlagsRgn(CharSequence s, int pos, int to, int bBase, int eBase, int wFrom, int wTo, int gBase, int gbO) {
+    private int positionFlagsRgn(CharSequence s, int pos, int to, int bBase, int eBase, int wFrom, int wTo, int gBase,
+        int gbO) {
         int flags = 0;
         if ((emptyLastLine || pos < eBase) && (pos == bBase || lineBegin(s, pos, eBase))) {
             flags |= Tnfa.BEGIN_TEXT;
@@ -3799,7 +3814,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         int wFrom = transparentBounds ? 0 : regionFrom;
         int wTo = transparentBounds ? input.length() : to;
         trace(Strategy.GENERIC);
-        MatchHolder h = runGeneric(input, scanFrom, to, false, false, sc, bBase, eBase, wFrom, wTo, gBase(sc), gbOrig(sc));
+        MatchHolder h =
+            runGeneric(input, scanFrom, to, false, false, sc, bBase, eBase, wFrom, wTo, gBase(sc), gbOrig(sc));
         if (h == null) {
             return null;
         }
@@ -4012,7 +4028,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             // past the window end sets both flags whether the boundary
             // answered held or failed (java's Bound.check).
             boolean attemptRan = p <= guard && !(scanSkipsPairs && Alphabet.pairInterior(input, p));
-            boolean gateHeld = attemptRan && maskSatisfiedRgn(input, p, to, seedMask, bBase, eBase, wFrom, wTo, gBase, gbO);
+            boolean gateHeld =
+                attemptRan && maskSatisfiedRgn(input, p, to, seedMask, bBase, eBase, wFrom, wTo, gBase, gbO);
             if (attemptRan) {
                 flags |= evaluatedEndProbeBits(seedMask, input, p, to, bBase, eBase, wFrom, wTo, gBase, gbO);
             }
@@ -4033,8 +4050,9 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 // already held before a failing one set their flags (a $
                 // holding one-before-end sets both, then a later \A kills
                 // the branch — java's nodes already ran).
-                flags |= heldEndGateBits(seedMask & positionFlagsRgn(input, p, to, bBase, eBase, wFrom, wTo, gBase, gbO),
-                    input, p, to, bBase, eBase, wFrom, wTo, gBase, gbO);
+                flags |=
+                    heldEndGateBits(seedMask & positionFlagsRgn(input, p, to, bBase, eBase, wFrom, wTo, gBase, gbO),
+                        input, p, to, bBase, eBase, wFrom, wTo, gBase, gbO);
             }
             int c = Alphabet.decode(input, p, to);
             long[] next = new long[stateWords];
@@ -4059,8 +4077,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 // on "xa" is the pinned shape).
                 for (int s = 0; s < stateCount; s++) {
                     if ((live[s >>> 5] & (1L << (s & 31))) != 0) {
-                        flags |=
-                            evaluatedEndProbeBits(stateAcceptMask[s], input, to, to, bBase, eBase, wFrom, wTo, gBase, gbO);
+                        flags |= evaluatedEndProbeBits(stateAcceptMask[s], input, to, to, bBase, eBase, wFrom, wTo,
+                            gBase, gbO);
                     }
                 }
                 break;
@@ -4144,8 +4162,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 flags |= PROBE_HIT_END;
                 for (int s = 0; s < stateCount; s++) {
                     if ((live[s >>> 5] & (1L << (s & 31))) != 0) {
-                        flags |=
-                            evaluatedEndProbeBits(stateAcceptMask[s], input, to, to, bBase, eBase, wFrom, wTo, gBase, gbO);
+                        flags |= evaluatedEndProbeBits(stateAcceptMask[s], input, to, to, bBase, eBase, wFrom, wTo,
+                            gBase, gbO);
                     }
                 }
                 break;
@@ -4207,8 +4225,10 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      *  failed (the accept gate and the edges' required masks are those
      *  nodes; a gate whose OTHER predicates failed was never reached and
      *  contributes nothing — see {@link #evaluatedEndProbeBits}). */
-    private int startAtEndEvalBits(CharSequence input, int to, int bBase, int eBase, int wFrom, int wTo, int gBase, int gbO) {
-        int bits = evaluatedEndProbeBits(stateAcceptMask[startState], input, to, to, bBase, eBase, wFrom, wTo, gBase, gbO);
+    private int startAtEndEvalBits(CharSequence input, int to, int bBase, int eBase, int wFrom, int wTo, int gBase,
+        int gbO) {
+        int bits =
+            evaluatedEndProbeBits(stateAcceptMask[startState], input, to, to, bBase, eBase, wFrom, wTo, gBase, gbO);
         int meta = stateMeta[startState];
         int base = stateBase[startState];
         int count = (meta >>> 1) & 0xFFFF;
@@ -4226,7 +4246,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      *  held): whether it would probe past the end (hitEnd — an accept
      *  there, or a consumable edge whose gate holds), plus the HELD end
      *  gates' flags (java's Dollar at the end: both flags; \z: hitEnd). */
-    private int startAtEndHeldBits(CharSequence input, int to, int bBase, int eBase, int wFrom, int wTo, int gBase, int gbO) {
+    private int startAtEndHeldBits(CharSequence input, int to, int bBase, int eBase, int wFrom, int wTo, int gBase,
+        int gbO) {
         int bits = 0;
         if (acceptGate(startState, input, to, to, bBase, eBase, wFrom, wTo, gBase, gbO) >= 0) {
             bits |= PROBE_HIT_END;
@@ -4240,7 +4261,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 continue;
             }
             int requiredMask = ranges[o + 4];
-            if (requiredMask == 0 || maskSatisfiedRgn(input, to, to, requiredMask, bBase, eBase, wFrom, wTo, gBase, gbO)) {
+            if (requiredMask == 0
+                || maskSatisfiedRgn(input, to, to, requiredMask, bBase, eBase, wFrom, wTo, gBase, gbO)) {
                 bits |= PROBE_HIT_END;
                 bits |= heldEndGateBits(requiredMask, input, to, to, bBase, eBase, wFrom, wTo, gBase, gbO);
             }
@@ -4289,7 +4311,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 continue;
             }
             int requiredMask = rg[o + 4];
-            if (requiredMask != 0 && !maskSatisfiedRgn(input, pos, to, requiredMask, bBase, eBase, wFrom, wTo, gBase, gbO)) {
+            if (requiredMask != 0
+                && !maskSatisfiedRgn(input, pos, to, requiredMask, bBase, eBase, wFrom, wTo, gBase, gbO)) {
                 continue;
             }
             int spec = Integer.bitCount(requiredMask);
@@ -4311,7 +4334,8 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         }
         int target = rg[best + 2];
         if (entryReqNext != 0) {
-            heldBits |= evaluatedEndProbeBits(entryReqNext, input, pos + width, to, bBase, eBase, wFrom, wTo, gBase, gbO);
+            heldBits |=
+                evaluatedEndProbeBits(entryReqNext, input, pos + width, to, bBase, eBase, wFrom, wTo, gBase, gbO);
             if (!maskSatisfiedRgn(input, pos + width, to, entryReqNext, bBase, eBase, wFrom, wTo, gBase, gbO)) {
                 return new int[]{-1, heldBits};
             }

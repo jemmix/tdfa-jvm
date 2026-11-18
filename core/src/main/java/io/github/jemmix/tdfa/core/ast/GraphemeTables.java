@@ -1,4 +1,6 @@
-package io.github.jemmix.tdfa.core.unicode;
+package io.github.jemmix.tdfa.core.ast;
+
+import java.util.Arrays;
 
 import java.util.Arrays;
 
@@ -35,7 +37,8 @@ public final class GraphemeTables {
     public final int[] linker;
     public final int[] linkingConsonant;
 
-    private GraphemeTables(int[] control, int[] extend, int[] zwj, int[] spacingMark, int[] l, int[] v, int[] lv,
+    /** Public-but-internal: built by the parser's provider resolution. */
+    public GraphemeTables(int[] control, int[] extend, int[] zwj, int[] spacingMark, int[] l, int[] v, int[] lv,
         int[] lvt, int[] t, int[] ri, int[] prepend, int[] extPict, int[] incbExtend, int[] linker,
         int[] linkingConsonant) {
         this.control = control;
@@ -53,34 +56,6 @@ public final class GraphemeTables {
         this.incbExtend = incbExtend;
         this.linker = linker;
         this.linkingConsonant = linkingConsonant;
-    }
-
-    /** Resolve from a provider; {@code null} tables stay null/empty. */
-    public static GraphemeTables from(UnicodeDataProvider p) {
-        return new GraphemeTables(union(p, "gcb.CR", "gcb.LF", "gcb.Control"), need(p, "gcb.Extend"),
-            p.tableFor("gcb.ZWJ"), need(p, "gcb.SpacingMark"), need(p, "gcb.L"), need(p, "gcb.V"), need(p, "gcb.LV"),
-            need(p, "gcb.LVT"), need(p, "gcb.T"), need(p, "gcb.Regional_Indicator"), need(p, "gcb.Prepend"),
-            p.tableFor("gcb.ExtPict"), p.tableFor("incb.Extend"), p.tableFor("incb.Linker"),
-            p.tableFor("incb.LinkingConsonant"));
-    }
-
-    private static int[] need(UnicodeDataProvider p, String name) {
-        int[] t = p.tableFor(name);
-        return t == null ? new int[0] : t;
-    }
-
-    private static int[] union(UnicodeDataProvider p, String... names) {
-        int[] all = new int[0];
-        for (String n : names) {
-            int[] t = p.tableFor(n);
-            if (t != null && t.length > 0) {
-                int[] merged = new int[all.length + t.length];
-                System.arraycopy(all, 0, merged, 0, all.length);
-                System.arraycopy(t, 0, merged, all.length, t.length);
-                all = merged;
-            }
-        }
-        return mergeSorted(all);
     }
 
     private static int[] mergeSorted(int[] ranges) {

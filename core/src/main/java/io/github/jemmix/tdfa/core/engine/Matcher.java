@@ -675,8 +675,7 @@ public class Matcher implements java.util.regex.MatchResult {
         boolean matched = hasMatch || searchSkipped;
         return engine.probeEndFlags(input, from, to, regionTo >= 0 ? anchoringBounds : true,
             regionTo >= 0 ? transparentBounds : false, matched ? lastMatchStart : lastSearchFrom,
-            matched ? lastMatchEnd : -1, matched, lastOpAnchored, lastOpGBase,
-            scratch != null ? scratch.gbOrigin : 0);
+            matched ? lastMatchEnd : -1, matched, lastOpAnchored, lastOpGBase, scratch != null ? scratch.gbOrigin : 0);
     }
 
     // ---- match results ----

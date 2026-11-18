@@ -3,6 +3,7 @@ package io.github.jemmix.tdfa.core.tnfa;
 import io.github.jemmix.tdfa.core.ast.Ast;
 import io.github.jemmix.tdfa.core.ast.CharClass;
 import io.github.jemmix.tdfa.core.ast.FixedTags;
+import io.github.jemmix.tdfa.core.ast.GraphemeTables;
 import io.github.jemmix.tdfa.core.budget.BudgetWeights;
 import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.FrameBudget;
@@ -100,7 +101,7 @@ public final class Tnfa {
     /** The grapheme-break inputs for {@code \b{g}} (null when the pattern
      *  does not consult the boundary — the tables resolve from the
      *  compile's provider only then). */
-    public final io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables;
+    public final GraphemeTables graphemeTables;
     public final Map<String, Integer> namedGroups;
     /**
      * Fixed-tag annotations per tag id (1-based; index 0 unused). {@code fixedBase[t] != 0}
@@ -204,10 +205,9 @@ public final class Tnfa {
     public Tnfa(int stateCount, int[] epsFrom, int[] epsTo, int[] epsPri, int[] epsTag, int[] epsEmptyMask,
         int[] epsForkRole, int possessiveForks, int[] symFrom, int[] symTo, CharClass[] symClass, int start, int accept,
         int tagCount, int groupCount, boolean multiline, boolean unicodeWordBoundary, int[] wordRanges,
-        io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables,
-        Map<String, Integer> namedGroups, int[] fixedBase, int[] fixedOffset, boolean[] dissolvedTags,
-        boolean[] surfaceFinalTags, boolean multiValuedTags, Semantics semantics, boolean hasSupplementaryStarts,
-        boolean rootBeginAnchor) {
+        GraphemeTables graphemeTables, Map<String, Integer> namedGroups, int[] fixedBase, int[] fixedOffset,
+        boolean[] dissolvedTags, boolean[] surfaceFinalTags, boolean multiValuedTags, Semantics semantics,
+        boolean hasSupplementaryStarts, boolean rootBeginAnchor) {
         this.stateCount = stateCount;
         this.epsFrom = epsFrom;
         this.epsTo = epsTo;
@@ -450,8 +450,7 @@ public final class Tnfa {
         int start = b.build(ast, accept);
         Tnfa nfa = b.build(start, accept, tagCount, parsed.groupCount(), parsed.multiline(), parsed.unicodeShorthand(),
             parsed.unicodeWordRanges(), parsed.graphemeTables(), parsed.namedGroups(), fixedBase, fixedOffset,
-            dissolved, surfaced,
-            multiValuedTags, semantics, parsed.hasSupplementaryStarts(), parsed.rootBeginAnchor());
+            dissolved, surfaced, multiValuedTags, semantics, parsed.hasSupplementaryStarts(), parsed.rootBeginAnchor());
         obs.stage(CompileObserver.Stage.TNFA, System.nanoTime() - t1, nfa.stateCount);
         return nfa;
     }
@@ -1468,10 +1467,9 @@ public final class Tnfa {
         }
 
         Tnfa build(int start, int accept, int tagCount, int groupCount, boolean multiline, boolean unicodeWordBoundary,
-            int[] wordRanges, io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables,
-            Map<String, Integer> namedGroups, int[] fixedBase, int[] fixedOffset,
-            boolean[] dissolvedTags, boolean[] surfaceFinalTags, boolean multiValuedTags, Semantics semantics,
-            boolean hasSupplementaryStarts, boolean rootBeginAnchor) {
+            int[] wordRanges, GraphemeTables graphemeTables, Map<String, Integer> namedGroups, int[] fixedBase,
+            int[] fixedOffset, boolean[] dissolvedTags, boolean[] surfaceFinalTags, boolean multiValuedTags,
+            Semantics semantics, boolean hasSupplementaryStarts, boolean rootBeginAnchor) {
             int n = eps.size();
             int[] eFrom = new int[n], eTo = new int[n], ePri = new int[n], eTag = new int[n], eEmpty = new int[n];
             int[] eFork = new int[n];
@@ -1487,9 +1485,9 @@ public final class Tnfa {
             int[] sFrom = syms.stream().mapToInt(a -> a[0]).toArray();
             int[] sTo = syms.stream().mapToInt(a -> a[1]).toArray();
             CharClass[] sClass = symClasses.toArray(new CharClass[0]);
-            return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, eFork, possessiveForks, sFrom, sTo, sClass,
-                start, accept, tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, graphemeTables,
-                namedGroups, fixedBase, fixedOffset, dissolvedTags, surfaceFinalTags, multiValuedTags, semantics,
+            return new Tnfa(counter, eFrom, eTo, ePri, eTag, eEmpty, eFork, possessiveForks, sFrom, sTo, sClass, start,
+                accept, tagCount, groupCount, multiline, unicodeWordBoundary, wordRanges, graphemeTables, namedGroups,
+                fixedBase, fixedOffset, dissolvedTags, surfaceFinalTags, multiValuedTags, semantics,
                 hasSupplementaryStarts, rootBeginAnchor);
         }
     }

@@ -3,6 +3,7 @@ package io.github.jemmix.tdfa.core.parser;
 import io.github.jemmix.tdfa.core.ast.Alphabet;
 import io.github.jemmix.tdfa.core.ast.Ast;
 import io.github.jemmix.tdfa.core.ast.CharClass;
+import io.github.jemmix.tdfa.core.ast.GraphemeTables;
 import io.github.jemmix.tdfa.core.budget.BudgetWeights;
 import io.github.jemmix.tdfa.core.budget.Budgets;
 import io.github.jemmix.tdfa.core.budget.FrameBudget;
@@ -256,7 +257,7 @@ public final class Parser {
     private int[] cachedUnicodeWord;
     /** The grapheme-break tables, resolved lazily at the first \b{g}
      *  (rides ParseResult → Tnfa → Tdfa — the runner's cluster scanner). */
-    private io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables;
+    private GraphemeTables graphemeTables;
     private int[] cachedUnicodeDigit;
 
     private Parser(String src, boolean disableUnicodeGroups, UnicodeDataProvider provider, WorkMeter meter,
@@ -319,8 +320,7 @@ public final class Parser {
         }
         e = anchorBoth ? anchorBoth(e) : e;
         return new ParseResult(e, p.tagCount(), p.groupCount(), p.multiline(), p.unicodeShorthand(),
-            p.unicodeWordRanges(), p.namedGroups(), p.hasSupplementaryStarts, p.rootBeginAnchor,
-            p.graphemeTables);
+            p.unicodeWordRanges(), p.namedGroups(), p.hasSupplementaryStarts, p.rootBeginAnchor, p.graphemeTables);
     }
 
     /** Wrap a parsed body in start/end-text anchors (matches() = anchored both ends).
@@ -1099,14 +1099,14 @@ public final class Parser {
      *  the {@code '{}.
      */
     private Ast graphemeBoundaryClause(Ast plain) {
-        if (peek() != '{' || pos + 1 >= src.length() || src.charAt(pos + 1) != 'g'
-            || pos + 2 >= src.length() || src.charAt(pos + 2) != '}') {
+        if (options.escapes() == EscapeAlphabet.RE2_MINIMAL || peek() != '{' || pos + 1 >= src.length()
+            || src.charAt(pos + 1) != 'g' || pos + 2 >= src.length() || src.charAt(pos + 2) != '}') {
             rejectBoundaryClause();
             return plain;
         }
         pos += 3;
         if (graphemeTables == null) {
-            graphemeTables = io.github.jemmix.tdfa.core.unicode.GraphemeTables.from(provider);
+            graphemeTables = resolveGraphemeTables();
         }
         return new Ast.Assertion(Ast.AssertionKind.GRAPH_BOUNDARY);
     }
@@ -1684,6 +1684,35 @@ public final class Parser {
     /** A gcb/incb table, or null when the provider does not carry the name. */
     private int[] tbl(String name) {
         return provider.tableFor(name);
+    }
+
+    /** Resolve the grapheme-break inputs from the compile's provider (the
+     *  one site — the value type itself is a pure ast leaf). */
+    private GraphemeTables resolveGraphemeTables() {
+        return new GraphemeTables(merged("gcb.CR", "gcb.LF", "gcb.Control"), orEmpty(tbl("gcb.Extend")), tbl("gcb.ZWJ"),
+            orEmpty(tbl("gcb.SpacingMark")), orEmpty(tbl("gcb.L")), orEmpty(tbl("gcb.V")), orEmpty(tbl("gcb.LV")),
+            orEmpty(tbl("gcb.LVT")), orEmpty(tbl("gcb.T")), orEmpty(tbl("gcb.Regional_Indicator")),
+            orEmpty(tbl("gcb.Prepend")), tbl("gcb.ExtPict"), tbl("incb.Extend"), tbl("incb.Linker"),
+            tbl("incb.LinkingConsonant"));
+    }
+
+    private static int[] orEmpty(int[] t) {
+        return t == null ? new int[0] : t;
+    }
+
+    private int[] merged(String... names) {
+        int[] all = new int[0];
+        for (String n : names) {
+            int[] t = tbl(n);
+            if (t != null && t.length > 0) {
+                int[] m = new int[all.length + t.length];
+                System.arraycopy(all, 0, m, 0, all.length);
+                System.arraycopy(t, 0, m, all.length, t.length);
+                all = m;
+            }
+        }
+        // CR/LF/Control are disjoint ascending — plain concat is sorted
+        return all;
     }
 
     private static Ast cls(int[] ranges) {

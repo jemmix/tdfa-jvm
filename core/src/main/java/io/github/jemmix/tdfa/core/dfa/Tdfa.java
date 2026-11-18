@@ -1,5 +1,6 @@
 package io.github.jemmix.tdfa.core.dfa;
 
+import io.github.jemmix.tdfa.core.ast.GraphemeTables;
 import io.github.jemmix.tdfa.core.determinize.Determinizer;
 import io.github.jemmix.tdfa.core.tnfa.Semantics;
 import io.github.jemmix.tdfa.core.tnfa.Tnfa;
@@ -199,7 +200,7 @@ public final class Tdfa {
      */
     final int[] wordRanges;
     /** The grapheme-break inputs for {@code \b{g}} (null when unused). */
-    final io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables;
+    final GraphemeTables graphemeTables;
     /**
      * Fixed-tag annotations (BT22 §6.4), forwarded from {@link Tnfa}. Null if no
      * tags were fixed. Otherwise 1-indexed: {@code fixedBase[t] != 0} means tag
@@ -328,12 +329,10 @@ public final class Tdfa {
         int startState, int stateCount, int[] stateMeta, int[] stateBase, int[] stateFinalOpsOff,
         int[] stateFinalOpsByMask, int[] ranges, int[] ops, int[] entryHiPrefix, int[] stateEntryMask,
         int[] stateAcceptMask, boolean longestMatch, int[] stopOnAcceptMask, byte[] stopMaskUniform, boolean multiline,
-        boolean unicodeWordBoundary, int[] wordRanges,
-        io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables, int[] fixedBase, int[] fixedOffset,
-        boolean pikeCutMatters,
-        int[] wholeRanges, int[] wholeBase, int[] wholeCount, int[] wholeHiPrefix, boolean wholeSideComplete,
-        boolean multiValued, Semantics semantics, int posFlagCells, boolean hasSupplementaryStarts,
-        boolean rootBeginAnchor) {
+        boolean unicodeWordBoundary, int[] wordRanges, GraphemeTables graphemeTables, int[] fixedBase,
+        int[] fixedOffset, boolean pikeCutMatters, int[] wholeRanges, int[] wholeBase, int[] wholeCount,
+        int[] wholeHiPrefix, boolean wholeSideComplete, boolean multiValued, Semantics semantics, int posFlagCells,
+        boolean hasSupplementaryStarts, boolean rootBeginAnchor) {
         this.tagCount = tagCount;
         this.groupCount = groupCount;
         this.namedGroups = namedGroups != null ? Collections.unmodifiableMap(namedGroups) : Collections.emptyMap();
@@ -455,9 +454,8 @@ public final class Tdfa {
         // (bit 128, \G) on 256-cell ones (which also cover FINAL_END — the
         // cell index is the posFlags value); the six universal bits exist
         // on every artifact.
-        int allowedMaskBits =
-            0x3F | (posFlagCells >= 128 ? Tnfa.FINAL_END : 0) | (posFlagCells >= 256 ? Tnfa.PREV_MATCH_END : 0)
-                | (posFlagCells >= 512 ? Tnfa.GRAPH_BOUNDARY : 0);
+        int allowedMaskBits = 0x3F | (posFlagCells >= 128 ? Tnfa.FINAL_END : 0)
+            | (posFlagCells >= 256 ? Tnfa.PREV_MATCH_END : 0) | (posFlagCells >= 512 ? Tnfa.GRAPH_BOUNDARY : 0);
         int entries = ranges.length / 5;
         if (startState < 0 || startState >= stateCount) {
             throw new IllegalStateException(
@@ -663,7 +661,9 @@ public final class Tdfa {
                 if (opsOff != 0) {
                     checkOpsBlock(s, i, opsOff, ops, false, finalRegBase, tagCount, multiValued);
                 }
-                if ((mask & ~(0x3F | (posFlagCells == 128 ? Tnfa.FINAL_END : 0))) != 0) {
+                if ((mask & ~(0x3F | (posFlagCells >= 128 ? Tnfa.FINAL_END : 0)
+                    | (posFlagCells >= 256 ? Tnfa.PREV_MATCH_END : 0)
+                    | (posFlagCells >= 512 ? Tnfa.GRAPH_BOUNDARY : 0))) != 0) {
                     throw new IllegalStateException(
                         "tdfa: whole state " + s + " entry " + i + " unknown assertion-mask bits");
                 }
@@ -1046,7 +1046,7 @@ public final class Tdfa {
     }
 
     /** The grapheme-break inputs ({@code \b{g}} artifacts only). */
-    public io.github.jemmix.tdfa.core.unicode.GraphemeTables graphemeTables() {
+    public GraphemeTables graphemeTables() {
         return graphemeTables;
     }
 

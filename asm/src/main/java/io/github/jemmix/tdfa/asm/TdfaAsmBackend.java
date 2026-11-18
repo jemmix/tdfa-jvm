@@ -467,6 +467,12 @@ public final class TdfaAsmBackend {
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "usesGraphemeBounds", "()Z", null, null);
+        mv.visitCode();
+        mv.visitInsn((tdfa.posFlagDeps() & Tnfa.GRAPH_BOUNDARY) != 0 ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 
     /**
