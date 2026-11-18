@@ -202,8 +202,8 @@ in a class only `\0`-led octal is legal, bare `[\0]` an octal error),
 so the lane rejects those spellings loudly instead of reading octal;
 re2j's octal/NUL readings stay on the :re2j facade — the BackrefParityTest twins pin both sides).
 
-**Graphemes (JDK-8394894) — `\X` landed; the boundary clauses reject
-loudly, never silently degraded.** `\X` (one extended grapheme cluster,
+**Graphemes (JDK-8394894) — `\X` and `\b{g}` landed; the property
+clauses reject loudly, never silently degraded.** `\X` (one extended grapheme cluster,
 UAX #29) translates on the jur facade as the TR29 rule alternation over
 the provider's break tables — pure syntax, no engine support: the
 gcb/ExtPict/InCB classes come from the data pipeline (the pinned
@@ -211,11 +211,24 @@ providers carry them per snapshot; the DEFAULT provider serves them
 from core's baked `GraphemeBreakTables` — 17.0-frozen, the JDK exposes
 no public GCB surface). Battery-pinned cluster-sequence-for-cluster-
 sequence against the live JDK over the rule families (GB3/4/5/6-8/9/
-9a/9b/9c/11/12/13), both engine tiers. The java boundary clauses
-`\b{g}`, `\b{gc=…}` and every other non-quantifier brace after `\b`/
-`\B` still reject under the jur reading (the ESCAPES_RE2 axis's unset
-side): java reads that brace as its boundary-type clause or an illegal
-repetition — NEVER a literal — while the re2j facade keeps the
+9a/9b/9c/11/12/13), both engine tiers. `\b{g}` (the grapheme-cluster boundary) LANDED as java's own
+OPERATIONAL reading, probed and source-shaped: TRUE at the region
+start and at/after the input end, FALSE across a surrogate straddle,
+and between them exactly at/after the next cluster boundary scanned
+FORWARD from the previous match's end (the `\G` base family — the
+position `last` itself reads FALSE, java's own quirk, visible in the
+iteration batteries); the boundary rides the position-flag cells (a
+ninth dimension) with the scan served cold from the carrier's origin,
+and such artifacts route through the machinery like `\G`'s. ONE
+documented divergence: under a QUANTIFIER java's Curly loop uses
+`matcher.last` as its position scratch, so `(?:\b{g}a)+` on `"aa"`
+gives `[0,1)` where the unrolled `\b{g}a\b{g}a` gives `[0,2)` — an
+implementation leak, not cluster semantics; we serve the principled
+loop-context-free reading (pinned). The remaining boundary clauses
+`\b{gc=…}` (and `\b{sc=…}`/`\b{scx=…}`, which the oracle JDK itself
+rejects) and every other non-quantifier brace after `\b`/`\B` still
+reject under the jur reading: java reads that brace as its
+boundary-type clause or an illegal repetition — NEVER a literal — while the re2j facade keeps the
 literal-brace reading (re2j's alphabet, pinned by
 `re2jFacadeKeepsTheLiteralBraceReading` and the RE2J fuzz lane; the
 literal spelling is `\b\{`). Before the vs-jur fuzz landing the parser

@@ -221,6 +221,9 @@ public class Matcher implements java.util.regex.MatchResult {
         lastOpGBase = gBaseSet ? lastMatchEnd : opFrom;
         if (scratch != null) {
             scratch.prevMatchEnd = lastOpGBase;
+            // \b{g}'s origin is java's matcher.last — the PREVIOUS op's
+            // end, 0-clamped (java's reset value), NOT the sentinel start.
+            scratch.gbOrigin = gBaseSet ? lastMatchEnd : 0;
         }
         gBaseSet = true;
     }
@@ -672,7 +675,7 @@ public class Matcher implements java.util.regex.MatchResult {
         boolean matched = hasMatch || searchSkipped;
         return engine.probeEndFlags(input, from, to, regionTo >= 0 ? anchoringBounds : true,
             regionTo >= 0 ? transparentBounds : false, matched ? lastMatchStart : lastSearchFrom,
-            matched ? lastMatchEnd : -1, matched, lastOpAnchored, lastOpGBase);
+            matched ? lastMatchEnd : -1, matched, lastOpAnchored, lastOpGBase, scratch != null ? scratch.gbOrigin : 0);
     }
 
     // ---- match results ----

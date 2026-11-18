@@ -172,7 +172,7 @@ public interface RegexEngine {
      * the success replay is the winning walk either way.
      */
     default int probeEndFlags(CharSequence input, int from, int to, boolean anchoringBounds, boolean transparentBounds,
-        int matchStart, int matchEnd, boolean matched, boolean anchoredOp, int gBase) {
+        int matchStart, int matchEnd, boolean matched, boolean anchoredOp, int gBase, int gbO) {
         throw new UnsupportedOperationException("hitEnd/requireEnd probing is not supported by engine "
             + getClass().getName() + " — override RegexEngine.probeEndFlags to serve it");
     }
@@ -197,6 +197,16 @@ public interface RegexEngine {
      * selection, no runtime check).
      */
     default boolean usesPrevMatchEnd() {
+        return false;
+    }
+
+    /**
+     * Whether this artifact consults the grapheme-cluster boundary
+     * ({@code \b{g}}) — the boundary scan reads the carrier's origin, so
+     * such artifacts serve through the machinery (emission-time routing,
+     * the {@code \G} posture).
+     */
+    default boolean usesGraphemeBounds() {
         return false;
     }
 

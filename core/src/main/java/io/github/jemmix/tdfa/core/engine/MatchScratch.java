@@ -57,6 +57,15 @@ public final class MatchScratch {
     public int prevMatchEnd;
 
     /**
+     * The {@code \b{g}} scan origin (java's {@code matcher.last}, the
+     * PREVIOUS op's end — 0-clamped like java's reset value). Set beside
+     * {@link #prevMatchEnd}; read by walks whose masks consult
+     * {@code Tnfa.GRAPH_BOUNDARY} (the cluster scan runs forward from
+     * here, java's own operational shape).
+     */
+    public int gbOrigin;
+
+    /**
      * Grow-only register file: returns an array of at least {@code n} ints,
      * cached in this carrier. Contents undefined; refill {@code [0, n)}
      * before reading.

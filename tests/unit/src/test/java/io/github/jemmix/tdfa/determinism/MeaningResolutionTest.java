@@ -284,19 +284,19 @@ class MeaningResolutionTest {
     void irEntryRejectsInconsistentProducerMetadata() {
         // Tag outside the declared counters.
         ParseResult badTag =
-            new ParseResult(new Ast.Tag(99), 2, 1, false, false, null, Collections.emptyMap(), false, false);
+            new ParseResult(new Ast.Tag(99), 2, 1, false, false, null, Collections.emptyMap(), false, false, null);
         assertThatThrownBy(() -> Tnfa.compile(badTag, false, Semantics.of(), null, CompileObserver.NONE,
             new WorkMeter(Budgets.compileComputeTicks()))).isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("tag 99");
         // Named group outside the declared group count.
         ParseResult badName = new ParseResult(new Ast.Symbol('a'), 2, 1, false, false, null,
-            Collections.singletonMap("x", 5), false, false);
+            Collections.singletonMap("x", 5), false, false, null);
         assertThatThrownBy(() -> Tnfa.compile(badName, false, Semantics.of(), null, CompileObserver.NONE,
             new WorkMeter(Budgets.compileComputeTicks()))).isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("named group 'x'");
         // Counters that cannot describe any tree (2 tags cannot hold 5 groups).
         ParseResult badCounts =
-            new ParseResult(new Ast.Symbol('a'), 2, 5, false, false, null, Collections.emptyMap(), false, false);
+            new ParseResult(new Ast.Symbol('a'), 2, 5, false, false, null, Collections.emptyMap(), false, false, null);
         assertThatThrownBy(() -> Tnfa.compile(badCounts, false, Semantics.of(), null, CompileObserver.NONE,
             new WorkMeter(Budgets.compileComputeTicks()))).isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("inconsistent parse result");
@@ -308,7 +308,7 @@ class MeaningResolutionTest {
         // no Ast.Dot can reach the builder regardless of who built the tree.
         ParseResult parsed =
             new ParseResult(new Ast.Concat(Arrays.asList(new Ast.Symbol('a'), new Ast.Dot(false), new Ast.Symbol('b'))),
-                0, 0, false, false, null, Collections.emptyMap(), false, false);
+                0, 0, false, false, null, Collections.emptyMap(), false, false, null);
         WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
         Tnfa viaIr = Tnfa.compile(parsed, false, RE2, null, CompileObserver.NONE, ledger);
         Tdfa ir = Determinizer.compile(viaIr, false, CompileObserver.NONE, ledger.fork(0));

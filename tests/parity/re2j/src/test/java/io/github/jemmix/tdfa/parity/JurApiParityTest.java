@@ -331,14 +331,15 @@ class JurApiParityTest {
         // translates; a\\Xb and (?:\\X)+ ride it.
         assertThat(io.github.jemmix.tdfa.Pattern.compile("a\\Xb", 0, f).matcher("a\u0301b").find()).isTrue();
         assertThat(io.github.jemmix.tdfa.Pattern.compile("(?:\\X)+", 0, f).matcher("x").find()).isTrue();
-        // the \b{...}/\B{...} boundary clauses: the named grapheme
-        // rejection (java's clause spellings) and the illegal-repetition
-        // spellings alike — the boundary family stays unsupported
-        for (String p : new String[]{"\\b{g}", "\\b{gc=L}", "\\b{w}", "\\B{g}", "\\b{}"}) {
+        // the \b{...}/\B{...} property clauses still reject (the boundary
+        // family beyond \b{g}); \B{g} does not exist in java either
+        for (String p : new String[]{"\\b{gc=L}", "\\b{w}", "\\B{g}", "\\b{}"}) {
             assertThatThrownBy(() -> io.github.jemmix.tdfa.Pattern.compile(p, 0, f)).as("jur rejects %s", p)
                 .isInstanceOf(io.github.jemmix.tdfa.core.parser.PatternSyntaxException.class)
                 .hasMessageContaining("grapheme");
         }
+        // \b{g} LANDED — the bare clause compiles (a zero-width assertion)
+        io.github.jemmix.tdfa.Pattern.compile("\\b{g}", 0, f);
         // the quantifier spelling is legal java in both readings
         assertThat(io.github.jemmix.tdfa.Pattern.compile("\\b{2,3}", 0, f).matcher("xx").find()).isTrue();
     }
@@ -727,6 +728,67 @@ class JurApiParityTest {
         assertSameCompileReject("a?+", factory);
         assertSameCompileReject("a{2,3}+", factory);
         assertSameCompileReject("(a|ab)++c", factory);
+    }
+
+    /** The {@code \b{g}} grapheme-cluster boundary against the live JDK
+     *  oracle, both engine tiers — java's OPERATIONAL semantics mirrored
+     *  through the identical find protocol: the boundary scans clusters
+     *  forward from the previous match's end, the region start (and end)
+     *  always hold, a surrogate straddle never does, and the position
+     *  {@code last} itself reads FALSE (java's own quirk — visible as the
+     *  skipped position in the iteration displays). Cells span the rule
+     *  families: marks, RI pairs (odd trailing), ZWJ chains, Hangul,
+     *  GB9c conjuncts, Prepend, controls. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void graphemeBoundaryMirrorsTheJdk(RegexEngineFactory f) {
+        String[] cells = {"cafe\u0301", "abc", "\uD83C\uDDFA\uD83C\uDDF8x",
+            "\uD83C\uDDFA\uD83C\uDDF8\uD83C\uDDEB\uD83C\uDDF7\uD83C\uDDFA",
+            "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67x", "\r\nx", "\u1100\u1161\u11A8x",
+            "\uD83D\uDC4D\uD83C\uDFFDx", "\u0C15\u0C4D\u0C15x", "\u0600ax", "e\u0301\u0308", "\u0301x"};
+        for (String in : cells) {
+            StringBuilder js = new StringBuilder(), os = new StringBuilder();
+            Matcher jm = jur("\\b{g}.", in, 0);
+            int pos = 0;
+            while (jm.find()) {
+                while (pos < jm.start()) {
+                    js.append('-');
+                    pos++;
+                }
+                js.append('^');
+                pos++;
+            }
+            PatternMatcher om = io.github.jemmix.tdfa.Pattern.compile("\\b{g}.", 0, f).matcher(in);
+            pos = 0;
+            while (om.find()) {
+                while (pos < om.start()) {
+                    os.append('-');
+                    pos++;
+                }
+                os.append('^');
+                pos++;
+            }
+            assertThat(os.toString()).as("\\b{g}. boundary positions on \"%s\"", in).isEqualTo(js.toString());
+        }
+        // mid-pattern shapes
+        JurOracle.assertSameFind("x\\b{g}y", "xy", f);
+        JurOracle.assertSameFind("a\\b{g}", "cafe\u0301", f);
+        JurOracle.assertSameFind("\\b{g}a\\b{g}a", "aa", f);
+        // The QUANTIFIED shape diverges by java's own implementation leak:
+        // Curly's greedy loop uses matcher.last as its position scratch, so
+        // under a quantifier java's boundary anchors at the ITERATION
+        // position ((?:\b{g}a)+ on "aa" gives [0,1) where the unrolled
+        // \b{g}a\b{g}a gives [0,2) — probed both). We serve the principled
+        // (unrolled) semantics: the boundary is loop-context-free. Pinned
+        // as our documented answer, the java quirk noted.
+        PatternMatcher loop = io.github.jemmix.tdfa.Pattern.compile("(?:\\b{g}a)+", 0, f).matcher("aa");
+        assertThat(loop.find()).isTrue();
+        assertThat(loop.group()).isEqualTo("aa");
+        // in a class the clause is illegal in java too — both reject
+        JurOracle.assertSameCompileReject("[\\b{g}]", f);
+        // the property clauses still reject loudly (the narrowed gate)
+        JurOracle.assertSameCompileReject("\\b{gc=Lu}", f);
+        JurOracle.assertSameCompileReject("\\b{sc=Latin}", f);
     }
 
     @ParameterizedTest
