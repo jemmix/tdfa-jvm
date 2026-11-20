@@ -15,7 +15,7 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 - [ ] `CANON_EQ`: compile-time canonical-equivalence pattern rewrite
 - [ ] Scoped inline `(?d)`: per-scope terminator tables
-- [ ] Atomic groups: decision record, VM prototype first
+- [ ] Atomic groups: fork-rule lowering, VM prototype first ([decision](docs/atomic-groups.md))
 
 ## Correctness
 
