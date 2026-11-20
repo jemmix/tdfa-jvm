@@ -110,6 +110,12 @@ public final class PatternCompiler {
      * round-trips serialization as the ORIGINAL pattern text. */
     public static final int LITERAL = 1024;
 
+    /** Canonical equivalence (JDK {@code CANON_EQ}): the pattern-side
+     *  rewrite — every literal and single-codepoint class member expands
+     *  to an alternation of its NFC and NFD spellings at the parse
+     *  (java's own mechanism, live-JDK probed). */
+    public static final int CANON_EQ = 4096;
+
     /** Free-spacing mode (JDK {@code COMMENTS}): whitespace between
      * tokens and {@code #}-to-end-of-line comments are skipped at the
      * parse; the {@code (?x)} inline spelling is the same behavior,
@@ -170,6 +176,7 @@ public final class PatternCompiler {
         }
         boolean longest = (flags & LONGEST_MATCH) != 0;
         boolean disableUnicodeGroups = (flags & DISABLE_UNICODE_GROUPS) != 0;
+        boolean canonEq = (flags & CANON_EQ) != 0;
         boolean findOnly = (flags & FIND_ONLY) != 0;
         boolean multiValued = (flags & MULTI_VALUED_TAGS) != 0;
         // Null knobs resolve to their defaults exactly once, here at the
@@ -187,8 +194,8 @@ public final class PatternCompiler {
         // side table has no reader, so its exploration is not even
         // attempted and its budget is never drawn.
         WorkMeter ledger = new WorkMeter(Budgets.compileComputeTicks());
-        Tnfa nfa = multiValued ? Tnfa.compileMulti(fl, disableUnicodeGroups, semantics, prov, obs, ledger)
-            : Tnfa.compile(fl, disableUnicodeGroups, false, false, semantics, prov, obs, ledger);
+        Tnfa nfa = multiValued ? Tnfa.compileMulti(fl, disableUnicodeGroups, semantics, prov, obs, ledger, canonEq)
+            : Tnfa.compile(fl, disableUnicodeGroups, false, false, semantics, prov, obs, ledger, canonEq);
         Tdfa find = findOnly ? Determinizer.compile(nfa, longest, obs, ledger.fork(0))
             : Determinizer.compileWithWholeSide(nfa, longest, obs, ledger.fork(0));
         if (findOnly) {

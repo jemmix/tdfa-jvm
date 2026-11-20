@@ -21,6 +21,7 @@ import io.github.jemmix.tdfa.core.unicode.UnicodeProviders;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.text.Normalizer;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -319,8 +320,215 @@ public final class Parser {
             throw fail(p, "unexpected '" + p.cur() + "'");
         }
         e = anchorBoth ? anchorBoth(e) : e;
+        if (options.isCanonEq()) {
+            e = rewriteCanonEq(e);
+        }
         return new ParseResult(e, p.tagCount(), p.groupCount(), p.multiline(), p.unicodeShorthand(),
             p.unicodeWordRanges(), p.namedGroups(), p.hasSupplementaryStarts, p.rootBeginAnchor, p.graphemeTables);
+    }
+
+    /**
+     * The canonical-equivalence rewrite (the jur facade's CANON_EQ flag —
+     * java's own PATTERN-side mechanism, live-JDK probed): every literal
+     * codepoint with a canonical decomposition, and every single-codepoint
+     * class member, expands to an alternation of its NFC and NFD
+     * spellings — a decomposed pattern matches the composed input and
+     * vice versa, the base alone matches neither, and order is
+     * significant. Negated classes, ranges with decomposable endpoints
+     * (java's isrange family) and the fold-literal interaction stay
+     * verbatim — battery-pinned as the landed surface.
+     */
+    private static Ast rewriteCanonEq(Ast e) {
+        if (e instanceof Ast.Concat) {
+            Ast.Concat c = (Ast.Concat) e;
+            List<Ast> out = new ArrayList<>(c.children.size());
+            boolean changed = false;
+            int i = 0;
+            while (i < c.children.size()) {
+                // A canonical RUN: a symbol followed by combining marks
+                // (Mn/Mc/Me approximation of ccc>0 — a run that does not
+                // compose is kept verbatim, so over-grouping is inert).
+                if (c.children.get(i) instanceof Ast.Symbol) {
+                    int j = i + 1;
+                    while (j < c.children.size() && c.children.get(j) instanceof Ast.Symbol
+                        && isCombining(((Ast.Symbol) c.children.get(j)).c)) {
+                        j++;
+                    }
+                    if (j > i + 1 || hasDecomposition(((Ast.Symbol) c.children.get(i)).c)) {
+                        StringBuilder raw = new StringBuilder();
+                        for (int t = i; t < j; t++) {
+                            raw.append(((Ast.Symbol) c.children.get(t)).c);
+                        }
+                        Ast x = expandSequence(raw.toString());
+                        if (x != null) {
+                            out.add(x);
+                            changed = true;
+                            i = j;
+                            continue;
+                        }
+                    }
+                }
+                Ast r = rewriteCanonEq(c.children.get(i));
+                changed |= r != c.children.get(i);
+                out.add(r);
+                i++;
+            }
+            return changed ? new Ast.Concat(out) : e;
+        }
+        if (e instanceof Ast.Alt) {
+            Ast.Alt a = (Ast.Alt) e;
+            List<Ast> out = new ArrayList<>(a.children.size());
+            boolean changed = false;
+            for (Ast ch : a.children) {
+                Ast r = rewriteCanonEq(ch);
+                changed |= r != ch;
+                out.add(r);
+            }
+            return changed ? new Ast.Alt(out) : e;
+        }
+        if (e instanceof Ast.Repeat) {
+            Ast.Repeat r = (Ast.Repeat) e;
+            Ast body = rewriteCanonEq(r.body);
+            if (body == r.body) {
+                return e;
+            }
+            Ast.Repeat nr = new Ast.Repeat(body, r.min, r.max, r.greedy);
+            nr.possessive = r.possessive;
+            nr.zeroWidthExit = r.zeroWidthExit;
+            nr.quantifiedCapture = r.quantifiedCapture;
+            return nr;
+        }
+        if (e instanceof Ast.ClassExpr) {
+            Ast.ClassExpr ce = (Ast.ClassExpr) e;
+            if (ce.negated) {
+                return e;
+            }
+            List<Ast> alts = null;
+            List<Ast.ClassExpr.Item> kept = null;
+            for (int idx = 0; idx < ce.items.size(); idx++) {
+                Ast.ClassExpr.Item item = ce.items.get(idx);
+                if (!(item instanceof Ast.ClassExpr.Member)) {
+                    continue;
+                }
+                Ast.ClassExpr.Member m = (Ast.ClassExpr.Member) item;
+                if (m.lo != m.hi || m.written) {
+                    continue;
+                }
+                // Adjacent single members forming a canonical RUN (base +
+                // combining marks): java's class-content normalization —
+                // the run's expansion joins the outer alternation, the
+                // members leave the class.
+                int j = idx + 1;
+                while (j < ce.items.size() && ce.items.get(j) instanceof Ast.ClassExpr.Member) {
+                    Ast.ClassExpr.Member m2 = (Ast.ClassExpr.Member) ce.items.get(j);
+                    if (m2.lo != m2.hi || m2.written || !isCombining((char) m2.lo)) {
+                        break;
+                    }
+                    j++;
+                }
+                StringBuilder raw = new StringBuilder();
+                for (int t = idx; t < j; t++) {
+                    raw.appendCodePoint(((Ast.ClassExpr.Member) ce.items.get(t)).lo);
+                }
+                Ast x = j > idx + 1 ? expandSequence(raw.toString()) : expandCp(m.lo, null);
+                if (x != null) {
+                    if (alts == null) {
+                        alts = new ArrayList<>(2);
+                        kept = new ArrayList<>(ce.items);
+                    }
+                    alts.add(x);
+                    kept.subList(idx, j).clear();
+                    idx = j - 1;
+                }
+            }
+            if (alts == null) {
+                return e;
+            }
+            if (!kept.isEmpty()) {
+                alts.add(new Ast.ClassExpr(kept, false, ce.ci, ce.uni));
+            }
+            return alts.size() == 1 ? alts.get(0) : new Ast.Alt(alts);
+        }
+        if (e instanceof Ast.Symbol) {
+            return expandCp(((Ast.Symbol) e).c, e);
+        }
+        if (e instanceof CharClass) {
+            CharClass cc = (CharClass) e;
+            if (cc.negated || cc.ranges.length == 0) {
+                return e;
+            }
+            List<Ast> alts = null;
+            int[] kept = new int[cc.ranges.length];
+            int k = 0;
+            for (int i = 0; i < cc.ranges.length; i += 2) {
+                int lo = cc.ranges[i], hi = cc.ranges[i + 1];
+                if (lo == hi) {
+                    Ast x = expandCp(lo, null);
+                    if (x != null) {
+                        if (alts == null) {
+                            alts = new ArrayList<>(2);
+                        }
+                        alts.add(x);
+                        continue;
+                    }
+                }
+                kept[k++] = lo;
+                kept[k++] = hi;
+            }
+            if (alts == null) {
+                return e;
+            }
+            if (k > 0) {
+                alts.add(new CharClass(Arrays.copyOf(kept, k), false));
+            }
+            return alts.size() == 1 ? alts.get(0) : new Ast.Alt(alts);
+        }
+        return e;
+    }
+
+    /**
+     * One codepoint's canonical expansion, or null when it has none (the
+     * NFC and NFD spellings are identical). The alternation prefers the
+     * composed spelling — the oracle's span on composed inputs.
+     */
+    private static Ast expandCp(int cp, Ast original) {
+        if (!hasDecomposition(cp)) {
+            return original;
+        }
+        return expandSequence(new String(Character.toChars(cp)));
+    }
+
+    private static boolean hasDecomposition(int cp) {
+        String src = new String(Character.toChars(cp));
+        return !Normalizer.isNormalized(src, Normalizer.Form.NFC) || !Normalizer.isNormalized(src, Normalizer.Form.NFD);
+    }
+
+    private static boolean isCombining(char c) {
+        int t = Character.getType(c);
+        return t == Character.NON_SPACING_MARK || t == Character.COMBINING_SPACING_MARK
+            || t == Character.ENCLOSING_MARK;
+    }
+
+    /** A raw codepoint sequence's canonical expansion, or null when its
+     *  NFC and NFD spellings are identical (nothing to alternate). */
+    private static Ast expandSequence(String raw) {
+        String nfc = Normalizer.normalize(raw, Normalizer.Form.NFC);
+        String nfd = Normalizer.normalize(raw, Normalizer.Form.NFD);
+        if (nfc.equals(nfd)) {
+            return null;
+        }
+        return new Ast.Alt(Arrays.asList(spell(nfc), spell(nfd)));
+    }
+
+    /** A codepoint sequence as a concat of single-codepoint atoms. */
+    private static Ast spell(String s) {
+        List<Ast> parts = new ArrayList<>(s.codePointCount(0, s.length()));
+        for (int i = 0; i < s.length();) {
+            int cp = s.codePointAt(i);
+            i += Character.charCount(cp);
+            parts.add(cp <= 0xFFFF ? new Ast.Symbol((char) cp) : new CharClass(new int[]{cp, cp}, false));
+        }
+        return parts.size() == 1 ? parts.get(0) : new Ast.Concat(parts);
     }
 
     /** Wrap a parsed body in start/end-text anchors (matches() = anchored both ends).

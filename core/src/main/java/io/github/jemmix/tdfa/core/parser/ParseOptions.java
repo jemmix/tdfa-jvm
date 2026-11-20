@@ -41,7 +41,7 @@ public final class ParseOptions {
     /** The RE2-lineage preset: every grammar axis at its RE2-side value
      *  (the pre-flip default the legacy parse entries answer in). */
     private static final ParseOptions RE2_LINEAGE =
-        new ParseOptions(true, FlagBindings.RE2, EscapeAlphabet.RE2_MINIMAL);
+        new ParseOptions(true, FlagBindings.RE2, EscapeAlphabet.RE2_MINIMAL, false);
 
     private final boolean unicodeCase;
 
@@ -49,10 +49,26 @@ public final class ParseOptions {
 
     private final EscapeAlphabet escapes;
 
-    private ParseOptions(boolean unicodeCase, FlagBindings flagBindings, EscapeAlphabet escapes) {
+    private final boolean canonEq;
+
+    private ParseOptions(boolean unicodeCase, FlagBindings flagBindings, EscapeAlphabet escapes, boolean canonEq) {
         this.unicodeCase = unicodeCase;
         this.flagBindings = flagBindings;
         this.escapes = escapes;
+        this.canonEq = canonEq;
+    }
+
+    /** Whether the parse applies the canonical-equivalence rewrite
+     *  (the jur facade's {@code CANON_EQ} flag — java's pattern-side
+     *  mechanism: every literal and class member expands to an
+     *  alternation of its NFC and NFD spellings; docs/jur-api-parity.md). */
+    public ParseOptions canonEq(boolean canonEq) {
+        return canonEq == this.canonEq ? this : new ParseOptions(unicodeCase, flagBindings, escapes, canonEq);
+    }
+
+    /** @see #canonEq(boolean) */
+    public boolean isCanonEq() {
+        return canonEq;
     }
 
     /**
@@ -61,7 +77,7 @@ public final class ParseOptions {
      * Tnfa.compile} applies a {@code Semantics} onto.
      */
     public static ParseOptions of() {
-        return new ParseOptions(false, FlagBindings.JDK, EscapeAlphabet.JDK);
+        return new ParseOptions(false, FlagBindings.JDK, EscapeAlphabet.JDK, false);
     }
 
     /**
@@ -88,7 +104,7 @@ public final class ParseOptions {
      * records.
      */
     public ParseOptions unicodeCase(boolean unicodeCase) {
-        return new ParseOptions(unicodeCase, flagBindings, escapes);
+        return new ParseOptions(unicodeCase, flagBindings, escapes, canonEq);
     }
 
     /**
@@ -100,7 +116,7 @@ public final class ParseOptions {
      * letter it does not bind rejects at the parse.
      */
     public ParseOptions flagBindings(FlagBindings flagBindings) {
-        return new ParseOptions(unicodeCase, flagBindings, escapes);
+        return new ParseOptions(unicodeCase, flagBindings, escapes, canonEq);
     }
 
     /**
@@ -112,7 +128,7 @@ public final class ParseOptions {
      * parse and reads {@code \v} as the single unit U+000B.
      */
     public ParseOptions escapes(EscapeAlphabet escapes) {
-        return new ParseOptions(unicodeCase, flagBindings, escapes);
+        return new ParseOptions(unicodeCase, flagBindings, escapes, canonEq);
     }
 
     /** Does the scoped fold state start at the full Unicode universe (vs ASCII only)? */

@@ -216,6 +216,18 @@ public interface Pattern extends Serializable {
     int LITERAL = PatternCompiler.LITERAL;
 
     /**
+     * Flag: canonical equivalence (JDK {@code java.util.regex.Pattern.CANON_EQ})
+     * — the pattern-side rewrite: every literal and single-codepoint class
+     * member expands to an alternation of its NFC and NFD spellings, so a
+     * decomposed pattern matches the composed input and vice versa
+     * (live-JDK probed; {@code docs/jur-api-parity.md}). Composes with
+     * {@link #CASE_INSENSITIVE} (the expansion applies before folding —
+     * {@code É}/{@code é} additionally wants {@link #UNICODE_CASE}, the
+     * JDK's own reading).
+     */
+    int CANON_EQ = PatternCompiler.CANON_EQ;
+
+    /**
      * Flag: free-spacing mode — whitespace between tokens and
      * {@code #}-to-end-of-line comments are skipped at the parse
      * (JDK-exact name and semantics,

@@ -135,7 +135,7 @@ java.util.regex's own escapes (`\v`/`\h` whitespace classes, `\e`, `\R`,
 `\G` (the previous-match-end anchor), `\X` (one extended grapheme
 cluster, UAX #29), `\b{g}` (the grapheme-cluster boundary),
 `\cX`, `\N{...}`, `\Z`) and its `UNIX_LINES`/`UNICODE_CASE`/`LITERAL`/
-`COMMENTS` compile flags — and its matcher carries the region/bounds family
+`COMMENTS`/`CANON_EQ` compile flags — and its matcher carries the region/bounds family
 (`region`, `useTransparentBounds`/`useAnchoringBounds`, `hitEnd`/
 `requireEnd`, `toMatchResult`, function replace) with JDK-exact semantics
 ([docs/jur-api-parity.md](docs/jur-api-parity.md)).

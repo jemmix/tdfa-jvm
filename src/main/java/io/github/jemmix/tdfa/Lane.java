@@ -34,13 +34,13 @@ final class Lane {
     static final int VALID_FLAGS = PatternCompiler.CASE_INSENSITIVE | PatternCompiler.DOTALL | PatternCompiler.MULTILINE
         | PatternCompiler.DISABLE_UNICODE_GROUPS | PatternCompiler.LONGEST_MATCH
         | PatternCompiler.UNICODE_CHARACTER_CLASS | PatternCompiler.FIND_ONLY | PatternCompiler.MULTI_VALUED_TAGS
-        | PatternCompiler.UNIX_LINES | PatternCompiler.UNICODE_CASE | PatternCompiler.LITERAL
-        | PatternCompiler.COMMENTS;
+        | PatternCompiler.UNIX_LINES | PatternCompiler.UNICODE_CASE | PatternCompiler.LITERAL | PatternCompiler.COMMENTS
+        | PatternCompiler.CANON_EQ;
 
     static final String FLAGS_MESSAGE = "Flags should only be a combination of MULTILINE, DOTALL, CASE_INSENSITIVE,"
         + " DISABLE_UNICODE_GROUPS, LONGEST_MATCH, UNICODE_CHARACTER_CLASS, FIND_ONLY, MULTI_VALUED_TAGS, UNIX_LINES,"
-        + " UNICODE_CASE, LITERAL, COMMENTS (the jur facade; CANON_EQ is not supported — canonical-equivalence"
-        + " matching needs normalization-aware compilation, outside the TDFA mission; the RE2 reading ships as the"
+        + " UNICODE_CASE, LITERAL, COMMENTS, CANON_EQ (the jur facade — CANON_EQ is the pattern-side canonical-"
+        + " equivalence rewrite; the RE2 reading ships as the"
         + " :re2j module's Pattern, and per-axis probes ride CompileOptions.semantics)";
 
     private Lane() {

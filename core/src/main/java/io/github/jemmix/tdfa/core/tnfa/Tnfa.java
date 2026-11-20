@@ -267,6 +267,13 @@ public final class Tnfa {
         return compile(pattern, disableUnicodeGroups, false, true, semantics, provider, observer, meter);
     }
 
+    /** {@code CANON_EQ} variant: the parse applies the canonical-equivalence
+     *  rewrite (see {@code ParseOptions.canonEq}). */
+    public static Tnfa compileMulti(String pattern, boolean disableUnicodeGroups, Semantics semantics,
+        UnicodeDataProvider provider, CompileObserver observer, WorkMeter meter, boolean canonEq) {
+        return compile(pattern, disableUnicodeGroups, false, true, semantics, provider, observer, meter, canonEq);
+    }
+
     /**
      * Ledger variant: parse + TNFA build run on the CALLER's work meter
      * (typically forked from the compile's root ledger — see {@code
@@ -294,6 +301,15 @@ public final class Tnfa {
     public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
         boolean multiValuedTags, Semantics semantics, UnicodeDataProvider provider, CompileObserver observer,
         WorkMeter meter) {
+        return compile(pattern, disableUnicodeGroups, anchorBoth, multiValuedTags, semantics, provider, observer, meter,
+            false);
+    }
+
+    /** {@code CANON_EQ} variant: the parse applies the canonical-equivalence
+     *  rewrite (see {@code ParseOptions.canonEq}). */
+    public static Tnfa compile(String pattern, boolean disableUnicodeGroups, boolean anchorBoth,
+        boolean multiValuedTags, Semantics semantics, UnicodeDataProvider provider, CompileObserver observer,
+        WorkMeter meter, boolean canonEq) {
         // The overloads above accept a null observer ("no hook"); resolve
         // it to NONE once here so the stage callbacks below fire
         // unconditionally (the no-op pays a handful of virtual calls —
@@ -316,9 +332,11 @@ public final class Tnfa {
         // (the family-6 marks), the \s table, the shorthand fold, the
         // shorthand/property tables and the fold expansion — is applied by
         // the meaning-resolution pass below, not mirrored here.
-        ParseResult parsed = Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth, ParseOptions.of()
-            .unicodeCase(semantics.isUnicodeCase()).flagBindings(semantics.flagBindings()).escapes(semantics.escapes()),
-            provider, meter);
+        ParseResult parsed =
+            Parser.parseResult(
+                pattern, disableUnicodeGroups, anchorBoth, ParseOptions.of().unicodeCase(semantics.isUnicodeCase())
+                    .flagBindings(semantics.flagBindings()).escapes(semantics.escapes()).canonEq(canonEq),
+                provider, meter);
         obs.stage(CompileObserver.Stage.PARSE, System.nanoTime() - t0, parsed.tagCount());
         return fromParsed(parsed, multiValuedTags, semantics, provider, meter, obs);
     }

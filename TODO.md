@@ -13,7 +13,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 ## Features
 
-- [ ] `CANON_EQ`: compile-time canonical-equivalence pattern rewrite
 - [ ] Scoped inline `(?d)`: per-scope terminator tables
 - [ ] Atomic groups: fork-rule lowering, VM prototype first ([decision](docs/atomic-groups.md))
 
