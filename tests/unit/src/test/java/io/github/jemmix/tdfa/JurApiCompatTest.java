@@ -45,11 +45,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  *     which implements the JDK interface outright.</li>
  * </ul>
  *
- * <p><b>Documented exclusions</b> (asserted, never silent): the
- * {@code CANON_EQ} flag bit is deliberately absent — canonical
- * equivalence needs normalization-aware compilation, outside the TDFA
- * mission — and the facade's roster message names it, so a caller
- * passing the JDK bit value learns why.
+ * <p>{@code CANON_EQ} landed as the pattern-side canonical-equivalence
+ * rewrite (every flag constant the live JDK carries is present; the
+ * roster message names the flag — no silent unknown-bit wall).
  */
 class JurApiCompatTest {
 
@@ -82,12 +80,12 @@ class JurApiCompatTest {
     }
 
     @Test
-    void patternFlagConstantsCoverTheJdkExceptCanonEq() {
+    void patternFlagConstantsCoverTheJdk() {
         Set<String> missing = intConstants(java.util.regex.Pattern.class);
         missing.removeAll(intConstants(Pattern.class));
-        // The one documented exclusion (see the class doc).
-        assertThat(missing).containsExactly("CANON_EQ");
-        // And the roster rejection names it — no silent unknown-bit wall.
+        // CANON_EQ LANDED (the pattern-side canonical-equivalence rewrite).
+        assertThat(missing).isEmpty();
+        // And the roster names it as supported — no silent unknown-bit wall.
         assertThat(Lane.FLAGS_MESSAGE).contains("CANON_EQ");
     }
 

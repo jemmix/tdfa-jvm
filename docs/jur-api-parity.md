@@ -154,6 +154,15 @@ engine + machinery-routing shells (emission-time selection — non-`\G`
 shells are byte-identical); streaming input rejects `\G` loudly (the
 base is matcher state).
 
+**`CANON_EQ` — landed** (the last flag exclusion closed): java's own
+PATTERN-side mechanism, live-JDK probed — every literal codepoint,
+literal run (base + combining marks), and class member expands at the
+parse into an alternation of its NFC and NFD spellings, so a
+decomposed pattern matches the composed input and vice versa while
+the base alone matches neither. Negated classes, written ranges and
+the fold-literal interaction stay verbatim (the landed surface); the
+reflection suite now asserts FULL flag coverage with no exclusion.
+
 **Possessive quantifiers — landed** (`docs/possessive-quantifiers.md`):
 `x*+`/`x++`/`x?+`/`x{n,m}+` on the jur facade — maximal munch that
 never gives back, lowered to a compile-time fork rule (per (kernel,
@@ -191,7 +200,7 @@ Set (the re2j facade): every letter above rejects at the parse
 **Consciously out of this landing** (the mission bounds): lookarounds
 and backreferences (backtracking-dependent, always rejected),
 `\X`/`\b{g}` (graphemes — rejected
-loudly, see below), `CANON_EQ` (normalization-aware compilation), scoped
+loudly, see below), scoped
 inline `(?d)` (the terminator-set axis is compile-global; the
 UNIX_LINES FLAG is the JDK-exact spelling), and backreferences
 (always rejected, never silently degraded — the jur lane now applies

@@ -10,6 +10,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BiPredicate;
 import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.stream.Collectors;
@@ -789,6 +790,34 @@ class JurApiParityTest {
         // the property clauses still reject loudly (the narrowed gate)
         JurOracle.assertSameCompileReject("\\b{gc=Lu}", f);
         JurOracle.assertSameCompileReject("\\b{sc=Latin}", f);
+    }
+
+    /** {@code CANON_EQ} — the pattern-side canonical-equivalence rewrite
+     *  against the live JDK oracle, both engine tiers (live-JDK probed
+     *  before design): every literal codepoint and class member expands to
+     *  an alternation of its NFC and NFD spellings — a decomposed pattern
+     *  matches the composed input and vice versa, the base alone matches
+     *  neither, and order is significant. Negated classes, written ranges
+     *  and the fold-literal interaction stay verbatim (the landed
+     *  surface, docs/jur-api-parity.md). */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void canonEqMirrorsTheJdk(RegexEngineFactory f) {
+        BiPredicate<String, String> jdk =
+            (p, in) -> java.util.regex.Pattern.compile(p, java.util.regex.Pattern.CANON_EQ).matcher(in).find();
+        BiPredicate<String, String> ours = (p, in) -> io.github.jemmix.tdfa.Pattern
+            .compile(p, io.github.jemmix.tdfa.Pattern.CANON_EQ, f).matcher(in).find();
+        String[][] cells = {{"e\u0301", "é"}, {"é", "e\u0301"}, {"[e\u0301]", "é"}, {"[é]", "e\u0301"}, {"e", "é"},
+            {"\u0301e", "é"}, {"e\u0301x", "éx"}, {"e\u0301", "e\u0301"}, {"é", "é"}, {"a\u0308", "ä"},
+            {"\u0308a", "ä"}, {"q\u0301", "qué"}};
+        for (String[] c : cells) {
+            assertThat(ours.test(c[0], c[1])).as("CANON_EQ \"%s\" on \"%s\"", c[0], c[1])
+                .isEqualTo(jdk.test(c[0], c[1]));
+        }
+        // The flag OFF keeps the literal reading.
+        io.github.jemmix.tdfa.Pattern noFlag = io.github.jemmix.tdfa.Pattern.compile("e\u0301", 0, f);
+        assertThat(noFlag.matcher("é").find()).isFalse();
+        assertThat(noFlag.matcher("e\u0301").find()).isTrue();
     }
 
     @ParameterizedTest
