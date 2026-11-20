@@ -140,12 +140,14 @@ cluster, UAX #29), `\b{g}` (the grapheme-cluster boundary),
 `requireEnd`, `toMatchResult`, function replace) with JDK-exact semantics
 ([docs/jur-api-parity.md](docs/jur-api-parity.md)).
 
-Backtracking-dependent features — backreferences, lookaround, atomic
-groups — are rejected at compile time. We never silently fall back to a
-slower engine. Possessive quantifiers (`a++`, `a*+`, `a?+`, `a{n,m}+`)
-are supported on the jur facade: they never give back, but need no
-backtracking to serve — the fork rule resolves at compile time
-([docs/possessive-quantifiers.md](docs/possessive-quantifiers.md)).
+Backtracking-dependent features — backreferences, lookaround — are
+rejected at compile time. We never silently fall back to a slower
+engine. Possessive quantifiers (`a++`, `a*+`, `a?+`, `a{n,m}+`) and
+atomic groups (`(?>…)`) are supported on the jur facade: they never
+give back, but need no backtracking to serve — the fork rule resolves
+at compile time
+([docs/possessive-quantifiers.md](docs/possessive-quantifiers.md),
+[docs/atomic-groups.md](docs/atomic-groups.md)).
 
 ## How it's tested
 

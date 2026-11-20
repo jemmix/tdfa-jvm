@@ -124,6 +124,9 @@ public final class FixedTags {
                     } else if (e instanceof Ast.Repeat) {
                         f.resumed = true;
                         visit(((Ast.Repeat) e).body, NO_BASE, NAN, 0);
+                    } else if (e instanceof Ast.Atomic) {
+                        f.resumed = true;
+                        visit(((Ast.Atomic) e).body, NO_BASE, NAN, 0);
                     } else {
                         throw new IllegalStateException("unknown ast: " + e);
                     }
@@ -173,6 +176,11 @@ public final class FixedTags {
                     } else {
                         complete(f.inB, NAN, NAN);
                     }
+                } else if (e instanceof Ast.Atomic) {
+                    // A transparent wrapper for distance purposes — but the
+                    // LOCK makes cross-boundary base fixes unsound: complete
+                    // with the body's own triple, base already NO_BASE.
+                    complete(NO_BASE, rd, rl);
                 } else {
                     throw new IllegalStateException("unknown ast: " + e);
                 }
@@ -247,6 +255,10 @@ public final class FixedTags {
                 rb = baseTag;
                 rd = dist;
                 rl = levelDist;
+                return;
+            }
+            if (e instanceof Ast.Atomic) {
+                walk(((Ast.Atomic) e).body);
                 return;
             }
             throw new IllegalStateException("unknown ast: " + e);

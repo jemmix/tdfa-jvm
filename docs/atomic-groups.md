@@ -26,6 +26,26 @@ continuation fails.
 - `(?>a*)b`, `(?:(?>a+))b` — the transparent wrapper and the
   zero-width-capable body behave as their possessive twins.
 
+## The landing
+
+Landed on both engine tiers (the prototype step found nothing tier-
+specific — the fork rule is determinizer-level, exactly as #195
+predicted). Two falsifiers the smoke caught:
+
+1. The first shape was QUEST-like — a decision state with body and
+   SKIP edges. Java's body is MANDATORY (a failed body fails the
+   group); the skip edge let `(?>a|ab)c` match the bare `c` at a
+   restart. The landed shape is PLUS-like: entry &rarr; body (the
+   BODY-stamped edge, no skip), body &rarr; exit hub, hub &rarr; out
+   (the EXIT-stamped reset).
+2. Fork bits now SURVIVE the symbol step. The old step-reset was
+   correct for possessive quantifiers (whose choice kernels sit at
+   the quantifier boundary, every boundary edge stamped) but wrong
+   for atomic, whose fork spans an arbitrary body — kernels inside
+   the body must keep competing (`(?>a+)a` matched by giving one
+   iteration back). The EXIT-stamped edges do all the resetting; the
+   possessive battery stayed green unchanged.
+
 ## The decision
 
 **Atomic lowers onto the possessive fork machinery — one mechanism,

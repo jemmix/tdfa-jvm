@@ -820,6 +820,45 @@ class JurApiParityTest {
         assertThat(noFlag.matcher("e\u0301").find()).isTrue();
     }
 
+    /** Atomic groups against the live JDK oracle, both engine tiers
+     *  (docs/atomic-groups.md — the decision record's cells): the lock
+     *  commits the body's standalone first-preference submatch — the
+     *  alternation commit, the loop commit, mid-pattern commits, captures
+     *  through the lock, empty-capable and bounded bodies, and nested
+     *  forks. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void atomicGroupsMirrorTheJdk(RegexEngineFactory f) {
+        // The alternation commit and its greedy twin
+        JurOracle.assertSameFind("(?>a|ab)c", "abc", f);
+        JurOracle.assertSameFind("(a|ab)c", "abc", f);
+        // The loop commit: the maximal run never gives back
+        JurOracle.assertSameFind("(?>a+)a", "aa", f);
+        JurOracle.assertSameFind("(?>a+)b", "aab", f);
+        JurOracle.assertSameFind("(?>a{1,2})a", "aa", f);
+        JurOracle.assertSameFind("(?>a{1,2})b", "aab", f);
+        // Mid-pattern commit
+        JurOracle.assertSameFind("a(?>b|bc)d", "abcd", f);
+        JurOracle.assertSameFind("(?>a(?>b|bc)c|d)", "abcd", f);
+        JurOracle.assertSameFind("(?>a(?>b|bc)c|d)x", "abcd", f);
+        // Zero-width-capable body
+        JurOracle.assertSameFind("(?>a*)b", "ab", f);
+        JurOracle.assertSameFind("(?>a?)b", "b", f);
+        JurOracle.assertSameFind("(?>a?)b", "ab", f);
+        // Captures through the lock report normally
+        Matcher jt = jur("(?>(a+))b", "aab", 0);
+        PatternMatcher ot = io.github.jemmix.tdfa.Pattern.compile("(?>(a+))b", 0, f).matcher("aab");
+        assertThat(ot.find()).isEqualTo(jt.find()).isTrue();
+        assertThat(ot.group(1)).isEqualTo(jt.group(1)).isEqualTo("aa");
+    }
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void re2jFacadeRejectsAtomicGroups(RegexEngineFactory factory) {
+        assertSameCompileReject("(?>a)", factory);
+        assertSameCompileReject("a(?>b|bc)d", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void toMatchResultIsAnImmutableSnapshot(RegexEngineFactory f) {

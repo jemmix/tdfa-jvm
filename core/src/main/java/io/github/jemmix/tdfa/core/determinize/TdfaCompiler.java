@@ -1959,6 +1959,13 @@ final class TdfaCompiler {
         // or the exit) is dropped for this range. Java's per-iteration
         // alternation commit and the no-give-back rule in one pass.
         int fired = possessiveForks > 0 ? 0 : -1;
+        if (Boolean.getBoolean("tdfa.debugfork") && possessiveForks > 0) {
+            StringBuilder db = new StringBuilder("[step] n=" + configs.size());
+            for (Config c : configs) {
+                db.append(' ').append(c.state).append('/').append(Integer.toBinaryString(c.forkArr));
+            }
+            System.err.println(db);
+        }
         for (int ci = 0; ci < configs.size(); ci++) {
             if (suppress && ci > firstAcceptIdx) {
                 continue; // pike-cut: lower-priority paths past the first live accept
@@ -1982,9 +1989,12 @@ final class TdfaCompiler {
             for (int idx : symOut[c.state]) {
                 meter.tick(); // per (config, symbol): step's cost is this loop
                 if ((activeEdges[idx >> 6] & (1L << (idx & 63))) != 0) {
-                    // emptyMask/forkArr reset on step — assertions are position-bound
-                    // (gated via requiredMask), the fork choice resolved here.
-                    out.add(new Config(nfa.symTo[idx], c.regs, c.l, HistTable.EMPTY_ID, 0, c.pri));
+                    // emptyMask resets on step (assertions are position-bound,
+                    // gated via requiredMask); fork bits SURVIVE — the fork
+                    // spans its construct, and every boundary edge out of it
+                    // carries the EXIT role that resets them (possessive's
+                    // exit edges, atomic's hub edge).
+                    out.add(new Config(nfa.symTo[idx], c.regs, c.l, HistTable.EMPTY_ID, 0, c.pri, c.forkArr));
                     stepped = true;
                 }
             }

@@ -615,6 +615,7 @@ public final class Tnfa {
             static final int PLUS = 6; // e+
             static final int BOUNDED_ZWE = 7; // marked {n,m}/{n,}: zero-width-exit split copies
             static final int WRAP_FORK = 8; // possessive: wrap the built construct's entry in a BODY-stamped ε
+            static final int ATOMIC = 9; // (?>X): fork-stamped QUEST shape — body edge BODY, exit edge EXIT
 
             int kind = DISPATCH;
             Ast node; // DISPATCH/CONCAT/ALT: the node; repeat kinds: the body
@@ -721,6 +722,25 @@ public final class Tnfa {
                         frames.push();
                         stack.push(f);
                         pushNode(stack, ch.get(0), f.entryTo);
+                        continue;
+                    }
+                    if (e instanceof Ast.Atomic) {
+                        // (?>X): the fork-stamped QUEST shape (docs/atomic-groups.md).
+                        // The fork id mints here; the resume stamps the two edges.
+                        if (possessiveForks >= 12) {
+                            throw new PatternSyntaxException("too many atomic/possessive forks (max 12 per pattern)");
+                        }
+                        int fb = possessiveForks << 1;
+                        f.kind = BuildFrame.ATOMIC;
+                        f.node = ((Ast.Atomic) e).body;
+                        f.forkBody = fb;
+                        f.forkExit = fb | 1;
+                        f.s = fresh(); // the entry decision (BODY-stamped, NO skip)
+                        f.hub = fresh(); // the body's exit hub (EXIT-stamped reset)
+                        possessiveForks++;
+                        frames.push();
+                        stack.push(f);
+                        pushNode(stack, ((Ast.Atomic) e).body, f.hub);
                         continue;
                     }
                     // Ast.Repeat — dispatch by shape (see the per-kind resume steps).
@@ -953,6 +973,20 @@ public final class Tnfa {
                         result = f.newStart;
                         frames.pop();
                     }
+                    continue;
+                }
+                if (f.kind == BuildFrame.ATOMIC) {
+                    int bodyStart = result;
+                    // The body is MANDATORY (java: a failed body fails the
+                    // group — no skip edge), and the lock is the fork's
+                    // first-live-edge rule inside the body. The EXIT edge
+                    // sits at the body's exit: leaving the fork RESETS its
+                    // bits (committing out), so continuation configs never
+                    // carry stale fork membership.
+                    forkEps(f.s, bodyStart, 1, f.forkBody);
+                    forkEps(f.hub, f.entryTo, 1, f.forkExit);
+                    result = f.s;
+                    frames.pop();
                     continue;
                 }
                 if (f.kind == BuildFrame.WRAP_FORK) {
