@@ -13,7 +13,7 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 ## Features
 
-- [ ] Scoped inline `(?d)`: per-scope terminator tables
+- [ ] Scoped inline `(?d)`: parallel unix bit families ([design](docs/scoped-unix-lines.md))
 
 ## Correctness
 
