@@ -363,6 +363,25 @@ public abstract class Ast {
         }
     }
 
+    /** The atomic group {@code (?>X)}: once X's standalone first-preference
+     *  submatch succeeds, the group locks — never re-entered, never
+     *  retried (docs/atomic-groups.md). Lowers onto the possessive fork
+     *  machinery: a two-edge construct whose body edge carries the fork's
+     *  BODY role and whose exit edge carries EXIT (the greedy QUEST
+     *  shape). */
+    public static final class Atomic extends Ast {
+        public final Ast body;
+
+        public Atomic(Ast body) {
+            this.body = body;
+        }
+
+        @Override
+        public String toString() {
+            return "(?>...)";
+        }
+    }
+
     public static final class Concat extends Ast {
         public final List<Ast> children;
 

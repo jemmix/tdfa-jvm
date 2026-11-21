@@ -188,6 +188,10 @@ public final class Resolve {
                 // resume path uniform with the containers.
                 stack.push(new Frame(e, Collections.singletonList(((Ast.Repeat) e).body)));
                 stack.push(((Ast.Repeat) e).body);
+            } else if (e instanceof Ast.Atomic) {
+                // A transparent one-child frame — same shape as Repeat's.
+                stack.push(new Frame(e, Collections.singletonList(((Ast.Atomic) e).body)));
+                stack.push(((Ast.Atomic) e).body);
             } else {
                 values.push(expandLeaf(e)); // symbolic or plain leaf
             }

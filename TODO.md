@@ -14,7 +14,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 ## Features
 
 - [ ] Scoped inline `(?d)`: per-scope terminator tables
-- [ ] Atomic groups: fork-rule lowering, VM prototype first ([decision](docs/atomic-groups.md))
 
 ## Correctness
 

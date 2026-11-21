@@ -917,7 +917,18 @@ public final class Parser {
                 throw fail(this, "lookahead not supported");
             }
             if (afterQ == '>') {
-                throw fail(this, "atomic groups not supported");
+                if (options.escapes() == EscapeAlphabet.RE2_MINIMAL) {
+                    throw fail(this, "atomic groups not supported");
+                }
+                // (?>X): the atomic group — the fork-rule lowering over the
+                // possessive machinery (docs/atomic-groups.md). One
+                // construct, body-first/exit-second like a greedy QUEST,
+                // the two edges carrying the fork's BODY/EXIT roles.
+                pos++; // consume '>'
+                int gOpen = pos;
+                Ast body = parseAlt();
+                expect(')');
+                return new Ast.Atomic(body);
             }
             if (afterQ == '<') {
                 char next = pos + 1 < src.length() ? src.charAt(pos + 1) : '\0';
