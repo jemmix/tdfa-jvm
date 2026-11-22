@@ -216,6 +216,10 @@ final class TdfaCompiler {
      * Per-state popped-mask bitsets for the closure's subsumption cut (see epsilonClosure).
      */
     long[] maskBitset;
+    /** Words per state in {@link #maskBitset} — sized from the compile's
+     *  highest mask bit (3 for stock families, more for scoped-{@code (?d)}
+     *  compiles; see the constructor). */
+    int maskWords;
 
     int[] maskEpoch;
     int epochCtr;
@@ -363,7 +367,18 @@ final class TdfaCompiler {
         this.maxStates = Budgets.maxDfaStates(longestMatch ? 0 : BudgetWeights.STOP_TABLE_STATE_BYTES);
         this.epsOut = sortedOutgoing(nfa.epsFrom, nfa.epsPri);
         this.symOut = plainOutgoing(nfa.symFrom);
-        this.maskBitset = new long[nfa.stateCount * 3];
+        // The popped-mask bitset indexes masks BY VALUE (bit m = value m):
+        // the word count must cover the highest bit any ε-edge carries —
+        // 3 words for the stock families, 33 when a scoped-(?d) compile
+        // consults the unix family (bit 2048). Paid only by those compiles.
+        int maxMaskBit = 63;
+        for (int mask : nfa.epsEmptyMask) {
+            while (mask > maxMaskBit) {
+                maxMaskBit = (maxMaskBit << 1) | 1; // round to 2^k-1
+            }
+        }
+        this.maskWords = maxMaskBit / 64 + 1;
+        this.maskBitset = new long[nfa.stateCount * maskWords];
         this.firstPopL = new int[nfa.stateCount];
         this.firstPopLEpoch = new int[nfa.stateCount];
         this.surfaceTags = nfa.surfaceFinalTags;
@@ -412,20 +427,41 @@ final class TdfaCompiler {
      *  256), and every bit below a consulted one is allocatable whether or
      *  not it is used (a \G artifact without plain-$ still needs 256). */
     private static int posFlagCellsOf(Tnfa nfa) {
-        boolean finalEnd = usesFinalEnd(nfa);
-        boolean prevEnd = usesPrevEnd(nfa);
-        boolean graphB = usesGraphBoundary(nfa);
-        int dims = 6;
-        if (finalEnd || prevEnd || graphB) {
-            dims++; // bit 6 (FINAL_END)
+        // The cell index IS the posFlags value — the highest bit any
+        // ε-edge gate carries must be addressable. Bits are sparse across
+        // the families (the OTHER family sits at 4096+), so round the
+        // max bit up, not the family count.
+        int maxBit = 63; // the six universal bits
+        for (int mask : nfa.epsEmptyMask) {
+            while (mask > maxBit) {
+                maxBit = (maxBit << 1) | 1;
+            }
         }
-        if (prevEnd || graphB) {
-            dims++; // bit 7 (PREV_MATCH_END)
+        return Math.max(64, Integer.highestOneBit(maxBit) << 1);
+    }
+
+    /** Whether any ε-edge is gated on the OTHER family — an explicit
+     *  {@code (?-d)} under a unix-default compile. */
+    private static boolean usesOtherFamily(Tnfa nfa) {
+        int family = Tnfa.BEGIN_TEXT_OTHER | Tnfa.END_TEXT_OTHER | Tnfa.FINAL_END_OTHER;
+        for (int mask : nfa.epsEmptyMask) {
+            if ((mask & family) != 0) {
+                return true;
+            }
         }
-        if (graphB) {
-            dims++; // bit 8 (GRAPH_BOUNDARY)
+        return false;
+    }
+
+    /** Whether any ε-edge is gated on the scoped {@code (?d)} unix bit
+     *  family (BEGIN/END/FINAL_END_UNIX). */
+    private static boolean usesUnixFamily(Tnfa nfa) {
+        int family = Tnfa.BEGIN_TEXT_UNIX | Tnfa.END_TEXT_UNIX | Tnfa.FINAL_END_UNIX;
+        for (int mask : nfa.epsEmptyMask) {
+            if ((mask & family) != 0) {
+                return true;
+            }
         }
-        return 1 << dims;
+        return false;
     }
 
     /** Whether any ε-edge of {@code nfa} is gated on {@link Tnfa#GRAPH_BOUNDARY}
@@ -518,14 +554,13 @@ final class TdfaCompiler {
      * word {@code sub >>> 6} holds bit {@code sub & 63}) has any submask
      * of {@code m} set.
      */
-    private static boolean submaskPopped(long w0, long w1, long w2, int m) {
+    private static boolean submaskPopped(long[] bitset, int base, int words, int m) {
         for (int sub = m; sub != 0; sub = (sub - 1) & m) {
-            long w = sub < 64 ? w0 : sub < 128 ? w1 : w2;
-            if ((w & (1L << (sub & 63))) != 0) {
+            if ((bitset[base + (sub >>> 6)] & (1L << (sub & 63))) != 0) {
                 return true;
             }
         }
-        return (w0 & 1L) != 0; // the empty submask (mask 0) closes the loop
+        return (bitset[base] & 1L) != 0; // the empty submask (mask 0) closes the loop
     }
 
     /**
@@ -1485,7 +1520,8 @@ final class TdfaCompiler {
             }
             stateEntryMask[s] = entryIntersect;
             int acceptIntersect = Tnfa.BEGIN_TEXT | Tnfa.END_TEXT | Tnfa.WORD_BOUNDARY | Tnfa.NO_WORD_BOUNDARY
-                | Tnfa.ABS_BEGIN | Tnfa.ABS_END | Tnfa.FINAL_END | Tnfa.PREV_MATCH_END | Tnfa.GRAPH_BOUNDARY;
+                | Tnfa.ABS_BEGIN | Tnfa.ABS_END | Tnfa.FINAL_END | Tnfa.PREV_MATCH_END | Tnfa.GRAPH_BOUNDARY
+                | Tnfa.BEGIN_TEXT_UNIX | Tnfa.END_TEXT_UNIX | Tnfa.FINAL_END_UNIX;
             boolean anyAccept = false;
             for (int i = 0; i < cnt; i++) {
                 if (k.stateAt(i) == nfa.accept) {
@@ -1734,15 +1770,13 @@ final class TdfaCompiler {
             }
             if (maskEpoch[c.state] != epoch) {
                 maskEpoch[c.state] = epoch;
-                maskBitset[c.state * 3] = 0L;
-                maskBitset[c.state * 3 + 1] = 0L;
-                maskBitset[c.state * 3 + 2] = 0L;
+                Arrays.fill(maskBitset, c.state * maskWords, (c.state + 1) * maskWords, 0L);
                 if (surfaceTags != null) {
                     firstPopLEpoch[c.state] = epoch;
                     firstPopL[c.state] = c.l;
                 }
             }
-            maskBitset[c.state * 3 + (c.emptyMask >>> 6)] |= 1L << (c.emptyMask & 63);
+            maskBitset[c.state * maskWords + (c.emptyMask >>> 6)] |= 1L << (c.emptyMask & 63);
             out.add(c);
             // Per-kernel spike bound (weighted bytes): kernelsTotal only
             // counts after addState, so a single closure of a
@@ -1795,7 +1829,7 @@ final class TdfaCompiler {
                     }
                 }
                 if (newFork == 0 && maskEpoch[to] == epoch
-                    && submaskPopped(maskBitset[to * 3], maskBitset[to * 3 + 1], maskBitset[to * 3 + 2], newMask)) {
+                    && submaskPopped(maskBitset, to * maskWords, maskWords, newMask)) {
                     if (surfaceTags != null) {
                         recordCut(idx, to, newMask, c);
                     }

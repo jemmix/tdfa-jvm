@@ -859,6 +859,71 @@ class JurApiParityTest {
         assertSameCompileReject("a(?>b|bc)d", factory);
     }
 
+    /** Scoped inline {@code (?d)} — the parallel unix bit families
+     *  (docs/scoped-unix-lines.md) against the live JDK oracle, both
+     *  engine tiers: the terminator set narrows to {@code \n} inside the
+     *  scope for {@code ^}/{@code $} under {@code (?m)}, the plain-{@code $}
+     *  final-terminator rule, and the dot; dotall wins for the dot;
+     *  scopes end at their group; the compile-global UNIX_LINES flag
+     *  composes; {@code \b} is unaffected. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void scopedUnixLinesMirrorTheJdk(RegexEngineFactory f) {
+        String s = "a\r\nb\rc\n";
+        JurOracle.assertSameFind("(?m)^b", s, f);
+        JurOracle.assertSameFind("(?dm)^b", s, f);
+        JurOracle.assertSameFind("(?dm)^c", s, f);
+        JurOracle.assertSameFind("(?m)^c", s, f);
+        JurOracle.assertSameFind("(?m)b$", s, f);
+        JurOracle.assertSameFind("(?dm)b$", s, f);
+        JurOracle.assertSameFind("b$", "b\r", f);
+        JurOracle.assertSameFind("(?d)b$", "b\r", f);
+        JurOracle.assertSameFind("(?d)b$", "b\r\n", f);
+        JurOracle.assertSameFind("(?dm:a.c)", "a\rc", f);
+        JurOracle.assertSameFind("(?m:a.c)", "a\rc", f);
+        JurOracle.assertSameFind("a.c", "a\rc", f);
+        JurOracle.assertSameFind("(?ds:a.c)", "a\rc", f);
+        JurOracle.assertSameFind("(?d)^b", "a\nb", f);
+        JurOracle.assertSameFind("(?dm:^b)(?m:^c)", s, f);
+        JurOracle.assertSameFind("((?dm:^b))", s, f);
+        JurOracle.assertSameFind("(?dm:^b)x", s, f);
+        JurOracle.assertSameFind("(?dm:a$)", "a\r", f);
+        // \b is terminator-blind
+        JurOracle.assertSameFind("(?d)\\ba\\b", "a b", f);
+        // the class reading is unaffected (the flag group only)
+        JurOracle.assertSameFind("(?d)[d]", "d", f);
+    }
+
+    /** The flag + scoped interplay: the compile-global UNIX_LINES flag
+     *  with an inline scoped off ({@code (?-d)}) restores the JDK set —
+     *  probed both ways against the oracle. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void unixLinesFlagAndScopedOffCompose(RegexEngineFactory f) {
+        String s = "a\r\nb\rc\n";
+        // flag on, plain (?m): unix set
+        Matcher jf = java.util.regex.Pattern.compile("(?m)^b", java.util.regex.Pattern.UNIX_LINES).matcher(s);
+        PatternMatcher of =
+            io.github.jemmix.tdfa.Pattern.compile("(?m)^b", io.github.jemmix.tdfa.Pattern.UNIX_LINES, f).matcher(s);
+        assertThat(of.find()).as("UNIX_LINES (?m)^b").isEqualTo(jf.find()).isTrue();
+        // flag on, scoped off: the JDK set — ^ after \r fires
+        Matcher jo = java.util.regex.Pattern.compile("(?m)(?-d:^c)", java.util.regex.Pattern.UNIX_LINES).matcher(s);
+        PatternMatcher oo = io.github.jemmix.tdfa.Pattern
+            .compile("(?m)(?-d:^c)", io.github.jemmix.tdfa.Pattern.UNIX_LINES, f).matcher(s);
+        assertThat(oo.find()).as("UNIX_LINES + (?-d:^c)").isEqualTo(jo.find()).isTrue();
+    }
+
+    /** The RE2 lineage has no {@code d} letter: the re2j facade keeps
+     *  rejecting the scoped spellings like its oracle. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void re2jFacadeRejectsTheDLetter(RegexEngineFactory factory) {
+        assertSameCompileReject("(?dm:^b)", factory);
+        assertSameCompileReject("(?d)b$", factory);
+        assertSameCompileReject("(?d:a.c)", factory);
+        assertSameCompileReject("(?-d:^b)", factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void toMatchResultIsAnImmutableSnapshot(RegexEngineFactory f) {

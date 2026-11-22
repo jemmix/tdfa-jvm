@@ -23,6 +23,28 @@ scoped:
   just the flag-setting group (classes are unaffected beyond the dot
   interplay). `\A`/`\z`/`\Z` are terminator-blind (no change).
 
+## The landing (as-built)
+
+The parallel-families design landed with ONE addition the flag
+composition forced: a THIRD family. The probes had pinned the scoped
+spellings, but the battery's flag-composition cell
+(`UNIX_LINES + (?-d:…)`) exposed that java's model is flag-picks-
+default / scope-overrides: an explicit `(?-d)` under the flag
+restores the JDK set — a third live set in one artifact. The parse
+tracks `dScoped` (any `(?d)`/`(?-d)` letter seen) and the compile's
+unix-default (the Semantics terminators axis); the emission picks
+plain / UNIX / OTHER per effective set, and the dot carries a
+tri-state (ON / explicit-off / untouched).
+
+Two representation fixes the falsifiers forced: the closure's
+popped-mask bitset now sizes its stride from the compile's HIGHEST
+mask bit (the unix family's bit 512 overflowed the fixed 3-word
+stride — silently aliasing neighbor states when it did not crash),
+and `posFlagCells` is now next-pow2(maxBit+1) rather than a family
+count (the OTHER family sits at bit 4096+ — the cell index IS the
+posFlags value, so sparse high bits need the address space, and
+`allowedMaskBits` admits exactly the addressable bits).
+
 ## The design
 
 **The axis stays ONE `Terminators` value per *scope*, not per

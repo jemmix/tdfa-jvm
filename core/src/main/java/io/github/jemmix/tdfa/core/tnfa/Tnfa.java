@@ -190,6 +190,19 @@ public final class Tnfa {
      *  boundary; the position `last` itself reads FALSE (java's own quirk,
      *  battery-pinned). Rides the position-flag cells like \G. */
     public static final int GRAPH_BOUNDARY = 256;
+    /** Scoped {@code (?d)} bit family (docs/scoped-unix-lines.md): the
+     *  unix-set twins of the line-anchor bits, minted only by mixed-scope
+     *  compiles. FINAL_END_UNIX shares the DOLLAR_UNIX shape (the
+     *  before-final-\n rule). */
+    public static final int BEGIN_TEXT_UNIX = 512;
+    public static final int END_TEXT_UNIX = 1024;
+    public static final int FINAL_END_UNIX = 2048;
+    /** The OTHER family: an explicit {@code (?-d)} under a unix-default
+     *  compile (the UNIX_LINES flag) restores the JDK set — a third
+     *  live set in one artifact (docs/scoped-unix-lines.md). */
+    public static final int BEGIN_TEXT_OTHER = 4096;
+    public static final int END_TEXT_OTHER = 8192;
+    public static final int FINAL_END_OTHER = 16384;
 
     /** The RE2-lineage preset (every axis at its RE2-side value): the
      *  compile-entry default when a caller passes no explicit
@@ -332,11 +345,11 @@ public final class Tnfa {
         // (the family-6 marks), the \s table, the shorthand fold, the
         // shorthand/property tables and the fold expansion — is applied by
         // the meaning-resolution pass below, not mirrored here.
-        ParseResult parsed =
-            Parser.parseResult(
-                pattern, disableUnicodeGroups, anchorBoth, ParseOptions.of().unicodeCase(semantics.isUnicodeCase())
-                    .flagBindings(semantics.flagBindings()).escapes(semantics.escapes()).canonEq(canonEq),
-                provider, meter);
+        ParseResult parsed = Parser.parseResult(pattern, disableUnicodeGroups, anchorBoth,
+            ParseOptions.of().unicodeCase(semantics.isUnicodeCase()).flagBindings(semantics.flagBindings())
+                .escapes(semantics.escapes()).canonEq(canonEq).compileUnixDefault(
+                    semantics.terminators() == Terminators.NL_ONLY && semantics.flagBindings() == FlagBindings.JDK),
+            provider, meter);
         obs.stage(CompileObserver.Stage.PARSE, System.nanoTime() - t0, parsed.tagCount());
         return fromParsed(parsed, multiValuedTags, semantics, provider, meter, obs);
     }
@@ -1215,6 +1228,21 @@ public final class Tnfa {
                     return PREV_MATCH_END;
                 case GRAPH_BOUNDARY :
                     return GRAPH_BOUNDARY;
+                case LINE_START_UNIX :
+                    return BEGIN_TEXT_UNIX;
+                case LINE_END_UNIX :
+                    return END_TEXT_UNIX;
+                case DOLLAR_UNIX :
+                    return FINAL_END_UNIX;
+                case FINAL_END_UNIX :
+                    return FINAL_END_UNIX;
+                case LINE_START_OTHER :
+                    return BEGIN_TEXT_OTHER;
+                case LINE_END_OTHER :
+                    return END_TEXT_OTHER;
+                case DOLLAR_OTHER :
+                case FINAL_END_OTHER :
+                    return FINAL_END_OTHER;
                 default :
                     throw new IllegalStateException("unresolved policy assertion reached the builder: " + kind);
             }

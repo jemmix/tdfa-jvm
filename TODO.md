@@ -13,7 +13,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 ## Features
 
-- [ ] Scoped inline `(?d)`: parallel unix bit families ([design](docs/scoped-unix-lines.md))
 
 ## Correctness
 

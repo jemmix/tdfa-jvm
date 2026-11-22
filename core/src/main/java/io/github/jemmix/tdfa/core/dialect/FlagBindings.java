@@ -43,7 +43,7 @@ public final class FlagBindings implements Serializable {
      *  (the stock lane the jur facade compiles in). */
     public static final FlagBindings JDK = builder().bind('i', FlagAction.CASE_INSENSITIVE).bind('s', FlagAction.DOTALL)
         .bind('m', FlagAction.MULTILINE).bind('u', FlagAction.UNICODE_CHARACTER_CLASS)
-        .bind('U', FlagAction.UNICODE_CASE).bind('x', FlagAction.COMMENTS).build();
+        .bind('U', FlagAction.UNICODE_CASE).bind('x', FlagAction.COMMENTS).bind('d', FlagAction.UNIX_LINES).build();
 
     /** The RE2/re2j alphabet: {@code i s m u} plus
      *  {@code U} = ungreedy — the PCRE/RE2 {@code (?U)} reading (the

@@ -288,6 +288,20 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
 
     private final boolean needsGraphBound;
     /**
+     * Whether any mask consults the scoped {@code (?d)} unix family — the
+     * formulas twin the line-anchor ones over Terminators.NL_ONLY.
+     */
+    private final boolean needsUnixBits;
+    /**
+     * Whether any mask consults the OTHER family — an explicit
+     * {@code (?-d)} under a unix-default compile.
+     */
+    private final boolean needsOtherBits;
+    /** The complement terminator set: the OTHER family's formulas run over
+     *  the set the compile's axis did NOT select (JDK under a unix
+     *  default; unreachable otherwise). */
+    private final Terminators otherTerminators;
+    /**
      * Word-class bitset over UTF-16 units (BMP): replaces the ASCII branch
      * chain / Unicode range binary search with one array load. Supplementary
      * codepoints still use the range search.
@@ -437,6 +451,14 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         this.needsFinalEnd = (tdfa.posFlagDeps() & Tnfa.FINAL_END) != 0;
         this.needsPrevEnd = (tdfa.posFlagDeps() & Tnfa.PREV_MATCH_END) != 0;
         this.needsGraphBound = (tdfa.posFlagDeps() & Tnfa.GRAPH_BOUNDARY) != 0;
+        this.needsUnixBits =
+            (tdfa.posFlagDeps() & (Tnfa.BEGIN_TEXT_UNIX | Tnfa.END_TEXT_UNIX | Tnfa.FINAL_END_UNIX)) != 0;
+        this.needsOtherBits =
+            (tdfa.posFlagDeps() & (Tnfa.BEGIN_TEXT_OTHER | Tnfa.END_TEXT_OTHER | Tnfa.FINAL_END_OTHER)) != 0;
+        // The complement set: JDK under a unix default; under a JDK
+        // default the OTHER family is unreachable (needsOtherBits false)
+        // and the value is inert.
+        this.otherTerminators = Terminators.JDK;
         // Derived (see Tdfa.absBeginBound): every accepting path crosses an
         // \A gate — restart enumeration past the origin is provably fruitless.
         this.absBeginBound = tdfa.absBeginBound();
@@ -997,7 +1019,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             sc = new MatchScratch();
         }
         MatchHolder h;
-        if (needsPrevEnd || needsGraphBound) {
+        if (needsPrevEnd || needsGraphBound || needsUnixBits || needsOtherBits) {
             // \G / \b{g} artifacts never ride the fast lanes: their flag
             // tables carry the extra dimensions and every predicate consults
             // the threaded bases (\b{g}'s scan origin rides the carrier) —
@@ -1066,7 +1088,7 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
             }
             sc = new MatchScratch();
         }
-        if (needsPrevEnd || needsGraphBound) {
+        if (needsPrevEnd || needsGraphBound || needsUnixBits || needsOtherBits) {
             // \G / \b{g} artifacts serve the whole discipline through the
             // region-generalized walk (match's routing, the (t, t) shape).
             trace(Strategy.GENERIC);
@@ -3760,6 +3782,32 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         if (needsGraphBound && graphBoundaryHolds(s, pos, bBase, eBase, gbO)) {
             flags |= Tnfa.GRAPH_BOUNDARY;
         } // \b{g}: java's operational reading (see graphBoundaryHolds)
+        if (needsUnixBits) {
+            // The scoped (?d) family: the same formulas over the \n-only
+            // terminator set (docs/scoped-unix-lines.md).
+            if ((emptyLastLine || pos < eBase) && (pos == bBase || unixLineBegin(s, pos, eBase))) {
+                flags |= Tnfa.BEGIN_TEXT_UNIX;
+            }
+            if (pos == eBase || unixLineEnd(s, pos, eBase)) {
+                flags |= Tnfa.END_TEXT_UNIX;
+            }
+            if (unixFinalEnd(s, pos, eBase)) {
+                flags |= Tnfa.FINAL_END_UNIX;
+            }
+        }
+        if (needsOtherBits) {
+            // The (?-d)-under-flag family: the same formulas over the
+            // complement set (JDK under a unix default).
+            if ((emptyLastLine || pos < eBase) && (pos == bBase || otherLineBegin(s, pos, eBase))) {
+                flags |= Tnfa.BEGIN_TEXT_OTHER;
+            }
+            if (pos == eBase || otherLineEnd(s, pos, eBase)) {
+                flags |= Tnfa.END_TEXT_OTHER;
+            }
+            if (otherFinalEnd(s, pos, eBase)) {
+                flags |= Tnfa.FINAL_END_OTHER;
+            }
+        }
         if (needsWordFlags) {
             boolean prevWord = pos > wFrom && isWordBefore(s, pos);
             // The right-side read decodes against the FULL input (java's
@@ -4481,6 +4529,70 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         }
         return !(terminators.hasPair() && c == terminators.pairHi() && pos > 0
             && s.charAt(pos - 1) == terminators.pairLo());
+    }
+
+    /** The scoped (?d) unix family (docs/scoped-unix-lines.md): the
+     *  line predicates over the \n-only set — no pair interior, no
+     *  other units. */
+    private boolean unixLineBegin(CharSequence s, int pos, int len) {
+        return pos > 0 && s.charAt(pos - 1) == '\n' && (emptyLastLine || pos < len);
+    }
+
+    private boolean otherLineBegin(CharSequence s, int pos, int len) {
+        char prev = s.charAt(pos - 1);
+        if (!otherTerminators.isUnit(prev)) {
+            return false;
+        }
+        if (otherTerminators.hasPair() && prev == otherTerminators.pairLo() && pos < len
+            && s.charAt(pos) == otherTerminators.pairHi()) {
+            return false;
+        }
+        return emptyLastLine || pos < len;
+    }
+
+    private boolean otherLineEnd(CharSequence s, int pos, int len) {
+        char c = s.charAt(pos);
+        if (!otherTerminators.isUnit(c)) {
+            return false;
+        }
+        return !(otherTerminators.hasPair() && c == otherTerminators.pairHi() && pos > 0
+            && s.charAt(pos - 1) == otherTerminators.pairLo());
+    }
+
+    private boolean otherFinalEnd(CharSequence s, int pos, int len) {
+        if (pos == len) {
+            return true;
+        }
+        if (!otherTerminators.isUnit(s.charAt(pos))) {
+            return false;
+        }
+        for (int i = pos + 1; i < len; i++) {
+            if (!otherTerminators.isUnit(s.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean unixLineEnd(CharSequence s, int pos, int len) {
+        return pos < len && s.charAt(pos) == '\n';
+    }
+
+    /** FINAL_END_UNIX: end of input, or immediately before the final
+     *  \n run (probe: (?d)b$ rejects before \r and \r\n). */
+    private boolean unixFinalEnd(CharSequence s, int pos, int len) {
+        if (pos == len) {
+            return true;
+        }
+        if (s.charAt(pos) != '\n') {
+            return false;
+        }
+        for (int i = pos + 1; i < len; i++) {
+            if (s.charAt(i) != '\n') {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

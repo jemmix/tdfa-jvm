@@ -176,7 +176,7 @@ public final class Resolve {
             }
             Ast e = (Ast) top;
             if (e instanceof Ast.Dot) {
-                values.push(dotClass(((Ast.Dot) e).dotall));
+                values.push(dotClass(((Ast.Dot) e).dotall, ((Ast.Dot) e).unixLines, ((Ast.Dot) e).otherSet));
             } else if (e instanceof Ast.Concat) {
                 stack.push(new Frame(e, ((Ast.Concat) e).children));
                 pushChildren(stack, ((Ast.Concat) e).children);
@@ -211,9 +211,17 @@ public final class Resolve {
      * historical constants (bit-identical artifacts); a custom set builds
      * its complement from the value.
      */
-    private CharClass dotClass(boolean dotall) {
+    private CharClass dotClass(boolean dotall, boolean unixLines, boolean otherSet) {
         if (dotall) {
-            return DOTALL;
+            return DOTALL; // dotall wins over the scoped (?d) set (probed)
+        }
+        if (unixLines) {
+            return DOT;
+        }
+        if (otherSet) {
+            // An explicit (?-d) under a unix-default compile: the JDK
+            // complement restored.
+            return DOT_JUR;
         }
         if (policy.terminators.equals(Terminators.NL_ONLY)) {
             return DOT;
@@ -246,6 +254,17 @@ public final class Resolve {
         }
         if (e instanceof Ast.Assertion) {
             Ast.Assertion a = (Ast.Assertion) e;
+            if (a.kind == Ast.AssertionKind.DOLLAR_OTHER) {
+                // An explicit (?-d) under a unix-default compile: the JDK
+                // set's final-terminator rule restored.
+                return new Ast.Assertion(Ast.AssertionKind.FINAL_END_OTHER);
+            }
+            if (a.kind == Ast.AssertionKind.DOLLAR_UNIX) {
+                // The scoped (?d) twin: java's before-final-terminator rule
+                // over the \n-only set — the 'd' binding exists only on the
+                // jur alphabet, so no policy fork applies.
+                return new Ast.Assertion(Ast.AssertionKind.FINAL_END_UNIX);
+            }
             if (a.kind == Ast.AssertionKind.DOLLAR) {
                 // The one policy-pending kind: a bare $ outside multiline.
                 // The RE2-lineage reading (END_OF_TEXT_ONLY) is \z; the

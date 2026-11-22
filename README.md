@@ -130,7 +130,8 @@ floor). Prefer zero code generation? Run with `-Dtdfa.engine=VM`.
 PCRE-ish subset: literals, classes (`[a-z]`, `\d \w \s`, `[:alpha:]`,
 `\p{L}`), `.`, quantifiers (`* + ? {n,m}`, greedy + lazy), alternation,
 groups (capturing, non-capturing, named), anchors, multiline, Unicode-aware
-word boundaries, inline flags. The jur facade additionally spells
+word boundaries, inline flags (including the scoped `(?d)` unix-terminator
+switch). The jur facade additionally spells
 java.util.regex's own escapes (`\v`/`\h` whitespace classes, `\e`, `\R`,
 `\G` (the previous-match-end anchor), `\X` (one extended grapheme
 cluster, UAX #29), `\b{g}` (the grapheme-cluster boundary),
