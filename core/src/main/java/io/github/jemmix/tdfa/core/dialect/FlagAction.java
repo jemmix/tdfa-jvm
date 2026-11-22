@@ -33,6 +33,12 @@ public enum FlagAction {
     /** {@code ^}/{@code $} match at line boundaries. Engine spelling
      *  {@code (?m)}. */
     MULTILINE,
+    /** Scoped UNIX_LINES ({@code (?d)}, the jur lane only): the line
+     *  terminator set narrows to {@code \n} for every terminator-sensitive
+     *  reading inside the scope — {@code ^}/{@code $} under {@code (?m)},
+     * the plain-{@code $} final-terminator rule, and the dot's complement
+     * (docs/scoped-unix-lines.md). */
+    UNIX_LINES,
 
     /** Unicode predefined classes: {@code \w} {@code \d} {@code \s}
      *  and the POSIX classes use the Unicode tables, and

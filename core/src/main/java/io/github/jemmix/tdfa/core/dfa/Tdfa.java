@@ -447,15 +447,18 @@ public final class Tdfa {
         int[] stateFinalOpsOff, int[] stateFinalOpsByMask, int[] ranges, int[] entryHiPrefix, int[] ops,
         int[] stateEntryMask, int[] stateAcceptMask, int registerCount, int finalRegBase, int tagCount,
         boolean multiValued, int posFlagCells) {
-        if (posFlagCells != 64 && posFlagCells != 128 && posFlagCells != 256 && posFlagCells != 512) {
-            throw new IllegalStateException("tdfa: posFlagCells must be 64, 128, 256 or 512, got " + posFlagCells);
+        if (posFlagCells < 64 || posFlagCells > 32768 || Integer.bitCount(posFlagCells) != 1) {
+            throw new IllegalStateException(
+                "tdfa: posFlagCells must be a power of two in [64, 32768], got " + posFlagCells);
         }
         // FINAL_END (bit 64) exists on 128-cell artifacts; PREV_MATCH_END
         // (bit 128, \G) on 256-cell ones (which also cover FINAL_END — the
         // cell index is the posFlags value); the six universal bits exist
         // on every artifact.
         int allowedMaskBits = 0x3F | (posFlagCells >= 128 ? Tnfa.FINAL_END : 0)
-            | (posFlagCells >= 256 ? Tnfa.PREV_MATCH_END : 0) | (posFlagCells >= 512 ? Tnfa.GRAPH_BOUNDARY : 0);
+            | (posFlagCells >= 256 ? Tnfa.PREV_MATCH_END : 0) | (posFlagCells >= 512 ? Tnfa.GRAPH_BOUNDARY : 0)
+            | (posFlagCells >= 1024 ? (Tnfa.BEGIN_TEXT_UNIX | Tnfa.END_TEXT_UNIX | Tnfa.FINAL_END_UNIX) : 0)
+            | (posFlagCells >= 8192 ? (Tnfa.BEGIN_TEXT_OTHER | Tnfa.END_TEXT_OTHER | Tnfa.FINAL_END_OTHER) : 0);
         int entries = ranges.length / 5;
         if (startState < 0 || startState >= stateCount) {
             throw new IllegalStateException(
@@ -519,8 +522,8 @@ public final class Tdfa {
                     checkOpsBlock(s, i, opsOff, ops, false, finalRegBase, tagCount, multiValued);
                 }
                 if ((mask & ~allowedMaskBits) != 0) {
-                    throw new IllegalStateException(
-                        "tdfa: state " + s + " entry " + i + " unknown assertion-mask bits");
+                    throw new IllegalStateException("tdfa: state " + s + " entry " + i
+                        + " unknown assertion-mask bits (mask=" + mask + " cells=" + posFlagCells + ")");
                 }
                 prefixHi = Math.max(prefixHi, hi);
                 if (entryHiPrefix[base + i] != prefixHi) {
@@ -611,6 +614,12 @@ public final class Tdfa {
      */
     private static void validateWhole(int stateCount, int[] wholeRanges, int[] wholeBase, int[] wholeCount,
         int[] wholeHiPrefix, int[] ops, int finalRegBase, int tagCount, boolean multiValued, int posFlagCells) {
+        int allowedMaskBits = 0x3F;
+        for (int bit : new int[]{Tnfa.FINAL_END, Tnfa.PREV_MATCH_END, Tnfa.GRAPH_BOUNDARY, Tnfa.BEGIN_TEXT_UNIX,
+            Tnfa.END_TEXT_UNIX, Tnfa.FINAL_END_UNIX, Tnfa.BEGIN_TEXT_OTHER, Tnfa.END_TEXT_OTHER,
+            Tnfa.FINAL_END_OTHER}) {
+            allowedMaskBits |= bit < posFlagCells ? bit : 0;
+        }
         if (wholeBase == null || wholeCount == null || wholeHiPrefix == null) {
             throw new IllegalStateException("tdfa: partial-whole side table present but incomplete");
         }
@@ -661,11 +670,9 @@ public final class Tdfa {
                 if (opsOff != 0) {
                     checkOpsBlock(s, i, opsOff, ops, false, finalRegBase, tagCount, multiValued);
                 }
-                if ((mask & ~(0x3F | (posFlagCells >= 128 ? Tnfa.FINAL_END : 0)
-                    | (posFlagCells >= 256 ? Tnfa.PREV_MATCH_END : 0)
-                    | (posFlagCells >= 512 ? Tnfa.GRAPH_BOUNDARY : 0))) != 0) {
-                    throw new IllegalStateException(
-                        "tdfa: whole state " + s + " entry " + i + " unknown assertion-mask bits");
+                if ((mask & ~allowedMaskBits) != 0) {
+                    throw new IllegalStateException("tdfa: whole state " + s + " entry " + i
+                        + " unknown assertion-mask bits (mask=" + mask + " cells=" + posFlagCells + ")");
                 }
                 prefixHi = Math.max(prefixHi, hi);
                 if (wholeHiPrefix[base + i] != prefixHi) {

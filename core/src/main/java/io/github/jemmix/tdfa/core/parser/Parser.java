@@ -189,6 +189,13 @@ public final class Parser {
     boolean caseInsensitive = false;
     boolean dotall = false;
     boolean multiline = false;
+    /** Scoped UNIX_LINES state ({@code (?d)}): the terminator set for
+     *  ^/$/dot inside the current scope (docs/scoped-unix-lines.md). */
+    boolean unixLines = false;
+    /** Whether any {@code (?d)}/{@code (?-d)} letter was seen in the
+     *  current scope — distinguishes an EXPLICIT off (the OTHER family
+     *  under a unix-default compile) from the untouched default. */
+    boolean dScoped = false;
     /** re2j's U flag: quantifiers default to lazy, a trailing ? makes them greedy. */
     boolean ungreedy = false;
 
@@ -826,15 +833,23 @@ public final class Parser {
             // complement otherwise (the UNIX_LINES axis). Either way the
             // bare dot never flips hasSupplementaryStarts (java's direct
             // CharProperty construction bypasses the flip).
-            return new Ast.Dot(dotall);
+            return new Ast.Dot(dotall, unixLines, dScoped && !unixLines && options.isCompileUnixDefault());
         }
         if (c == '^') {
             pos++;
-            return new Ast.Assertion(this.multiline ? Ast.AssertionKind.LINE_START : Ast.AssertionKind.TEXT_START);
+            return new Ast.Assertion(this.multiline
+                ? (this.unixLines ? Ast.AssertionKind.LINE_START_UNIX : (this.dScoped && options.isCompileUnixDefault()
+                    ? Ast.AssertionKind.LINE_START_OTHER : Ast.AssertionKind.LINE_START))
+                : Ast.AssertionKind.TEXT_START);
         }
         if (c == '$') {
             pos++;
-            return new Ast.Assertion(this.multiline ? Ast.AssertionKind.LINE_END : Ast.AssertionKind.DOLLAR);
+            return new Ast.Assertion(this.multiline
+                ? (this.unixLines ? Ast.AssertionKind.LINE_END_UNIX
+                    : (this.dScoped && options.isCompileUnixDefault() ? Ast.AssertionKind.LINE_END_OTHER
+                        : Ast.AssertionKind.LINE_END))
+                : (this.unixLines ? Ast.AssertionKind.DOLLAR_UNIX : (this.dScoped && options.isCompileUnixDefault()
+                    ? Ast.AssertionKind.DOLLAR_OTHER : Ast.AssertionKind.DOLLAR)));
         }
         if (c == '\\') {
             pos++;
@@ -875,7 +890,7 @@ public final class Parser {
         List<Ast> alts = new ArrayList<>();
         boolean capturing;
         int open = -1, close = -1;
-        boolean savedCi, savedDs, savedMl, savedUs, savedUc, savedUg, savedCx;
+        boolean savedCi, savedDs, savedMl, savedUs, savedUc, savedUg, savedCx, savedDl, savedDsc;
     }
 
     /** group := '(' ('?:')? alt ')' | '(' '?flags' ')' | '(' '?flags:' alt ')' | '(' '?<' name '>' alt ')' | '(' '?P<' name '>' alt ')'
@@ -903,7 +918,8 @@ public final class Parser {
         // never one two-char Slice (which never flips).
         flushLiteralRun();
         boolean savedCi = caseInsensitive, savedDs = dotall, savedMl = multiline;
-        boolean savedUs = unicodeShorthand, savedUc = unicodeCase, savedUg = ungreedy, savedCx = comments;
+        boolean savedUs = unicodeShorthand, savedUc = unicodeCase, savedUg = ungreedy, savedCx = comments,
+            savedDl = unixLines, savedDq = dScoped;
         boolean capturing = true;
         String groupName = null;
         if (pos + 1 < src.length() && src.charAt(pos) == '?' && src.charAt(pos + 1) == ':') {
@@ -1012,12 +1028,13 @@ public final class Parser {
         f.open = open;
         f.close = close;
         f.savedCi = savedCi;
-        f.savedDs = savedDs;
         f.savedMl = savedMl;
         f.savedUs = savedUs;
         f.savedUc = savedUc;
         f.savedUg = savedUg;
         f.savedCx = savedCx;
+        f.savedDl = savedDl;
+        f.savedDsc = savedDq;
         frames.push();
         stack.push(f);
         return null;
@@ -1059,6 +1076,10 @@ public final class Parser {
             case COMMENTS :
                 this.comments = on;
                 break;
+            case UNIX_LINES :
+                this.unixLines = on;
+                this.dScoped = true;
+                break;
             default :
                 throw new IllegalStateException("unhandled flag action: " + action);
         }
@@ -1081,6 +1102,8 @@ public final class Parser {
         caseInsensitive = f.savedCi;
         dotall = f.savedDs;
         multiline = f.savedMl;
+        unixLines = f.savedDl;
+        dScoped = f.savedDsc;
         unicodeShorthand = f.savedUs;
         unicodeCase = f.savedUc;
         ungreedy = f.savedUg;

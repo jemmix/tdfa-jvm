@@ -41,7 +41,7 @@ public final class ParseOptions {
     /** The RE2-lineage preset: every grammar axis at its RE2-side value
      *  (the pre-flip default the legacy parse entries answer in). */
     private static final ParseOptions RE2_LINEAGE =
-        new ParseOptions(true, FlagBindings.RE2, EscapeAlphabet.RE2_MINIMAL, false);
+        new ParseOptions(true, FlagBindings.RE2, EscapeAlphabet.RE2_MINIMAL, false, false);
 
     private final boolean unicodeCase;
 
@@ -51,11 +51,17 @@ public final class ParseOptions {
 
     private final boolean canonEq;
 
-    private ParseOptions(boolean unicodeCase, FlagBindings flagBindings, EscapeAlphabet escapes, boolean canonEq) {
+    /** The compile's global terminator axis is the unix set (the
+     *  UNIX_LINES flag on a JDK-set facade) — @see #compileUnixDefault. */
+    private final boolean compileUnixDefault;
+
+    private ParseOptions(boolean unicodeCase, FlagBindings flagBindings, EscapeAlphabet escapes, boolean canonEq,
+        boolean compileUnixDefault) {
         this.unicodeCase = unicodeCase;
         this.flagBindings = flagBindings;
         this.escapes = escapes;
         this.canonEq = canonEq;
+        this.compileUnixDefault = compileUnixDefault;
     }
 
     /** Whether the parse applies the canonical-equivalence rewrite
@@ -63,12 +69,27 @@ public final class ParseOptions {
      *  mechanism: every literal and class member expands to an
      *  alternation of its NFC and NFD spellings; docs/jur-api-parity.md). */
     public ParseOptions canonEq(boolean canonEq) {
-        return canonEq == this.canonEq ? this : new ParseOptions(unicodeCase, flagBindings, escapes, canonEq);
+        return canonEq == this.canonEq ? this
+            : new ParseOptions(unicodeCase, flagBindings, escapes, canonEq, compileUnixDefault);
+    }
+
+    /** Whether the compile's GLOBAL terminator axis is already the unix
+     *  set (the UNIX_LINES flag on a JDK-set facade) — the scoped (?d)
+     *  emission needs it to pick the OTHER family for an explicit
+     *  {@code (?-d)} (java: the flag picks the default; the scope
+     *  overrides; {@code (?-d)} under the flag restores the JDK set). */
+    public ParseOptions compileUnixDefault(boolean v) {
+        return v == this.compileUnixDefault ? this : new ParseOptions(unicodeCase, flagBindings, escapes, canonEq, v);
     }
 
     /** @see #canonEq(boolean) */
     public boolean isCanonEq() {
         return canonEq;
+    }
+
+    /** @see #compileUnixDefault(boolean) */
+    public boolean isCompileUnixDefault() {
+        return compileUnixDefault;
     }
 
     /**
@@ -77,7 +98,7 @@ public final class ParseOptions {
      * Tnfa.compile} applies a {@code Semantics} onto.
      */
     public static ParseOptions of() {
-        return new ParseOptions(false, FlagBindings.JDK, EscapeAlphabet.JDK, false);
+        return new ParseOptions(false, FlagBindings.JDK, EscapeAlphabet.JDK, false, false);
     }
 
     /**
@@ -104,7 +125,7 @@ public final class ParseOptions {
      * records.
      */
     public ParseOptions unicodeCase(boolean unicodeCase) {
-        return new ParseOptions(unicodeCase, flagBindings, escapes, canonEq);
+        return new ParseOptions(unicodeCase, flagBindings, escapes, canonEq, compileUnixDefault);
     }
 
     /**
@@ -116,7 +137,7 @@ public final class ParseOptions {
      * letter it does not bind rejects at the parse.
      */
     public ParseOptions flagBindings(FlagBindings flagBindings) {
-        return new ParseOptions(unicodeCase, flagBindings, escapes, canonEq);
+        return new ParseOptions(unicodeCase, flagBindings, escapes, canonEq, compileUnixDefault);
     }
 
     /**
@@ -128,7 +149,7 @@ public final class ParseOptions {
      * parse and reads {@code \v} as the single unit U+000B.
      */
     public ParseOptions escapes(EscapeAlphabet escapes) {
-        return new ParseOptions(unicodeCase, flagBindings, escapes, canonEq);
+        return new ParseOptions(unicodeCase, flagBindings, escapes, canonEq, compileUnixDefault);
     }
 
     /** Does the scoped fold state start at the full Unicode universe (vs ASCII only)? */

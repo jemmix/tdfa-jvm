@@ -230,7 +230,24 @@ public abstract class Ast {
          *  answers at the region start or at/after the next boundary; the
          *  position {@code last} itself reads FALSE (java's own quirk,
          *  battery-pinned). Rides the position-flag cells. */
-        GRAPH_BOUNDARY("\\b{g}");
+        GRAPH_BOUNDARY("\\b{g}"),
+        /** {@code ^} under {@code (?m)} AND scoped {@code (?d)}: line begin
+         *  against the UNIX terminator set ({@code \n} only). Minted only by
+         *  mixed-scope compiles (docs/scoped-unix-lines.md). */
+        LINE_START_UNIX("^dm"),
+        /** {@code $} under {@code (?m)} AND scoped {@code (?d)}: line end
+         *  against the UNIX set. */
+        LINE_END_UNIX("$dm"),
+        /** A bare {@code $} outside multiline with scoped {@code (?d)}: the
+         *  DOLLAR policy pending kind resolved against the UNIX set's
+         *  final-terminator rule. */
+        DOLLAR_UNIX("$d"),
+        /** The resolved plain-{@code $d}: end of input or before the final
+         *  {@code \\n} run — java's {@code \\Z} over the unix set. */
+        FINAL_END_UNIX("$dz"),
+        /** The OTHER family — an explicit {@code (?-d)} under a
+         *  unix-default compile (UNIX_LINES flag): the JDK set restored. */
+        LINE_START_OTHER("^-d"), LINE_END_OTHER("$-d"), DOLLAR_OTHER("$-d?"), FINAL_END_OTHER("$-dz");
 
         private final String symbol;
 
@@ -255,9 +272,33 @@ public abstract class Ast {
     public static final class Dot extends Ast {
         /** The scoped {@code (?s)} state captured at the atom. */
         public final boolean dotall;
+        /** The scoped {@code (?d)} state captured at the atom: the dot's
+         *  complement switches to the {@code \\n}-only set (probe:
+         *  {@code (?dm:a.c)} matches {@code "a\\rc"}; dotall still wins
+         *  when both are scoped). */
+        public final boolean unixLines;
+        /** An explicit {@code (?-d)} under a unix-default compile: the
+         *  dot's complement switches BACK to the JDK set. */
+        public final boolean otherSet;
 
         public Dot(boolean dotall) {
             this.dotall = dotall;
+            this.unixLines = false;
+            this.otherSet = false;
+        }
+
+        public Dot(boolean dotall, boolean unixLines) {
+            this.dotall = dotall;
+            this.unixLines = unixLines;
+            this.otherSet = false;
+        }
+
+        /** The OTHER-set dot: an explicit {@code (?-d)} under a
+         *  unix-default compile — the JDK complement restored. */
+        public Dot(boolean dotall, boolean unixLines, boolean otherSet) {
+            this.dotall = dotall;
+            this.unixLines = unixLines;
+            this.otherSet = otherSet;
         }
 
         @Override
