@@ -516,7 +516,7 @@ class PivotLanesTest {
         assertThat(degenerate.matcher("\u0130").find()).as("facade CI|UCC [I-I] rejects İ (degenerate = range)")
             .isFalse();
         // the re2j surface keeps the orbit closure for ranges (its oracle's
-        // reading; İ fold-inert under the patched fork — the surface split
+        // reading; İ fold-inert in the re2j universe — the surface split
         // this battery pins the other side of)
         io.github.jemmix.tdfa.re2j.Pattern re2Range = io.github.jemmix.tdfa.re2j.Pattern.compile("(?i)[H-K]");
         assertThat(re2Range.matcher("\u0130").find()).as("re2j surface (?i)[H-K] keeps İ inert").isFalse();

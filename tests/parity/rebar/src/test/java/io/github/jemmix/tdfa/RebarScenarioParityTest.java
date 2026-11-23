@@ -151,7 +151,7 @@ class RebarScenarioParityTest {
     /** Default true; set {@code -Dtdfa.test.rebar.skipBombs=false} to run the bombs for real. */
     static final boolean SKIP_BOMBS = Boolean.parseBoolean(System.getProperty("tdfa.test.rebar.skipBombs", "true"));
 
-    /** Live-oracle mode: patched re2j computes `want`. Null = fall back to
+    /** Live-oracle mode: the re2j oracle computes `want`. Null = fall back to
      *  corpus (re2j can't compile the regex, or hiccupped). */
     private static final boolean CORPUS_ORACLE = "corpus".equals(System.getProperty("tdfa.test.rebar.oracle"));
 

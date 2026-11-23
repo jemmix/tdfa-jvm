@@ -6,8 +6,13 @@ import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.engine.Matcher;
 import io.github.jemmix.tdfa.core.unicode.UnicodeDataProvider;
 
+import java.io.File;
+import java.io.IOException;
+import java.net.URISyntaxException;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.jar.JarFile;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -33,12 +38,36 @@ public final class Re2jOracle {
 
     /**
      * Which re2j is on the test classpath: released 1.8 (true) or the
-     * patched fork (false). Probed, not declared — the lone-low surrogate
-     * pair-interior behavior is the discriminator (same probe as the
-     * fuzzer).
+     * vendored upstream snapshot (false). Probed, not declared — the
+     * lone-low surrogate pair-interior behavior is the discriminator
+     * (same probe as the fuzzer).
      */
     public static boolean releasedOracle() {
         return com.google.re2j.Pattern.compile("\uDC21").matcher("a\uD801\uDC21zz").find();
+    }
+
+    /**
+     * The oracle jar's {@code Implementation-Version}: the vendored
+     * snapshot's commit ({@code vendor/re2j-oracle/build-oracle.sh} stamps
+     * it), {@code null} for an artifact whose manifest is bare (the
+     * released 1.8 jar). Read from the jar at {@code Pattern}'s own code
+     * source — {@code getPackage()} answers for whichever class opened the
+     * package first, and here that is this suite's own
+     * {@code com.google.re2j.Re2jUnicodeProvider}, from a classes
+     * directory with no manifest.
+     */
+    public static String implementationVersion() {
+        try {
+            URL location = com.google.re2j.Pattern.class.getProtectionDomain().getCodeSource().getLocation();
+            if (!"file".equals(location.getProtocol()) || !location.getPath().endsWith(".jar")) {
+                throw new IllegalStateException("the re2j oracle is not a jar: " + location);
+            }
+            try (JarFile jar = new JarFile(new File(location.toURI()))) {
+                return jar.getManifest().getMainAttributes().getValue("Implementation-Version");
+            }
+        } catch (IOException | URISyntaxException e) {
+            throw new IllegalStateException("cannot read the re2j oracle's manifest", e);
+        }
     }
 
     /**

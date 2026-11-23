@@ -1,8 +1,9 @@
 # java.util.regex (jemmix patched build)
 
 Patched OpenJDK `java.util.regex` used as the JUR-lane fuzz/soak oracle —
-the "what if the JDK fixed JDK-8381696" dress rehearsal, exactly parallel to
-the patched re2j oracle in `../re2j-jemmix/`: pristine vanilla sources
+the "what if the JDK fixed JDK-8381696" dress rehearsal. It is what the
+re2j oracle used to be before its fixes landed upstream (`../re2j-oracle/`
+now builds the pristine snapshot as-is): pristine vanilla sources
 vendored as one archive, one patch per fix, built on demand, patched by
 default. Fully reproducible from this repo — no external fetches needed.
 
@@ -43,8 +44,9 @@ both pins.
 - `build-patched.sh` — verifies the archive checksum, extracts into a
   gitignored `.build/` scratch dir, applies patches, compiles the two files
   as a `java.base` override (`javac --patch-module`), and probes the result:
-  `vendor/jdk-regex-jemmix/build-patched.sh` (no arguments; re2j's script
-  takes a level, this one builds the single fix).
+  `vendor/jdk-regex-jemmix/build-patched.sh` (no arguments; the re2j
+  oracle's script takes the annotation jar it compiles against, this one
+  builds the single fix).
 - `openjdk-regex-exact-restore/` — the compiled module dir, **gitignored**
   build output. Consumed by `--patch-module java.base=…` on the fuzz fork
   only — never on a classpath, never in the parity tests.

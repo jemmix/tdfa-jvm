@@ -72,7 +72,9 @@ public final class Re2jUnicodeProvider implements UnicodeDataProvider {
     public int[] foldTableFor(String name) {
         // re2j precomputes fold-addition tables only for the four case-bearing categories
         // Lu/Ll/Lt/Mn (see UnicodeTables.FoldCategory); other classes get no fold additions.
-        // NB: this faithfully matches re2j, which (notably) does NOT fold ASCII A-Z into \p{Ll}.
+        // Read live, so the tables are whichever re2j is on the classpath: since google/re2j
+        // #199 regenerated them, \p{Ll} under (?i) reaches the uppercase letters (ASCII A-Z
+        // included) — the released 1.8 tables left them out.
         int[][] fold = UnicodeTables.FOLD_CATEGORIES.get(name);
         if (fold == null) {
             return null;
@@ -87,13 +89,12 @@ public final class Re2jUnicodeProvider implements UnicodeDataProvider {
     }
 
     /**
-     * Literal/class folding follows the oracle's own fold universe, so tdfa folds exactly like
-     * the re2j on the classpath (released or patched) by construction — no transcription of its
-     * behavior. The orbit is {@link Unicode#simpleFold}'s next-pointer walk; simple-fold orbits
-     * have at most 4 members, so the walk is hop-bounded defensively: the bound only engages on
-     * the released oracle's asymmetric-mapping runes (U+1C80..U+1C88, whose walks never cycle
-     * back — the patched oracle declines those mappings instead), and a bounded walk yields
-     * no orbit (fold-inert) rather than a partial one.
+     * the re2j on the classpath (released or the vendored upstream snapshot) by construction — no
+     * transcription of its behavior. The orbit is {@link Unicode#simpleFold}'s next-pointer walk;
+     * simple-fold orbits have at most 4 members, so the walk is hop-bounded defensively: the bound
+     * only engages on the released oracle's asymmetric-mapping runes (U+1C80..U+1C88, whose walks
+     * never cycle back — the snapshot declines those mappings instead, upstream #213), and a
+     * bounded walk yields no orbit (fold-inert) rather than a partial one.
      */
     @Override
     public boolean suppliesFoldUniverse() {

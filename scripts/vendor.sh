@@ -39,6 +39,8 @@ Usage:
 Commands:
   refresh <dep> [<sha>]   Fetch upstream <dep> at <sha> (or default branch tip if
                           omitted), build vendor/archives/<dep>-<sha>.tar.gz.
+                          Pin the full SHA: the archive name is the provenance
+                          every consumer reports (oracle jar manifest, docs).
 
   prepare                 Extract all archives, copy files per the in-script maps,
                           apply patches. Idempotent — safe to re-run.
@@ -184,6 +186,18 @@ archive_for() {
     echo "$matches"
 }
 
+# do_refresh's scratch clone. A global, not a local: bash 3.2 (the stated
+# floor; macOS /bin/bash) runs the RETURN trap after the function's locals
+# are gone, and `set -u` then fails the whole refresh on the unbound name.
+refresh_scratch=""
+
+refresh_cleanup() {
+    if [ -n "$refresh_scratch" ]; then
+        rm -rf "$refresh_scratch"
+        refresh_scratch=""
+    fi
+}
+
 do_refresh() {
     local dep="${1:-}"
     local sha="${2:-HEAD}"
@@ -200,7 +214,8 @@ do_refresh() {
 
     local tmp
     tmp=$(mktemp -d)
-    trap 'rm -rf "$tmp"' RETURN
+    refresh_scratch="$tmp"
+    trap refresh_cleanup RETURN
 
     echo "==> Fetching $dep @ $sha"
     git clone --quiet --no-checkout "$url" "$tmp/repo"
@@ -218,8 +233,15 @@ do_refresh() {
     rm -f "$ARCHIVES_DIR/${dep}-"*.tar.gz "$ARCHIVES_DIR/${dep}-"*.tar.gz.sha256
 
     local archive="$ARCHIVES_DIR/${dep}-${resolved_sha}.tar.gz"
-    tar -czf "$archive" -C "$tmp/snapshot" "$dep"
-    sha256sum_cmd "$archive" | awk -v f="$archive" '{print $1"  "f}' > "$archive.sha256"
+    # A macOS stamp would ride every member otherwise: com.apple.provenance
+    # as PAX xattr headers (--no-xattrs), or as ._<name> AppleDouble entries
+    # once those are off (COPYFILE_DISABLE) — and GNU tar then materializes
+    # each as a ._<name> sidecar FILE: binary junk matching '*.java' in
+    # vendored trees. --no-xattrs is bsdtar and GNU tar >= 1.27 alike; the
+    # env var is read by Apple's tar only.
+    COPYFILE_DISABLE=1 tar --no-xattrs -czf "$archive" -C "$tmp/snapshot" "$dep"
+    # Repo-relative path in the sidecar, so `shasum -c` works from the root.
+    sha256sum_cmd "$archive" | awk -v f="${archive#"$ROOT"/}" '{print $1"  "f}' > "$archive.sha256"
 
     echo "==> Wrote $archive ($(du -h "$archive" | cut -f1))"
     echo "==> Wrote $archive.sha256"

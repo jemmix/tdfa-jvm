@@ -6,6 +6,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.Serializable;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -183,6 +186,55 @@ class ObjectMethodsParityTest {
         var tdfaMatcher = io.github.jemmix.tdfa.Pattern.compile("a").matcher("a");
         tdfaMatcher.reset(new byte[]{65});
         assertThat(tdfaMatcher.matches()).isEqualTo(re2jMatcher.matches());
+    }
+
+    /**
+     * The byte[] path decodes UTF-8, so its match spans are UTF-16 offsets
+     * of the decoded text (the surface's documented contract) and its match
+     * set is the oracle's STRING-path answer — java's too.
+     *
+     * <p>The oracle's own byte[] path disagrees with its String path in one
+     * known place: {@code UTF8Input.context}'s backward scan never checks
+     * whether the byte just before {@code pos} is a lead byte, so at an
+     * interior position right after one it decodes the PREVIOUS character,
+     * and a zero-width {@code (?m)^} finds a line start inside a multibyte
+     * character (the empty-match nudge is what lands there). An oracle bug
+     * (TODO.md), not a surface divergence — in released 1.8 and in the
+     * snapshot alike: pinned below, so the day upstream fixes it the
+     * extra-span assertion fails and the pin retires.
+     */
+    @Test
+    void byteInputAnswersLikeTheOraclesStringPath() {
+        String text = "\né";
+        byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+        List<Integer> onText = new ArrayList<>();
+        for (com.google.re2j.Matcher m = com.google.re2j.Pattern.compile("(?m)^").matcher(text); m.find();) {
+            onText.add(m.start());
+        }
+        List<Integer> onJava = new ArrayList<>();
+        for (java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?m)^").matcher(text); m.find();) {
+            onJava.add(m.start());
+        }
+        List<Integer> onBytes = new ArrayList<>();
+        for (com.google.re2j.Matcher m = com.google.re2j.Pattern.compile("(?m)^").matcher(bytes); m.find();) {
+            onBytes.add(m.start());
+        }
+        List<Integer> onTdfa = new ArrayList<>();
+        for (io.github.jemmix.tdfa.core.engine.Matcher m =
+            io.github.jemmix.tdfa.re2j.Pattern.compile("(?m)^").matcher(bytes); m.find();) {
+            onTdfa.add(m.start());
+        }
+        assertThat(onText).as("the oracle on the text").containsExactly(0, 1);
+        assertThat(onJava).as("java on the text").isEqualTo(onText);
+        // released 1.8 carries a second byte-path bug on top (the one #193
+        // fixed): a line start after the multibyte character as well
+        List<Integer> expectedOnBytes = new ArrayList<>(onText);
+        expectedOnBytes.add(2);
+        if (Re2jOracle.releasedOracle()) {
+            expectedOnBytes.add(3);
+        }
+        assertThat(onBytes).as("the oracle on the bytes: line starts inside é").isEqualTo(expectedOnBytes);
+        assertThat(onTdfa).as("the surface on the bytes").isEqualTo(onText);
     }
 
     // ---- Serializable ----

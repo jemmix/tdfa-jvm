@@ -88,11 +88,106 @@ class MatcherApiParityTest {
     void findIterate(RegexEngineFactory factory) {
         var r = re2jM("\\d+", "a1b2c3");
         var t = tdfaM("\\d+", "a1b2c3", factory);
-        while (r.find() && t.find()) {
-            assertThat(t.group()).as("group").isEqualTo(r.group());
-            assertThat(t.start()).as("start").isEqualTo(r.start());
+        // One call per side per round, the terminating false included.
+        boolean found;
+        do {
+            found = r.find();
+            assertThat(t.find()).as("find").isEqualTo(found);
+            if (found) {
+                assertThat(t.group()).as("group").isEqualTo(r.group());
+                assertThat(t.start()).as("start").isEqualTo(r.start());
+            }
+        } while (found);
+    }
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void failedMatchClearsState(RegexEngineFactory factory) {
+        // re2j #205: a failed match leaves no match state — the accessors
+        // throw instead of answering the previous match.
+        var r = re2jM("abc", "abc");
+        var t = tdfaM("abc", "abc", factory);
+        assertThat(t.find()).isEqualTo(r.find());
+        assertThat(t.group()).isEqualTo(r.group());
+        assertThat(t.find()).isEqualTo(r.find());
+        assertThatThrownBy(t::group).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(t::start).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(t::end).isInstanceOf(IllegalStateException.class);
+        var p = "([1-5][0-9]{2})-([1-5][0-9]{2})";
+        var r2 = re2jM(p, "201-299");
+        var t2 = tdfaM(p, "201-299", factory);
+        assertThat(t2.matches()).isEqualTo(r2.matches());
+        assertThat(t2.find()).isEqualTo(r2.find());
+        assertThatThrownBy(() -> t2.group(1)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void findAfterFailureRestarts(RegexEngineFactory factory) {
+        // With no match state, find() scans from the beginning of the input
+        // (re2j's contract: "the end of the last match, or else the
+        // beginning of the input") — after an exhausted iteration that is
+        // the first match again. #205 made the oracle live up to its own
+        // contract; the released 1.8 build kept scanning from the stale
+        // last match's end, so probe which one is running.
+        var r = re2jM("\\d+", "a1b2c3");
+        var t = tdfaM("\\d+", "a1b2c3", factory);
+        boolean found;
+        do {
+            found = r.find();
+            assertThat(t.find()).isEqualTo(found);
+        } while (found);
+        if (Re2jOracle.releasedOracle()) {
+            return; // stale state: the oracle keeps scanning from the last match's end
         }
-        assertThat(r.find()).isEqualTo(t.find());
+        assertThat(t.find()).as("find() with no match state").isEqualTo(r.find());
+        assertThat(t.group()).isEqualTo(r.group());
+        assertThat(t.group()).isEqualTo("1");
+    }
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void findFromFailureThenFind(RegexEngineFactory factory) {
+        // A failed find(int) leaves no match state either: the next find()
+        // scans from the beginning, not from the failed restart index.
+        var r = re2jM("\\d+", "a1b");
+        var t = tdfaM("\\d+", "a1b", factory);
+        assertThat(r.find(2)).isFalse();
+        assertThat(t.find(2)).isFalse();
+        assertThat(t.find()).isEqualTo(r.find());
+        assertThat(t.group()).isEqualTo(r.group());
+        assertThat(t.group()).isEqualTo("1");
+    }
+
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void findFromKeepsAppendPosition(RegexEngineFactory factory) {
+        // find(int) is a reset plus a scan: the append position returns to 0
+        // with the reset, so the text before the restart index stays in the
+        // append output — on a hit and on a miss alike.
+        var rSb = new StringBuilder();
+        var rM = re2jM("\\d", "a1b2c");
+        rM.find(2);
+        rM.appendReplacement(rSb, "X");
+        rM.appendTail(rSb);
+        var tSb = new StringBuilder();
+        var tM = tdfaM("\\d", "a1b2c", factory);
+        tM.find(2);
+        tM.appendReplacement(tSb, "X");
+        tM.appendTail(tSb);
+        assertThat(tSb.toString()).as("find(2) hit").isEqualTo(rSb.toString());
+        assertThat(tSb.toString()).isEqualTo("a1bXc");
+
+        var rTail = new StringBuilder();
+        var rMiss = re2jM("\\d", "a1b");
+        rMiss.find(2);
+        rMiss.appendTail(rTail);
+        var tTail = new StringBuilder();
+        var tMiss = tdfaM("\\d", "a1b", factory);
+        tMiss.find(2);
+        tMiss.appendTail(tTail);
+        assertThat(tTail.toString()).as("find(2) miss").isEqualTo(rTail.toString());
+        assertThat(tTail.toString()).isEqualTo("a1b");
     }
 
     @ParameterizedTest
@@ -545,11 +640,15 @@ class MatcherApiParityTest {
         assertThat(tf.end()).isEqualTo(jf.end());
         var ji = jurM("\\d+", "a1b2c3");
         var ti = facadeM("\\d+", "a1b2c3", factory);
-        while (ji.find() && ti.find()) {
-            assertThat(ti.group()).as("group").isEqualTo(ji.group());
-            assertThat(ti.start()).as("start").isEqualTo(ji.start());
-        }
-        assertThat(ji.find()).isEqualTo(ti.find());
+        boolean found;
+        do {
+            found = ji.find();
+            assertThat(ti.find()).as("find").isEqualTo(found);
+            if (found) {
+                assertThat(ti.group()).as("group").isEqualTo(ji.group());
+                assertThat(ti.start()).as("start").isEqualTo(ji.start());
+            }
+        } while (found);
         var j4 = jurM("\\d+", "12ab34");
         var t4 = facadeM("\\d+", "12ab34", factory);
         j4.find(4);
@@ -666,5 +765,34 @@ class MatcherApiParityTest {
         assertThat(tp.find(1)).as("explicit interior start honored (jur)").isTrue();
         assertThat(tp.start()).isEqualTo(1);
         assertThat(jurM("\uDC00", pair).find(1)).as("the JDK honors it too").isTrue();
+    }
+
+    /** Jur twin of {@link #findFromKeepsAppendPosition}: the JDK's
+     *  {@code find(int)} is the same reset-plus-search, and its reset sets
+     *  the append position to zero. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
+    void jurTwinFindFromKeepsAppendPosition(RegexEngineFactory factory) {
+        var jSb = new StringBuilder();
+        var jM = jurM("\\d", "a1b2c");
+        jM.find(2);
+        jM.appendReplacement(jSb, "X");
+        jM.appendTail(jSb);
+        var tSb = new StringBuilder();
+        var tM = facadeM("\\d", "a1b2c", factory);
+        tM.find(2);
+        tM.appendReplacement(tSb, "X");
+        tM.appendTail(tSb);
+        assertThat(tSb.toString()).as("jur find(2) hit").isEqualTo(jSb.toString());
+
+        var jTail = new StringBuilder();
+        var jMiss = jurM("\\d", "a1b");
+        jMiss.find(2);
+        jMiss.appendTail(jTail);
+        var tTail = new StringBuilder();
+        var tMiss = facadeM("\\d", "a1b", factory);
+        tMiss.find(2);
+        tMiss.appendTail(tTail);
+        assertThat(tTail.toString()).as("jur find(2) miss").isEqualTo(jTail.toString());
     }
 }

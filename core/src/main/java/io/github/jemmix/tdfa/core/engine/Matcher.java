@@ -287,6 +287,26 @@ public class Matcher implements java.util.regex.MatchResult {
         } else {
             start = appendPos;
         }
+        return scanFrom(start);
+    }
+
+    public boolean find(int start) {
+        if (start < 0 || start > inputLength) {
+            throw new IndexOutOfBoundsException("start index out of bounds: " + start);
+        }
+        // A reset and a scan — exactly java's {@code search(start)} and re2j's
+        // {@code genMatch(start, 0)}. The restart index is the scan's argument,
+        // never the append position: the reset zeroed that, and
+        // appendReplacement/appendTail keep reading from 0, so the text
+        // before the restart index stays in the append output.
+        reset();
+        lastOpAnchored = false;
+        return scanFrom(start);
+    }
+
+    /** The unanchored scan from {@code start} over the whole input — the one
+     *  body behind both {@code find()} spellings (the region route has its own). */
+    private boolean scanFrom(int start) {
         // Clamped to the input (see findInRegion): an empty match at the
         // end bumps start past the last valid scan origin.
         lastSearchFrom = Math.min(start, inputLength);
@@ -307,15 +327,6 @@ public class Matcher implements java.util.regex.MatchResult {
         lastMatchStart = m.start(0);
         lastMatchEnd = m.end(0);
         return true;
-    }
-
-    public boolean find(int start) {
-        if (start < 0 || start > inputLength) {
-            throw new IndexOutOfBoundsException("start index out of bounds: " + start);
-        }
-        reset();
-        appendPos = start;
-        return find();
     }
 
     // ---- region bounds (the java.util.regex Matcher family) ----

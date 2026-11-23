@@ -19,7 +19,12 @@ dependencies {
     api project(':lib:pikesim')
     api project(':')
     api project(':re2j')
-    implementation 'com.google.re2j:re2j:1.8'
+    // re2j is the oracle's API at COMPILE time only. Which re2j answers at
+    // runtime is the consumer's call (:tests:parity:re2j puts the vendored
+    // pristine oracle on the classpath) — carrying the released 1.8 artifact
+    // transitively would put a second com.google.re2j on every consumer's
+    // runtime classpath, to be shadowed or not by classpath order.
+    compileOnly 'com.google.re2j:re2j:1.8'
 }
 
 jar {

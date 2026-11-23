@@ -104,10 +104,12 @@ defining file(s), not every occurrence.
   modern tier) vs ones that follow the runtime JDK. Providers
   *pin a snapshot* or *bridge the live oracle* (parity tiers).
 - **oracle** — a reference implementation whose answers define truth: the
-  live oracle (running JDK), the patched oracle (this repo's patched re2j
-  fork) vs the pristine/released oracle (stock re2j 1.8), the contract
-  oracle (re2j in hard-gate suites). "Probed, not declared": oracle flavor
-  is detected by behavior (the lone-low-interior discriminator).
+  live oracle (running JDK), the patched oracle (the vendored
+  exact-restore JDK build) vs the stock JDK on the jur lane; the pristine
+  oracle (the vendored upstream re2j snapshot) vs the released oracle
+  (stock re2j 1.8) on the re2j lane; the contract oracle (re2j in
+  hard-gate suites). "Probed, not declared": oracle flavor is detected by
+  behavior (the lone-low-interior discriminator).
 - **oracle ladder** — the stacked oracles (re2j → PikeSim → VM → ASM) that
   attribute a divergence to one layer; `LayeredComparator` is its harness.
 - **StartS / plain Start / hasSupplementaryStarts** *(borrowed: JDK
@@ -462,9 +464,12 @@ defining file(s), not every occurrence.
   a state claims it (the queue marking); a recorder cuts every
   lower-priority thread (the record rule); symbol-waiting threads are
   **parked**. Capture arrays fork copy-on-write (**caps / cap fork**).
-- **patched vs released oracle / pristine** — the vendored re2j fork
-  (`vendor/re2j-jemmix`, fixes 0001-0003) vs stock re2j 1.8; the fuzzer
-  probes which is on the classpath.
+- **pristine vs released oracle** — the vendored pristine upstream
+  snapshot (`vendor/re2j-oracle/`, the DEFAULT: every divergence a
+  finding) vs stock re2j 1.8 from Maven (`-Pfuzz.releasedOracle=true`:
+  its known bugs are classified); the fuzzer probes which is on the
+  classpath. Supersedes *patched vs released* — the patched fork's three
+  fixes landed upstream as google/re2j #208/#212/#213.
 - **re2j-suite / testregex / Fowler / .dat corpora / prepareVendor** — the
   vendored upstream re2j test suite and Glenn Fowler's testregex corpora
   (basic.dat, nullsubexpr.dat, repetition.dat); `./gradlew prepareVendor`
@@ -578,9 +583,12 @@ defining file(s), not every occurrence.
   states and operations: pristine upstream tarballs (one archive per dep,
   sha256 sidecars, `NN-*.patch` applied in lexical order) extracted and
   patched into `build/generated` by `scripts/vendor.sh`.
-- **re2j-jemmix / fix levels / upstreamable unit** — the patched oracle
-  fork; jars build at cumulative fix levels 1-3; each patch is a
-  self-contained upstream candidate.
+- **re2j-oracle / pristine snapshot / buildOracle** — the re2j oracle:
+  the vendored upstream snapshot (`vendor/archives/re2j-<sha>.tar.gz`)
+  built as-is by `build-oracle.sh`; its jar's manifest carries the commit,
+  `OracleIdentityTest` pins it and the fuzz summary records it. Retires
+  the former *re2j-jemmix / fix levels / upstreamable unit* (the patched
+  1.8 fork).
 - **pinned table modules / Tables0..N / CHUNK_BUDGET** — the generated
   `:unicode:v6_0` / `:unicode:v17_0` providers: fold orbits frozen at the
   UCD snapshot ("folding cannot float with the runtime JDK"), tables split

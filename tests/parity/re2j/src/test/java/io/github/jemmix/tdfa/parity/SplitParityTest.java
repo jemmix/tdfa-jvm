@@ -39,6 +39,16 @@ class SplitParityTest {
         assertThat(tdfa).as("jur split \"%s\" on \"%s\" limit=%d", pattern, input, limit).isEqualTo(jur);
     }
 
+    /** An input the delimiters consume whole has no trailing segment at
+     *  limit 0 — re2j #202, which the snapshot carries and released 1.8
+     *  does not (it kept one empty segment; the JDK never did). */
+    private static void assertSplitFullyMatched(String pattern, String input, RegexEngineFactory factory) {
+        if (Re2jOracle.releasedOracle()) {
+            return;
+        }
+        assertSplit(pattern, input, factory);
+    }
+
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void splitBasic(RegexEngineFactory factory) {
@@ -84,7 +94,17 @@ class SplitParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void splitOnlyDelimiter(RegexEngineFactory factory) {
-        assertSplit(",", ",,", factory);
+        assertSplitFullyMatched(",", ",,", factory);
+    }
+
+    /** The cells of re2j #202. */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void splitFullyMatched(RegexEngineFactory factory) {
+        assertSplitFullyMatched("\\s+", "   ", factory);
+        assertSplitFullyMatched("\\s+", "   foo", factory);
+        assertSplitFullyMatched("\\s+", "foo   ", factory);
+        assertSplitFullyMatched("\\s+", "", factory);
     }
 
     @ParameterizedTest
@@ -134,7 +154,7 @@ class SplitParityTest {
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void splitEveryChar(RegexEngineFactory factory) {
-        assertSplit(".", "abc", factory);
+        assertSplitFullyMatched(".", "abc", factory);
     }
 
     @ParameterizedTest
@@ -166,12 +186,11 @@ class SplitParityTest {
         assertJurSplit(",", "a,b,", factory);
         assertJurSplit(",", "a,b,,,", factory);
         assertJurSplit(",", ",a", factory);
-        // all-delimiter input: we keep one empty segment (re2j lineage),
-        // the JDK drops every trailing empty — documented divergence
-        assertThat(io.github.jemmix.tdfa.Pattern.compile(",", 0, factory).split(",,")).isEqualTo(new String[]{""});
-        assertThat(java.util.regex.Pattern.compile(",").split(",,")).isEmpty();
-        assertThat(io.github.jemmix.tdfa.Pattern.compile(".", 0, factory).split("abc")).isEqualTo(new String[]{""}); // "." on "abc": the same family
-        assertThat(java.util.regex.Pattern.compile(".").split("abc")).isEmpty();
+        // All-delimiter input: an empty result on all three engines. It was
+        // a documented divergence until re2j #202 dropped the trailing empty
+        // the JDK never kept.
+        assertJurSplit(",", ",,", factory);
+        assertJurSplit(".", "abc", factory);
         assertJurSplit("\\W+", "hello, world! foo", factory);
         assertJurSplit(",", "a,b,c", 2, factory);
         assertJurSplit(",", "a,b,c", 1, factory);

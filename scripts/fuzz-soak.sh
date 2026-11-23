@@ -10,7 +10,7 @@
 #   scripts/fuzz-soak.sh [iterations=480] [minutes-per-iter=1] [out=build/fuzz] [seed-base=random] [extra gradle args...]
 #
 # Both lanes since the evidence re-base: the per-batch lane draw mixes the
-# re2j surface vs the re2j (patched) oracle and the jur facade vs live
+# re2j surface vs the re2j oracle and the jur facade vs live
 # java.util.regex; summary.txt splits per-lane counts (roughly half each).
 # Lane-pure soaks (re-running the re2j-pinned ~300 M evidence, or a jur-only
 # night) pass the pin through as extra gradle args:
@@ -29,10 +29,10 @@
 # via -Pfuzz.one=<caseSeed>). A nonzero fuzzer exit (findings found) is logged
 # and does NOT stop the soak.
 #
-# The oracle is our patched re2j fork by default (surrogate-pair-interior
-# + FoldCase fixes, vendor/re2j-jemmix/, built on demand). To soak against
-# released (pristine) re2j 1.8 instead: append -Pfuzz.pristineOracle=true
-#   scripts/fuzz-soak.sh 480 1 build/fuzz '' -Pfuzz.pristineOracle=true
+# The re2j oracle is the vendored pristine upstream snapshot by default
+# (vendor/re2j-oracle/, built on demand; summary.txt names its commit). To
+# soak against released re2j 1.8 instead: append -Pfuzz.releasedOracle=true
+#   scripts/fuzz-soak.sh 480 1 build/fuzz '' -Pfuzz.releasedOracle=true
 # The jur lane's live java.util.regex oracle is patched the same way by
 # default — the vendored exact-restore build (vendor/jdk-regex-jemmix/,
 # JDK-8381696 dress rehearsal; the fuzzer's leak-family soft classes are

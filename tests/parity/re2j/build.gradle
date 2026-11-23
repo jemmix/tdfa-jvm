@@ -31,31 +31,50 @@ dependencies {
     testImplementation platform('org.junit:junit-bom:5.10.2'),
             'org.junit.jupiter:junit-jupiter',
             'org.assertj:assertj-core:3.25.3'
-    // re2j as live oracle for parity comparison. DEFAULT: our patched fork
-    // (vendor/re2j-jemmix/) — the released 1.8 oracle has known bugs of its
-    // own (lone-surrogate pair-interior literal prefix, FoldCase factoring),
-    // so findings under it need a known-divergence classifier to interpret.
-    // The patched build removes those, making any divergence a real finding.
-    // Built on demand by buildPatchedOracle from the single committed
-    // pristine archive + per-fix patches (jar is a gitignored build output).
-    // -Pfuzz.pristineOracle=true swaps in the released Maven artifact to run
-    // against stock re2j 1.8 behavior instead — see vendor/re2j-jemmix/README.md.
-    def patchedOracleJar = rootProject.file('vendor/re2j-jemmix/re2j-1.8-jemmix-fix3.jar')
-    tasks.register('buildPatchedOracle', Exec) {
+    // re2j as live oracle for parity comparison. DEFAULT: the PRISTINE
+    // upstream snapshot — vendor/archives/re2j-<sha>.tar.gz, built as-is by
+    // buildOracle (jar is a gitignored build output). The three fixes the
+    // former patched fork carried are upstream (google/re2j #208, #212,
+    // #213), so every divergence is a real finding.
+    // -Pfuzz.releasedOracle=true swaps in the released 1.8 Maven artifact
+    // instead — an oracle with known bugs of its own, which the fuzzer
+    // probes and answers with its known-divergence classifier and hang
+    // guards. See vendor/re2j-oracle/README.md.
+    def oracleJar = rootProject.file('vendor/re2j-oracle/re2j-pristine.jar')
+    // The snapshot's API sources are JSpecify-annotated (google/re2j #210):
+    // javac needs the annotations on its classpath. Same coordinates as
+    // upstream's own build.gradle.
+    configurations {
+        oracleAnnotations
+    }
+    dependencies {
+        oracleAnnotations 'org.jspecify:jspecify:1.0.1'
+    }
+    tasks.register('buildOracle', Exec) {
         group = 'build'
-        description = 'Rebuild the patched re2j oracle jar (fix3) from the vendored pristine archive + patches'
+        description = 'Builds the pristine re2j oracle jar from the vendored upstream snapshot'
         workingDir rootProject.projectDir
-        commandLine './vendor/re2j-jemmix/build-patched.sh', '3'
+        executable './vendor/re2j-oracle/build-oracle.sh'
         inputs.files fileTree(dir: rootProject.projectDir, include: [
                 'vendor/archives/re2j-*.tar.gz', 'vendor/archives/re2j-*.tar.gz.sha256',
-                'vendor/re2j-jemmix/patches/*.patch', 'vendor/re2j-jemmix/build-patched.sh'])
-        outputs.file patchedOracleJar
+                'vendor/re2j-oracle/build-oracle.sh'])
+        inputs.files configurations.oracleAnnotations
+        outputs.file oracleJar
+        // Resolved at execution, not configuration: the script argument is
+        // the one jar on the annotation classpath.
+        argumentProviders.add({
+            def jars = configurations.oracleAnnotations.files
+            if (jars.size() != 1) {
+                throw new GradleException("expected exactly one jspecify jar on oracleAnnotations, got: ${jars}")
+            }
+            [jars.iterator().next().absolutePath]
+        } as CommandLineArgumentProvider)
     }
-    if (project.hasProperty('fuzz.pristineOracle')) {
+    if (project.hasProperty('fuzz.releasedOracle')) {
         testImplementation 'com.google.re2j:re2j:1.8'
     } else {
-        tasks.named('compileTestJava') { dependsOn 'buildPatchedOracle' }
-        testImplementation files(patchedOracleJar)
+        tasks.named('compileTestJava') { dependsOn 'buildOracle' }
+        testImplementation files(oracleJar)
     }
     // bytecode policy check + CheckClassAdapter verification on the
     // ASM-generated engine classes (asm-util pulls asm-analysis)
@@ -65,7 +84,8 @@ dependencies {
 }
 
 // Patched jur oracle — the JDK-8381696 exact-restore dress rehearsal
-// (vendor/jdk-regex-jemmix/), exactly parallel to the patched re2j fork above:
+// (vendor/jdk-regex-jemmix/), the same archive + build-script discipline as
+// the re2j oracle above:
 // vanilla OpenJDK 26.0.2-ga sources vendored as one sha256-pinned archive +
 // per-fix patches, built on demand (module dir is a gitignored build output)
 // and mounted with --patch-module on the fuzz fork ONLY. The daemon, workers
@@ -111,10 +131,17 @@ def usePatchedJurOracle(JavaExec t, String prefix, File patchedJurDir) {
 // first fuzz night that needs it.
 tasks.named('check') { dependsOn 'buildPatchedJurOracle' }
 
+// The vendored snapshot's commit, from the archive name: the identity the
+// oracle jar's manifest carries and OracleIdentityTest pins.
+def oracleSha = rootProject.fileTree(dir: rootProject.projectDir, include: ['vendor/archives/re2j-*.tar.gz']).singleFile.name
+        .replace('re2j-', '').replace('.tar.gz', '')
+
 test {
     useJUnitPlatform()
     jvmArgs '-Xmx512m', '-XX:+HeapDumpOnOutOfMemoryError'
     systemProperty 'tdfa.asm.dump', System.getProperty('tdfa.asm.dump', 'false')
+    // for the oracle-identity tripwire (OracleIdentityTest)
+    systemProperty 'tdfa.oracle.sha', oracleSha
     // Forked parallelism, NOT in-JVM class-level parallelism: this suite's
     // machinery leans on JVM-global system properties (tdfa.budget.compile.*
     // swaps in BudgetRejectReplayTest, tdfa.asm.dump/tmpdir in
@@ -136,8 +163,9 @@ test {
 // per-batch lane draw mixes the re2j surface vs the re2j (patched) oracle
 // and the jur facade vs live java.util.regex; summary.txt splits per-lane
 // counts. Pin one lane for lane-pure evidence (-Pfuzz.lane=re2j|jur).
-// The oracle is our patched re2j fork by default (built on demand); pass
-// -Pfuzz.pristineOracle=true to soak against released re2j 1.8 instead.
+// The oracle is the vendored pristine upstream snapshot by default (built on
+// demand); pass -Pfuzz.releasedOracle=true to soak against released re2j 1.8
+// instead.
 //   ./gradlew :tests:parity:re2j:fuzz                      # 8h both lanes, logs to build/fuzz
 //   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.minutes=60 -Pfuzz.seed=42 -Pfuzz.out=/tmp/soak
 //   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.lane=re2j     # lane-pure re2j evidence

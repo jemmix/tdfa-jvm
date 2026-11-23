@@ -13,7 +13,7 @@ name: nightly-fuzz
 # Widest-surface differential soak. scripts/fuzz-soak.sh runs
 # the chunked DifferentialFuzzer (one short-lived JVM per minute — hang-leak
 # containment) with ALL widening defaults left on:
-#   - lane mix: per-batch draw between the re2j surface vs the patched re2j
+#   - lane mix: per-batch draw between the re2j surface vs the pristine re2j
 #     oracle AND the jur facade vs live java.util.regex;
 #   - multi-valued lane (BT22 §3.1): MULTI_VALUED_TAGS compiles per batch
 #     under the four MVT oracles (self-consistency, latest==plain, tier

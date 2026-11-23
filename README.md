@@ -157,7 +157,9 @@ at compile time
   JUR-default flip; the evidence re-base is the open
   both-lane soak TODO item).
 - **~300 M** differential fuzz cases vs re2j (overnight soaks): 0 divergences
-  (same lane note). Failures shrink: `fuzz.one` replays delta-debug a
+  (same lane note; against the patched re2j 1.8 fork — the oracle is the
+  pristine upstream snapshot since 2026-11-23, and its re-base soak is the
+  open TODO item). Failures shrink: `fuzz.one` replays delta-debug a
   finding down to a minimal same-kind repro (pattern + input), and
   `-Pfuzz.shrink=1` pre-shrinks every recorded soak failure.
 - Overnight-soak budget rejections — the documented non-divergence class

@@ -14,20 +14,20 @@ vendor/
 ├── patches/
 │   └── <dep>/
 │       └── NN-name.patch                patches applied in lexical order
-├── re2j-jemmix/                         patched re2j oracle builds
-│   ├── patches/NNNN-*.patch             one patch per fix (applied cumulatively)
-│   └── build-patched.sh                 builds oracle jars from the re2j archive
-│                                        (outputs gitignored — never committed)
+├── re2j-oracle/                          the re2j oracle: the pristine
+│   │                                     snapshot, built as-is
+│   └── build-oracle.sh                   builds the oracle jar from the re2j archive
+│                                         (output gitignored — never committed)
 └── ucd/
     ├── 6.0.0/                           UCD snapshots feeding :unicode:v6_0
     └── 17.0.0/                          UCD snapshots feeding :unicode:v17_0
-                                        (regenerate via scripts/gen-unicode.py)
+                                         (regenerate via scripts/gen-unicode.py)
 ```
 
 One archive per dep — the archive IS the single committed source of truth;
-no vendored tree is checked out in place. The patched re2j oracle jars are
-built on demand from the same `re2j-*.tar.gz` archive (see
-`re2j-jemmix/README.md`).
+no vendored tree is checked out in place. The re2j oracle jar is built on
+demand from the `re2j-*.tar.gz` archive, unpatched (see
+`re2j-oracle/README.md`).
 
 ## Operations
 
@@ -57,6 +57,12 @@ writes a fresh tarball + sha256 sidecar. Removes any prior archive for the
 dep (one-for-one replacement). Does NOT update patches — if upstream
 changed line numbers near a patched region, the patch may fail to apply
 on the next `prepare`.
+
+Pin the full commit SHA: the archive's name is the provenance every
+consumer reports (the re2j oracle jar's manifest, the fuzz summary). The
+tarball is xattr-free by construction — without `--no-xattrs` a macOS
+stamp would ride every member, and GNU tar would materialize each one as
+a `._<name>` file.
 
 To add a new dep:
 1. Add an entry to `upstream_url_for()` and `copy_map_for()` in
