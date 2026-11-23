@@ -18,8 +18,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * The re2j facade's API-compat contract, verified by reflection against
- * the re2j oracle's own surface (the patched vendored jar rides this
- * suite's classpath) — the re2j twin of the jur facade's
+ * the re2j oracle's own surface (the vendored upstream snapshot's jar
+ * rides this suite's classpath) — the re2j twin of the jur facade's
  * {@code JurApiCompatTest} (which checks against the live JDK's classes
  * in the unit suite): every public member of
  * {@code com.google.re2j.Pattern} / {@code com.google.re2j.Matcher} has

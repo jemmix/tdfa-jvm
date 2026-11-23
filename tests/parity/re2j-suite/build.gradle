@@ -12,14 +12,10 @@ dependencies {
     testImplementation platform('org.junit:junit-bom:5.10.2'),
             'org.junit.jupiter:junit-jupiter',
             'junit:junit:4.13.2',
-            'com.google.re2j:re2j:1.8',
             'com.google.guava:guava:33.0.0-jre'
     // JUnit4 tests (ExecTest) discovered via Vintage engine at runtime
     testRuntimeOnly 'org.junit.vintage:junit-vintage-engine'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-    // Re2jUnicodeProvider bridge lives in :tests:parity:re2j; needs to be on
-    // the runtime classpath here for ExecTest's Unicode case-folding paths.
-    testRuntimeOnly project(':tests:parity:re2j')
 }
 
 // Vendor-wired generated sources (ExecTest, Utils, UnicodeTables, etc.)

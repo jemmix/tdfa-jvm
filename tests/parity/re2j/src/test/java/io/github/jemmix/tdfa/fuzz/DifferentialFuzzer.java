@@ -8,6 +8,7 @@ import io.github.jemmix.tdfa.core.dfa.TdfaRunner;
 import io.github.jemmix.tdfa.core.parser.PatternSyntaxException;
 import io.github.jemmix.tdfa.parity.LayeredComparator;
 import io.github.jemmix.tdfa.parity.LayeredComparator.Layer;
+import io.github.jemmix.tdfa.parity.Re2jOracle;
 import io.github.jemmix.tdfa.sim.PikeSim;
 import jdk.jfr.Configuration;
 import jdk.jfr.Recording;
@@ -98,14 +99,14 @@ import java.util.function.Predicate;
  * combinations ARE generated (un-avoided since full-Unicode {@code (?i)}
  * folding landed — 12d9921; pinned in {@code FuzzSmokeTest}) and compare
  * hard on both lanes. The remaining generation guards are ORACLE-SIDE,
- * both for the RELEASED re2j build only (never the default patched fork):
- * fold-hang codepoints leave the {@code (?i)} literal pool
- * ({@code releasedCiPool}), and {@code (?i)} class ranges narrow to ASCII
- * — pristine re2j folds every codepoint in a range with an unbounded
- * orbit walk, and a range reaching U+1C80..U+1C88 never terminates (patch
- * 0003 declines the asymmetric mappings, so the patched oracle generates
- * full-width ranges). Everything else must agree with the oracles or it
- * is a finding.
+ * both for the RELEASED re2j 1.8 build only (never the default — the
+ * pristine upstream snapshot): fold-hang codepoints leave the {@code (?i)}
+ * literal pool ({@code releasedCiPool}), and {@code (?i)} class ranges
+ * narrow to ASCII — released 1.8 folds every codepoint in a range with an
+ * unbounded orbit walk, and a range reaching U+1C80..U+1C88 never
+ * terminates (upstream #213 declines the asymmetric mappings, so the
+ * snapshot's oracle takes full-width ranges). Everything else must agree
+ * with the oracles or it is a finding.
  *
  * <p>On the jur lane the ORACLE itself is a backtracking engine, so one
  * more family is avoided rather than compared: nested-quantifier bombs
@@ -267,13 +268,14 @@ public final class DifferentialFuzzer {
     /** Layered comparator (re2j/sim/vm/asm vote) for failure attribution. */
     private static final LayeredComparator LAYERED = new LayeredComparator(Re2jUnicodeProvider.INSTANCE);
 
-    /** Which re2j is on the classpath — our patched fork (the DEFAULT
-     *  oracle, vendor/re2j-jemmix/) or released 1.8
-     *  (-Pfuzz.pristineOracle=true)? Probed, not declared: the
+    /** Which re2j is on the classpath — the vendored pristine upstream
+     *  snapshot (the DEFAULT oracle, vendor/re2j-oracle/) or released 1.8
+     *  (-Pfuzz.releasedOracle=true)? Probed, not declared: the
      *  lone-low-interior behavior is the discriminator (same probe as
-     *  LayeredComparatorTest). Under the patched oracle the lone-surrogate
-     *  "known divergence" family is FIXED — any divergence there is a real
-     *  finding, so the known-divergence classifier runs only when released. */
+     *  LayeredComparatorTest). In the snapshot the lone-surrogate "known
+     *  divergence" family is FIXED (upstream #208) — any divergence there
+     *  is a real finding, so the known-divergence classifier runs only when
+     *  released. */
     static final boolean RELEASED_ORACLE = releasedOracle();
 
     /** Does the live java.util.regex oracle still leak capture groups from
@@ -579,6 +581,18 @@ public final class DifferentialFuzzer {
         } catch (RuntimeException e) {
             return true; // cannot happen for this constant; fail loud in the soak instead of silently
         }
+    }
+
+    /** The re2j that answered, for the soak's record (summary.txt): the
+     *  vendored snapshot's commit off its jar's manifest, or the released
+     *  artifact the probe recognizes. */
+    static String oracleLabel() {
+        if (RELEASED_ORACLE) {
+            return "re2j 1.8 released";
+        }
+        String version = Re2jOracle.implementationVersion();
+        return version == null ? "re2j (unknown build — no Implementation-Version in its jar)"
+            : "re2j upstream snapshot " + version;
     }
 
     /** {@link #JUR_LEAKS}'s probe: g1 set on {@code "(?:(\A))*(\n)"} over
@@ -2461,8 +2475,8 @@ public final class DifferentialFuzzer {
      *  runes under (?i) on the RELEASED oracle: its Unicode 6.0 CASE_ORBIT
      *  predates them, so simpleFold's fallback steps into the partner's
      *  symmetric orbit and never cycles back — the compile hangs. The
-     *  patched oracle (fork patch 0003) declines the asymmetric mappings,
-     *  so they compile freely there (fold-inert). Inputs carrying them
+     *  upstream fix (#213, in the vendored snapshot) declines the
+     *  asymmetric mappings, so they compile freely there (fold-inert). Inputs carrying them
      *  are safe on any oracle (no compile-time walk), and fold semantics
      *  track the oracle by construction (see knownDivergence). */
     static boolean releasedFoldHang(int cp) {
@@ -2713,7 +2727,7 @@ public final class DifferentialFuzzer {
     static String genPattern(long batch) {
         ciRangeAvoided = 0;
         // The ci range guard is RELEASED-oracle-only (see classBody): the
-        // patched fork and the jur oracle fold bounded, so CI batches
+        // vendored snapshot and the jur oracle fold bounded, so CI batches
         // generate full-width there — supplementary and lone-surrogate
         // codepoints included (pinned in FuzzSmokeTest). Pure function of
         // the batch still (genFlags is), so replay holds. Family batches
@@ -2920,7 +2934,7 @@ public final class DifferentialFuzzer {
                     // unbounded orbit walk, and any range reaching
                     // U+1C80..U+1C88 never terminates (the walk steps into
                     // the partner's symmetric orbit and cannot cycle back).
-                    // The patched oracle (fork patch 0003) declines the
+                    // The vendored snapshot (upstream #213) declines the
                     // asymmetric mappings, so ranges generate full-width
                     // there.
                     ciRangeAvoided++;
@@ -3526,9 +3540,9 @@ public final class DifferentialFuzzer {
                     jurFailures++;
                 }
                 // Known-divergence classification is RELEASED-oracle-only: it
-                // documents the released re2j lone-surrogate bugs, and the
-                // patched fork exists to fix them — under it, every
-                // divergence is a finding. The layer==PARSER cross-check
+                // documents the released re2j lone-surrogate bugs, which the
+                // vendored snapshot carries the upstream fix for — under it,
+                // every divergence is a finding. The layer==PARSER cross-check
                 // below is what keeps the classifier honest (whole stack
                 // self-consistent, oracle alone differs); classification
                 // without it would misattribute real findings whose pattern
@@ -3715,35 +3729,35 @@ public final class DifferentialFuzzer {
         }
 
         /**
-         * Documented re2j divergences (see TODO.md "Correctness"):
+         * Documented divergences of the RELEASED re2j 1.8 oracle. None
+         * survive in the vendored upstream snapshot — #208 fixed the one
+         * entry — so under the default oracle this classifier never runs:
          * <ul>
-         *   <li><b>lone-low interior starts</b> — re2j matches a lone-LOW
-         *       surrogate pattern against the low half of a well-formed pair
-         *       in the input (and thereby also finds EARLIER leftmost matches
-         *       than a boundary-respecting engine). JDK agrees with us. This
-         *       is a suspected re2j BUG (upstream issue drafted; fix on our
-         *       fork: https://github.com/jemmix/re2j/tree/fix-surrogate-pair-interior-prefix):
-         *       raw String.indexOf in the literal-prefix fast path lands on
-         *       pair interiors, so only patterns that compile to a singleton
-         *       literal prefix are affected — `\uDC21` matches where
-         *       `\uDC21|\uDC22` (a strict superset!) and `[\uD800-\uDFFF]`
-         *       do not, a monotonicity violation. The RANGE form avoids the
-         *       fast path entirely (no single-rune prefix). We keep
-         *       codepoint-boundary semantics either way.
-         *   <li><b>lone-low surrogate patterns</b> — re2j's literal-prefix
-         *       fast path lands on pair interiors; we keep
-         *       codepoint-boundary semantics either way. Applies when both
-         *       our engines agree with each other and the pattern contains
-         *       a lone low surrogate.</li>
+         *   <li><b>lone-low interior starts</b> — released re2j matches a
+         *       lone-LOW surrogate pattern against the low half of a
+         *       well-formed pair in the input (and thereby also finds
+         *       EARLIER leftmost matches than a boundary-respecting
+         *       engine). JDK agrees with us. A re2j bug, fixed upstream as
+         *       google/re2j#208: raw String.indexOf in the literal-prefix
+         *       fast path lands on pair interiors, so only patterns that
+         *       compile to a singleton literal prefix are affected —
+         *       `\uDC21` matches where `\uDC21|\uDC22` (a strict superset!)
+         *       and `[\uD800-\uDFFF]` do not, a monotonicity violation.
+         *       The RANGE form avoids the fast path entirely (no single-rune
+         *       prefix). We keep codepoint-boundary semantics either way.
+         *   <li><b>lone-low surrogate patterns</b> — the same fast path;
+         *       applies when both our engines agree with each other and
+         *       the pattern contains a lone low surrogate.</li>
          * </ul>
          *
          * Fold divergences have NO entry — under any oracle: tdfa is
          * compiled with {@code Re2jUnicodeProvider}, whose fold universe
          * IS the oracle's own ({@code Unicode.simpleFold} walk, live), so
-         * the two cannot disagree on folding. The patched oracle's guard
-         * patch additionally makes the asymmetric-orbit family
-         * fold-inert there; the released oracle still cannot compile
-         * those literals — see {@code releasedFoldHang}.
+         * the two cannot disagree on folding. Upstream's guards (#213's
+         * symmetric-mapping rule, #220's MAX_FOLD bound) additionally make
+         * the asymmetric-orbit family and the mappings above 0x1044F
+         * fold-inert there; the released oracle still cannot compile those
+         * literals — see {@code releasedFoldHang}.
          */
         static String knownDivergence(Outcome o) {
             String p = o.c.pattern();
@@ -3975,10 +3989,8 @@ public final class DifferentialFuzzer {
                 w.println("masterSeed: " + r.masterSeed);
                 w.println("lane pin: " + System.getProperty("fuzz.lane", "mix") + " (per-batch draw; jur = facade"
                     + " vs live java.util.regex, re2j = re2j surface vs re2j)");
-                w.println("oracle: "
-                    + (RELEASED_ORACLE ? "re2j 1.8 released"
-                        : "re2j 1.8 patched fork (known-divergence classifier off)")
-                    + " + " + (JUR_LEAKS ? "stock java.util.regex (leak skips on)"
+                w.println("oracle: " + oracleLabel() + " (known-divergence classifier "
+                    + (RELEASED_ORACLE ? "on)" : "off)") + " + " + (JUR_LEAKS ? "stock java.util.regex (leak skips on)"
                         : "exact-restore java.util.regex (JDK-8381696 fixed; leak skips demoted)")
                     + " (jur lane)");
                 w.println("cases: " + r.cases + "  failures: " + r.failures + "  bothReject: " + r.bothReject

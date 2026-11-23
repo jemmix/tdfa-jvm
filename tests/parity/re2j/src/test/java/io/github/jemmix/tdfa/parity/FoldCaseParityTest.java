@@ -27,13 +27,21 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       universe folds the full modern orbits, both directions. The oracle
  *       does not: released 1.8 folds the partner letters without the
  *       historic ones (and its unbounded walk hangs from the letters);
- *       fork patch 0003 declines the asymmetric mappings, so the letters
- *       are fold-inert there — shape-consistent and hang-free, but not
+ *       upstream #213 (in the vendored snapshot) declines the asymmetric
+ *       mappings, so the letters are fold-inert there — shape-consistent
+ *       and hang-free, but not
  *       modern. Parity tests therefore pin the family two ways:
  *       agreement with the oracle when tdfa is compiled with the
  *       {@code Re2jUnicodeProvider} bridge (folding follows the oracle's
  *       own universe by construction), and modern-orbit behavior under the
  *       default universe (engine truth, JDK parity).
+ *   <li><b>The pairs above re2j's {@code MAX_FOLD} (0x1044F)</b> — re2j
+ *       #220 bounded the fold walk, so eight scripts' symmetric case
+ *       pairs above the ceiling (534 codepoints: Adlam, Warang Citi,
+ *       Old Hungarian, ...) are fold-inert in the snapshot's universe
+ *       where the JDK and tdfa's default universe fold them. Same
+ *       two-way pin as the historic family; pairs below the ceiling
+ *       from the same post-6.0 stratum stay folded on every oracle.
  *   </ul>
  *
  * <p>Jur twins below — bare {@code (?i)} folds ASCII only on both sides,
@@ -63,7 +71,7 @@ class FoldCaseParityTest {
 
     /** tdfa compiled with the bridge folds exactly like the oracle on the
      *  family — whatever the oracle does (released: stale partner orbits,
-     *  patched: letters fold-inert). Agreement must hold for every
+     *  the snapshot: letters fold-inert). Agreement must hold for every
      *  pattern shape and both directions; this is what the fuzzer relies
      *  on (fold divergence = real bug, no known-divergence coat). */
     @ParameterizedTest
@@ -73,10 +81,10 @@ class FoldCaseParityTest {
             "(?i)\u0432", "(?i)\u0412", "(?i)\u1C80", // {В, в, Ꚁ}
             "(?i)\u1C88", "(?i)\uA64A", "(?i)\uA64B", // {Ԫ, ԫ, Ꚉ}
             "(?i)[\u0422\u0442]", "(?i)[\u1C80]", "(?i)[^t]"}) {
-            // NB: patched-oracle-only shapes: the released oracle's
-            // unbounded walk hangs on the letter literals, so those
-            // patterns are skipped there (letter RUNES in the PATTERN are
-            // the hazard; letter inputs are safe).
+            // NB: shapes the released oracle cannot take: its unbounded
+            // walk hangs on the letter literals, so those patterns are
+            // skipped there (letter RUNES in the PATTERN are the hazard;
+            // letter inputs are safe).
             if (releasedOracle() && containsHistoricLetter(p)) {
                 continue;
             }
@@ -117,9 +125,10 @@ class FoldCaseParityTest {
     /** Released 1.8 documents the oracle's stale side (kept as an explicit
      *  divergence pin so an oracle change fails here and gets re-triaged
      *  instead of surfacing as an unexplained fuzzer signature): partner
-     *  patterns fold WITHOUT the historic letters. The patched oracle's
-     *  guard makes the letters fold-inert there — also not modern, and
-     *  also pinned by the same shape (agreement via the bridge above). */
+     *  patterns fold WITHOUT the historic letters. The upstream guard
+     *  (#213) makes the letters fold-inert in the snapshot — also not
+     *  modern, and also pinned by the same shape (agreement via the
+     *  bridge above). */
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void oracleDoesNotFoldModernHistoricCyrillic(RegexEngineFactory factory) {
@@ -131,6 +140,37 @@ class FoldCaseParityTest {
             .isNull();
         // ... while the default universe folds modern (see above) — the
         // documented, deliberate gap between the two lanes.
+    }
+
+    // ===== above MAX_FOLD: fold-inert in the snapshot, modern by default =====
+
+    /**
+     * The MAX_FOLD family (re2j #220): the snapshot's fold walk stops at
+     * {@code 0x1044F}, so the symmetric case pairs above it are
+     * fold-inert in the oracle's universe. The released build folded
+     * them (its fallback walk was unbounded), so the oracle's side is
+     * probed. A pair from the same post-6.0 stratum BELOW the ceiling
+     * (U+A7CC/U+A7CD, Unicode 14.0) stays folded on every oracle: the
+     * bound is a ceiling, not a Unicode-version cut.
+     */
+    @ParameterizedTest
+    @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
+    void maxFoldFamily(RegexEngineFactory factory) {
+        String adlamCap = "\uD83A\uDD00", adlamLow = "\uD83A\uDD22"; // U+1E900 / U+1E922
+        int[] oracle = re2jFind("(?i)" + adlamCap, adlamLow);
+        assertThat(oracle != null).as("oracle (?i)\uD83A\uDD00 → \uD83A\uDD22").isEqualTo(releasedOracle());
+        // under the bridge tdfa answers with the oracle, folded or inert ...
+        assertThat(tdfaFind("(?i)" + adlamCap, adlamLow, factory)).isEqualTo(oracle);
+        assertThat(tdfaFind("(?i)" + adlamLow, adlamCap, factory)).isEqualTo(re2jFind("(?i)" + adlamLow, adlamCap));
+        assertSameFind("(?i)" + adlamCap, adlamCap, factory); // the self-match holds everywhere
+        // ... while the default universe folds modern — the same
+        // deliberate gap as the historic-Cyrillic family
+        assertThat(tdfaFindDefaultUniverse("(?i)" + adlamCap, adlamLow))
+            .as("default universe (?i)\uD83A\uDD00 → \uD83A\uDD22").isNotNull();
+        assertThat(tdfaFindDefaultUniverse("(?i)" + adlamLow, adlamCap)).isNotNull();
+        // below the ceiling: a post-6.0 BMP pair, folded on every oracle
+        assertSameFind("(?i)\uA7CC", "\uA7CD", factory);
+        assertThat(re2jFind("(?i)\uA7CC", "\uA7CD")).as("oracle (?i)\uA7CC → \uA7CD").isNotNull();
     }
 
     /**
@@ -154,6 +194,10 @@ class FoldCaseParityTest {
         JurOracle.assertSameFind("(?u)\u1C85", "\u0442", ucc, factory);
         JurOracle.assertSameFind("(?u)\u1C80", "\u0432", ucc, factory);
         JurOracle.assertSameFind("(?u)\u1C80", "\u1C80", ucc, factory); // self-match holds everywhere
+        // the MAX_FOLD family twins the same way: the JDK folds Adlam under
+        // (?u), and so does the JDK-derived default universe
+        JurOracle.assertSameFind("(?u)\uD83A\uDD00", "\uD83A\uDD22", ucc, factory);
+        JurOracle.assertSameFind("(?u)\uD83A\uDD22", "\uD83A\uDD00", ucc, factory);
         // NB: no inline-(?u) divergence pin — this JDK (26) compiles
         // (?u) too, so the spelling is not a clean either/or cell; the
         // flag-bit route above is the translatable twin

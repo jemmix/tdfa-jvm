@@ -62,11 +62,11 @@ tasks.register('prepareVendor', Exec) {
     commandLine './scripts/vendor.sh', 'prepare'
     // Inputs are the vendored SOURCES (archives, patches, scripts) — not the
     // gitignored build outputs some of them produce inside vendor/ (the
-    // patched oracle jar / module dir); those are other tasks' outputs and
+    // oracle jar / module dir); those are other tasks' outputs and
     // must neither dirty nor depend on this one.
     inputs.files fileTree('vendor') {
-        exclude 're2j-jemmix/*.jar'
-        exclude 're2j-jemmix/.build/**'
+        exclude 're2j-oracle/*.jar'
+        exclude 're2j-oracle/.build/**'
         exclude 'jdk-regex-jemmix/.build/**'
         exclude 'jdk-regex-jemmix/openjdk-regex-exact-restore/**'
     }

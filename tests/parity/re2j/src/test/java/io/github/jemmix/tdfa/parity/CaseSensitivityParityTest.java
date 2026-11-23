@@ -73,10 +73,17 @@ class CaseSensitivityParityTest {
         assertSameFind("(?i)hello", "HeLLo", factory);
     }
 
+    /** {@code (?i)\p{Ll}} reaches the uppercase letters, ASCII included, since
+     *  google/re2j #199 regenerated the fold tables — the released 1.8 tables
+     *  left them out. The bridge reads the live tables, so the surface answers
+     *  with whichever oracle is running. */
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.Re2jOracle#engineFactories")
     void foldUnicodePropertyLl(RegexEngineFactory factory) {
         assertSameFind("(?i)\\p{Ll}", "A", factory);
+        assertSameFind("(?i)\\p{Ll}", "\u00C9", factory);
+        assertThat(Re2jOracle.re2jFind("(?i)\\p{Ll}", "A") != null).as("oracle (?i)\\p{Ll} reaches 'A'")
+            .isEqualTo(!Re2jOracle.releasedOracle());
     }
 
     @ParameterizedTest

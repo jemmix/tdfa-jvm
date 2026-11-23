@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>Pinned cases are real fuzzer findings (30k-pattern differential, old vs
  * new vs oracles): every behavioral difference was an old-engine capture bug;
  * expected values are oracle-verified (JDK java.util.regex for Perl mode,
- * patched re2j LONGEST_MATCH for POSIX mode). The minimal repro
+ * the re2j oracle's LONGEST_MATCH for POSIX mode). The minimal repro
  * {@code ((?:(?:(?:(?:b))|())|((?:(b|)|c)){2})){2}} is the shrunk pattern that
  * fires the POSIX-mode rejection at compile time.
  */

@@ -219,7 +219,10 @@ public class TDFAPattern implements Serializable {
             }
             result.add(input.substring(last));
         }
-        if (limit != 0 || result.isEmpty()) {
+        // An input the delimiters consumed whole (last reached its end) has no
+        // trailing segment to keep at limit 0 — all-delimiter input splits to
+        // nothing (re2j #202; the JDK's trailing-empty omission all along).
+        if (limit != 0 || (result.isEmpty() && !(last == input.length() && last > 0))) {
             result.add(input.substring(last));
         }
         return result.toArray(new String[0]);

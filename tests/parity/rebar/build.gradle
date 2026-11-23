@@ -9,11 +9,12 @@ repositories {
 dependencies {
     testImplementation project(':')
     testImplementation project(':testlib:rebar')
-    // Vendored patched re2j (fix1 surrogate, fix2 FoldCase, fix3 fold guard)
-    // — the live oracle for the re2j-compat scenario class. Gitignored build
-    // output: built on demand by
-    // :tests:parity:re2j:buildPatchedOracle, never committed.
-    testImplementation files(rootProject.file('vendor/re2j-jemmix/re2j-1.8-jemmix-fix3.jar'))
+    // Vendored pristine re2j (upstream snapshot; carries the surrogate,
+    // FoldCase and fold-guard fixes since google/re2j #208/#212/#213) — the
+    // live oracle for the re2j-compat scenario class. Gitignored build
+    // output: built on demand by :tests:parity:re2j:buildOracle, never
+    // committed.
+    testImplementation files(rootProject.file('vendor/re2j-oracle/re2j-pristine.jar'))
     testImplementation platform('org.junit:junit-bom:5.10.2'),
             'org.junit.jupiter:junit-jupiter',
             'org.assertj:assertj-core:3.25.3'
@@ -28,7 +29,7 @@ def rebarBenchmarksDir = rootProject.layout.buildDirectory.dir(
 
 tasks.named('compileTestJava') {
     dependsOn rootProject.tasks.named('prepareVendor')
-    dependsOn ':tests:parity:re2j:buildPatchedOracle'
+    dependsOn ':tests:parity:re2j:buildOracle'
 }
 
 tasks.named('test') {

@@ -34,9 +34,9 @@ replay_pid*
 # belt-and-suspenders in case a sourceSet path ever points outside build/.
 /build/generated/
 
-# patched-oracle build scratch and outputs (built from the committed pristine
-# archive via build-patched.sh — never committed)
-vendor/re2j-jemmix/.build/
-vendor/re2j-jemmix/*.jar
+# oracle build scratch and outputs (built from the committed pristine
+# archive via build-*.sh — never committed)
+vendor/re2j-oracle/.build/
+vendor/re2j-oracle/*.jar
 vendor/jdk-regex-jemmix/.build/
 vendor/jdk-regex-jemmix/openjdk-regex-exact-restore/

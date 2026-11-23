@@ -257,7 +257,7 @@ hard), pinned cell-for-cell in
   `Pattern`/`Matcher`/`MatchResult`, member by member, type-mapped,
   with `CANON_EQ` the one asserted exclusion and the roster message
   naming it) and `Re2jApiCompatTest` (the re2j twin, vs
-  `com.google.re2j` off the patched oracle jar; the JDK family on the
+  `com.google.re2j` off the pristine oracle jar; the JDK family on the
   shared matcher asserted as ADDITIVE from re2j's point of view).
   Before this landing the re2j facade's API compat was verified by
   running re2j's own vendored test suite against it plus the parity
