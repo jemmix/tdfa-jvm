@@ -1028,6 +1028,7 @@ public final class Parser {
         f.open = open;
         f.close = close;
         f.savedCi = savedCi;
+        f.savedDs = savedDs;
         f.savedMl = savedMl;
         f.savedUs = savedUs;
         f.savedUc = savedUc;
