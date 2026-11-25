@@ -18,6 +18,9 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 
 - [ ] JUR-compat re-base tail: local soak, README numbers
+- [ ] \X atomic: never gives back its cluster tail ([triage](docs/fuzz-jur-2026-11-25.md#f1-the-cluster-atom-is-not-atomic))
+- [ ] Grapheme break classes: one reader, JDK or UAX ([triage](docs/fuzz-jur-2026-11-25.md#f2-two-break-class-readers))
+- [ ] \b{g} regions: rebase gbOrigin, transparentBounds bases ([triage](docs/fuzz-jur-2026-11-25.md#f3-the-grapheme-boundary-under-a-region))
 - [ ] Watch JDK-8381696; leak skips auto-retire via probe ([analysis](docs/jdk-8381696-restart-tag-leak-fix.md))
 - [ ] Local overnight cross-rung soak; refresh README numbers
 - [ ] Verify TDFA(1) conformance vs paper wording (lookahead delay)
@@ -26,6 +29,8 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 ## Performance
 
+- [ ] \b{g} artifacts ride the search ladder ([triage](docs/fuzz-jur-2026-11-25.md#f4-grapheme-boundary-scans-are-quadratic))
+- [ ] \X compile cost: 15–40 ms after the atomic fix ([triage](docs/fuzz-jur-2026-11-25.md#f8-quantified-cluster-atoms-and-the-compile-budget))
 - [ ] Required-infix needle-set prefilter: decision record ([SafeRE comparison](docs/safere-comparison.md))
 
 ## Benchmarks
@@ -35,6 +40,9 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 ## Engineering
 
+- [ ] Fuzz: probe-gated cells for the JDK's grapheme bugs ([triage](docs/fuzz-jur-2026-11-25.md#the-plan))
+- [ ] Fuzz: unswallow \X budget rejects from graphemes-unsupported ([triage](docs/fuzz-jur-2026-11-25.md#f7-the-fuzzer-files-budget-rejects-as-unsupported))
+- [ ] Fuzz: tier-equality check before every domain skip ([triage](docs/fuzz-jur-2026-11-25.md#f6-the-oracle-throws))
 - [ ] Complexity review: land recorded removals, simplifications ([review](docs/complexity-review.md))
 - [ ] Namespace move jemmix → tagmaton (gates publish)
 - [ ] First Maven publish
