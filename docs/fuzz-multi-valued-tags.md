@@ -82,9 +82,10 @@ Free once the lane exists, both landed:
   ([multi-valued-tags.md](multi-valued-tags.md)). Classified when BOTH
   multi tiers budget-reject while the plain pair compiled: counted,
   capped-logged, never a finding, dropped by the nightly issue gate
-  (anything asymmetric — one tier rejecting — stays a real finding). Did
-  not fire once in the 1.6 M-case validation soak; the classifier is
-  defensive.
+  (anything asymmetric — one tier rejecting — stays a real finding). It
+  did not fire once in the 1.6 M-case validation soak; its first firing
+  at scale is the re-base soak under Acceptance — 15 patterns in 73.3 M
+  cases.
 - **The `-1` padding path — decided ILLEGAL.** `groupSpans` pads with
   `-1` when a group's open/close histories differ in length (`no != nc`).
   Open and close crossings of a group alternate along any accepting path
@@ -122,6 +123,14 @@ classified away:
   are pinned in MultiValuedTagsTest and ride the parity corpus.
 - the soak's plain-lane RESULT_MISMATCH records are the pre-existing #127
   family the nightly already tracks — unrelated to this lane.
+
+The 2026-11-25 re-base soak (73.3 M cases, re2j lane pinned against the
+pristine upstream oracle;
+[record](../vendor/re2j-oracle/README.md#re-base-soak)) ran the lane at its
+default sampling: zero
+MVT_SELF / MVT_PAD / MVT_SINGLE / MVT_TIER / MVT_SIM / MVT_RUNG / MVT_THREW
+findings, and `MVT_BUDGET_REJECT` on 15 patterns — plain fit and answered
+the oracle, both multi tiers rejected cleanly at the scoped budget.
 
 From here the lane rides the nightly soak; new findings flow through the
 per-run issue gate like every other kind. README fuzz-number refresh

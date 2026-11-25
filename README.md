@@ -157,20 +157,26 @@ at compile time
   JUR-default flip; the evidence re-base is the open
   both-lane soak TODO item).
 - **~300 M** differential fuzz cases vs re2j (overnight soaks): 0 divergences
-  (same lane note; against the patched re2j 1.8 fork — the oracle is the
-  pristine upstream snapshot since 2026-11-23, and its re-base soak is the
-  open TODO item). Failures shrink: `fuzz.one` replays delta-debug a
-  finding down to a minimal same-kind repro (pattern + input), and
-  `-Pfuzz.shrink=1` pre-shrinks every recorded soak failure.
+  (same lane note; against the patched re2j 1.8 fork through 2026-11-22),
+  re-based on the pristine upstream snapshot — the oracle since 2026-11-23 —
+  by a **73.3 M**-case overnight soak (2026-11-25): 0 divergences with the
+  known-divergence classifier off
+  ([record](vendor/re2j-oracle/README.md#re-base-soak)). Failures shrink:
+  `fuzz.one` replays delta-debug a finding down to a minimal same-kind repro
+  (pattern + input), and `-Pfuzz.shrink=1` pre-shrinks every recorded soak
+  failure.
 - Overnight-soak budget rejections — the documented non-divergence class
   (clean `PatternTooLargeException`s under the soak's scoped 8 M-tick
-  compile budget): 0.023% of re2j-lane cases (2026-10-16); the 2026-10-24
-  jur leg ran **0.069%** (≈116.2 k/168.9 M, ×13 vs 0.005% on its 2026-10-16
-  run) — suspected #83 `BOUNDED_ZWE` ε-subgraph compile-state growth on
-  deep-nesting shapes. Raised-knob replay verified the class: 13 sampled
-  records compiled under raised `tdfa.budget.*` knobs and answered
-  byte-identical to `java.util.regex`; 3 expanded past any raised cap
-  (genuinely too large) — 0 mismatches in the sample. The one separately
+  compile budget): 0.021% of re2j-lane cases (2026-11-25, the
+  pristine-oracle re-base soak: 15 328 cases over 1 916 patterns) and
+  0.023% (2026-10-16); the 2026-10-24 jur leg ran **0.069%**
+  (≈116.2 k/168.9 M, ×13 vs 0.005% on its 2026-10-16 run) — suspected #83
+  `BOUNDED_ZWE` ε-subgraph compile-state growth on deep-nesting shapes.
+  Raised-knob replay verified the class: 13 sampled records compiled under
+  raised `tdfa.budget.*` knobs and answered byte-identical to
+  `java.util.regex`; 3 expanded past any raised cap (genuinely too large) —
+  0 mismatches in the sample, and the re-base soak's first three records
+  split the same way (two accept, one too large). The one separately
   flagged F5-seed raised-knob divergence was investigated and explained:
   a draft-harness budget-knob leak, not an engine divergence (the seed's
   pattern cannot match its input; on main its artifact is unreachable at

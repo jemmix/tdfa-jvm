@@ -148,6 +148,33 @@ predates this snapshot: `CampaignSmokeTest`'s stretch and budget legs
 report a hard finding against 1.8, because the campaign harness has no
 released-oracle classifier.
 
+### Re-base soak
+
+The README's fuzz evidence was re-based on this oracle by one local
+overnight soak (2026-11-25; engine at `1a2f4cf8`, main after #204):
+
+    scripts/fuzz-soak.sh 480 1 build/fuzz-re2j 20400 -Pfuzz.lane=re2j
+
+480 one-minute chunks (seeds 20401–20880), every default axis on (flag
+matrix, multi-valued lane, cross-rung ladder, stretch, CharSequence
+wrappers, region/bounds, determinism double-run):
+
+- **73 346 168 cases, 0 divergences.** No `RESULT_MISMATCH`,
+  `COMPILE_PARITY`, `EXCEPTION`, `MEMO_STATE_MISMATCH`, cross-rung,
+  stretch, region, multi-valued or hang record in any chunk. Nothing is
+  classified away under this oracle: a divergence would have been
+  recorded as a finding.
+- **15 328 `BUDGET_REJECT` cases (0.021%) over 1 916 patterns** — the
+  documented budget class (above, #219) and the only failure records of
+  the night. Raised-knob replay of the first chunk's three: two compile
+  at the library budget and answer the oracle byte-identically on all
+  eight inputs; the third still rejects there (54 MB of retained tables
+  against the 16 MiB runtime cap).
+- **`MVT_BUDGET_REJECT` on 15 patterns** — plain fits, both multi tiers
+  reject at the scoped budget; counted, never a finding.
+
+Every case replays from its seed (`-Pfuzz.one=<caseSeed>`).
+
 ## Bumping the snapshot
 
     ./scripts/vendor.sh refresh re2j <full sha>

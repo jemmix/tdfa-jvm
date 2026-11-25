@@ -21,7 +21,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 - [ ] Watch JDK-8381696; leak skips auto-retire via probe ([analysis](docs/jdk-8381696-restart-tag-leak-fix.md))
 - [ ] Local overnight cross-rung soak; refresh README numbers
 - [ ] Verify TDFA(1) conformance vs paper wording (lookahead delay)
-- [ ] Overnight re2j-lane soak vs the pristine oracle; refresh README numbers
 - [ ] Matcher find() restart origin: per-lane ([oracle README](vendor/re2j-oracle/README.md#the-one-known-residual))
 - [ ] File upstream: re2j byte[] finds line starts inside multibyte ([pin](tests/parity/re2j/src/test/java/io/github/jemmix/tdfa/parity/ObjectMethodsParityTest.java))
 
