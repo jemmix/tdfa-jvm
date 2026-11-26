@@ -18,7 +18,7 @@ class OracleIdentityTest {
     @Test
     void classpathOracleIsTheVendoredSnapshot() {
         if (Re2jOracle.releasedOracle()) {
-            return; // -Pfuzz.releasedOracle=true: the released artifact, by choice
+            return; // -Pfuzz.releasedOracle=true: the released 1.8 artifact, by choice
         }
         assertThat(Re2jOracle.implementationVersion())
             .as("the oracle jar's Implementation-Version against the vendored archive's commit")
