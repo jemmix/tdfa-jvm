@@ -37,10 +37,13 @@ public final class Re2jOracle {
     }
 
     /**
-     * Which re2j is on the test classpath: released 1.8 (true) or the
-     * vendored upstream snapshot (false). Probed, not declared — the
-     * lone-low surrogate pair-interior behavior is the discriminator
-     * (same probe as the fuzzer).
+     * Which re2j is on the test classpath: released 1.8 (true) or a build
+     * carrying upstream #208 (false) — the vendored snapshot (the
+     * {@code re2j-1.9} release tag), and any other 1.9 jar alike. Probed,
+     * not declared: the lone-low surrogate pair-interior behavior is the
+     * discriminator (same probe as the fuzzer). It tells the pre-fix build
+     * from the rest; which post-fix jar answered is
+     * {@link OracleIdentityTest}'s to pin.
      */
     public static boolean releasedOracle() {
         return com.google.re2j.Pattern.compile("\uDC21").matcher("a\uD801\uDC21zz").find();
@@ -49,8 +52,8 @@ public final class Re2jOracle {
     /**
      * The oracle jar's {@code Implementation-Version}: the vendored
      * snapshot's commit ({@code vendor/re2j-oracle/build-oracle.sh} stamps
-     * it), {@code null} for an artifact whose manifest is bare (the
-     * released 1.8 jar). Read from the jar at {@code Pattern}'s own code
+     * it), {@code null} for an artifact whose manifest is bare (the released
+     * 1.8 and 1.9 jars). Read from the jar at {@code Pattern}'s own code
      * source — {@code getPackage()} answers for whichever class opened the
      * package first, and here that is this suite's own
      * {@code com.google.re2j.Re2jUnicodeProvider}, from a classes

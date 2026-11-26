@@ -32,14 +32,14 @@ dependencies {
             'org.junit.jupiter:junit-jupiter',
             'org.assertj:assertj-core:3.25.3'
     // re2j as live oracle for parity comparison. DEFAULT: the PRISTINE
-    // upstream snapshot — vendor/archives/re2j-<sha>.tar.gz, built as-is by
-    // buildOracle (jar is a gitignored build output). The three fixes the
-    // former patched fork carried are upstream (google/re2j #208, #212,
-    // #213), so every divergence is a real finding.
-    // -Pfuzz.releasedOracle=true swaps in the released 1.8 Maven artifact
-    // instead — an oracle with known bugs of its own, which the fuzzer
-    // probes and answers with its known-divergence classifier and hang
-    // guards. See vendor/re2j-oracle/README.md.
+    // upstream snapshot — vendor/archives/re2j-<sha>.tar.gz (the re2j-1.9
+    // release tag), built as-is by buildOracle (jar is a gitignored build
+    // output). The three fixes the former patched fork carried are upstream
+    // (google/re2j #208, #212, #213), so every divergence is a real finding.
+    // -Pfuzz.releasedOracle=true swaps in the PREVIOUS release, 1.8, from
+    // Maven instead — the last build with known bugs of its own, which the
+    // fuzzer probes and answers with its known-divergence classifier and
+    // hang guards. See vendor/re2j-oracle/README.md.
     def oracleJar = rootProject.file('vendor/re2j-oracle/re2j-pristine.jar')
     // The snapshot's API sources are JSpecify-annotated (google/re2j #210):
     // javac needs the annotations on its classpath. Same coordinates as
@@ -164,8 +164,8 @@ test {
 // and the jur facade vs live java.util.regex; summary.txt splits per-lane
 // counts. Pin one lane for lane-pure evidence (-Pfuzz.lane=re2j|jur).
 // The oracle is the vendored pristine upstream snapshot by default (built on
-// demand); pass -Pfuzz.releasedOracle=true to soak against released re2j 1.8
-// instead.
+// demand; the re2j-1.9 release tag); pass -Pfuzz.releasedOracle=true to soak
+// against the previous release, re2j 1.8, instead.
 //   ./gradlew :tests:parity:re2j:fuzz                      # 8h both lanes, logs to build/fuzz
 //   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.minutes=60 -Pfuzz.seed=42 -Pfuzz.out=/tmp/soak
 //   ./gradlew :tests:parity:re2j:fuzz -Pfuzz.lane=re2j     # lane-pure re2j evidence

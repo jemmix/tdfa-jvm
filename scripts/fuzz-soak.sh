@@ -31,7 +31,8 @@
 #
 # The re2j oracle is the vendored pristine upstream snapshot by default
 # (vendor/re2j-oracle/, built on demand; summary.txt names its commit). To
-# soak against released re2j 1.8 instead: append -Pfuzz.releasedOracle=true
+# soak against the previous release, re2j 1.8, instead: append
+# -Pfuzz.releasedOracle=true
 #   scripts/fuzz-soak.sh 480 1 build/fuzz '' -Pfuzz.releasedOracle=true
 # The jur lane's live java.util.regex oracle is patched the same way by
 # default — the vendored exact-restore build (vendor/jdk-regex-jemmix/,
