@@ -17,7 +17,9 @@ import java.util.Arrays;
  */
 public final class GraphemeTables {
 
-    /** CR ∪ LF ∪ Control (GB3/4/5 collapse into one family). */
+    /** CR ∪ LF ∪ Control (GB3/4/5 collapse into one family), sorted: the
+     *  parser hands the three tables over concatenated, not ascending, and
+     *  {@link #in} binary-searches. */
     public final int[] control;
     public final int[] extend;
     /** Null when the snapshot carries no ZWJ class. */
@@ -41,7 +43,7 @@ public final class GraphemeTables {
     public GraphemeTables(int[] control, int[] extend, int[] zwj, int[] spacingMark, int[] l, int[] v, int[] lv,
         int[] lvt, int[] t, int[] ri, int[] prepend, int[] extPict, int[] incbExtend, int[] linker,
         int[] linkingConsonant) {
-        this.control = control;
+        this.control = mergeSorted(control);
         this.extend = extend;
         this.zwj = zwj;
         this.spacingMark = spacingMark;
