@@ -18,9 +18,15 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 
 - [ ] JUR-compat re-base tail: local soak, README numbers
+- [ ] \b{g} GB9c: scanner never sees an InCB linker ([triage](docs/fuzz-jur-2026-11-25.md#f9-the-boundary-scanner-never-sees-a-linker))
+- [ ] JDK grapheme bugs: oracle patches, record, report upstream ([triage](docs/fuzz-jur-2026-11-25.md#jdk-bugs-recorded-patched-in-the-vendored-oracle-reported-upstream))
 - [ ] \X atomic: never gives back its cluster tail ([triage](docs/fuzz-jur-2026-11-25.md#f1-the-cluster-atom-is-not-atomic))
-- [ ] Grapheme break classes: one reader, JDK or UAX ([triage](docs/fuzz-jur-2026-11-25.md#f2-two-break-class-readers))
+- [ ] Grapheme break classes: replicate the JDK's category reading ([triage](docs/fuzz-jur-2026-11-25.md#f2-two-break-class-readers))
 - [ ] \b{g} regions: rebase gbOrigin, transparentBounds bases ([triage](docs/fuzz-jur-2026-11-25.md#f3-the-grapheme-boundary-under-a-region))
+- [ ] \X at a cut region end: replicate java ([triage](docs/fuzz-jur-2026-11-25.md#engine))
+- [ ] matches() region walk: pair-splitting regions, non-default bounds ([triage](docs/fuzz-jur-2026-11-25.md#older-known-non-parity-the-policy-reaches))
+- [ ] Stacked zero-width heads: triage the unpinned region skip ([triage](docs/fuzz-jur-2026-11-25.md#older-known-non-parity-the-policy-reaches))
+- [ ] hitEnd/requireEnd under regions: triage residue, decide ([triage](docs/fuzz-jur-2026-11-25.md#older-known-non-parity-the-policy-reaches))
 - [ ] Watch JDK-8381696; leak skips auto-retire via probe ([analysis](docs/jdk-8381696-restart-tag-leak-fix.md))
 - [ ] Local overnight cross-rung soak; refresh README numbers
 - [ ] Verify TDFA(1) conformance vs paper wording (lookahead delay)
@@ -40,9 +46,9 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 ## Engineering
 
-- [ ] Fuzz: probe-gated cells for the JDK's grapheme bugs ([triage](docs/fuzz-jur-2026-11-25.md#the-plan))
-- [ ] Fuzz: unswallow \X budget rejects from graphemes-unsupported ([triage](docs/fuzz-jur-2026-11-25.md#f7-the-fuzzer-files-budget-rejects-as-unsupported))
+- [ ] Fuzz: delete the graphemes-unsupported skip ([triage](docs/fuzz-jur-2026-11-25.md#f7-the-fuzzer-files-budget-rejects-as-unsupported))
 - [ ] Fuzz: tier-equality check before every domain skip ([triage](docs/fuzz-jur-2026-11-25.md#f6-the-oracle-throws))
+- [ ] Fuzz generator: draw conjunct-break input ([triage](docs/fuzz-jur-2026-11-25.md#harness))
 - [ ] Complexity review: land recorded removals, simplifications ([review](docs/complexity-review.md))
 - [ ] Namespace move jemmix → tagmaton (gates publish)
 - [ ] First Maven publish
