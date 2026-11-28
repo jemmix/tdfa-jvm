@@ -18,7 +18,6 @@ Format — enforced by `scripts/check-todo.sh`, which rides
 
 
 - [ ] JUR-compat re-base tail: local soak, README numbers
-- [ ] \b{g} GB9c: scanner never sees an InCB linker ([triage](docs/fuzz-jur-2026-11-25.md#f9-the-boundary-scanner-never-sees-a-linker))
 - [ ] JDK grapheme bugs: oracle patches, record, report upstream ([triage](docs/fuzz-jur-2026-11-25.md#jdk-bugs-recorded-patched-in-the-vendored-oracle-reported-upstream))
 - [ ] \X atomic: never gives back its cluster tail ([triage](docs/fuzz-jur-2026-11-25.md#f1-the-cluster-atom-is-not-atomic))
 - [ ] Grapheme break classes: replicate the JDK's category reading ([triage](docs/fuzz-jur-2026-11-25.md#f2-two-break-class-readers))

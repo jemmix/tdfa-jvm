@@ -1856,7 +1856,7 @@ public final class Parser {
         alts.add(new CharClass(RangeMath.merge(RangeMath.merge(control, cr), lf), false));
 
         // GB6-8 Hangul — every alternative consumes at least one char:
-        // L+ (V+ T* | LV V* T* | LVT T*)?  |  V+ T*  |  LV V* T*  |  LVT T*
+        // L+ (V+ T* | LV V* T* | LVT T*)?  |  V+ T*  |  LV V* T*  |  LVT T*  |  T+
         Ast tStar = star(cls(tbl("gcb.T")));
         Ast afterL = new Ast.Repeat(
             new Ast.Alt(Arrays.<Ast>asList(new Ast.Concat(Arrays.<Ast>asList(plus(cls(tbl("gcb.V"))), tStar)),
@@ -1867,6 +1867,7 @@ public final class Parser {
         alts.add(new Ast.Concat(Arrays.<Ast>asList(plus(cls(tbl("gcb.V"))), tStar, tail)));
         alts.add(new Ast.Concat(Arrays.<Ast>asList(cls(tbl("gcb.LV")), star(cls(tbl("gcb.V"))), tStar, tail)));
         alts.add(new Ast.Concat(Arrays.<Ast>asList(cls(tbl("gcb.LVT")), tStar, tail)));
+        alts.add(new Ast.Concat(Arrays.<Ast>asList(plus(cls(tbl("gcb.T"))), tail)));
 
         // GB12/13 RI pairs: (RI RI)+ | RI — a lone trailing RI starts the
         // NEXT cluster's pair.
@@ -1906,8 +1907,8 @@ public final class Parser {
         // its own alternative above). Prepend and the joining classes stay
         // residual: an orphan Prepend/Extend/SpacingMark at a boundary is
         // its own cluster (GB999), and the tail rides it.
-        int[] residual = RangeMath.complement(
-            unionAll(control, cr, lf, tbl("gcb.L"), tbl("gcb.V"), tbl("gcb.LV"), tbl("gcb.LVT"), riTbl, ep, lc));
+        int[] residual = RangeMath.complement(unionAll(control, cr, lf, tbl("gcb.L"), tbl("gcb.V"), tbl("gcb.LV"),
+            tbl("gcb.LVT"), tbl("gcb.T"), riTbl, ep, lc));
         alts.add(new Ast.Concat(Arrays.<Ast>asList(new CharClass(residual, false), tail)));
 
         // GB9b: Prepend* joins the FOLLOWING cluster (GB4/5 override it
@@ -1954,7 +1955,8 @@ public final class Parser {
                 all = m;
             }
         }
-        // CR/LF/Control are disjoint ascending — plain concat is sorted
+        // the union of three disjoint tables, in whatever order they come —
+        // GraphemeTables sorts and merges it
         return all;
     }
 

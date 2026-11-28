@@ -220,15 +220,24 @@ providers carry them per snapshot; the DEFAULT provider serves them
 from core's baked `GraphemeBreakTables` — 17.0-frozen, the JDK exposes
 no public GCB surface). Battery-pinned cluster-sequence-for-cluster-
 sequence against the live JDK over the rule families (GB3/4/5/6-8/9/
-9a/9b/9c/11/12/13), both engine tiers. `\b{g}` (the grapheme-cluster boundary) LANDED as java's own
+9a/9b/9c/11/12/13), both engine tiers — and, because hand-picked cells
+cannot cover the rule interactions densely, by a seeded random
+differential over every class family
+(`GraphemeClusterDifferentialTest`: `\X` and `\b{g}` on 50 000
+strings, live JDK oracle; the three defects it exists for are recorded
+in [the 2026-11-25 triage](fuzz-jur-2026-11-25.md#f9-three-defects-the-hand-cells-could-not-see)).
+`\b{g}` (the grapheme-cluster boundary) LANDED as java's own
 OPERATIONAL reading, probed and source-shaped: TRUE at the region
 start and at/after the input end, FALSE across a surrogate straddle,
 and between them exactly at/after the next cluster boundary scanned
 FORWARD from the previous match's end (the `\G` base family — the
 position `last` itself reads FALSE, java's own quirk, visible in the
 iteration batteries); the boundary rides the position-flag cells (a
-ninth dimension) with the scan served cold from the carrier's origin,
-and such artifacts route through the machinery like `\G`'s. ONE
+ninth dimension) with the scan served cold from the carrier's origin
+— its GB9c run state keyed on the InCB properties the rule names,
+since every linker is also `gcb=Extend` and the class alone cannot
+carry the role — and such artifacts route through the machinery like
+`\G`'s. ONE
 documented divergence: under a QUANTIFIER java's Curly loop uses
 `matcher.last` as its position scratch, so `(?:\b{g}a)+` on `"aa"`
 gives `[0,1)` where the unrolled `\b{g}a\b{g}a` gives `[0,2)` — an

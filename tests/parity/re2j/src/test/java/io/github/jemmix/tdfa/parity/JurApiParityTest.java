@@ -59,6 +59,36 @@ class JurApiParityTest {
         return java.util.regex.Pattern.compile(p, flags).matcher(in);
     }
 
+    /** The boundary display: {@code ^} at every match start, {@code -} at
+     *  every other position, nothing past the last. */
+    private static String matchStarts(Matcher m) {
+        StringBuilder sb = new StringBuilder();
+        int pos = 0;
+        while (m.find()) {
+            while (pos < m.start()) {
+                sb.append('-');
+                pos++;
+            }
+            sb.append('^');
+            pos++;
+        }
+        return sb.toString();
+    }
+
+    private static String matchStarts(PatternMatcher m) {
+        StringBuilder sb = new StringBuilder();
+        int pos = 0;
+        while (m.find()) {
+            while (pos < m.start()) {
+                sb.append('-');
+                pos++;
+            }
+            sb.append('^');
+            pos++;
+        }
+        return sb.toString();
+    }
+
     interface Dual {
         void run(Matcher j, PatternMatcher o);
     }
@@ -361,8 +391,9 @@ class JurApiParityTest {
             "\uD83C\uDDFA\uD83C\uDDF8\uD83C\uDDEB\uD83C\uDDF7\uD83C\uDDFA", "\uD83D\uDC4D\uD83C\uDFFD",
             "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67",
             "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67\u200D\uD83D\uDC66", "\u1100\u1161\u11A8", "\uAC01",
-            "\u1100\uAC01\u11A8", "\u1100\u1161", "a\uD83D\uDC4Db", "\u0905\u094D\u0915", "\u0C15\u0C4D\u0C15",
-            "\u0600abc", "\u0600\u0600a", "x\u200Dy", "\u200D"};
+            "\u1100\uAC01\u11A8", "\u1100\u1161", "\u11A8\u11A8", "a\u11A8\u11A8\u0301x", // T × T (GB8)
+            "a\uD83D\uDC4Db", "\u0905\u094D\u0915", "\u0C15\u0C4D\u0C15", "\u0600abc", "\u0600\u0600a", "x\u200Dy",
+            "\u200D"};
         for (String in : cells) {
             StringBuilder js = new StringBuilder(), os = new StringBuilder();
             Matcher jm = jur("\\X", in, 0);
@@ -739,37 +770,36 @@ class JurApiParityTest {
      *  {@code last} itself reads FALSE (java's own quirk — visible as the
      *  skipped position in the iteration displays). Cells span the rule
      *  families: marks, RI pairs (odd trailing), ZWJ chains, Hangul,
-     *  GB9c conjuncts, Prepend, controls. */
+     *  GB9c conjuncts, Prepend, controls. Two protocols: {@code \b{g}.}
+     *  and the bare {@code \b{g}} — the bare one shows the interior
+     *  positions themselves, where a conjunct that runs on past its first
+     *  consonant (क्या) exposes a scanner whose GB9c never joins; the
+     *  consuming form agrees with the JDK on a bare
+     *  consonant-linker-consonant, whose spurious boundary lands on the
+     *  real one. */
     @ParameterizedTest
     @MethodSource("io.github.jemmix.tdfa.parity.JurOracle#engineFactories")
     void graphemeBoundaryMirrorsTheJdk(RegexEngineFactory f) {
         String[] cells = {"cafe\u0301", "abc", "\uD83C\uDDFA\uD83C\uDDF8x",
-            "\uD83C\uDDFA\uD83C\uDDF8\uD83C\uDDEB\uD83C\uDDF7\uD83C\uDDFA",
+            "\uD83C\uDDFA\uD83C\uDDF8\uD83C\uDDEB\uD83C\uDDF7\uD83C\uD83C\uDDFA",
             "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67x", "\r\nx", "\u1100\u1161\u11A8x",
-            "\uD83D\uDC4D\uD83C\uDFFDx", "\u0C15\u0C4D\u0C15x", "\u0600ax", "e\u0301\u0308", "\u0301x"};
+            "\uD83D\uDC4D\uD83C\uDFFDx", "\u0C15\u0C4D\u0C15x", "\u0600ax", "e\u0301\u0308", "\u0301x",
+            // GB9c conjuncts: on past the first consonant (क्या, विद्यालय, हिन्दी),
+            // chained, with an InCB extend inside the bracket, a leading
+            // linker (no consonant before it: two clusters), and the two
+            // gcb=Extend marks that end the bracket — ZWNJ ends it, ZWJ
+            // (InCB extend) keeps it
+            "\u0915\u094D\u092F\u093Ex", "\u0935\u093F\u0926\u094D\u092F\u093E\u0932\u092Fx",
+            "\u0939\u093F\u0928\u094D\u0926\u0940x", "\u0915\u094D\u0915\u094D\u0915x", "\u0915\u093C\u094D\u0915x",
+            "\u094D\u0915x", "a\u094D\u0915x", "\u0915\u094D\u200C\u0915x", "\u0915\u094D\u200D\u0915x",
+            // a control breaks on both sides (GB4/GB5): the mark after NUL
+            // and after TAB never joins them
+            "\u0000\u0301x", "a\t\u093C\u0915x"};
         for (String in : cells) {
-            StringBuilder js = new StringBuilder(), os = new StringBuilder();
-            Matcher jm = jur("\\b{g}.", in, 0);
-            int pos = 0;
-            while (jm.find()) {
-                while (pos < jm.start()) {
-                    js.append('-');
-                    pos++;
-                }
-                js.append('^');
-                pos++;
-            }
-            PatternMatcher om = io.github.jemmix.tdfa.Pattern.compile("\\b{g}.", 0, f).matcher(in);
-            pos = 0;
-            while (om.find()) {
-                while (pos < om.start()) {
-                    os.append('-');
-                    pos++;
-                }
-                os.append('^');
-                pos++;
-            }
-            assertThat(os.toString()).as("\\b{g}. boundary positions on \"%s\"", in).isEqualTo(js.toString());
+            assertThat(matchStarts(ours("\\b{g}.", in, f, 0))).as("\\b{g}. boundary positions on \"%s\"", in)
+                .isEqualTo(matchStarts(jur("\\b{g}.", in, 0)));
+            assertThat(matchStarts(ours("\\b{g}", in, f, 0))).as("\\b{g} boundary positions on \"%s\"", in)
+                .isEqualTo(matchStarts(jur("\\b{g}", in, 0)));
         }
         // mid-pattern shapes
         JurOracle.assertSameFind("x\\b{g}y", "xy", f);

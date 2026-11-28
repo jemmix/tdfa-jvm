@@ -281,10 +281,11 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
      * shape: forward from the previous match's end) and route through the
      * machinery like \G's (the scan reads the carrier's origin).
      */
-    /** gcb class ids for the scanner. */
+    /** gcb class ids for the scanner — the gcb class alone: the InCB roles
+     *  GB9c needs are read from the tables ({@link #gb9cState}). */
     private static final int GB_CR = 0, GB_LF = 1, GB_CONTROL = 2, GB_EXTEND = 3, GB_ZWJ = 4, GB_SPACING = 5, GB_L = 6,
-        GB_V = 7, GB_LV = 8, GB_LVT = 9, GB_T = 10, GB_RI = 11, GB_PREPEND = 12, GB_EXTPICT = 13, GB_LINKER = 14,
-        GB_INCB_EXT = 15, GB_LC = 16, GB_OTHER = 17;
+        GB_V = 7, GB_LV = 8, GB_LVT = 9, GB_T = 10, GB_RI = 11, GB_PREPEND = 12, GB_EXTPICT = 13, GB_LC = 14,
+        GB_OTHER = 15;
 
     private final boolean needsGraphBound;
     /**
@@ -3157,25 +3158,19 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         return nextGraphemeBoundary(s, gbO, eBase) <= pos;
     }
 
-    private int gbClass(int cp) {
-        GraphemeTables g = tdfa.graphemeTables();
+    private static int gbClass(GraphemeTables g, int cp) {
         if (g == null) {
             return GB_OTHER;
         }
-        // The GB9-governing classes FIRST: gcb.Extend covers every joining
-        // mark (InCB=Extend overlaps it heavily — classifying by InCB first
-        // made plain combining marks GB_INCB_EXT, which no join rule covers,
-        // splitting e+mark clusters). The InCB classes remain for the GB9c
-        // brackets; chars that are InCB=Extend but not gcb.Extend (rare)
-        // classify GB_INCB_EXT below.
+        // The gcb class only — one int cannot carry a second role. The InCB
+        // roles (linker, consonant, bracket extend) are read from the tables
+        // where the GB9c run state is kept: every InCB linker is also
+        // gcb.Extend, and InCB=Extend never reaches outside gcb.Extend ∪ ZWJ.
         if (GraphemeTables.in(g.extend, cp)) {
             return GB_EXTEND;
         }
         if (GraphemeTables.in(g.linkingConsonant, cp)) {
             return GB_LC;
-        }
-        if (GraphemeTables.in(g.linker, cp)) {
-            return GB_LINKER;
         }
         if (cp == '\r') {
             return GB_CR;
@@ -3188,9 +3183,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         }
         if (GraphemeTables.in(g.zwj, cp)) {
             return GB_ZWJ;
-        }
-        if (GraphemeTables.in(g.extend, cp)) {
-            return GB_EXTEND;
         }
         if (GraphemeTables.in(g.spacingMark, cp)) {
             return GB_SPACING;
@@ -3219,9 +3211,6 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         if (GraphemeTables.in(g.extPict, cp)) {
             return GB_EXTPICT;
         }
-        if (GraphemeTables.in(g.incbExtend, cp)) {
-            return GB_INCB_EXT;
-        }
         return GB_OTHER;
     }
 
@@ -3243,12 +3232,13 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
         int riParity = 0; // consecutive RIs before the current position, mod 2
         int gb11 = 0; // 0 none; 1 pict-run (+extends); 2 zwj after pict-run
         int gb9c = 0; // 0 none; 1 consonant run (no linker yet); 2 linker seen
+        GraphemeTables g = tdfa.graphemeTables();
         while (i < to) {
             char c0 = s.charAt(i);
             int cp = Character.isHighSurrogate(c0) && i + 1 < to && Character.isLowSurrogate(s.charAt(i + 1))
                 ? Character.toCodePoint(c0, s.charAt(i + 1)) : c0;
             int w = cp > 0xFFFF ? 2 : 1;
-            int cls = gbClass(cp);
+            int cls = gbClass(g, cp);
             boolean boundary;
             if (first) {
                 boundary = false;
@@ -3273,27 +3263,37 @@ public final class TdfaRunner implements RegexEngine, WholeEngine, StreamEngine 
                 default :
                     gb11 = 0;
             }
-            switch (cls) {
-                case GB_LC :
-                    gb9c = 1; // a consonant (re)starts the run
-                    break;
-                case GB_LINKER :
-                    if (gb9c >= 1) {
-                        gb9c = 2;
-                    }
-                    break;
-                case GB_INCB_EXT :
-                case GB_EXTEND :
-                    // keeps gb9c: the InCB bracket's Extend overlaps gcb.Extend
-                    // almost entirely (vowel signs are both)
-                    break;
-                default :
-                    gb9c = 0;
-            }
+            gb9c = gb9cState(g, cp, gb9c);
             prev = cls;
             i += w;
         }
         return to;
+    }
+
+    /**
+     * The GB9c run state after {@code cp}: 0 none, 1 a consonant with no
+     * linker yet, 2 a linker seen since the consonant. Keyed on the InCB
+     * properties the rule names — {@code Consonant (Extend | Linker)* Linker
+     * (Extend | Linker)* × Consonant} — never on the gcb class: a consonant
+     * restarts the run, a linker arms it, an InCB extend (ZWJ included)
+     * keeps it, and anything else ends it — a {@code gcb=Extend} mark
+     * outside InCB (ZWNJ) included. Without tables there is no conjunct
+     * rule.
+     */
+    private static int gb9cState(GraphemeTables g, int cp, int state) {
+        if (g == null) {
+            return 0;
+        }
+        if (GraphemeTables.in(g.linkingConsonant, cp)) {
+            return 1;
+        }
+        if (state == 0) {
+            return 0;
+        }
+        if (GraphemeTables.in(g.linker, cp)) {
+            return 2;
+        }
+        return GraphemeTables.in(g.incbExtend, cp) ? state : 0;
     }
 
     /** The GB rules between the previous class and the current one, with
